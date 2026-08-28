@@ -32,6 +32,7 @@ import {
   workspaceCheckpoint,
 } from './model';
 import { useLaunchResource } from './useLaunchResource';
+import { useRetryDeadline } from './useRetryDeadline';
 import {
   commandOutcomeIsUnresolved,
   retainedCommandRequest,
@@ -102,6 +103,7 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
   const [recoveryFailure, setRecoveryFailure] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const commands = useIdempotentCommand(ownerId, [`launch:${launchId}`]);
+  const retryBlocked = useRetryDeadline(resource.nextRetryAt);
 
   useEffect(() => {
     heading.current?.focus();
@@ -281,6 +283,16 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
               Launch unavailable
             </h1>
             <p>{resource.failure ?? 'This Launch could not be read.'}</p>
+            {resource.failureDisposition === 'retryable' ? (
+              <Button
+                variant="outline"
+                icon={<IconRefreshOutline16 />}
+                disabled={retryBlocked}
+                onClick={() => void resource.refresh()}
+              >
+                Retry Launch
+              </Button>
+            ) : null}
           </div>
         </section>
       </main>
@@ -343,17 +355,34 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
           <div>
             <p className="notice__title">Launch data may be stale.</p>
             <p className="notice__detail">{resource.failure}</p>
-            <Button
-              size="sm"
-              variant="outline"
-              icon={<IconRefreshOutline16 />}
-              onClick={() => void resource.refresh()}
-            >
-              Retry refresh
-            </Button>
+            {resource.nextRetryAt === null ? null : (
+              <p className="notice__detail">
+                Automatic retry after {new Date(resource.nextRetryAt).toLocaleTimeString()}.
+              </p>
+            )}
+            {resource.failureDisposition === 'retryable' ? (
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<IconRefreshOutline16 />}
+                disabled={retryBlocked}
+                onClick={() => void resource.refresh()}
+              >
+                Retry refresh
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : null}
+      {commands.failure === null ? null : (
+        <div className="notice notice--fail trigger-workflow__notice" role="alert">
+          <IconWarningOutline16 />
+          <div>
+            <p className="notice__title">Command recovery is unavailable.</p>
+            <p className="notice__detail">{commands.failure}</p>
+          </div>
+        </div>
+      )}
       <p className="launch__live" aria-live="polite" aria-atomic="true">
         {commands.pending === null
           ? resource.liveSummary
@@ -377,6 +406,10 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
             <h2 id="launch-repository-heading">Repository</h2>
           </div>
           <dl className="launch-facts">
+            <div>
+              <dt>Work label</dt>
+              <dd>{launch.effective.work_label}</dd>
+            </div>
             <div>
               <dt>Upstream</dt>
               <dd>

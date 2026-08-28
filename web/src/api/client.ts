@@ -22,7 +22,7 @@
  * call away; this module is only the one this app happens to hold.
  */
 
-import { createClient, type CreateSession } from '@chronoai/cma-sdk';
+import { createClient, ProtocolError, type CreateSession } from '@chronoai/cma-sdk';
 import type {
   DiffReview,
   CursorPage,
@@ -89,6 +89,44 @@ export type {
  * not a coincidence but the reason they are the defaults.
  */
 const bot = createClient();
+const CATALOG_PAGE_LIMIT = 200;
+const CATALOG_MAX_PAGES = 50;
+const CATALOG_MAX_ITEMS = CATALOG_PAGE_LIMIT * CATALOG_MAX_PAGES;
+
+async function collectCatalog<T extends { readonly id: string }>(
+  name: string,
+  load: (cursor?: string) => Promise<CursorPage<T>>,
+): Promise<readonly T[]> {
+  const items: T[] = [];
+  const itemIds = new Set<string>();
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (let pageNumber = 0; pageNumber < CATALOG_MAX_PAGES; pageNumber += 1) {
+    const page = await load(cursor);
+    let added = 0;
+    for (const item of page.items) {
+      if (itemIds.has(item.id)) continue;
+      if (items.length >= CATALOG_MAX_ITEMS) {
+        throw new ProtocolError(`${name} exceeded the bounded catalogue size`);
+      }
+      itemIds.add(item.id);
+      items.push(item);
+      added += 1;
+    }
+    if (page.next_cursor === null) return items;
+    if (page.items.length === 0 || added === 0) {
+      throw new ProtocolError(`${name} pagination made no progress`);
+    }
+    if (page.next_cursor === cursor || cursors.has(page.next_cursor)) {
+      throw new ProtocolError(`${name} pagination repeated a cursor`);
+    }
+    cursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+
+  throw new ProtocolError(`${name} exceeded the bounded page count`);
+}
 
 /** Public, credential-suppressed README Trigger preview. */
 export function readTriggerPreview(
@@ -106,8 +144,10 @@ export function createTrigger(
   return bot.createTrigger(serviceId, content, options);
 }
 
-export function listTriggers(): Promise<readonly TriggerDraft[]> {
-  return bot.listTriggers().then((page) => page.items);
+export function listTriggers(signal?: AbortSignal): Promise<readonly TriggerDraft[]> {
+  return collectCatalog('Trigger drafts', (cursor) =>
+    bot.listTriggers(CATALOG_PAGE_LIMIT, cursor, { signal }),
+  );
 }
 
 export function readTrigger(id: string, signal?: AbortSignal): Promise<TriggerDraft> {
@@ -133,8 +173,10 @@ export function publishTrigger(
   return bot.publishTrigger(id, expectedVersion, serviceId, options);
 }
 
-export function listTriggerRevisions(): Promise<readonly TriggerRevision[]> {
-  return bot.listTriggerRevisions().then((page) => page.items);
+export function listTriggerRevisions(signal?: AbortSignal): Promise<readonly TriggerRevision[]> {
+  return collectCatalog('Trigger revisions', (cursor) =>
+    bot.listTriggerRevisions(CATALOG_PAGE_LIMIT, cursor, { signal }),
+  );
 }
 
 export function retireTriggerRevision(
@@ -254,6 +296,15 @@ export function cancelLaunch(
   return bot.cancelLaunch(id, expectedRevision, snapshotDigest, options);
 }
 
+export function completeLaunch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+) {
+  return bot.completeLaunch(id, expectedRevision, snapshotDigest, options);
+}
+
 export function readLaunchProgress(
   id: string,
   after: number,
@@ -310,6 +361,15 @@ export function confirmPullRequest(
   options: TriggerCommandOptions,
 ): Promise<Launch> {
   return bot.confirmPullRequest(id, operation, expectedRevision, snapshotDigest, edits, options);
+}
+
+/** Queue a fenced, read-only GitHub status observation for one open pull request. */
+export function refreshPullRequestStatus(
+  id: string,
+  expectedRevision: number,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.refreshPullRequestStatus(id, expectedRevision, options);
 }
 
 /** Sessions belonging to the signed-in subject, newest first. */

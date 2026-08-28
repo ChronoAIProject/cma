@@ -57,6 +57,36 @@ function duration(seconds: number): string {
   return `${String(seconds)} seconds`;
 }
 
+function PreviewCost({ cost }: { readonly cost: TriggerPreview['estimated_cost'] }) {
+  if (cost.kind === 'exact_zero') {
+    return (
+      <>
+        {cost.display}
+        <span className="trigger-facts__detail">Exact under this Trigger's zero-cost policy.</span>
+      </>
+    );
+  }
+  if (cost.kind === 'contributor_estimate') {
+    return (
+      <>
+        About {cost.display}
+        <span className="trigger-facts__detail">
+          Based on the defaults above. Authenticated review recalculates and finalizes the amount.
+        </span>
+      </>
+    );
+  }
+  return (
+    <>
+      Estimate unavailable
+      <span className="trigger-facts__detail">
+        Authenticated review will calculate the current estimate when deployment pricing is
+        available.
+      </span>
+    </>
+  );
+}
+
 export function PublicTriggerPreview(props: PublicTriggerPreviewProps) {
   return <PublicTriggerPreviewRoute key={props.publicId} {...props} />;
 }
@@ -166,13 +196,9 @@ function PublicTriggerPreviewRoute({ publicId, authError, onSignIn }: PublicTrig
                     <dd>{duration(preview.timeout_default_seconds)}</dd>
                   </div>
                   <div>
-                    <dt>Billing</dt>
+                    <dt>Estimated cost</dt>
                     <dd>
-                      {preview.billing_mode === 'zero_cost'
-                        ? 'No CMA capacity charge'
-                        : preview.billing_mode === 'contributor'
-                          ? 'Contributor billed'
-                          : 'Sponsored policy'}
+                      <PreviewCost cost={preview.estimated_cost} />
                     </dd>
                   </div>
                 </dl>

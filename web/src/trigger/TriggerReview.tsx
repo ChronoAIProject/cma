@@ -30,7 +30,12 @@ import {
   IconWarningOutline16,
 } from '../ui/icons';
 import type { AppRouter, TriggerAuthError } from '../routing/routes';
-import { authorizeTriggerConnection, isActiveTriggerConnection } from './connectionFlow';
+import {
+  INACTIVE_TRIGGER_CONNECTION_GUIDANCE,
+  authorizeTriggerConnection,
+  isActiveTriggerConnection,
+  isReconnectableTriggerConnection,
+} from './connectionFlow';
 import { TriggerAuthNotice } from './TriggerAuthNotice';
 import {
   commandBoolean,
@@ -50,11 +55,13 @@ import {
   upstreamRepository,
 } from './model';
 import {
+  commandExecutionIsClaimed,
   commandOutcomeIsUnresolved,
   retainedCommandMetadata,
   retainedCommandRequest,
   useIdempotentCommand,
 } from './useIdempotentCommand';
+import { useRetryDeadline } from './useRetryDeadline';
 import './Trigger.css';
 
 type TriggerReviewProps =
@@ -73,8 +80,6 @@ type TriggerReviewProps =
       readonly navigate: AppRouter['navigate'];
     };
 
-type TaskValues = Readonly<Record<string, JsonValue>>;
-
 interface ReviewSnapshot {
   readonly selectedService: string;
   readonly overrides: LaunchOverrides;
@@ -86,27 +91,79 @@ interface ReviewCommandMetadata {
   readonly expectedRevision: number;
 }
 
+type ConnectionIssue = 'inactive' | 'reauthorization' | null;
+
+type ReviewLoadSource = 'launch_command' | 'launch_read' | 'connections';
+type ReviewLoadAction = 'retry' | 'reconcile' | null;
+
+interface ReviewLoadFailure {
+  readonly title: string;
+  readonly detail: string;
+  readonly action: ReviewLoadAction;
+  readonly retryAt: number | null;
+  readonly supportReference: string | null;
+}
+
+class ReviewLoadError extends Error {
+  constructor(
+    readonly source: ReviewLoadSource,
+    readonly cause: unknown,
+  ) {
+    super(message(cause), { cause });
+    this.name = 'ReviewLoadError';
+  }
+}
+
+function connectionIssue(cause: unknown): ConnectionIssue {
+  if (!(cause instanceof ApiError)) return null;
+  if (cause.code === 'trigger_connection_inactive') return 'inactive';
+  if (cause.code === 'trigger_reauthorization_required') return 'reauthorization';
+  return null;
+}
+
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function initialTaskValues(launch: Launch): TaskValues {
-  const values: Record<string, JsonValue> = {};
-  for (const field of taskFields(launch)) {
-    const override = launch.overrides.task_inputs[field.key];
-    const value = override ?? field.defaultValue;
-    if (value !== undefined) values[field.key] = value;
-  }
-  return values;
+function reviewLoadFailure(cause: unknown): ReviewLoadFailure {
+  const wrapped =
+    cause instanceof ReviewLoadError ? cause : new ReviewLoadError('launch_read', cause);
+  const api = wrapped.cause instanceof ApiError ? wrapped.cause : null;
+  const unresolvedLaunchCommand =
+    wrapped.source === 'launch_command' && commandOutcomeIsUnresolved(wrapped.cause);
+  const retryable =
+    !unresolvedLaunchCommand &&
+    ((api !== null && api.isRetryable) ||
+      (wrapped.cause instanceof Error &&
+        'isRetryable' in wrapped.cause &&
+        wrapped.cause.isRetryable === true));
+  return {
+    title:
+      api?.status === 429
+        ? 'Trigger review temporarily limited'
+        : api?.status === 404
+          ? 'Trigger unavailable'
+          : 'Trigger review unavailable',
+    detail: message(wrapped.cause),
+    action: unresolvedLaunchCommand ? 'reconcile' : retryable ? 'retry' : null,
+    retryAt: retryable && api?.retryAfterMs !== undefined ? Date.now() + api.retryAfterMs : null,
+    supportReference: api?.requestId ?? null,
+  };
 }
 
 function initialOverrides(launch: Launch): LaunchOverrides {
   return {
-    task_inputs: initialTaskValues(launch),
-    branch_suffix: launch.overrides.branch_suffix ?? launch.effective.branch_suffix,
-    resource_size: launch.overrides.resource_size ?? launch.effective.resource_size,
-    timeout_seconds: launch.overrides.timeout_seconds ?? launch.effective.timeout_seconds,
-    optional_checks: launch.overrides.optional_checks,
+    task_inputs: { ...launch.overrides.task_inputs },
+    ...(launch.overrides.work_label === undefined
+      ? {}
+      : { work_label: launch.overrides.work_label }),
+    ...(launch.overrides.resource_size === undefined
+      ? {}
+      : { resource_size: launch.overrides.resource_size }),
+    ...(launch.overrides.timeout_seconds === undefined
+      ? {}
+      : { timeout_seconds: launch.overrides.timeout_seconds }),
+    optional_checks: [...launch.overrides.optional_checks],
   };
 }
 
@@ -116,6 +173,21 @@ function equalOverrides(left: LaunchOverrides, right: LaunchOverrides): boolean 
 
 function connectionReady(connection: TriggerConnection | null): boolean {
   return connection !== null && connection.state === 'active' && connection.account_id !== null;
+}
+
+const CONCURRENT_START_RECONCILE_DELAYS_MS = [0, 200, 400, 800, 1_600, 2_000] as const;
+
+async function reconcileConcurrentStart(launchId: string): Promise<Launch | null> {
+  for (const delay of CONCURRENT_START_RECONCILE_DELAYS_MS) {
+    if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay));
+    try {
+      const current = await readLaunch(launchId);
+      if (current.state !== 'draft') return current;
+    } catch {
+      // The winning tab remains authoritative. Retry this bounded observation.
+    }
+  }
+  return null;
 }
 
 function formatMicros(micros: number, currency: string): string {
@@ -134,6 +206,17 @@ function deploymentCapacity(quota: LaunchQuotaSnapshot): string {
   if (cpu === undefined) return `No CPU ceiling declared, ${String(memory)} MiB free at review`;
   if (memory === undefined) return `${String(cpu)}m CPU free, no memory ceiling declared`;
   return `${String(cpu)}m CPU, ${String(memory)} MiB free at review`;
+}
+
+function scopeClassLabel(
+  scope: Launch['revision_content']['repository_access']['required_scope_classes'][number],
+): string {
+  switch (scope) {
+    case 'public_repository':
+      return 'Public repositories';
+    case 'workflow':
+      return 'Workflow files';
+  }
 }
 
 export function TriggerReview(props: TriggerReviewProps) {
@@ -166,6 +249,8 @@ function TriggerReviewRoute({
   const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null);
   const [reviewNeedsRefresh, setReviewNeedsRefresh] = useState(false);
   const [readAttempt, setReadAttempt] = useState(0);
+  const [loadFailure, setLoadFailure] = useState<ReviewLoadFailure | null>(null);
+  const [selectedConnectionIssue, setSelectedConnectionIssue] = useState<ConnectionIssue>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const authorization = useRef<AbortController | null>(null);
   const commandResources = useMemo(
@@ -175,7 +260,12 @@ function TriggerReviewRoute({
     ],
     [launch, publicId],
   );
-  const { execute: executeCommand, pending } = useIdempotentCommand(ownerId, commandResources);
+  const {
+    execute: executeCommand,
+    pending,
+    failure: commandFailure,
+  } = useIdempotentCommand(ownerId, commandResources);
+  const retryBlocked = useRetryDeadline(loadFailure?.retryAt ?? null);
 
   useEffect(() => {
     heading.current?.focus();
@@ -183,7 +273,9 @@ function TriggerReviewRoute({
 
   useEffect(() => {
     let live = true;
-    const launchRequest =
+    const launchSource: ReviewLoadSource =
+      recoveryLaunchId === undefined ? 'launch_command' : 'launch_read';
+    const launchRequest = (
       recoveryLaunchId === undefined
         ? executeCommand(
             {
@@ -196,8 +288,14 @@ function TriggerReviewRoute({
             'Launch creation',
             (idempotencyKey, request) => createOrResumeLaunch(request.publicId, { idempotencyKey }),
           )
-        : readLaunch(recoveryLaunchId);
-    void Promise.all([launchRequest, listTriggerConnections()])
+        : readLaunch(recoveryLaunchId)
+    ).catch((cause: unknown) => {
+      throw new ReviewLoadError(launchSource, cause);
+    });
+    const connectionsRequest = listTriggerConnections().catch((cause: unknown) => {
+      throw new ReviewLoadError('connections', cause);
+    });
+    void Promise.all([launchRequest, connectionsRequest])
       .then(([current, available]) => {
         if (!live) return;
         if (recoveryLaunchId !== undefined) {
@@ -213,6 +311,7 @@ function TriggerReviewRoute({
           navigate({ kind: 'launch', launchId: current.id }, { replace: true });
           return;
         }
+        setLoadFailure(null);
         setLaunch(current);
         setReviewNeedsRefresh(false);
         setOverrides(initialOverrides(current));
@@ -223,7 +322,7 @@ function TriggerReviewRoute({
         setSelectedService(selected);
       })
       .catch((cause: unknown) => {
-        if (live) setFailure(message(cause));
+        if (live) setLoadFailure(reviewLoadFailure(cause));
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -241,6 +340,7 @@ function TriggerReviewRoute({
     void preflightTriggerConnection(selectedService, controller.signal)
       .then((connection) => {
         if (controller.signal.aborted) return;
+        setSelectedConnectionIssue(null);
         setPreflight(connection);
         setConnections((items) => [
           connection,
@@ -248,6 +348,8 @@ function TriggerReviewRoute({
         ]);
       })
       .catch((cause: unknown) => {
+        const issue = connectionIssue(cause);
+        if (!controller.signal.aborted && issue !== null) setSelectedConnectionIssue(issue);
         if (
           !controller.signal.aborted &&
           (!(cause instanceof ApiError) ||
@@ -462,7 +564,18 @@ function TriggerReviewRoute({
       setConfirming(false);
       navigate({ kind: 'launch', launchId: started.id });
     } catch (cause) {
-      if (commandOutcomeIsUnresolved(cause)) {
+      if (commandExecutionIsClaimed(cause)) {
+        const current = await reconcileConcurrentStart(launch.id);
+        if (current !== null) {
+          setLaunch(current);
+          setConfirming(false);
+          navigate({ kind: 'launch', launchId: current.id });
+          return;
+        }
+        setFailure(
+          'Another CMA tab is still submitting this exact Start. This page could not confirm its durable outcome yet; reconcile the retained Start to continue.',
+        );
+      } else if (commandOutcomeIsUnresolved(cause)) {
         setFailure(
           'The Start outcome is unknown. CMA retained the exact reviewed configuration and command for reconciliation.',
         );
@@ -531,6 +644,15 @@ function TriggerReviewRoute({
 
   async function connect(mode: 'begin' | 'reconnect'): Promise<void> {
     if (mode === 'reconnect' && selectedService === '') return;
+    const selected = connections.find((item) => item.service_id === selectedService) ?? null;
+    if (
+      mode === 'reconnect' &&
+      selectedConnectionIssue !== 'reauthorization' &&
+      !isReconnectableTriggerConnection(selected)
+    ) {
+      setFailure(INACTIVE_TRIGGER_CONNECTION_GUIDANCE);
+      return;
+    }
     authorization.current?.abort();
     const controller = new AbortController();
     authorization.current = controller;
@@ -539,13 +661,16 @@ function TriggerReviewRoute({
     try {
       const connection = await authorizeTriggerConnection({
         signal: controller.signal,
+        inactiveIsPending: mode === 'begin',
         begin: () => (mode === 'begin' ? beginConnection() : reconnectConnection(selectedService)),
         preflight: preflightTriggerConnection,
         onService: (serviceId) => {
           setSelectedService(serviceId);
+          setSelectedConnectionIssue(null);
           setPreflight(null);
         },
       });
+      setSelectedConnectionIssue(null);
       setSelectedService(connection.service_id);
       setPreflight(connection);
       setConnections((items) => [
@@ -572,14 +697,17 @@ function TriggerReviewRoute({
     setFailure(null);
     try {
       const connection = await preflightTriggerConnection(selectedService);
+      setSelectedConnectionIssue(null);
       setPreflight(connection);
       setConnections((items) => [
         connection,
         ...items.filter((item) => item.service_id !== connection.service_id),
       ]);
     } catch (cause) {
+      const issue = connectionIssue(cause);
+      setSelectedConnectionIssue(issue);
       setPreflight(null);
-      setFailure(message(cause));
+      setFailure(issue === 'inactive' ? INACTIVE_TRIGGER_CONNECTION_GUIDANCE : message(cause));
     } finally {
       setBusy(null);
     }
@@ -646,26 +774,37 @@ function TriggerReviewRoute({
     );
   }
 
-  if (failure !== null && launch === null) {
+  if (loadFailure !== null && launch === null) {
     return (
       <main className="trigger-workflow">
         <section className="trigger-workflow__fatal" role="alert">
           <IconWarningOutline16 />
           <div>
             <h1 ref={heading} tabIndex={-1}>
-              Trigger review unavailable
+              {loadFailure.title}
             </h1>
-            <p>{failure}</p>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setLoading(true);
-                setFailure(null);
-                setReadAttempt((attempt) => attempt + 1);
-              }}
-            >
-              {pending?.slot === `trigger:resume:${publicId}` ? 'Reconcile Launch' : 'Retry'}
-            </Button>
+            <p>{loadFailure.detail}</p>
+            {loadFailure.supportReference === null ? null : (
+              <p>
+                Support reference: <code>{loadFailure.supportReference}</code>
+              </p>
+            )}
+            {!retryBlocked || loadFailure.retryAt === null ? null : (
+              <p>Retry available after {new Date(loadFailure.retryAt).toLocaleTimeString()}.</p>
+            )}
+            {loadFailure.action === null ? null : (
+              <Button
+                variant="outline"
+                disabled={retryBlocked}
+                onClick={() => {
+                  setLoading(true);
+                  setLoadFailure(null);
+                  setReadAttempt((attempt) => attempt + 1);
+                }}
+              >
+                {loadFailure.action === 'reconcile' ? 'Reconcile Launch' : 'Retry'}
+              </Button>
+            )}
           </div>
         </section>
       </main>
@@ -695,8 +834,10 @@ function TriggerReviewRoute({
     (launch.workflow_paths.length === 0 || workflowAcknowledged);
   const canResume = authenticationRecovery && connectionVerified;
   const needsReconnect =
-    selectedConnection !== null &&
-    (selectedConnection.state !== 'active' || selectedConnection.account_id === null);
+    selectedConnectionIssue === 'reauthorization' ||
+    isReconnectableTriggerConnection(selectedConnection);
+  const inactiveConnection =
+    selectedConnectionIssue === 'inactive' || selectedConnection?.state === 'inactive';
   const pendingRevoke = pending?.action === 'revoke-connection';
   const pendingRevokeRequest = pendingRevoke
     ? commandObject(pending.request, { serviceId: nonEmptyString })
@@ -743,6 +884,15 @@ function TriggerReviewRoute({
           <div>
             <p className="notice__title">The review could not be applied.</p>
             <p className="notice__detail">{failure}</p>
+          </div>
+        </div>
+      )}
+      {commandFailure === null ? null : (
+        <div className="notice notice--fail trigger-workflow__notice" role="alert">
+          <IconWarningOutline16 />
+          <div>
+            <p className="notice__title">Command recovery is unavailable.</p>
+            <p className="notice__detail">{commandFailure}</p>
           </div>
         </div>
       )}
@@ -841,16 +991,16 @@ function TriggerReviewRoute({
           <h2 id="trigger-runtime-heading">Session configuration</h2>
           <div className="trigger-formgrid">
             <label className="field">
-              <span className="field__label">Branch suffix</span>
+              <span className="field__label">Work label</span>
               <Input
                 placement="field__input"
-                value={overrides.branch_suffix ?? ''}
-                disabled={reviewLocked || !editable.has('branch_suffix')}
-                onChange={(event) =>
-                  setOverrides({ ...overrides, branch_suffix: event.target.value })
-                }
+                value={overrides.work_label ?? launch.effective.work_label}
+                disabled={reviewLocked || !editable.has('work_label')}
+                onChange={(event) => setOverrides({ ...overrides, work_label: event.target.value })}
               />
-              <span className="field__hint">The server owns the cma/ branch prefix.</span>
+              <span className="field__hint">
+                Display only. CMA owns the immutable Git branch for this Launch.
+              </span>
             </label>
             <label className="field">
               <span className="field__label">Timeout seconds</span>
@@ -916,6 +1066,13 @@ function TriggerReviewRoute({
 
         <section className="trigger-band" aria-labelledby="trigger-connection-heading">
           <h2 id="trigger-connection-heading">GitHub connection</h2>
+          <p className="trigger-connectionnote">
+            Required GitHub access:{' '}
+            {launch.revision_content.repository_access.required_scope_classes
+              .map(scopeClassLabel)
+              .join(', ')}
+            .
+          </p>
           {connections.length === 0 ? (
             <div className="trigger-connectionempty">
               <p>No GitHub account is connected through NyxID.</p>
@@ -943,6 +1100,7 @@ function TriggerReviewRoute({
                     disabled={reviewLocked}
                     onChange={() => {
                       setSelectedService(connection.service_id);
+                      setSelectedConnectionIssue(null);
                       setPreflight(null);
                     }}
                   />
@@ -1011,6 +1169,9 @@ function TriggerReviewRoute({
               </Button>
             ) : null}
           </div>
+          {inactiveConnection ? (
+            <p className="trigger-connectionnote">{INACTIVE_TRIGGER_CONNECTION_GUIDANCE}</p>
+          ) : null}
           {selectedConnection === null ? null : (
             <p className="trigger-connectionnote">
               CMA stores this NyxID service identity and scope snapshot, never a GitHub token.
@@ -1049,6 +1210,19 @@ function TriggerReviewRoute({
                   '_',
                   ' ',
                 ) ?? 'Contributor connection'}
+              </dd>
+            </div>
+            <div>
+              <dt>Required scope classes</dt>
+              <dd>
+                {launch.revision_content.repository_access.required_scope_classes.map(
+                  (scope, index) => (
+                    <span key={scope}>
+                      {index === 0 ? null : ', '}
+                      <code>{scope}</code>
+                    </span>
+                  ),
+                )}
               </dd>
             </div>
             <div>
@@ -1151,8 +1325,12 @@ function TriggerReviewRoute({
               </dd>
             </div>
             <div>
+              <dt>Work label</dt>
+              <dd>{overrides.work_label ?? launch.effective.work_label}</dd>
+            </div>
+            <div>
               <dt>Branch</dt>
-              <dd>cma/{overrides.branch_suffix ?? launch.effective.branch_suffix}</dd>
+              <dd>{launch.branch?.name ?? `cma/${launch.id}`}</dd>
             </div>
             <div>
               <dt>Resources</dt>

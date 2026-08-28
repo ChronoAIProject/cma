@@ -154,7 +154,7 @@ describe('Trigger contributor GitHub authorization', () => {
     expect(await screen.findByText('Verified')).toBeInTheDocument();
   });
 
-  it('reconnects only the selected inactive service without losing edits', async () => {
+  it('does not claim CMA can reactivate the selected inactive service', async () => {
     const inactive: TriggerConnection = { ...ACTIVE, state: 'inactive' };
     api.createOrResumeLaunch.mockResolvedValue(launch(inactive));
     api.listTriggerConnections.mockResolvedValue([inactive]);
@@ -168,7 +168,31 @@ describe('Trigger contributor GitHub authorization', () => {
     expect(screen.queryByRole('button', { name: 'Revoke connection' })).toBeNull();
     await user.clear(task);
     await user.type(task, 'my retained task');
-    await user.click(screen.getByRole('button', { name: 'Reconnect' }));
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+    expect(
+      screen.getByText(/cannot reactivate this inactive UserService.*Enable this exact service/i),
+    ).toBeInTheDocument();
+    api.preflightTriggerConnection.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Check access' }));
+
+    await waitFor(() =>
+      expect(api.preflightTriggerConnection).toHaveBeenCalledWith(ACTIVE.service_id),
+    );
+    expect(api.reconnectTriggerConnection).not.toHaveBeenCalled();
+    expect(flow.authorizeTriggerConnection).not.toHaveBeenCalled();
+    expect(task).toHaveValue('my retained task');
+  });
+
+  it('still renews authorization for the selected disconnected service', async () => {
+    const disconnected: TriggerConnection = { ...ACTIVE, state: 'disconnected' };
+    api.createOrResumeLaunch.mockResolvedValue(launch(disconnected));
+    api.listTriggerConnections.mockResolvedValue([disconnected]);
+    api.preflightTriggerConnection.mockRejectedValue(
+      new ApiError(409, 'reauthorization required', 'trigger_reauthorization_required'),
+    );
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
 
     await waitFor(() =>
       expect(api.reconnectTriggerConnection).toHaveBeenCalledWith(
@@ -176,7 +200,6 @@ describe('Trigger contributor GitHub authorization', () => {
         expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
       ),
     );
-    expect(task).toHaveValue('my retained task');
   });
 
   it('confirms an exact revocation, preserves edits, and never claims immediate provider denial', async () => {
@@ -208,7 +231,10 @@ describe('Trigger contributor GitHub authorization', () => {
       ),
     );
     expect(task).toHaveValue('keep this local review');
-    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+    expect(
+      await screen.findByText(/cannot reactivate this inactive UserService/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
     expect(screen.queryByRole('dialog', { name: 'Revoke GitHub connection?' })).toBeNull();
   });
 
@@ -245,7 +271,10 @@ describe('Trigger contributor GitHub authorization', () => {
     await user.click(within(recovered).getByRole('button', { name: 'Reconcile revocation' }));
     await waitFor(() => expect(api.revokeTriggerConnection).toHaveBeenCalledTimes(3));
     expect(api.revokeTriggerConnection.mock.calls[2]).toEqual(retainedCall);
-    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+    expect(
+      await screen.findByText(/cannot reactivate this inactive UserService/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
   });
 
   it('manually checks only the selected service', async () => {
@@ -501,6 +530,29 @@ describe('Trigger contributor command reconciliation', () => {
     expect(within(kernel as HTMLElement).getByText('Codex')).toBeInTheDocument();
   });
 
+  it('discloses every required GitHub scope class before Start', async () => {
+    api.createOrResumeLaunch.mockResolvedValue({
+      ...launch(ACTIVE),
+      revision_content: {
+        ...launch(ACTIVE).revision_content,
+        repository_access: {
+          ...launch(ACTIVE).revision_content.repository_access,
+          required_scope_classes: ['public_repository', 'workflow'],
+        },
+      },
+    });
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'Fix one bounded issue' });
+    expect(
+      screen.getByText('Required GitHub access: Public repositories, Workflow files.'),
+    ).toBeInTheDocument();
+    const scopeClasses = screen.getByText('Required scope classes').closest('div');
+    expect(scopeClasses).not.toBeNull();
+    expect(within(scopeClasses as HTMLElement).getByText('public_repository')).toBeInTheDocument();
+    expect(within(scopeClasses as HTMLElement).getByText('workflow')).toBeInTheDocument();
+  });
+
   it('requires an explicit same-configuration review refresh after Start admission drifts', async () => {
     api.startLaunch.mockRejectedValueOnce(
       new ApiError(409, 'the reviewed price changed', 'trigger_price_changed'),
@@ -519,13 +571,64 @@ describe('Trigger contributor command reconciliation', () => {
 
     await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledOnce());
     expect(api.updateLaunchOverrides.mock.calls[0]?.[2]).toEqual({
-      task_inputs: { topic: 'the selected issue' },
-      branch_suffix: 'work',
-      resource_size: { cpu_millis: 500, memory_mib: 1024 },
-      timeout_seconds: 3600,
+      task_inputs: {},
       optional_checks: [],
     });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start Launch' })).toBeEnabled());
+  });
+
+  it('submits only actual overrides while displaying locked effective defaults', async () => {
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    const topic = await screen.findByLabelText(/topic/i);
+    expect(topic).toHaveValue('the selected issue');
+    expect(screen.getByLabelText('CPU millis')).toHaveValue(500);
+    expect(screen.getByLabelText('Timeout seconds')).toHaveValue(3600);
+    expect(screen.getByLabelText(/Work label/)).toHaveValue('work');
+    await user.clear(topic);
+    await user.type(topic, 'fix only this issue');
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+
+    await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledOnce());
+    expect(api.updateLaunchOverrides.mock.calls[0]?.[2]).toEqual({
+      task_inputs: { topic: 'fix only this issue' },
+      optional_checks: [],
+    });
+  });
+
+  it('keeps the Git branch Launch-owned when a contributor changes the work label', async () => {
+    const base = launch(ACTIVE);
+    api.createOrResumeLaunch.mockResolvedValue({
+      ...base,
+      revision_content: {
+        ...base.revision_content,
+        override_policy: {
+          ...base.revision_content.override_policy,
+          editable_fields: [...base.revision_content.override_policy.editable_fields, 'work_label'],
+        },
+      },
+    });
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    const label = await screen.findByLabelText(/Work label/);
+    const branch = screen.getByText('Branch').closest('div');
+    expect(branch).not.toBeNull();
+    expect(branch).toHaveTextContent(`cma/${base.id}`);
+
+    await user.clear(label);
+    await user.type(label, 'Documentation fix');
+    expect(branch).toHaveTextContent(`cma/${base.id}`);
+    expect(branch).not.toHaveTextContent('Documentation fix');
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+
+    await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledOnce());
+    expect(api.updateLaunchOverrides.mock.calls[0]?.[2]).toEqual({
+      task_inputs: {},
+      work_label: 'Documentation fix',
+      optional_checks: [],
+    });
   });
 
   it('requires saving and reviewing recalculated admission before Start', async () => {
@@ -578,8 +681,10 @@ describe('Trigger contributor command reconciliation', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save review' }));
     await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledOnce());
-    expect(screen.getByText('Price').parentElement).toHaveTextContent(/9\.00 maximum/);
-    expect(screen.getByRole('button', { name: 'Start Launch' })).toBeEnabled();
+    await waitFor(() =>
+      expect(screen.getByText('Price').parentElement).toHaveTextContent(/9\.00 maximum/),
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start Launch' })).toBeEnabled());
     expect(api.startLaunch).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Start Launch' }));
@@ -616,6 +721,69 @@ describe('Trigger contributor command reconciliation', () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({ kind: 'launch', launchId: current.id }),
     );
+  });
+
+  it.each([
+    [404, 'not found', 'trigger_not_found'],
+    [422, 'invalid Trigger identifier', 'invalid_trigger_request'],
+  ])('does not offer Retry for terminal initial HTTP %i failures', async (status, detail, code) => {
+    api.createOrResumeLaunch.mockRejectedValueOnce(new ApiError(status, detail, code));
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(detail);
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reconcile Launch' })).toBeNull();
+    expect(api.createOrResumeLaunch).toHaveBeenCalledOnce();
+  });
+
+  it('offers an explicit Retry for a rate-limited initial read', async () => {
+    api.createOrResumeLaunch
+      .mockRejectedValueOnce(new ApiError(429, 'Wait before trying again.', 'rate_limited'))
+      .mockResolvedValueOnce(launch(ACTIVE));
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    expect(
+      await screen.findByRole('heading', { name: 'Trigger review temporarily limited' }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Fix one bounded issue' }),
+    ).toBeInTheDocument();
+    expect(api.createOrResumeLaunch).toHaveBeenCalledTimes(2);
+  });
+
+  it('honors a rate-limit deadline and retains the support reference', async () => {
+    api.createOrResumeLaunch.mockRejectedValueOnce(
+      new ApiError(
+        429,
+        'Wait before trying again.',
+        'rate_limited',
+        'request-rate-limit-668',
+        60_000,
+      ),
+    );
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    expect(await screen.findByText(/request-rate-limit-668/)).toBeInTheDocument();
+    expect(screen.getByText(/Retry available after/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+  });
+
+  it('retries a connection-list transport failure instead of labeling it an ambiguous Launch', async () => {
+    api.listTriggerConnections
+      .mockRejectedValueOnce(new TransportError('connection list unavailable'))
+      .mockResolvedValueOnce([ACTIVE]);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('connection list unavailable');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconcile Launch' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Fix one bounded issue' }),
+    ).toBeInTheDocument();
   });
 
   it('reconciles an ambiguous create-or-resume with the original key', async () => {

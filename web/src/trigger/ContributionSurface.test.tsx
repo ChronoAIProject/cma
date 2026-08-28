@@ -16,10 +16,13 @@ import { TransportError } from '../api/client';
 import { ContributionSurface } from './ContributionSurface';
 
 const api = vi.hoisted(() => ({
+  completeLaunch: vi.fn(),
   confirmPullRequest: vi.fn(),
+  createNewLaunch: vi.fn(),
   downloadDiffArtifact: vi.fn(),
   publishLaunchBranch: vi.fn(),
   readLaunchDiff: vi.fn(),
+  refreshPullRequestStatus: vi.fn(),
   requestLaunchDiff: vi.fn(),
   reviewPullRequest: vi.fn(),
 }));
@@ -38,12 +41,28 @@ vi.mock('./useLaunchResource', () => ({
 const LAUNCH = JSON.parse(
   readFileSync('../sdk/typescript/tests/fixtures/launch.json', 'utf8'),
 ) as Launch;
-const DIFF = JSON.parse(
+const DIFF_WIRE = JSON.parse(
   readFileSync('../sdk/typescript/tests/fixtures/diff_review.json', 'utf8'),
 ) as DiffReview;
+// Most command tests start after branch publication but before any PR exists.
+// Keep that state explicit now that the shared wire fixture exercises a live PR.
+const DIFF = { ...DIFF_WIRE, pull_request: null } satisfies DiffReview;
 const PROPOSAL = JSON.parse(
   readFileSync('../sdk/typescript/tests/fixtures/pull_request_draft.json', 'utf8'),
 ) as PullRequestDraft;
+
+function sealProposalEdits(edits: { readonly title?: string; readonly body?: string }) {
+  const title = edits.title ?? PROPOSAL.title;
+  const body = edits.body ?? PROPOSAL.body;
+  if (title === PROPOSAL.title && body === PROPOSAL.body) return PROPOSAL;
+  return {
+    ...PROPOSAL,
+    title,
+    body,
+    body_digest: 'b'.repeat(64),
+    intent_digest: 'c'.repeat(64),
+  } satisfies PullRequestDraft;
+}
 
 function reach(state: LaunchCapabilityRevocationState): LaunchReachStatus {
   return {
@@ -74,6 +93,14 @@ function readyLaunch(reachState: LaunchCapabilityRevocationState | null = 'activ
   };
 }
 
+function pullRequestOpenLaunch(): Launch {
+  return {
+    ...readyLaunch(),
+    state: 'pr_open',
+    pull_request: openPullRequest(),
+  };
+}
+
 function openPullRequest(): PullRequestRecord {
   return {
     ...PROPOSAL,
@@ -94,6 +121,9 @@ function openPullRequest(): PullRequestRecord {
     updated_at: '2026-08-27T00:00:15Z',
     provider_created_at: '2026-08-27T00:00:15Z',
     provider_updated_at: '2026-08-27T00:00:15Z',
+    status_failure: null,
+    provider_request_id: 'github-request-17',
+    head_matches_launch: true,
   };
 }
 
@@ -155,6 +185,22 @@ function reviewOutcome(outcome: DiffValidationOutcome): DiffReview {
   };
 }
 
+function publicationDrift(field: 'identity' | 'digest' | 'revision' | 'head'): DiffReview {
+  const artifact = DIFF.artifact;
+  if (artifact === null) throw new Error('diff fixture omitted its artifact');
+  return {
+    ...DIFF,
+    revision_number: field === 'revision' ? DIFF.revision_number + 1 : DIFF.revision_number,
+    artifact: {
+      ...artifact,
+      id: field === 'identity' ? '99999999-9999-4999-8999-999999999999' : artifact.id,
+      digest: field === 'digest' ? '9'.repeat(64) : artifact.digest,
+      expected_branch_head: field === 'head' ? '8'.repeat(40) : artifact.expected_branch_head,
+    },
+    contribution: null,
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -181,6 +227,8 @@ function resource(launch = readyLaunch()) {
     launch,
     loading: false,
     failure: null,
+    failureDisposition: null,
+    nextRetryAt: null,
     offline: false,
     lastUpdated: Date.now(),
     liveSummary: 'Launch ready',
@@ -193,7 +241,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   launchResource.use.mockReturnValue(resource());
   api.readLaunchDiff.mockResolvedValue({ ...DIFF, artifact: null, contribution: null });
-  api.reviewPullRequest.mockResolvedValue(PROPOSAL);
+  api.reviewPullRequest.mockImplementation(async (_launchId, _operation, edits = {}) =>
+    sealProposalEdits(edits),
+  );
 });
 
 describe('contribution command reconciliation', () => {
@@ -365,6 +415,261 @@ describe('contribution command reconciliation', () => {
     },
   );
 
+  it('omits provider metadata from an ordinary head-only PR update', async () => {
+    const providerRecord = {
+      ...openPullRequest(),
+      observed_title: 'Maintainer-retitled contribution',
+      observed_body_digest: '9'.repeat(64),
+    };
+    const updateDraft = {
+      ...PROPOSAL,
+      operation: 'update',
+      previous_head_revision: providerRecord.head_revision,
+      target_number: providerRecord.number,
+      target_provider_id: providerRecord.provider_id,
+      target_provider_node_id: providerRecord.provider_node_id,
+      update_metadata: false,
+      expected_previous_title: null,
+      expected_previous_body_digest: null,
+      intent_digest: '8'.repeat(64),
+    } satisfies PullRequestDraft;
+    api.readLaunchDiff.mockResolvedValue({ ...DIFF, pull_request: providerRecord });
+    api.reviewPullRequest.mockResolvedValue(updateDraft);
+    api.confirmPullRequest.mockResolvedValue({ ...readyLaunch(), revision_number: 1 });
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Update pull request' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Update pull request?' });
+    expect(dialog).toHaveTextContent('without including its provider title or body in the update');
+    await user.click(within(dialog).getByRole('button', { name: 'Update pull request' }));
+
+    await waitFor(() => expect(api.confirmPullRequest).toHaveBeenCalledOnce());
+    expect(api.reviewPullRequest).toHaveBeenNthCalledWith(1, LAUNCH.id, 'update');
+    expect(api.reviewPullRequest).toHaveBeenNthCalledWith(2, LAUNCH.id, 'update', {});
+    expect(api.confirmPullRequest).toHaveBeenCalledWith(
+      LAUNCH.id,
+      'update',
+      LAUNCH.revision_number,
+      updateDraft.intent_digest,
+      {},
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+    expect(api.confirmPullRequest).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ title: providerRecord.observed_title }),
+      expect.anything(),
+    );
+  });
+
+  it('retains explicit PR metadata edits behind provider-metadata CAS', async () => {
+    const providerRecord = {
+      ...openPullRequest(),
+      observed_title: 'Maintainer-retitled contribution',
+      observed_body_digest: '9'.repeat(64),
+    };
+    const baseUpdateDraft = {
+      ...PROPOSAL,
+      operation: 'update',
+      previous_head_revision: providerRecord.head_revision,
+      target_number: providerRecord.number,
+      target_provider_id: providerRecord.provider_id,
+      target_provider_node_id: providerRecord.provider_node_id,
+      update_metadata: false,
+      expected_previous_title: null,
+      expected_previous_body_digest: null,
+      intent_digest: '8'.repeat(64),
+    } satisfies PullRequestDraft;
+    const editedTitle = 'Contributor-requested title';
+    const editedDraft = {
+      ...baseUpdateDraft,
+      update_metadata: true,
+      expected_previous_title: providerRecord.observed_title,
+      expected_previous_body_digest: providerRecord.observed_body_digest,
+      title: editedTitle,
+      intent_digest: '7'.repeat(64),
+    } satisfies PullRequestDraft;
+    api.readLaunchDiff.mockResolvedValue({ ...DIFF, pull_request: providerRecord });
+    api.reviewPullRequest.mockImplementation(async (_id, _operation, edits = {}) =>
+      edits.title === editedTitle ? editedDraft : baseUpdateDraft,
+    );
+    api.confirmPullRequest.mockResolvedValue({ ...readyLaunch(), revision_number: 1 });
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Update pull request' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Update pull request?' });
+    const title = within(dialog).getByLabelText('Title');
+    await user.clear(title);
+    await user.type(title, editedTitle);
+    expect(dialog).toHaveTextContent('applies your explicit metadata edits');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Update pull request' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /proposal changed while CMA resealed it/i,
+    );
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Update pull request' }));
+    await waitFor(() => expect(api.confirmPullRequest).toHaveBeenCalledOnce());
+    expect(api.reviewPullRequest).toHaveBeenLastCalledWith(LAUNCH.id, 'update', {
+      title: editedTitle,
+      body: PROPOSAL.body,
+    });
+    expect(api.confirmPullRequest).toHaveBeenCalledWith(
+      LAUNCH.id,
+      'update',
+      LAUNCH.revision_number,
+      editedDraft.intent_digest,
+      { title: editedTitle, body: PROPOSAL.body },
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+    expect(editedDraft.expected_previous_title).toBe(providerRecord.observed_title);
+    expect(editedDraft.expected_previous_body_digest).toBe(providerRecord.observed_body_digest);
+  });
+
+  it('queues an open-PR status read and waits for a newer provider observation', async () => {
+    const pullRequest = openPullRequest();
+    const currentLaunch = {
+      ...readyLaunch(),
+      state: 'pr_open' as const,
+      pull_request: pullRequest,
+    };
+    const current = resource(currentLaunch);
+    const queued = { ...currentLaunch, revision_number: currentLaunch.revision_number + 1 };
+    const observed = {
+      ...DIFF,
+      revision_number: queued.revision_number + 1,
+      pull_request: {
+        ...pullRequest,
+        checks: 'passing' as const,
+        mergeability: 'mergeable' as const,
+        updated_at: '2026-08-27T00:01:00Z',
+        provider_updated_at: '2026-08-27T00:01:00Z',
+        provider_request_id: 'github-request-refreshed',
+      },
+    };
+    launchResource.use.mockReturnValue(current);
+    api.refreshPullRequestStatus.mockResolvedValue(queued);
+    api.readLaunchDiff
+      .mockResolvedValueOnce({ ...DIFF, pull_request: pullRequest })
+      .mockResolvedValue(observed);
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Refresh status' }));
+
+    await waitFor(() => expect(api.refreshPullRequestStatus).toHaveBeenCalledOnce());
+    expect(api.refreshPullRequestStatus).toHaveBeenCalledWith(
+      LAUNCH.id,
+      currentLaunch.revision_number,
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+    await waitFor(() => expect(current.accept).toHaveBeenCalledWith(queued));
+    expect(
+      await screen.findByText('Pull request status refreshed from GitHub.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('github-request-refreshed')).toBeInTheDocument();
+    expect(screen.getByText('passing')).toBeInTheDocument();
+    expect(screen.getByText('Mergeable')).toBeInTheDocument();
+    expect(api.reviewPullRequest).not.toHaveBeenCalled();
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps a manually changed PR readable and refreshable while disabling CMA Update', async () => {
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      contribution: null,
+      pull_request: { ...openPullRequest(), head_matches_launch: false },
+    });
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+
+    const update = await screen.findByRole('button', { name: 'Update pull request' });
+    expect(update).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh status' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'New Launch' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Refresh diff' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Publish branch' })).toBeDisabled();
+    expect(screen.getByRole('link', { name: `#17 ${PROPOSAL.title}` })).toHaveAttribute(
+      'href',
+      openPullRequest().canonical_url,
+    );
+    expect(screen.getByText('Changed outside CMA')).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/head changed outside CMA.*same Launch cannot capture another diff/i)[0],
+    ).toBeInTheDocument();
+    expect(api.requestLaunchDiff).not.toHaveBeenCalled();
+    expect(api.publishLaunchBranch).not.toHaveBeenCalled();
+  });
+
+  it('shows a safe provider status failure, retry deadline, and correlation identifiers', async () => {
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      pull_request: {
+        ...openPullRequest(),
+        provider_request_id: 'github-request-delayed',
+        status_failure: {
+          class: 'retryable_transient',
+          code: 'github_status_rate_limited',
+          detail: 'GitHub delayed the read-only status check.',
+          remediation: 'CMA will retry without issuing a pull-request write.',
+          correlation_id: 'correlation-status-17',
+          retry_at: '2026-08-27T00:05:00Z',
+          observed_at: '2026-08-27T00:00:00Z',
+        },
+      },
+    });
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+
+    expect(await screen.findByText('Pull request status paused by CMA')).toBeInTheDocument();
+    expect(
+      screen.getAllByText('GitHub delayed the read-only status check.').length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/Retry after/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/github_status_rate_limited.*correlation-status-17/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('github-request-delayed')).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      'intent_recorded',
+      /Publication intent is recorded, but Git object writes are not yet confirmed/i,
+    ],
+    [
+      'objects_written',
+      /Git objects are written, but the guarded Launch branch has not been advanced/i,
+    ],
+    [
+      'ref_update_pending',
+      /guarded branch update may have reached GitHub.*awaiting read-only reconciliation/i,
+    ],
+    ['conflict', /guarded Launch branch changed before publication completed/i],
+    ['recovery_required', /publication outcome is ambiguous.*paused automatic writes/i],
+    ['failed', /Branch publication failed.*does not claim a published result/i],
+  ] as const)(
+    'does not claim or use an exact-artifact %s publication as published',
+    async (state, reason) => {
+      if (DIFF.contribution === null) throw new Error('diff fixture omitted its contribution');
+      api.readLaunchDiff.mockResolvedValue({
+        ...DIFF,
+        contribution: { ...DIFF.contribution, state },
+        pull_request: null,
+      });
+      render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+
+      expect(await screen.findByText(state.replaceAll('_', ' '))).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Publish branch' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Open pull request' })).toBeDisabled();
+      expect(screen.getAllByText(reason)).toHaveLength(2);
+      expect(api.publishLaunchBranch).not.toHaveBeenCalled();
+      expect(api.reviewPullRequest).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ['missing', null],
     ['revoked', 'revoked'],
@@ -422,22 +727,170 @@ describe('contribution command reconciliation', () => {
     },
   );
 
+  it('creates a separate Launch from a closed pull request without mutating the old PR', async () => {
+    const navigate = vi.fn();
+    const next = {
+      ...readyLaunch(),
+      id: 'new-launch-id',
+      trigger_public_id: LAUNCH.trigger_public_id,
+    };
+    api.createNewLaunch.mockResolvedValue(next);
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      pull_request: pullRequestWithState('closed_unmerged'),
+    });
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={navigate} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'New Launch' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create a separate Launch?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create New Launch' }));
+
+    await waitFor(() => expect(api.createNewLaunch).toHaveBeenCalledOnce());
+    expect(api.createNewLaunch).toHaveBeenCalledWith(
+      LAUNCH.trigger_public_id,
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({
+        kind: 'trigger',
+        publicId: LAUNCH.trigger_public_id,
+      }),
+    );
+    expect(api.reviewPullRequest).not.toHaveBeenCalled();
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('finishes CMA orchestration while leaving the handed-off pull request open', async () => {
+    const launch = pullRequestOpenLaunch();
+    const completed = {
+      ...launch,
+      state: 'completed',
+      revision_number: launch.revision_number + 1,
+    } satisfies Launch;
+    const current = resource(launch);
+    launchResource.use.mockReturnValue(current);
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      revision_number: launch.revision_number,
+      pull_request: launch.pull_request,
+    });
+    api.completeLaunch.mockResolvedValue(completed);
+    render(<ContributionSurface ownerId="test-owner" launchId={launch.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Finish CMA work' }));
+    const dialog = screen.getByRole('dialog', {
+      name: 'Finish CMA work on this pull request?',
+    });
+    expect(dialog).toHaveTextContent('pull request remains open on GitHub');
+    expect(dialog).toHaveTextContent('no further same-Launch updates');
+    await user.click(within(dialog).getByRole('button', { name: 'Finish CMA work' }));
+
+    await waitFor(() => expect(api.completeLaunch).toHaveBeenCalledOnce());
+    expect(api.completeLaunch).toHaveBeenCalledWith(
+      launch.id,
+      launch.revision_number,
+      launch.effective.digest,
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+    await waitFor(() => expect(current.accept).toHaveBeenCalledWith(completed));
+    expect(completed.pull_request?.state).toBe('open');
+  });
+
+  it('reconciles an ambiguous completion with the original command key', async () => {
+    const launch = pullRequestOpenLaunch();
+    const current = resource(launch);
+    launchResource.use.mockReturnValue(current);
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      revision_number: launch.revision_number,
+      pull_request: launch.pull_request,
+    });
+    api.completeLaunch.mockRejectedValue(new TransportError('response lost'));
+    render(<ContributionSurface ownerId="test-owner" launchId={launch.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Finish CMA work' }));
+    const dialog = screen.getByRole('dialog', {
+      name: 'Finish CMA work on this pull request?',
+    });
+    await user.click(within(dialog).getByRole('button', { name: 'Finish CMA work' }));
+    await waitFor(() => expect(api.completeLaunch).toHaveBeenCalledTimes(2));
+    expect(api.completeLaunch.mock.calls[0]?.[3].idempotencyKey).toBe(
+      api.completeLaunch.mock.calls[1]?.[3].idempotencyKey,
+    );
+
+    api.completeLaunch.mockResolvedValue({
+      ...launch,
+      state: 'completed',
+      revision_number: launch.revision_number + 1,
+    });
+    const reconcile = await within(dialog).findByRole('button', {
+      name: 'Reconcile completion',
+    });
+    await user.click(reconcile);
+    await waitFor(() => expect(api.completeLaunch).toHaveBeenCalledTimes(3));
+    expect(new Set(api.completeLaunch.mock.calls.map((call) => call[3].idempotencyKey)).size).toBe(
+      1,
+    );
+  });
+
   it.each([
-    ['closed_unmerged', /closed.*Create a New Launch for a separate attempt/i],
-    ['merged', /merged pull request cannot be updated from CMA/i],
+    [
+      'the Launch has not reached the open-PR state',
+      { ...pullRequestOpenLaunch(), state: 'ready' } satisfies Launch,
+      false,
+    ],
+    [
+      'the provider pull request is closed',
+      {
+        ...pullRequestOpenLaunch(),
+        pull_request: pullRequestWithState('closed_unmerged'),
+      } satisfies Launch,
+      false,
+    ],
+    ['the displayed Launch is offline', pullRequestOpenLaunch(), true],
+  ] as const)('withholds completion when %s', async (_reason, launch, offline) => {
+    launchResource.use.mockReturnValue({ ...resource(launch), offline });
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      revision_number: launch.revision_number,
+      pull_request: launch.pull_request,
+    });
+
+    render(<ContributionSurface ownerId="test-owner" launchId={launch.id} navigate={vi.fn()} />);
+
+    await screen.findByText('Pull request');
+    expect(screen.queryByRole('button', { name: 'Finish CMA work' })).toBeNull();
+    expect(api.completeLaunch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['closed_unmerged', /pull request is closed.*same Launch cannot capture another diff/i],
+    ['merged', /pull request was merged.*same Launch cannot capture another diff/i],
   ] as const)(
-    'explains the terminal %s PR state without offering another write',
+    'keeps terminal %s PR history readable and disables every same-Launch contribution action',
     async (state, reason) => {
       api.readLaunchDiff.mockResolvedValue({
         ...DIFF,
+        contribution: null,
         pull_request: pullRequestWithState(state),
       });
       render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
 
-      expect(await screen.findByText(reason)).toBeInTheDocument();
+      expect(first(await screen.findAllByText(reason))).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: `#17 ${PROPOSAL.title}` })).toHaveAttribute(
+        'href',
+        openPullRequest().canonical_url,
+      );
+      expect(screen.getByRole('button', { name: 'Refresh diff' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Publish branch' })).toBeDisabled();
       expect(screen.queryByRole('button', { name: 'Open pull request' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Update pull request' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Refresh status' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'New Launch' })).toBeEnabled();
+      expect(api.requestLaunchDiff).not.toHaveBeenCalled();
+      expect(api.publishLaunchBranch).not.toHaveBeenCalled();
       expect(api.reviewPullRequest).not.toHaveBeenCalled();
       expect(api.confirmPullRequest).not.toHaveBeenCalled();
     },
@@ -536,14 +989,61 @@ describe('contribution command reconciliation', () => {
   });
 
   it('discloses an online refresh failure and retries the retained Launch read', async () => {
-    const current = { ...resource(), failure: 'CMA returned a provider failure.' };
+    const current = {
+      ...resource(),
+      failure: 'CMA returned a provider failure.',
+      failureDisposition: 'retryable' as const,
+    };
     launchResource.use.mockReturnValue(current);
+    api.readLaunchDiff.mockResolvedValue(DIFF);
     render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
 
     expect(screen.getByRole('alert')).toHaveTextContent('Contribution data may be stale.');
+    expect(await screen.findByRole('button', { name: 'Open pull request' })).toBeDisabled();
+    expect(
+      screen.getByText(DIFF.artifact?.files[0]?.path ?? 'missing reviewed file'),
+    ).toBeVisible();
+    expect(
+      screen.getAllByText(
+        'Refresh the Launch before starting another GitHub write; the displayed review may be stale.',
+      ),
+    ).toHaveLength(2);
     await userEvent.click(screen.getByRole('button', { name: 'Retry refresh' }));
     expect(current.refresh).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ['failed refresh', { failure: 'CMA returned a provider failure.' }],
+    ['offline cache', { offline: true }],
+  ] as const)(
+    'withholds new publish, PR-open, and PR-update intent while %s data is displayed',
+    async (_label, resourceState) => {
+      const staleResource = { ...resource(), ...resourceState };
+      launchResource.use.mockReturnValue(staleResource);
+
+      api.readLaunchDiff.mockResolvedValueOnce({
+        ...DIFF,
+        contribution: null,
+        pull_request: null,
+      });
+      const publish = render(
+        <ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />,
+      );
+      expect(await screen.findByRole('button', { name: 'Publish branch' })).toBeDisabled();
+      publish.unmount();
+
+      api.readLaunchDiff.mockResolvedValueOnce({ ...DIFF, pull_request: null });
+      const open = render(
+        <ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />,
+      );
+      expect(await screen.findByRole('button', { name: 'Open pull request' })).toBeDisabled();
+      open.unmount();
+
+      api.readLaunchDiff.mockResolvedValueOnce({ ...DIFF, pull_request: openPullRequest() });
+      render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+      expect(await screen.findByRole('button', { name: 'Update pull request' })).toBeDisabled();
+    },
+  );
 
   it('replays diff capture with one key and no second logical command', async () => {
     const currentResource = resource();
@@ -591,6 +1091,97 @@ describe('contribution command reconciliation', () => {
     ).toBe(1);
   });
 
+  it.each(['identity', 'digest', 'revision', 'head'] as const)(
+    'invalidates branch confirmation when the reviewed artifact %s drifts during preflight',
+    async (field) => {
+      api.readLaunchDiff.mockResolvedValue({ ...DIFF, contribution: null });
+      render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+      const user = userEvent.setup();
+
+      await user.click(await screen.findByRole('button', { name: 'Publish branch' }));
+      const dialog = screen.getByRole('dialog', { name: 'Publish this reviewed branch?' });
+      expect(dialog).toHaveTextContent(DIFF.artifact?.id ?? 'missing artifact');
+      expect(dialog).toHaveTextContent(`Launch revision${String(DIFF.revision_number)}`);
+
+      const preflight = deferred<DiffReview>();
+      api.readLaunchDiff.mockReturnValueOnce(preflight.promise);
+      await user.click(within(dialog).getByRole('button', { name: 'Publish branch' }));
+      await waitFor(() => expect(api.readLaunchDiff).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        preflight.resolve(publicationDrift(field));
+      });
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        /reviewed artifact changed before publication.*did not write to GitHub/i,
+      );
+      expect(screen.queryByRole('dialog', { name: 'Publish this reviewed branch?' })).toBeNull();
+      expect(api.publishLaunchBranch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('stops for a newly displayed PR review when any sealed authority drifts', async () => {
+    const resealed = {
+      ...PROPOSAL,
+      base_ref: 'release-candidate',
+      expected_base_revision: '8'.repeat(40),
+      expected_head_revision: '9'.repeat(40),
+      intent_digest: 'a'.repeat(64),
+    } satisfies PullRequestDraft;
+    api.readLaunchDiff.mockResolvedValue(DIFF);
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Open pull request' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Open pull request?' });
+    api.reviewPullRequest.mockResolvedValueOnce(resealed);
+    await user.click(within(dialog).getByRole('button', { name: 'Open pull request' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /proposal changed while CMA resealed it.*did not write to GitHub/i,
+    );
+    expect(within(dialog).getByRole('status')).toHaveTextContent(
+      /review the updated target, revisions, content, and intent/i,
+    );
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+    expect(within(dialog).getByText('release-candidate')).toBeInTheDocument();
+    expect(within(dialog).getByText('999999999999')).toBeInTheDocument();
+
+    api.reviewPullRequest.mockResolvedValueOnce(resealed);
+    await user.click(within(dialog).getByRole('button', { name: 'Open pull request' }));
+    await waitFor(() => expect(api.confirmPullRequest).toHaveBeenCalledOnce());
+    expect(api.confirmPullRequest).toHaveBeenCalledWith(
+      LAUNCH.id,
+      'open',
+      LAUNCH.revision_number,
+      resealed.intent_digest,
+      { title: resealed.title, body: resealed.body },
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+  });
+
+  it('requires a new PR review when the Launch revision advances during resealing', async () => {
+    const current = resource();
+    const advanced = { ...readyLaunch(), revision_number: LAUNCH.revision_number + 1 };
+    current.refresh.mockResolvedValue(advanced);
+    launchResource.use.mockReturnValue(current);
+    api.readLaunchDiff.mockResolvedValue(DIFF);
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Open pull request' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Open pull request?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Open pull request' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /proposal changed while CMA resealed it.*did not write to GitHub/i,
+    );
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Open pull request' }));
+    await waitFor(() => expect(api.confirmPullRequest).toHaveBeenCalledOnce());
+    expect(api.confirmPullRequest.mock.calls[0]?.[2]).toBe(advanced.revision_number);
+  });
+
   it('freezes edited PR intent and retains the dialog until an ambiguous confirmation reconciles', async () => {
     api.readLaunchDiff.mockResolvedValue(DIFF);
     api.confirmPullRequest.mockRejectedValue(new TransportError('response lost'));
@@ -605,6 +1196,14 @@ describe('contribution command reconciliation', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Open pull request' }));
 
     await waitFor(() => expect(api.reviewPullRequest).toHaveBeenCalledTimes(2));
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /proposal changed while CMA resealed it.*did not write to GitHub/i,
+    );
+    expect(title).toHaveValue('My retained PR title');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Open pull request' }));
+    await waitFor(() => expect(api.reviewPullRequest).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(api.confirmPullRequest).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('alert')).toHaveTextContent(/pull-request outcome is unknown/i);
     expect(title).toHaveValue('My retained PR title');
@@ -619,7 +1218,7 @@ describe('contribution command reconciliation', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Reconcile pull request' }));
     await waitFor(() => expect(api.confirmPullRequest).toHaveBeenCalledTimes(3));
 
-    expect(api.reviewPullRequest).toHaveBeenCalledTimes(2);
+    expect(api.reviewPullRequest).toHaveBeenCalledTimes(3);
     expect(api.confirmPullRequest.mock.calls[2]?.[4]).toEqual(
       api.confirmPullRequest.mock.calls[0]?.[4],
     );
@@ -648,6 +1247,11 @@ describe('contribution command reconciliation', () => {
     await user.type(firstBody, privateBody);
     await user.click(within(firstDialog).getByRole('button', { name: 'Open pull request' }));
 
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /proposal changed while CMA resealed it.*did not write to GitHub/i,
+    );
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+    await user.click(within(firstDialog).getByRole('button', { name: 'Open pull request' }));
     await waitFor(() => expect(api.confirmPullRequest).toHaveBeenCalledTimes(2));
     const originalKey = api.confirmPullRequest.mock.calls[0]?.[5].idempotencyKey as string;
     expect(storageText()).not.toContain(privateTitle);

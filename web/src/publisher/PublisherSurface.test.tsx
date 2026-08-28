@@ -10,8 +10,9 @@ import type {
   TriggerRevision,
 } from '@chronoai/cma-sdk';
 import { ApiError, TransportError } from '../api/client';
+import { BrowserCommandLedger } from '../trigger/useIdempotentCommand';
 import { PublisherSurface } from './PublisherSurface';
-import { applyRepository, newPublisherEditor } from './model';
+import { applyRepository, editorFromDraft, newPublisherEditor } from './model';
 
 const api = vi.hoisted(() => ({
   beginTriggerConnection: vi.fn(),
@@ -81,6 +82,16 @@ const HANDOFF = {
     'https://github.com/login/oauth/authorize?client_id=fixture&state=12345678-1234-4234-8234-123456789abc',
   attempt_nonce: '12345678-1234-4234-8234-123456789abc',
 };
+
+function controlled<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
 
 function revisionContent(content: TriggerContentDraft, triggerId: string) {
   return {
@@ -155,6 +166,13 @@ function revision(availability: 'published' | 'retired' = 'published'): TriggerR
   };
 }
 
+function commandStorageText(): string {
+  return Array.from({ length: window.localStorage.length }, (_, index) => {
+    const key = window.localStorage.key(index);
+    return key === null ? '' : (window.localStorage.getItem(key) ?? '');
+  }).join('\n');
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   api.listTriggers.mockResolvedValue([draft()]);
@@ -201,6 +219,55 @@ describe('publisher loading and empty states', () => {
     expect(await screen.findByText('No Trigger drafts yet.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Fix one bounded issue' })).toBeInTheDocument();
   });
+
+  it('recovers a retained command whose draft is beyond the first catalogue page', async () => {
+    const drafts = Array.from({ length: 60 }, (_, index) => {
+      const id = `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;
+      const item = draft(`Catalogue draft ${String(index + 1)}`);
+      return { ...item, id, content: { ...item.content, trigger_id: id } };
+    });
+    const target = drafts[55]!;
+    api.listTriggers.mockResolvedValue(drafts);
+    api.listTriggerRevisions.mockResolvedValue(
+      Array.from({ length: 60 }, (_, index) => ({
+        ...revision(),
+        id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        public_id: `20000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        content: { ...revision().content, trigger_id: drafts[index]!.id },
+      })),
+    );
+    const editor = editorFromDraft(target);
+    const ledger = new BrowserCommandLedger({ ownerId: 'test-owner' });
+    await expect(
+      ledger.execute(
+        {
+          slot: `trigger:update:${target.id}`,
+          resource: `trigger:${target.id}`,
+          action: 'update-trigger',
+          request: {
+            draftId: target.id,
+            expectedVersion: target.version,
+            serviceId: target.selected_service_id,
+            content: editor.content,
+          },
+          retained: {
+            draftId: target.id,
+            expectedVersion: target.version,
+            serviceId: target.selected_service_id,
+          },
+        },
+        'Trigger draft save',
+        async () => Promise.reject(new TransportError('response lost')),
+      ),
+    ).rejects.toBeInstanceOf(TransportError);
+
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+
+    expect(await screen.findByText(/did not retain the private draft body/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Public summary')).toHaveValue('Catalogue draft 56');
+    });
+  });
 });
 
 describe('exact connection and repository selection', () => {
@@ -227,27 +294,84 @@ describe('exact connection and repository selection', () => {
       ACTIVE.service_id,
       'upstream-owner',
       'project',
+      expect.any(AbortSignal),
     );
     expect(await screen.findByText('upstream-owner/project')).toBeInTheDocument();
   });
 
-  it('keeps the form in CMA while reconnecting the exact inactive service', async () => {
+  it('discards a delayed repository verification after the locator changes', async () => {
+    const resolution = controlled<TriggerRepositorySelection>();
+    api.listTriggers.mockResolvedValue([]);
+    api.resolveTriggerRepository.mockImplementation(
+      (_serviceId: string, _owner: string, _name: string, signal: AbortSignal) => {
+        expect(signal.aborted).toBe(false);
+        return resolution.promise;
+      },
+    );
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+    const user = userEvent.setup();
+
+    await user.selectOptions(await screen.findByLabelText('UserService'), ACTIVE.service_id);
+    await waitFor(() => expect(api.preflightTriggerConnection).toHaveBeenCalled());
+    const input = screen.getByLabelText('GitHub repository URL');
+    await user.type(input, 'https://github.com/upstream-owner/project');
+    await user.click(screen.getByRole('button', { name: 'Verify repository' }));
+    const signal = api.resolveTriggerRepository.mock.calls[0]?.[3] as AbortSignal;
+
+    await user.clear(input);
+    await user.type(input, 'https://github.com/new-owner/new-project');
+    expect(signal.aborted).toBe(true);
+    resolution.resolve(REPOSITORY);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Verify repository' })).toBeEnabled(),
+    );
+    expect(input).toHaveValue('https://github.com/new-owner/new-project');
+    expect(screen.queryByText('upstream-owner/project')).toBeNull();
+    expect(screen.queryByText(/Verified upstream-owner\/project/)).toBeNull();
+  });
+
+  it('keeps the form but never offers OAuth as inactive-service reactivation', async () => {
     const inactive: TriggerConnection = { ...ACTIVE, state: 'inactive' };
     api.listTriggers.mockResolvedValue([draft(undefined, 3, inactive.service_id)]);
     api.listTriggerConnections.mockResolvedValue([inactive]);
     api.preflightTriggerConnection.mockRejectedValue(
       new ApiError(409, 'inactive', 'trigger_connection_inactive'),
     );
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+
+    expect(
+      await screen.findByText(/cannot reactivate this inactive UserService/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Check connection' }));
+    expect(api.reconnectTriggerConnection).not.toHaveBeenCalled();
+    expect(flow.authorizeTriggerConnection).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Public summary')).toHaveValue('Fix one bounded issue');
+    expect(screen.queryByRole('button', { name: 'Revoke connection' })).toBeNull();
+  });
+
+  it('keeps reconnect available for an exact disconnected service', async () => {
+    const disconnected: TriggerConnection = { ...ACTIVE, state: 'disconnected' };
+    api.listTriggers.mockResolvedValue([draft(undefined, 3, disconnected.service_id)]);
+    api.listTriggerConnections.mockResolvedValue([disconnected]);
+    api.preflightTriggerConnection.mockRejectedValue(
+      new ApiError(409, 'reauthorization required', 'trigger_reauthorization_required'),
+    );
     flow.authorizeTriggerConnection.mockImplementation(async (options) => {
-      options.onService?.(inactive.service_id);
+      await options.begin();
       return ACTIVE;
     });
     render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
-    expect(flow.authorizeTriggerConnection).toHaveBeenCalledOnce();
-    expect(screen.getByLabelText('Public summary')).toHaveValue('Fix one bounded issue');
-    expect(screen.queryByRole('button', { name: 'Revoke connection' })).toBeNull();
+
+    await waitFor(() =>
+      expect(api.reconnectTriggerConnection).toHaveBeenCalledWith(
+        disconnected.service_id,
+        expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+      ),
+    );
   });
 
   it('requires confirmation before revoking and retains the Trigger draft', async () => {
@@ -273,7 +397,8 @@ describe('exact connection and repository selection', () => {
     );
     expect(screen.getByLabelText('Public summary')).toHaveValue('Fix one bounded issue');
     expect(await screen.findByText('GitHub connection revoked')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+    expect(screen.getByText(/cannot reactivate this inactive UserService/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Verify repository' })).toBeDisabled();
   });
 
@@ -296,7 +421,9 @@ describe('exact connection and repository selection', () => {
     );
 
     api.beginTriggerConnection.mockResolvedValue(HANDOFF);
-    await user.click(screen.getByRole('button', { name: 'Reconcile connection' }));
+    const reconcile = screen.getByRole('button', { name: 'Reconcile connection' });
+    await waitFor(() => expect(reconcile).toBeEnabled());
+    await user.click(reconcile);
     await waitFor(() => expect(api.beginTriggerConnection).toHaveBeenCalledTimes(3));
     expect(api.beginTriggerConnection.mock.calls[2]).toEqual(
       api.beginTriggerConnection.mock.calls[0],
@@ -385,6 +512,51 @@ describe('draft mutations', () => {
     await waitFor(() => expect(api.updateTrigger).toHaveBeenCalledTimes(3));
     expect(api.updateTrigger.mock.calls[2]).toEqual(api.updateTrigger.mock.calls[0]);
   });
+
+  it('reconstructs an unresolved private save after reload without sending a changed body', async () => {
+    api.updateTrigger.mockRejectedValue(new TransportError('response lost'));
+    const first = render(
+      <PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />,
+    );
+    const user = userEvent.setup();
+    const summary = await screen.findByLabelText('Public summary');
+    await user.clear(summary);
+    await user.type(summary, 'Private retained publisher edit');
+    await user.click(screen.getByRole('button', { name: 'Save draft' }));
+
+    await waitFor(() => expect(api.updateTrigger).toHaveBeenCalledTimes(2));
+    const original = api.updateTrigger.mock.calls[0];
+    expect(commandStorageText()).not.toContain('Private retained publisher edit');
+    first.unmount();
+
+    api.updateTrigger.mockImplementation(
+      async (_id: string, _version: number, _service: string, content: TriggerContentDraft) =>
+        savedFrom(content),
+    );
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+
+    expect(await screen.findByText(/did not retain the private draft body/i)).toBeInTheDocument();
+    const reconstructed = screen.getByLabelText('Public summary');
+    expect(reconstructed).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Reconcile save' })).toBeEnabled();
+
+    await user.clear(reconstructed);
+    await user.type(reconstructed, 'Different private edit');
+    await user.click(screen.getByRole('button', { name: 'Reconcile save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /does not match the retained private save.*sent nothing/i,
+    );
+    expect(api.updateTrigger).toHaveBeenCalledTimes(2);
+    expect(reconstructed).toBeEnabled();
+
+    await user.clear(reconstructed);
+    await user.type(reconstructed, 'Private retained publisher edit');
+    await user.click(screen.getByRole('button', { name: 'Reconcile save' }));
+
+    await waitFor(() => expect(api.updateTrigger).toHaveBeenCalledTimes(3));
+    expect(api.updateTrigger.mock.calls[2]).toEqual(original);
+    expect(await screen.findByRole('status')).toHaveTextContent('Draft saved');
+  });
 });
 
 describe('immutable publication and retirement', () => {
@@ -404,7 +576,7 @@ describe('immutable publication and retirement', () => {
     );
 
     await waitFor(() => expect(api.publishTrigger).toHaveBeenCalledOnce());
-    expect(api.readTrigger).toHaveBeenCalledWith(draft().id);
+    await waitFor(() => expect(api.readTrigger).toHaveBeenCalledWith(draft().id));
     expect(await screen.findByText('Revision 1 published')).toBeInTheDocument();
     expect(screen.getByText('v4')).toBeInTheDocument();
   });
@@ -456,6 +628,59 @@ describe('immutable publication and retirement', () => {
     expect(api.publishTrigger.mock.calls[2]).toEqual(api.publishTrigger.mock.calls[0]);
   });
 
+  it('reopens and reconciles an unresolved publication after reload', async () => {
+    api.publishTrigger.mockRejectedValue(new TransportError('response lost'));
+    const first = render(
+      <PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />,
+    );
+    const user = userEvent.setup();
+    await waitFor(() => expect(api.preflightTriggerConnection).toHaveBeenCalled());
+    await user.click(await screen.findByRole('button', { name: 'Publish' }));
+    let dialog = screen.getByRole('dialog', { name: 'Publish immutable revision' });
+    await user.click(within(dialog).getByRole('button', { name: 'Publish immutable revision' }));
+    await waitFor(() => expect(api.publishTrigger).toHaveBeenCalledTimes(2));
+    const original = api.publishTrigger.mock.calls[0];
+    first.unmount();
+
+    api.publishTrigger.mockResolvedValue(revision());
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+
+    dialog = await screen.findByRole('dialog', { name: 'Publish immutable revision' });
+    expect(within(dialog).getByText('2')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Reconcile publication' }));
+
+    await waitFor(() => expect(api.publishTrigger).toHaveBeenCalledTimes(3));
+    expect(api.publishTrigger.mock.calls[2]).toEqual(original);
+    expect(await screen.findByText('Revision 1 published')).toBeInTheDocument();
+  });
+
+  it('retains a published revision and locks stale publication when draft reread fails', async () => {
+    const refreshed = { ...draft(), version: 4, next_revision_number: 3 };
+    api.readTrigger.mockRejectedValue(new Error('advanced draft unavailable'));
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(api.preflightTriggerConnection).toHaveBeenCalled());
+    await user.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = screen.getByRole('dialog', { name: 'Publish immutable revision' });
+    await user.click(within(dialog).getByRole('button', { name: 'Publish immutable revision' }));
+
+    expect(await screen.findByText(/Revision 1 was published/i)).toBeInTheDocument();
+    expect(screen.getByText('Revision 1')).toBeInTheDocument();
+    expect(screen.getByText('published')).toBeInTheDocument();
+    expect(screen.queryByText('The Trigger was not changed.')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Publish immutable revision' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled();
+    expect(api.publishTrigger).toHaveBeenCalledOnce();
+
+    api.readTrigger.mockResolvedValue(refreshed);
+    await user.click(screen.getByRole('button', { name: 'Retry draft refresh' }));
+
+    expect(await screen.findByText('v4')).toBeInTheDocument();
+    expect(screen.queryByText(/Revision 1 was published/i)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled();
+    expect(api.publishTrigger).toHaveBeenCalledOnce();
+  });
+
   it('pins retirement confirmation while its outcome is ambiguous', async () => {
     api.listTriggerRevisions.mockResolvedValue([revision()]);
     api.retireTriggerRevision.mockRejectedValue(new TransportError('response lost'));
@@ -478,6 +703,35 @@ describe('immutable publication and retirement', () => {
     expect(api.retireTriggerRevision.mock.calls[2]).toEqual(
       api.retireTriggerRevision.mock.calls[0],
     );
+  });
+
+  it('reopens and reconciles an unresolved retirement after reload', async () => {
+    api.listTriggerRevisions.mockResolvedValue([revision()]);
+    api.retireTriggerRevision.mockRejectedValue(new TransportError('response lost'));
+    const first = render(
+      <PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />,
+    );
+    const user = userEvent.setup();
+    let row = (await screen.findByText('Revision 1')).closest('li');
+    expect(row).not.toBeNull();
+    await user.click(within(row!).getByRole('button', { name: 'Retire revision 1' }));
+    await user.click(within(row!).getByRole('button', { name: 'Retire revision' }));
+    await waitFor(() => expect(api.retireTriggerRevision).toHaveBeenCalledTimes(2));
+    const original = api.retireTriggerRevision.mock.calls[0];
+    first.unmount();
+
+    api.retireTriggerRevision.mockResolvedValue(revision('retired'));
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+
+    row = (await screen.findByText('Revision 1')).closest('li');
+    expect(row).not.toBeNull();
+    const reconcile = await within(row!).findByRole('button', { name: 'Reconcile retirement' });
+    expect(reconcile).toBeEnabled();
+    await user.click(reconcile);
+
+    await waitFor(() => expect(api.retireTriggerRevision).toHaveBeenCalledTimes(3));
+    expect(api.retireTriggerRevision.mock.calls[2]).toEqual(original);
+    expect(await within(row!).findByText('retired')).toBeInTheDocument();
   });
 });
 
