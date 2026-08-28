@@ -2,18 +2,24 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { Cma } from '../src/client.js';
 import { resolveConfig, type ResolvedConfig } from '../src/config.js';
-import { ProtocolError } from '../src/errors.js';
+import { ProtocolError, ValidationError } from '../src/errors.js';
 import {
   beginTriggerConnection,
   cancelLaunch,
+  completeLaunch,
   confirmPullRequest,
   createNewLaunch,
   createOrResumeLaunch,
   createTrigger,
   decodeLaunch,
+  listLaunches,
+  listTriggerConnections,
+  listTriggerRevisions,
+  listTriggers,
   preflightTriggerConnection,
   publishLaunchBranch,
   publishTrigger,
+  refreshPullRequestStatus,
   readLaunch,
   readLaunchDiff,
   readLaunchProgress,
@@ -35,35 +41,45 @@ import {
 /** @vitest-environment node */
 
 const TRIGGER_CONTENT = {} as TriggerContentDraft;
-const LAUNCH = {
-  id: 'launch_fixture',
-  trigger_public_id: 'public_fixture',
-  revision_digest: 'revision-digest',
-  state: 'draft',
-  revision_number: 1,
-  draft_expires_at: '2026-08-28T00:00:00Z',
-  steps: [],
-  revision_content: {},
-  effective: { permission: 'autonomous' },
-  pricing: null,
-  runtime_admission: null,
-  review_quota: null,
-  start_admission: null,
-};
+const LAUNCH = fixture('launch.json') as Record<string, unknown>;
+const REVISION_CONTENT = LAUNCH.revision_content as Record<string, unknown>;
 const TRIGGER_DRAFT = {
   id: 'trigger_fixture',
   selected_service_id: 'service_fixture',
   version: 1,
-  content: {},
+  next_revision_number: 2,
+  content: REVISION_CONTENT,
+  created_at: '2026-08-27T00:00:00Z',
+  updated_at: '2026-08-27T01:00:00Z',
 };
 const TRIGGER_REVISION = {
   id: 'revision_fixture',
   public_id: 'public_fixture',
   digest: 'revision-digest',
   availability: 'published',
-  content: {},
+  content: REVISION_CONTENT,
+  authority: {
+    service_id: 'service_fixture',
+    service_state_version: 1,
+    account_id: 42,
+    account_login: 'contributor',
+    role: 'owner',
+    verified_at: '2026-08-27T00:00:00Z',
+  },
+  published_at: '2026-08-27T00:00:00Z',
+  retired_at: null,
 };
-const CONNECTION = { service_id: 'service_fixture', state_version: 1, state: 'active' };
+const CONNECTION = {
+  service_id: 'service_fixture',
+  state_version: 1,
+  state: 'active',
+  account_id: 42,
+  account_node_id: 'U_fixture',
+  account_login: 'contributor',
+  avatar_url: null,
+  granted_scopes: ['public_repo'],
+  consent_observed_at: '2026-08-27T00:00:00Z',
+};
 const AUTHORIZATION = {
   service_id: 'service_fixture',
   authorization_url: 'https://identity.example.test/authorize',
@@ -75,20 +91,29 @@ const PR_DRAFT = {
   intent_digest: 'intent-digest',
   expected_head_revision: 'head-revision',
 };
-const PREVIEW = {
-  public_id: 'public_fixture',
-  availability: 'published',
-  revision_digest: 'revision-digest',
-  public_summary: 'Fix one bounded issue',
-  repository_id: 42,
-  visibility: 'public',
-  permission_ceiling: 'autonomous',
-  required_capabilities: ['conversation'],
-  billing_mode: 'contributor',
-};
+const PREVIEW = fixture('trigger_preview.json') as Record<string, unknown>;
 
 function fixture(name: string): unknown {
   return JSON.parse(readFileSync(new URL(`fixtures/${name}`, import.meta.url), 'utf8')) as unknown;
+}
+
+function withoutPath<T>(raw: T, path: readonly string[]): T {
+  const cloned = structuredClone(raw);
+  let cursor = cloned as unknown as Record<string, unknown>;
+  for (const part of path.slice(0, -1)) cursor = cursor[part] as Record<string, unknown>;
+  delete cursor[path.at(-1)!];
+  return cloned;
+}
+
+function objectFieldPaths(raw: unknown, prefix: readonly string[] = []): readonly string[][] {
+  if (Array.isArray(raw)) {
+    return raw.flatMap((value, index) => objectFieldPaths(value, [...prefix, String(index)]));
+  }
+  if (typeof raw !== 'object' || raw === null) return [];
+  return Object.entries(raw).flatMap(([field, value]) => {
+    const path = [...prefix, field];
+    return [path, ...objectFieldPaths(value, path)];
+  });
 }
 
 function responder(body: unknown, status: number) {
@@ -281,11 +306,29 @@ describe('Trigger command idempotency', () => {
           ),
       },
       {
+        name: 'refresh pull request status',
+        status: 202,
+        response: LAUNCH,
+        invoke: (config) =>
+          refreshPullRequestStatus(config, 'launch_fixture', 2, {
+            idempotencyKey: 'exact-key',
+          }),
+      },
+      {
         name: 'cancel Launch',
         status: 200,
         response: LAUNCH,
         invoke: (config) =>
           cancelLaunch(config, 'launch_fixture', 1, 'snapshot-digest', {
+            idempotencyKey: 'exact-key',
+          }),
+      },
+      {
+        name: 'complete Launch',
+        status: 200,
+        response: LAUNCH,
+        invoke: (config) =>
+          completeLaunch(config, 'launch_fixture', 17, 'snapshot-digest', {
             idempotencyKey: 'exact-key',
           }),
       },
@@ -325,6 +368,39 @@ describe('Trigger command idempotency', () => {
       snapshot_digest: 'retained-payload-hash',
       acknowledge_duplicate_execution_risk: true,
     });
+  });
+
+  it('completes through the configured client with the exact reviewed snapshot', async () => {
+    const { fetch, calls } = responder(LAUNCH, 200);
+    const client = new Cma({ fetch });
+
+    await client.completeLaunch('launch_fixture', 17, 'snapshot-digest', {
+      idempotencyKey: 'complete-command',
+    });
+
+    const [url, init] = calls.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/v1/launches/launch_fixture/complete');
+    expect(init.method).toBe('POST');
+    expect(new Headers(init.headers).get('idempotency-key')).toBe('complete-command');
+    expect(JSON.parse(String(init.body))).toEqual({
+      expected_revision: 17,
+      snapshot_digest: 'snapshot-digest',
+    });
+  });
+
+  it('queues pull-request status refresh with only the optimistic revision', async () => {
+    const { fetch, calls } = responder(LAUNCH, 202);
+    const client = new Cma({ fetch });
+
+    await client.refreshPullRequestStatus('launch_fixture', 23, {
+      idempotencyKey: 'refresh-status-command',
+    });
+
+    const [url, init] = calls.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/v1/launches/launch_fixture/pull-request/refresh');
+    expect(init.method).toBe('POST');
+    expect(new Headers(init.headers).get('idempotency-key')).toBe('refresh-status-command');
+    expect(JSON.parse(String(init.body))).toEqual({ expected_revision: 23 });
   });
 
   it('uses an authenticated GET without an idempotency key for connection preflight', async () => {
@@ -452,6 +528,12 @@ describe('Trigger response validation', () => {
       '33333333-3333-4333-8333-333333333333',
     );
     expect(preview.repository_id).toBe(10);
+    expect(preview.estimated_cost).toEqual({
+      kind: 'exact_zero',
+      currency: 'USD',
+      amount_micros: 0,
+      display: '$0.00',
+    });
 
     const repositoryTransport = responder(fixture('repository_selection.json'), 200);
     const repository = await resolveTriggerRepository(
@@ -475,7 +557,7 @@ describe('Trigger response validation', () => {
       resolveConfig({ fetch: progressTransport.fetch }),
       launch.id,
     );
-    expect(progress.next_cursor).toBe(3);
+    expect(progress.next_cursor).toBe(5);
     expect(progress.events[0]?.progress.state).toBe('draft');
     const created = progress.events[0]?.kind;
     expect(created?.type).toBe('created');
@@ -484,6 +566,11 @@ describe('Trigger response validation', () => {
     const diffTransport = responder(fixture('diff_review.json'), 200);
     const diff = await readLaunchDiff(resolveConfig({ fetch: diffTransport.fetch }), launch.id);
     expect(diff.artifact?.files).toHaveLength(1);
+    expect(diff.pull_request?.status_failure?.code).toBe('github_status_unavailable');
+    expect(diff.pull_request?.provider_request_id).toBe('github-request-fixture');
+    expect(diff.pull_request?.head_matches_launch).toBe(false);
+    expect(progress.events.at(-2)?.kind.type).toBe('pull_request_status_refresh_requested');
+    expect(progress.events.at(-1)?.kind.type).toBe('pull_request_status_changed');
 
     const pullRequestTransport = responder(fixture('pull_request_draft.json'), 200);
     const pullRequest = await reviewPullRequest(
@@ -492,6 +579,214 @@ describe('Trigger response validation', () => {
       'open',
     );
     expect(pullRequest.operation).toBe('open');
+  });
+
+  it('keeps public Trigger cost states closed and validates quoted amounts', async () => {
+    const raw = fixture('trigger_preview.json') as Record<string, unknown>;
+    const contributor = {
+      kind: 'contributor_estimate',
+      currency: 'USD',
+      amount_micros: 25_000,
+      display: '$0.025',
+      quoted_at: '2026-08-26T12:00:00Z',
+    };
+    const available = await readTriggerPreview(
+      resolveConfig({ fetch: responder({ ...raw, estimated_cost: contributor }, 200).fetch }),
+      'public_fixture',
+    );
+    expect(available.estimated_cost).toEqual(contributor);
+
+    const unavailable = await readTriggerPreview(
+      resolveConfig({
+        fetch: responder({ ...raw, estimated_cost: { kind: 'quote_unavailable' } }, 200).fetch,
+      }),
+      'public_fixture',
+    );
+    expect(unavailable.estimated_cost).toEqual({ kind: 'quote_unavailable' });
+
+    for (const estimatedCost of [
+      { kind: 'future_quote' },
+      { kind: 'exact_zero', currency: 'USD', amount_micros: 1, display: '$0.00' },
+      {
+        kind: 'contributor_estimate',
+        currency: 'EUR',
+        amount_micros: 25_000,
+        display: 'EUR 0.025',
+        quoted_at: '2026-08-26T12:00:00Z',
+      },
+      {
+        kind: 'contributor_estimate',
+        currency: 'USD',
+        amount_micros: -1,
+        display: '$0.025',
+        quoted_at: '2026-08-26T12:00:00Z',
+      },
+    ]) {
+      await expect(
+        readTriggerPreview(
+          resolveConfig({
+            fetch: responder({ ...raw, estimated_cost: estimatedCost }, 200).fetch,
+          }),
+          'public_fixture',
+        ),
+      ).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
+  it('rejects every omitted required preview, draft, revision, and connection field', async () => {
+    for (const path of objectFieldPaths(PREVIEW)) {
+      await expect(
+        readTriggerPreview(
+          resolveConfig({ fetch: responder(withoutPath(PREVIEW, path), 200).fetch }),
+          'public_fixture',
+        ),
+        path.join('.'),
+      ).rejects.toBeInstanceOf(ProtocolError);
+    }
+
+    for (const field of [
+      'id',
+      'selected_service_id',
+      'version',
+      'next_revision_number',
+      'content',
+      'created_at',
+      'updated_at',
+    ]) {
+      await expect(
+        createTrigger(
+          resolveConfig({ fetch: responder(withoutPath(TRIGGER_DRAFT, [field]), 201).fetch }),
+          'service_fixture',
+          TRIGGER_CONTENT,
+          { idempotencyKey: 'decode-draft' },
+        ),
+        field,
+      ).rejects.toBeInstanceOf(ProtocolError);
+    }
+
+    for (const path of [
+      ['id'],
+      ['public_id'],
+      ['digest'],
+      ['availability'],
+      ['content'],
+      ['authority'],
+      ['authority', 'service_id'],
+      ['authority', 'service_state_version'],
+      ['authority', 'account_id'],
+      ['authority', 'account_login'],
+      ['authority', 'role'],
+      ['authority', 'verified_at'],
+      ['published_at'],
+      ['retired_at'],
+    ]) {
+      await expect(
+        publishTrigger(
+          resolveConfig({ fetch: responder(withoutPath(TRIGGER_REVISION, path), 201).fetch }),
+          'trigger_fixture',
+          1,
+          'service_fixture',
+          { idempotencyKey: 'decode-revision' },
+        ),
+        path.join('.'),
+      ).rejects.toBeInstanceOf(ProtocolError);
+    }
+
+    for (const field of Object.keys(CONNECTION)) {
+      await expect(
+        listTriggerConnections(
+          resolveConfig({
+            fetch: responder({ connections: [withoutPath(CONNECTION, [field])] }, 200).fetch,
+          }),
+        ),
+        field,
+      ).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
+  it('rejects every omitted required immutable revision-content field', () => {
+    const raw = fixture('launch.json') as Record<string, unknown>;
+    const content = raw.revision_content as Record<string, unknown>;
+    const optional = new Set(['upstream.observed_source_sha', 'task.input_fields.0.default']);
+    const requiredPaths = objectFieldPaths(content).filter((path) => !optional.has(path.join('.')));
+
+    for (const path of requiredPaths) {
+      expect(
+        () => decodeLaunch({ ...raw, revision_content: withoutPath(content, path) }),
+        path.join('.'),
+      ).toThrow(ProtocolError);
+    }
+  });
+
+  it('filters forbidden internals at the connection-list and nested Trigger boundaries', async () => {
+    await expect(
+      listTriggerConnections(
+        resolveConfig({
+          fetch: responder(
+            { connections: [{ ...CONNECTION, intent_key: 'must-not-cross-layer-one' }] },
+            200,
+          ).fetch,
+        }),
+      ),
+    ).rejects.toThrow('leaked intent_key');
+
+    await expect(
+      readTriggerPreview(
+        resolveConfig({
+          fetch: responder(
+            {
+              ...PREVIEW,
+              resource_default: {
+                ...(PREVIEW.resource_default as Record<string, unknown>),
+                backing_key_id: 'must-not-cross-layer-one',
+              },
+            },
+            200,
+          ).fetch,
+        }),
+        'public_fixture',
+      ),
+    ).rejects.toThrow('leaked backing_key_id');
+  });
+
+  it('validates every Trigger and Launch page limit locally', async () => {
+    const fetch = vi.fn();
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+    for (const invoke of [
+      () => listTriggers(config, 0),
+      () => listTriggers(config, 201),
+      () => listTriggerRevisions(config, 0),
+      () => listTriggerRevisions(config, 201),
+      () => listLaunches(config, { limit: 0 }),
+      () => listLaunches(config, { limit: 201 }),
+    ]) {
+      await expect(invoke()).rejects.toBeInstanceOf(ValidationError);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+
+    const accepted = responder({ items: [], next_cursor: null }, 200);
+    await listLaunches(resolveConfig({ fetch: accepted.fetch }), { limit: 200 });
+    expect(String(accepted.calls.mock.calls[0]?.[0])).toContain('limit=200');
+  });
+
+  it('filters Launches by one validated session identifier', async () => {
+    const accepted = responder({ items: [], next_cursor: null }, 200);
+    await listLaunches(resolveConfig({ fetch: accepted.fetch }), {
+      session_id: 'ses_fixture',
+      limit: 1,
+    });
+    expect(String(accepted.calls.mock.calls[0]?.[0])).toBe(
+      '/api/v1/launches?session_id=ses_fixture&limit=1',
+    );
+
+    const fetch = vi.fn();
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+    for (const sessionId of ['', '   ', 'ses/fixture']) {
+      await expect(listLaunches(config, { session_id: sessionId })).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+    }
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('accepts omitted quota ceilings and rejects malformed present ceilings', () => {
@@ -511,6 +806,43 @@ describe('Trigger response validation', () => {
         `Launch review quota carried an invalid ${field}`,
       );
     }
+  });
+
+  it('admits only the public pull-request provider correlation field', () => {
+    const pullRequest = {
+      operation: 'open',
+      state: 'open',
+      mergeability: 'mergeable',
+      checks: 'passing',
+      status_failure: null,
+      provider_request_id: 'github-request-fixture',
+      head_matches_launch: false,
+    };
+    const launch = decodeLaunch({ ...LAUNCH, pull_request: pullRequest });
+    expect(launch.pull_request?.provider_request_id).toBe('github-request-fixture');
+    expect(launch.pull_request?.head_matches_launch).toBe(false);
+
+    expect(() =>
+      decodeLaunch({
+        ...LAUNCH,
+        steps: [{ provider_request_id: 'worker-internal' }],
+        pull_request: pullRequest,
+      }),
+    ).toThrow('leaked provider_request_id');
+  });
+
+  it('admits public pull-request provider correlation in a Launch page only', async () => {
+    const rawLaunch = fixture('launch.json') as Record<string, unknown>;
+    const rawReview = fixture('diff_review.json') as Record<string, unknown>;
+    const { fetch } = responder(
+      {
+        items: [{ ...rawLaunch, state: 'pr_open', pull_request: rawReview.pull_request }],
+        next_cursor: null,
+      },
+      200,
+    );
+    const page = await listLaunches(resolveConfig({ fetch }));
+    expect(page.items[0]?.pull_request?.provider_request_id).toBe('github-request-fixture');
   });
 
   it('rejects malformed Launches and internal fields at any nesting depth', () => {
@@ -624,8 +956,8 @@ describe('Trigger response validation', () => {
       resolveConfig({ fetch: acceptedTransport.fetch }),
       launchId,
     );
-    expect(accepted.events).toHaveLength(3);
-    expect(accepted.next_cursor).toBe(3);
+    expect(accepted.events).toHaveLength(5);
+    expect(accepted.next_cursor).toBe(5);
 
     const conflicting = fixture('launch_progress.json') as Record<string, unknown>;
     const conflictingEvents = conflicting.events as Record<string, unknown>[];
@@ -671,6 +1003,26 @@ describe('Trigger response validation', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('decodes completion as a closed Launch confirmation action', async () => {
+    const raw = fixture('launch_progress.json') as Record<string, unknown>;
+    const events = raw.events as Record<string, unknown>[];
+    events[3] = {
+      ...events[3],
+      kind: { type: 'confirmation_recorded', action: 'complete' },
+    };
+    const transport = responder(raw, 200);
+
+    const progress = await readLaunchProgress(
+      resolveConfig({ fetch: transport.fetch }),
+      String(raw.launch_id),
+    );
+
+    expect(progress.events[3]?.kind).toEqual({
+      type: 'confirmation_recorded',
+      action: 'complete',
+    });
+  });
+
   it('rejects malformed, unordered, and internally leaky progress', async () => {
     for (const progress of [
       { launch_id: 'launch_fixture', next_cursor: 2, events: {} },
@@ -700,6 +1052,7 @@ describe('configured Trigger client paths', () => {
       [LAUNCH, 201],
       [{ launch_id: 'launch_fixture', next_cursor: 7, events: [] }, 200],
       [PR_DRAFT, 200],
+      [LAUNCH, 202],
       [LAUNCH, 202],
       [new Uint8Array([1, 2, 3]), 200],
     ] as const;
@@ -733,6 +1086,9 @@ describe('configured Trigger client paths', () => {
         idempotencyKey: 'confirm-key',
       },
     );
+    await cma.refreshPullRequestStatus('launch_fixture', 2, {
+      idempotencyKey: 'refresh-key',
+    });
     await cma.downloadDiffArtifact('launch_fixture', 'artifact_fixture');
 
     expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
@@ -741,6 +1097,7 @@ describe('configured Trigger client paths', () => {
       '/api/v1/launches/launch_fixture/events?after=7&limit=25',
       '/api/v1/launches/launch_fixture/pull-request/review',
       '/api/v1/launches/launch_fixture/pull-request/open',
+      '/api/v1/launches/launch_fixture/pull-request/refresh',
       '/api/v1/launches/launch_fixture/diff-artifacts/artifact_fixture/download',
     ]);
   });

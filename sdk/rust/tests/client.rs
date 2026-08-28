@@ -12,14 +12,16 @@ use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
     ApprovalDecision, BeginConnectionRequest, Client, Conformance, CreateSessionRequest,
-    CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationRequest,
-    LaunchEventKind, LaunchProgress, LaunchStartRequest, LaunchState, MAX_PAGE_SIZE,
-    PageWalkLimits, PublishTriggerRequest, PullRequestConfirmRequest, PullRequestDraft,
-    PullRequestOperation, PullRequestReviewRequest, RecoverInitialPromptRequest, ResponseMetadata,
-    RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session, SessionId, SessionInput,
+    CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationAction,
+    LaunchConfirmationRequest, LaunchEventKind, LaunchListRequest, LaunchProgress,
+    LaunchStartRequest, LaunchState, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
+    PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
+    PullRequestStatusRefreshRequest, RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy,
+    ScreenSnapshot, SelectLaunchConnectionRequest, Session, SessionId, SessionInput,
     SessionPageRequest, SessionStatus, TerminalGeometry, TriggerConnection, TriggerConnectionState,
-    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
-    UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
+    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewCost,
+    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
+    UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -44,6 +46,8 @@ const LAUNCH_START_REQUEST: &str = include_str!("fixtures/launch_start_request.j
 const PULL_REQUEST_REVIEW_REQUEST: &str = include_str!("fixtures/pull_request_review_request.json");
 const PULL_REQUEST_CONFIRM_REQUEST: &str =
     include_str!("fixtures/pull_request_confirm_request.json");
+const PULL_REQUEST_STATUS_REFRESH_REQUEST: &str =
+    include_str!("fixtures/pull_request_status_refresh_request.json");
 const CONFORMANCE: &str = r#"{
   "conformsTo": ["https://spec.chrono-ai.fun/cma/1.0/conf/rest-core"],
   "version": "development",
@@ -360,6 +364,71 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     let preview: TriggerPreview =
         serde_json::from_str(TRIGGER_PREVIEW).expect("Trigger preview fixture is typed");
     assert_eq!(preview.repository_id, 10);
+    assert!(matches!(
+        preview.estimated_cost,
+        TriggerPreviewCost::ExactZero {
+            amount_micros: 0,
+            ..
+        }
+    ));
+    let mut contributor_preview = fixture(TRIGGER_PREVIEW);
+    contributor_preview["estimated_cost"] = serde_json::json!({
+        "kind": "contributor_estimate",
+        "currency": "USD",
+        "amount_micros": 25_000,
+        "display": "$0.025",
+        "quoted_at": "2026-08-26T12:00:00Z"
+    });
+    assert!(matches!(
+        serde_json::from_value::<TriggerPreview>(contributor_preview)
+            .expect("contributor estimate is typed")
+            .estimated_cost,
+        TriggerPreviewCost::ContributorEstimate {
+            amount_micros: 25_000,
+            ..
+        }
+    ));
+    let mut unavailable_preview = fixture(TRIGGER_PREVIEW);
+    unavailable_preview["estimated_cost"] = serde_json::json!({ "kind": "quote_unavailable" });
+    assert!(matches!(
+        serde_json::from_value::<TriggerPreview>(unavailable_preview)
+            .expect("unavailable quote is typed")
+            .estimated_cost,
+        TriggerPreviewCost::QuoteUnavailable
+    ));
+    let mut unknown_cost = fixture(TRIGGER_PREVIEW);
+    unknown_cost["estimated_cost"] = serde_json::json!({ "kind": "future_quote" });
+    assert!(serde_json::from_value::<TriggerPreview>(unknown_cost).is_err());
+    for malformed in [
+        serde_json::json!({
+            "kind": "exact_zero",
+            "currency": "EUR",
+            "amount_micros": 0,
+            "display": "EUR 0.00"
+        }),
+        serde_json::json!({
+            "kind": "exact_zero",
+            "currency": "USD",
+            "amount_micros": 1,
+            "display": "$0.00"
+        }),
+        serde_json::json!({
+            "kind": "contributor_estimate",
+            "currency": "EUR",
+            "amount_micros": 25_000,
+            "display": "EUR 0.025",
+            "quoted_at": "2026-08-26T12:00:00Z"
+        }),
+    ] {
+        let mut preview = fixture(TRIGGER_PREVIEW);
+        preview["estimated_cost"] = malformed;
+        assert!(serde_json::from_value::<TriggerPreview>(preview).is_err());
+    }
+    assert_eq!(
+        serde_json::from_str::<LaunchConfirmationAction>(r#""complete""#)
+            .expect("complete is a closed confirmation action"),
+        LaunchConfirmationAction::Complete
+    );
     let repository: TriggerRepositorySelection =
         serde_json::from_str(REPOSITORY_SELECTION).expect("repository selection fixture is typed");
     assert_eq!(repository.repository.repository_node_id, "R_upstream");
@@ -378,7 +447,7 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert!(serde_json::from_value::<Launch>(unknown_kernel).is_err());
     let progress: LaunchProgress =
         serde_json::from_str(LAUNCH_PROGRESS).expect("Launch progress fixture is typed");
-    assert_eq!(progress.next_cursor, 3);
+    assert_eq!(progress.next_cursor, 5);
     assert_eq!(progress.events[0].progress.state, LaunchState::Draft);
     assert!(matches!(
         &progress.events[0].kind,
@@ -389,11 +458,36 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(
         review
             .artifact
+            .as_ref()
             .expect("fixture has an artifact")
             .files
             .len(),
         1
     );
+    let pull_request = review
+        .pull_request
+        .as_ref()
+        .expect("diff-review fixture has an observed pull request");
+    assert_eq!(
+        pull_request.provider_request_id.as_deref(),
+        Some("github-request-fixture")
+    );
+    assert_eq!(pull_request.head_matches_launch, Some(false));
+    assert_eq!(
+        pull_request
+            .status_failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("github_status_unavailable")
+    );
+    assert!(matches!(
+        progress.events[3].kind,
+        LaunchEventKind::PullRequestStatusRefreshRequested
+    ));
+    assert!(matches!(
+        progress.events[4].kind,
+        LaunchEventKind::PullRequestStatusChanged { .. }
+    ));
     let draft: PullRequestDraft =
         serde_json::from_str(PULL_REQUEST_DRAFT).expect("pull-request draft fixture is typed");
     assert_eq!(draft.operation, PullRequestOperation::Open);
@@ -406,6 +500,10 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     let pr_confirm: PullRequestConfirmRequest = serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST)
         .expect("pull-request confirmation fixture is typed");
     assert_eq!(pr_confirm.expected_revision, 0);
+    let pr_refresh: PullRequestStatusRefreshRequest =
+        serde_json::from_str(PULL_REQUEST_STATUS_REFRESH_REQUEST)
+            .expect("pull-request status refresh fixture is typed");
+    assert_eq!(pr_refresh.expected_revision, 0);
 }
 
 #[tokio::test]
@@ -511,6 +609,8 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
         StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
         StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
         StubResponse::json(StatusCode::OK, LAUNCH),
         StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
     ])
@@ -646,7 +746,19 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         .await
         .unwrap();
     client
-        .cancel_launch("launch_fixture", confirmation, "exact-16")
+        .refresh_pull_request_status(
+            "launch_fixture",
+            serde_json::from_str(PULL_REQUEST_STATUS_REFRESH_REQUEST).unwrap(),
+            "exact-16",
+        )
+        .await
+        .unwrap();
+    client
+        .cancel_launch("launch_fixture", confirmation.clone(), "exact-17")
+        .await
+        .unwrap();
+    client
+        .complete_launch("launch_fixture", confirmation, "exact-18")
         .await
         .unwrap();
     client
@@ -657,7 +769,7 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
                 snapshot_digest: "retained-payload-hash".into(),
                 acknowledge_duplicate_execution_risk: true,
             },
-            "exact-17",
+            "exact-19",
         )
         .await
         .unwrap();
@@ -720,7 +832,15 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
             Method::POST,
             "/proxy/api/v1/launches/launch_fixture/pull-request/update",
         ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/pull-request/refresh",
+        ),
         (Method::POST, "/proxy/api/v1/launches/launch_fixture/cancel"),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/complete",
+        ),
         (
             Method::POST,
             "/proxy/api/v1/launches/launch_fixture/recover-initial-prompt",
@@ -747,6 +867,8 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         Some("exact-15"),
         Some("exact-16"),
         Some("exact-17"),
+        Some("exact-18"),
+        Some("exact-19"),
     ];
     for (index, ((request, (method, path)), key)) in
         requests.iter().zip(expected).zip(keys).enumerate()
@@ -760,7 +882,18 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         fixture(LAUNCH_START_REQUEST)
     );
     assert_eq!(
-        fixture(std::str::from_utf8(&requests[18].body).unwrap()),
+        fixture(std::str::from_utf8(&requests[17].body).unwrap()),
+        fixture(PULL_REQUEST_STATUS_REFRESH_REQUEST)
+    );
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[19].body).unwrap()),
+        serde_json::json!({
+            "expected_revision": 0,
+            "snapshot_digest": "snapshot_fixture",
+        })
+    );
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[20].body).unwrap()),
         serde_json::json!({
             "expected_revision": 12,
             "snapshot_digest": "retained-payload-hash",
@@ -908,6 +1041,84 @@ async fn trigger_contract_rejects_internal_fields_before_typed_decoding() {
 }
 
 #[tokio::test]
+async fn trigger_contract_admits_public_pull_request_provider_correlation_at_its_record() {
+    let mut launch = fixture(LAUNCH);
+    let review = fixture(DIFF_REVIEW);
+    launch["state"] = serde_json::json!("pr_open");
+    launch["pull_request"] = review["pull_request"].clone();
+    let page = serde_json::json!({ "items": [launch.clone()], "next_cursor": null });
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &launch.to_string()),
+        StubResponse::json(StatusCode::OK, &page.to_string()),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let launch = client.read_launch("launch_fixture").await.unwrap();
+    let pull_request = launch.pull_request.expect("fixture carries a pull request");
+    assert_eq!(
+        pull_request.provider_request_id.as_deref(),
+        Some("github-request-fixture")
+    );
+    assert_eq!(pull_request.head_matches_launch, Some(false));
+    let page = client
+        .list_launches(LaunchListRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        page.items[0]
+            .pull_request
+            .as_ref()
+            .and_then(|record| record.provider_request_id.as_deref()),
+        Some("github-request-fixture")
+    );
+}
+
+#[tokio::test]
+async fn launch_list_filters_by_one_validated_session_identifier() {
+    let page = serde_json::json!({ "items": [], "next_cursor": null });
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &page.to_string())]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    client
+        .list_launches(LaunchListRequest {
+            session_id: Some("ses_fixture".to_owned()),
+            limit: Some(1),
+            ..LaunchListRequest::default()
+        })
+        .await
+        .unwrap();
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].uri.path(), "/proxy/api/v1/launches");
+    assert_eq!(
+        requests[0].uri.query(),
+        Some("session_id=ses_fixture&limit=1")
+    );
+}
+
+#[tokio::test]
+async fn launch_list_rejects_invalid_session_identifiers_before_transport() {
+    let stub = Stub::start([]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    for session_id in ["", "   ", "ses/fixture"] {
+        assert!(matches!(
+            client
+                .list_launches(LaunchListRequest {
+                    session_id: Some(session_id.to_owned()),
+                    ..LaunchListRequest::default()
+                })
+                .await,
+            Err(Error::Protocol { ref message })
+                if message.contains("session id must be a non-empty path identifier")
+        ));
+    }
+    assert!(stub.requests().await.is_empty());
+}
+
+#[tokio::test]
 async fn trigger_contract_rejects_unknown_closed_enum_values() {
     let mut launch = fixture(LAUNCH);
     launch["effective"]["permission"] = serde_json::json!("future_permission");
@@ -971,8 +1182,8 @@ async fn launch_progress_normalizes_identical_duplicates_and_rejects_unsafe_repl
         .read_launch_progress(&launch_id, 0, 100)
         .await
         .expect("an identical adjacent duplicate is harmless");
-    assert_eq!(progress.events.len(), 3);
-    assert_eq!(progress.next_cursor, 3);
+    assert_eq!(progress.events.len(), 5);
+    assert_eq!(progress.next_cursor, 5);
 
     for expected in [
         "conflicting duplicate",

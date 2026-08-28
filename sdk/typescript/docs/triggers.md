@@ -14,6 +14,13 @@ GitHub OAuth credential.
 both its configured bearer credential and browser cookies for that request. Every
 other Trigger or Launch operation is authenticated normally.
 
+`preview.estimated_cost` is a discriminated public contract. `exact_zero` is an
+exact USD zero under the immutable Trigger policy. `contributor_estimate` is the
+current deployment estimate for the published default resources and timeout;
+authenticated review recalculates and pins the effective choices, so treat the
+preview amount as provisional. `quote_unavailable` has deliberately no amount:
+show that review must calculate the current quote rather than substituting zero.
+
 Every state-changing method requires an `idempotencyKey`. Reuse the exact key only
 when retrying the exact same command and body after an ambiguous transport result.
 Use a new key for a changed edit, a later confirmation, or any other new intent.
@@ -105,7 +112,7 @@ async function reviewAndStart(publicId: string): Promise<Launch> {
     launch.revision_number,
     {
       task_inputs: {},
-      branch_suffix: 'documentation-fix',
+      work_label: 'Documentation fix',
       optional_checks: [],
     },
     { idempotencyKey: crypto.randomUUID() },
@@ -223,6 +230,11 @@ Admission Problem Details use stable codes and typed remediation:
 Treat these as review-state transitions, not transport failures. In particular,
 do not retry Start for price, runtime, quota, quote, or draft conflicts.
 
+Publisher validation uses HTTP `422` with stable code
+`invalid_trigger_request`. Use `validation_category` and `remediation` to guide
+repository identity/policy/ref, scope/capability, and commercial-policy fixes;
+do not parse the English `detail` or echo the rejected value yourself.
+
 For an ambiguous initial task, show the owner the retained Launch and state
 plainly that CMA cannot determine whether the prior task started. Only after the
 owner deliberately accepts that another dispatch may execute the task twice may
@@ -314,6 +326,42 @@ until the Launch projection records the sealed diff, published contribution, or
 reconciled pull request. For later changes, request a new diff and use the
 `update` proposal and confirmation. CMA never force-pushes an unexpected head and
 never silently changes an Open request into Update or the reverse.
+
+An opened PR remains `pr_open`, and the same Launch remains available for
+another reviewed diff and explicit `update`. `completed` has two paths: a later
+read-only provider observation positively reports it merged, or the contributor
+explicitly finishes CMA orchestration while the provider PR is still open:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient({ baseUrl: 'https://cma.example.com' });
+
+async function completeCmaWork(launchId: string): Promise<void> {
+  const openLaunch = await cma.readLaunch(launchId);
+  await cma.completeLaunch(openLaunch.id, openLaunch.revision_number, openLaunch.effective.digest, {
+    idempotencyKey: crypto.randomUUID(),
+  });
+}
+
+void completeCmaWork;
+```
+
+Explicit completion performs no provider call, converges remaining reach to
+revocation, and leaves the fork, branch, commit, and open PR untouched. It closes
+further CMA contribution/Update/status commands for that Launch. CMA observes
+open PRs independently of the browser. To request an earlier observation, call
+`refreshPullRequestStatus(launch.id, launch.revision_number, { idempotencyKey })`.
+The `202` response means the observation was queued, not that GitHub was read.
+Reuse the same key only to reconcile that exact command, then follow Launch
+progress for `pull_request_status_refresh_requested` and
+`pull_request_status_changed`.
+
+`pull_request.status_failure` carries a safe status-read failure,
+`provider_request_id` carries provider correlation, and `head_matches_launch`
+reports manual head drift. When the head match is false, keep the PR readable but
+disable Update. `closed_unmerged` remains top-level `pr_open` and should offer a
+New Launch action; CMA does not reopen it.
 
 `downloadDiffArtifact` returns the immutable complete artifact after CMA verifies
 Launch ownership, retention, byte length, and digest. Treat `delete_after` as the

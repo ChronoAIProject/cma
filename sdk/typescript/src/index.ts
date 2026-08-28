@@ -174,6 +174,7 @@ export {
 export {
   beginTriggerConnection,
   cancelLaunch,
+  completeLaunch,
   confirmPullRequest,
   createNewLaunch,
   createOrResumeLaunch,
@@ -185,6 +186,7 @@ export {
   listTriggerRevisions,
   listTriggers,
   preflightTriggerConnection,
+  refreshPullRequestStatus,
   resolveTriggerRepository,
   publishLaunchBranch,
   publishTrigger,
@@ -269,6 +271,7 @@ export {
   type TriggerOverridePolicy,
   type TriggerPermissionCeiling,
   type TriggerPreview,
+  type TriggerPreviewCost,
   type TriggerPublisherRepositoryRole,
   type TriggerPublicProjectionPolicy,
   type TriggerPullRequestDefaults,

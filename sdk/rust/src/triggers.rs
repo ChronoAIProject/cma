@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use reqwest::{Method, StatusCode};
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -107,6 +108,85 @@ pub enum TriggerPermissionMode {
     Autonomous,
 }
 
+/// Public cost of the immutable Trigger defaults, before authenticated review.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TriggerPreviewCost {
+    ExactZero {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+    },
+    ContributorEstimate {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+        quoted_at: String,
+    },
+    QuoteUnavailable,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum TriggerPreviewCostWire {
+    ExactZero {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+    },
+    ContributorEstimate {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+        quoted_at: String,
+    },
+    QuoteUnavailable,
+}
+
+impl<'de> Deserialize<'de> for TriggerPreviewCost {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match TriggerPreviewCostWire::deserialize(deserializer)? {
+            TriggerPreviewCostWire::ExactZero {
+                currency,
+                amount_micros,
+                display,
+            } => {
+                if currency != "USD" {
+                    return Err(de::Error::custom("exact-zero cost currency must be USD"));
+                }
+                if amount_micros != 0 {
+                    return Err(de::Error::custom("exact-zero cost amount must be zero"));
+                }
+                Ok(Self::ExactZero {
+                    currency,
+                    amount_micros,
+                    display,
+                })
+            }
+            TriggerPreviewCostWire::ContributorEstimate {
+                currency,
+                amount_micros,
+                display,
+                quoted_at,
+            } => {
+                if currency != "USD" {
+                    return Err(de::Error::custom("contributor cost currency must be USD"));
+                }
+                Ok(Self::ContributorEstimate {
+                    currency,
+                    amount_micros,
+                    display,
+                    quoted_at,
+                })
+            }
+            TriggerPreviewCostWire::QuoteUnavailable => Ok(Self::QuoteUnavailable),
+        }
+    }
+}
+
 /// Side-effect-free public README Trigger preview.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -129,6 +209,7 @@ pub struct TriggerPreview {
     pub timeout_ceiling_seconds: u32,
     pub billing_mode: TriggerBillingMode,
     pub pricing_policy_reference: String,
+    pub estimated_cost: TriggerPreviewCost,
     pub revision_digest: String,
 }
 
@@ -484,7 +565,7 @@ pub struct LaunchOverrides {
     #[serde(default)]
     pub task_inputs: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_suffix: Option<String>,
+    pub work_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_size: Option<TriggerSessionSize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -499,7 +580,7 @@ pub struct LaunchOverrides {
 #[serde(deny_unknown_fields)]
 pub struct EffectiveConfiguration {
     pub rendered_prompt: String,
-    pub branch_suffix: String,
+    pub work_label: String,
     pub permission: TriggerPermissionMode,
     pub resource_size: TriggerSessionSize,
     pub timeout_seconds: u32,
@@ -830,6 +911,12 @@ pub struct PullRequestRecord {
     pub updated_at: String,
     pub provider_created_at: Option<String>,
     pub provider_updated_at: Option<String>,
+    /// Safe failure from the latest read-only provider status observation.
+    pub status_failure: Option<LaunchFailure>,
+    /// Provider correlation identifier for the latest status observation.
+    pub provider_request_id: Option<String>,
+    /// Whether the observed provider head still equals CMA's retained Launch head.
+    pub head_matches_launch: Option<bool>,
 }
 
 /// Side-effect-free pull-request proposal sealed for explicit confirmation.
@@ -962,6 +1049,7 @@ pub enum LaunchConfirmationAction {
     RecoverPrompt,
     NewLaunch,
     Cancel,
+    Complete,
 }
 
 /// Public prompt delivery observation.
@@ -1030,22 +1118,56 @@ pub struct Launch {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LaunchEventKind {
-    Created { steps: Vec<LaunchStep> },
+    Created {
+        steps: Vec<LaunchStep>,
+    },
     DraftUpdated,
     ConnectionSelected,
     Started,
-    StateChanged { from: LaunchState, to: LaunchState },
-    StepChanged { step: LaunchStep },
-    Blocked { reason: LaunchBlockedReason },
-    Resumed { reason: LaunchBlockedReason },
-    Failure { failure: LaunchFailure },
-    EffectReconciled { effect: LaunchEffectKind },
-    RecoveryAuthorized { effect: LaunchEffectKind },
-    DeliveryChanged { state: PromptDeliveryState },
-    ReachChanged { reach: LaunchReachStatus },
-    ConfirmationRecorded { action: LaunchConfirmationAction },
-    CleanupPlanned { target_count: usize },
-    CleanupCompleted { target_count: usize },
+    StateChanged {
+        from: LaunchState,
+        to: LaunchState,
+    },
+    StepChanged {
+        step: LaunchStep,
+    },
+    Blocked {
+        reason: LaunchBlockedReason,
+    },
+    Resumed {
+        reason: LaunchBlockedReason,
+    },
+    Failure {
+        failure: LaunchFailure,
+    },
+    EffectReconciled {
+        effect: LaunchEffectKind,
+    },
+    RecoveryAuthorized {
+        effect: LaunchEffectKind,
+    },
+    DeliveryChanged {
+        state: PromptDeliveryState,
+    },
+    ReachChanged {
+        reach: LaunchReachStatus,
+    },
+    PullRequestStatusChanged {
+        state: PullRequestState,
+        mergeability: Mergeability,
+        checks: PullRequestCheckSummaryState,
+        failure: Option<LaunchFailure>,
+    },
+    PullRequestStatusRefreshRequested,
+    ConfirmationRecorded {
+        action: LaunchConfirmationAction,
+    },
+    CleanupPlanned {
+        target_count: usize,
+    },
+    CleanupCompleted {
+        target_count: usize,
+    },
     Cancelled,
 }
 
@@ -1106,6 +1228,7 @@ pub struct DiffReview {
 pub struct LaunchListRequest {
     pub state: Option<LaunchState>,
     pub trigger_public_id: Option<String>,
+    pub session_id: Option<String>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
 }
@@ -1217,6 +1340,14 @@ pub struct PullRequestConfirmRequest {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+}
+
+/// Optimistic command that queues one immediate read-only pull-request status observation.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PullRequestStatusRefreshRequest {
+    pub expected_revision: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1532,6 +1663,10 @@ impl Client {
         if let Some(public_id) = page.trigger_public_id {
             query.push(("trigger_public_id", public_id));
         }
+        if let Some(session_id) = page.session_id {
+            identifier(&session_id, "session id")?;
+            query.push(("session_id", session_id));
+        }
         query.push(("limit", limit.to_string()));
         if let Some(cursor) = page.cursor {
             query.push(("cursor", cursor));
@@ -1724,6 +1859,24 @@ impl Client {
         .await
     }
 
+    /// Queue an immediate read-only provider status observation for an open pull request.
+    pub async fn refresh_pull_request_status(
+        &self,
+        launch_id: &str,
+        request: PullRequestStatusRefreshRequest,
+        idempotency_key: &str,
+    ) -> Result<Launch> {
+        identifier(launch_id, "Launch id")?;
+        self.command(
+            Method::POST,
+            &["launches", launch_id, "pull-request", "refresh"],
+            request,
+            StatusCode::ACCEPTED,
+            idempotency_key,
+        )
+        .await
+    }
+
     /// Cancel one Launch while retaining its durable history.
     pub async fn cancel_launch(
         &self,
@@ -1735,6 +1888,24 @@ impl Client {
         self.command(
             Method::POST,
             &["launches", launch_id, "cancel"],
+            request,
+            StatusCode::OK,
+            idempotency_key,
+        )
+        .await
+    }
+
+    /// Finish CMA orchestration after handing an open pull request to its maintainers.
+    pub async fn complete_launch(
+        &self,
+        launch_id: &str,
+        request: LaunchConfirmationRequest,
+        idempotency_key: &str,
+    ) -> Result<Launch> {
+        identifier(launch_id, "Launch id")?;
+        self.command(
+            Method::POST,
+            &["launches", launch_id, "complete"],
             request,
             StatusCode::OK,
             idempotency_key,

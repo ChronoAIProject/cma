@@ -1036,25 +1036,51 @@ fn reject_internal_fields(value: &serde_json::Value) -> Result<()> {
         "prompt_origin_key",
         "prompt_payload_hash",
     ];
+    reject_internal_fields_at(value, &FORBIDDEN, &mut Vec::new())
+}
+
+fn reject_internal_fields_at(
+    value: &serde_json::Value,
+    forbidden: &[&str],
+    path: &mut Vec<String>,
+) -> Result<()> {
     match value {
         serde_json::Value::Array(values) => {
+            path.push("*".into());
             for value in values {
-                reject_internal_fields(value)?;
+                reject_internal_fields_at(value, forbidden, path)?;
             }
+            path.pop();
         }
         serde_json::Value::Object(values) => {
             for (name, value) in values {
-                if FORBIDDEN.contains(&name.as_str()) {
+                path.push(name.clone());
+                let public_pull_request_status = name == "provider_request_id"
+                    && (path_matches(path, &["pull_request", "provider_request_id"])
+                        || path_matches(
+                            path,
+                            &["items", "*", "pull_request", "provider_request_id"],
+                        ));
+                if forbidden.contains(&name.as_str()) && !public_pull_request_status {
                     return Err(Error::protocol(format!(
                         "public response leaked internal field {name}"
                     )));
                 }
-                reject_internal_fields(value)?;
+                reject_internal_fields_at(value, forbidden, path)?;
+                path.pop();
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+fn path_matches(path: &[String], expected: &[&str]) -> bool {
+    path.len() == expected.len()
+        && path
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual == expected)
 }
 
 async fn decode_json_page<T: DeserializeOwned>(

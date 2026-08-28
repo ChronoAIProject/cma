@@ -245,7 +245,45 @@
           "correlation_id": "create"
         }
       }
+    },
+    {
+      "sequence": 4,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "fixture-pr-status",
+      "progress": {
+        "state": "draft",
+        "blocked_reason": null,
+        "failure": null,
+        "resume_state": null,
+        "reach": null,
+        "delivery": null
+      },
+      "kind": {
+        "type": "pull_request_status_refresh_requested"
+      }
+    },
+    {
+      "sequence": 5,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "fixture-pr-status",
+      "progress": {
+        "state": "draft",
+        "blocked_reason": null,
+        "failure": null,
+        "resume_state": null,
+        "reach": null,
+        "delivery": null
+      },
+      "kind": {
+        "type": "pull_request_status_changed",
+        "state": "open",
+        "mergeability": "mergeable",
+        "checks": "passing",
+        "failure": null
+      }
     }
   ],
-  "next_cursor": 3
+  "next_cursor": 5
 }
