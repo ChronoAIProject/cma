@@ -18,6 +18,7 @@ use super::{problem_document, problem_response, BodyProblem, RequestFailure};
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
 const MAX_KEY_BYTES: usize = 255;
 pub(super) const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+const EXECUTION_LEASE: Duration = Duration::from_secs(2 * 60);
 
 /// A JSON decoding result accompanied by the digest of the bytes that carried it.
 pub(super) struct RequestBody<T> {
@@ -133,6 +134,7 @@ pub enum IdempotencyProblem {
     Missing,
     Invalid,
     Pending,
+    RecoveryRequired,
     Reused,
 }
 
@@ -156,6 +158,12 @@ impl IntoResponse for IdempotencyProblem {
                 "idempotency-in-flight",
                 "idempotency_in_flight",
                 "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+            ),
+            Self::RecoveryRequired => (
+                StatusCode::CONFLICT,
+                "idempotency-recovery-required",
+                "idempotency_recovery_required",
+                "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
             ),
             Self::Reused => (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -191,12 +199,14 @@ impl Idempotency {
         let Some(key) = key.0 else {
             return Ok(Self::Unkeyed);
         };
+        let now = std::time::SystemTime::now();
         let claim = OperationClaim::new(
             caller.subject.clone(),
             operation,
             key,
             fingerprint,
-            std::time::SystemTime::now() + RETENTION,
+            now + EXECUTION_LEASE,
+            RETENTION,
         );
         let reservation = store
             .reserve(&claim)
@@ -206,6 +216,9 @@ impl Idempotency {
             OperationReservation::Acquired => Self::Acquired { store, claim },
             OperationReservation::Pending => {
                 return Err(IdempotencyProblem::Pending.into_response())
+            }
+            OperationReservation::RecoveryRequired => {
+                return Err(IdempotencyProblem::RecoveryRequired.into_response())
             }
             OperationReservation::FingerprintMismatch => {
                 return Err(IdempotencyProblem::Reused.into_response())

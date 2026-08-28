@@ -561,11 +561,13 @@ type TriggerSessionFixture = (
     Arc<TriggerWorkspaceBytes>,
 );
 
+const TEST_TRIGGER_KERNEL: &str = "trigger-test-kernel";
+
 fn trigger_session_service(archive: Vec<u8>) -> TriggerSessionFixture {
     trigger_session_service_defaulting_to(
         archive,
         crate::AgentConfiguration {
-            kernel: KernelId::new("codex"),
+            kernel: KernelId::new(TEST_TRIGGER_KERNEL),
             mode: SessionMode::Conversation,
             ..Default::default()
         },
@@ -611,7 +613,7 @@ fn build_trigger_session_service(
         profiles,
         workspaces,
         crate::AgentConfiguration {
-            kernel: KernelId::new("codex"),
+            kernel: KernelId::new(TEST_TRIGGER_KERNEL),
             mode: SessionMode::Conversation,
             ..Default::default()
         },
@@ -634,7 +636,7 @@ fn build_trigger_session_service_defaulting_to(
         crate::test_support::unconfigured_settings(),
     );
     let mut adapters: HashMap<KernelId, Arc<dyn layer3_adapter::KernelAdapter>> = HashMap::new();
-    adapters.insert(KernelId::new("codex"), adapter.clone());
+    adapters.insert(KernelId::new(TEST_TRIGGER_KERNEL), adapter.clone());
     let factory: ScreenFactory = Arc::new(|geometry| {
         Box::new(RecordingScreen {
             geometry,
@@ -665,7 +667,7 @@ fn build_trigger_session_service_defaulting_to(
                 crate::RequiredCapability::CredentialRefresh,
                 crate::RequiredCapability::CredentialRevocation,
             ],
-            trigger_kernel: Some(KernelId::new("codex")),
+            trigger_kernel: Some(KernelId::new(TEST_TRIGGER_KERNEL)),
             ..crate::test_support::owned()
         },
     );
@@ -1096,7 +1098,7 @@ async fn trigger_session_creation_is_deterministic_and_hands_over_exact_workspac
     );
     let expected_id = format!("sesn_trg_{}", launch.id.0.replace('-', ""));
     assert_eq!(created.id.0, expected_id);
-    assert_eq!(created.kernel, KernelId::new("codex"));
+    assert_eq!(created.kernel, KernelId::new(TEST_TRIGGER_KERNEL));
     assert_eq!(created.options.mode, SessionMode::Conversation);
     assert_eq!(
         created.options.permission,
@@ -1113,7 +1115,10 @@ async fn trigger_session_creation_is_deterministic_and_hands_over_exact_workspac
         .next()
         .cloned()
         .expect("the resolved Trigger profile is stored");
-    assert_eq!(stored_profile.agent.kernel, KernelId::new("codex"));
+    assert_eq!(
+        stored_profile.agent.kernel,
+        KernelId::new(TEST_TRIGGER_KERNEL)
+    );
     assert_eq!(stored_profile.agent.mode, SessionMode::Conversation);
     assert_eq!(
         stored_profile.agent.permission,
@@ -2025,6 +2030,29 @@ async fn install_trigger_prompt_state(
         .initial_prompt = initial_prompt;
 }
 
+async fn install_live_trigger_prompt_state(
+    fixture: &TriggerPromptFixture,
+    state: crate::PromptDeliveryState,
+) {
+    let initial = trigger_prompt_dispatch(&fixture.launch, &fixture.session.id, state);
+    fixture
+        .store
+        .sessions
+        .lock()
+        .await
+        .get_mut(&fixture.session.id.0)
+        .expect("the Trigger session is durable")
+        .initial_prompt = Some(initial.clone());
+    fixture
+        .service
+        .entries
+        .write()
+        .await
+        .get_mut(&fixture.session.id)
+        .expect("the Trigger session is live")
+        .initial_prompt = Some(initial);
+}
+
 fn trigger_prompt_dispatch(
     launch: &crate::Launch,
     session_id: &SessionId,
@@ -2291,6 +2319,180 @@ async fn settled_trigger_prompt_states_restore_ordinary_owner_input() {
                 ))
         ));
     }
+}
+
+fn cancelled_prompt_launch(fixture: &TriggerPromptFixture) -> crate::Launch {
+    let mut launch = fixture.launch.clone();
+    launch.lease = None;
+    for effect in &mut launch.effects {
+        if effect.kind == crate::LaunchEffectKind::InitialDispatch {
+            effect.state = crate::EffectState::Queued;
+            effect.next_attempt_at = None;
+        }
+    }
+    let owner = launch.owner.clone();
+    let digest = launch.effective.digest.clone();
+    launch
+        .cancel(
+            crate::Confirmation {
+                action: crate::ConfirmationAction::Cancel,
+                subject: owner,
+                snapshot_digest: digest,
+                confirmed_at: "2026-08-26T12:01:00Z".into(),
+                idempotency_key_hash: "cancel-initial-prompt".into(),
+            },
+            "2026-08-26T12:01:00Z",
+            "cancel-initial-prompt",
+        )
+        .expect("the safely queued initial dispatch can be cancelled");
+    launch
+}
+
+#[tokio::test]
+async fn cancelling_safely_queued_initial_dispatch_releases_owner_input_without_sending_it() {
+    for explicit_outbox in [false, true] {
+        let fixture = trigger_prompt_fixture().await;
+        if explicit_outbox {
+            install_live_trigger_prompt_state(&fixture, crate::PromptDeliveryState::Queued).await;
+        }
+        let stale_dispatch_launch = fixture.launch.clone();
+        let cancelled = cancelled_prompt_launch(&fixture);
+
+        let settled_delivery = crate::TriggerSessionCancellation::settle_cancelled_initial_prompt(
+            fixture.service.as_ref(),
+            &cancelled,
+        )
+        .await
+        .expect("cancellation durably settles the safely queued reservation");
+        let mut projected = cancelled.clone();
+        projected
+            .record_cancelled_session_settlement(
+                settled_delivery.clone(),
+                "2026-08-26T12:01:01Z",
+                "restart-session-settlement",
+            )
+            .expect("a restarted worker can project the durable session receipt");
+        assert_eq!(projected.delivery.as_ref(), Some(&settled_delivery));
+        assert!(!projected.cancelled_session_requires_settlement());
+
+        let record = fixture
+            .store
+            .get(&fixture.session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let tombstone = record
+            .initial_prompt
+            .expect("cancellation records a private prompt tombstone");
+        assert_eq!(tombstone.delivery.state, crate::PromptDeliveryState::Failed);
+        assert_eq!(tombstone.delivery.attempt, 0);
+        assert_eq!(tombstone.delivery.dispatch_fence_sequence, None);
+
+        assert!(fixture
+            .service
+            .dispatch_trigger_prompt(&stale_dispatch_launch, &fixture.claim)
+            .await
+            .is_err());
+        assert!(recorded_conversation_inputs(&fixture.adapter)
+            .await
+            .is_empty());
+
+        let owner_text = "continue manually after cancelling the Trigger";
+        fixture
+            .service
+            .send_prompt(&fixture.caller, &fixture.session.id, owner_text.into())
+            .await
+            .expect("the preserved session accepts ordinary owner interaction");
+        let sent = recorded_conversation_inputs(&fixture.adapter).await;
+        assert_eq!(sent.len(), 1);
+        assert!(matches!(
+            sent.first(),
+            Some(ConversationInput::Prompt(content))
+                if content.iter().any(|block| matches!(
+                    block,
+                    layer3_adapter::ContentBlock::Text(text) if text.text == owner_text
+                ))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn cancellation_waits_for_dispatch_and_never_releases_a_prompt_that_may_have_been_written() {
+    let fixture = trigger_prompt_fixture().await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let writes = Arc::new(AtomicUsize::new(0));
+    replace_prompt_input(
+        &fixture.service,
+        &fixture.session.id,
+        ConversationInputSender::spawn(1, {
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            let writes = Arc::clone(&writes);
+            move |_input| {
+                let entered = Arc::clone(&entered);
+                let release = Arc::clone(&release);
+                let writes = Arc::clone(&writes);
+                async move {
+                    writes.fetch_add(1, Ordering::SeqCst);
+                    entered.notify_one();
+                    release.notified().await;
+                    Ok(())
+                }
+            }
+        }),
+    )
+    .await;
+
+    let service = Arc::clone(&fixture.service);
+    let launch = fixture.launch.clone();
+    let claim = fixture.claim.clone();
+    let dispatch =
+        tokio::spawn(async move { service.dispatch_trigger_prompt(&launch, &claim).await });
+    entered.notified().await;
+
+    let service = Arc::clone(&fixture.service);
+    let cancelled = cancelled_prompt_launch(&fixture);
+    let settlement = tokio::spawn(async move {
+        crate::TriggerSessionCancellation::settle_cancelled_initial_prompt(
+            service.as_ref(),
+            &cancelled,
+        )
+        .await
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !settlement.is_finished(),
+        "cancellation must wait behind the dispatch prompt gate"
+    );
+
+    release.notify_one();
+    let delivery = dispatch.await.unwrap().unwrap();
+    assert_eq!(delivery.state, crate::PromptDeliveryState::WriteConfirmed);
+    assert!(settlement.await.unwrap().is_err());
+
+    let record = fixture
+        .store
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record.initial_prompt.unwrap().delivery.state,
+        crate::PromptDeliveryState::WriteConfirmed
+    );
+    assert_initial_prompt_reserved(
+        fixture
+            .service
+            .send_prompt(
+                &fixture.caller,
+                &fixture.session.id,
+                "must remain behind the possible write".into(),
+            )
+            .await,
+        crate::PromptDeliveryState::WriteConfirmed,
+    );
+    assert_eq!(writes.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -3664,7 +3866,7 @@ async fn runtime_policy_observation_pairs_the_exact_typed_snapshot_under_the_lif
             .lock()
             .await
             .as_slice(),
-        &[current_handle.clone()]
+        std::slice::from_ref(&current_handle)
     );
     assert_eq!(
         observed,

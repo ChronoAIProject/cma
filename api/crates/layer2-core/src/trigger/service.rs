@@ -8,11 +8,12 @@ use super::{
     Launch, LaunchEvent, LaunchId, LaunchOverrides, LaunchQuery, LaunchReviewAdmission,
     LaunchState, LaunchStore, PublicTriggerId, PublishedRevision, PublisherAuthority,
     StartAdmissionSnapshot, TriggerAvailability, TriggerDraft, TriggerId, TriggerPage,
-    TriggerPageRequest, TriggerPreview, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
-    TriggerRolloutDenial, TriggerRolloutPolicy, TriggerStore, TriggerStoreError,
-    TriggerSupportLookup, TriggerSupportSnapshot, TriggerValidationError, WorkerLease,
+    TriggerPageRequest, TriggerPreview, TriggerPreviewCost, TriggerRevision,
+    TriggerRevisionContent, TriggerRevisionId, TriggerRolloutDenial, TriggerRolloutPolicy,
+    TriggerStore, TriggerStoreError, TriggerSupportLookup, TriggerSupportSnapshot,
+    TriggerValidationError, WorkerLease,
 };
-use crate::{Caller, Capability, SubjectId};
+use crate::{clock::now_rfc3339, BillingMode, Caller, Capability, SessionId, SubjectId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchAuthority {
@@ -106,6 +107,15 @@ pub enum TriggerAdmissionError {
 /// Server-owned pricing, quota, and pinned-runtime policy for Trigger Launches.
 #[async_trait]
 pub trait TriggerLaunchAdmission: Send + Sync {
+    /// Best-effort public estimate for the immutable Trigger defaults.
+    ///
+    /// Failure is represented as `QuoteUnavailable`, not as a failed public
+    /// preview. The authenticated review remains the authority that
+    /// recalculates and pins a contributor's final configuration and price.
+    async fn preview_cost(&self, _revision: &TriggerRevision, _now: &str) -> TriggerPreviewCost {
+        TriggerPreviewCost::QuoteUnavailable
+    }
+
     async fn review(
         &self,
         owner: &SubjectId,
@@ -119,6 +129,20 @@ pub trait TriggerLaunchAdmission: Send + Sync {
         launch: &Launch,
         now: &str,
     ) -> Result<StartAdmissionSnapshot, TriggerAdmissionError>;
+}
+
+/// Settles the private initial-prompt reservation after a Launch cancellation.
+///
+/// The Launch store remains the authority for whether cancellation won its
+/// revision race. Implementations must therefore be idempotent: a retry of an
+/// already-cancelled Launch still calls this port to close a prior partial
+/// success between the Launch write and the session write.
+#[async_trait]
+pub trait TriggerSessionCancellation: Send + Sync {
+    async fn settle_cancelled_initial_prompt(
+        &self,
+        launch: &Launch,
+    ) -> Result<super::PromptDelivery, TriggerStoreError>;
 }
 
 struct UnavailableTriggerLaunchAdmission;
@@ -314,6 +338,7 @@ pub struct TriggerService {
     launches: Arc<dyn LaunchStore>,
     authority: Arc<dyn TriggerAuthorityVerifier>,
     launch_admission: Arc<dyn TriggerLaunchAdmission>,
+    session_cancellation: Option<Arc<dyn TriggerSessionCancellation>>,
     rollout: Arc<TriggerRolloutPolicy>,
 }
 
@@ -328,6 +353,7 @@ impl TriggerService {
             launches,
             authority,
             launch_admission: Arc::new(UnavailableTriggerLaunchAdmission),
+            session_cancellation: None,
             rollout: Arc::new(TriggerRolloutPolicy::allow_all()),
         }
     }
@@ -339,6 +365,14 @@ impl TriggerService {
 
     pub fn with_launch_admission(mut self, admission: Arc<dyn TriggerLaunchAdmission>) -> Self {
         self.launch_admission = admission;
+        self
+    }
+
+    pub fn with_session_cancellation(
+        mut self,
+        cancellation: Arc<dyn TriggerSessionCancellation>,
+    ) -> Self {
+        self.session_cancellation = Some(cancellation);
         self
     }
 
@@ -506,7 +540,14 @@ impl TriggerService {
             .get_public_revision(public_id)
             .await?
             .ok_or(TriggerServiceError::NotFound)?;
-        Ok(TriggerPreview::from(&revision))
+        let mut preview = TriggerPreview::from(&revision);
+        if revision.content.commercial_policy.billing_mode == BillingMode::Contributor {
+            preview.estimated_cost = self
+                .launch_admission
+                .preview_cost(&revision, &now_rfc3339())
+                .await;
+        }
+        Ok(preview)
     }
 
     pub async fn get_revision(
@@ -653,6 +694,7 @@ impl TriggerService {
         &self,
         owner: &SubjectId,
         public_id: Option<PublicTriggerId>,
+        session_id: Option<SessionId>,
         states: Vec<LaunchState>,
         page: TriggerPageRequest,
     ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
@@ -661,6 +703,7 @@ impl TriggerService {
             .list_launches(&LaunchQuery {
                 owner: Some(owner.clone()),
                 public_id,
+                session_id,
                 states,
                 updated_before: None,
                 page,
@@ -715,11 +758,7 @@ impl TriggerService {
                 }
             }
         }
-        let events = ordered
-            .into_values()
-            .into_iter()
-            .take(limit)
-            .collect::<Vec<_>>();
+        let events = ordered.into_values().take(limit).collect::<Vec<_>>();
         if after < launch.event_high_water()
             && events.first().map(|event| event.sequence) != after.checked_add(1)
         {
@@ -928,7 +967,19 @@ impl TriggerService {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<Launch, TriggerServiceError> {
+        let now = now.into();
+        let correlation_id = correlation_id.into();
         let mut launch = self.get_launch(owner, id).await?;
+        if launch.state == LaunchState::Cancelled {
+            if self
+                .reconcile_cancelled_session(&mut launch, &now, &correlation_id)
+                .await?
+            {
+                let revision = launch.revision_number;
+                return persist_user_mutation(self.launches.as_ref(), revision, launch).await;
+            }
+            return Ok(launch);
+        }
         if launch.revision_number != expected_revision {
             return Err(TriggerStoreError::RevisionConflict {
                 expected: expected_revision,
@@ -937,11 +988,62 @@ impl TriggerService {
             .into());
         }
         let before = launch.clone();
-        launch.cancel(confirmation, now, correlation_id)?;
+        launch.cancel(confirmation, now.clone(), correlation_id.clone())?;
         if launch == before {
             return Ok(launch);
         }
+        let mut launch =
+            persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await?;
+        if self
+            .reconcile_cancelled_session(&mut launch, &now, &correlation_id)
+            .await?
+        {
+            let revision = launch.revision_number;
+            launch = persist_user_mutation(self.launches.as_ref(), revision, launch).await?;
+        }
+        Ok(launch)
+    }
+
+    pub async fn complete(
+        &self,
+        owner: &SubjectId,
+        id: &LaunchId,
+        expected_revision: u64,
+        confirmation: Confirmation,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<Launch, TriggerServiceError> {
+        let mut launch = self.get_launch(owner, id).await?;
+        if launch.state == LaunchState::Completed {
+            return Ok(launch);
+        }
+        launch.complete(confirmation, now, correlation_id)?;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
+    }
+
+    /// Settle and project a cancelled Trigger session's reserved first turn.
+    ///
+    /// This mutates only the supplied aggregate. The caller must commit it
+    /// under either the user CAS or a worker lease. Keeping that second write
+    /// explicit makes a crash between the session and Launch stores harmless:
+    /// the terminal capability inventory retries until this projection lands.
+    pub async fn reconcile_cancelled_session(
+        &self,
+        launch: &mut Launch,
+        now: &str,
+        correlation_id: &str,
+    ) -> Result<bool, TriggerServiceError> {
+        if !launch.cancelled_session_requires_settlement() {
+            return Ok(false);
+        }
+        let cancellation = self.session_cancellation.as_ref().ok_or_else(|| {
+            TriggerStoreError::Unavailable(
+                "Trigger session cancellation settlement is not configured".into(),
+            )
+        })?;
+        let delivery = cancellation.settle_cancelled_initial_prompt(launch).await?;
+        launch.record_cancelled_session_settlement(delivery, now, correlation_id)?;
+        Ok(true)
     }
 
     pub async fn recover_initial_prompt(
@@ -1052,6 +1154,22 @@ impl TriggerService {
             now,
             correlation_id,
         )?;
+        persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
+    }
+
+    /// Enqueue an immediate read-only provider status observation. The caller
+    /// receives the durable queued state; a fenced background worker performs
+    /// the actual GitHub read independently of the browser request.
+    pub async fn request_pull_request_status_refresh(
+        &self,
+        owner: &SubjectId,
+        id: &LaunchId,
+        expected_revision: u64,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<Launch, TriggerServiceError> {
+        let mut launch = self.get_launch(owner, id).await?;
+        launch.request_pull_request_status_refresh(now, correlation_id)?;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }
 

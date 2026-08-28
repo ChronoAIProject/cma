@@ -281,6 +281,8 @@ fn validate_event(
             .as_ref()
             .is_some_and(|delivery| delivery.state == *state),
         LaunchEventKind::ReachChanged { reach } => event.progress.reach.as_ref() == Some(reach),
+        LaunchEventKind::PullRequestStatusChanged { .. }
+        | LaunchEventKind::PullRequestStatusRefreshRequested => true,
         LaunchEventKind::Cancelled => event.progress.state == LaunchState::Cancelled,
         LaunchEventKind::DraftUpdated
         | LaunchEventKind::ConnectionSelected

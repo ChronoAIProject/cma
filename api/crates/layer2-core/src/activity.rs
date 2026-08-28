@@ -173,6 +173,60 @@ pub enum ActivityAction {
     TriggerCleanupExecute,
 }
 
+impl ActivityAction {
+    /// Whether this action belongs to the CMA Trigger workflow.
+    ///
+    /// Kept as an exhaustive match so adding a Trigger action forces its audit
+    /// and alert behavior to be considered rather than relying on a string
+    /// prefix after serialization.
+    pub fn is_trigger(self) -> bool {
+        matches!(
+            self,
+            Self::TriggerPreviewRead
+                | Self::TriggerDraftCreate
+                | Self::TriggerDraftRead
+                | Self::TriggerDraftList
+                | Self::TriggerDraftUpdate
+                | Self::TriggerRevisionPublish
+                | Self::TriggerRevisionRead
+                | Self::TriggerRevisionList
+                | Self::TriggerRevisionRetire
+                | Self::TriggerConnectionList
+                | Self::TriggerConnectionBegin
+                | Self::TriggerConnectionRevoke
+                | Self::TriggerConnectionReconnect
+                | Self::TriggerConnectionPreflight
+                | Self::TriggerRepositoryResolve
+                | Self::TriggerLaunchCreate
+                | Self::TriggerLaunchRead
+                | Self::TriggerLaunchList
+                | Self::TriggerLaunchDraftUpdate
+                | Self::TriggerLaunchConnectionSelect
+                | Self::TriggerLaunchStart
+                | Self::TriggerLaunchDiffReview
+                | Self::TriggerLaunchDiffRead
+                | Self::TriggerLaunchContributionPublish
+                | Self::TriggerLaunchPullRequestReview
+                | Self::TriggerLaunchPullRequestOpen
+                | Self::TriggerLaunchPullRequestUpdate
+                | Self::TriggerLaunchDiffDownload
+                | Self::TriggerLaunchCancel
+                | Self::TriggerLaunchPromptRecover
+                | Self::TriggerLaunchEventsRead
+                | Self::TriggerLaunchSupportRead
+                | Self::TriggerOrchestrationPause
+                | Self::TriggerOrchestrationResume
+                | Self::TriggerEffectExecute
+                | Self::TriggerEffectReconcile
+                | Self::TriggerEffectRecoveryAuthorize
+                | Self::TriggerCapabilityRenew
+                | Self::TriggerCapabilityRevoke
+                | Self::TriggerCleanupPlan
+                | Self::TriggerCleanupExecute
+        )
+    }
+}
+
 /// What an action was taken on.
 ///
 /// Absent for actions that address a collection rather than one thing: listing
@@ -424,5 +478,13 @@ mod tests {
             ActivityTarget::Subject(SubjectId("subject-a".into())).id(),
             "subject-a"
         );
+    }
+
+    #[test]
+    fn trigger_actions_are_classified_without_string_inference() {
+        assert!(ActivityAction::TriggerPreviewRead.is_trigger());
+        assert!(ActivityAction::TriggerCleanupExecute.is_trigger());
+        assert!(!ActivityAction::SessionCreate.is_trigger());
+        assert!(!ActivityAction::ActivityLogRead.is_trigger());
     }
 }

@@ -18,12 +18,13 @@ use layer2_core::{
     PublicProjectionPolicy, PublicTriggerId, PullRequestDraft, PullRequestOperation,
     PullRequestRecord, QuotaSnapshot, ReachStatus, RecoverInitialPromptCommand,
     RepositoryAccessPolicy, RequiredCapability, ResourcePolicy, RuntimeAdmissionSnapshot,
-    ScopeClass, SessionLink, SetupPolicy, SourceMode, StartAdmissionSnapshot, StartLaunchCommand,
-    TriggerAvailability, TriggerConnection, TriggerConnectionAuthorization,
+    ScopeClass, SessionId, SessionLink, SetupPolicy, SourceMode, StartAdmissionSnapshot,
+    StartLaunchCommand, TriggerAvailability, TriggerConnection, TriggerConnectionAuthorization,
     TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPageRequest, TriggerPreview,
-    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
-    TriggerServiceError, TriggerSessionPolicy, TriggerStoreError, TriggerTask, UpstreamRevision,
-    WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceManifest, WorkspaceRecord,
+    TriggerPreviewCost, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
+    TriggerRevisionId, TriggerServiceError, TriggerSessionPolicy, TriggerStoreError, TriggerTask,
+    UpstreamRevision, WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceManifest,
+    WorkspaceRecord,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -32,7 +33,8 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::trigger_openapi_shapes as trigger_schema;
 use super::{
-    idempotency, problem_document, problem_response, BodyProblem, RequestFailure, TriggersState,
+    idempotency, problem_document, problem_response, BodyProblem, RequestFailure,
+    TriggerValidationCategory, TriggersState,
 };
 use crate::auth::AuthenticatedCaller;
 
@@ -65,8 +67,10 @@ pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
         .routes(routes!(review_pull_request))
         .routes(routes!(open_pull_request))
         .routes(routes!(update_pull_request))
+        .routes(routes!(refresh_pull_request_status))
         .routes(routes!(download_diff_artifact))
         .routes(routes!(recover_initial_prompt))
+        .routes(routes!(complete_launch))
         .routes(routes!(cancel_launch))
         .routes(routes!(launch_progress))
         .with_state(state)
@@ -277,6 +281,12 @@ struct ConfirmPullRequestRequest {
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+struct RefreshPullRequestStatusRequest {
+    expected_revision: u64,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 struct StartLaunchRequest {
     expected_revision: u64,
     snapshot_digest: String,
@@ -319,6 +329,8 @@ struct LaunchPageParams {
     state: Option<LaunchState>,
     #[serde(default)]
     trigger_public_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
     #[serde(default = "default_page_limit")]
     limit: u32,
     #[serde(default)]
@@ -377,7 +389,53 @@ pub(crate) struct TriggerPreviewView {
     #[schema(value_type = trigger_schema::BillingMode)]
     billing_mode: String,
     pricing_policy_reference: String,
+    estimated_cost: TriggerPreviewCostView,
     revision_digest: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum TriggerPreviewCostView {
+    ExactZero {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+    },
+    ContributorEstimate {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+        quoted_at: String,
+    },
+    QuoteUnavailable,
+}
+
+impl From<TriggerPreviewCost> for TriggerPreviewCostView {
+    fn from(value: TriggerPreviewCost) -> Self {
+        match value {
+            TriggerPreviewCost::ExactZero {
+                currency,
+                amount_micros,
+                display,
+            } => Self::ExactZero {
+                currency,
+                amount_micros,
+                display,
+            },
+            TriggerPreviewCost::ContributorEstimate {
+                currency,
+                amount_micros,
+                display,
+                quoted_at,
+            } => Self::ContributorEstimate {
+                currency,
+                amount_micros,
+                display,
+                quoted_at,
+            },
+            TriggerPreviewCost::QuoteUnavailable => Self::QuoteUnavailable,
+        }
+    }
 }
 
 impl From<TriggerPreview> for TriggerPreviewView {
@@ -404,6 +462,7 @@ impl From<TriggerPreview> for TriggerPreviewView {
             timeout_ceiling_seconds: value.timeout_ceiling_seconds,
             billing_mode: enum_name(value.billing_mode),
             pricing_policy_reference: value.pricing_policy_reference,
+            estimated_cost: value.estimated_cost.into(),
             revision_digest: value.revision_digest,
         }
     }
@@ -759,6 +818,10 @@ struct PullRequestRecordView {
     updated_at: String,
     provider_created_at: Option<String>,
     provider_updated_at: Option<String>,
+    #[schema(value_type = Option<trigger_schema::LaunchFailure>)]
+    status_failure: Option<LaunchFailure>,
+    provider_request_id: Option<String>,
+    head_matches_launch: Option<bool>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -881,6 +944,9 @@ impl From<ContributionRecord> for ContributionRecordView {
 
 impl From<PullRequestRecord> for PullRequestRecordView {
     fn from(value: PullRequestRecord) -> Self {
+        let status_failure = value.status_sync.last_failure.clone();
+        let provider_request_id = value.status_sync.provider_request_id.clone();
+        let head_matches_launch = value.status_sync.head_matches_launch;
         Self {
             operation: enum_name(value.intent.operation),
             marker: value.intent.marker,
@@ -920,6 +986,9 @@ impl From<PullRequestRecord> for PullRequestRecordView {
             updated_at: value.updated_at,
             provider_created_at: value.provider_created_at,
             provider_updated_at: value.provider_updated_at,
+            status_failure,
+            provider_request_id,
+            head_matches_launch,
         }
     }
 }
@@ -1224,6 +1293,17 @@ enum LaunchEventKindView {
         #[schema(value_type = trigger_schema::ReachStatus)]
         reach: ReachStatus,
     },
+    PullRequestStatusChanged {
+        #[schema(value_type = trigger_schema::PullRequestState)]
+        state: String,
+        #[schema(value_type = trigger_schema::Mergeability)]
+        mergeability: String,
+        #[schema(value_type = trigger_schema::CheckSummaryState)]
+        checks: String,
+        #[schema(value_type = Option<trigger_schema::LaunchFailure>)]
+        failure: Option<LaunchFailure>,
+    },
+    PullRequestStatusRefreshRequested,
     ConfirmationRecorded {
         #[schema(value_type = trigger_schema::ConfirmationAction)]
         action: String,
@@ -1280,6 +1360,20 @@ impl From<LaunchEvent> for LaunchEventView {
                 LaunchEventKind::ReachChanged { reach } => {
                     LaunchEventKindView::ReachChanged { reach }
                 }
+                LaunchEventKind::PullRequestStatusChanged {
+                    state,
+                    mergeability,
+                    checks,
+                    failure,
+                } => LaunchEventKindView::PullRequestStatusChanged {
+                    state: enum_name(state),
+                    mergeability: enum_name(mergeability),
+                    checks: enum_name(checks),
+                    failure,
+                },
+                LaunchEventKind::PullRequestStatusRefreshRequested => {
+                    LaunchEventKindView::PullRequestStatusRefreshRequested
+                }
                 LaunchEventKind::ConfirmationRecorded { action } => {
                     LaunchEventKindView::ConfirmationRecorded {
                         action: enum_name(action),
@@ -1309,9 +1403,7 @@ fn now() -> String {
 }
 
 fn correlation_id(headers: &HeaderMap) -> String {
-    headers
-        .get("x-request-id")
-        .and_then(|value| value.to_str().ok())
+    super::request_id_from_headers(headers)
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
@@ -1436,7 +1528,10 @@ pub(crate) async fn load_public_preview(
     tag = "triggers",
     params(("Idempotency-Key" = String, Header)),
     request_body = CreateTriggerRequest,
-    responses((status = 201, description = "Trigger draft created", body = TriggerDraftView))
+    responses(
+        (status = 201, description = "Trigger draft created", body = TriggerDraftView),
+        (status = 422, description = "Trigger policy validation with safe remediation", body = super::ProblemDocument, content_type = "application/problem+json")
+    )
 )]
 async fn create_trigger(
     State(state): State<TriggersState>,
@@ -1534,7 +1629,10 @@ async fn read_trigger(
     tag = "triggers",
     params(("trigger_id" = String, Path), ("Idempotency-Key" = String, Header)),
     request_body = UpdateTriggerRequest,
-    responses((status = 200, description = "Trigger draft replaced", body = TriggerDraftView))
+    responses(
+        (status = 200, description = "Trigger draft replaced", body = TriggerDraftView),
+        (status = 422, description = "Trigger policy validation with safe remediation", body = super::ProblemDocument, content_type = "application/problem+json")
+    )
 )]
 async fn update_trigger(
     State(state): State<TriggersState>,
@@ -1586,7 +1684,10 @@ async fn update_trigger(
     tag = "triggers",
     params(("trigger_id" = String, Path), ("Idempotency-Key" = String, Header)),
     request_body = PublishTriggerRequest,
-    responses((status = 201, description = "Immutable Trigger revision published", body = TriggerRevisionView))
+    responses(
+        (status = 201, description = "Immutable Trigger revision published", body = TriggerRevisionView),
+        (status = 422, description = "Trigger policy validation with safe remediation", body = super::ProblemDocument, content_type = "application/problem+json")
+    )
 )]
 async fn publish_trigger(
     State(state): State<TriggersState>,
@@ -1994,6 +2095,7 @@ async fn create_new_launch(
     params(
         ("state" = Option<String>, Query),
         ("trigger_public_id" = Option<String>, Query),
+        ("session_id" = Option<String>, Query),
         ("limit" = Option<u32>, Query),
         ("cursor" = Option<String>, Query)
     ),
@@ -2011,6 +2113,7 @@ async fn list_launches(
         .list_launches(
             &caller.subject,
             public_id,
+            params.session_id.map(SessionId),
             params.state.into_iter().collect(),
             TriggerPageRequest::new(params.limit, params.cursor),
         )
@@ -2417,6 +2520,50 @@ async fn update_pull_request(
     .await
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/launches/{launch_id}/pull-request/refresh",
+    tag = "launches",
+    request_body = RefreshPullRequestStatusRequest,
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses((status = 202, description = "Read-only pull-request status refresh queued", body = LaunchView))
+)]
+async fn refresh_pull_request_status(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<RefreshPullRequestStatusRequest>, BodyProblem>,
+) -> Response {
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let claim = format!("trigger-launch-pull-request-refresh:{}", launch_id.0);
+    let (guard, body, _) =
+        match command(key, Arc::clone(&state.operations), &caller, claim, body).await {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        };
+    let result: Result<Response, RequestFailure> = async {
+        let body = body.map_err(RequestFailure::from)?;
+        let launch = state
+            .triggers
+            .request_pull_request_status_refresh(
+                &caller.subject,
+                &launch_id,
+                body.expected_revision,
+                now(),
+                correlation_id(&headers),
+            )
+            .await?;
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+    }
+    .await;
+    guard.finish(result).await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn confirm_pull_request(
     state: TriggersState,
@@ -2605,6 +2752,58 @@ async fn cancel_launch(
 
 #[utoipa::path(
     post,
+    path = "/api/v1/launches/{launch_id}/complete",
+    tag = "launches",
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = ConfirmLaunchRequest,
+    responses((status = 200, description = "Open pull-request handoff completed", body = LaunchView))
+)]
+async fn complete_launch(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
+) -> Response {
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-complete:{}", launch_id.0);
+    let (guard, body, confirmation_hash) =
+        match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        };
+    let result: Result<Response, RequestFailure> = async {
+        let body = body.map_err(RequestFailure::from)?;
+        let timestamp = now();
+        let launch = state
+            .triggers
+            .complete(
+                &caller.subject,
+                &launch_id,
+                body.expected_revision,
+                Confirmation {
+                    action: ConfirmationAction::Complete,
+                    subject: caller.subject.clone(),
+                    snapshot_digest: body.snapshot_digest,
+                    confirmed_at: timestamp.clone(),
+                    idempotency_key_hash: confirmation_hash,
+                },
+                timestamp,
+                correlation_id(&headers),
+            )
+            .await?;
+        Ok(Json(LaunchView::from(launch)).into_response())
+    }
+    .await;
+    guard.finish(result).await
+}
+
+#[utoipa::path(
+    post,
     path = "/api/v1/launches/{launch_id}/recover-initial-prompt",
     tag = "launches",
     params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
@@ -2708,6 +2907,66 @@ pub(crate) async fn load_launch_progress(
 /// persistence diagnostics.
 pub(crate) struct TriggerProblem(pub TriggerServiceError);
 
+struct TriggerValidationGuidance {
+    category: TriggerValidationCategory,
+    remediation: &'static str,
+}
+
+fn trigger_validation_guidance(field: Option<&str>) -> TriggerValidationGuidance {
+    let field = field.unwrap_or_default();
+    if matches!(
+        field,
+        "upstream.repository_id"
+            | "upstream.repository_node_id"
+            | "upstream.owner_node_id"
+            | "upstream.canonical_owner"
+            | "upstream.canonical_name"
+    ) {
+        return TriggerValidationGuidance {
+            category: TriggerValidationCategory::RepositoryIdentity,
+            remediation: "Resolve the repository again through the selected GitHub connection and submit the canonical numeric and node identities CMA returns.",
+        };
+    }
+    if field == "upstream" {
+        return TriggerValidationGuidance {
+            category: TriggerValidationCategory::RepositoryPolicy,
+            remediation: "Select a public source repository whose current policy permits forking, then resolve it again through the selected GitHub connection.",
+        };
+    }
+    if matches!(
+        field,
+        "upstream.default_branch"
+            | "upstream.selected_ref"
+            | "upstream.contribution_base_ref"
+            | "upstream.observed_source_sha"
+            | "contribution.branch_prefix"
+    ) {
+        return TriggerValidationGuidance {
+            category: TriggerValidationCategory::RepositoryRef,
+            remediation: "Resolve the repository again and select a safe existing ref and contribution base; contribution branches must use CMA's server-owned prefix.",
+        };
+    }
+    if field == "session.required_capabilities"
+        || field == "session.sandbox_profile"
+        || field.starts_with("repository_access.")
+    {
+        return TriggerValidationGuidance {
+            category: TriggerValidationCategory::ScopeCapability,
+            remediation: "Use the contributor connection route, the public-repository scope class, allowed public operation classes, and capabilities supported by the Trigger runtime.",
+        };
+    }
+    if field == "commercial_policy" || field.starts_with("commercial_policy.") {
+        return TriggerValidationGuidance {
+            category: TriggerValidationCategory::CommercialPolicy,
+            remediation: "Choose a supported billing mode and its matching deployment-owned pricing policy; sponsored policy is unavailable in the public MVP.",
+        };
+    }
+    TriggerValidationGuidance {
+        category: TriggerValidationCategory::TriggerPolicy,
+        remediation: "Review the named field against the CMA Trigger request contract and submit a newly validated request.",
+    }
+}
+
 impl From<TriggerServiceError> for TriggerProblem {
     fn from(value: TriggerServiceError) -> Self {
         Self(value)
@@ -2729,6 +2988,7 @@ impl IntoResponse for TriggerProblem {
         };
         let mut retry_after = None;
         let mut admission_remediation = None;
+        let mut validation_category = None;
         let (status, slug, code, detail, field): (StatusCode, &str, &str, String, Option<String>) =
             match error {
                 TriggerServiceError::CursorBeyondEnd { cursor, head } => {
@@ -2767,13 +3027,18 @@ impl IntoResponse for TriggerProblem {
                         error.field,
                     )
                 }
-                TriggerServiceError::Validation(error) => (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "invalid-trigger-request",
-                    "invalid_trigger_request",
-                    "The Trigger request violates the declared policy.".into(),
-                    error.field,
-                ),
+                TriggerServiceError::Validation(error) => {
+                    let guidance = trigger_validation_guidance(error.field.as_deref());
+                    validation_category = Some(guidance.category);
+                    admission_remediation = Some(guidance.remediation);
+                    (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "invalid-trigger-request",
+                        "invalid_trigger_request",
+                        "The Trigger request violates the declared policy.".into(),
+                        error.field,
+                    )
+                }
                 TriggerServiceError::Authority(error) => {
                     use layer2_core::TriggerAuthorityError as Authority;
                     let (status, slug, code) = match &error {
@@ -2957,6 +3222,12 @@ impl IntoResponse for TriggerProblem {
         if let (Some(remediation), Some(object)) = (admission_remediation, body.as_object_mut()) {
             object.insert("remediation".into(), remediation.into());
         }
+        if let (Some(category), Some(object)) = (validation_category, body.as_object_mut()) {
+            object.insert(
+                "validation_category".into(),
+                serde_json::to_value(category).expect("a validation category is serializable"),
+            );
+        }
         if let (Some(capability), Some(object)) = (admission_capability, body.as_object_mut()) {
             object.insert("capability".into(), capability.into());
         }
@@ -2990,7 +3261,7 @@ fn closed_contract_vocabulary() {
     let _ = [ScopeClass::PublicRepository, ScopeClass::Workflow];
     let _ = [
         EditableField::TaskInput,
-        EditableField::BranchSuffix,
+        EditableField::WorkLabel,
         EditableField::ResourceSize,
         EditableField::Timeout,
         EditableField::OptionalChecks,

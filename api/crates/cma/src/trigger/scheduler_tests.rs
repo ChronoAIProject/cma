@@ -185,6 +185,83 @@ async fn a_repeated_cursor_is_detected_and_cannot_loop_forever() {
     assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
 }
 
+#[test]
+fn scheduler_metric_dimensions_and_alert_candidates_are_closed_and_bounded() {
+    assert_eq!(
+        [
+            SchedulerLane::Effects,
+            SchedulerLane::Capabilities,
+            SchedulerLane::Workspaces,
+            SchedulerLane::Cleanup,
+        ]
+        .map(SchedulerLane::code),
+        ["effects", "capabilities", "workspaces", "cleanup"]
+    );
+    assert_eq!(
+        [
+            CandidateOutcome::NotAcquired,
+            CandidateOutcome::Paused,
+            CandidateOutcome::NoWork,
+            CandidateOutcome::Completed,
+            CandidateOutcome::Deferred,
+            CandidateOutcome::Failed,
+        ]
+        .map(CandidateOutcome::code),
+        [
+            "not_acquired",
+            "paused",
+            "no_work",
+            "completed",
+            "deferred",
+            "failed",
+        ]
+    );
+
+    let failed = PassStats {
+        candidates: 4,
+        failed: 1,
+        errors: 1,
+        ..PassStats::default()
+    };
+    assert_eq!(
+        pass_alert_candidates(SchedulerLane::Effects, failed),
+        vec![TriggerAlert::SchedulerHealth]
+    );
+    assert_eq!(
+        pass_alert_candidates(SchedulerLane::Capabilities, failed),
+        vec![TriggerAlert::SchedulerHealth, TriggerAlert::CapabilityBound,]
+    );
+    assert_eq!(
+        pass_alert_candidates(SchedulerLane::Cleanup, failed),
+        vec![TriggerAlert::SchedulerHealth, TriggerAlert::CleanupDebt,]
+    );
+}
+
+#[test]
+fn lease_contention_emits_a_stuck_launch_candidate_without_treating_empty_work_as_stuck() {
+    let contended = PassStats {
+        candidates: 5,
+        not_acquired: 3,
+        no_work: 2,
+        ..PassStats::default()
+    };
+    assert_eq!(
+        pass_alert_candidates(SchedulerLane::Workspaces, contended),
+        vec![TriggerAlert::StuckLaunch]
+    );
+    assert!(pass_alert_candidates(SchedulerLane::Workspaces, PassStats::default()).is_empty());
+    assert!(pass_alert_candidates(
+        SchedulerLane::Workspaces,
+        PassStats {
+            candidates: 5,
+            completed: 1,
+            not_acquired: 4,
+            ..PassStats::default()
+        }
+    )
+    .is_empty());
+}
+
 struct BlockingBackend {
     candidates: usize,
     active: AtomicUsize,

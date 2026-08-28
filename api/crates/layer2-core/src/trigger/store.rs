@@ -7,12 +7,12 @@ use super::{
     TriggerRevision, TriggerRevisionId, WorkerLease, WorkspaceCheckpoint,
     WorkspaceCheckpointIntent, WorkspaceManifest,
 };
-use crate::SubjectId;
+use crate::{SessionId, SubjectId};
 
 pub const DEFAULT_TRIGGER_PAGE_SIZE: u32 = 50;
 pub const MAX_TRIGGER_PAGE_SIZE: u32 = 200;
 
-pub const TRIGGER_WORKER_STATES: [LaunchState; 11] = [
+pub const TRIGGER_WORKER_STATES: [LaunchState; 12] = [
     LaunchState::Preflight,
     LaunchState::ForkPending,
     LaunchState::ForkReady,
@@ -23,6 +23,7 @@ pub const TRIGGER_WORKER_STATES: [LaunchState; 11] = [
     LaunchState::PromptPending,
     LaunchState::Contributing,
     LaunchState::PrPending,
+    LaunchState::PrOpen,
     LaunchState::FailedRetryable,
 ];
 
@@ -260,6 +261,7 @@ pub trait TriggerStore: Send + Sync {
 pub struct LaunchQuery {
     pub owner: Option<SubjectId>,
     pub public_id: Option<PublicTriggerId>,
+    pub session_id: Option<SessionId>,
     pub states: Vec<LaunchState>,
     pub updated_before: Option<String>,
     pub page: TriggerPageRequest,
@@ -335,14 +337,23 @@ pub trait LaunchStore: Send + Sync {
         updated_before: Option<String>,
         page: &TriggerPageRequest,
     ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
-        self.list_launches(&LaunchQuery {
-            owner: None,
-            public_id: None,
-            states: TRIGGER_WORKER_STATES.to_vec(),
-            updated_before,
-            page: page.clone(),
-        })
-        .await
+        let mut candidates = self
+            .list_launches(&LaunchQuery {
+                owner: None,
+                public_id: None,
+                session_id: None,
+                states: TRIGGER_WORKER_STATES.to_vec(),
+                updated_before: updated_before.clone(),
+                page: page.clone(),
+            })
+            .await?;
+        if let Some(boundary) = updated_before.as_deref() {
+            candidates.items.retain(|launch| {
+                launch.state != LaunchState::PrOpen
+                    || launch.pull_request_status_due(boundary).unwrap_or(true)
+            });
+        }
+        Ok(candidates)
     }
 
     /// Launches with Reach work or terminal session-key retirement, including
@@ -355,13 +366,15 @@ pub trait LaunchStore: Send + Sync {
             .list_launches(&LaunchQuery {
                 owner: None,
                 public_id: None,
+                session_id: None,
                 states: TRIGGER_CAPABILITY_STATES.to_vec(),
                 updated_before: None,
                 page: page.clone(),
             })
             .await?;
         candidates.items.retain(|launch| {
-            launch.session_credential_requires_retirement()
+            launch.cancelled_session_requires_settlement()
+                || launch.session_credential_requires_retirement()
                 || launch
                     .reach
                     .as_ref()
@@ -380,6 +393,7 @@ pub trait LaunchStore: Send + Sync {
             .list_launches(&LaunchQuery {
                 owner: None,
                 public_id: None,
+                session_id: None,
                 states: vec![
                     LaunchState::Completed,
                     LaunchState::FailedTerminal,
@@ -430,6 +444,7 @@ pub trait LaunchStore: Send + Sync {
             .list_launches(&LaunchQuery {
                 owner: None,
                 public_id: None,
+                session_id: None,
                 states: TRIGGER_WORKSPACE_STATES.to_vec(),
                 updated_before: None,
                 page: page.clone(),

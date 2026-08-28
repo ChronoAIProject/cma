@@ -80,6 +80,7 @@ struct ScriptedExecutor {
     renewal_calls: Mutex<Vec<(u64, u64)>>,
     revocation_calls: AtomicUsize,
     retirement_calls: AtomicUsize,
+    retirement_saw_cancelled_settlement: AtomicUsize,
 }
 
 impl ScriptedExecutor {
@@ -96,6 +97,7 @@ impl ScriptedExecutor {
             renewal_calls: Mutex::new(Vec::new()),
             revocation_calls: AtomicUsize::new(0),
             retirement_calls: AtomicUsize::new(0),
+            retirement_saw_cancelled_settlement: AtomicUsize::new(0),
         }
     }
 }
@@ -214,6 +216,16 @@ impl CapabilityExecutor for ScriptedExecutor {
         _fence: u64,
     ) -> Result<SessionId, LaunchFailure> {
         self.retirement_calls.fetch_add(1, Ordering::SeqCst);
+        if launch.state == LaunchState::Cancelled
+            && launch.delivery.as_ref().is_some_and(|delivery| {
+                delivery.state == layer2_core::PromptDeliveryState::Failed
+                    && delivery.attempt == 0
+                    && delivery.dispatch_fence_sequence.is_none()
+            })
+        {
+            self.retirement_saw_cancelled_settlement
+                .fetch_add(1, Ordering::SeqCst);
+        }
         Ok(layer2_core::trigger_session_id(&launch.id).unwrap())
     }
 }
@@ -839,7 +851,9 @@ async fn terminal_reachless_launch_retires_exact_custody_before_and_after_sessio
     for retain_session_link in [false, true] {
         let mut launch = launch_with_active_reach(epoch(NOW) + 60);
         launch.state = LaunchState::Cancelled;
+        launch.terminal_at = Some(NOW.into());
         launch.reach = None;
+        launch.delivery = None;
         if !retain_session_link {
             launch.session = None;
         }
@@ -873,6 +887,13 @@ async fn terminal_reachless_launch_retires_exact_custody_before_and_after_sessio
         );
         assert_eq!(retirement.settled_at, ONE_SECOND_LATER);
         assert_eq!(executor.retirement_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            executor
+                .retirement_saw_cancelled_settlement
+                .load(Ordering::SeqCst),
+            usize::from(retain_session_link),
+            "credential retirement starts only after a linked cancelled session is settled"
+        );
 
         let candidates = service
             .capability_candidates(layer2_core::TriggerPageRequest::default())
@@ -899,6 +920,75 @@ async fn terminal_reachless_launch_retires_exact_custody_before_and_after_sessio
         );
         assert_eq!(executor.retirement_calls.load(Ordering::SeqCst), 1);
     }
+}
+
+#[tokio::test]
+async fn restarted_capability_worker_settles_cancelled_session_without_browser_replay() {
+    let mut launch = launch_with_active_reach(epoch(NOW) + 60);
+    launch.state = LaunchState::Cancelled;
+    launch.terminal_at = Some(NOW.into());
+    launch.reach = None;
+    launch.delivery = None;
+    launch.session_credential_retirement = Some(layer2_core::SessionCredentialRetirement {
+        session_id: layer2_core::trigger_session_id(&launch.id).unwrap(),
+        settled_at: NOW.into(),
+    });
+    let service = service_for_launch(launch.clone());
+    let before = service
+        .capability_candidates(layer2_core::TriggerPageRequest::new(1, None))
+        .await
+        .unwrap();
+    assert_eq!(
+        before.items.iter().map(|item| &item.id).collect::<Vec<_>>(),
+        vec![&launch.id],
+        "session-settlement debt remains visible after credential retirement"
+    );
+
+    let executor = Arc::new(ScriptedExecutor::new(Vec::new(), Vec::new(), Vec::new()));
+    let worker = test_worker(
+        service.clone(),
+        executor.clone(),
+        "restart-cancellation-worker",
+        &[ONE_SECOND_LATER],
+    );
+    assert_eq!(
+        worker
+            .run_once(
+                &launch.id,
+                launch.revision_number,
+                "restart-cancellation-settlement",
+            )
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::NoWork
+    );
+
+    let current = stored(&service, &launch).await;
+    let delivery = current
+        .delivery
+        .as_ref()
+        .expect("the restarted worker projects durable session settlement");
+    assert_eq!(delivery.state, layer2_core::PromptDeliveryState::Failed);
+    assert_eq!(delivery.attempt, 0);
+    assert_eq!(delivery.dispatch_fence_sequence, None);
+    assert_eq!(executor.retirement_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        current
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                layer2_core::LaunchEventKind::DeliveryChanged { .. }
+            ))
+            .count(),
+        1
+    );
+
+    let after = service
+        .capability_candidates(layer2_core::TriggerPageRequest::new(1, None))
+        .await
+        .unwrap();
+    assert!(after.items.is_empty());
 }
 
 #[tokio::test]

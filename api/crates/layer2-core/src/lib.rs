@@ -138,6 +138,7 @@ mod transcript;
 #[path = "transcript_tests.rs"]
 mod transcript_tests;
 pub mod trigger;
+mod trigger_cancellation;
 mod trigger_prompt;
 mod workspace_checkpoint;
 pub use workspace_checkpoint::{TriggerLifecycleCheckpointOutcome, WorkspaceWriterHoldReceipt};

@@ -73,12 +73,8 @@
     },
     "repository_access": {
       "credential_route": "contributor_connection",
-      "required_scope_classes": [
-        "public_repository"
-      ],
-      "allowed_operation_classes": [
-        "repository_read"
-      ],
+      "required_scope_classes": ["public_repository"],
+      "allowed_operation_classes": ["repository_read"],
       "workflow_change_policy": "refuse"
     },
     "setup": {
@@ -98,9 +94,7 @@
       "policy_reference": "public-zero-cost-v1"
     },
     "override_policy": {
-      "editable_fields": [
-        "task_input"
-      ],
+      "editable_fields": ["task_input"],
       "optional_checks": []
     },
     "public_projection": {
@@ -116,7 +110,7 @@
   },
   "effective": {
     "rendered_prompt": "PRIVATE_TRIGGER_PROMPT the selected issue",
-    "branch_suffix": "work",
+    "work_label": "work",
     "permission": "autonomous",
     "resource_size": {
       "cpu_millis": 500,
@@ -168,9 +162,7 @@
     "account_node_id": "U_contributor",
     "account_login": "contributor",
     "avatar_url": null,
-    "granted_scopes": [
-      "public_repo"
-    ],
+    "granted_scopes": ["public_repo"],
     "consent_observed_at": "2026-08-26T12:00:00Z"
   },
   "workflow_paths": [],

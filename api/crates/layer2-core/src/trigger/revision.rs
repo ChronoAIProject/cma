@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use super::ConnectionSnapshot;
 use crate::{
-    AgentConfiguration, CredentialMode, KernelId, PermissionMode, SessionMode, SessionSize,
-    SubjectId,
+    format_usd, AgentConfiguration, CredentialMode, KernelId, PermissionMode, SessionMode,
+    SessionSize, SubjectId, CURRENCY,
 };
 
 pub const TRIGGER_SCHEMA_VERSION: u32 = 1;
@@ -424,7 +424,7 @@ pub struct CommercialPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum EditableField {
     TaskInput,
-    BranchSuffix,
+    WorkLabel,
     ResourceSize,
     Timeout,
     OptionalChecks,
@@ -953,7 +953,47 @@ pub struct TriggerPreview {
     pub timeout_ceiling_seconds: u32,
     pub billing_mode: BillingMode,
     pub pricing_policy_reference: String,
+    pub estimated_cost: TriggerPreviewCost,
     pub revision_digest: String,
+}
+
+/// Public-safe cost information for the immutable Trigger defaults.
+///
+/// The variant is part of the contract: an absent deployment quote must never
+/// be rendered as zero, while the deployment-owned zero-cost policy is exact
+/// and does not depend on a mutable rate card. Contributor amounts are only a
+/// preview; authenticated Launch review recalculates and pins the final quote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TriggerPreviewCost {
+    ExactZero {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+    },
+    ContributorEstimate {
+        currency: String,
+        amount_micros: u64,
+        display: String,
+        quoted_at: String,
+    },
+    QuoteUnavailable,
+}
+
+impl TriggerPreviewCost {
+    fn from_immutable_policy(policy: &CommercialPolicy) -> Self {
+        if policy.billing_mode == BillingMode::ZeroCost
+            && policy.policy_reference == CMA_TRIGGER_ZERO_COST_POLICY_V1
+        {
+            Self::ExactZero {
+                currency: CURRENCY.into(),
+                amount_micros: 0,
+                display: format_usd(0),
+            }
+        } else {
+            Self::QuoteUnavailable
+        }
+    }
 }
 
 impl From<&TriggerRevision> for TriggerPreview {
@@ -977,6 +1017,7 @@ impl From<&TriggerRevision> for TriggerPreview {
             timeout_ceiling_seconds: content.session.timeout_ceiling_seconds,
             billing_mode: content.commercial_policy.billing_mode,
             pricing_policy_reference: content.commercial_policy.policy_reference.clone(),
+            estimated_cost: TriggerPreviewCost::from_immutable_policy(&content.commercial_policy),
             revision_digest: revision.digest.clone(),
         }
     }
