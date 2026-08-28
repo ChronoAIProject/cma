@@ -1,0 +1,131 @@
+{
+  "launch_id": "44444444-4444-4444-8444-444444444444",
+  "revision_number": 0,
+  "state": "pr_open",
+  "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "workflow_paths": [],
+  "artifact": {
+    "id": "66666666-6666-4666-8666-666666666666",
+    "checkpoint_id": "55555555-5555-4555-8555-555555555555",
+    "baseline_digest": "cfe8e783afa26b3ec3b59dfaf6236ef51cb85a5c37fe49639e4f9ea86e7aa532",
+    "checkpoint_digest": "16f3dfe2d3af81272728e7c1e02abdfdd5800b5fcea1b890e599d6aee5645487",
+    "expected_branch_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observed_branch_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "changed_file_limit": 1000,
+    "total_changed_files": 1,
+    "files": [
+      {
+        "path": "README.md",
+        "change": "added",
+        "binary": false,
+        "old_mode": null,
+        "new_mode": 33188,
+        "old_sha256": null,
+        "new_sha256": "d08cdcc7af420d6fce393f84c6e27a7a9e2c3aa4bdc32c1c1e4f775e7acbf9f6",
+        "old_bytes": 0,
+        "new_bytes": 16,
+        "patch": "--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n",
+        "patch_complete": true
+      }
+    ],
+    "changed_bytes": 16,
+    "digest": "ee8e1de061f0be50c3ce399b8aee6a3908fbc0e3650414dc3bb8d8ea71f00e95",
+    "object_bytes": 25,
+    "author": {
+      "name": "contributor",
+      "email": "21+contributor@users.noreply.github.com"
+    },
+    "committer": {
+      "name": "CMA",
+      "email": "cma@chrono.ai"
+    },
+    "workflow_paths": [],
+    "validation": "valid",
+    "checks": [],
+    "created_at": "2026-08-26T12:00:00Z",
+    "delete_after": "2026-09-26T12:00:00Z",
+    "download_url": "/api/v1/launches/44444444-4444-4444-8444-444444444444/diff-artifacts/66666666-6666-4666-8666-666666666666/download"
+  },
+  "contribution": {
+    "id": "77777777-7777-4777-8777-777777777777",
+    "diff_artifact_id": "66666666-6666-4666-8666-666666666666",
+    "revision_digest": "e49c49f8e2459f64d9f594ec060c89254d7dc03f07b468db5f51bd0f87603086",
+    "baseline_digest": "cfe8e783afa26b3ec3b59dfaf6236ef51cb85a5c37fe49639e4f9ea86e7aa532",
+    "checkpoint_digest": "16f3dfe2d3af81272728e7c1e02abdfdd5800b5fcea1b890e599d6aee5645487",
+    "diff_digest": "ee8e1de061f0be50c3ce399b8aee6a3908fbc0e3650414dc3bb8d8ea71f00e95",
+    "branch_name": "cma/44444444-4444-4444-8444-444444444444",
+    "state": "published",
+    "expected_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base_tree_id": "cccccccccccccccccccccccccccccccccccccccc",
+    "tree_id": "dddddddddddddddddddddddddddddddddddddddd",
+    "commit_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "resulting_head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "object_ids": [
+      "dddddddddddddddddddddddddddddddddddddddd",
+      "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    ],
+    "author": {
+      "name": "contributor",
+      "email": "21+contributor@users.noreply.github.com"
+    },
+    "committer": {
+      "name": "CMA",
+      "email": "cma@chrono.ai"
+    },
+    "confirmation_snapshot_digest": "ee8e1de061f0be50c3ce399b8aee6a3908fbc0e3650414dc3bb8d8ea71f00e95",
+    "confirmed_at": "2026-08-26T12:00:00Z",
+    "created_at": "2026-08-26T12:00:00Z",
+    "updated_at": "2026-08-26T12:00:00Z"
+  },
+  "pull_request": {
+    "operation": "open",
+    "marker": "<!-- cma-trigger:launch:44444444-4444-4444-8444-444444444444:v1 -->",
+    "upstream_repository_id": 10,
+    "upstream_repository_node_id": "R_upstream",
+    "fork_repository_id": 11,
+    "fork_repository_node_id": "R_contributor_fork",
+    "base_ref": "main",
+    "head_owner": "contributor",
+    "head_branch": "cma/44444444-4444-4444-8444-444444444444",
+    "head_ref": "contributor:cma/44444444-4444-4444-8444-444444444444",
+    "expected_base_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_head_revision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "previous_head_revision": null,
+    "target_number": null,
+    "update_metadata": false,
+    "expected_previous_title": null,
+    "expected_previous_body_digest": null,
+    "title": "CMA contribution",
+    "body": "Created by CMA\n\nCMA Launch: `44444444-4444-4444-8444-444444444444`\nTrigger revision: `e49c49f8e2459f64d9f594ec060c89254d7dc03f07b468db5f51bd0f87603086`\nReviewed commit: `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`",
+    "body_digest": "7c898f21d10c72c30fd60a68d34e5048af2a1711b0b213d795623ceb6877125c",
+    "intent_digest": "c86fd2f58464a0e3d837bf8f164f5981d72af0f298bea79f7ae31f69bfad24fe",
+    "provider_id": 9001,
+    "provider_node_id": "PR_fixture",
+    "number": 17,
+    "canonical_url": "https://github.com/upstream-owner/project/pull/17",
+    "state": "open",
+    "base_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_revision": "ffffffffffffffffffffffffffffffffffffffff",
+    "observed_title": "CMA contribution",
+    "observed_body_digest": "7c898f21d10c72c30fd60a68d34e5048af2a1711b0b213d795623ceb6877125c",
+    "mergeability": "conflicting",
+    "checks": "failing",
+    "confirmation_snapshot_digest": "c86fd2f58464a0e3d837bf8f164f5981d72af0f298bea79f7ae31f69bfad24fe",
+    "confirmed_at": "2026-08-26T12:00:00Z",
+    "created_at": "2026-08-26T12:00:00Z",
+    "updated_at": "2026-08-26T12:00:00Z",
+    "provider_created_at": "2026-08-26T12:00:00Z",
+    "provider_updated_at": "2026-08-26T12:00:00Z",
+    "status_failure": {
+      "class": "retryable_transient",
+      "code": "github_status_unavailable",
+      "detail": "GitHub status could not be refreshed safely.",
+      "remediation": "CMA will retry the read-only status observation.",
+      "correlation_id": "fixture-pr-status",
+      "retry_at": "2099-08-26T12:01:00Z",
+      "observed_at": "2026-08-26T12:00:00Z"
+    },
+    "provider_request_id": "github-request-fixture",
+    "head_matches_launch": false
+  }
+}

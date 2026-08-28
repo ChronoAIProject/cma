@@ -11,6 +11,18 @@ use utoipa::ToSchema;
 
 use super::PROBLEM_BASE;
 
+/// Stable, safe classes used to choose actionable Trigger validation help.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TriggerValidationCategory {
+    RepositoryIdentity,
+    RepositoryPolicy,
+    RepositoryRef,
+    ScopeCapability,
+    CommercialPolicy,
+    TriggerPolicy,
+}
+
 /// RFC 9457 problem details returned by every REST refusal.
 ///
 /// The last fields are typed extensions used by particular domain refusals.
@@ -26,6 +38,11 @@ pub struct ProblemDocument {
     code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    validation_category: Option<TriggerValidationCategory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remediation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +192,9 @@ impl IntoResponse for Problem {
             // even though both are transient and therefore both use 503.
             CoreError::RuntimeRefused(_) => (StatusCode::SERVICE_UNAVAILABLE, "runtime-refused"),
             CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
+            CoreError::InitialPromptReserved(_) => {
+                (StatusCode::CONFLICT, "initial-prompt-reserved")
+            }
             // The route exists and the request is well formed; this session
             // simply cannot honour it, so 404 would be actively misleading.
             CoreError::CapabilityUnsupported(_) => {
@@ -286,6 +306,8 @@ pub(crate) fn problem_document(
         detail: detail.to_string(),
         code: code.to_string(),
         field: None,
+        validation_category: None,
+        remediation: None,
         path: None,
         capability: None,
         dimension: None,
@@ -364,6 +386,7 @@ mod tests {
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
             CoreError::InvalidState,
+            CoreError::InitialPromptReserved(layer2_core::PromptDeliveryState::DispatchFenced),
             CoreError::CapabilityUnsupported("terminal".into()),
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("service".into()),
@@ -394,6 +417,7 @@ mod tests {
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
                 | CoreError::InvalidState
+                | CoreError::InitialPromptReserved(_)
                 | CoreError::CapabilityUnsupported(_)
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)

@@ -453,6 +453,9 @@ impl SessionService {
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
+        if let Some(state) = record.reserved_initial_prompt_state() {
+            return Err(CoreError::InitialPromptReserved(state));
+        }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
@@ -643,6 +646,16 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
     ) -> Result<(), CoreError> {
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if let Some(state) = record.reserved_initial_prompt_state() {
+            return Err(CoreError::InitialPromptReserved(state));
+        }
         // Authorization and any readoption happen before durable interaction
         // acquisition. Re-read afterwards so the lease names the exact record
         // boundary produced by that work rather than its stale input snapshot.
@@ -651,6 +664,9 @@ impl SessionService {
         let record = self.record(id).await?;
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
+        }
+        if let Some(state) = record.reserved_initial_prompt_state() {
+            return Err(CoreError::InitialPromptReserved(state));
         }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
@@ -739,12 +755,26 @@ impl SessionService {
             return Err(CoreError::InvalidState);
         }
 
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if let Some(state) = record.reserved_initial_prompt_state() {
+            return Err(CoreError::InitialPromptReserved(state));
+        }
+
         // Readoption may itself open a runtime update stream. Complete it before
         // taking the folder's order gate, then re-read every live authority
         // under that gate rather than using the sender snapshot returned here.
         self.conversation_input(caller, id, Capability::Conversation)
             .await?;
         let durable = self.record(id).await?;
+        if let Some(state) = durable.reserved_initial_prompt_state() {
+            return Err(CoreError::InitialPromptReserved(state));
+        }
         let service = Arc::clone(self);
         let id = id.clone();
         let owner = caller.subject.clone();

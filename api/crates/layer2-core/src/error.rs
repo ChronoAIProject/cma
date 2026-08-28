@@ -110,6 +110,10 @@ pub enum CoreError {
     #[error("invalid state for operation")]
     InvalidState,
 
+    /// Ordinary owner input is fenced by a Trigger's initial prompt.
+    #[error("the initial Trigger prompt currently owns session input ({0:?})")]
+    InitialPromptReserved(crate::trigger::PromptDeliveryState),
+
     /// The session's runtime does not provide something the request needs.
     ///
     /// Carries the ability's own name, because "not supported" without saying
@@ -222,6 +226,7 @@ impl CoreError {
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::RuntimeRefused(_) => "runtime_refused",
             Self::InvalidState => "invalid_state",
+            Self::InitialPromptReserved(_) => "initial_prompt_reserved",
             Self::CapabilityUnsupported(_) => "capability_unsupported",
             Self::InvalidRequest(_) => "invalid_request",
             Self::ServiceNotGranted(_) => "service_not_granted",
@@ -294,6 +299,7 @@ mod tests {
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
             CoreError::InvalidState,
+            CoreError::InitialPromptReserved(crate::PromptDeliveryState::DispatchFenced),
             CoreError::CapabilityUnsupported("terminal".into()),
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("api-github".into()),
@@ -327,6 +333,7 @@ mod tests {
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
                 | CoreError::InvalidState
+                | CoreError::InitialPromptReserved(_)
                 | CoreError::CapabilityUnsupported(_)
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)

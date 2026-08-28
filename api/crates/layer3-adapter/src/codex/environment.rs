@@ -25,6 +25,8 @@ use crate::RuntimeSpec;
 /// kernel at all.
 pub(super) const SESSIONS_DIR: &str = ".codex/sessions";
 
+const TRIGGER_GATEWAY_PROBE_COMMAND: &str = r#"["codex","sandbox","--permission-profile","cma-trigger","--","/usr/local/bin/layer4-runtime","runtime-gateway-probe-helper-v1"]"#;
+
 /// How sandboxes for this kernel are configured.
 #[derive(Debug, Clone)]
 pub struct CodexSandboxSpec {
@@ -145,6 +147,13 @@ impl super::CodexAdapter {
             ),
             super::config::placeholder(),
         ]);
+        if spec.runtime_policy_required {
+            controlled.insert("INITIAL_AGENT_MODE".to_string(), "cma-trigger".to_string());
+            controlled.insert(
+                "CHRONO_RUNTIME_GATEWAY_PROBE_COMMAND".to_string(),
+                TRIGGER_GATEWAY_PROBE_COMMAND.to_string(),
+            );
+        }
         // The session's own variables, added last and refused where they
         // collide. `apply_to` is what enforces that: the names above are how
         // the runtime finds its upstream, its proxy and its credential, so a

@@ -29,6 +29,8 @@
 //! the point it happened and its owner can be shown a boundary, rather than
 //! left to puzzle over a conversation that skips.
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt as _;
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -123,6 +125,10 @@ pub struct Bridge {
     /// it is the one where somebody is waiting for an answer that is never
     /// coming — so it is the case that must not be missed.
     ended: tokio::sync::watch::Sender<bool>,
+    /// Dedicated process session containing the bridge and supported
+    /// descendants. The root remains checkpoint authority after the primary
+    /// exits because a descendant may still hold the workspace open.
+    writer_session_root: Option<i32>,
 }
 
 impl Bridge {
@@ -136,12 +142,26 @@ impl Bridge {
         let program = parts
             .next()
             .ok_or_else(|| std::io::Error::other("no bridge command configured"))?;
-        let mut child = tokio::process::Command::new(program)
+        let mut process = tokio::process::Command::new(program);
+        process
             .args(parts)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        unsafe {
+            process.as_std_mut().pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = process.spawn()?;
+        #[cfg(unix)]
+        let writer_session_root = child.id().and_then(|pid| i32::try_from(pid).ok());
+        #[cfg(not(unix))]
+        let writer_session_root = None;
 
         let stdin = child
             .stdin
@@ -172,6 +192,7 @@ impl Bridge {
             output,
             pending,
             ended,
+            writer_session_root,
         })
     }
 
@@ -201,6 +222,10 @@ impl Bridge {
     /// a conversation that accepted prompts and answered none.
     pub fn is_ended(&self) -> bool {
         *self.ended.subscribe().borrow()
+    }
+
+    pub(crate) fn writer_session_root(&self) -> Option<i32> {
+        self.writer_session_root
     }
 
     /// Resolves when the bridge process has ended, including when it already

@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use json_patch::Patch;
 use layer2_core::{
-    session::ProvisioningStage, Event, EventKind, LiveFrame, ResourceReading, SessionId,
-    SessionMode, SessionStatus, StopReason,
+    session::ProvisioningStage, Event, EventKind, LiveFrame, PromptDeliveryState, ResourceReading,
+    SessionId, SessionMode, SessionStatus, StopReason,
 };
 use serde_json::{json, Value};
 
@@ -39,6 +39,9 @@ fn every_durable_kind() -> Vec<EventKind> {
         },
         EventKind::TurnStarted,
         EventKind::TurnCompleted,
+        EventKind::InitialPromptDeliveryChanged {
+            state: PromptDeliveryState::Completed,
+        },
         EventKind::ConversationOpened {
             conversation_id: "conversation_state_contract".into(),
         },
@@ -138,6 +141,7 @@ fn every_durable_kind() -> Vec<EventKind> {
             | EventKind::StatusChanged { .. }
             | EventKind::TurnStarted
             | EventKind::TurnCompleted
+            | EventKind::InitialPromptDeliveryChanged { .. }
             | EventKind::ConversationOpened { .. }
             | EventKind::MessageCommitted { .. }
             | EventKind::OwnerMessage { .. }

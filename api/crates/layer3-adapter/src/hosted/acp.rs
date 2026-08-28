@@ -256,6 +256,14 @@ impl Bridge {
                                         .settle_credential(&control, &operation_id, installed)
                                         .await;
                                 }
+                            } else if let Some((operation_id, answer)) =
+                                super::link::runtime_policy_answer(&text)
+                            {
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle
+                                        .settle_runtime_policy(&control, &operation_id, answer)
+                                        .await;
+                                }
                             } else if let Some(accepted) = super::link::switch_answer(&text) {
                                 if let Some(control) = control_for_reader.upgrade() {
                                     lifecycle.settle(&control, accepted).await;

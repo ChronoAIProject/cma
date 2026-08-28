@@ -33,7 +33,7 @@ use crate::coordination::{
 };
 use crate::event::{ConfigOption, Event, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
-use crate::log::append_conversation;
+use crate::log::{append_conversation, append_conversation_with_prompt_evidence};
 use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 use crate::store::StoreError;
@@ -73,6 +73,16 @@ impl FoldedUpdate {
         if let Some((sender, frame)) = self.live {
             let _ = sender.send(frame);
         }
+    }
+}
+
+fn prompt_evidence(update: ConversationUpdate) -> (ConversationUpdate, bool) {
+    match update {
+        ConversationUpdate::WithoutPromptEvidence(update) => {
+            let (update, _) = prompt_evidence(*update);
+            (update, false)
+        }
+        update => (update, true),
     }
 }
 
@@ -345,13 +355,22 @@ impl SessionService {
         link: ConversationLinkId,
         update: ConversationUpdate,
     ) -> FoldedUpdate {
+        let (update, prompt_evidence) = prompt_evidence(update);
         let update = match update {
+            ConversationUpdate::WithoutPromptEvidence(_) => {
+                unreachable!("prompt-evidence wrappers are removed before folding")
+            }
             ConversationUpdate::Said(update) => update,
             ConversationUpdate::Asked(request) => {
-                return FoldedUpdate::quiet(self.fold_request(id, link, request).await);
+                return FoldedUpdate::quiet(
+                    self.fold_request(id, link, request, prompt_evidence).await,
+                );
             }
             ConversationUpdate::TurnEnded(completed) => {
-                return FoldedUpdate::quiet(self.fold_completion(id, link, completed).await);
+                return FoldedUpdate::quiet(
+                    self.fold_completion(id, link, completed, prompt_evidence)
+                        .await,
+                );
             }
             ConversationUpdate::SignInRequired { url, code, message } => {
                 return FoldedUpdate::quiet(self.fold_sign_in(id, link, url, code, message).await);
@@ -360,7 +379,10 @@ impl SessionService {
                 message,
                 capability,
             } => {
-                return FoldedUpdate::quiet(self.fold_failure(id, link, message, capability).await);
+                return FoldedUpdate::quiet(
+                    self.fold_failure(id, link, message, capability, prompt_evidence)
+                        .await,
+                );
             }
             ConversationUpdate::Lost { frames } => {
                 // Recorded where it happened, in the same spirit as a
@@ -422,21 +444,31 @@ impl SessionService {
                 };
                 match &mut entry.assembling {
                     // The same message, still being typed.
-                    Some((assembling, so_far)) if *assembling == message_id => {
-                        so_far.push_str(&text)
+                    Some((assembling, so_far, correlated)) if *assembling == message_id => {
+                        so_far.push_str(&text);
+                        // One uncorrelated chunk makes the assembled message an
+                        // unsafe acknowledgement even if later chunks arrived
+                        // after a prompt began.
+                        *correlated &= prompt_evidence;
                     }
                     // A different one. The previous is finished by definition:
                     // a runtime that has started saying something else is not
                     // going back to what it was saying.
                     Some(_) => {
                         finished = entry.assembling.take();
-                        entry.assembling = Some((message_id, text.clone()));
+                        entry.assembling = Some((message_id, text.clone(), prompt_evidence));
                     }
-                    None => entry.assembling = Some((message_id, text.clone())),
+                    None => {
+                        entry.assembling = Some((message_id, text.clone(), prompt_evidence));
+                    }
                 }
                 let changed = finished.is_some();
-                if let Some((_, content)) = finished {
-                    append_conversation(entry, EventKind::MessageCommitted { content });
+                if let Some((_, content, correlated)) = finished {
+                    append_conversation_with_prompt_evidence(
+                        entry,
+                        EventKind::MessageCommitted { content },
+                        correlated,
+                    );
                 }
                 (entry.live_frames.clone(), changed)
             };
@@ -523,7 +555,7 @@ impl SessionService {
                 }
                 entry.context_reading = Some(now);
             }
-            append_conversation(entry, kind);
+            append_conversation_with_prompt_evidence(entry, kind, prompt_evidence);
         }
         FoldedUpdate::quiet(true)
     }
@@ -570,6 +602,7 @@ impl SessionService {
         id: &SessionId,
         link: ConversationLinkId,
         request: PermissionRequest,
+        prompt_evidence: bool,
     ) -> bool {
         let locator = request.locator.clone();
         {
@@ -604,7 +637,7 @@ impl SessionService {
                 entry.session.status = SessionStatus::Idle;
                 entry.session.stop_reason = Some(StopReason::RequiresAction);
             }
-            append_conversation(
+            append_conversation_with_prompt_evidence(
                 entry,
                 EventKind::ApprovalRequested {
                     request_id: request.id.clone(),
@@ -612,6 +645,7 @@ impl SessionService {
                     detail: None,
                     locator,
                 },
+                prompt_evidence,
             );
             if !rotating {
                 append_conversation(
@@ -638,6 +672,7 @@ impl SessionService {
         id: &SessionId,
         link: ConversationLinkId,
         completed: PromptResponse,
+        prompt_evidence: bool,
     ) -> bool {
         {
             let mut entries = self.entries.write().await;
@@ -670,8 +705,12 @@ impl SessionService {
             // The turn ending is what finishes the message the agent was
             // saying. Committed before the boundary so the log reads in the
             // order it happened.
-            if let Some((_, content)) = entry.assembling.take() {
-                append_conversation(entry, EventKind::MessageCommitted { content });
+            if let Some((_, content, correlated)) = entry.assembling.take() {
+                append_conversation_with_prompt_evidence(
+                    entry,
+                    EventKind::MessageCommitted { content },
+                    correlated,
+                );
             }
             entry.pending_approvals.clear();
             entry.approval_locators.clear();
@@ -680,7 +719,12 @@ impl SessionService {
                 entry.session.status = SessionStatus::Ready;
                 entry.session.stop_reason = Some(reason);
             }
-            append_conversation(entry, EventKind::TurnCompleted);
+            let prompt_evidence = prompt_evidence || initial_execution_was_observed(entry);
+            append_conversation_with_prompt_evidence(
+                entry,
+                EventKind::TurnCompleted,
+                prompt_evidence,
+            );
             if !rotating {
                 append_conversation(
                     entry,
@@ -741,6 +785,7 @@ impl SessionService {
         link: ConversationLinkId,
         message: String,
         capability: Option<String>,
+        prompt_evidence: bool,
     ) -> bool {
         tracing::warn!(session_id = %id, %message, "a turn failed");
         {
@@ -754,8 +799,12 @@ impl SessionService {
             // Half a message is still what the agent said, and it is the last
             // thing anybody saw. Committed before the failure so the log
             // reads in the order it happened.
-            if let Some((_, content)) = entry.assembling.take() {
-                append_conversation(entry, EventKind::MessageCommitted { content });
+            if let Some((_, content, correlated)) = entry.assembling.take() {
+                append_conversation_with_prompt_evidence(
+                    entry,
+                    EventKind::MessageCommitted { content },
+                    correlated,
+                );
             }
             entry.pending_approvals.clear();
             entry.approval_locators.clear();
@@ -764,7 +813,12 @@ impl SessionService {
                 entry.session.status = SessionStatus::Ready;
                 entry.session.stop_reason = Some(StopReason::Error);
             }
-            append_conversation(entry, EventKind::TurnCompleted);
+            let prompt_evidence = prompt_evidence || initial_execution_was_observed(entry);
+            append_conversation_with_prompt_evidence(
+                entry,
+                EventKind::TurnCompleted,
+                prompt_evidence,
+            );
             if !rotating {
                 append_conversation(
                     entry,
@@ -805,11 +859,15 @@ impl SessionService {
                 return;
             };
             let mut changed = false;
-            if let Some((_, content)) = entry.assembling.take() {
+            if let Some((_, content, correlated)) = entry.assembling.take() {
                 // Half a message is still what the agent said. Losing it
                 // because the runtime went away would leave the log missing
                 // the last thing anybody saw on screen.
-                append_conversation(entry, EventKind::MessageCommitted { content });
+                append_conversation_with_prompt_evidence(
+                    entry,
+                    EventKind::MessageCommitted { content },
+                    correlated,
+                );
                 changed = true;
             }
             // Only a turn that was actually open is closed. A session that
@@ -825,7 +883,12 @@ impl SessionService {
                     entry.session.status = SessionStatus::Idle;
                     entry.session.stop_reason = Some(StopReason::Error);
                 }
-                append_conversation(entry, EventKind::TurnCompleted);
+                let prompt_evidence = initial_execution_was_observed(entry);
+                append_conversation_with_prompt_evidence(
+                    entry,
+                    EventKind::TurnCompleted,
+                    prompt_evidence,
+                );
                 if !rotating {
                     append_conversation(
                         entry,
@@ -847,6 +910,15 @@ impl SessionService {
         drop(ordered);
         drop(input_fence);
     }
+}
+
+/// A synthetic adapter/link ending can settle Trigger delivery only after the
+/// runtime already produced positive activity for that prompt. Ordinary
+/// sessions have no initial outbox and keep their established failure folding.
+fn initial_execution_was_observed(entry: &crate::service_state::SessionEntry) -> bool {
+    entry.initial_prompt.as_ref().is_none_or(|initial| {
+        initial.delivery.state == crate::PromptDeliveryState::ExecutionObserved
+    })
 }
 
 /// The core's word for why a turn ended.

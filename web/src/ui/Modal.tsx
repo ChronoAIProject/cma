@@ -35,6 +35,8 @@ interface ModalProps {
   readonly children?: ReactNode;
   /** The action row. The primary action goes last. */
   readonly footer?: ReactNode;
+  /** Whether Escape, the close key, and the mask may dismiss this dialog. */
+  readonly dismissible?: boolean;
   /**
    * Draw the card and nothing else.
    *
@@ -54,6 +56,7 @@ export function Modal({
   description,
   children,
   footer,
+  dismissible = true,
   headless = false,
   placement,
 }: ModalProps) {
@@ -65,6 +68,7 @@ export function Modal({
       title={title}
       description={description}
       footer={footer}
+      dismissible={dismissible}
       headless={headless}
       placement={placement}
       panelRef={panelRef}
@@ -86,14 +90,19 @@ function ModalBody({
   description,
   children,
   footer,
+  dismissible,
   headless,
   placement,
   panelRef,
-}: Omit<ModalProps, 'open' | 'headless'> & {
+}: Omit<ModalProps, 'open' | 'headless' | 'dismissible'> & {
   readonly headless: boolean;
+  readonly dismissible: boolean;
   readonly panelRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  usePlateFocus(panelRef, onClose);
+  const close = () => {
+    if (dismissible) onClose();
+  };
+  usePlateFocus(panelRef, close);
 
   useEffect(() => {
     /*
@@ -109,13 +118,7 @@ function ModalBody({
 
   return createPortal(
     <div className="modal" role="presentation">
-      <div
-        className="modal__mask"
-        aria-hidden="true"
-        onClick={() => {
-          onClose();
-        }}
-      />
+      <div className="modal__mask" aria-hidden="true" onClick={close} />
       <div
         className={['modal__card', placement ?? ''].filter(Boolean).join(' ')}
         role="dialog"
@@ -135,7 +138,8 @@ function ModalBody({
                   placement="modal__close"
                   aria-label="Close"
                   icon={<IconCloseOutline16 size={14} />}
-                  onClick={onClose}
+                  disabled={!dismissible}
+                  onClick={close}
                 />
               </div>
               {description === undefined || description === '' ? null : (

@@ -124,6 +124,10 @@ pub struct MintedKey {
     pub full_key: String,
     /// The exact provider expiry CMA requested for this key.
     pub expires_at: SystemTime,
+    /// NyxID's exact state version for the created key.
+    pub state_version: i64,
+    /// Hash of the normalized authority NyxID says the key actually received.
+    pub grant_fingerprint: String,
 }
 
 /// NyxID's create response omits `expires_at`, even when it accepted and
@@ -133,6 +137,86 @@ pub struct MintedKey {
 struct MintedKeyResponse {
     id: String,
     full_key: String,
+    scopes: String,
+    state_version: i64,
+    allowed_service_ids: Vec<String>,
+    allowed_node_ids: Vec<String>,
+    allow_all_services: bool,
+    allow_all_nodes: bool,
+}
+
+fn normalized_identifiers(values: &[String]) -> Option<Vec<&str>> {
+    let mut normalized = Vec::with_capacity(values.len());
+    for value in values {
+        let value = value.trim();
+        if value.is_empty()
+            || value
+                .bytes()
+                .filter(u8::is_ascii_hexdigit)
+                .all(|byte| byte == b'0')
+            || normalized.contains(&value)
+        {
+            return None;
+        }
+        normalized.push(value);
+    }
+    normalized.sort_unstable();
+    Some(normalized)
+}
+
+fn provider_grant_fingerprint(response: &MintedKeyResponse) -> Option<String> {
+    let services = normalized_identifiers(&response.allowed_service_ids)?;
+    let nodes = normalized_identifiers(&response.allowed_node_ids)?;
+    let mut digest = sha2::Sha256::new();
+    use sha2::Digest as _;
+    digest.update(b"cma-nyxid-agent-key-grant-v1\0");
+    let scopes = response.scopes.trim();
+    digest.update((scopes.len() as u64).to_be_bytes());
+    digest.update(scopes.as_bytes());
+    for collection in [services, nodes] {
+        digest.update((collection.len() as u64).to_be_bytes());
+        for value in collection {
+            digest.update((value.len() as u64).to_be_bytes());
+            digest.update(value.as_bytes());
+        }
+    }
+    digest.update([u8::from(response.allow_all_services)]);
+    digest.update([u8::from(response.allow_all_nodes)]);
+    Some(
+        digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
+}
+
+fn minted_key_from_response(
+    key: MintedKeyResponse,
+    expected_service_ids: &[String],
+    expires_at: SystemTime,
+) -> Option<MintedKey> {
+    let expected = normalized_identifiers(expected_service_ids)?;
+    let returned = normalized_identifiers(&key.allowed_service_ids)?;
+    if key.id.trim().is_empty()
+        || key.full_key.trim().is_empty()
+        || key.scopes != KEY_SCOPES
+        || key.state_version <= 0
+        || returned != expected
+        || !key.allowed_node_ids.is_empty()
+        || key.allow_all_services
+        || key.allow_all_nodes
+    {
+        return None;
+    }
+    let grant_fingerprint = provider_grant_fingerprint(&key)?;
+    Some(MintedKey {
+        id: key.id,
+        full_key: key.full_key,
+        expires_at,
+        state_version: key.state_version,
+        grant_fingerprint,
+    })
 }
 
 /// A service as the platform lists it.
@@ -153,6 +237,11 @@ struct ServiceRow {
     /// which is a failure nobody could interpret.
     #[serde(default)]
     is_active: Option<bool>,
+}
+
+struct ServiceResolution {
+    allowed: Vec<String>,
+    complete: bool,
 }
 
 /// The name a key carries, which is how it is found again.
@@ -221,12 +310,19 @@ impl KeyIssuer {
 
     /// Turn the names a profile carries into the platform's own identifiers.
     ///
-    /// A profile names services the way a person selected them. Anything that
-    /// no longer resolves is dropped rather than failing the mint: a service
-    /// removed from the account should narrow the session, not stop it.
-    async fn resolve(&self, owner_token: &str, wanted: &[ServiceId]) -> Vec<String> {
+    /// A profile names services the way a person selected them. Ordinary
+    /// sessions may narrow when an optional service no longer resolves;
+    /// deterministic Trigger sessions consume `complete` and fail closed.
+    async fn resolve(
+        &self,
+        owner_token: &str,
+        wanted: &[ServiceId],
+    ) -> Result<ServiceResolution, ()> {
         if wanted.is_empty() {
-            return Vec::new();
+            return Ok(ServiceResolution {
+                allowed: Vec::new(),
+                complete: true,
+            });
         }
         let url = format!("{}{USER_SERVICES_PATH}", self.base_url);
         let rows: Vec<ServiceRow> = match self
@@ -241,34 +337,67 @@ impl KeyIssuer {
                 Ok(listing) => listing.into_rows(),
                 Err(e) => {
                     tracing::warn!(error = %e, "service listing was not usable");
-                    return Vec::new();
+                    return Err(());
                 }
             },
             Err(e) => {
                 tracing::warn!(error = %e, "could not list the owner's services");
-                return Vec::new();
+                return Err(());
             }
         };
 
         let mut resolved = Vec::new();
+        let mut complete = true;
         for want in wanted {
             let found = rows
                 .iter()
-                .filter(|r| r.is_active.unwrap_or(true))
                 .find(|r| r.id == want.0 || r.slug.as_deref() == Some(want.0.as_str()));
             match found {
-                Some(row) => {
+                Some(row) if row.is_active != Some(false) => {
                     if !resolved.contains(&row.id) {
                         resolved.push(row.id.clone());
+                    }
+                    // `/api/v1/user-services` guarantees this field. Keep
+                    // legacy narrowing available to ordinary sessions when an
+                    // older provider omits it, but absence is not positive
+                    // evidence for Trigger's exact-service admission.
+                    if row.is_active != Some(true) {
+                        complete = false;
+                        tracing::warn!(
+                            service = %want,
+                            "the owner service listing omitted active-state evidence"
+                        );
                     }
                 }
                 // Named but absent. Logged because a selection silently doing
                 // nothing is how somebody spends an afternoon wondering why
                 // their session cannot reach something they ticked.
-                None => tracing::warn!(service = %want, "this owner has no such service"),
+                Some(_) | None => {
+                    complete = false;
+                    tracing::warn!(service = %want, "this owner has no such active service");
+                }
             }
         }
-        resolved
+        Ok(ServiceResolution {
+            allowed: resolved,
+            complete,
+        })
+    }
+
+    /// Read-only exact-service admission used before a Trigger session exists.
+    pub(crate) async fn resolves_all(
+        &self,
+        owner_token: &str,
+        wanted: &[ServiceId],
+    ) -> Result<bool, layer2_core::StoreError> {
+        self.resolve(owner_token, wanted)
+            .await
+            .map(|resolution| resolution.complete)
+            .map_err(|()| {
+                layer2_core::StoreError::Unavailable(
+                    "the owner service listing is unavailable".into(),
+                )
+            })
     }
 
     /// Mint a credential for one session, reaching only the given services.
@@ -284,7 +413,19 @@ impl KeyIssuer {
         owner_token: &str,
         services: &[ServiceId],
     ) -> Option<MintedKey> {
-        let allowed = self.resolve(owner_token, services).await;
+        let resolution = match self.resolve(owner_token, services).await {
+            Ok(resolution) => resolution,
+            Err(()) => return None,
+        };
+        if session.is_trigger_managed() && !resolution.complete {
+            tracing::warn!(
+                session_id = %session,
+                %owner,
+                "a required Trigger service did not resolve; not minting a degraded credential"
+            );
+            return None;
+        }
+        let allowed = resolution.allowed;
         if allowed.is_empty() {
             tracing::warn!(
                 session_id = %session,
@@ -310,16 +451,20 @@ impl KeyIssuer {
                 match resp.json::<MintedKeyResponse>().await {
                     Ok(key) => {
                         // The value is never logged, only the fact and the reach.
-                        tracing::info!(
-                            session_id = %session,
-                            services = allowed.len(),
-                            "minted a credential for this session"
-                        );
-                        Some(MintedKey {
-                            id: key.id,
-                            full_key: key.full_key,
-                            expires_at,
-                        })
+                        let minted = minted_key_from_response(key, &allowed, expires_at);
+                        if minted.is_some() {
+                            tracing::info!(
+                                session_id = %session,
+                                services = allowed.len(),
+                                "minted a credential for this session"
+                            );
+                        } else {
+                            tracing::error!(
+                                session_id = %session,
+                                "mint response authority did not match the requested grant"
+                            );
+                        }
+                        minted
                     }
                     Err(e) => {
                         tracing::error!(session_id = %session, error = %e, "mint response was not usable");
@@ -576,17 +721,90 @@ impl layer2_core::ServiceCatalog for ServicePicker {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     use axum::{
         extract::{Path, State},
         http::{header::AUTHORIZATION, HeaderMap, StatusCode},
         response::IntoResponse,
-        routing::{delete, get},
+        routing::{delete, get, post},
         Json, Router,
     };
 
     use super::*;
+
+    fn valid_mint_response() -> MintedKeyResponse {
+        MintedKeyResponse {
+            id: "provider-key-1".into(),
+            full_key: "secret-value".into(),
+            scopes: KEY_SCOPES.into(),
+            state_version: 1,
+            allowed_service_ids: vec!["service-b".into(), "service-a".into()],
+            allowed_node_ids: Vec::new(),
+            allow_all_services: false,
+            allow_all_nodes: false,
+        }
+    }
+
+    #[test]
+    fn mint_accepts_only_the_exact_returned_provider_grant() {
+        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+        let minted = minted_key_from_response(
+            valid_mint_response(),
+            &["service-a".into(), "service-b".into()],
+            expires_at,
+        )
+        .expect("the normalized returned grant matches exactly");
+
+        assert_eq!(minted.state_version, 1);
+        assert_eq!(minted.expires_at, expires_at);
+        assert_eq!(minted.grant_fingerprint.len(), 64);
+    }
+
+    #[test]
+    fn mint_rejects_ambient_or_malformed_returned_authority() {
+        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+        let expected = ["service-a".into(), "service-b".into()];
+        let mut invalid = Vec::new();
+
+        let mut response = valid_mint_response();
+        response.scopes = "proxy read write".into();
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.state_version = 0;
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.allowed_service_ids.push("service-a".into());
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.allowed_service_ids = vec!["service-a".into()];
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.allowed_node_ids = vec!["node-1".into()];
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.allow_all_services = true;
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.allow_all_nodes = true;
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.id.clear();
+        invalid.push(response);
+        let mut response = valid_mint_response();
+        response.full_key.clear();
+        invalid.push(response);
+
+        for response in invalid {
+            assert!(
+                minted_key_from_response(response, &expected, expires_at).is_none(),
+                "unsafe returned authority must fail closed"
+            );
+        }
+    }
 
     #[derive(Clone)]
     struct ListingResponse {
@@ -627,6 +845,73 @@ mod tests {
                 .expect("serve mock identity platform");
         });
         (base, server)
+    }
+
+    #[derive(Clone)]
+    struct ServiceMintPlatform {
+        services: Arc<serde_json::Value>,
+        mints: Arc<AtomicUsize>,
+    }
+
+    async fn list_owner_services(
+        State(platform): State<ServiceMintPlatform>,
+        headers: HeaderMap,
+    ) -> Json<serde_json::Value> {
+        assert_eq!(
+            headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        Json((*platform.services).clone())
+    }
+
+    async fn mint_scoped_key(
+        State(platform): State<ServiceMintPlatform>,
+        headers: HeaderMap,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        assert_eq!(
+            headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        platform.mints.fetch_add(1, Ordering::SeqCst);
+        Json(serde_json::json!({
+            "id": "provider-key-1",
+            "full_key": "session-key-value",
+            "scopes": KEY_SCOPES,
+            "state_version": 1,
+            "allowed_service_ids": body["allowed_service_ids"],
+            "allowed_node_ids": [],
+            "allow_all_services": false,
+            "allow_all_nodes": false,
+        }))
+    }
+
+    async fn service_mint_platform(
+        services: serde_json::Value,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let mints = Arc::new(AtomicUsize::new(0));
+        let state = ServiceMintPlatform {
+            services: Arc::new(services),
+            mints: Arc::clone(&mints),
+        };
+        let app = Router::new()
+            .route("/api/v1/user-services", get(list_owner_services))
+            .route("/api/v1/api-keys", post(mint_scoped_key))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock identity platform");
+        let base = format!("http://{}", listener.local_addr().expect("mock address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock identity platform");
+        });
+        (base, mints, server)
     }
 
     async fn delete_key(
@@ -705,6 +990,98 @@ mod tests {
         let base = closed_local_url().await;
 
         assert!(!issuer(&base).revoke("key-under-test", "owner-access").await);
+    }
+
+    #[tokio::test]
+    async fn trigger_mint_refuses_a_partial_service_resolution_while_ordinary_mint_narrows() {
+        let (base, mints, server) = service_mint_platform(serde_json::json!({
+            "services": [
+                { "id": "model-service", "slug": "chrono-llm", "is_active": true },
+                { "id": "github-service", "slug": "api-github", "is_active": false }
+            ]
+        }))
+        .await;
+        let issuer = issuer(&base);
+        let wanted = [ServiceId::new("chrono-llm"), ServiceId::new("api-github")];
+
+        assert!(!issuer
+            .resolves_all("owner-access", &wanted)
+            .await
+            .expect("the complete listing is readable"));
+        assert!(
+            issuer
+                .mint(
+                    &SessionId("sesn_trg_0123456789abcdef".into()),
+                    &SubjectId("owner".into()),
+                    "owner-access",
+                    &wanted,
+                )
+                .await
+                .is_none(),
+            "a Trigger key must never silently omit its selected GitHub service"
+        );
+        assert_eq!(mints.load(Ordering::SeqCst), 0);
+
+        let ordinary = issuer
+            .mint(
+                &SessionId("sesn_ordinary".into()),
+                &SubjectId("owner".into()),
+                "owner-access",
+                &wanted,
+            )
+            .await
+            .expect("ordinary sessions retain the established narrowing policy");
+        assert_eq!(ordinary.state_version, 1);
+        assert_eq!(mints.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn trigger_resolution_requires_explicit_active_state_evidence() {
+        let (base, mints, server) = service_mint_platform(serde_json::json!({
+            "services": [
+                { "id": "github-service", "slug": "api-github" }
+            ]
+        }))
+        .await;
+        let issuer = issuer(&base);
+        let wanted = [ServiceId::new("github-service")];
+
+        assert!(
+            !issuer
+                .resolves_all("owner-access", &wanted)
+                .await
+                .expect("the incomplete listing is readable"),
+            "missing active-state evidence cannot admit a Trigger session"
+        );
+        assert!(
+            issuer
+                .mint(
+                    &SessionId("sesn_trg_0123456789abcdef".into()),
+                    &SubjectId("owner".into()),
+                    "owner-access",
+                    &wanted,
+                )
+                .await
+                .is_none(),
+            "Trigger minting must repeat the same fail-closed proof"
+        );
+        assert_eq!(mints.load(Ordering::SeqCst), 0);
+
+        assert!(
+            issuer
+                .mint(
+                    &SessionId("sesn_ordinary".into()),
+                    &SubjectId("owner".into()),
+                    "owner-access",
+                    &wanted,
+                )
+                .await
+                .is_some(),
+            "ordinary sessions retain compatibility with legacy listings"
+        );
+        assert_eq!(mints.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 
     #[test]

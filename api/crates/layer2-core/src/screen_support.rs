@@ -40,6 +40,15 @@ pub(crate) struct FixedCredential(pub(crate) String);
 
 #[async_trait::async_trait]
 impl crate::store::CredentialSource for FixedCredential {
+    async fn exact_services_available(
+        &self,
+        _subject: &SubjectId,
+        _services: &[crate::environment::ServiceId],
+    ) -> Result<bool, crate::store::StoreError> {
+        // Test-only fixed sources stand in for an already admitted grant.
+        Ok(true)
+    }
+
     async fn credential_for(
         &self,
         _session: &crate::ids::SessionId,

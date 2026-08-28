@@ -146,11 +146,54 @@ if (hasDom) {
   });
 }
 
+/*
+ * The Trigger command ledger uses the browser's same-origin Web Locks API so
+ * two tabs cannot both claim one frozen request. jsdom has no LockManager; a
+ * FIFO implementation here keeps the production coordination boundary real
+ * in component tests instead of silently replacing it with an unlocked path.
+ */
+const lockTails = new Map<string, Promise<void>>();
+if (hasDom && navigator.locks === undefined) {
+  const request = async <T>(
+    name: string,
+    optionsOrCallback: LockOptions | ((lock: Lock | null) => T | PromiseLike<T>),
+    possibleCallback?: (lock: Lock | null) => T | PromiseLike<T>,
+  ): Promise<T> => {
+    const options = typeof optionsOrCallback === 'function' ? undefined : optionsOrCallback;
+    const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : possibleCallback;
+    if (callback === undefined || (options?.mode !== undefined && options.mode !== 'exclusive')) {
+      throw new Error('The test LockManager supports exclusive request callbacks only.');
+    }
+
+    const previous = lockTails.get(name) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => held);
+    lockTails.set(name, tail);
+    await previous;
+    try {
+      return await callback({ name, mode: 'exclusive' } as Lock);
+    } finally {
+      release();
+      void tail.then(() => {
+        if (lockTails.get(name) === tail) lockTails.delete(name);
+      });
+    }
+  };
+  Object.defineProperty(navigator, 'locks', {
+    configurable: true,
+    value: { request } as unknown as LockManager,
+  });
+}
+
 afterEach(() => {
   if (hasDom) {
     cleanup();
   }
   setReducedMotion(false);
   stored.clear();
+  lockTails.clear();
   observing.clear();
 });
