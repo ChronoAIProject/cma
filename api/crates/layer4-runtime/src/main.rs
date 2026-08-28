@@ -142,6 +142,9 @@ pub(crate) struct AppState {
     /// start. Readers may start an agent; writers must finish before any
     /// agent process can observe the filesystem.
     startup_gate: std::sync::Arc<RwLock<()>>,
+    /// Linux child-subreaper boundary covering agent processes even after a
+    /// double fork, session change, and orphan reparenting.
+    writer_supervisor: writer_fence::SupervisorBoundary,
     /// Where under home this kernel records its conversation, if it records
     /// one at all.
     ///
@@ -218,6 +221,7 @@ impl AppState {
                 WorkspaceWriterHoldState::default(),
             )),
             startup_gate: std::sync::Arc::new(RwLock::new(())),
+            writer_supervisor: writer_fence::SupervisorBoundary::default(),
             snapshot_dir: None,
             resume_args: None,
             snapshot_named: false,
@@ -381,6 +385,14 @@ async fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    let writer_supervisor = match writer_fence::SupervisorBoundary::install() {
+        Ok(boundary) => boundary,
+        Err(error) => {
+            tracing::error!(%error, "workspace-writer supervisor boundary could not be established");
+            std::process::exit(2);
+        }
+    };
 
     let configured_bind: SocketAddr = std::env::var("CHRONO_RUNTIME_BIND")
         .unwrap_or_else(|_| "0.0.0.0:9090".to_string())
@@ -618,6 +630,7 @@ async fn main() {
         checkpoint_gate: std::sync::Arc::new(Mutex::new(())),
         workspace_writer_hold: std::sync::Arc::new(Mutex::new(WorkspaceWriterHoldState::default())),
         startup_gate: std::sync::Arc::new(RwLock::new(())),
+        writer_supervisor,
         snapshot_dir,
         resume_args,
         snapshot_named,
@@ -919,7 +932,10 @@ mod conversation_writer_tests {
         assert!(roots.contains(&first_root));
         assert!(roots.contains(&replacement_root));
         let writer_count = tokio::task::spawn_blocking(move || {
-            let mut fence = writer_fence::WriterFence::quiesce(roots)?;
+            let mut fence = writer_fence::WriterFence::quiesce(
+                roots,
+                writer_fence::SupervisorBoundary::default(),
+            )?;
             let count = fence.writer_count()?;
             fence.resume()?;
             Ok::<_, String>(count)
@@ -1429,9 +1445,10 @@ async fn workspace_checkpoint(
     let admission = state.startup_gate.clone().write_owned().await;
     let writer_roots = state.writer_session_roots().await;
     let workspace_root = state.workspace_root.clone();
+    let writer_supervisor = state.writer_supervisor;
     let disposition = params.disposition;
     let capture = tokio::task::spawn_blocking(move || {
-        let mut writers = writer_fence::WriterFence::quiesce(writer_roots)?;
+        let mut writers = writer_fence::WriterFence::quiesce(writer_roots, writer_supervisor)?;
         let prepared = workspace::prepare_capture(
             &workspace_root,
             &checkpoint_root,
@@ -1682,6 +1699,10 @@ async fn runtime_gateway_probe(
     State(state): State<AppState>,
     axum::Json(request): axum::Json<gateway_probe::ProbeRequest>,
 ) -> impl IntoResponse {
+    // The helper is another process with workspace visibility. Serialize its
+    // entire lifetime with checkpoint admission so Layer 4 cannot start a new
+    // potential writer after the fence's final procfs observation.
+    let _admission = state.startup_gate.read().await;
     axum::Json(state.gateway_probe.run(request).await)
 }
 

@@ -40,7 +40,9 @@ jobs:
           node .github/scripts/cma-trigger-provider-smoke.mjs \
             --validate-config .github/cma-trigger-provider-smoke.example.json
       - name: Provider workflow is valid YAML
-        run: ruby .github/scripts/cma-trigger-provider-contract.rb
+        run: |
+          ruby .github/scripts/cma-trigger-provider-contract.rb
+          ruby .github/scripts/cma-trigger-provider-contract.rb --self-test
 
   structure:
     name: Repository structure
@@ -478,7 +480,7 @@ jobs:
             --arg recorded_at "$now" \
             --arg build_commit "$GITHUB_SHA" \
             '{
-              schema: "cma-trigger-d09-v2",
+              schema: "cma-trigger-d09-v3",
               evidenceClass: "D",
               result: "inconclusive",
               startedAt: $started_at,
@@ -507,8 +509,6 @@ jobs:
             /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
             /etc/apparmor.d/bwrap-userns-restrict
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-          sudo grep -Fx 'bwrap (enforce)' /sys/kernel/security/apparmor/profiles
-          sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles
       - name: Pinned Trigger runtime network boundary
         if: matrix.component == 'runtime'
         run: |
@@ -529,8 +529,15 @@ jobs:
           if ! jq -e \
             --arg build_commit "$GITHUB_SHA" \
             --arg source_reference "cma-runtime:ci" \
-            'type == "object"
-              and (.schema == "cma-trigger-d09-v2")
+            'def sha256:
+               (type == "string") and test("^[0-9a-f]{64}$");
+             def bounded_body:
+               ((.bodyBytes | type) == "number")
+               and (.bodyBytes >= 0 and .bodyBytes <= 65536)
+               and ((.bodyBytes | floor) == .bodyBytes)
+               and (.bodySha256 | sha256);
+             type == "object"
+              and (.schema == "cma-trigger-d09-v3")
               and (.evidenceClass == "D")
               and (.result == "pass" or .result == "fail" or .result == "inconclusive")
               and ((.startedAt | type) == "string" and (.startedAt | length) > 0)
@@ -541,10 +548,28 @@ jobs:
               and ((.cleanup | type) == "object")
               and ((.cleanup.status | type) == "string")
               and ((.cleanup.failureCodes | type) == "array")
-              and ((.redaction | type) == "string" and (.redaction | length) > 0)
+              and (.redaction == "Only closed outcomes, status classes, artifact hashes, synthetic identities, and counts are retained; provider bodies and credential values are discarded.")
               and (if .result == "pass"
-                   then (((.image | type) == "object")
+                   then ((keys == [
+                           "artifacts", "buildCommit", "capability", "cleanup",
+                           "connect", "evidenceClass", "image", "isolationDenials",
+                           "listeners", "managedDenials", "outcomes",
+                           "permissionProfile", "providerFixture", "recordedAt",
+                           "redaction", "result", "schema", "startedAt",
+                           "startupRefusals", "traversal", "workspaceFence"
+                         ])
+                         and ((.image | type) == "object")
+                         and ((.image | keys) == [
+                           "architecture", "id", "os", "reference",
+                           "repoDigests", "revision"
+                         ])
                          and (.image.reference == $source_reference)
+                         and (.image.id | test("^sha256:[0-9a-f]{64}$"))
+                         and ((.image.repoDigests | type) == "array")
+                         and (all(.image.repoDigests[];
+                           (type == "string") and test("@sha256:[0-9a-f]{64}$")
+                         ))
+                         and (.image.os == "linux")
                          and (.image.architecture == "amd64")
                          and (.image.revision == $build_commit)
                          and ((.artifacts | type) == "object")
@@ -554,26 +579,175 @@ jobs:
                            "codexLauncherHash", "codexNativeHash", "codexVersion",
                            "platform", "runtimeHash", "uid"
                          ])
-                         and ((.artifacts.codexVersion | type) == "string"
-                              and (.artifacts.codexVersion | length) > 0)
-                         and ((.artifacts.acpVersion | type) == "string"
-                              and (.artifacts.acpVersion | length) > 0)
-                         and (.artifacts.acpHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.codexVersion == "codex-cli 0.147.0")
+                         and (.artifacts.acpVersion == "1.4.0")
+                         and (.artifacts.acpHash == "2c370f2337a5cc689d9a76b4bba1289d42afe6c17de824e2ca48004ba9670ab6")
                          and (.artifacts.bwrapPath == "/usr/bin/bwrap")
                          and (.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\.[0-9]+(\\.[0-9]+)?([-+~].*)?$"))
-                         and (.artifacts.bwrapHash | test("^[0-9a-f]{64}$"))
-                         and (.artifacts.codexLauncherHash | test("^[0-9a-f]{64}$"))
-                         and (.artifacts.codexNativeHash | test("^[0-9a-f]{64}$"))
-                         and (.artifacts.runtimeHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.bwrapHash | sha256)
+                         and (.artifacts.codexLauncherHash == "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477")
+                         and (.artifacts.codexNativeHash == "cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40")
+                         and (.artifacts.runtimeHash | sha256)
                          and (.artifacts.uid == 10001)
                          and (.artifacts.platform == "linux")
                          and (.artifacts.architecture == "x64")
-                         and (.cleanup.status == "verified")
-                         and (.cleanup.failureCodes == [])
-                         and (has("failure") | not))
-                   else (((.failure | type) == "object")
+                         and (.permissionProfile == {
+                           name: "cma-trigger",
+                           approvalPolicy: "never",
+                           sha256: "65ce3deca2d907481d999d1ec56a52ad3017644417e262a89cdf9ca1ad649be2",
+                           allowedDomains: ["127.0.0.2"],
+                           socks5: false,
+                           upstreamProxy: false,
+                           localBinding: false
+                         })
+                         and ((.listeners | type) == "array")
+                         and ((.listeners | length) == 5)
+                         and (.listeners == (.listeners | sort))
+                         and ((.listeners | map(select(startswith("127.")))) == [
+                           "127.0.0.1:9091", "127.0.0.2:9090",
+                           "127.0.0.2:9091", "127.0.0.2:9092"
+                         ])
+                         and ((.listeners | map(select(startswith("127.") | not)) | length) == 1)
+                         and ((.listeners | map(select(startswith("127.") | not))[0]
+                           | test("^[0-9]{1,3}(\\.[0-9]{1,3}){3}:9090$")
+                             and (startswith("0.0.0.0:") | not)))
+                         and (.outcomes == {
+                           missingPolicy: "policy_denied",
+                           wrongGeneration: "stale_generation",
+                           allowed: "allowed",
+                           providerDenied: "provider_denied",
+                           brokerTransient: "transient_broker_failure",
+                           wrongService: "policy_denied",
+                           wrongResource: "policy_denied"
+                         })
+                         and (.capability == {
+                           firstGeneration: 2,
+                           lastGeneration: 7,
+                           renewedBeforeEveryProviderProbe: true
+                         })
+                         and ((.workspaceFence | keys) == [
+                           "adoptedBySupervisor", "boundary",
+                           "escapedOriginalSession", "fullyDaemonized",
+                           "quiescedWriters", "reapedAfterExit", "resumed",
+                           "stableWhileHeld"
+                         ])
+                         and (.workspaceFence.boundary == "linux_child_subreaper_v1")
+                         and (.workspaceFence.fullyDaemonized == true)
+                         and (.workspaceFence.adoptedBySupervisor == true)
+                         and (.workspaceFence.escapedOriginalSession == true)
+                         and ((.workspaceFence.quiescedWriters | type) == "number")
+                         and (.workspaceFence.quiescedWriters >= 2)
+                         and ((.workspaceFence.quiescedWriters | floor) == .workspaceFence.quiescedWriters)
+                         and (.workspaceFence.stableWhileHeld == true)
+                         and (.workspaceFence.resumed == true)
+                         and (.workspaceFence.reapedAfterExit == true)
+                         and ((.managedDenials | map(.target)) == [
+                           "127.0.0.1", "localhost", "public-destination",
+                           "pod-address"
+                         ])
+                         and (all(.managedDenials[];
+                           (keys == ["bodyBytes", "bodySha256", "marker", "status", "target"])
+                           and (.status == 403)
+                           and (.marker == "blocked-by-allowlist")
+                           and bounded_body
+                         ))
+                         and ((.isolationDenials | map(.target)) == [
+                           "supervisor-front", "model-front"
+                         ])
+                         and (all(.isolationDenials[];
+                           (keys == ["bodyBytes", "bodySha256", "marker", "status", "target"])
+                           and (.status == 403)
+                           and (.marker == "denied")
+                           and (.bodyBytes == 0)
+                           and (.bodySha256 == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                         ))
+                         and ((.traversal | map(.form)) == [
+                           "literal-dot-dot", "encoded-dot-dot",
+                           "double-encoded-dot-dot", "mixed-dot-dot",
+                           "encoded-slash", "backslash"
+                         ])
+                         and (all(.traversal[];
+                           (keys == ["bodyBytes", "bodySha256", "form", "outcome", "status"])
+                           and (.status == 403)
+                           and (.outcome == "policy_denied")
+                           and bounded_body
+                         ))
+                         and ((.connect | map([.path, .target])) == [
+                           ["direct-listener", "supervisor"],
+                           ["direct-listener", "model-proxy"],
+                           ["direct-listener", "platform-upstream"],
+                           ["direct-listener", "public-destination"],
+                           ["cma-trigger-sandbox", "supervisor"],
+                           ["cma-trigger-sandbox", "model-proxy"],
+                           ["cma-trigger-sandbox", "platform-upstream"],
+                           ["cma-trigger-sandbox", "public-via-gateway"],
+                           ["cma-trigger-sandbox", "public-direct"],
+                           ["cma-trigger-sandbox", "platform-direct"]
+                         ])
+                         and (all(.connect[];
+                           ((.status | type) == "number")
+                           and ((.status | floor) == .status)
+                           and (.status < 200 or .status >= 300)
+                           and bounded_body
+                           and (if .path == "direct-listener"
+                                then (keys == ["bodyBytes", "bodySha256", "path", "status", "target"])
+                                else (keys == ["bodyBytes", "bodySha256", "marker", "path", "status", "target"])
+                                end)
+                         ))
+                         and ([.connect[] | select(.path == "cma-trigger-sandbox") | [.target, .marker]] == [
+                           ["supervisor", "blocked-by-allowlist"],
+                           ["model-proxy", "blocked-by-allowlist"],
+                           ["platform-upstream", null],
+                           ["public-via-gateway", null],
+                           ["public-direct", "blocked-by-allowlist"],
+                           ["platform-direct", "blocked-by-allowlist"]
+                         ])
+                         and ((.startupRefusals | map(.name)) == [
+                           "occupied-supervisor-ingress", "occupied-model-proxy",
+                           "occupied-supervisor-denial", "occupied-model-denial",
+                           "occupied-platform-gateway", "loopback-supervisor-ingress",
+                           "missing-model-upstream", "missing-platform-upstream",
+                           "missing-gateway-command", "missing-policy-keyring"
+                         ])
+                         and (all(.startupRefusals[];
+                           (keys == [
+                             "exitCode", "markerObserved", "name", "readyAnswered",
+                             "readyStatusCount", "signal"
+                           ])
+                           and (.exitCode == 2)
+                           and (.signal == null)
+                           and (.readyAnswered == false)
+                           and (.readyStatusCount == 0)
+                           and (.markerObserved == true)
+                         ))
+                         and (.providerFixture == {
+                           githubCalls: 3,
+                           modelCalls: 0,
+                           connectCalls: 0,
+                           unexpectedCalls: 0,
+                           authorizationFailures: 0,
+                           probeHeaderLeaks: 0
+                         })
+                         and (.cleanup == {status: "verified", failureCodes: []}))
+                   else ((keys == [
+                           "artifacts", "buildCommit", "cleanup", "evidenceClass",
+                           "failure", "image", "recordedAt", "redaction", "result",
+                           "schema", "startedAt"
+                         ])
+                         and (.result == "fail" or .result == "inconclusive")
+                         and (.image == null or (.image | type) == "object")
+                         and (.artifacts == null or (.artifacts | type) == "object")
+                         and ((.failure | type) == "object")
+                         and ((.failure | keys) == ["code"])
                          and ((.failure.code | type) == "string")
-                         and ((.failure.code | length) > 0))
+                         and ((.failure.code | length) > 0)
+                         and ((.cleanup | keys) == ["failureCodes", "status"])
+                         and (.cleanup.status == "not_started"
+                              or .cleanup.status == "verified"
+                              or .cleanup.status == "failed")
+                         and (all(.cleanup.failureCodes[];
+                           (type == "string") and (length > 0)
+                         )))
                    end)' \
             "$D09_EVIDENCE_PATH" >/dev/null 2>&1; then
             now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
