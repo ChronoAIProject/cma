@@ -284,7 +284,7 @@ data:
   # The API and runtime also share one exact four-MiB skill-prelude limit. Adopt
   # the matching runtime image before deploying an API that accepts that limit;
   # the currently pinned v0.7.0 runtime rejects bodies above two MiB with 413.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-runtime:v0.7.0"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-runtime:v0.9.0"
   # The default, and therefore the floor a session receives when its profile
   # names no size.
   #
