@@ -5,7 +5,7 @@ import { SignInCard } from './SignInCard';
 import { Composer } from './Composer';
 import { Context } from './Context';
 import { Usage } from './Usage';
-import { MemoryPressureNotice, Resources } from './Resources';
+import { CpuPressureNotice, MemoryPressureNotice, Resources } from './Resources';
 import { RuntimeLoss } from './RuntimeLoss';
 import { initialConversation, reduce, type Conversation } from '@chronoai/cma-sdk';
 import { planeStateFor } from './planeState';
@@ -273,6 +273,7 @@ export function ConversationSurface({
       />
 
       <MemoryPressureNotice pressure={conversation.memoryPressure} />
+      <CpuPressureNotice pressure={conversation.cpuPressure} />
 
       {visibleFailure === undefined ? null : (
         <div className="notice notice--fail conversation__refusal" role="alert">
@@ -356,7 +357,8 @@ export function ConversationSurface({
             granted={capabilities.resources}
             unreported={resourcesUnreported}
             resources={conversation.resources}
-            pressure={conversation.memoryPressure}
+            cpuPressure={conversation.cpuPressure}
+            memoryPressure={conversation.memoryPressure}
           />
           <Context granted={capabilities.usage} usage={conversation.usage} />
         </div>

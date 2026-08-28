@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { fullTimestamp } from '../sessions/sessionTime';
 import { IconCloseOutline16 } from '../ui/icons';
-import type { MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
+import type { CpuPressure, MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
 import './Resources.css';
 
 interface ResourcesProps {
@@ -11,12 +11,18 @@ interface ResourcesProps {
   readonly unreported?: boolean;
   /** What has arrived, when anything has. */
   readonly resources?: ResourceReading;
-  /** The open pressure episode, which gives the memory row its failure wording. */
-  readonly pressure?: MemoryPressure;
+  /** The open processor-pressure episode, which gives the CPU row its failure wording. */
+  readonly cpuPressure?: CpuPressure;
+  /** The open memory-pressure episode, which gives the memory row its failure wording. */
+  readonly memoryPressure?: MemoryPressure;
 }
 
 interface PressureNoticeProps {
-  readonly pressure?: MemoryPressure;
+  readonly label: 'CPU' | 'Memory';
+  readonly since: string;
+  readonly used: number;
+  readonly limit: number;
+  readonly format: (value: number) => string;
 }
 
 interface BoundedRowProps {
@@ -43,7 +49,7 @@ export function formatBytes(bytes: number): string {
 }
 
 /** Thousandths of a core, in the vocabulary container limits use. */
-function formatCpu(millis: number): string {
+export function formatCpu(millis: number): string {
   if (millis < 1000) {
     return `${millis.toLocaleString('en')}m`;
   }
@@ -103,7 +109,13 @@ function BoundedRow({ label, used, limit, format, measuring, pressure }: Bounded
 }
 
 /** A session's live CPU, memory, and unbounded network figures. */
-export function Resources({ granted, unreported, resources, pressure }: ResourcesProps) {
+export function Resources({
+  granted,
+  unreported,
+  resources,
+  cpuPressure,
+  memoryPressure,
+}: ResourcesProps) {
   if (!granted) {
     return <span className="resources__status">Resources not reported for this session</span>;
   }
@@ -130,7 +142,7 @@ export function Resources({ granted, unreported, resources, pressure }: Resource
         used={resources.memoryBytesUsed}
         limit={resources.memoryBytesLimit}
         format={formatBytes}
-        pressure={pressure !== undefined}
+        pressure={memoryPressure !== undefined}
       />
       <BoundedRow
         label="CPU"
@@ -138,6 +150,7 @@ export function Resources({ granted, unreported, resources, pressure }: Resource
         limit={resources.cpuMillisLimit}
         format={formatCpu}
         measuring
+        pressure={cpuPressure !== undefined}
       />
       <div className="resources__row">
         <span className="resources__figure">Network · {network}</span>
@@ -146,35 +159,62 @@ export function Resources({ granted, unreported, resources, pressure }: Resource
   );
 }
 
-/** The actionable, durable episode at the head of the reading column. */
-export function MemoryPressureNotice({ pressure }: PressureNoticeProps) {
+/** One actionable, durable episode at the head of the reading column. */
+function PressureNotice({ label, since, used, limit, format }: PressureNoticeProps) {
   const [dismissedSince, setDismissedSince] = useState<string | undefined>();
-  if (pressure === undefined || pressure.since === dismissedSince) {
+  if (since === dismissedSince) {
     return null;
   }
 
-  const opened = Date.parse(pressure.since);
-  const openedAt = Number.isNaN(opened) ? pressure.since : fullTimestamp(opened);
+  const opened = Date.parse(since);
+  const openedAt = Number.isNaN(opened) ? since : fullTimestamp(opened);
+  const lowerLabel = label.toLowerCase();
   return (
     <div className="notice notice--fail chat__pressure" role="alert">
       <div className="chat__pressure-copy">
-        <p className="notice__title">Memory pressure is high</p>
+        <p className="notice__title">{label} pressure is high</p>
         <p className="notice__detail">
-          {formatBytes(pressure.usedBytes)} used of {formatBytes(pressure.limitBytes)}. Opened at{' '}
-          <time dateTime={pressure.since}>{openedAt}</time>.
+          {format(used)} used of {format(limit)}. Opened at <time dateTime={since}>{openedAt}</time>
+          .
         </p>
       </div>
       <button
         type="button"
         className="chat__pressure-dismiss"
-        aria-label="Dismiss memory pressure notice"
-        title="Dismiss memory pressure notice"
+        aria-label={`Dismiss ${lowerLabel} pressure notice`}
+        title={`Dismiss ${lowerLabel} pressure notice`}
         onClick={() => {
-          setDismissedSince(pressure.since);
+          setDismissedSince(since);
         }}
       >
         <IconCloseOutline16 size={14} />
       </button>
     </div>
+  );
+}
+
+/** The actionable, durable memory episode at the head of the reading column. */
+export function MemoryPressureNotice({ pressure }: { readonly pressure?: MemoryPressure }) {
+  return pressure === undefined ? null : (
+    <PressureNotice
+      label="Memory"
+      since={pressure.since}
+      used={pressure.usedBytes}
+      limit={pressure.limitBytes}
+      format={formatBytes}
+    />
+  );
+}
+
+/** The actionable, durable processor episode at the head of the reading column. */
+export function CpuPressureNotice({ pressure }: { readonly pressure?: CpuPressure }) {
+  return pressure === undefined ? null : (
+    <PressureNotice
+      label="CPU"
+      since={pressure.since}
+      used={pressure.usedMillis}
+      limit={pressure.limitMillis}
+      format={formatCpu}
+    />
   );
 }
