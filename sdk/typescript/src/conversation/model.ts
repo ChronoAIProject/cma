@@ -208,6 +208,17 @@ export interface MemoryPressure {
   readonly since: string;
 }
 
+/** The processor-pressure episode currently open, reconstructed from durable state. */
+export interface CpuPressure {
+  /** Processor use over the opening interval, in thousandths of one core. */
+  readonly usedMillis: number;
+  /** Reported processor limit in thousandths of one core. */
+  readonly limitMillis: number;
+  readonly occupancyPermille: number;
+  /** RFC 3339 timestamp from the event that opened this episode. */
+  readonly since: string;
+}
+
 /** Everything a surface needs to draw the conversation. */
 export interface Conversation {
   /** The canonical public AG-UI state after every applied `STATE_DELTA`. */
@@ -247,6 +258,10 @@ export interface Conversation {
    * The latest live resource reading. Every undefined figure is absence, not zero.
    */
   readonly resources?: Resources;
+  /**
+   * The durable processor-pressure episode currently open. Undefined means no open episode.
+   */
+  readonly cpuPressure?: CpuPressure;
   /**
    * The durable pressure episode currently open. Undefined means no open episode.
    */

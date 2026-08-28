@@ -71,6 +71,7 @@ export interface AguiState {
   planeChanges: unknown[];
   contextCompactions: unknown[];
   runtimeLosses: unknown[];
+  cpuPressure: unknown;
   memoryPressure: unknown;
   resources: unknown;
 }
@@ -101,6 +102,7 @@ export function initialState(): AguiState {
     planeChanges: [],
     contextCompactions: [],
     runtimeLosses: [],
+    cpuPressure: null,
     memoryPressure: null,
     resources: null,
   };
@@ -152,6 +154,8 @@ export const PATHS = {
   progress: '/progress',
   /** A session's live resource readings. Replaced whole; never accumulated. */
   resources: '/resources',
+  /** An open processor-pressure episode, or null when there is none. */
+  cpuPressure: '/cpuPressure',
   /** An open memory-pressure episode, or null when there is none. */
   memoryPressure: '/memoryPressure',
   /** Tokens the turn consumed reading. */

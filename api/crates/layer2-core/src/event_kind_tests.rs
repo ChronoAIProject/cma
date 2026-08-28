@@ -123,6 +123,17 @@ fn one_of_every_kind() -> Vec<EventKind> {
             request_id: "r-1".into(),
             allowed: true,
         },
+        EventKind::CpuPressureOpened {
+            used_millis: 850,
+            limit_millis: 1_000,
+            occupancy_permille: 850,
+        },
+        EventKind::CpuPressureClosed {
+            peak_millis: 970,
+            limit_millis: 1_000,
+            peak_permille: 970,
+            duration_seconds: 181,
+        },
         EventKind::MemoryPressureOpened {
             used_bytes: 850,
             limit_bytes: 1_000,
@@ -182,6 +193,8 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::TerminalResized { .. }
             | EventKind::ApprovalRequested { .. }
             | EventKind::ApprovalResolved { .. }
+            | EventKind::CpuPressureOpened { .. }
+            | EventKind::CpuPressureClosed { .. }
             | EventKind::MemoryPressureOpened { .. }
             | EventKind::MemoryPressureClosed { .. }
             | EventKind::RuntimeHandoverStarted
