@@ -13,6 +13,7 @@ interface ConfirmProps {
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
   readonly busy?: boolean;
+  readonly cancelDisabled?: boolean;
 }
 
 export function InlineConfirm({
@@ -21,11 +22,12 @@ export function InlineConfirm({
   onConfirm,
   onCancel,
   busy = false,
+  cancelDisabled = false,
 }: ConfirmProps) {
   return (
     <div className="confirm" role="group">
       <span className="confirm__question">{question}</span>
-      <Button size="sm" onClick={onCancel}>
+      <Button size="sm" disabled={cancelDisabled} onClick={onCancel}>
         Keep it
       </Button>
       <Button size="sm" variant="primary" disabled={busy} onClick={onConfirm}>

@@ -70,6 +70,32 @@ pub enum DetailKey {
     Setting,
     /// The sealed rate card appended by a pricing change.
     RateCard,
+    /// Correlation identifier emitted to a caller and retained by a Launch.
+    CorrelationId,
+    /// Immutable Trigger revision digest.
+    RevisionDigest,
+    /// Numeric upstream repository identity.
+    RepositoryId,
+    /// Numeric contributor-fork repository identity.
+    ForkRepositoryId,
+    /// Numeric connected GitHub account identity.
+    GithubAccountId,
+    /// Exact NyxID UserService identifier.
+    ServiceId,
+    /// Closed Launch effect name.
+    Effect,
+    /// Closed Launch state name.
+    LaunchState,
+    /// External provider request identifier.
+    ProviderRequestId,
+    /// Persisted worker fencing token.
+    FencingToken,
+    /// Runtime-policy generation.
+    PolicyGeneration,
+    /// Number of CMA-owned objects in a cleanup plan.
+    CleanupTargetCount,
+    /// Stable machine-readable rollout refusal reason.
+    RolloutReason,
 }
 
 impl DetailKey {
@@ -92,6 +118,19 @@ impl DetailKey {
             Self::Plane => "plane",
             Self::Setting => "setting",
             Self::RateCard => "rate_card",
+            Self::CorrelationId => "correlation_id",
+            Self::RevisionDigest => "revision_digest",
+            Self::RepositoryId => "repository_id",
+            Self::ForkRepositoryId => "fork_repository_id",
+            Self::GithubAccountId => "github_account_id",
+            Self::ServiceId => "service_id",
+            Self::Effect => "effect",
+            Self::LaunchState => "launch_state",
+            Self::ProviderRequestId => "provider_request_id",
+            Self::FencingToken => "fencing_token",
+            Self::PolicyGeneration => "policy_generation",
+            Self::CleanupTargetCount => "cleanup_target_count",
+            Self::RolloutReason => "rollout_reason",
         }
     }
 
@@ -118,6 +157,19 @@ impl DetailKey {
             Self::Plane,
             Self::Setting,
             Self::RateCard,
+            Self::CorrelationId,
+            Self::RevisionDigest,
+            Self::RepositoryId,
+            Self::ForkRepositoryId,
+            Self::GithubAccountId,
+            Self::ServiceId,
+            Self::Effect,
+            Self::LaunchState,
+            Self::ProviderRequestId,
+            Self::FencingToken,
+            Self::PolicyGeneration,
+            Self::CleanupTargetCount,
+            Self::RolloutReason,
         ]
         .into_iter()
         .find(|k| k.as_str() == code)
@@ -229,6 +281,19 @@ mod tests {
             DetailKey::Plane,
             DetailKey::Setting,
             DetailKey::RateCard,
+            DetailKey::CorrelationId,
+            DetailKey::RevisionDigest,
+            DetailKey::RepositoryId,
+            DetailKey::ForkRepositoryId,
+            DetailKey::GithubAccountId,
+            DetailKey::ServiceId,
+            DetailKey::Effect,
+            DetailKey::LaunchState,
+            DetailKey::ProviderRequestId,
+            DetailKey::FencingToken,
+            DetailKey::PolicyGeneration,
+            DetailKey::CleanupTargetCount,
+            DetailKey::RolloutReason,
         ] {
             assert_eq!(
                 DetailKey::from_code(key.as_str()),

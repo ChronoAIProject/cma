@@ -10,7 +10,7 @@ import type { AuthProvider, AuthState } from './types';
 
 interface AuthContextValue {
   readonly state: AuthState;
-  readonly signIn: () => Promise<void>;
+  readonly signIn: (returnTo?: string) => Promise<void>;
   readonly signOut: () => Promise<void>;
 }
 
@@ -53,17 +53,20 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     };
   }, [provider]);
 
-  const signIn = useCallback(async () => {
-    try {
-      await provider.signIn();
-      setState(await provider.current());
-    } catch (error: unknown) {
-      setState({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Sign-in could not be started.',
-      });
-    }
-  }, [provider]);
+  const signIn = useCallback(
+    async (returnTo?: string) => {
+      try {
+        await provider.signIn(returnTo);
+        setState(await provider.current());
+      } catch (error: unknown) {
+        setState({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Sign-in could not be started.',
+        });
+      }
+    },
+    [provider],
+  );
 
   const signOut = useCallback(async () => {
     try {

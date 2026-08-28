@@ -930,6 +930,7 @@ async fn superseded_candidate_teardown_failure_is_surfaced_with_its_handle_intac
                 crate::provision::RuntimeStartContext {
                     geometry: live.geometry,
                     restore: None,
+                    trigger_recovery: None,
                     platform_briefing: "",
                     handover: None,
                     publication_token: "superseded-candidate-test",
@@ -1027,6 +1028,7 @@ async fn failed_row_discard_cannot_later_abandon_a_promoted_successor() {
             crate::provision::RuntimeStartContext {
                 geometry: live.geometry,
                 restore: None,
+                trigger_recovery: None,
                 platform_briefing: "",
                 handover: None,
                 publication_token: "failed-discard-successor-test",
@@ -1135,6 +1137,7 @@ async fn stack_owned_teardown_failure_never_discards_a_promoted_successor_or_ret
                 crate::provision::RuntimeStartContext {
                     geometry: live.geometry,
                     restore: None,
+                    trigger_recovery: None,
                     platform_briefing: "",
                     handover: None,
                     publication_token: "promoted-successor-candidate-test",
@@ -1279,6 +1282,7 @@ async fn deleted_row_stack_owned_teardown_failure_stops_without_another_candidat
                 crate::provision::RuntimeStartContext {
                     geometry: live.geometry,
                     restore: None,
+                    trigger_recovery: None,
                     platform_briefing: "",
                     handover: None,
                     publication_token: "deleted-candidate-row-test",
@@ -1540,6 +1544,7 @@ async fn nonretryable_handover_failure_clears_its_claim_and_descriptor() {
         claim: claim.clone(),
         snapshot_ref: format!("sessions/{}/handover.snapshot", created.id.0),
         snapshot_at: "2026-08-27T01:02:03Z".into(),
+        trigger_recovery: None,
         rotations_from: rotating.session.rotations,
         rotations_to: rotating.session.rotations + 1,
         target: crate::store::PendingHandoverTarget::RuntimeVersion {

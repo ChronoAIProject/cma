@@ -18,7 +18,7 @@ pub mod tickets;
 
 mod unavailable;
 
-pub use auth::{ActedUpon, AuthenticatedSubject, SettingsTouched};
+pub use auth::{ActedUpon, AuthenticatedSubject, SettingsTouched, TriggerSupportObserved};
 
 /// A semantic operation on the core session model. Each interface declares the
 /// subset it projects.
@@ -54,6 +54,30 @@ pub enum Operation {
     ChangePlane,
     /// Author and reuse environment bundles a session can be started with.
     ManageEnvironmentProfiles,
+    /// Read one anonymous, side-effect-free Trigger preview.
+    ReadTriggerPreview,
+    /// Author, publish, and retire Trigger revisions.
+    ManageTriggers,
+    /// Connect, select, and preflight reusable repository authority.
+    ManageTriggerConnections,
+    /// Create or explicitly replace a Launch draft.
+    CreateLaunch,
+    /// Read an owned Launch and its safe repository state.
+    ReadLaunch,
+    /// Change editable Launch review fields before Start.
+    UpdateLaunchDraft,
+    /// Explicitly start one reviewed Launch.
+    StartLaunch,
+    /// Cancel one owned Launch.
+    CancelLaunch,
+    /// Replay durable Launch progress from a cursor.
+    ReplayLaunchProgress,
+    /// Read a sealed contribution diff and pull-request status.
+    ReadLaunchDiff,
+    /// Request a diff checkpoint and publish one reviewed branch.
+    PublishLaunchContribution,
+    /// Review and explicitly confirm opening or updating a pull request.
+    ManageLaunchPullRequest,
 }
 
 /// An interface declares which operations it projects, so callers can discover

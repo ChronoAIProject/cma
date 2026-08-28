@@ -54,7 +54,7 @@ function renderActions() {
       sessions,
       activeId,
       setSessions,
-      setActiveId,
+      clearSelection: () => setActiveId(null),
       setOpeningForId,
       setNotice,
       setActing,

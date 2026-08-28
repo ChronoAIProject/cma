@@ -29,6 +29,7 @@ use crate::{
 
 const OUTCOME_VERSION: u8 = 1;
 const CLAIM_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+const CLAIM_EXECUTION_LEASE: Duration = Duration::from_secs(5 * 60);
 const PENDING_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const PENDING_WAIT: Duration = Duration::from_secs(2);
 const FINGERPRINT_DOMAIN: &[u8] = b"cma-agui-operation-fingerprint-v1\0";
@@ -193,6 +194,7 @@ pub(super) enum Reservation<T> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CoordinationProblem {
     Pending,
+    RecoveryRequired,
     Reused,
 }
 
@@ -204,6 +206,12 @@ impl IntoResponse for CoordinationProblem {
                 "agui-operation-in-flight",
                 "This AG-UI operation is still in progress. Retry shortly.",
                 "agui_operation_in_flight",
+            ),
+            Self::RecoveryRequired => (
+                StatusCode::CONFLICT,
+                "agui-operation-recovery-required",
+                "The previous AG-UI execution ended without a replay receipt. This runId remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+                "agui_operation_recovery_required",
             ),
             Self::Reused => (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -280,12 +288,14 @@ pub(super) async fn reserve<T: DeserializeOwned>(
     key: impl Into<String>,
     fingerprint: [u8; 32],
 ) -> Result<Reservation<T>, RunFailure> {
+    let now = SystemTime::now();
     let claim = OperationClaim::new(
         caller.subject.clone(),
         operation,
         key,
         fingerprint,
-        SystemTime::now() + CLAIM_RETENTION,
+        now + CLAIM_EXECUTION_LEASE,
+        CLAIM_RETENTION,
     );
     let deadline = tokio::time::Instant::now() + PENDING_WAIT;
 
@@ -299,6 +309,11 @@ pub(super) async fn reserve<T: DeserializeOwned>(
             }
             OperationReservation::FingerprintMismatch => {
                 return Err(RunFailure::Coordination(CoordinationProblem::Reused))
+            }
+            OperationReservation::RecoveryRequired => {
+                return Err(RunFailure::Coordination(
+                    CoordinationProblem::RecoveryRequired,
+                ))
             }
             OperationReservation::Pending if tokio::time::Instant::now() >= deadline => {
                 return Err(RunFailure::Coordination(CoordinationProblem::Pending))

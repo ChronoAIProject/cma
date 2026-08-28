@@ -51,6 +51,140 @@ async fn runtime_losses(
         .collect()
 }
 
+async fn mark_trigger_prompt_in_flight(store: &FakeStore, id: &SessionId) {
+    let launch = crate::trigger::tests::session_launch(&"a".repeat(64));
+    let origin = crate::service::trigger_session_origin(&launch).expect("valid Trigger origin");
+    let now = crate::clock::now_rfc3339();
+    let mut sessions = store.sessions.lock().await;
+    let record = sessions
+        .get_mut(&id.0)
+        .expect("the conversation session is durable");
+    record.trigger_origin = Some(origin);
+    record.initial_prompt = Some(crate::InitialPromptDispatch {
+        delivery: crate::PromptDelivery {
+            launch_id: launch.id,
+            session_id: id.clone(),
+            revision_digest: launch.revision_digest,
+            origin_key: format!("cma-trigger:{id}:initial"),
+            payload_hash: "b".repeat(64),
+            state: crate::PromptDeliveryState::DispatchFenced,
+            attempt: 1,
+            recovery_generation: 0,
+            dispatch_fence_sequence: Some(record.session.last_seq.max(1)),
+            queued_at: now.clone(),
+            updated_at: now,
+        },
+        payload: "immutable Trigger task".into(),
+        recorded_recovery_generation: 0,
+    });
+}
+
+async fn trigger_runtime_loss_stays_fenced_without_a_handover(coordinated: bool) {
+    let (store, adapter, profiles) = conversing_deployment();
+    let owner = user("trigger-contributor");
+    let service = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("the conversation session is created");
+    await_settled(&service, &owner, &created.id).await;
+    mark_trigger_prompt_in_flight(store.as_ref(), &created.id).await;
+    let service = if coordinated {
+        service
+    } else {
+        store.demote_runtime_authority_to_legacy(&created.id).await;
+        store.disable_coordination();
+        drop(service);
+        crate::test_support::service_with_environments(
+            Arc::clone(&store),
+            Arc::clone(&adapter),
+            profiles,
+        )
+    };
+
+    let before = store.get(&created.id).await.unwrap().unwrap();
+    let lost = before.runtime_id.expect("the Trigger runtime is durable");
+    let provision_calls = adapter
+        .provision_calls
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let conversation_opens = adapter.rejoined.lock().await.clone();
+    adapter.lose(&lost).await;
+
+    let recovered = service.reconcile().await;
+    assert_eq!(recovered.lost_runtimes, 1);
+    assert_eq!(recovered.reprovisioned_sessions, 0);
+    assert_eq!(recovered.deferred_sessions, 1);
+
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.runtime_id, None);
+    assert_eq!(durable.session.status, SessionStatus::Rotating);
+    assert_eq!(durable.session.recovery_state, RecoveryState::Degraded);
+    assert_eq!(
+        durable
+            .initial_prompt
+            .as_ref()
+            .map(|initial| initial.delivery.state),
+        Some(crate::PromptDeliveryState::RecoveryRequired),
+        "an in-flight owner turn must require explicit recovery"
+    );
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        provision_calls,
+        "runtime loss must not provision an unverified fresh conversation"
+    );
+    assert_eq!(
+        *adapter.rejoined.lock().await,
+        conversation_opens,
+        "runtime loss must not open another agent conversation"
+    );
+    assert_eq!(
+        service
+            .send_prompt(&owner, &created.id, "do not redispatch".into())
+            .await,
+        Err(crate::CoreError::InitialPromptReserved(
+            crate::PromptDeliveryState::RecoveryRequired
+        ))
+    );
+    assert!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the original conversation existed")
+            .sent()
+            .await
+            .is_empty(),
+        "no prompt may cross the lost-runtime boundary"
+    );
+
+    let repeated = service.reconcile().await;
+    assert_eq!(repeated.reprovisioned_sessions, 0);
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        provision_calls,
+        "later sweeps must preserve the recovery fence"
+    );
+}
+
+#[tokio::test]
+async fn coordinated_trigger_runtime_loss_requires_verified_conversation_continuity() {
+    trigger_runtime_loss_stays_fenced_without_a_handover(true).await;
+}
+
+#[tokio::test]
+async fn compatibility_trigger_runtime_loss_requires_verified_conversation_continuity() {
+    trigger_runtime_loss_stays_fenced_without_a_handover(false).await;
+}
+
 async fn switch_to_test_candidate(
     store: &FakeStore,
     adapter: &FakeAdapter,

@@ -318,6 +318,7 @@ fn request_tier(request: &Request) -> RequestTier {
         || path == "/api/v1/agui/run"
         || is_session_operation(path, "plane")
         || is_session_operation(path, "revive")
+        || is_launch_operation(path, "start")
     {
         return RequestTier::Create;
     }
@@ -343,6 +344,22 @@ fn is_session_operation(path: &str, operation: &str) -> bool {
     )
 }
 
+fn is_launch_operation(path: &str, operation: &str) -> bool {
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    matches!(
+        (
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+        ),
+        (Some("api"), Some("v1"), Some("launches"), Some(_), Some(found), None)
+            if found == operation
+    )
+}
+
 /// Routes that never require identity keep a network budget even when a
 /// browser happens to attach a cookie. Otherwise the same public operation
 /// changes buckets based on ambient credentials and can be used to exhaust a
@@ -353,6 +370,8 @@ fn uses_client_operation_key(path: &str) -> bool {
         || path == "/api/v1/agui/capabilities"
         || path == "/api/v1/mcp"
         || path == "/api/v1/a2a"
+        || is_public_trigger_preview(path)
+        || is_agui_trigger_preview(path)
         || path == "/.well-known/agent-card.json"
         || path == "/auth"
         || path.starts_with("/auth/")
@@ -365,15 +384,31 @@ fn is_rest_path(path: &str) -> bool {
     if path != "/api/v1" && path != "/api/v1/" && !path.starts_with("/api/v1/") {
         return false;
     }
-    path != "/api/v1/agui/run"
-        && path != "/api/v1/agui/events"
-        && path != "/api/v1/agui/capabilities"
+    path != "/api/v1/agui"
+        && !path.starts_with("/api/v1/agui/")
         && path != "/api/v1/mcp"
         && path != "/api/v1/a2a"
         && path
             .strip_prefix("/api/v1/sessions/")
             .and_then(|tail| tail.split_once('/'))
             .is_none_or(|(id, tail)| id.is_empty() || tail != "terminal")
+}
+
+fn is_public_trigger_preview(path: &str) -> bool {
+    exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
+}
+
+fn is_agui_trigger_preview(path: &str) -> bool {
+    exact_path_segments(path, &["api", "v1", "agui", "triggers", "*"])
+}
+
+fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    expected.iter().all(|expected| {
+        segments
+            .next()
+            .is_some_and(|actual| *expected == "*" || actual == *expected)
+    }) && segments.next().is_none()
 }
 
 fn resolve_client(request: &Request, trusted: &TrustedProxyConfig) -> ClientKey {
