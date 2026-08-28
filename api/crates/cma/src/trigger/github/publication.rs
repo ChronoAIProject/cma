@@ -215,9 +215,9 @@ impl GithubBroker {
             PublicationState::ObjectsWritten => {
                 let prepared = retained_prepared(context)?;
                 let observed_head = self
-                    .resolve_branch_sha(
+                    .resolve_branch_sha_with_connection(
                         &context.owner,
-                        &context.connection.service_id,
+                        &context.connection,
                         &repository,
                         &context.branch_name,
                     )
@@ -284,9 +284,9 @@ impl GithubBroker {
             PublicationState::ObjectsWritten => {
                 let prepared = retained_prepared(context)?;
                 let observed_head = self
-                    .resolve_branch_sha(
+                    .resolve_branch_sha_with_connection(
                         &context.owner,
-                        &context.connection.service_id,
+                        &context.connection,
                         &repository,
                         &context.branch_name,
                     )
@@ -322,9 +322,9 @@ impl GithubBroker {
             PublicationState::RefUpdatePending => {
                 let prepared = retained_prepared(context)?;
                 let observed_head = self
-                    .resolve_branch_sha(
+                    .resolve_branch_sha_with_connection(
                         &context.owner,
-                        &context.connection.service_id,
+                        &context.connection,
                         &repository,
                         &context.branch_name,
                     )
@@ -359,9 +359,9 @@ impl GithubBroker {
         repository: &layer2_core::RepositoryIdentity,
     ) -> Result<PendingGitData, GithubBrokerError> {
         let observed_head = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 repository,
                 &context.branch_name,
             )
@@ -400,9 +400,9 @@ impl GithubBroker {
     ) -> Result<PublicationAdvance, GithubBrokerError> {
         let (mut pending, recipe) = retained_object_write(context, plan)?;
         let observed_head = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 repository,
                 &context.branch_name,
             )
@@ -480,9 +480,9 @@ impl GithubBroker {
     ) -> Result<PendingGitData, GithubBrokerError> {
         let (mut pending, recipe) = retained_object_write(context, plan)?;
         let observed_head = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 repository,
                 &context.branch_name,
             )
@@ -537,9 +537,9 @@ impl GithubBroker {
         })?;
         let repository = self.current_publication_write_fork(context, plan).await?;
         let response: Observed<BlobWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::POST,
                 &[
                     "repos",
@@ -570,9 +570,9 @@ impl GithubBroker {
     ) -> Result<String, GithubBrokerError> {
         let repository = self.current_publication_write_fork(context, plan).await?;
         let tree: Observed<TreeWriteWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::POST,
                 &[
                     "repos",
@@ -600,9 +600,9 @@ impl GithubBroker {
     ) -> Result<String, GithubBrokerError> {
         let repository = self.current_publication_write_fork(context, plan).await?;
         let commit: Observed<CommitWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::POST,
                 &[
                     "repos",
@@ -627,9 +627,9 @@ impl GithubBroker {
     ) -> Result<bool, GithubBrokerError> {
         validate_commit_sha(blob_id)?;
         let blob: Result<Observed<BlobWire>, GithubBrokerError> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -659,9 +659,9 @@ impl GithubBroker {
     ) -> Result<bool, GithubBrokerError> {
         validate_commit_sha(tree_id)?;
         let tree: Result<Observed<TreeReadWire>, GithubBrokerError> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -697,9 +697,9 @@ impl GithubBroker {
         } = prepared;
 
         let before_patch = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 repository,
                 &context.branch_name,
             )
@@ -726,9 +726,9 @@ impl GithubBroker {
         ];
         ref_path.extend(components);
         let patch: Result<Observed<RefWire>, GithubBrokerError> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::PATCH,
                 &ref_path,
                 &[],
@@ -768,9 +768,9 @@ impl GithubBroker {
     ) -> Result<PublishedGitData, GithubBrokerError> {
         let repository = self.current_publication_fork(context, plan).await?;
         let observed = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 &repository,
                 &context.branch_name,
             )
@@ -870,9 +870,9 @@ impl GithubBroker {
         commit_id: &str,
     ) -> Result<(), GithubBrokerError> {
         let head = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 repository,
                 &context.branch_name,
             )
@@ -891,9 +891,9 @@ impl GithubBroker {
         let commit = self.read_commit(context, repository, commit_id).await?;
         validate_commit_response(&commit, tree_id, &plan.expected_head, context, plan)?;
         let tree: Observed<TreeReadWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -951,9 +951,9 @@ impl GithubBroker {
     ) -> Result<CommitWire, GithubBrokerError> {
         validate_commit_sha(commit_id)?;
         let commit: Observed<CommitWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -1315,6 +1315,8 @@ fn validate_ref(
 
 fn same_connection(expected: &ConnectionSnapshot, current: &ConnectionSnapshot) -> bool {
     expected.service_id == current.service_id
+        && expected.github_catalog_service_id == current.github_catalog_service_id
+        && expected.github_user_service_slug == current.github_user_service_slug
         && expected.service_state_version == current.service_state_version
         && expected.backing_key_id == current.backing_key_id
         && expected.account.account_id == current.account.account_id
@@ -1335,7 +1337,45 @@ fn same_connection(expected: &ConnectionSnapshot, current: &ConnectionSnapshot) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use layer2_core::{CommitIdentity, DiffArtifactId, LaunchId};
+    use layer2_core::{
+        CommitIdentity, ConnectedAccount, ConnectionState, DiffArtifactId, LaunchId, ScopeClass,
+    };
+
+    fn connection_snapshot() -> ConnectionSnapshot {
+        ConnectionSnapshot {
+            service_id: "service-1".into(),
+            github_catalog_service_id: Some("123e4567-e89b-42d3-a456-426614174200".into()),
+            github_user_service_slug: Some("api-github-2".into()),
+            service_state_version: 4,
+            backing_key_id: "key-1".into(),
+            account: ConnectedAccount {
+                account_id: 21,
+                account_node_id: "U_contributor".into(),
+                login: "contributor".into(),
+                avatar_url: None,
+            },
+            state: ConnectionState::Active,
+            granted_scopes: vec!["public_repo".into()],
+            satisfied_scope_classes: vec![ScopeClass::PublicRepository],
+            consent_observed_at: "2026-08-27T00:00:00Z".into(),
+            preflight_observed_at: "2026-08-27T00:00:01Z".into(),
+        }
+    }
+
+    #[test]
+    fn git_data_write_fence_rejects_catalog_or_user_route_drift() {
+        let expected = connection_snapshot();
+        assert!(same_connection(&expected, &expected));
+
+        let mut changed_catalog = expected.clone();
+        changed_catalog.github_catalog_service_id =
+            Some("123e4567-e89b-42d3-a456-426614174201".into());
+        assert!(!same_connection(&expected, &changed_catalog));
+
+        let mut changed_slug = expected.clone();
+        changed_slug.github_user_service_slug = Some("api-github-3".into());
+        assert!(!same_connection(&expected, &changed_slug));
+    }
 
     fn publication_plan(path: &str, content: &[u8]) -> PublicationPlan {
         PublicationPlan {

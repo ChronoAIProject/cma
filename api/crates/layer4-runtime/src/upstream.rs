@@ -724,7 +724,7 @@ mod tests {
         let state = UpstreamState::new("http://127.0.0.1:1", CredentialHolder::new())
             .with_github_capability(gate);
         let request = Request::builder()
-            .uri("/api/v1/proxy/s/api-github/repositories/30?_nyxid_via=service-1")
+            .uri("/api/v1/proxy/catalog-service-github/repositories/30?_nyxid_via=service-1")
             .body(Body::empty())
             .unwrap();
 
@@ -761,7 +761,7 @@ mod tests {
             .with_github_capability(gate);
         let request = Request::builder()
             .method(axum::http::Method::POST)
-            .uri("/api/v1/proxy/s/api-github/repos/contributor/project/git/blobs?_nyxid_via=service-1")
+            .uri("/api/v1/proxy/catalog-service-github/repos/contributor/project/git/blobs?_nyxid_via=service-1")
             .body(Body::from(vec![0_u8; MAX_GITHUB_BODY_BYTES + 1]))
             .unwrap();
 

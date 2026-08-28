@@ -303,6 +303,8 @@ pub enum TriggerAuthorityError {
     ReauthorizationRequired,
     #[error("the selected connection does not satisfy required scope class {required}")]
     InsufficientScope { required: String },
+    #[error("the selected connection grants an unapproved GitHub scope: {scope}")]
+    UnapprovedScope { scope: String },
     #[error("the selected authority changed since the retained preflight")]
     AuthorityDrift,
     #[error("the provider refused this subject or exact connection")]
@@ -1385,6 +1387,9 @@ fn verify_authoritative_identity(
     verified: &PublisherAuthority,
 ) -> Result<(), TriggerServiceError> {
     let expected = &content.upstream.repository;
+    verified
+        .connection
+        .validate_for(&content.repository_access.required_scope_classes)?;
     if content.publisher_subject_id != verified.subject
         || expected.repository_id != verified.repository.repository_id
         || expected.repository_node_id != verified.repository.repository_node_id

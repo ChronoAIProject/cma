@@ -618,11 +618,13 @@ jobs:
                            providerDenied: "provider_denied",
                            brokerTransient: "transient_broker_failure",
                            wrongService: "policy_denied",
+                           wrongCatalogService: "policy_denied",
+                           wrongUserServiceSlug: "policy_denied",
                            wrongResource: "policy_denied"
                          })
                          and (.capability == {
                            firstGeneration: 2,
-                           lastGeneration: 7,
+                           lastGeneration: 9,
                            renewedBeforeEveryProviderProbe: true
                          })
                          and ((.workspaceFence | keys) == [
@@ -664,7 +666,10 @@ jobs:
                          and ((.traversal | map(.form)) == [
                            "literal-dot-dot", "encoded-dot-dot",
                            "double-encoded-dot-dot", "mixed-dot-dot",
-                           "encoded-slash", "backslash"
+                           "encoded-slash", "backslash",
+                           "canonical-github-slug-route", "suffixed-github-slug-route",
+                           "pat-lookalike-slug-route", "user-service-id-as-slug-route",
+                           "catalog-service-id-as-slug-route"
                          ])
                          and (all(.traversal[];
                            (keys == ["bodyBytes", "bodySha256", "form", "outcome", "status"])

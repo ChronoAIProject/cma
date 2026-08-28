@@ -1955,6 +1955,7 @@ impl SessionService {
         };
         tracing::warn!(session_id = %id, "starting a coordinated replacement runtime");
         let service = Arc::clone(self);
+        let trigger_origin = starting.trigger_origin.clone();
         let session = starting.session;
         tokio::spawn(async move {
             service
@@ -1969,6 +1970,7 @@ impl SessionService {
                         lease: Some(lease),
                         handover: None,
                         trigger_recovery,
+                        trigger_origin,
                         prepared_skills: None,
                         rotation_claim,
                     },
@@ -2236,6 +2238,7 @@ impl SessionService {
             quoted_rate_card: None,
         };
         let service = Arc::clone(self);
+        let trigger_origin = starting.trigger_origin.clone();
         let session = starting.session;
         tokio::spawn(async move {
             service
@@ -2250,6 +2253,7 @@ impl SessionService {
                         lease: None,
                         handover: None,
                         trigger_recovery,
+                        trigger_origin,
                         prepared_skills: None,
                         rotation_claim,
                     },

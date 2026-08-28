@@ -1937,16 +1937,16 @@ fn runtime_policy_readiness_requires_the_exact_name_version_and_runtime_support(
         .to_string()
     };
     assert!(super::readiness_supports_runtime_policy(
-        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, true).as_bytes()
+        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, true).as_bytes()
     ));
     for body in [
-        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, true),
+        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, true),
         ready(
-            "github_capability_v1",
+            "github_capability_v2",
             super::RUNTIME_POLICY_VERSION + 1,
             true,
         ),
-        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, false),
+        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, false),
         "{}".into(),
         "not-json".into(),
     ] {
@@ -1960,7 +1960,7 @@ fn runtime_policy_observation_accepts_only_consistent_closed_tuples() {
         serde_json::json!({
             "status": "ready",
             "githubCapability": {
-                "name": "github_capability_v1",
+                "name": "github_capability_v2",
                 "version": super::RUNTIME_POLICY_VERSION,
                 "runtime": runtime,
             }
@@ -2066,7 +2066,7 @@ fn runtime_gateway_probe_readiness_requires_the_exact_name_version_and_support_f
     };
     assert!(super::readiness_supports_runtime_gateway_probe(
         ready(
-            "runtime_gateway_probe_v1",
+            "runtime_gateway_probe_v2",
             super::RUNTIME_GATEWAY_PROBE_VERSION,
             true,
         )
@@ -2074,17 +2074,17 @@ fn runtime_gateway_probe_readiness_requires_the_exact_name_version_and_support_f
     ));
     for body in [
         ready(
-            "runtime_gateway_probe_v2",
+            "runtime_gateway_probe_v1",
             super::RUNTIME_GATEWAY_PROBE_VERSION,
             true,
         ),
         ready(
-            "runtime_gateway_probe_v1",
+            "runtime_gateway_probe_v2",
             super::RUNTIME_GATEWAY_PROBE_VERSION + 1,
             true,
         ),
         ready(
-            "runtime_gateway_probe_v1",
+            "runtime_gateway_probe_v2",
             super::RUNTIME_GATEWAY_PROBE_VERSION,
             false,
         ),
@@ -2222,22 +2222,27 @@ fn runtime_gateway_probe_wire_outcomes_are_closed_and_complete() {
 }
 
 #[tokio::test]
-async fn hosted_gateway_probe_sends_only_the_exact_numeric_binding() {
+async fn hosted_gateway_probe_sends_the_exact_catalog_and_user_service_binding() {
     let fixture = workspace_fixture(
         serde_json::json!({
             "runtimeGatewayProbe": {
-                "name": "runtime_gateway_probe_v1",
+                "name": "runtime_gateway_probe_v2",
                 "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 "supported": true,
             }
         }),
-        Some(serde_json::json!({ "version": 1, "outcome": "allowed" })),
+        Some(serde_json::json!({
+            "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            "outcome": "allowed"
+        })),
     )
     .await;
     let kernel = hosted(&fixture.base_url);
     let request = crate::RuntimeGatewayProbeRequest {
         version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
-        service_id: "service-1.a_b".into(),
+        service_id: "service-1_a_b".into(),
+        catalog_service_id: "catalog-github".into(),
+        user_service_slug: "api-github-2".into(),
         resource_id: 30,
     };
 
@@ -2255,7 +2260,9 @@ async fn hosted_gateway_probe_sends_only_the_exact_numeric_binding() {
         serde_json::from_slice::<serde_json::Value>(&requests[2].1).unwrap(),
         serde_json::json!({
             "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
-            "service_id": "service-1.a_b",
+            "service_id": "service-1_a_b",
+            "catalog_service_id": "catalog-github",
+            "user_service_slug": "api-github-2",
             "resource_id": 30,
         })
     );
@@ -2268,16 +2275,36 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
         crate::RuntimeGatewayProbeRequest {
             version: crate::RUNTIME_GATEWAY_PROBE_VERSION + 1,
             service_id: "service-1".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "api-github-2".into(),
             resource_id: 30,
         },
         crate::RuntimeGatewayProbeRequest {
             version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: "service/credential=secret".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "api-github-2".into(),
             resource_id: 30,
         },
         crate::RuntimeGatewayProbeRequest {
             version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: "service-1".into(),
+            catalog_service_id: "catalog/id".into(),
+            user_service_slug: "api-github-2".into(),
+            resource_id: 30,
+        },
+        crate::RuntimeGatewayProbeRequest {
+            version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: "service-1".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "API-github".into(),
+            resource_id: 30,
+        },
+        crate::RuntimeGatewayProbeRequest {
+            version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: "service-1".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "api-github-2".into(),
             resource_id: 0,
         },
     ] {
@@ -2296,6 +2323,8 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
             &crate::RuntimeGatewayProbeRequest {
                 version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 service_id: "service-1".into(),
+                catalog_service_id: "catalog-github".into(),
+                user_service_slug: "api-github-2".into(),
                 resource_id: 30,
             },
         )
@@ -2307,12 +2336,15 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
     let unknown = workspace_fixture(
         serde_json::json!({
             "runtimeGatewayProbe": {
-                "name": "runtime_gateway_probe_v1",
+                "name": "runtime_gateway_probe_v2",
                 "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 "supported": true,
             }
         }),
-        Some(serde_json::json!({ "version": 1, "outcome": "future_outcome" })),
+        Some(serde_json::json!({
+            "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            "outcome": "future_outcome"
+        })),
     )
     .await;
     let error = hosted(&unknown.base_url)
@@ -2321,6 +2353,8 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
             &crate::RuntimeGatewayProbeRequest {
                 version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 service_id: "service-1".into(),
+                catalog_service_id: "catalog-github".into(),
+                user_service_slug: "api-github-2".into(),
                 resource_id: 30,
             },
         )
