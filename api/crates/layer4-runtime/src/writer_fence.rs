@@ -587,10 +587,7 @@ mod tests {
         fn drop(&mut self) {
             let roots = BTreeSet::from([self.root]);
             let deadline = Instant::now() + QUIESCE_TIMEOUT;
-            loop {
-                let Ok(table) = process_table() else {
-                    break;
-                };
+            while let Ok(table) = process_table() {
                 let states = writer_states(&table, &roots, None);
                 let live = states
                     .iter()
