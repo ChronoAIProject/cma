@@ -661,9 +661,10 @@ async fn a_legacy_read_echo_projects_current_defaults_without_rewriting() {
     historical.agent.kernel = KernelId::default();
     historical.agent.skills.clear();
     store
-        .upsert(&historical)
+        .profiles
+        .lock()
         .await
-        .expect("seeds old timestamp");
+        .insert(historical.id.0.clone(), historical.clone());
 
     let read = service
         .get(&owner, &historical.id)
@@ -924,7 +925,11 @@ async fn two_profiles_claiming_preselection_are_settled_on_read() {
         let mut claim = profile.clone();
         claim.preferred = true;
         claim.updated_at = updated.to_string();
-        store.upsert(&claim).await.expect("writes");
+        store
+            .profiles
+            .lock()
+            .await
+            .insert(claim.id.0.clone(), claim);
     }
 
     let listed = service.list(&owner, &first_page()).await.expect("lists");

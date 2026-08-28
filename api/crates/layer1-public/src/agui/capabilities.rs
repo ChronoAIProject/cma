@@ -82,12 +82,22 @@ pub(super) fn document() -> serde_json::Value {
                 // durable log and a client must never resume from one.
                 // Declared so a client can size its handling rather than
                 // discover the marker on a frame it has already mishandled.
-                "cma:liveFrames": true
+                "cma:liveFrames": true,
+                // Trigger resources are companions, not threads. Mutations
+                // stay on REST so every caller crosses one operation store.
+                "cma:trigger": {
+                    "preview": true,
+                    "launchSnapshot": true,
+                    "progressReplay": true,
+                    "diffReview": true,
+                    "mutations": false
+                }
             }
         },
         "conformsTo": [
             "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
-            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
+            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/agui-trigger-read"
         ]
     })
 }

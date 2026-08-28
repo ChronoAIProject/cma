@@ -12,7 +12,9 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{ConversationUpdate, KernelAdapter, RuntimeSpec, TermSize, TerminalInput};
+use layer3_adapter::ConversationUpdate;
+use layer3_adapter::{KernelAdapter, RuntimeSpec, TermSize, TerminalInput};
+use sha2::{Digest, Sha256};
 use tokio::sync::{broadcast, watch, Mutex};
 
 /// How many updates may queue between a kernel and the folder.
@@ -29,6 +31,7 @@ use crate::service::{SessionEntry, SessionService, LIVE_BUFFER, RESOURCE_BUFFER}
 use crate::session::{ProvisioningStage, RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 use crate::terminal_io::spawn_relay;
+use crate::WorkspaceWriterHoldReceipt;
 
 /// How many times to try bringing a runtime up before giving up.
 ///
@@ -51,6 +54,7 @@ pub(crate) const DEFAULT_RETRY_BACKOFF_MS: u64 = 3_000;
 pub(crate) struct RuntimeStartContext<'a> {
     pub(crate) geometry: TerminalGeometry,
     pub(crate) restore: Option<&'a Vec<u8>>,
+    pub(crate) trigger_recovery: Option<&'a crate::TriggerRecoveryPair>,
     pub(crate) platform_briefing: &'a str,
     pub(crate) handover: Option<&'a crate::rotate::CoordinatedHandover>,
     pub(crate) publication_token: &'a str,
@@ -76,6 +80,7 @@ impl SessionService {
         let RuntimeStartContext {
             geometry,
             restore,
+            trigger_recovery,
             platform_briefing,
             handover,
             publication_token,
@@ -141,7 +146,7 @@ impl SessionService {
         // much the agent may do unattended per conversation rather than per
         // runtime, so this is needed twice and computing it twice would be two
         // places for the translation to drift.
-        let options = runtime_options(&spec.options);
+        let mut options = runtime_options(&spec.options);
         /*
          * Read from the session rather than from the profile, exactly as the
          * credential's own scope is: a session keeps what it was granted when
@@ -157,6 +162,37 @@ impl SessionService {
             .into_iter()
             .map(|service| service.0)
             .collect();
+        let durable = self.store.get(&id).await.map_err(|error| {
+            StartFailure::transient(format!(
+                "this session's runtime authority could not be read: {error}"
+            ))
+        })?;
+        let trigger_origin = durable
+            .as_ref()
+            .and_then(|record| record.trigger_origin.as_ref());
+        let runtime_policy_required = trigger_origin.is_some();
+        options.restricted_service_gateway = runtime_policy_required;
+        let trigger_timeout_seconds =
+            trigger_origin.map(|origin| u64::from(origin.timeout_seconds));
+        let (workspace, restore) = match trigger_recovery {
+            Some(pair) => {
+                let origin = trigger_origin.ok_or_else(|| {
+                    StartFailure::permanent(
+                        "a non-Trigger session cannot consume a Trigger recovery pair".into(),
+                    )
+                })?;
+                pair.validate_for(origin).map_err(|error| {
+                    StartFailure::permanent(format!(
+                        "this Trigger session's recovery pair failed integrity verification: {error}"
+                    ))
+                })?;
+                (
+                    Some(pair.workspace.clone()),
+                    Some(pair.conversation.clone()),
+                )
+            }
+            None => (self.workspace_for(&id).await?, restore.cloned()),
+        };
         // Kept for redaction: a tool body must not carry a value the session
         // was handed, and these are exactly those values.
         let environment_values: Vec<String> = environment.variables.values().cloned().collect();
@@ -204,12 +240,14 @@ impl SessionService {
                     rows: geometry.rows(),
                 },
                 capacity: runtime_capacity(spec.options.size),
+                timeout_seconds: trigger_timeout_seconds,
                 // The provider request predates the exact runtime target, so a
                 // credential selected here could be superseded by a late H1
                 // acknowledgement. Delivery happens after authority switches.
                 subject_credential: None,
                 options: options.clone(),
-                restore_from: restore.cloned(),
+                restore_from: restore,
+                workspace,
                 skills: skills
                     .iter()
                     .map(|pack| layer3_adapter::SkillPackage {
@@ -219,6 +257,7 @@ impl SessionService {
                     .collect(),
                 platform_briefing: platform_briefing.to_string(),
                 reaches,
+                runtime_policy_required,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })
@@ -252,9 +291,16 @@ impl SessionService {
                 ))
             }
         };
-        let runtime_generation = candidate
-            .as_ref()
-            .map_or(0, |candidate| candidate.generation.get());
+        let runtime_generation = candidate.as_ref().map_or_else(
+            || {
+                if runtime_policy_required {
+                    u64::from(session.rotations).saturating_add(1)
+                } else {
+                    0
+                }
+            },
+            |candidate| candidate.generation.get(),
+        );
 
         // Compatibility stores still name the handle immediately. Coordinated
         // stores keep it as uncommitted-candidate cleanup debt until attach
@@ -513,6 +559,43 @@ impl SessionService {
                     "a coordinated runtime reached installation without a candidate".into(),
                 )
             })?;
+            let writer_hold: Option<WorkspaceWriterHoldReceipt> = match handover {
+                Some(handover) if handover.original.trigger_origin.is_some() => {
+                    let expected_old = handover
+                        .original
+                        .runtime_id
+                        .as_ref()
+                        .map(|runtime| layer3_adapter::RuntimeHandle(runtime.clone()))
+                        .ok_or_else(|| {
+                            StartFailure::transient(
+                                "the Trigger handover lost its old runtime before workspace capture"
+                                    .into(),
+                            )
+                        })?;
+                    let hold = handover.writer_hold.as_ref().ok_or_else(|| {
+                        StartFailure::permanent(
+                            "the Trigger handover reached H2 without its retained H1 writer hold"
+                                .into(),
+                        )
+                    })?;
+                    let expected_pair = handover.trigger_recovery.as_ref().ok_or_else(|| {
+                        StartFailure::permanent(
+                            "the Trigger handover reached H2 without its exact recovery descriptor"
+                                .into(),
+                        )
+                    })?;
+                    if hold.runtime != expected_old
+                        || trigger_recovery.map(|pair| &pair.reference) != Some(expected_pair)
+                    {
+                        return Err(StartFailure::permanent(
+                            "the Trigger handover candidate does not match its held recovery pair"
+                                .into(),
+                        ));
+                    }
+                    Some(hold.clone())
+                }
+                _ => None,
+            };
             let first_switch = self
                 .store
                 .switch_runtime_authority(
@@ -523,28 +606,84 @@ impl SessionService {
             // An unavailable response can hide a committed switch. The same
             // candidate and lease token are an idempotent receipt; retry them
             // exactly before considering another generation.
-            let switched = match first_switch {
-                Ok(switched) => switched,
-                Err(crate::store::StoreError::Unavailable(_)) => {
-                    self.store
+            let switched_result = match first_switch {
+                Ok(switched) => Ok(switched),
+                Err(crate::store::StoreError::Unavailable(first_error)) => {
+                    match self
+                        .store
                         .switch_runtime_authority(
                             lease.as_mut().expect("the coordinated lease is present"),
                             candidate,
                         )
                         .await
-                        .map_err(|error| {
-                            StartFailure::transient(format!(
-                                "the runtime authority switch could not be confirmed: {error}"
-                            ))
-                        })?
+                    {
+                        Ok(switched) => Ok(switched),
+                        Err(replay_error) => {
+                            // The first response may hide a committed H2. No
+                            // later error can prove that H1 is still the
+                            // authority, so reopening its held writers here
+                            // could create two concurrent repository writers.
+                            // Keep the non-expiring hold and let readoption
+                            // resolve the durable authority explicitly.
+                            drop(installation);
+                            return Err(StartFailure::unverified_attempt(format!(
+                                "the runtime authority switch outcome is ambiguous after exact replay ({first_error}; {replay_error}); the old Trigger runtime remains writer-fenced"
+                            )));
+                        }
+                    }
                 }
+                Err(error) => Err(error),
+            };
+            let switched = match switched_result {
+                Ok(switched) => switched,
                 Err(error) => {
+                    if let Some(hold) = writer_hold.as_ref() {
+                        adapter
+                            .resume_workspace_writers(&hold.runtime, &hold.resume_token)
+                            .await
+                            .map_err(|resume_error| {
+                                StartFailure::transient(format!(
+                                    "the authority switch failed and the old Trigger runtime could not be reopened: {resume_error}"
+                                ))
+                            })?;
+                    }
                     drop(installation);
                     return Err(StartFailure::transient(format!(
                         "the runtime candidate could not become authoritative: {error}"
                     )));
                 }
             };
+            if let Some(hold) = writer_hold.as_ref() {
+                match self.store.runtime_cleanup_debts(&id).await {
+                    Ok(debts) => {
+                        if let Some(cleanup) = debts.into_iter().find(|cleanup| {
+                            cleanup.runtime_id == hold.runtime.0
+                                && cleanup.generation
+                                    == handover
+                                        .expect("a writer hold exists only for a handover")
+                                        .rotating_boundary
+                                        .authority
+                                        .generation
+                        }) {
+                            if let Err(error) = self
+                                .reclaim_runtime_with_lease(
+                                    adapter,
+                                    lease.as_ref().expect("the switched lease is present"),
+                                    &cleanup,
+                                )
+                                .await
+                            {
+                                tracing::warn!(session_id = %id, runtime = %hold.runtime.0, %error, "held old Trigger runtime remains as exact cleanup debt");
+                            }
+                        } else {
+                            tracing::warn!(session_id = %id, runtime = %hold.runtime.0, "authority switch did not expose the expected old-runtime cleanup debt");
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(session_id = %id, runtime = %hold.runtime.0, %error, "cannot load the held old-runtime cleanup debt");
+                    }
+                }
+            }
             // The switch writes its authority marker outside this process's
             // ordinary event lane. Advance the allocator before readiness or
             // handover completion can reserve the same sequence.
@@ -715,6 +854,23 @@ impl SessionService {
                     ))
                 })?;
         }
+        if let (Some(workspaces), Some(origin)) =
+            (self.workspaces.as_ref(), ready.trigger_origin.as_ref())
+        {
+            workspaces
+                .synchronize_runtime_generation(
+                    &ready.session.owner,
+                    origin,
+                    runtime_generation,
+                    &crate::clock::now_rfc3339(),
+                )
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "readiness committed but the Trigger Launch runtime authority could not advance: {error}"
+                    ))
+                })?;
+        }
         #[cfg(test)]
         self.pause_live_install_if_armed().await;
 
@@ -762,6 +918,8 @@ impl SessionService {
         event_log.observe_record(&durable);
         let entry = SessionEntry {
             session: seeded,
+            trigger_origin: durable.trigger_origin.clone(),
+            initial_prompt: durable.initial_prompt.clone(),
             event_log,
             // Evidence means the adapter acknowledged this exact value, not
             // merely that provisioning intends to send it.
@@ -945,5 +1103,70 @@ impl SessionService {
             self.revoke_conversation_opening(&id, opening).await;
         }
         result
+    }
+}
+
+impl SessionService {
+    /// Resolve and integrity-check the repository package for this generation.
+    pub(crate) async fn workspace_for(
+        &self,
+        id: &crate::SessionId,
+    ) -> Result<Option<layer3_adapter::WorkspacePackage>, StartFailure> {
+        let record = self.store.get(id).await.map_err(|error| {
+            StartFailure::transient(format!(
+                "this session's workspace authority could not be read: {error}"
+            ))
+        })?;
+        let Some(record) = record else {
+            return Err(StartFailure::permanent(
+                "this Trigger session no longer exists".to_string(),
+            ));
+        };
+        let Some(origin) = record.trigger_origin else {
+            return Ok(None);
+        };
+        let source = self.workspaces.as_ref().ok_or_else(|| {
+            StartFailure::permanent(
+                "this Trigger session has no configured workspace source".to_string(),
+            )
+        })?;
+        let workspace = source
+            .resolve_workspace(&record.session.owner, &origin)
+            .await
+            .map_err(|error| match error {
+                crate::store::StoreError::Unavailable(detail) => StartFailure::transient(format!(
+                    "this Trigger session's workspace could not be loaded: {detail}"
+                )),
+                other => StartFailure::permanent(format!(
+                    "this Trigger session's workspace authority is malformed: {other}"
+                )),
+            })?
+            .ok_or_else(|| {
+                StartFailure::permanent(
+                    "this Trigger session's repository workspace is missing".to_string(),
+                )
+            })?;
+        let digest = format!("{:x}", Sha256::digest(&workspace.archive));
+        if workspace.epoch != origin.workspace_epoch
+            || workspace.source_revision != origin.source_revision
+            || workspace.baseline_manifest_digest != origin.manifest_digest
+            || workspace.manifest_digest.len() != 64
+            || !workspace
+                .manifest_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || workspace.archive_sha256.len() != 64
+            || !workspace
+                .archive_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || digest != workspace.archive_sha256
+        {
+            return Err(StartFailure::permanent(
+                "this Trigger session's repository workspace failed integrity verification"
+                    .to_string(),
+            ));
+        }
+        Ok(Some(workspace))
     }
 }

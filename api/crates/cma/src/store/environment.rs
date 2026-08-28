@@ -16,7 +16,7 @@ use layer2_core::{
     ServiceId, SessionMode, SkillId, SoftwarePackage, SubjectId,
 };
 use mongodb::bson::doc;
-use mongodb::options::{IndexOptions, ReplaceOptions, ReturnDocument};
+use mongodb::options::{IndexOptions, ReturnDocument};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
@@ -310,10 +310,9 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
     async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError> {
         let doc = to_doc(profile);
         self.profiles
-            .replace_one(doc! { "_id": &doc.id }, &doc)
-            .with_options(ReplaceOptions::builder().upsert(true).build())
+            .insert_one(&doc)
             .await
-            .map_err(|e| StoreError::Unavailable(format!("upsert profile: {e}")))?;
+            .map_err(|e| StoreError::Unavailable(format!("insert profile: {e}")))?;
         Ok(())
     }
 

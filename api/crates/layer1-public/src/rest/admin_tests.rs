@@ -292,6 +292,70 @@ fn an_unattributed_action_renders_without_an_actor_rather_than_a_null() {
 }
 
 #[test]
+fn trigger_support_renders_only_the_closed_lease_projection() {
+    let view = TriggerSupportView::from(layer2_core::TriggerSupportSnapshot {
+        launch_id: layer2_core::LaunchId("launch-support".into()),
+        owner: SubjectId("owner".into()),
+        revision_digest: "sha256:revision".into(),
+        publisher: SubjectId("publisher".into()),
+        upstream_repository_id: 101,
+        fork_repository_id: Some(202),
+        github_account_id: Some(303),
+        service_id: Some("userservice-github".into()),
+        session_id: Some("session-support".into()),
+        state: layer2_core::LaunchState::Ready,
+        blocked_reason: None,
+        created_at: "2026-08-27T00:00:00Z".into(),
+        updated_at: "2026-08-27T00:00:02Z".into(),
+        started_at: Some("2026-08-27T00:00:01Z".into()),
+        terminal_at: None,
+        lease: Some(layer2_core::TriggerSupportLease {
+            fence: 17,
+            acquired_at: "2026-08-27T00:00:01Z".into(),
+            expires_at: "2026-08-27T00:02:01Z".into(),
+        }),
+        cleanup: None,
+        effects: Vec::new(),
+        timeline: Vec::new(),
+    });
+
+    let json = serde_json::to_value(view).expect("support response serialises");
+    let lease = json["lease"]
+        .as_object()
+        .expect("the active lease is represented");
+    assert_eq!(
+        lease
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["acquired_at", "expires_at", "fence"])
+    );
+    assert_eq!(lease["fence"], 17);
+    assert_eq!(lease["acquired_at"], "2026-08-27T00:00:01Z");
+    assert_eq!(lease["expires_at"], "2026-08-27T00:02:01Z");
+}
+
+#[tokio::test]
+async fn cross_owner_effect_recovery_returns_only_empty_acceptance_and_audit_ownership() {
+    let caller = Caller::new(SubjectId("operator".into()), Default::default());
+    let owner = SubjectId("contributor".into());
+    let response = effect_reconciliation_accepted(&caller, owner.clone());
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        response.extensions().get::<ActedUpon>(),
+        Some(&ActedUpon(owner))
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("the empty acceptance body is readable");
+    assert!(
+        body.is_empty(),
+        "a cross-owner Launch projection must not escape"
+    );
+}
+
+#[test]
 fn a_target_of_any_kind_renders_with_the_kind_it_is() {
     let view = ActivityView::from(
         ActivityRecord::new(

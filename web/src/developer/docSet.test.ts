@@ -75,7 +75,7 @@ describe('compileSdkDocuments', () => {
     expect(() => compileSdkDocuments(order)).toThrow(/duplicate nav order 60/i);
 
     const label = completeSources();
-    label['../../../sdk/typescript/docs/errors.md'] = guide(70, 'Operations', 'typescript');
+    label['../../../sdk/typescript/docs/errors.md'] = guide(95, 'Operations', 'typescript');
     expect(() => compileSdkDocuments(label)).toThrow(/duplicate nav label Operations/i);
   });
 

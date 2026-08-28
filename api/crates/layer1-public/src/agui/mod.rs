@@ -49,6 +49,7 @@ mod state;
 #[path = "steer_tests.rs"]
 mod steer_tests;
 mod thread_alias;
+pub(crate) mod trigger;
 mod turn_admission;
 
 pub use state::initial_state;
@@ -57,7 +58,8 @@ pub(super) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Routes this interface contributes.
 pub fn router(state: SessionsState) -> Router {
-    Router::new()
+    let triggers = state.triggers.clone();
+    let mut router = Router::new()
         // One request is one turn: the response is the turn, and it ends when
         // the turn does. Creating a session is projected here too — a thread
         // that does not exist is made — because this protocol has no separate
@@ -70,7 +72,11 @@ pub fn router(state: SessionsState) -> Router {
         // that followed the instruction could read none of what came back.
         .route("/api/v1/agui/events", get(replay::replay))
         .route("/api/v1/agui/capabilities", get(capabilities::declare))
-        .with_state(state)
+        .with_state(state);
+    if let Some(triggers) = triggers {
+        router = router.merge(trigger::router(triggers));
+    }
+    router
 }
 
 /// The AG-UI projection of the core session model.
@@ -91,6 +97,10 @@ impl InterfaceProfile for AguiInterface {
             Operation::Interrupt,
             Operation::Steer,
             Operation::GetUsage,
+            Operation::ReadTriggerPreview,
+            Operation::ReadLaunch,
+            Operation::ReplayLaunchProgress,
+            Operation::ReadLaunchDiff,
         ]
     }
 }

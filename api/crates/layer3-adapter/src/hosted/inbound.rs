@@ -18,6 +18,22 @@ use crate::{
 };
 
 impl Bridge {
+    /// Preserve runtime activity while attaching the correlation fact known at
+    /// the adapter boundary.
+    ///
+    /// ACP carries no turn id on streaming updates. A link-local prompt waiter
+    /// is therefore the positive boundary for activity on this socket; replay
+    /// and startup traffic received before one exists must remain visible but
+    /// cannot later become prompt evidence merely because Layer 2 folded it
+    /// after a dispatch fence.
+    fn scope_activity(&self, update: ConversationUpdate) -> ConversationUpdate {
+        let owns_prompt = self
+            .owned_prompt_waiters
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0;
+        scope_activity(update, owns_prompt)
+    }
+
     /// Act on one frame the bridge sent.
     pub(super) async fn receive(&self, payload: &[u8], updates: &mpsc::Sender<ConversationUpdate>) {
         let Ok(frame) = serde_json::from_slice::<serde_json::Value>(payload) else {
@@ -58,7 +74,8 @@ impl Bridge {
                 };
                 match serde_json::from_value::<SessionUpdate>(update.clone()) {
                     Ok(update) => {
-                        let _ = updates.send(ConversationUpdate::Said(update)).await;
+                        let update = self.scope_activity(ConversationUpdate::Said(update));
+                        let _ = updates.send(update).await;
                     }
                     // A shape of update this build has no type for. Skipped
                     // rather than failing the conversation: a newer bridge
@@ -181,13 +198,28 @@ impl Bridge {
                 owns_prompt_waiter,
             },
         );
-        let _ = updates
-            .send(ConversationUpdate::Asked(PermissionRequest {
-                id,
-                locator: Some(locator),
-                request,
-            }))
-            .await;
+        let update = ConversationUpdate::Asked(PermissionRequest {
+            id,
+            locator: Some(locator),
+            request,
+        });
+        let update = scope_activity(update, owns_prompt_waiter);
+        let _ = updates.send(update).await;
+    }
+}
+
+/// Attach the prompt-ownership fact while it is still known at the socket
+/// boundary. Kept separate from `Bridge` so the closed evidence contract can be
+/// tested without constructing a live WebSocket sink.
+pub(super) fn scope_activity(update: ConversationUpdate, owns_prompt: bool) -> ConversationUpdate {
+    let is_activity = matches!(
+        update.turn_evidence(),
+        Some(crate::TurnEvidence::Activity(_))
+    );
+    if is_activity && !owns_prompt {
+        update.without_prompt_evidence()
+    } else {
+        update
     }
 }
 

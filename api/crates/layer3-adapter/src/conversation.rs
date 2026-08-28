@@ -93,6 +93,51 @@ pub struct PermissionRequest {
     pub request: RequestPermissionRequest,
 }
 
+/// Turn-scoped runtime activity that can prove a dispatched prompt executed.
+///
+/// This is deliberately a closed, small allowlist. Conversation setup and
+/// reconnect traffic shares the same ordered stream as a prompt, so merely
+/// seeing an update after a dispatch fence is not evidence that the runtime
+/// received that prompt. Only activity ACP defines inside a prompt turn is
+/// represented here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TurnScopedEvidence {
+    /// The agent emitted part of its answer.
+    AgentMessage,
+    /// The agent began a tool call.
+    ToolCallStarted,
+    /// A tool call changed state or produced output.
+    ToolCallUpdated,
+    /// The agent stopped for an owner decision.
+    ApprovalRequested,
+}
+
+impl TurnScopedEvidence {
+    /// Every activity class that may be treated as positive execution evidence.
+    pub const ALL: [Self; 4] = [
+        Self::AgentMessage,
+        Self::ToolCallStarted,
+        Self::ToolCallUpdated,
+        Self::ApprovalRequested,
+    ];
+}
+
+/// What one adapter update proves about a prompt turn.
+///
+/// Terminal outcomes are separate from activity because Layer 2 records them
+/// as completion/failure rather than the intermediate `execution_observed`
+/// state. An update returning `None` is initialization, reconnect, telemetry,
+/// liveness, or another event that must never acknowledge a prompt dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEvidence {
+    /// Positive non-terminal execution evidence.
+    Activity(TurnScopedEvidence),
+    /// The runtime reported a terminal prompt result.
+    TerminalResult,
+    /// The runtime reported that the prompt turn failed.
+    TerminalFailure,
+}
+
 /// Something sent toward a runtime's conversation.
 #[derive(Debug, Clone)]
 pub enum ConversationInput {
@@ -126,6 +171,21 @@ pub enum ConversationInput {
 struct PendingInput {
     input: ConversationInput,
     delivered: oneshot::Sender<Result<(), AdapterError>>,
+}
+
+/// What CMA can honestly establish about one conversation-input attempt.
+///
+/// A queue refusal is the only outcome that proves the adapter never received
+/// the operation. Once the operation has crossed that boundary, a timeout,
+/// task loss, or handler error cannot exclude a partial runtime-link write.
+#[derive(Debug)]
+pub enum ConversationSendOutcome {
+    /// The adapter queue rejected the operation before any runtime write.
+    PreWriteFailure(AdapterError),
+    /// The adapter handler returned after writing the operation locally.
+    WriteConfirmed,
+    /// CMA cannot prove whether any bytes reached the runtime link.
+    Ambiguous(AdapterError),
 }
 
 struct AbortWriterOnDrop {
@@ -192,41 +252,60 @@ impl ConversationInputSender {
         self.send_with_deadline(input, DELIVERY_DEADLINE).await
     }
 
+    /// Send one operation without collapsing the only safe retry boundary.
+    pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
+        self.send_classified_with_deadline(input, DELIVERY_DEADLINE)
+            .await
+    }
+
     async fn send_with_deadline(
         &self,
         input: ConversationInput,
         deadline: Duration,
     ) -> Result<(), AdapterError> {
+        match self.send_classified_with_deadline(input, deadline).await {
+            ConversationSendOutcome::WriteConfirmed => Ok(()),
+            ConversationSendOutcome::PreWriteFailure(error)
+            | ConversationSendOutcome::Ambiguous(error) => Err(error),
+        }
+    }
+
+    async fn send_classified_with_deadline(
+        &self,
+        input: ConversationInput,
+        deadline: Duration,
+    ) -> ConversationSendOutcome {
         let (delivered, receipt) = oneshot::channel();
-        self.inner
-            .try_send(PendingInput { input, delivered })
-            .map_err(|error| match error {
+        if let Err(error) = self.inner.try_send(PendingInput { input, delivered }) {
+            let error = match error {
                 mpsc::error::TrySendError::Full(_) => AdapterError::Unavailable(
                     "the conversation input queue is not being consumed".to_string(),
                 ),
                 mpsc::error::TrySendError::Closed(_) => {
                     AdapterError::Unavailable("the conversation input task has ended".to_string())
                 }
-            })?;
+            };
+            return ConversationSendOutcome::PreWriteFailure(error);
+        }
 
         let mut abort_on_drop = AbortWriterOnDrop::new(self.abort.clone());
         let result = match tokio::time::timeout(deadline, receipt).await {
             Err(_) => {
                 self.retire().await;
-                Err(AdapterError::Unavailable(
+                ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
                     "the conversation input task did not deliver the operation".to_string(),
                 ))
             }
             Ok(Err(_)) => {
                 self.retire().await;
-                Err(AdapterError::Unavailable(
+                ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
                     "the conversation input task ended before delivery".to_string(),
                 ))
             }
-            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Ok(()))) => ConversationSendOutcome::WriteConfirmed,
             Ok(Ok(Err(error))) => {
                 self.retire().await;
-                Err(error)
+                ConversationSendOutcome::Ambiguous(error)
             }
         };
         abort_on_drop.disarm();
@@ -315,6 +394,14 @@ pub enum PermissionDecision {
 /// neither would be visible until somebody read the history back.
 #[derive(Debug, Clone)]
 pub enum ConversationUpdate {
+    /// An update that remains part of the visible conversation but cannot
+    /// acknowledge a prompt dispatched on this link.
+    ///
+    /// Hosted adapters use this for activity received while they own no prompt
+    /// waiter, including conversation-opening and reconnect replay. Keeping the
+    /// original update inside the wrapper lets Layer 2 record it normally while
+    /// preserving the adapter's correlation fact across a delayed update queue.
+    WithoutPromptEvidence(Box<ConversationUpdate>),
     /// Something the runtime said, in the protocol's own words.
     Said(SessionUpdate),
     /// A decision the runtime is now blocked on.
@@ -367,6 +454,44 @@ pub enum ConversationUpdate {
     },
 }
 
+impl ConversationUpdate {
+    /// Preserve this update while declaring that it cannot acknowledge a
+    /// prompt dispatched on the current adapter link.
+    pub fn without_prompt_evidence(self) -> Self {
+        match self {
+            already @ Self::WithoutPromptEvidence(_) => already,
+            update => Self::WithoutPromptEvidence(Box::new(update)),
+        }
+    }
+
+    /// Classify only evidence that the runtime contract makes prompt-scoped.
+    ///
+    /// In particular, available commands, mode/configuration changes, usage,
+    /// sign-in requests, and lost-frame notices remain unclassified. All can
+    /// arrive while a conversation opens or reconnects without any prompt
+    /// having reached the model.
+    pub fn turn_evidence(&self) -> Option<TurnEvidence> {
+        match self {
+            Self::WithoutPromptEvidence(_) => None,
+            Self::Said(SessionUpdate::AgentMessageChunk(_)) => {
+                Some(TurnEvidence::Activity(TurnScopedEvidence::AgentMessage))
+            }
+            Self::Said(SessionUpdate::ToolCall(_)) => {
+                Some(TurnEvidence::Activity(TurnScopedEvidence::ToolCallStarted))
+            }
+            Self::Said(SessionUpdate::ToolCallUpdate(_)) => {
+                Some(TurnEvidence::Activity(TurnScopedEvidence::ToolCallUpdated))
+            }
+            Self::Asked(_) => Some(TurnEvidence::Activity(
+                TurnScopedEvidence::ApprovalRequested,
+            )),
+            Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
+            Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
+            Self::Said(_) | Self::Lost { .. } | Self::SignInRequired { .. } => None,
+        }
+    }
+}
+
 /// A bidirectional attachment to a runtime's conversation.
 ///
 /// One stream each way. Outward it is ordered, because the durable log built
@@ -399,21 +524,112 @@ mod tests {
 
     use super::*;
 
+    fn sender_with_unrelated_retirement(
+        inner: mpsc::Sender<PendingInput>,
+    ) -> ConversationInputSender {
+        let retirement = TaskRetirement::default();
+        let retired = retirement.guard();
+        let task = tokio::spawn(async move {
+            let _retired = retired;
+            std::future::pending::<()>().await;
+        });
+        ConversationInputSender {
+            inner,
+            abort: task.abort_handle(),
+            retirement,
+        }
+    }
+
     #[tokio::test]
-    async fn writer_failure_is_returned_and_closes_the_generation() {
+    async fn a_closed_queue_is_a_proven_pre_write_failure() {
+        let (inner, pending) = mpsc::channel(1);
+        drop(pending);
+        let input = sender_with_unrelated_retirement(inner);
+
+        assert!(matches!(
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
+                if message.contains("task has ended")
+        ));
+        input.retire().await;
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_is_a_proven_pre_write_failure() {
+        let (inner, _held_open) = mpsc::channel(1);
+        let (delivered, _receipt) = oneshot::channel();
+        assert!(inner
+            .try_send(PendingInput {
+                input: ConversationInput::Cancel,
+                delivered,
+            })
+            .is_ok());
+        let input = sender_with_unrelated_retirement(inner);
+
+        assert!(matches!(
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
+                if message.contains("not being consumed")
+        ));
+        input.retire().await;
+    }
+
+    #[tokio::test]
+    async fn handler_success_is_a_confirmed_local_write() {
+        let input = ConversationInputSender::spawn(1, |_input| async { Ok(()) });
+
+        assert!(matches!(
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::WriteConfirmed
+        ));
+        input
+            .send(ConversationInput::Cancel)
+            .await
+            .expect("the compatibility API still reports handler success");
+    }
+
+    #[tokio::test]
+    async fn writer_failure_is_ambiguous_and_closes_the_generation() {
         let input = ConversationInputSender::spawn(1, |_input| async {
-            Err(AdapterError::Unavailable("socket write failed".into()))
+            Err(AdapterError::Rejected(
+                "runtime link refused the frame".into(),
+            ))
         });
 
         assert!(matches!(
-            input.send(ConversationInput::Cancel).await,
-            Err(AdapterError::Unavailable(detail)) if detail == "socket write failed"
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::Ambiguous(AdapterError::Rejected(message))
+                if message.contains("refused the frame")
         ));
         input.wait_retired().await;
         assert!(matches!(
             input.send(ConversationInput::Cancel).await,
-            Err(AdapterError::Unavailable(detail))
-                if detail == "the conversation input task has ended"
+            Err(AdapterError::Unavailable(message)) if message.contains("task has ended")
+        ));
+    }
+
+    #[tokio::test]
+    async fn losing_the_consumer_after_queue_acceptance_is_ambiguous() {
+        let (entered, waiting) = oneshot::channel();
+        let mut entered = Some(entered);
+        let (input, abort) = ConversationInputSender::spawn_with_abort(1, move |_input| {
+            let entered = entered.take();
+            async move {
+                if let Some(entered) = entered {
+                    let _ = entered.send(());
+                }
+                std::future::pending::<Result<(), AdapterError>>().await
+            }
+        });
+        let attempt =
+            tokio::spawn(async move { input.send_classified(ConversationInput::Cancel).await });
+        waiting.await.expect("the consumer accepted the operation");
+        abort.abort();
+
+        assert!(matches!(
+            attempt.await.expect("the sender task survives consumer loss"),
+            ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(message))
+                if message.contains("ended before delivery")
         ));
     }
 

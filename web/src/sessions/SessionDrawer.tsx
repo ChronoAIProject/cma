@@ -15,6 +15,35 @@ import { CreatorFace, Fact, Facts, ReachList, Section, SkillList, Unknown } from
 import './SessionDrawer.css';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { SessionSpend } from '@chronoai/cma-sdk';
+import type { Launch } from '@chronoai/cma-sdk';
+import { listLaunchPage, readLaunch } from '../api/client';
+import type { AppRouter } from '../routing/routes';
+import { routeClick, routePath } from '../routing/routes';
+import {
+  deliveryState,
+  mergeabilityLabel,
+  reachState,
+  shortRevision,
+  stateLabel,
+  upstreamRepository,
+  workspaceCheckpoint,
+} from '../trigger/model';
+
+const TRIGGER_LAUNCH_REFRESH_INTERVAL_MS = 15_000;
+
+function pullRequestChecksLabel(value: NonNullable<Launch['pull_request']>['checks']): string {
+  return value === 'awaiting_maintainer_approval'
+    ? 'Awaiting maintainer approval'
+    : stateLabel(value);
+}
+
+function pullRequestFailureNote(
+  failure: NonNullable<Launch['pull_request']>['status_failure'],
+): string | undefined {
+  if (failure === null) return undefined;
+  const retry = failure.retry_at === undefined ? '' : ` Retry after ${failure.retry_at}.`;
+  return `${failure.detail} ${failure.remediation}${retry}`;
+}
 
 /**
  * What is known about the open session — `docs/Web_Style.md` §17.
@@ -40,14 +69,27 @@ interface SessionDrawerProps {
   readonly ending?: string;
   /** Read this session's reserved-capacity spend from the public REST API. */
   readonly readSpend?: (id: string) => Promise<SessionSpend>;
+  /** Navigate to the owning Launch without turning the read into a mutation. */
+  readonly navigate?: AppRouter['navigate'];
 }
 
-export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDrawerProps) {
+export function SessionDrawer({
+  session,
+  onClose,
+  ending,
+  readSpend,
+  navigate,
+}: SessionDrawerProps) {
   const can = abilitiesFor(session);
   const [copied, setCopied] = useState(false);
   const [spendRead, setSpendRead] = useState<{
     readonly session: string;
     readonly spend?: SessionSpend;
+    readonly failed: boolean;
+  }>();
+  const [launchRead, setLaunchRead] = useState<{
+    readonly session: string;
+    readonly launch: Launch | null;
     readonly failed: boolean;
   }>();
   const tone = toneFor(session.lifecycle);
@@ -87,8 +129,86 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
     };
   }, [readSpend, session.id]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: number | undefined;
+    let live = true;
+
+    function scheduleDiscovery(): void {
+      timer = window.setTimeout(() => {
+        void discover();
+      }, TRIGGER_LAUNCH_REFRESH_INTERVAL_MS);
+    }
+
+    async function discover(): Promise<void> {
+      try {
+        const page = await listLaunchPage({ session_id: session.id, limit: 1 }, controller.signal);
+        const found = page.items[0];
+        if (found !== undefined) {
+          if (live) setLaunchRead({ session: session.id, launch: found, failed: false });
+          return;
+        }
+        if (live) {
+          setLaunchRead({ session: session.id, launch: null, failed: false });
+          scheduleDiscovery();
+        }
+      } catch {
+        if (live && !controller.signal.aborted) {
+          setLaunchRead({ session: session.id, launch: null, failed: true });
+          scheduleDiscovery();
+        }
+      }
+    }
+
+    void discover();
+    return () => {
+      live = false;
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [session.id]);
+
+  const discoveredLaunchId =
+    launchRead?.session === session.id ? (launchRead.launch?.id ?? null) : null;
+
+  useEffect(() => {
+    if (discoveredLaunchId === null) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    let live = true;
+
+    const schedule = () => {
+      timer = window.setTimeout(refresh, TRIGGER_LAUNCH_REFRESH_INTERVAL_MS);
+    };
+
+    const refresh = () => {
+      void readLaunch(discoveredLaunchId, controller.signal)
+        .then((next) => {
+          if (live) setLaunchRead({ session: session.id, launch: next, failed: false });
+        })
+        .catch(() => {
+          if (!live || controller.signal.aborted) return;
+          setLaunchRead((current) =>
+            current?.session === session.id ? { ...current, failed: true } : current,
+          );
+        })
+        .finally(() => {
+          if (live) schedule();
+        });
+    };
+
+    refresh();
+    return () => {
+      live = false;
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [discoveredLaunchId, session.id]);
+
   const currentSpend = spendRead?.session === session.id ? spendRead.spend : undefined;
   const spendFailed = spendRead?.session === session.id && spendRead.failed;
+  const owningLaunch = launchRead?.session === session.id ? launchRead.launch : null;
+  const launchLookupFailed = launchRead?.session === session.id && launchRead.failed;
 
   const copyIdentifier = () => {
     /*
@@ -210,6 +330,16 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
           <ReachList services={session.reach} />
         </Section>
 
+        {owningLaunch === null ? (
+          launchLookupFailed ? (
+            <Section title="Trigger repository">
+              <Unknown>Could not be read</Unknown>
+            </Section>
+          ) : null
+        ) : (
+          <TriggerRepository launch={owningLaunch} navigate={navigate} stale={launchLookupFailed} />
+        )}
+
         {/*
          * Only worth a band once there is something to say. A session that has
          * never been moved and reports no version would draw two empty rows.
@@ -273,6 +403,151 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
        * acts is a panel people are afraid to open.
        */}
     </aside>
+  );
+}
+
+function TriggerRepository({
+  launch,
+  navigate,
+  stale,
+}: {
+  readonly launch: Launch;
+  readonly navigate?: AppRouter['navigate'];
+  readonly stale: boolean;
+}) {
+  const upstream = upstreamRepository(launch);
+  const fork = launch.fork?.repository;
+  const reach = reachState(launch);
+  const delivery = deliveryState(launch);
+  const artifact = launch.diff;
+  const promptRecoveryRequired = delivery === 'recovery_required';
+  const pullRequestBlocksSameLaunchContribution =
+    launch.pull_request?.state === 'merged' ||
+    launch.pull_request?.state === 'closed_unmerged' ||
+    launch.pull_request?.head_matches_launch === false;
+  const canContribute =
+    !stale &&
+    artifact !== null &&
+    artifact.total_changed_files > 0 &&
+    artifact.total_changed_files <= artifact.changed_file_limit &&
+    artifact.expected_branch_head === artifact.observed_branch_head &&
+    artifact.validation === 'valid' &&
+    artifact.checks.every((check) => check.passed) &&
+    reach === 'active' &&
+    !pullRequestBlocksSameLaunchContribution;
+  const launchRoute = { kind: 'launch', launchId: launch.id } as const;
+  const contributionRoute = { kind: 'contribute', launchId: launch.id } as const;
+
+  return (
+    <Section
+      title="Trigger repository"
+      note={stale ? 'The latest Launch refresh failed; provider status may be stale.' : undefined}
+    >
+      <Facts>
+        <Fact label="Upstream">
+          {upstream.canonical_owner}/{upstream.canonical_name}
+        </Fact>
+        <Fact label="Fork">
+          {fork === undefined ? 'Pending' : `${fork.canonical_owner}/${fork.canonical_name}`}
+        </Fact>
+        <Fact label="Branch">{launch.branch?.name ?? 'Pending'}</Fact>
+        <Fact label="Base">
+          <code className="drawer__mono">{shortRevision(launch.source_sha)}</code>
+        </Fact>
+        <Fact label="Head">
+          {launch.branch === null ? (
+            'Pending'
+          ) : (
+            <code className="drawer__mono">{shortRevision(launch.branch.current_head)}</code>
+          )}
+        </Fact>
+        <Fact label="Checkpoint">{workspaceCheckpoint(launch) ?? 'Not yet'}</Fact>
+        <Fact label="GitHub reach">{reach?.replaceAll('_', ' ') ?? 'Pending'}</Fact>
+        <Fact label="Task delivery">{delivery?.replaceAll('_', ' ') ?? 'Pending'}</Fact>
+        {launch.pull_request === null ? null : (
+          <>
+            <Fact label="Pull request">
+              {launch.pull_request.canonical_url === null ? (
+                stateLabel(launch.pull_request.state)
+              ) : (
+                <a
+                  href={launch.pull_request.canonical_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {launch.pull_request.number === null
+                    ? launch.pull_request.title
+                    : `#${String(launch.pull_request.number)} ${launch.pull_request.title}`}
+                </a>
+              )}
+            </Fact>
+            <Fact label="PR state">{stateLabel(launch.pull_request.state)}</Fact>
+            <Fact label="PR base">
+              <code className="drawer__mono">{launch.pull_request.base_ref}</code>
+            </Fact>
+            <Fact label="PR head">
+              <code className="drawer__mono">{launch.pull_request.head_ref}</code>
+              {' @ '}
+              <code className="drawer__mono">
+                {shortRevision(
+                  launch.pull_request.head_revision ?? launch.pull_request.expected_head_revision,
+                )}
+              </code>
+            </Fact>
+            <Fact label="Mergeability">{mergeabilityLabel(launch.pull_request.mergeability)}</Fact>
+            <Fact label="Checks">{pullRequestChecksLabel(launch.pull_request.checks)}</Fact>
+            <Fact label="CMA head binding">
+              {launch.pull_request.head_matches_launch === null
+                ? 'Not observed'
+                : launch.pull_request.head_matches_launch
+                  ? 'Matches Launch'
+                  : 'Changed outside CMA'}
+            </Fact>
+            <Fact
+              label="Status sync"
+              note={pullRequestFailureNote(launch.pull_request.status_failure)}
+            >
+              {launch.pull_request.status_failure === null ? 'Current' : 'Paused by CMA'}
+            </Fact>
+            {launch.pull_request.provider_request_id === null ? null : (
+              <Fact label="Provider request">
+                <code className="drawer__mono">{launch.pull_request.provider_request_id}</code>
+              </Fact>
+            )}
+          </>
+        )}
+      </Facts>
+      {promptRecoveryRequired ? (
+        <p className="drawer__reason" role="status">
+          CMA cannot determine whether the previous initial task started. Authorizing another
+          dispatch may execute the task twice.
+        </p>
+      ) : null}
+      <div className="drawer__repository-actions">
+        <a
+          className="button button--outline button--sm"
+          href={routePath(launchRoute)}
+          onClick={
+            navigate === undefined ? undefined : (event) => routeClick(event, launchRoute, navigate)
+          }
+        >
+          {promptRecoveryRequired ? 'Review initial-task recovery' : 'Launch progress'}
+        </a>
+        {canContribute ? (
+          <a
+            className="button button--primary button--sm"
+            href={routePath(contributionRoute)}
+            onClick={
+              navigate === undefined
+                ? undefined
+                : (event) => routeClick(event, contributionRoute, navigate)
+            }
+          >
+            Contribute
+          </a>
+        ) : null}
+      </div>
+    </Section>
   );
 }
 

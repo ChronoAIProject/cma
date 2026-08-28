@@ -11,7 +11,7 @@ use axum::{
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
 };
-use layer2_core::{Authorization, Caller, SubjectId};
+use layer2_core::{Authorization, Caller, LaunchId, SubjectId};
 
 use crate::rest::{problem_document, problem_response};
 
@@ -39,6 +39,17 @@ impl AuthenticatedSubject {
 /// second name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActedUpon(pub SubjectId);
+
+/// Validated identifiers resolved by a successful Trigger support read.
+///
+/// The request recorder cannot safely infer these from a raw query string. The
+/// handler attaches this closed projection only after authorization, lookup,
+/// and correlation validation have all succeeded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerSupportObserved {
+    pub launch_id: LaunchId,
+    pub correlation_id: Option<String>,
+}
 
 /// What a platform-settings write actually changed.
 ///

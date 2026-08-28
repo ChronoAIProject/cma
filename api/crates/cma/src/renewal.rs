@@ -70,11 +70,13 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
     //
     // A control plane that stopped between minting and releasing leaves one
     // behind, and nothing else records the pairing — the key's own name is
-    // what says whose it was. Reclaiming needs the owner's token, which this
-    // process may not hold after a restart. New keys then remain valid only to
-    // their provider expiry, while legacy keys may have no bound at all. This
-    // sweep is the path that takes both back promptly, so a pass it cannot make
-    // is still a credential open, not a tidy-up postponed.
+    // what says whose it was. Reclamation resolves the owner's current bearer
+    // from durable custody after restart. It lacks that authority only when a
+    // non-renewable access token has expired (or the provider has withdrawn
+    // it), not merely because this process restarted. New keys then remain
+    // valid only to their provider expiry, while legacy keys may have no bound
+    // at all. This sweep is the path that takes both back promptly, so a pass
+    // it cannot make is still a credential open, not a tidy-up postponed.
     match auth
         .reclaim_orphaned_credentials_with_budgets(
             service,
@@ -402,6 +404,12 @@ mod tests {
         axum::Json(serde_json::json!({
             "id": format!("provider-key-{mint}"),
             "full_key": format!("full-key-{mint}"),
+            "scopes": "proxy read",
+            "state_version": mint,
+            "allowed_service_ids": ["resolved-model"],
+            "allowed_node_ids": [],
+            "allow_all_services": false,
+            "allow_all_nodes": false,
         }))
     }
 
@@ -718,6 +726,9 @@ mod tests {
                 issued_at: SystemTime::now() - CREDENTIAL_ROTATION_AGE - Duration::from_secs(60),
                 expires_at: Some(SystemTime::now() + Duration::from_secs(60)),
                 scope_fingerprint: "scope".into(),
+                custody_generation: 0,
+                provider_state_version: 0,
+                grant_fingerprint: String::new(),
                 revocation_credential: None,
             }),
             pending: None,
@@ -799,6 +810,9 @@ mod tests {
                 issued_at,
                 expires_at: Some(expires_at),
                 scope_fingerprint: "scope".into(),
+                custody_generation: 0,
+                provider_state_version: 0,
+                grant_fingerprint: String::new(),
                 revocation_credential: None,
             }),
             pending: None,
@@ -866,6 +880,9 @@ mod tests {
                         issued_at: SystemTime::now(),
                         expires_at: Some(expires_at),
                         scope_fingerprint: "scope".into(),
+                        custody_generation: 0,
+                        provider_state_version: 0,
+                        grant_fingerprint: String::new(),
                         revocation_credential: None,
                     }),
                     pending: None,
@@ -927,6 +944,9 @@ mod tests {
                         issued_at: now,
                         expires_at: Some(now + Duration::from_secs(60)),
                         scope_fingerprint: "scope".into(),
+                        custody_generation: 0,
+                        provider_state_version: 0,
+                        grant_fingerprint: String::new(),
                         revocation_credential: None,
                     }),
                     pending: None,
@@ -953,6 +973,9 @@ mod tests {
                         SystemTime::now() + CREDENTIAL_ROTATION_AGE + Duration::from_secs(1),
                     ),
                     scope_fingerprint: "scope".into(),
+                    custody_generation: 0,
+                    provider_state_version: 0,
+                    grant_fingerprint: String::new(),
                     revocation_credential: None,
                 }),
                 pending: None,
@@ -1318,6 +1341,9 @@ mod tests {
             issued_at,
             expires_at: None,
             scope_fingerprint: "scope".into(),
+            custody_generation: 0,
+            provider_state_version: 0,
+            grant_fingerprint: String::new(),
             revocation_credential: None,
         };
         let lane_work = crate::auth::AUTH_SWEEP_BATCH_SIZE / 4 + 2;
@@ -1523,6 +1549,9 @@ mod tests {
             issued_at,
             expires_at: None,
             scope_fingerprint: "scope".into(),
+            custody_generation: 0,
+            provider_state_version: 0,
+            grant_fingerprint: String::new(),
             revocation_credential: None,
         };
         for number in 0..40 {
@@ -1620,6 +1649,9 @@ mod tests {
             issued_at,
             expires_at: None,
             scope_fingerprint: "scope".into(),
+            custody_generation: 0,
+            provider_state_version: 0,
+            grant_fingerprint: String::new(),
             revocation_credential: None,
         };
         for number in 0..REISSUE_PER_SUBLANE {

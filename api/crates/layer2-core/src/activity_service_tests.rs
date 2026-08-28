@@ -86,13 +86,15 @@ async fn a_recorded_action_can_be_read_back_by_an_operator() {
     let store = Arc::new(FakeActivityStore::default());
     let service = ActivityService::new(Arc::clone(&store) as Arc<dyn ActivityStore>);
 
-    service
-        .record(
-            ActivityRecord::new(ActivityAction::SessionTerminate, ActivityOutcome::Succeeded)
-                .by(SubjectId("operator".into()))
-                .on(ActivityTarget::Session(SessionId("sesn_1".into()))),
-        )
-        .await;
+    assert!(
+        service
+            .record(
+                ActivityRecord::new(ActivityAction::SessionTerminate, ActivityOutcome::Succeeded)
+                    .by(SubjectId("operator".into()))
+                    .on(ActivityTarget::Session(SessionId("sesn_1".into()))),
+            )
+            .await
+    );
 
     let entries = service
         .list(&operator(), ActivityQuery::default())
@@ -223,12 +225,14 @@ async fn recording_survives_a_store_that_is_down() {
     });
     let service = ActivityService::new(Arc::clone(&store) as Arc<dyn ActivityStore>);
 
-    service
-        .record(ActivityRecord::new(
-            ActivityAction::SessionCreate,
-            ActivityOutcome::Succeeded,
-        ))
-        .await;
+    assert!(
+        !service
+            .record(ActivityRecord::new(
+                ActivityAction::SessionCreate,
+                ActivityOutcome::Succeeded,
+            ))
+            .await
+    );
     assert!(store.entries.lock().await.is_empty());
 }
 

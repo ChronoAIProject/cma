@@ -1087,8 +1087,16 @@ async fn a_permission_answer_survives_replacing_the_entire_hosted_bridge() {
     .await
     .expect("the runtime replays its blocked request")
     .expect("the replacement update stream stays open");
-    let crate::ConversationUpdate::Asked(replayed) = replayed else {
-        panic!("expected the replayed permission request, got {replayed:?}");
+    assert_eq!(
+        replayed.turn_evidence(),
+        None,
+        "a replayed approval cannot acknowledge a prompt owned by the old bridge"
+    );
+    let crate::ConversationUpdate::WithoutPromptEvidence(replayed) = replayed else {
+        panic!("expected an uncorrelated replayed permission request, got {replayed:?}");
+    };
+    let crate::ConversationUpdate::Asked(replayed) = *replayed else {
+        panic!("expected the replayed permission request");
     };
     assert_eq!(replayed.id, asked.id);
     replacement
