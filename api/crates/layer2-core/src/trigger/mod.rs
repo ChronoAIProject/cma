@@ -10,6 +10,7 @@ mod launch;
 mod revision;
 mod rollout;
 mod service;
+mod sponsorship;
 mod store;
 mod support;
 mod template;
@@ -21,9 +22,12 @@ pub use launch::*;
 pub use revision::*;
 pub use rollout::*;
 pub use service::*;
+pub use sponsorship::*;
 pub use store::*;
 pub use support::*;
 pub use workspace::*;
 
+#[cfg(test)]
+mod sponsorship_tests;
 #[cfg(test)]
 pub(crate) mod tests;
