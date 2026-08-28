@@ -295,7 +295,7 @@ done
 Use the same immutable Skopeo image as the publisher. Authenticate it only to the destination registry; the source is the downloaded archive. The copy must keep both flags shown here. If the destination cannot preserve the media types or digest, `--preserve-digests` fails instead of silently rewriting the image.
 
 ```bash
-SKOPEO_IMAGE='quay.io/skopeo/stable@sha256:4fcfc74eb89ec72dcd8caa7fbbf2a5f77d9fe3e2f5ac9e39192702f49c6d4d1a'
+SKOPEO_IMAGE='quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810'
 TARGET_REGISTRY=registry.example.com
 TARGET_NAMESPACE=chrono
 TARGET_USER=operator
