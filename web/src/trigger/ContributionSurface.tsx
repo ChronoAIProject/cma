@@ -38,12 +38,15 @@ import {
   IconWarningOutline16,
 } from '../ui/icons';
 import {
+  isCurrentTriggerRuntime,
+  isLegacyTriggerRuntime,
   mergeabilityLabel,
   reachState,
   sessionId,
   shortRevision,
   stateLabel,
   timestamp,
+  triggerKernelLabel,
   upstreamRepository,
 } from './model';
 import { useLaunchResource } from './useLaunchResource';
@@ -280,15 +283,10 @@ function mode(value: number | null): string {
   return value === null ? 'none' : `0${value.toString(8)}`;
 }
 
-function patchStats(file: DiffFile): { readonly additions: number; readonly deletions: number } {
-  if (file.patch === undefined) return { additions: 0, deletions: 0 };
-  let additions = 0;
-  let deletions = 0;
-  for (const line of file.patch.split('\n')) {
-    if (line.startsWith('+') && !line.startsWith('+++')) additions += 1;
-    if (line.startsWith('-') && !line.startsWith('---')) deletions += 1;
-  }
-  return { additions, deletions };
+function lineStats(file: DiffFile): string {
+  return typeof file.additions === 'number' && typeof file.deletions === 'number'
+    ? `+${String(file.additions)} −${String(file.deletions)}`
+    : 'Line changes unavailable';
 }
 
 function checksLabel(value: string): string {
@@ -532,6 +530,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
     const launch = resource.launch;
     if (
       launch === null ||
+      !isCurrentTriggerRuntime(launch) ||
       sameLaunchContributionBlock(launch.pull_request, review?.pull_request) !== null
     ) {
       return;
@@ -583,6 +582,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
     const pending = commands.pending?.slot === `launch:branch:${launch?.id}`;
     if (
       launch === null ||
+      !isCurrentTriggerRuntime(launch) ||
       sameLaunchContributionBlock(launch.pull_request, review?.pull_request) !== null ||
       (!pending && publicationReview === null) ||
       ((artifact === null || artifact === undefined) && !pending)
@@ -653,7 +653,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
   }
 
   async function download(): Promise<void> {
-    const artifact = review?.artifact;
+    const artifact = review?.artifact ?? resource.launch?.diff;
     if (artifact === null || artifact === undefined) return;
     setBusy('download');
     setReviewFailure(null);
@@ -678,6 +678,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
     const launch = resource.launch;
     if (
       launch === null ||
+      !isCurrentTriggerRuntime(launch) ||
       sameLaunchContributionBlock(launch.pull_request, review?.pull_request) !== null
     ) {
       return;
@@ -708,6 +709,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
     const retainedOperation = pendingPullRequestOperation(commands.pending, launchId);
     if (
       launch === null ||
+      !isCurrentTriggerRuntime(launch) ||
       sameLaunchContributionBlock(launch.pull_request, review?.pull_request) !== null ||
       (current === null && retainedOperation === null)
     ) {
@@ -820,7 +822,13 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
   async function refreshOpenPullRequestStatus(): Promise<void> {
     const launch = resource.launch;
     const currentPullRequest = review?.pull_request ?? launch?.pull_request;
-    if (launch === null || currentPullRequest?.state !== 'open') return;
+    if (
+      launch === null ||
+      !isCurrentTriggerRuntime(launch) ||
+      currentPullRequest?.state !== 'open'
+    ) {
+      return;
+    }
     const generation = statusRefreshGeneration.current + 1;
     statusRefreshGeneration.current = generation;
     setBusy('status');
@@ -937,6 +945,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
     const pending = commands.pending?.slot === slot && commands.pending.action === 'complete';
     if (
       launch === null ||
+      !isCurrentTriggerRuntime(launch) ||
       (!pending && (launch.state !== 'pr_open' || launch.pull_request?.state !== 'open'))
     ) {
       return;
@@ -1027,17 +1036,24 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
   }
 
   const launch = resource.launch;
+  const legacyReadOnly = isLegacyTriggerRuntime(launch);
+  const runtimeLabel = triggerKernelLabel(launch) ?? 'Admission unavailable';
   const captureSlot = `launch:diff:${launch.id}`;
   const publishSlot = `launch:branch:${launch.id}`;
-  const retainedProposalOperation = pendingPullRequestOperation(commands.pending, launch.id);
-  const proposalOperation = proposal?.operation ?? retainedProposalOperation;
+  const retainedProposalOperation = legacyReadOnly
+    ? undefined
+    : pendingPullRequestOperation(commands.pending, launch.id);
+  const proposalOperation = legacyReadOnly
+    ? undefined
+    : (proposal?.operation ?? retainedProposalOperation);
   const proposalSlot =
     proposalOperation === undefined
       ? null
       : `launch:pull-request:${launch.id}:${proposalOperation}`;
-  const pendingCapture = commands.pending?.slot === captureSlot;
-  const pendingPublish = commands.pending?.slot === publishSlot;
+  const pendingCapture = !legacyReadOnly && commands.pending?.slot === captureSlot;
+  const pendingPublish = !legacyReadOnly && commands.pending?.slot === publishSlot;
   const pendingProposal =
+    !legacyReadOnly &&
     proposalSlot !== null &&
     commands.pending?.slot === proposalSlot &&
     commands.pending.action === 'confirm-pull-request';
@@ -1045,11 +1061,16 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
   const pendingNew = commands.pending?.slot === newSlot && commands.pending.action === 'new-launch';
   const statusSlot = `launch:pull-request-status:${launch.id}`;
   const pendingStatus =
+    !legacyReadOnly &&
     commands.pending?.slot === statusSlot &&
     commands.pending.action === 'refresh-pull-request-status';
   const completeSlot = `launch:complete:${launch.id}`;
   const pendingComplete =
-    commands.pending?.slot === completeSlot && commands.pending.action === 'complete';
+    !legacyReadOnly &&
+    commands.pending?.slot === completeSlot &&
+    commands.pending.action === 'complete';
+  const visiblePendingCommand =
+    !legacyReadOnly || commands.pending?.action === 'new-launch' ? commands.pending : null;
   const repository = upstreamRepository(launch);
   const artifact = review?.artifact ?? launch.diff;
   const contribution = review?.contribution ?? launch.contribution;
@@ -1070,31 +1091,40 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
         ? publicationStatusReason(contribution.state)
         : 'The retained publication intent belongs to a different reviewed artifact. Refresh the Launch before taking another action.';
   const canPublish =
+    !legacyReadOnly &&
     serverStateCurrent &&
     artifact !== null &&
     contribution === null &&
     reviewRemediation === null &&
     reachAvailable &&
     sameLaunchContributionBlock(launch.pull_request, review?.pull_request) === null;
-  const operation = pullRequest === null ? 'open' : pullRequest.state === 'open' ? 'update' : null;
+  const operation = legacyReadOnly
+    ? null
+    : pullRequest === null
+      ? 'open'
+      : pullRequest.state === 'open'
+        ? 'update'
+        : null;
   const pullRequestGuidance =
     pullRequest === null ? null : pullRequestStatusGuidance(pullRequest.state);
   const sameLaunchBlock = sameLaunchContributionBlock(launch.pull_request, review?.pull_request);
   const sameLaunchBlockReason = sameLaunchContributionBlockReason(sameLaunchBlock);
   const statusFailure = pullRequest?.status_failure ?? null;
   const canComplete =
+    !legacyReadOnly &&
     serverStateCurrent &&
     launch.state === 'pr_open' &&
     launch.pull_request?.state === 'open' &&
     pullRequest?.state === 'open';
   const launchRoute = { kind: 'launch', launchId } as const;
-  const recoveryRoute = { kind: 'trigger_recovery', launchId } as const;
+  const recoveryRoute = legacyReadOnly ? null : ({ kind: 'trigger_recovery', launchId } as const);
   const linkedSessionId = sessionId(launch);
   const linkedSessionRoute =
     linkedSessionId === undefined
       ? null
       : ({ kind: 'session', sessionId: linkedSessionId } as const);
   const canPrepareProposal =
+    !legacyReadOnly &&
     serverStateCurrent &&
     operation !== null &&
     sameLaunchBlock === null &&
@@ -1102,6 +1132,9 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
     reviewRemediation === null &&
     exactReviewPublished;
   const publishReason =
+    (legacyReadOnly
+      ? 'This historical Launch is read-only; its retained artifact cannot be republished.'
+      : null) ??
     (!serverStateCurrent
       ? 'Refresh the Launch before starting another GitHub write; the displayed review may be stale.'
       : null) ??
@@ -1110,6 +1143,9 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
     publicationReason ??
     'Publishing writes exactly this reviewed artifact to the guarded Launch branch.';
   const pullRequestReason =
+    (legacyReadOnly
+      ? 'This historical Launch is read-only; CMA will not observe or mutate its pull request again.'
+      : null) ??
     (!serverStateCurrent
       ? 'Refresh the Launch before starting another GitHub write; the displayed review may be stale.'
       : null) ??
@@ -1130,6 +1166,13 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
 
   function remediationAction(remediation: ContributionRemediation | null) {
     if (remediation === null) return null;
+    if (
+      legacyReadOnly &&
+      remediation.action !== 'session' &&
+      remediation.action !== 'refresh_reach'
+    ) {
+      return null;
+    }
     if (remediation.action === 'capture') {
       return (
         <Button
@@ -1211,6 +1254,27 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
             : new Date(resource.lastUpdated).toLocaleTimeString()}
         </div>
       ) : null}
+      {legacyReadOnly ? (
+        <div className="notice notice--quiet trigger-workflow__notice" role="status">
+          <IconWarningOutline16 />
+          <div>
+            <p className="notice__title">Historical contribution is read-only</p>
+            <p className="notice__detail">
+              {runtimeLabel} retains this review for inspection and artifact download. CMA will not
+              capture, publish, complete, or make another pull-request request for it.
+            </p>
+            {linkedSessionRoute === null ? null : (
+              <a
+                className="button button--outline button--sm"
+                href={routePath(linkedSessionRoute)}
+                onClick={(event) => routeClick(event, linkedSessionRoute, navigate)}
+              >
+                Open session
+              </a>
+            )}
+          </div>
+        </div>
+      ) : null}
       {!resource.offline && resource.failure !== null ? (
         <div className="notice notice--fail trigger-workflow__notice" role="alert">
           <IconWarningOutline16 />
@@ -1245,11 +1309,11 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
           </div>
         </div>
       )}
-      {commands.pending === null ? null : (
+      {visiblePendingCommand === null ? null : (
         <div className="notice notice--quiet trigger-workflow__notice" role="status">
           <IconRefreshOutline16 />
           <div>
-            <p className="notice__title">Reconciling {commands.pending.label}</p>
+            <p className="notice__title">Reconciling {visiblePendingCommand.label}</p>
             <p className="notice__detail">
               Only the retained same-key command can be retried until CMA returns a finite result.
             </p>
@@ -1305,30 +1369,34 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
           </dl>
           <div className="contribution__row">
             <span id="contribution-capture-reason" className="control-reason">
-              {sameLaunchBlockReason ??
-                'Capturing a diff reads the workspace and writes nothing to GitHub.'}
+              {legacyReadOnly
+                ? 'This historical Launch retains only previously sealed contribution evidence.'
+                : (sameLaunchBlockReason ??
+                  'Capturing a diff reads the workspace and writes nothing to GitHub.')}
             </span>
-            <Button
-              variant="outline"
-              aria-describedby="contribution-capture-reason"
-              disabled={
-                busy !== null ||
-                sameLaunchBlock !== null ||
-                launch.session === null ||
-                (commands.pending !== null && !pendingCapture)
-              }
-              onClick={() => void capture()}
-            >
-              {busy === 'capture'
-                ? pendingCapture
-                  ? 'Reconciling'
-                  : 'Submitting'
-                : pendingCapture
-                  ? 'Reconcile diff capture'
-                  : artifact === null
-                    ? 'Review diff'
-                    : 'Refresh diff'}
-            </Button>
+            {legacyReadOnly ? null : (
+              <Button
+                variant="outline"
+                aria-describedby="contribution-capture-reason"
+                disabled={
+                  busy !== null ||
+                  sameLaunchBlock !== null ||
+                  launch.session === null ||
+                  (commands.pending !== null && !pendingCapture)
+                }
+                onClick={() => void capture()}
+              >
+                {busy === 'capture'
+                  ? pendingCapture
+                    ? 'Reconciling'
+                    : 'Submitting'
+                  : pendingCapture
+                    ? 'Reconcile diff capture'
+                    : artifact === null
+                      ? 'Review diff'
+                      : 'Refresh diff'}
+              </Button>
+            )}
           </div>
         </section>
 
@@ -1372,49 +1440,44 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
                 <span>{stateLabel(artifact.validation)}</span>
               </div>
               <div className="contribution-files">
-                {artifact.files.map((file) => {
-                  const stats = patchStats(file);
-                  return (
-                    <details key={file.path} className="contribution-file">
-                      <summary>
-                        <IconChevronRightOutline14 />
-                        <span className="contribution-file__path">{file.path}</span>
-                        <span className="contribution-file__change">{stateLabel(file.change)}</span>
-                        <span className="contribution-file__stats">
-                          +{String(stats.additions)} −{String(stats.deletions)}
-                        </span>
-                      </summary>
-                      <dl>
-                        <div>
-                          <dt>Content</dt>
-                          <dd>{file.binary ? 'Binary' : 'Text'}</dd>
-                        </div>
-                        <div>
-                          <dt>Mode</dt>
-                          <dd>
-                            {mode(file.old_mode)} → {mode(file.new_mode)}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Size</dt>
-                          <dd>
-                            {file.old_bytes.toLocaleString('en')} →{' '}
-                            {file.new_bytes.toLocaleString('en')} bytes
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Patch</dt>
-                          <dd>
-                            {file.patch_complete
-                              ? 'Complete in this review'
-                              : 'Use the complete artifact download'}
-                          </dd>
-                        </div>
-                      </dl>
-                      {file.binary || file.patch === undefined ? null : <pre>{file.patch}</pre>}
-                    </details>
-                  );
-                })}
+                {artifact.files.map((file) => (
+                  <details key={file.path} className="contribution-file">
+                    <summary>
+                      <IconChevronRightOutline14 />
+                      <span className="contribution-file__path">{file.path}</span>
+                      <span className="contribution-file__change">{stateLabel(file.change)}</span>
+                      <span className="contribution-file__stats">{lineStats(file)}</span>
+                    </summary>
+                    <dl>
+                      <div>
+                        <dt>Content</dt>
+                        <dd>{file.binary ? 'Binary' : 'Text'}</dd>
+                      </div>
+                      <div>
+                        <dt>Mode</dt>
+                        <dd>
+                          {mode(file.old_mode)} → {mode(file.new_mode)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Size</dt>
+                        <dd>
+                          {file.old_bytes.toLocaleString('en')} →{' '}
+                          {file.new_bytes.toLocaleString('en')} bytes
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Patch</dt>
+                        <dd>
+                          {file.patch_complete
+                            ? 'Complete in this review'
+                            : 'Use the complete artifact download'}
+                        </dd>
+                      </div>
+                    </dl>
+                    {file.binary || file.patch === undefined ? null : <pre>{file.patch}</pre>}
+                  </details>
+                ))}
               </div>
               <div className="contribution__row">
                 <span className="control-reason">
@@ -1482,28 +1545,30 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
                 </span>
                 <div className="contribution__actions">
                   {remediationAction(publishRemediation)}
-                  <Button
-                    variant="primary"
-                    aria-describedby="contribution-publish-reason"
-                    disabled={!canPublish || busy !== null || commands.pending !== null}
-                    onClick={() => {
-                      if (artifact === null) return;
-                      const expectedRevision =
-                        review?.artifact?.id === artifact.id &&
-                        review.artifact.digest === artifact.digest
-                          ? review.revision_number
-                          : launch.revision_number;
-                      setPublicationReview({
-                        launchId: launch.id,
-                        artifactId: artifact.id,
-                        expectedRevision,
-                        snapshotDigest: artifact.digest,
-                        expectedBranchHead: artifact.expected_branch_head,
-                      });
-                    }}
-                  >
-                    Publish branch
-                  </Button>
+                  {legacyReadOnly ? null : (
+                    <Button
+                      variant="primary"
+                      aria-describedby="contribution-publish-reason"
+                      disabled={!canPublish || busy !== null || commands.pending !== null}
+                      onClick={() => {
+                        if (artifact === null) return;
+                        const expectedRevision =
+                          review?.artifact?.id === artifact.id &&
+                          review.artifact.digest === artifact.digest
+                            ? review.revision_number
+                            : launch.revision_number;
+                        setPublicationReview({
+                          launchId: launch.id,
+                          artifactId: artifact.id,
+                          expectedRevision,
+                          snapshotDigest: artifact.digest,
+                          expectedBranchHead: artifact.expected_branch_head,
+                        });
+                      }}
+                    >
+                      Publish branch
+                    </Button>
+                  )}
                 </div>
               </div>
             </section>
@@ -1604,7 +1669,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
             </span>
             <div className="contribution__actions">
               {remediationAction(publishRemediation)}
-              {pullRequestGuidance?.refreshable === true ? (
+              {!legacyReadOnly && pullRequestGuidance?.refreshable === true ? (
                 <Button
                   variant="outline"
                   icon={<IconRefreshOutline16 />}
@@ -1626,10 +1691,10 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
                       : 'Refresh status'}
                 </Button>
               ) : null}
-              {sameLaunchBlock !== null ? (
+              {sameLaunchBlock !== null || legacyReadOnly ? (
                 <Button
                   variant="primary"
-                  disabled={busy !== null || (commands.pending !== null && !pendingNew)}
+                  disabled={busy !== null || (visiblePendingCommand !== null && !pendingNew)}
                   onClick={() => setConfirmingNew(true)}
                 >
                   {pendingNew ? 'Reconcile New Launch' : 'New Launch'}
@@ -1664,7 +1729,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
       </div>
 
       <Modal
-        open={publicationReview !== null || pendingPublish}
+        open={!legacyReadOnly && (publicationReview !== null || pendingPublish)}
         title="Publish this reviewed branch?"
         description="CMA will create one commit with the author and committer shown in this review, then advance only the guarded Launch branch if its head is unchanged."
         onClose={() => {
@@ -1728,7 +1793,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
       </Modal>
 
       <Modal
-        open={confirmingComplete || pendingComplete}
+        open={!legacyReadOnly && (confirmingComplete || pendingComplete)}
         title="Finish CMA work on this pull request?"
         description="The pull request remains open on GitHub for maintainer review. CMA stops this Launch's automation, starts bounded revocation of its remaining GitHub reach, and no further same-Launch updates can be published."
         onClose={() => {
@@ -1773,7 +1838,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
             </Button>
             <Button
               variant="primary"
-              disabled={busy !== null || (commands.pending !== null && !pendingNew)}
+              disabled={busy !== null || (visiblePendingCommand !== null && !pendingNew)}
               onClick={() => void createAnother()}
             >
               {busy === 'new'
@@ -1789,7 +1854,7 @@ function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionS
       />
 
       <Modal
-        open={proposal !== null || pendingProposal}
+        open={!legacyReadOnly && (proposal !== null || pendingProposal)}
         title={`${proposalOperation === 'update' ? 'Update' : 'Open'} pull request?`}
         description={
           proposalOperation === 'update'

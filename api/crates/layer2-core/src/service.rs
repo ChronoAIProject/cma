@@ -217,6 +217,7 @@ impl SessionService {
         let mut offerings: Vec<_> = self
             .adapters
             .iter()
+            .filter(|(id, _)| self.trigger_kernel.as_ref() != Some(*id))
             .map(|(id, adapter)| (id.clone(), servable_modes(adapter.capabilities())))
             .collect();
         offerings.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
@@ -401,6 +402,12 @@ impl SessionService {
             .environments
             .agent_for(caller, spec.environment_profile.as_ref())
             .await?;
+        if trigger_origin.is_none() && self.trigger_kernel.as_ref() == Some(&agent.kernel) {
+            return Err(CoreError::InvalidRequest(format!(
+                "runtime {} is reserved for managed Trigger sessions",
+                agent.kernel
+            )));
+        }
         let size = Self::resolve_size(&agent);
         let mut spec = spec;
         // Which plane a session is on is the exception, and only where no
@@ -618,6 +625,7 @@ impl SessionService {
         self.begin_start(&id).await;
         let service = Arc::clone(self);
         let spawned = record.session.clone();
+        let trigger_origin = record.trigger_origin.clone();
         tokio::spawn(async move {
             service
                 .bring_up(
@@ -629,7 +637,8 @@ impl SessionService {
                     crate::provision_support::BringUpContext::compatibility(
                         crate::provision_failure::Abandonment::Retire,
                         None,
-                    ),
+                    )
+                    .with_trigger_origin(trigger_origin),
                 )
                 .await;
         });
@@ -1439,6 +1448,9 @@ pub(crate) fn trigger_session_origin(
     let connection = launch.connection.as_ref().ok_or_else(|| {
         CoreError::InvalidRequest("the Launch GitHub connection is not frozen".into())
     })?;
+    let (github_catalog_service_id, github_user_service_slug) = connection
+        .github_binding()
+        .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
     let pricing = launch.pricing.as_ref().ok_or_else(|| {
         CoreError::InvalidRequest("the Launch pricing snapshot is not frozen".into())
     })?;
@@ -1467,6 +1479,8 @@ pub(crate) fn trigger_session_origin(
         revision_digest: launch.revision_digest.clone(),
         sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
         github_service_id: connection.service_id.clone(),
+        github_catalog_service_id: Some(github_catalog_service_id.to_string()),
+        github_user_service_slug: Some(github_user_service_slug.to_string()),
         workspace_epoch: workspace.workspace_epoch,
         source_revision: launch.source_sha.clone(),
         manifest_digest: workspace.baseline.digest.clone(),

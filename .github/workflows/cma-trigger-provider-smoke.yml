@@ -112,6 +112,7 @@ jobs:
       CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST: ${{ vars.CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST }}
       CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION }}
       CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION: ${{ vars.CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION }}
+      CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE: ${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}
       CMA_TRIGGER_SMOKE_PUBLIC_ID: ${{ vars.CMA_TRIGGER_SMOKE_PUBLIC_ID }}
       CMA_TRIGGER_SMOKE_REVISION_DIGEST: ${{ vars.CMA_TRIGGER_SMOKE_REVISION_DIGEST }}
       CMA_TRIGGER_SMOKE_SOURCE_SHA: ${{ vars.CMA_TRIGGER_SMOKE_SOURCE_SHA }}
@@ -201,12 +202,75 @@ jobs:
           cache: npm
           cache-dependency-path: sdk/typescript/package-lock.json
 
+      - name: Install the pinned Kubernetes inventory client
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.34.1
+
       - name: Install and build the reviewed CMA SDK
         working-directory: sdk/typescript
         run: |
           set -euo pipefail
           npm ci
           npm run build
+
+      - name: Materialize the scoped Kubernetes inventory credential
+        env:
+          KUBECONFIG_B64: ${{ secrets.CMA_TRIGGER_SMOKE_KUBECONFIG_B64 }}
+          KUBECONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-kubeconfig
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "::error::CMA_TRIGGER_SMOKE_KUBECONFIG_B64 is not provisioned"
+            exit 1
+          fi
+          if ! printf '%s' "$KUBECONFIG_B64" | base64 --decode > "$KUBECONFIG_PATH"; then
+            echo "::error::CMA_TRIGGER_SMOKE_KUBECONFIG_B64 is not valid base64"
+            exit 1
+          fi
+          chmod 0600 "$KUBECONFIG_PATH"
+          test -s "$KUBECONFIG_PATH"
+
+      - name: Verify exact read-only BatchSandbox inventory authority
+        env:
+          KUBECONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-kubeconfig
+          SANDBOX_NAMESPACE: ${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SANDBOX_NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then
+            echo "::error::CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE must be one nonempty DNS-1123 label"
+            exit 1
+          fi
+          resource='batchsandboxes.sandbox.opensandbox.io'
+          allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+            list "$resource" --namespace "$SANDBOX_NAMESPACE")
+          if [ "$allowed" != 'yes' ]; then
+            echo "::error::inventory credential cannot list BatchSandboxes in the exact Trigger namespace"
+            exit 1
+          fi
+          for verb in get watch create update patch delete deletecollection; do
+            allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+              "$verb" "$resource" --namespace "$SANDBOX_NAMESPACE")
+            if [ "$allowed" != 'no' ]; then
+              echo "::error::inventory credential unexpectedly has $verb authority on BatchSandboxes"
+              exit 1
+            fi
+          done
+          allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+            list "$resource" --all-namespaces)
+          if [ "$allowed" != 'no' ]; then
+            echo "::error::inventory credential is not confined to the exact Trigger namespace"
+            exit 1
+          fi
+          for resource in secrets configmaps pods; do
+            allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+              list "$resource" --namespace "$SANDBOX_NAMESPACE")
+            if [ "$allowed" != 'no' ]; then
+              echo "::error::inventory credential unexpectedly reads $resource"
+              exit 1
+            fi
+          done
 
       - name: Materialize the non-secret pinned fixture contract
         env:
@@ -219,6 +283,7 @@ jobs:
             --arg runtime_image_digest "$CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST" \
             --arg runtime_version "$CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION" \
             --arg configuration_revision "$CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION" \
+            --arg trigger_sandbox_namespace "$CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE" \
             --arg public_id "$CMA_TRIGGER_SMOKE_PUBLIC_ID" \
             --arg revision_digest "$CMA_TRIGGER_SMOKE_REVISION_DIGEST" \
             --arg source_sha "$CMA_TRIGGER_SMOKE_SOURCE_SHA" \
@@ -239,6 +304,7 @@ jobs:
               runtime_image_digest: $runtime_image_digest,
               expected_runtime_version: $runtime_version,
               configuration_revision: $configuration_revision,
+              trigger_sandbox_namespace: $trigger_sandbox_namespace,
               public_id: $public_id,
               revision_digest: $revision_digest,
               source_sha: $source_sha,
@@ -268,6 +334,8 @@ jobs:
               timeouts: {launch_seconds: 2400, effect_seconds: 600, poll_seconds: 5},
               github_api_url: "https://api.github.com"
             }' > "$CONFIG_PATH"
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-config "$CONFIG_PATH"
 
       - name: Run one exact provider path
         env:
@@ -275,6 +343,7 @@ jobs:
           EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
           CMA_TRIGGER_SMOKE_ACCESS_TOKEN: ${{ secrets.CMA_TRIGGER_SMOKE_ACCESS_TOKEN }}
           CMA_TRIGGER_SMOKE_SERVICE_ID: ${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}
+          CMA_TRIGGER_SMOKE_KUBECONFIG: ${{ runner.temp }}/cma-trigger-smoke-kubeconfig
           CMA_TRIGGER_SMOKE_OPERATOR_LOGIN: ${{ steps.approval.outputs.operator_login }}
           CMA_TRIGGER_SMOKE_OPERATOR_ACCOUNT_ID: ${{ steps.approval.outputs.operator_account_id }}
           CMA_TRIGGER_SMOKE_REVIEWERS_JSON: ${{ steps.approval.outputs.reviewers_json }}
@@ -282,6 +351,17 @@ jobs:
           set -euo pipefail
           node .github/scripts/cma-trigger-provider-smoke.mjs \
             --run "$CONFIG_PATH" "$EVIDENCE_PATH"
+
+      - name: Remove the Kubernetes inventory credential
+        if: always()
+        env:
+          KUBECONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-kubeconfig
+        run: |
+          set -euo pipefail
+          if [ -e "$KUBECONFIG_PATH" ]; then
+            chmod u+w "$KUBECONFIG_PATH"
+            rm -- "$KUBECONFIG_PATH"
+          fi
 
       - name: Audit and validate closed provider evidence
         id: evidence_audit

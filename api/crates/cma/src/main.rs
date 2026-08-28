@@ -74,6 +74,64 @@ type TriggerProviderPorts = (
     Option<Arc<trigger::github::GithubBroker>>,
 );
 
+/// Composition facts required before a Trigger Launch may claim the native
+/// runtime route or any of its closed capabilities.
+///
+/// Rollout state is deliberately absent. A disabled environment still needs
+/// the fully composed scheduler to reconcile retained work and revoke existing
+/// reach; rollout policy independently denies new admission and effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TriggerCompositionReadiness {
+    native_runtime_adapter: bool,
+    provider_github_broker: bool,
+    durable_workspace_store: bool,
+    github_capability_signer: bool,
+}
+
+impl TriggerCompositionReadiness {
+    fn is_ready(self) -> bool {
+        self.native_runtime_adapter
+            && self.provider_github_broker
+            && self.durable_workspace_store
+            && self.github_capability_signer
+    }
+
+    fn missing_prerequisites(self) -> Vec<&'static str> {
+        [
+            (
+                self.native_runtime_adapter,
+                "native_trigger_runtime_adapter",
+            ),
+            (self.provider_github_broker, "provider_github_broker"),
+            (
+                self.durable_workspace_store,
+                "durable_trigger_workspace_store",
+            ),
+            (self.github_capability_signer, "github_capability_signer"),
+        ]
+        .into_iter()
+        .filter_map(|(present, name)| (!present).then_some(name))
+        .collect()
+    }
+
+    fn admitted_session_route(
+        self,
+        configured_capabilities: &[layer2_core::RequiredCapability],
+    ) -> (
+        Vec<layer2_core::RequiredCapability>,
+        Option<layer2_core::KernelId>,
+    ) {
+        if self.is_ready() {
+            (
+                configured_capabilities.to_vec(),
+                Some(layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
+            )
+        } else {
+            (Vec::new(), None)
+        }
+    }
+}
+
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
         Box::new(AguiInterface),
@@ -662,6 +720,7 @@ async fn serve_normal_control_plane() {
                     base_url,
                     Arc::clone(&auth_state),
                     trigger_store.clone() as Arc<dyn layer2_core::ConnectionRevocationStore>,
+                    config.trigger.public_github_service_slug.clone(),
                 ) {
                     Ok(broker) => Arc::new(broker),
                     Err(error) => {
@@ -676,6 +735,15 @@ async fn serve_normal_control_plane() {
                 (unavailable.clone(), unavailable, None)
             }
         };
+    let trigger_composition = TriggerCompositionReadiness {
+        native_runtime_adapter: adapters
+            .contains_key(&layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
+        provider_github_broker: trigger_github.is_some(),
+        durable_workspace_store: trigger_workspace_store.is_some(),
+        github_capability_signer: github_capability_signer.is_some(),
+    };
+    let (trigger_runtime_capabilities, trigger_kernel) =
+        trigger_composition.admitted_session_route(&config.trigger.runtime_capabilities);
     if !auth_state.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; every request is attributed \
@@ -734,7 +802,7 @@ async fn serve_normal_control_plane() {
     // session provisioning and the administrator surface must never observe
     // different revisions of deployment policy by construction.
     let settings = Arc::new(PlatformSettingsService::new(settings_store));
-    let environments = EnvironmentProfileService::new(
+    let environments = EnvironmentProfileService::new_with_reserved_kernels(
         profile_store,
         baseline,
         catalog
@@ -743,6 +811,7 @@ async fn serve_normal_control_plane() {
         service_picker,
         config.default_agent.clone(),
         Arc::clone(&settings),
+        [layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)],
     );
     let service = SessionService::new(
         adapters,
@@ -773,10 +842,10 @@ async fn serve_normal_control_plane() {
             runtime_version: Some(config.sandbox_image.clone()),
             identity: Some(config.deployment_id.clone()),
             adopts_untagged: config.adopts_untagged_runtimes,
-            trigger_runtime_capabilities: config.trigger.runtime_capabilities.clone(),
+            trigger_runtime_capabilities,
             // The versioned Trigger profile selects this adapter explicitly;
             // Layer 2 treats the identifier as opaque and remains kernel-neutral.
-            trigger_kernel: Some(layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
+            trigger_kernel,
         },
     );
     let trigger_service = Arc::new(
@@ -802,23 +871,15 @@ async fn serve_normal_control_plane() {
     // creator of the deterministic Trigger session, and Session is its
     // read-only attachment check. No partial worker starts: every closed effect
     // shares one executor, so a missing provider, durable workspace store, or
-    // policy signer disables all three scheduler lanes by construction.
-    let mut missing_trigger_worker_prerequisites = Vec::new();
-    if trigger_github.is_none() {
-        missing_trigger_worker_prerequisites.push("provider_github_broker");
-    }
-    if trigger_workspace_store.is_none() {
-        missing_trigger_worker_prerequisites.push("durable_trigger_workspace_store");
-    }
-    if github_capability_signer.is_none() {
-        missing_trigger_worker_prerequisites.push("github_capability_signer");
-    }
+    // policy signer disables all four scheduler lanes by construction.
+    let missing_trigger_worker_prerequisites = trigger_composition.missing_prerequisites();
     let trigger_effect_executor = match (
+        trigger_composition.is_ready(),
         trigger_github,
         trigger_workspace_store.as_ref(),
         github_capability_signer.as_ref(),
     ) {
-        (Some(github), Some(workspace_store), Some(signer)) => {
+        (true, Some(github), Some(workspace_store), Some(signer)) => {
             let baseline_store: Arc<dyn layer2_core::BaselineObjectStore> =
                 Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
             let checkpoint_store: Arc<dyn layer2_core::CheckpointObjectStore> =
@@ -1294,6 +1355,79 @@ mod tests {
         assert!(
             issuer < scheduler,
             "an immediate scheduler tick must observe the installed issuer"
+        );
+    }
+
+    #[test]
+    fn trigger_route_and_workers_share_one_complete_prerequisite_table() {
+        let complete = TriggerCompositionReadiness {
+            native_runtime_adapter: true,
+            provider_github_broker: true,
+            durable_workspace_store: true,
+            github_capability_signer: true,
+        };
+        let configured = vec![
+            layer2_core::RequiredCapability::Conversation,
+            layer2_core::RequiredCapability::RestrictedServiceGateway,
+        ];
+        let (capabilities, kernel) = complete.admitted_session_route(&configured);
+        assert_eq!(capabilities, configured);
+        assert_eq!(kernel.unwrap().as_str(), trigger::TRIGGER_KERNEL_ID);
+        assert!(complete.missing_prerequisites().is_empty());
+
+        for (missing, expected) in [
+            (
+                TriggerCompositionReadiness {
+                    native_runtime_adapter: false,
+                    ..complete
+                },
+                "native_trigger_runtime_adapter",
+            ),
+            (
+                TriggerCompositionReadiness {
+                    provider_github_broker: false,
+                    ..complete
+                },
+                "provider_github_broker",
+            ),
+            (
+                TriggerCompositionReadiness {
+                    durable_workspace_store: false,
+                    ..complete
+                },
+                "durable_trigger_workspace_store",
+            ),
+            (
+                TriggerCompositionReadiness {
+                    github_capability_signer: false,
+                    ..complete
+                },
+                "github_capability_signer",
+            ),
+        ] {
+            let (capabilities, kernel) = missing.admitted_session_route(&configured);
+            assert!(capabilities.is_empty(), "{expected}");
+            assert!(kernel.is_none(), "{expected}");
+            assert_eq!(missing.missing_prerequisites(), [expected]);
+        }
+    }
+
+    #[test]
+    fn incomplete_trigger_composition_reports_every_missing_boundary_in_stable_order() {
+        let missing = TriggerCompositionReadiness {
+            native_runtime_adapter: false,
+            provider_github_broker: false,
+            durable_workspace_store: false,
+            github_capability_signer: false,
+        };
+        assert_eq!(
+            missing.missing_prerequisites(),
+            [
+                "native_trigger_runtime_adapter",
+                "provider_github_broker",
+                "durable_trigger_workspace_store",
+                "github_capability_signer",
+            ]
         );
     }
 }

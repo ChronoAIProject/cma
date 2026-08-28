@@ -796,6 +796,7 @@ impl SessionService {
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();
+        let trigger_origin = moved.trigger_origin.clone();
         let rotation_claim = moved.rotation_claim.clone();
         tokio::spawn(async move {
             service
@@ -810,6 +811,7 @@ impl SessionService {
                         lease: None,
                         handover: None,
                         trigger_recovery,
+                        trigger_origin,
                         prepared_skills: None,
                         rotation_claim,
                     }
@@ -1192,6 +1194,7 @@ impl SessionService {
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();
+        let trigger_origin = moved.trigger_origin.clone();
         let rotation_claim = rotating.rotation_claim.clone();
         tokio::spawn(async move {
             service
@@ -1206,6 +1209,7 @@ impl SessionService {
                         lease: Some(lease),
                         handover: Some(handover),
                         trigger_recovery,
+                        trigger_origin,
                         prepared_skills: None,
                         rotation_claim,
                     }

@@ -308,6 +308,18 @@ pub enum RequiredCapability {
     CredentialRevocation,
 }
 
+/// Closed capability inventory required by the public Trigger product. The
+/// selected runtime route is a separate composition concern; this list remains
+/// provider- and kernel-neutral.
+pub const CMA_TRIGGER_REQUIRED_CAPABILITIES: [RequiredCapability; 6] = [
+    RequiredCapability::Conversation,
+    RequiredCapability::DurableConversation,
+    RequiredCapability::WorkspaceCheckpoint,
+    RequiredCapability::RestrictedServiceGateway,
+    RequiredCapability::CredentialRefresh,
+    RequiredCapability::CredentialRevocation,
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourcePolicy {
@@ -670,14 +682,13 @@ fn validate_task(task: &TriggerTask) -> Result<(), TriggerValidationError> {
             InputFieldKind::Text {
                 min_bytes,
                 max_bytes,
-            } => {
-                if min_bytes > max_bytes || *max_bytes as usize > MAX_FIELD_TEXT_BYTES {
-                    return Err(TriggerValidationError::field(
-                        format!("task.input_fields.{}", field.key),
-                        "has invalid text bounds",
-                    ));
-                }
+            } if min_bytes > max_bytes || *max_bytes as usize > MAX_FIELD_TEXT_BYTES => {
+                return Err(TriggerValidationError::field(
+                    format!("task.input_fields.{}", field.key),
+                    "has invalid text bounds",
+                ));
             }
+            InputFieldKind::Text { .. } => {}
             InputFieldKind::Integer { minimum, maximum } if minimum > maximum => {
                 return Err(TriggerValidationError::field(
                     format!("task.input_fields.{}", field.key),
@@ -754,14 +765,7 @@ fn validate_session(session: &TriggerSessionPolicy) -> Result<(), TriggerValidat
         ));
     }
     let required: BTreeSet<_> = session.required_capabilities.iter().copied().collect();
-    for capability in [
-        RequiredCapability::Conversation,
-        RequiredCapability::DurableConversation,
-        RequiredCapability::WorkspaceCheckpoint,
-        RequiredCapability::RestrictedServiceGateway,
-        RequiredCapability::CredentialRefresh,
-        RequiredCapability::CredentialRevocation,
-    ] {
+    for capability in CMA_TRIGGER_REQUIRED_CAPABILITIES {
         if !required.contains(&capability) {
             return Err(TriggerValidationError::field(
                 "session.required_capabilities",
@@ -841,6 +845,36 @@ pub enum TriggerAvailability {
     Retired,
 }
 
+/// Current, public-safe availability of a Trigger preview.
+///
+/// Unlike [`TriggerAvailability`], this value includes repository policy
+/// observed after publication and is never persisted into an immutable
+/// revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPreviewAvailability {
+    Published,
+    Retired,
+    Unavailable,
+}
+
+/// Public-safe reason a published Trigger cannot currently start a Launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPreviewUnavailableReason {
+    UpstreamNotForkable,
+    UpstreamUnavailable,
+    UpstreamIdentityChanged,
+    RepositoryPolicyUnavailable,
+}
+
+/// Current provider observation used to derive public preview availability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerPreviewRepositoryPolicy {
+    pub repository: RepositoryIdentity,
+    pub public_forkable: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PublisherRepositoryRole {
@@ -910,7 +944,7 @@ impl TriggerRevision {
         }
         authority
             .connection
-            .validate_for(&self.content.repository_access.required_scope_classes)?;
+            .validate_historical_for(&self.content.repository_access.required_scope_classes)?;
         match self.availability {
             TriggerAvailability::Published if self.retired_at.is_some() => {
                 Err(TriggerValidationError::field(
@@ -937,7 +971,8 @@ impl TriggerRevision {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TriggerPreview {
     pub public_id: PublicTriggerId,
-    pub availability: TriggerAvailability,
+    pub availability: TriggerPreviewAvailability,
+    pub unavailable_reason: Option<TriggerPreviewUnavailableReason>,
     pub publisher_display_identity: String,
     pub repository_id: u64,
     pub repository_owner: String,
@@ -1001,7 +1036,11 @@ impl From<&TriggerRevision> for TriggerPreview {
         let content = &revision.content;
         Self {
             public_id: revision.public_id.clone(),
-            availability: revision.availability,
+            availability: match revision.availability {
+                TriggerAvailability::Published => TriggerPreviewAvailability::Published,
+                TriggerAvailability::Retired => TriggerPreviewAvailability::Retired,
+            },
+            unavailable_reason: None,
             publisher_display_identity: content.publisher_display_identity.clone(),
             repository_id: content.upstream.repository.repository_id,
             repository_owner: content.upstream.repository.canonical_owner.clone(),

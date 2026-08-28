@@ -131,7 +131,7 @@ fn only_a_trigger_runtime_gets_the_fixed_gateway_probe_command() {
         env.get("CHRONO_RUNTIME_GATEWAY_PROBE_COMMAND")
             .map(String::as_str),
         Some(
-            r#"["codex","sandbox","--permission-profile","cma-trigger","--","/usr/local/bin/layer4-runtime","runtime-gateway-probe-helper-v1"]"#
+            r#"["codex","sandbox","--permission-profile","cma-trigger","--","/usr/local/bin/layer4-runtime","runtime-gateway-probe-helper-v2"]"#
         )
     );
     assert_eq!(

@@ -26,6 +26,7 @@ use tokio::sync::mpsc;
 
 /// Drives Codex inside a provider-managed sandbox.
 pub struct CodexAdapter {
+    kernel: &'static str,
     hosted: HostedKernel,
     spec: CodexSandboxSpec,
 }
@@ -34,10 +35,30 @@ impl CodexAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
         Self {
+            kernel: "codex",
             hosted: HostedKernel::new(
                 client,
                 spec.deployment.shape.clone(),
                 "codex",
+                spec.deployment.skills_root.clone(),
+                spec.deployment.agent_notes.clone(),
+            ),
+            spec,
+        }
+    }
+
+    /// Build a Codex adapter under a deployment-owned opaque kernel name.
+    ///
+    /// A distinct name lets one deployment route a closed session profile to
+    /// a dedicated provider lane while preserving Codex's implementation and
+    /// keeping the selection provider-neutral above this layer.
+    pub fn named(kernel: &'static str, client: SandboxClient, spec: CodexSandboxSpec) -> Self {
+        Self {
+            kernel,
+            hosted: HostedKernel::new_strict(
+                client,
+                spec.deployment.shape.clone(),
+                kernel,
                 spec.deployment.skills_root.clone(),
                 spec.deployment.agent_notes.clone(),
             ),
@@ -61,7 +82,7 @@ impl CodexAdapter {
 #[async_trait::async_trait]
 impl KernelAdapter for CodexAdapter {
     fn kernel_name(&self) -> &'static str {
-        "codex"
+        self.kernel
     }
 
     fn capabilities(&self) -> KernelCapabilities {
