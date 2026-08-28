@@ -747,14 +747,20 @@ impl CapabilityWorker {
         launch: Launch,
         lease: &layer2_core::WorkerLease,
     ) -> Result<Launch, TriggerServiceError> {
-        let committed = self
-            .triggers
-            .commit_worker(launch.revision_number, lease, launch)
-            .await?;
-        let released = self
-            .triggers
-            .release_worker(&committed.id, committed.revision_number, lease)
-            .await?;
+        // Both store futures retain a full Launch across an await. Keep them
+        // off Tokio's bounded worker stack just as run_once does for this worker.
+        let committed = Box::pin(self.triggers.commit_worker(
+            launch.revision_number,
+            lease,
+            launch,
+        ))
+        .await?;
+        let released = Box::pin(self.triggers.release_worker(
+            &committed.id,
+            committed.revision_number,
+            lease,
+        ))
+        .await?;
         Ok(released)
     }
 
