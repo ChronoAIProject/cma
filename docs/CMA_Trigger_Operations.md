@@ -145,6 +145,23 @@ missing or different headers, malformed receipts, or any broader reach is a
 typed failure and no prompt is sent. Release evidence must additionally show
 that raw `CONNECT` cannot tunnel to the real supervisor or model proxy.
 
+The pinned image carries the distribution `bubblewrap` at `/usr/bin/bwrap` so
+Codex does not fall back to its anonymous bundled helper. The D-09 runners are
+pinned to Ubuntu 24.04 and must install `apparmor-profiles` and `apparmor-utils`,
+copy `/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` to
+`/etc/apparmor.d/bwrap-userns-restrict`, load it with `apparmor_parser -r`, and
+observe both `bwrap (enforce)` and `unpriv_bwrap (enforce)` in the kernel profile
+inventory before starting the campaign.
+
+Only the disposable D-09 runtime container receives the reviewed outer
+`seccomp=unconfined`, `apparmor=unconfined`, and `systempaths=unconfined`
+options. They allow `/usr/bin/bwrap` to transition from Docker's outer policy
+and establish its nested namespace and `/proc`; they do not grant capabilities,
+privileged mode, host networking, or permission to bypass the mandatory inner
+`cma-trigger` Codex sandbox. A command-sandbox initialization refusal is a
+provisioning failure. Disabling the global AppArmor user-namespace restriction
+or running Codex unsandboxed is prohibited.
+
 Both credential proxies parse their configured base and the requested URI as
 structured URLs. They pin scheme, origin, and service-path prefix and reject
 literal, percent-encoded, recursively encoded, mixed-dot, slash, or backslash

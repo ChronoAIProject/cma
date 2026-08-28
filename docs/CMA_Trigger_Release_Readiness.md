@@ -96,7 +96,7 @@ but does not advance this ledger.
 | `D-06` | D     | Repository fixture matrix from section 6                                                                                                                                                    | Every fixture is bounded, synthetic, reproducible, and covers its expected validation/publication result                                                                                                                                                                                |
 | `D-07` | D     | Credential/content redaction and wrong-authority tests                                                                                                                                      | Planted markers never enter browser, prompt, sandbox, logs, traces, activity, support, or artifacts; wrong owner/repository/ref/session is denied before effect                                                                                                                         |
 | `D-08` | D     | Deterministic rollback and recovery simulation                                                                                                                                              | Pause, kill switch, takeover, read-only reconciliation, cancellation, and cleanup preserve session and GitHub resources and retain exact resource counts                                                                                                                                |
-| `D-09` | D     | Pinned Trigger runtime network-boundary campaign                                                                                                                                            | The exact release image proves the listener inventory, Codex/ACP versions and reviewed artifact hashes, exact permission profile, mandatory negative probes, signed numeric-resource gateway call, traversal refusal without an outbound call, and raw-`CONNECT` denial described below |
+| `D-09` | D     | Pinned Trigger runtime network-boundary campaign                                                                                                                                            | The exact release image proves the listener inventory, Codex/ACP/system-bubblewrap identity and reviewed artifact hashes, exact permission profile, mandatory negative probes, signed numeric-resource gateway call, traversal refusal without an outbound call, and raw-`CONNECT` denial described below |
 | `P-01` | P     | Disposable public-repository end-to-end smoke                                                                                                                                               | Anonymous click through explicit PR produces the exact counts in section 7 and validates real GitHub/NyxID identifiers and attribution                                                                                                                                                  |
 | `P-02` | P/S   | Issue #131 real session-side GitHub evidence                                                                                                                                                | An `autonomous` scoped session uses the broker without manual approval, denies ungranted reach, survives replacement with its turn/skills, and fails closed without a profile                                                                                                           |
 | `S-01` | S     | Issue #675 restart and authority campaign                                                                                                                                                   | Fork-pending restart, running-session restart, access expiry with and without refresh token, inactive/reconnect service, and authority drift have redacted passing evidence                                                                                                             |
@@ -119,10 +119,11 @@ MVP.
 in a host substitute and not against a floating Codex installation. The image's
 `org.opencontainers.image.revision` label must equal the full workflow commit;
 a caller-supplied commit string is not image identity. The record adds the
-pinned Codex and ACP versions, the reviewed ACP, Codex launcher, and native
-amd64 Codex executable hashes, the immutable image digest, and the image's IPv4
-listener inventory to section 2's fields. It must prove all of the following in
-one reviewable run:
+pinned Codex and ACP versions, `/usr/bin/bwrap` path and version, the reviewed
+ACP, Codex launcher, native amd64 Codex executable, system bubblewrap, and
+runtime hashes, the immutable image digest, and the image's IPv4 listener
+inventory to section 2's fields. It must prove all of the following in one
+reviewable run:
 
 - the supervisor listens on a discovered non-loopback pod address at `9090`,
   the model proxy on `127.0.0.1:9091`, the two closed denial fronts on
@@ -157,6 +158,16 @@ marker is a failure.
 
 The executable campaign is
 [`cma-trigger-runtime-image-smoke.mjs`](../.github/scripts/cma-trigger-runtime-image-smoke.mjs).
+Its CI and release jobs are pinned to Ubuntu 24.04 and load the distribution's
+targeted `bwrap-userns-restrict` AppArmor policy before execution. The system
+`/usr/bin/bwrap` binary remains part of the image identity; the host policy is
+test-harness provisioning. Only the campaign runtime receives the exact three
+outer security options documented in the operations runbook, while the inner
+Codex permission sandbox remains mandatory. A profile-load failure or sandbox
+bootstrap refusal closes the run as non-passing; it never authorizes a global
+AppArmor change, added capability, privileged container, host network, or
+unsandboxed substitute.
+
 The pull-request runtime matrix runs it against the exact `cma-runtime:ci`
 image loaded for the vulnerability scan and always retains its closed
 `pass`, `fail`, or `inconclusive` JSON record as the 90-day
