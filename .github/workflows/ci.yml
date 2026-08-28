@@ -21,8 +21,31 @@ jobs:
       - uses: actions/checkout@v5
       - name: Runtime provenance and release evidence stay mandatory
         run: |
+          set -euo pipefail
+          ruby -c .github/scripts/cma-trigger-gateway-source-contract.rb
+          ruby -c .github/scripts/cma-trigger-gateway-projection.rb
+          ruby -c .github/scripts/cma-trigger-gateway-tls-sanitize.rb
+          ruby .github/scripts/cma-trigger-gateway-source-contract.rb
+          ruby .github/scripts/cma-trigger-gateway-source-contract.rb --self-test
+          ruby .github/scripts/cma-trigger-gateway-projection.rb --self-test
+          bash -n .github/scripts/cma-trigger-gateway-*.sh
+          shellcheck -x .github/scripts/cma-trigger-gateway-*.sh
+          bash .github/scripts/cma-trigger-gateway-tls-sanitize-tests.sh
+          bash .github/scripts/cma-trigger-gateway-projection-tests.sh
+          bash .github/scripts/cma-trigger-gateway-admission-bootstrap-tests.sh
+          bash .github/scripts/cma-trigger-gateway-cloudflare-capture-tests.sh
+          bash .github/scripts/cma-trigger-gateway-launch-tests.sh
+          bash .github/scripts/cma-trigger-gateway-origin-evidence-tests.sh
+          .github/scripts/cma-trigger-gateway-state.sh --self-test
+          .github/scripts/cma-trigger-gateway-adoption.sh --self-test
+          .github/scripts/cma-trigger-gateway-adoption-tests.sh
+          .github/scripts/cma-trigger-gateway-restore-traffic-tests.sh
           ruby .github/scripts/cma-trigger-publish-contract.rb
           ruby .github/scripts/cma-trigger-publish-contract.rb --self-test
+          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10 | bash -n
+          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10 | shellcheck -s bash -
+          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10-invocation | bash -n
+          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10-invocation | shellcheck -s bash -
 
   trigger-provider-smoke-contract:
     name: Trigger provider smoke contract
@@ -102,7 +125,7 @@ jobs:
             infra/api/secret.yaml infra/api/service.yaml \
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
-            infra/api/gcpbackendpolicy.yaml \
+            infra/api/gcpbackendpolicy.yaml infra/api/cutover-fence-policy.yaml \
             infra/runtime/Dockerfile \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
             infra/web/secret.yaml infra/web/service.yaml \
