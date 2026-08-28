@@ -826,6 +826,30 @@ def verify_contract(workflow, release_doc, readiness_doc, restore_source = nil)
   jobs = required_hash(workflow, "publish.yml must contain a workflow mapping")["jobs"]
   jobs = required_hash(jobs, "publish.yml must contain jobs")
 
+  main_checks_start = release_doc.index("### Required checks on `main`")
+  main_checks_end = main_checks_start && release_doc.index("### ", main_checks_start + 4)
+  check(
+    main_checks_start && main_checks_end,
+    "Release documentation must retain its bounded main-checks section",
+  )
+  main_checks = release_doc[main_checks_start...main_checks_end]
+  ["Trigger release contract", "Trigger provider smoke contract"].each do |name|
+    check(
+      main_checks.include?(name),
+      "main branch protection documentation must require #{name}",
+    )
+  end
+  [
+    "same non-null GitHub Actions App ID required on `develop`",
+    "Legacy context-only entries accept a status from any app",
+    "`required_status_checks.checks`",
+  ].each do |contract|
+    check(
+      main_checks.include?(contract),
+      "main branch protection documentation must retain exact app binding",
+    )
+  end
+
   images = required_hash(jobs["images"], "publish.yml must retain the images job")
   check(
     images.dig("strategy", "matrix", "component") == COMPONENTS,
@@ -1179,10 +1203,11 @@ def verify_contract(workflow, release_doc, readiness_doc, restore_source = nil)
     "Public DNS is not origin proof",
     "HTTP/HTTPS `curl --resolve` probes",
     "`%{remote_ip}` required to equal it",
-    "production client-IP authority remains a choose-one gate",
+    "release candidate selects and implements the conditional chain-aware",
     "approved GFE peer",
-    "reviewed pinned official Cloudflare CIDRs",
-    "blind hop-count increase is prohibited",
+    "build-pinned complete official Cloudflare CIDR",
+    "Startup accepts only an empty Cloudflare set or",
+    "official-CIDR comparison in both directions",
     "hard-disabled by a reviewed source constant",
     "put `--disable` first",
     "set `--noproxy '*'`",
@@ -1726,10 +1751,10 @@ def verify_gateway_release_contract_legacy_unused(
     "`curl --resolve`",
     "`%{remote_ip}` to equal that captured address",
     "Cloudflare DNS, origin/TLS, redirect, cache, transform, header, and routing setting",
-    "Production is also blocked on one explicitly selected and tested client-IP authority contract",
+    "Production is also blocked on live validation of the selected conditional",
     "GFE-observed upstream token",
-    "official Cloudflare CIDRs",
-    "Blindly increasing the hop count to two is prohibited",
+    "build-pinned complete official Cloudflare CIDR",
+    "official Cloudflare IPv4 and IPv6 sets",
     "production adoption, `--adopt`, and step 10 traffic restoration remain disabled",
   ]
   check(
