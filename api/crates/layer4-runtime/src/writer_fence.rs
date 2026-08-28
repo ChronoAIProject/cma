@@ -585,12 +585,29 @@ mod tests {
 
     impl Drop for WriterSession {
         fn drop(&mut self) {
-            if let Ok(table) = process_table() {
-                for pid in writer_states(&table, &BTreeSet::from([self.root]), None).keys() {
+            let roots = BTreeSet::from([self.root]);
+            let deadline = Instant::now() + QUIESCE_TIMEOUT;
+            loop {
+                let Ok(table) = process_table() else {
+                    break;
+                };
+                let states = writer_states(&table, &roots, None);
+                let live = states
+                    .iter()
+                    .filter_map(|(pid, state)| (!matches!(state, 'Z' | 'X')).then_some(*pid))
+                    .collect::<Vec<_>>();
+                if live.is_empty() {
+                    break;
+                }
+                for pid in live {
                     unsafe {
-                        libc::kill(*pid, libc::SIGKILL);
+                        libc::kill(pid, libc::SIGKILL);
                     }
                 }
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(POLL_INTERVAL);
             }
             let _ = self.child.wait();
         }
