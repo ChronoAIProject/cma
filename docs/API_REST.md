@@ -400,16 +400,33 @@ have no rate card or rate and both amounts are zero, even on a priced
 deployment. Contributor Launches copy the accepted rate terms into the session;
 retiring that card after Start does not reprice or invalidate the promise.
 
-`runtime_admission` discloses the closed `kernel` vocabulary (`codex` for the
-public MVP), pins the deployment runtime identity, and records its canonical
-capability inventory. The value comes from the server's authoritative Trigger
-admission configuration; clients must not infer it from `runtime_version` or
-capabilities. `review_quota` shows the observed owner live-session count and
+`runtime_admission` discloses the closed `kernel` vocabulary
+(`codex-trigger-native-v1` for the public MVP), pins the dedicated provider lane
+and deployment runtime identity, and records its canonical capability inventory.
+The ordinary `codex` session kernel is not a Trigger fallback. The value comes
+from the server's authoritative Trigger admission configuration; clients must
+not infer it from `runtime_version` or capabilities. `review_quota` shows the
+observed owner live-session count and
 deployment reservation headroom. Start obtains `start_admission` by checking the
 quote, current rate card, locked kernel, runtime identity/capabilities, owner
 quota, and deployment capacity again. Kernel/runtime identity and required
 capabilities are also checked immediately before provisioning. Missing or
 changed evidence fails closed.
+
+The second exact kernel value, `codex`, identifies a retained pre-versioned
+Launch; it is not an alias or fallback for the current route. CMA returns that
+Launch from owned list/read, a normal README re-click, progress/events, and diff
+inspection. Its existing session remains reachable, retained immutable diff
+artifacts remain downloadable, `/launches/new` may create a separate current
+Launch, and `/cancel` may stop the historical Launch without deleting its
+records. Overrides, connection selection, Start, diff capture, branch
+publication, pull-request review/open/update/status refresh, completion, and
+initial-prompt recovery are unavailable. Those commands return HTTP `409` with
+code `trigger_runtime_route_unavailable` and field
+`runtime_admission.kernel`, without a provider call or Launch mutation. Clients
+should present `codex` Launches as explicitly read-only except for cancellation
+and New Launch creation. Every other kernel string is outside the closed wire
+vocabulary and fails decoding rather than being treated as historical.
 
 Each step carries `key`, stable `sequence`, `status`, nullable start/completion
 times, `attempt`, `safe_detail`, `remediation`, public-safe external resource ids,
@@ -576,6 +593,12 @@ bounded file entries with change kind, modes, hashes, byte counts, optional patc
 and completeness; total changed bytes/files; commit identities; workflow paths;
 validation/check results; its digest and object size; creation/retention times; and
 the tenant-scoped download path.
+
+Every file entry always carries `additions` and `deletions`. They are exact
+non-negative line counts for text, computed independently of whether the bounded
+response retains `patch`; both are JSON `null` for binary content, where line
+counts are unavailable. Their availability is paired. Clients must never derive
+counts from the optional patch or render `null` as zero.
 
 Branch publication requires the artifact digest and creates a contribution record
 with the exact expected head, produced tree/commit/object ids, resulting head,

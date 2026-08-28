@@ -247,6 +247,53 @@ beforeEach(() => {
 });
 
 describe('contribution command reconciliation', () => {
+  it('projects a historical contribution as retained read-only evidence', async () => {
+    if (LAUNCH.runtime_admission === null) throw new Error('fixture omitted runtime admission');
+    const legacy: Launch = {
+      ...readyLaunch(),
+      state: 'pr_open',
+      runtime_admission: { ...LAUNCH.runtime_admission, kernel: 'codex' },
+      diff: DIFF.artifact,
+      contribution: DIFF.contribution,
+      pull_request: openPullRequest(),
+    };
+    launchResource.use.mockReturnValue(resource(legacy));
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      launch_id: legacy.id,
+      revision_number: legacy.revision_number,
+      state: legacy.state,
+      artifact: legacy.diff,
+      contribution: legacy.contribution,
+      pull_request: legacy.pull_request,
+    });
+
+    render(<ContributionSurface ownerId="test-owner" launchId={legacy.id} navigate={vi.fn()} />);
+
+    expect(await screen.findByText('Historical contribution is read-only')).toBeInTheDocument();
+    expect(screen.getByText(/Codex \(historical, read-only\)/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open session' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download artifact' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'New Launch' })).toBeEnabled();
+    for (const name of [
+      'Review diff',
+      'Refresh diff',
+      'Publish branch',
+      'Refresh status',
+      'Open pull request',
+      'Update pull request',
+      'Finish CMA work',
+    ]) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    expect(api.requestLaunchDiff).not.toHaveBeenCalled();
+    expect(api.publishLaunchBranch).not.toHaveBeenCalled();
+    expect(api.reviewPullRequest).not.toHaveBeenCalled();
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+    expect(api.refreshPullRequestStatus).not.toHaveBeenCalled();
+    expect(api.completeLaunch).not.toHaveBeenCalled();
+  });
+
   it('clears A review state and accepts a lower-revision B review', async () => {
     const launchA = { ...readyLaunch(), id: 'launch-a', revision_number: 10 };
     const launchB = { ...readyLaunch(), id: 'launch-b', revision_number: 1 };
@@ -1285,6 +1332,62 @@ describe('contribution command reconciliation', () => {
       title: privateTitle,
       body: privateBody,
     });
+  });
+
+  it('renders authoritative line statistics when the summary omits its patch', async () => {
+    const artifact = DIFF.artifact;
+    const file = artifact?.files[0];
+    if (artifact === null || file === undefined) throw new Error('diff fixture omitted its file');
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      artifact: {
+        ...artifact,
+        files: [
+          {
+            ...file,
+            additions: 12,
+            deletions: 4,
+            patch: undefined,
+            patch_complete: false,
+          },
+        ],
+      },
+    });
+
+    const view = render(
+      <ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('+12 −4')).toBeVisible();
+    expect(screen.queryByText('Line changes unavailable')).toBeNull();
+    expect(view.container.querySelector('.contribution-file pre')).toBeNull();
+  });
+
+  it('names unavailable binary line statistics without fabricating zeroes', async () => {
+    const artifact = DIFF.artifact;
+    const file = artifact?.files[0];
+    if (artifact === null || file === undefined) throw new Error('diff fixture omitted its file');
+    api.readLaunchDiff.mockResolvedValue({
+      ...DIFF,
+      artifact: {
+        ...artifact,
+        files: [
+          {
+            ...file,
+            binary: true,
+            additions: null,
+            deletions: null,
+            patch: undefined,
+            patch_complete: false,
+          },
+        ],
+      },
+    });
+
+    render(<ContributionSurface ownerId="test-owner" launchId={LAUNCH.id} navigate={vi.fn()} />);
+
+    expect(await screen.findByText('Line changes unavailable')).toBeVisible();
+    expect(screen.queryByText('+0 −0')).toBeNull();
   });
 
   it('renders hostile filenames and patches as inert text', async () => {

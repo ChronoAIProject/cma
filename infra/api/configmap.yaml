@@ -160,6 +160,21 @@ data:
   # until that image has demonstrated every named capability; Trigger Launch
   # admission fails closed when a published requirement is absent.
   CHRONO_TRIGGER_RUNTIME_CAPABILITIES: ""
+  # Exact NyxID public-proxy service used only for credential-free repository
+  # metadata. NyxID's smallest rule is GET /repositories/**; CMA narrows it to
+  # /repositories/{one nonzero numeric ID} and never sends a subject, bearer,
+  # UserService, query, body, or caller-selected path.
+  # Keep empty until a dedicated credential-free NyxID service (for example,
+  # cma-trigger-github-public) has the bounded anonymous rule and live evidence.
+  CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG: ""
+  # Trigger sessions never fall back to the ordinary gVisor OpenSandbox
+  # service. These three values are one closed authority and stay empty until
+  # the dedicated versioned native lane, workload namespace, key mount, and live
+  # evidence are present. A partial tuple fails CMA startup; an absent tuple
+  # leaves ordinary sessions available while Trigger admission stays closed.
+  CHRONO_TRIGGER_SANDBOX_BASE_URL: ""
+  CHRONO_TRIGGER_SANDBOX_NAMESPACE: ""
+  CHRONO_TRIGGER_SANDBOX_API_KEY_FILE: ""
   CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS: ""
   CHRONO_TRIGGER_REPOSITORY_IDS: ""
   CHRONO_TRIGGER_USER_COHORT_PERCENT: "0"
@@ -269,7 +284,7 @@ data:
   # The API and runtime also share one exact four-MiB skill-prelude limit. Adopt
   # the matching runtime image before deploying an API that accepts that limit;
   # the currently pinned v0.7.0 runtime rejects bodies above two MiB with 413.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime:v0.9.0"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime:v0.10.0"
   # The default, and therefore the floor a session receives when its profile
   # names no size.
   #

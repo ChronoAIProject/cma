@@ -5,6 +5,7 @@
   "runtime_image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "expected_runtime_version": "registry.example.invalid/cma-runtime@sha256:unprovisioned",
   "configuration_revision": "unprovisioned-example",
+  "trigger_sandbox_namespace": "trigger-workloads",
   "public_id": "00000000-0000-4000-8000-000000000000",
   "revision_digest": "0000000000000000000000000000000000000000000000000000000000000000",
   "source_sha": "0000000000000000000000000000000000000000",

@@ -157,7 +157,9 @@ impl Bridge {
                 Ok(())
             });
         }
+        let spawn = crate::writer_fence::ManagedSpawnPermit::begin();
         let mut child = process.spawn()?;
+        let managed_child = spawn.register(child.id());
         #[cfg(unix)]
         let writer_session_root = child.id().and_then(|pid| i32::try_from(pid).ok());
         #[cfg(not(unix))]
@@ -184,7 +186,7 @@ impl Bridge {
         spawn_writer(stdin, input_rx);
         spawn_reader(stdout, output.clone(), Arc::clone(&pending));
         spawn_diagnostics(stderr);
-        spawn_reaper(child, ended.clone());
+        spawn_reaper(child, managed_child, ended.clone());
 
         tracing::info!(%command, "conversation bridge started");
         Ok(Self {
@@ -302,7 +304,11 @@ fn spawn_diagnostics(stderr: tokio::process::ChildStderr) {
 ///
 /// A bridge that exits mid-conversation is the runtime being lost, and has to
 /// surface as that rather than as a stream that quietly stops.
-fn spawn_reaper(mut child: tokio::process::Child, ended: tokio::sync::watch::Sender<bool>) {
+fn spawn_reaper(
+    mut child: tokio::process::Child,
+    managed_child: crate::writer_fence::ManagedChild,
+    ended: tokio::sync::watch::Sender<bool>,
+) {
     tokio::spawn(async move {
         match child.wait().await {
             Ok(status) => {
@@ -310,6 +316,7 @@ fn spawn_reaper(mut child: tokio::process::Child, ended: tokio::sync::watch::Sen
             }
             Err(e) => tracing::warn!(error = %e, "conversation bridge could not be waited on"),
         }
+        drop(managed_child);
         // Held rather than announced: a bridge that exits before anything
         // asks must still answer the question when it is finally asked.
         let _ = ended.send(true);

@@ -670,7 +670,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
     assert!(readiness["workspaceCheckpoint"].is_null());
     assert_eq!(
         readiness["githubCapability"]["name"],
-        "github_capability_v1"
+        "github_capability_v2"
     );
     assert_eq!(
         readiness["githubCapability"]["version"],

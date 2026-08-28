@@ -47,6 +47,32 @@ pub enum TriggerAvailability {
     Retired,
 }
 
+/// Current public preview availability after resolving repository policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPreviewAvailability {
+    /// The revision and current repository policy permit Launch review.
+    Published,
+    /// The publisher retired this immutable revision.
+    Retired,
+    /// Current repository identity or policy prevents Launch review.
+    Unavailable,
+}
+
+/// Public-safe reason a published Trigger is currently unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPreviewUnavailableReason {
+    /// The current repository policy does not permit the public fork workflow.
+    UpstreamNotForkable,
+    /// The retained numeric upstream can no longer be read.
+    UpstreamUnavailable,
+    /// The retained upstream identity no longer matches the provider.
+    UpstreamIdentityChanged,
+    /// CMA could not safely resolve current repository policy.
+    RepositoryPolicyUnavailable,
+}
+
 /// Repository visibility observed through the selected connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -190,10 +216,11 @@ impl<'de> Deserialize<'de> for TriggerPreviewCost {
 /// Side-effect-free public README Trigger preview.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "TriggerPreviewWire")]
 pub struct TriggerPreview {
     pub public_id: String,
-    pub availability: TriggerAvailability,
+    pub availability: TriggerPreviewAvailability,
+    pub unavailable_reason: Option<TriggerPreviewUnavailableReason>,
     pub publisher_display_identity: String,
     pub repository_id: u64,
     pub repository_owner: String,
@@ -211,6 +238,66 @@ pub struct TriggerPreview {
     pub pricing_policy_reference: String,
     pub estimated_cost: TriggerPreviewCost,
     pub revision_digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TriggerPreviewWire {
+    public_id: String,
+    availability: TriggerPreviewAvailability,
+    unavailable_reason: Option<TriggerPreviewUnavailableReason>,
+    publisher_display_identity: String,
+    repository_id: u64,
+    repository_owner: String,
+    repository_name: String,
+    visibility: RepositoryVisibility,
+    allow_forking: bool,
+    public_summary: String,
+    permission_ceiling: TriggerPermissionMode,
+    required_capabilities: Vec<TriggerRequiredCapability>,
+    resource_default: TriggerSessionSize,
+    resource_ceiling: TriggerSessionSize,
+    timeout_default_seconds: u32,
+    timeout_ceiling_seconds: u32,
+    billing_mode: TriggerBillingMode,
+    pricing_policy_reference: String,
+    estimated_cost: TriggerPreviewCost,
+    revision_digest: String,
+}
+
+impl TryFrom<TriggerPreviewWire> for TriggerPreview {
+    type Error = &'static str;
+
+    fn try_from(value: TriggerPreviewWire) -> std::result::Result<Self, Self::Error> {
+        match (value.availability, value.unavailable_reason) {
+            (TriggerPreviewAvailability::Unavailable, Some(_))
+            | (TriggerPreviewAvailability::Published | TriggerPreviewAvailability::Retired, None) =>
+                {}
+            _ => return Err("Trigger preview availability and unavailable_reason disagree"),
+        }
+        Ok(Self {
+            public_id: value.public_id,
+            availability: value.availability,
+            unavailable_reason: value.unavailable_reason,
+            publisher_display_identity: value.publisher_display_identity,
+            repository_id: value.repository_id,
+            repository_owner: value.repository_owner,
+            repository_name: value.repository_name,
+            visibility: value.visibility,
+            allow_forking: value.allow_forking,
+            public_summary: value.public_summary,
+            permission_ceiling: value.permission_ceiling,
+            required_capabilities: value.required_capabilities,
+            resource_default: value.resource_default,
+            resource_ceiling: value.resource_ceiling,
+            timeout_default_seconds: value.timeout_default_seconds,
+            timeout_ceiling_seconds: value.timeout_ceiling_seconds,
+            billing_mode: value.billing_mode,
+            pricing_policy_reference: value.pricing_policy_reference,
+            estimated_cost: value.estimated_cost,
+            revision_digest: value.revision_digest,
+        })
+    }
 }
 
 /// Stable provider-neutral repository identity.
@@ -618,9 +705,28 @@ pub struct LaunchPricingSnapshot {
 /// Closed kernel identity admitted for a Trigger-owned session.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub enum TriggerKernel {
+    /// Historical route retained for reads, cancellation, session access, and
+    /// immutable artifact download; it cannot authorize new Trigger work.
+    #[serde(rename = "codex")]
     Codex,
+    /// Current dedicated Trigger runtime route.
+    #[serde(rename = "codex-trigger-native-v1")]
+    CodexTriggerNativeV1,
+}
+
+impl TriggerKernel {
+    /// Whether this is the current route that may admit new Trigger work.
+    pub const fn is_current(self) -> bool {
+        matches!(self, Self::CodexTriggerNativeV1)
+    }
+
+    /// Whether this is the historical route exposed only through the bounded
+    /// read, cancellation, session, and retained-artifact surface.
+    pub const fn is_legacy_read_only(self) -> bool {
+        matches!(self, Self::Codex)
+    }
 }
 
 /// Locked kernel, pinned runtime identity, and demonstrated capabilities shown during review.
@@ -708,7 +814,7 @@ pub enum DiffChangeKind {
 /// One file in a sealed diff review.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "DiffFileWire")]
 pub struct DiffFile {
     pub path: String,
     pub change: DiffChangeKind,
@@ -723,9 +829,68 @@ pub struct DiffFile {
     pub new_provider_object_id: Option<String>,
     pub old_bytes: u64,
     pub new_bytes: u64,
+    pub additions: Option<u64>,
+    pub deletions: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch: Option<String>,
     pub patch_complete: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct RequiredNullableLineCount(Option<u64>);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiffFileWire {
+    path: String,
+    change: DiffChangeKind,
+    binary: bool,
+    old_mode: Option<u32>,
+    new_mode: Option<u32>,
+    old_sha256: Option<String>,
+    new_sha256: Option<String>,
+    #[serde(default)]
+    old_provider_object_id: Option<String>,
+    #[serde(default)]
+    new_provider_object_id: Option<String>,
+    old_bytes: u64,
+    new_bytes: u64,
+    additions: RequiredNullableLineCount,
+    deletions: RequiredNullableLineCount,
+    #[serde(default)]
+    patch: Option<String>,
+    patch_complete: bool,
+}
+
+impl TryFrom<DiffFileWire> for DiffFile {
+    type Error = &'static str;
+
+    fn try_from(value: DiffFileWire) -> std::result::Result<Self, Self::Error> {
+        let additions = value.additions.0;
+        let deletions = value.deletions.0;
+        match (value.binary, additions, deletions) {
+            (false, Some(_), Some(_)) | (true, None, None) => {}
+            _ => return Err("Diff file line statistics disagree with its binary state"),
+        }
+        Ok(Self {
+            path: value.path,
+            change: value.change,
+            binary: value.binary,
+            old_mode: value.old_mode,
+            new_mode: value.new_mode,
+            old_sha256: value.old_sha256,
+            new_sha256: value.new_sha256,
+            old_provider_object_id: value.old_provider_object_id,
+            new_provider_object_id: value.new_provider_object_id,
+            old_bytes: value.old_bytes,
+            new_bytes: value.new_bytes,
+            additions,
+            deletions,
+            patch: value.patch,
+            patch_complete: value.patch_complete,
+        })
+    }
 }
 
 /// One optional validation check attached to a diff.

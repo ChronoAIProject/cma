@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
-pub const POLICY_VERSION: u32 = 1;
-pub const POLICY_AUDIENCE: &str = "cma-layer4-github-capability-v1";
+pub const POLICY_VERSION: u32 = 2;
+pub const POLICY_AUDIENCE: &str = "cma-layer4-github-capability-v2";
 pub const MAX_LIFETIME_SECONDS: u64 = 60;
 pub const MAX_CLOCK_SKEW_SECONDS: u64 = 5;
 pub const MAX_ENVELOPE_BYTES: usize = 96 * 1024;
@@ -31,8 +31,12 @@ pub(crate) const AUDIT_SCHEMA_VERSION: u64 = 1;
 pub(crate) const AUDIT_ALLOWED_CODE: &str = "allowed";
 pub(crate) const AUDIT_UNCLASSIFIED_OPERATION: &str = "unclassified";
 
-const SIGNING_DOMAIN: &[u8] = b"CMA_GITHUB_CAPABILITY_V1\0";
+const SIGNING_DOMAIN: &[u8] = b"CMA_GITHUB_CAPABILITY_V2\0";
 const PLATFORM_PROXY_PREFIX: &[&str] = &["api", "v1", "proxy"];
+// Trigger production grants only these non-GitHub baseline services. Keeping
+// the list closed prevents an opaque UserService ID in SESSION_REACHES from
+// becoming an accidental slug-route bypass before policy installation.
+const TRIGGER_PASSTHROUGH_SERVICE_SLUGS: &[&str] = &["chrono-llm", "ornn-api", "ornn"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,6 +136,8 @@ enum CapabilityDocument {
         session_id: String,
         runtime_audience: String,
         service_id: String,
+        catalog_service_id: String,
+        user_service_slug: String,
         upstream: Box<RepositoryBinding>,
         fork: Box<RepositoryBinding>,
         allowed_ref: String,
@@ -336,7 +342,7 @@ impl GithubCapabilityGate {
 
         let passthrough_service_slugs = reaches
             .into_iter()
-            .filter(|slug| slug != GITHUB_SERVICE_SLUG)
+            .filter(|slug| !required || TRIGGER_PASSTHROUGH_SERVICE_SLUGS.contains(&slug.as_str()))
             .filter(|slug| usable_slug(slug))
             .collect();
         Ok(Self {
@@ -416,16 +422,53 @@ impl GithubCapabilityGate {
         if !self.required {
             return Ok(None);
         }
-        let route = match classify_platform_route(uri.path(), &self.passthrough_service_slugs) {
-            Ok(PlatformRoute::Passthrough) => return Ok(None),
-            Ok(PlatformRoute::Github(path)) => path,
-            Err(refusal) => {
-                return self
-                    .refuse_request(refusal, None, self.current_audit_resources().await)
-                    .await;
-            }
-        };
+        let platform_route =
+            match classify_platform_route(uri.path(), &self.passthrough_service_slugs) {
+                Ok(route) => route,
+                Err(refusal) => {
+                    return self
+                        .refuse_request(refusal, None, self.current_audit_resources().await)
+                        .await;
+                }
+            };
         let installed = self.installed.read().await.clone();
+        if let PlatformRoute::Passthrough { slug } = &platform_route {
+            let is_signed_github_selector = installed.as_ref().is_some_and(|installed| {
+                matches!(
+                    &installed.document,
+                    CapabilityDocument::Policy {
+                        service_id,
+                        catalog_service_id,
+                        user_service_slug,
+                        ..
+                    } if service_id == slug
+                        || catalog_service_id == slug
+                        || user_service_slug == slug
+                )
+            });
+            if !is_signed_github_selector {
+                return Ok(None);
+            }
+            return self
+                .refuse_request(
+                    CapabilityRefusal::OperationDenied,
+                    None,
+                    installed
+                        .as_ref()
+                        .map(|installed| {
+                            CapabilityAuditResources::from_document(&installed.document)
+                        })
+                        .unwrap_or_default(),
+                )
+                .await;
+        }
+        let PlatformRoute::Github {
+            catalog_service_id: requested_catalog_service_id,
+            path: route,
+        } = platform_route
+        else {
+            unreachable!("passthrough routes return above")
+        };
         let Some(installed) = installed.as_ref() else {
             return self
                 .refuse_request(
@@ -438,6 +481,7 @@ impl GithubCapabilityGate {
         let audit_resources = CapabilityAuditResources::from_document(&installed.document);
         let CapabilityDocument::Policy {
             service_id,
+            catalog_service_id,
             fork,
             allowed_ref,
             github_operation_classes,
@@ -450,6 +494,11 @@ impl GithubCapabilityGate {
                 .refuse_request(CapabilityRefusal::Revoked, None, audit_resources)
                 .await;
         };
+        if requested_catalog_service_id != *catalog_service_id {
+            return self
+                .refuse_request(CapabilityRefusal::ResourceMismatch, None, audit_resources)
+                .await;
+        }
         if now_epoch_seconds.saturating_add(MAX_CLOCK_SKEW_SECONDS) < *not_before_epoch_seconds
             || now_epoch_seconds > expires_at_epoch_seconds.saturating_add(MAX_CLOCK_SKEW_SECONDS)
         {
@@ -479,9 +528,12 @@ impl GithubCapabilityGate {
             &route,
             query,
             body,
-            fork,
-            allowed_ref,
-            service_id,
+            GithubRequestAuthority {
+                fork,
+                allowed_ref,
+                service_id,
+                catalog_service_id,
+            },
         ) {
             Ok(request) if allowed.contains(&request.operation) => request,
             Ok(request) => {
@@ -507,7 +559,7 @@ impl GithubCapabilityGate {
         if !self.required
             || matches!(
                 classify_platform_route(uri.path(), &self.passthrough_service_slugs),
-                Ok(PlatformRoute::Passthrough)
+                Ok(PlatformRoute::Passthrough { .. })
             )
         {
             return None;
@@ -553,6 +605,39 @@ impl GithubCapabilityGate {
             expires_at_epoch_seconds,
             last_refusal: last_refusal.map(CapabilityRefusal::wire_name),
         }
+    }
+
+    pub async fn matches_probe_binding(
+        &self,
+        service_id: &str,
+        catalog_service_id: &str,
+        user_service_slug: &str,
+        repository_id: u64,
+        now_epoch_seconds: u64,
+    ) -> bool {
+        if !self.required {
+            return false;
+        }
+        let installed = self.installed.read().await;
+        matches!(
+            installed.as_ref().map(|installed| &installed.document),
+            Some(CapabilityDocument::Policy {
+                service_id: signed_service_id,
+                catalog_service_id: signed_catalog_service_id,
+                user_service_slug: signed_user_service_slug,
+                fork,
+                not_before_epoch_seconds,
+                expires_at_epoch_seconds,
+                ..
+            }) if signed_service_id == service_id
+                && signed_catalog_service_id == catalog_service_id
+                && signed_user_service_slug == user_service_slug
+                && fork.repository_id == repository_id
+                && now_epoch_seconds.saturating_add(MAX_CLOCK_SKEW_SECONDS)
+                    >= *not_before_epoch_seconds
+                && now_epoch_seconds
+                    <= expires_at_epoch_seconds.saturating_add(MAX_CLOCK_SKEW_SECONDS)
+        )
     }
 
     fn verify(
@@ -620,6 +705,8 @@ impl GithubCapabilityGate {
             CapabilityDocument::Policy {
                 launch_id,
                 service_id,
+                catalog_service_id,
+                user_service_slug,
                 upstream,
                 fork,
                 allowed_ref,
@@ -632,6 +719,9 @@ impl GithubCapabilityGate {
             } => {
                 if !usable_identifier(launch_id, 128)
                     || !usable_identifier(service_id, 256)
+                    || !usable_identifier(catalog_service_id, 256)
+                    || catalog_service_id == "s"
+                    || !usable_user_service_slug(user_service_slug)
                     || !usable_identifier(issuer, 256)
                     || numeric_binding_observed_at.is_empty()
                     || !valid_head_ref(allowed_ref)
@@ -752,8 +842,13 @@ impl GithubCapabilityGate {
 }
 
 enum PlatformRoute {
-    Passthrough,
-    Github(Vec<String>),
+    Passthrough {
+        slug: String,
+    },
+    Github {
+        catalog_service_id: String,
+        path: Vec<String>,
+    },
 }
 
 fn classify_platform_route(
@@ -787,27 +882,36 @@ fn classify_platform_route(
     {
         return Err(CapabilityRefusal::OperationDenied);
     }
-    if segments.get(3).map(String::as_str) != Some("s") {
-        // NyxID also supports /proxy/{service_id}; allowing it would bypass
-        // the signed api-github slug policy with the same scoped credential.
-        return Err(CapabilityRefusal::OperationDenied);
-    }
-    let Some(slug) = segments.get(4) else {
+    let Some(selector) = segments.get(3) else {
         return Err(CapabilityRefusal::MalformedRequest);
     };
-    if !usable_slug(slug) {
-        return Err(CapabilityRefusal::MalformedRequest);
-    }
-    if slug == GITHUB_SERVICE_SLUG {
-        if segments.len() <= 5 {
+    if selector == "s" {
+        let Some(slug) = segments.get(4) else {
+            return Err(CapabilityRefusal::MalformedRequest);
+        };
+        if !usable_slug(slug) {
+            return Err(CapabilityRefusal::MalformedRequest);
+        }
+        // GitHub authority is catalog-ID routed. Neither the catalog slug nor
+        // the captured, user-level slug is accepted as a credential route.
+        if slug == GITHUB_SERVICE_SLUG {
             return Err(CapabilityRefusal::OperationDenied);
         }
-        return Ok(PlatformRoute::Github(segments[5..].to_vec()));
+        if passthrough.contains(slug) {
+            return Ok(PlatformRoute::Passthrough { slug: slug.clone() });
+        }
+        return Err(CapabilityRefusal::OperationDenied);
     }
-    if passthrough.contains(slug) {
-        return Ok(PlatformRoute::Passthrough);
+    if !usable_identifier(selector, 256) {
+        return Err(CapabilityRefusal::MalformedRequest);
     }
-    Err(CapabilityRefusal::OperationDenied)
+    if segments.len() <= 4 {
+        return Err(CapabilityRefusal::OperationDenied);
+    }
+    Ok(PlatformRoute::Github {
+        catalog_service_id: selector.clone(),
+        path: segments[4..].to_vec(),
+    })
 }
 
 fn parse_query(raw: Option<&str>) -> Result<BTreeMap<String, String>, CapabilityRefusal> {
@@ -842,15 +946,26 @@ fn parse_query(raw: Option<&str>) -> Result<BTreeMap<String, String>, Capability
     Ok(query)
 }
 
+struct GithubRequestAuthority<'a> {
+    fork: &'a RepositoryBinding,
+    allowed_ref: &'a str,
+    service_id: &'a str,
+    catalog_service_id: &'a str,
+}
+
 fn validate_github_request(
     method: &Method,
     route: &[String],
     mut query: BTreeMap<String, String>,
     body: &[u8],
-    fork: &RepositoryBinding,
-    allowed_ref: &str,
-    service_id: &str,
+    authority: GithubRequestAuthority<'_>,
 ) -> Result<CanonicalGithubRequest, CapabilityRefusal> {
+    let GithubRequestAuthority {
+        fork,
+        allowed_ref,
+        service_id,
+        catalog_service_id,
+    } = authority;
     let allowed_branch = allowed_branch(allowed_ref)?;
     query.remove("_nyxid_via");
     if route.len() == 2 && route[0] == "repositories" {
@@ -867,6 +982,7 @@ fn validate_github_request(
             &query,
             Vec::new(),
             service_id,
+            catalog_service_id,
         );
     }
     if route.len() < 3
@@ -887,12 +1003,20 @@ fn validate_github_request(
             &query,
             Vec::new(),
             service_id,
+            catalog_service_id,
         );
     }
 
     if method == Method::GET && body.is_empty() {
         if let Some(operation) = validate_read_route(tail, &query, allowed_branch)? {
-            return canonical(operation, route, &query, Vec::new(), service_id);
+            return canonical(
+                operation,
+                route,
+                &query,
+                Vec::new(),
+                service_id,
+                catalog_service_id,
+            );
         }
     }
     if method == Method::POST && tail == ["git", "blobs"] && query.is_empty() {
@@ -903,6 +1027,7 @@ fn validate_github_request(
             &query,
             canonical_body,
             service_id,
+            catalog_service_id,
         );
     }
     if method == Method::POST && tail == ["git", "trees"] && query.is_empty() {
@@ -913,6 +1038,7 @@ fn validate_github_request(
             &query,
             canonical_body,
             service_id,
+            catalog_service_id,
         );
     }
     if method == Method::POST && tail == ["git", "commits"] && query.is_empty() {
@@ -923,6 +1049,7 @@ fn validate_github_request(
             &query,
             canonical_body,
             service_id,
+            catalog_service_id,
         );
     }
     if method == Method::POST && tail == ["git", "refs"] && query.is_empty() {
@@ -934,6 +1061,7 @@ fn validate_github_request(
             &query,
             canonical_body,
             service_id,
+            catalog_service_id,
         );
     }
     if method == Method::PATCH
@@ -949,6 +1077,7 @@ fn validate_github_request(
             &query,
             canonical_body,
             service_id,
+            catalog_service_id,
         );
     }
     Err(CapabilityRefusal::OperationDenied)
@@ -1008,10 +1137,11 @@ fn canonical(
     query: &BTreeMap<String, String>,
     body: Vec<u8>,
     service_id: &str,
+    catalog_service_id: &str,
 ) -> Result<CanonicalGithubRequest, CapabilityRefusal> {
     let mut query = query.clone();
     query.insert("_nyxid_via".to_string(), service_id.to_string());
-    let mut path = format!("/api/v1/proxy/s/{GITHUB_SERVICE_SLUG}/{}", route.join("/"));
+    let mut path = format!("/api/v1/proxy/{catalog_service_id}/{}", route.join("/"));
     if !query.is_empty() {
         path.push('?');
         path.push_str(
@@ -1233,6 +1363,16 @@ fn usable_slug(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn usable_user_service_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 fn valid_ref(value: &str) -> bool {

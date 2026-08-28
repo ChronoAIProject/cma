@@ -152,9 +152,10 @@ apply after publishing starts:
    rm ruleset.json
    ```
 
-   The current repository has no tag ruleset, so this prerequisite is also
-   **not yet satisfied**. Never weaken or bypass it to make a failed release
-   retry succeed.
+   The repository satisfies this prerequisite through active ruleset
+   `21664901` (`Immutable v* release tags`), verified with this exact target,
+   rule set and empty bypass list on 2026-08-28. Never weaken or bypass it to
+   make a failed release retry succeed.
 
 Image reconciliation is authorized to reuse an existing release tag only
 under the exclusive-writer contract and only when package history ties that
@@ -396,6 +397,41 @@ kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northea
 ```
 
 For the first production release containing the MongoDB cutovers below, do not run that Deployment command yet. Applying it before recovery capture A could start normal CMA and cross both database boundaries. Section 5 applies that Deployment only after the old writer is gone, capture A is durable, and the live ConfigMap selects the maintenance stage.
+
+### Trigger native-provider adoption
+
+Publishing the CMA Trigger code and runtime image does not activate its native
+provider lane. Follow the ordered procedure in
+[`CMA_Trigger_Operations.md`](CMA_Trigger_Operations.md#dedicated-provider-activation)
+only after the CMA-owned provider tenant, native template, workload namespace,
+API key, and infrastructure owner are independently verified. The ordinary CMA
+provider and the neighbouring Aevatar Codex provider are not substitutes.
+
+Keep `CHRONO_TRIGGER_ENABLED=false`, orchestration paused, the capability kill
+switch enabled, runtime capabilities empty, and rollout allowlists closed while
+applying the namespaced reclaimer RBAC, dedicated secret-provider projection,
+mount, and complete provider tuple. Apply and verify each prerequisite before
+restarting the Deployment; never use an unordered `kubectl apply -f infra/api/`
+for this adoption. After restart, prove the versioned Trigger kernel route,
+successful creation and fenced teardown, and zero total `BatchSandbox` objects
+in the configured namespace. Only then advance rollout controls one at a time.
+
+Before advancing any Trigger rollout control, provision the protected
+`CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE` variable as an exact, reviewed match for
+the deployed `CHRONO_TRIGGER_SANDBOX_NAMESPACE`, and provision
+`CMA_TRIGGER_SMOKE_KUBECONFIG_B64` as the protected secret for a separate smoke
+observer. Its namespace-local, list-only Role must grant `list` on
+`batchsandboxes.sandbox.opensandbox.io`; do not reuse CMA's production
+`get`/`list`/`delete` reclaimer identity. The provider-smoke workflow must
+materialize the kubeconfig temporarily at mode `0600`, remove it under
+`always()` before its evidence audit, and retain no Kubernetes credentials,
+bearer tokens, client key/certificate data, or raw runtime reservation. A
+passing smoke must provide complete inventory evidence of exactly zero
+`BatchSandbox` objects before Launch, one entitled live object with zero
+unexpected objects, and zero objects after session-stop reconciliation. The
+retained allowlisted Kubernetes metadata and reservation SHA-256 must bind that
+`0 before / 1 live / 0 after stop` result to the reviewed deployment before
+rollout advances.
 
 ---
 

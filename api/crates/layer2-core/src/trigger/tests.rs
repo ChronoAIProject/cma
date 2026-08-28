@@ -16,6 +16,7 @@ const DRAFT_EXPIRY: &str = "2026-08-27T12:00:00Z";
 const AFTER_DRAFT_EXPIRY: &str = "2026-08-27T12:00:01Z";
 pub(crate) const TEST_TRIGGER_RUNTIME_VERSION: &str = "cma-trigger-test-runtime@sha256:admitted";
 const TEST_TRIGGER_KERNEL: &str = "trigger-test-kernel";
+const TEST_HISTORICAL_KERNEL: &str = "historical-trigger-test-kernel";
 
 pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
     let owner = SubjectId("trigger-contributor".into());
@@ -149,6 +150,204 @@ fn capability_lifetime_is_hard_bounded() {
     capability.validate().unwrap();
     capability.expires_at_epoch_seconds += 1;
     assert!(capability.validate().is_err());
+}
+
+#[test]
+fn connection_generation_must_be_positive() {
+    let mut snapshot = connection();
+    snapshot
+        .validate_for(&[ScopeClass::PublicRepository])
+        .unwrap();
+
+    for invalid_generation in [0, -1] {
+        snapshot.service_state_version = invalid_generation;
+        let error = snapshot
+            .validate_for(&[ScopeClass::PublicRepository])
+            .unwrap_err();
+        assert!(error.to_string().contains("generation data"));
+    }
+}
+
+#[test]
+fn fresh_connection_authority_requires_the_exact_canonical_github_binding() {
+    let required = [ScopeClass::PublicRepository];
+
+    for (catalog_service_id, user_service_slug) in [
+        (None, Some("api-github-2")),
+        (Some("catalog-github"), None),
+        (Some("catalog.github"), Some("api-github-2")),
+        (Some("catalog-github"), Some("API-github")),
+        (Some("catalog-github"), Some("-api-github")),
+        (Some("catalog-github"), Some("api-github-")),
+    ] {
+        let mut snapshot = connection();
+        snapshot.github_catalog_service_id = catalog_service_id.map(str::to_string);
+        snapshot.github_user_service_slug = user_service_slug.map(str::to_string);
+        assert!(snapshot.validate_for(&required).is_err());
+    }
+
+    let mut valid = connection();
+    valid.github_user_service_slug = Some("api--github-2".into());
+    valid.validate_for(&required).unwrap();
+}
+
+#[test]
+fn historical_connection_authority_remains_readable_without_v2_binding() {
+    let mut wire = serde_json::to_value(connection()).unwrap();
+    let object = wire.as_object_mut().unwrap();
+    object.remove("github_catalog_service_id");
+    object.remove("github_user_service_slug");
+
+    let snapshot: ConnectionSnapshot = serde_json::from_value(wire).unwrap();
+    assert_eq!(snapshot.github_catalog_service_id, None);
+    assert_eq!(snapshot.github_user_service_slug, None);
+    snapshot
+        .validate_historical_for(&[ScopeClass::PublicRepository])
+        .unwrap();
+    assert!(snapshot
+        .validate_for(&[ScopeClass::PublicRepository])
+        .is_err());
+}
+
+#[test]
+fn authority_admission_rejects_missing_or_drifted_github_route_provenance() {
+    let (mut effect_launch, lease) = leased_started_launch();
+    let preflight = effect_launch
+        .claim_next_effect(&lease, NOW, "claim-preflight-for-route-drift")
+        .unwrap()
+        .unwrap();
+    effect_launch
+        .complete_effect(
+            &lease,
+            &preflight,
+            EffectCompletion {
+                result: LaunchEffectResult::Preflight {
+                    connection: effect_launch.connection.clone().unwrap(),
+                    authority: effect_launch.authority.clone().unwrap(),
+                    source_sha: "a".repeat(40),
+                    workflow_paths: Vec::new(),
+                },
+                safe_detail: "Authority is current.".into(),
+                external_resource_ids: BTreeMap::new(),
+                now: NOW.into(),
+                correlation_id: "complete-preflight-for-route-drift".into(),
+            },
+        )
+        .unwrap();
+    let effect = effect_launch
+        .claim_next_effect(&lease, NOW, "claim-fork-for-route-drift")
+        .unwrap()
+        .unwrap();
+    assert_eq!(effect.kind, LaunchEffectKind::Fork);
+
+    let connection = effect_launch.connection.clone().unwrap();
+    let authority = effect_launch.authority.clone().unwrap();
+    for (case, catalog_service_id, user_service_slug) in [
+        (
+            "missing-catalog",
+            None,
+            authority.github_user_service_slug.clone(),
+        ),
+        (
+            "wrong-catalog",
+            Some("catalog-github-other".into()),
+            authority.github_user_service_slug.clone(),
+        ),
+        (
+            "missing-user-slug",
+            authority.github_catalog_service_id.clone(),
+            None,
+        ),
+        (
+            "wrong-user-slug",
+            authority.github_catalog_service_id.clone(),
+            Some("api-github-3".into()),
+        ),
+    ] {
+        let mut drifted = authority.clone();
+        drifted.github_catalog_service_id = catalog_service_id;
+        drifted.github_user_service_slug = user_service_slug;
+        assert!(
+            AuthorityAdmissionSnapshot::for_effect(
+                &effect_launch,
+                &effect,
+                connection.clone(),
+                drifted,
+                effect_launch.revision.content.upstream.repository.clone(),
+                None,
+                None,
+                NOW,
+            )
+            .is_err(),
+            "effect admission accepted {case}"
+        );
+    }
+
+    let mut renewal_launch = reviewed_launch();
+    let renewal_connection = renewal_launch.connection.clone().unwrap();
+    let credential = crate::SessionCredentialAuthority {
+        session_id: renewal_launch.session.as_ref().unwrap().session_id.clone(),
+        custody_generation: 1,
+        provider_key_id: "provider-session-key-1".into(),
+        provider_state_version: 1,
+        provider_expires_at_epoch_milliseconds: 2_000_000_000_000,
+        grant_fingerprint: "a".repeat(64),
+    };
+    let renewal_authority = AuthorityProvenance {
+        subject: renewal_launch.owner.clone(),
+        subject_token_generation: 1,
+        service_id: renewal_connection.service_id.clone(),
+        github_catalog_service_id: renewal_connection.github_catalog_service_id.clone(),
+        github_user_service_slug: renewal_connection.github_user_service_slug.clone(),
+        service_state_version: renewal_connection.service_state_version,
+        backing_key_id: renewal_connection.backing_key_id.clone(),
+        session_credential_authority: Some(credential),
+        state: DelegationState::Available,
+        observed_at: NOW.into(),
+    };
+    renewal_launch.authority = Some(renewal_authority.clone());
+    let target_generation = renewal_launch.reach.as_ref().unwrap().policy_generation + 1;
+    for (case, catalog_service_id, user_service_slug) in [
+        (
+            "missing-catalog",
+            None,
+            renewal_authority.github_user_service_slug.clone(),
+        ),
+        (
+            "wrong-catalog",
+            Some("catalog-github-other".into()),
+            renewal_authority.github_user_service_slug.clone(),
+        ),
+        (
+            "missing-user-slug",
+            renewal_authority.github_catalog_service_id.clone(),
+            None,
+        ),
+        (
+            "wrong-user-slug",
+            renewal_authority.github_catalog_service_id.clone(),
+            Some("api-github-3".into()),
+        ),
+    ] {
+        let mut drifted = renewal_authority.clone();
+        drifted.github_catalog_service_id = catalog_service_id;
+        drifted.github_user_service_slug = user_service_slug;
+        assert!(
+            AuthorityAdmissionSnapshot::for_capability_renewal(
+                &renewal_launch,
+                7,
+                target_generation,
+                renewal_connection.clone(),
+                drifted,
+                renewal_launch.revision.content.upstream.repository.clone(),
+                renewal_launch.fork.as_ref().unwrap().repository.clone(),
+                renewal_launch.branch.clone().unwrap(),
+                NOW,
+            )
+            .is_err(),
+            "capability renewal admission accepted {case}"
+        );
+    }
 }
 
 #[test]
@@ -1356,6 +1555,8 @@ fn reconciled_publication_progress_resets_the_ambiguity_budget() {
         subject: launch.owner.clone(),
         subject_token_generation: 1,
         service_id: connection.service_id.clone(),
+        github_catalog_service_id: connection.github_catalog_service_id.clone(),
+        github_user_service_slug: connection.github_user_service_slug.clone(),
         service_state_version: connection.service_state_version,
         backing_key_id: connection.backing_key_id.clone(),
         session_credential_authority: None,
@@ -2181,6 +2382,8 @@ fn reviewed_launch() -> Launch {
             new_provider_object_id: None,
             old_bytes: 0,
             new_bytes: bytes.len() as u64,
+            additions: Some(1),
+            deletions: Some(0),
             patch: Some("--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n".into()),
             patch_complete: true,
         }],
@@ -2912,6 +3115,8 @@ fn capability_admission_and_renewal_refresh_canonical_locators_without_weakening
         subject: launch.owner.clone(),
         subject_token_generation: 2,
         service_id: connection.service_id.clone(),
+        github_catalog_service_id: connection.github_catalog_service_id.clone(),
+        github_user_service_slug: connection.github_user_service_slug.clone(),
         service_state_version: connection.service_state_version,
         backing_key_id: connection.backing_key_id.clone(),
         session_credential_authority: Some(crate::SessionCredentialAuthority {
@@ -4999,6 +5204,8 @@ fn leased_started_launch() -> (Launch, WorkerLease) {
         subject: owner.clone(),
         subject_token_generation: 1,
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
         session_credential_authority: None,
@@ -5381,6 +5588,8 @@ fn fork() -> RepositoryIdentity {
 fn connection() -> ConnectionSnapshot {
     ConnectionSnapshot {
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
         account: ConnectedAccount {
@@ -5414,6 +5623,8 @@ fn capability() -> LaunchCapability {
         session_id: crate::SessionId::generate(),
         runtime_audience: "runtime-generation-1".into(),
         service_id: "service-1".into(),
+        github_catalog_service_id: "catalog-github".into(),
+        github_user_service_slug: "api-github-2".into(),
         upstream: upstream(),
         fork: fork(),
         allowed_ref: "refs/heads/cma/launch".into(),
@@ -5426,7 +5637,7 @@ fn capability() -> LaunchCapability {
         expires_at_epoch_seconds: 160,
         issuer: "cma".into(),
         audience: "layer4".into(),
-        signature_key_id: "trigger-policy-v1".into(),
+        signature_key_id: "trigger-policy-v2".into(),
         numeric_binding_observed_at: NOW.into(),
         revocation: CapabilityRevocationState::Active,
     }
@@ -5503,6 +5714,154 @@ async fn public_preview_projects_the_deployment_contributor_estimate() {
             ..
         } if currency == "USD" && display == "$0.025"
     ));
+}
+
+#[derive(Clone, Copy)]
+enum PreviewPolicyOutcome {
+    Available,
+    Renamed,
+    NotForkable,
+    NotFound,
+    IdentityDrift,
+    Transient,
+}
+
+struct PreviewPolicyAuthority(PreviewPolicyOutcome);
+
+#[async_trait]
+impl TriggerAuthorityVerifier for PreviewPolicyAuthority {
+    async fn verify_publisher(
+        &self,
+        subject: &SubjectId,
+        content: &TriggerRevisionContent,
+        selected_service_id: &str,
+    ) -> Result<PublisherAuthority, TriggerServiceError> {
+        TestAuthority
+            .verify_publisher(subject, content, selected_service_id)
+            .await
+    }
+
+    async fn verify_launch(
+        &self,
+        subject: &SubjectId,
+        revision: &TriggerRevision,
+        selected_service_id: &str,
+        previous: Option<&ConnectionSnapshot>,
+    ) -> Result<LaunchAuthority, TriggerServiceError> {
+        TestAuthority
+            .verify_launch(subject, revision, selected_service_id, previous)
+            .await
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        let mut repository = revision.content.upstream.repository.clone();
+        match self.0 {
+            PreviewPolicyOutcome::Available => Ok(TriggerPreviewRepositoryPolicy {
+                repository,
+                public_forkable: true,
+            }),
+            PreviewPolicyOutcome::Renamed => {
+                repository.canonical_owner = "renamed-owner".into();
+                repository.canonical_name = "renamed-repository".into();
+                repository.default_branch = "trunk".into();
+                Ok(TriggerPreviewRepositoryPolicy {
+                    repository,
+                    public_forkable: true,
+                })
+            }
+            PreviewPolicyOutcome::NotForkable => {
+                repository.allow_forking = false;
+                Ok(TriggerPreviewRepositoryPolicy {
+                    repository,
+                    public_forkable: false,
+                })
+            }
+            PreviewPolicyOutcome::NotFound => Err(TriggerAuthorityError::ResourceNotFound.into()),
+            PreviewPolicyOutcome::IdentityDrift => {
+                Err(TriggerAuthorityError::AuthorityDrift.into())
+            }
+            PreviewPolicyOutcome::Transient => Err(TriggerAuthorityError::Transient.into()),
+        }
+    }
+}
+
+async fn preview_for_policy(outcome: PreviewPolicyOutcome) -> TriggerPreview {
+    let publisher = SubjectId("publisher".into());
+    let store = Arc::new(MemoryTriggerStore::default());
+    let service = TriggerService::new(
+        store.clone(),
+        store,
+        Arc::new(PreviewPolicyAuthority(outcome)),
+    )
+    .with_launch_admission(Arc::new(TestAdmission));
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    service
+        .preview(&published.revision.public_id)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn public_preview_maps_current_repository_policy_to_typed_availability() {
+    let available = preview_for_policy(PreviewPolicyOutcome::Available).await;
+    assert_eq!(
+        available.availability,
+        TriggerPreviewAvailability::Published
+    );
+    assert_eq!(available.unavailable_reason, None);
+
+    let renamed = preview_for_policy(PreviewPolicyOutcome::Renamed).await;
+    assert_eq!(renamed.availability, TriggerPreviewAvailability::Published);
+    assert_eq!(renamed.repository_owner, "renamed-owner");
+    assert_eq!(renamed.repository_name, "renamed-repository");
+
+    let not_forkable = preview_for_policy(PreviewPolicyOutcome::NotForkable).await;
+    assert_eq!(
+        not_forkable.availability,
+        TriggerPreviewAvailability::Unavailable
+    );
+    assert_eq!(
+        not_forkable.unavailable_reason,
+        Some(TriggerPreviewUnavailableReason::UpstreamNotForkable)
+    );
+    assert!(!not_forkable.allow_forking);
+
+    for (outcome, reason) in [
+        (
+            PreviewPolicyOutcome::NotFound,
+            TriggerPreviewUnavailableReason::UpstreamUnavailable,
+        ),
+        (
+            PreviewPolicyOutcome::IdentityDrift,
+            TriggerPreviewUnavailableReason::UpstreamIdentityChanged,
+        ),
+        (
+            PreviewPolicyOutcome::Transient,
+            TriggerPreviewUnavailableReason::RepositoryPolicyUnavailable,
+        ),
+    ] {
+        let preview = preview_for_policy(outcome).await;
+        assert_eq!(
+            preview.availability,
+            TriggerPreviewAvailability::Unavailable
+        );
+        assert_eq!(preview.unavailable_reason, Some(reason));
+    }
 }
 
 #[derive(Default)]
@@ -5716,6 +6075,151 @@ fn runtime_admission_requires_an_explicit_opaque_kernel() {
     assert_eq!(decoded.kernel, KernelId::new(TEST_TRIGGER_KERNEL));
 }
 
+#[test]
+fn retained_runtime_route_requires_one_complete_exact_admission_snapshot() {
+    let launch = session_launch(&"a".repeat(64));
+    assert_eq!(
+        launch.runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        ),
+        RuntimeAdmissionRoute::Current
+    );
+    assert!(launch
+        .validate_runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        )
+        .is_ok());
+
+    let mut historical = launch.clone();
+    historical.runtime_admission.as_mut().unwrap().kernel = KernelId::new(TEST_HISTORICAL_KERNEL);
+    assert_eq!(
+        historical.runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        ),
+        RuntimeAdmissionRoute::Historical
+    );
+    assert_eq!(
+        historical
+            .validate_runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            )
+            .unwrap_err()
+            .field
+            .as_deref(),
+        Some("runtime_admission.kernel")
+    );
+
+    for (corruption, expected_field) in [
+        ("missing", "runtime_admission"),
+        ("wrong-kernel", "runtime_admission.kernel"),
+        ("missing-version", "runtime_admission.runtime_version"),
+        ("malformed-time", "runtime_admission.observed_at"),
+        (
+            "missing-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+        (
+            "duplicate-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+    ] {
+        let mut retained = launch.clone();
+        match corruption {
+            "missing" => retained.runtime_admission = None,
+            "wrong-kernel" => {
+                retained.runtime_admission.as_mut().unwrap().kernel = KernelId::new("other-route");
+            }
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = " \t".into();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "not-a-time".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        let error = retained
+            .validate_runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            )
+            .unwrap_err();
+        assert_eq!(error.field.as_deref(), Some(expected_field), "{corruption}");
+        assert_eq!(
+            retained.runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            ),
+            RuntimeAdmissionRoute::Invalid,
+            "{corruption}"
+        );
+    }
+
+    for corruption in [
+        "missing-version",
+        "malformed-time",
+        "missing-capability",
+        "duplicate-capability",
+    ] {
+        let mut retained = historical.clone();
+        match corruption {
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = " \t".into();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "not-a-time".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        assert_eq!(
+            retained.runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            ),
+            RuntimeAdmissionRoute::Invalid,
+            "historical {corruption}"
+        );
+    }
+}
+
 fn start_admission(launch: &Launch, now: &str) -> StartAdmissionSnapshot {
     let pricing = launch.pricing.as_ref().unwrap();
     let runtime = launch.runtime_admission.as_ref().unwrap();
@@ -5768,6 +6272,8 @@ impl TriggerAuthorityVerifier for TestAuthority {
                 subject: SubjectId("contributor".into()),
                 subject_token_generation: 1,
                 service_id: connection.service_id.clone(),
+                github_catalog_service_id: connection.github_catalog_service_id.clone(),
+                github_user_service_slug: connection.github_user_service_slug.clone(),
                 service_state_version: connection.service_state_version,
                 backing_key_id: connection.backing_key_id.clone(),
                 session_credential_authority: None,
@@ -5777,6 +6283,16 @@ impl TriggerAuthorityVerifier for TestAuthority {
             connection,
             source_sha: "a".repeat(40),
             workflow_paths: Vec::new(),
+        })
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        Ok(TriggerPreviewRepositoryPolicy {
+            repository: revision.content.upstream.repository.clone(),
+            public_forkable: true,
         })
     }
 }

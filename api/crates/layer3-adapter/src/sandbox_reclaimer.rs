@@ -10,7 +10,10 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use kube::api::{Api, DeleteParams, DynamicObject, ListParams, Preconditions};
+use k8s_openapi::api::authorization::v1::{
+    ResourceAttributes, SelfSubjectAccessReview, SelfSubjectAccessReviewSpec,
+};
+use kube::api::{Api, DeleteParams, DynamicObject, ListParams, PostParams, Preconditions};
 use kube::core::{ApiResource, Expression, GroupVersionKind, Selector};
 
 use crate::sandbox::SandboxError;
@@ -20,6 +23,8 @@ pub(crate) const CREATOR_METADATA_KEY: &str = "cma/control-plane";
 pub(crate) const SESSION_METADATA_KEY: &str = "cma/session";
 pub(crate) const GENERATION_METADATA_KEY: &str = "cma/runtime-generation";
 pub(crate) const RESERVATION_METADATA_KEY: &str = "cma/runtime-reservation";
+pub(crate) const KERNEL_METADATA_KEY: &str = "cma/kernel";
+pub(crate) const LEGACY_KERNEL_METADATA_KEY: &str = "chrono-bot/kernel";
 
 const SANDBOX_ID_LABEL: &str = "opensandbox.io/id";
 const BATCH_SANDBOX_GROUP: &str = "sandbox.opensandbox.io";
@@ -38,8 +43,10 @@ const DELETE_CONFIRM_POLL: Duration = Duration::from_millis(250);
 /// or a different namespace.
 #[derive(Clone)]
 pub struct BatchSandboxReclaimer {
+    client: kube::Client,
     api: Api<DynamicObject>,
     namespace: String,
+    expected_kernel: Option<String>,
 }
 
 /// One immutable Kubernetes object version captured before destructive work.
@@ -59,6 +66,22 @@ impl BatchSandboxReclaimer {
             ))
         })?;
         let namespace = config.default_namespace.clone();
+        Self::from_config(config, namespace)
+    }
+
+    /// Build exact reclamation authority for a deployment-owned workload
+    /// namespace rather than inheriting the control-plane pod's namespace.
+    pub async fn infer_namespaced(namespace: impl Into<String>) -> Result<Self, SandboxError> {
+        let namespace = namespace.into();
+        let config = kube::Config::infer().await.map_err(|error| {
+            SandboxError::Unreachable(format!(
+                "infer Kubernetes configuration for fenced sandbox cleanup: {error}"
+            ))
+        })?;
+        Self::from_config(config, namespace)
+    }
+
+    fn from_config(config: kube::Config, namespace: String) -> Result<Self, SandboxError> {
         let client = kube::Client::try_from(config).map_err(|error| {
             SandboxError::Unreachable(format!(
                 "build Kubernetes client for fenced sandbox cleanup: {error}"
@@ -76,8 +99,178 @@ impl BatchSandboxReclaimer {
             BATCH_SANDBOX_KIND,
         );
         let resource = ApiResource::from_gvk_with_plural(&gvk, BATCH_SANDBOX_PLURAL);
-        let api = Api::namespaced_with(client, &namespace, &resource);
-        Self { api, namespace }
+        let api = Api::namespaced_with(client.clone(), &namespace, &resource);
+        Self {
+            client,
+            api,
+            namespace,
+            expected_kernel: None,
+        }
+    }
+
+    /// Rebind this exact Kubernetes identity to another explicit namespace.
+    ///
+    /// Composition roots use one inferred client for ordinary and dedicated
+    /// lanes so a transient second inference cannot hide namespace overlap.
+    #[must_use]
+    pub fn in_namespace(&self, namespace: impl Into<String>) -> Self {
+        Self::namespaced(self.client.clone(), namespace)
+    }
+
+    /// Namespace to which every read and destructive operation is confined.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Prove this identity can discover and exactly reclaim provider objects.
+    ///
+    /// Building a Kubernetes client is lazy and proves no API or RBAC access.
+    /// Trigger admission therefore calls this before registering its adapter:
+    /// each required verb is checked through Kubernetes authorization, then a
+    /// bounded real list proves the namespaced custom-resource endpoint exists.
+    pub async fn preflight_cleanup_authority(&self) -> Result<(), SandboxError> {
+        for verb in ["get", "list", "delete"] {
+            if !self
+                .resource_access_allowed(
+                    BATCH_SANDBOX_GROUP,
+                    BATCH_SANDBOX_VERSION,
+                    BATCH_SANDBOX_PLURAL,
+                    Some(&self.namespace),
+                    verb,
+                )
+                .await?
+            {
+                return Err(SandboxError::Unsupported(format!(
+                    "Kubernetes identity lacks unambiguous {verb} authority for BatchSandbox resources in namespace {}",
+                    self.namespace
+                )));
+            }
+        }
+
+        self.api
+            .list(&ListParams::default().limit(1))
+            .await
+            .map_err(|error| {
+                kube_error(
+                    "list one namespaced BatchSandbox during cleanup-authority preflight",
+                    error,
+                )
+            })?;
+        Ok(())
+    }
+
+    /// Prove the dedicated Trigger lane has no broader Kubernetes authority
+    /// than its namespaced discovery and preconditioned-delete contract.
+    ///
+    /// Ordinary lanes retain [`Self::preflight_cleanup_authority`]. The closed
+    /// negative inventory is specific to Trigger activation and prevents a
+    /// stale or aggregated grant from silently widening this provider boundary.
+    pub async fn preflight_exclusive_cleanup_authority(&self) -> Result<(), SandboxError> {
+        self.preflight_cleanup_authority().await?;
+
+        for verb in ["watch", "create", "update", "patch", "deletecollection"] {
+            if self
+                .resource_access_allowed(
+                    BATCH_SANDBOX_GROUP,
+                    BATCH_SANDBOX_VERSION,
+                    BATCH_SANDBOX_PLURAL,
+                    Some(&self.namespace),
+                    verb,
+                )
+                .await?
+            {
+                return Err(SandboxError::Unsupported(format!(
+                    "Kubernetes identity unexpectedly has {verb} authority for BatchSandbox resources in namespace {}",
+                    self.namespace
+                )));
+            }
+        }
+        for resource in ["secrets", "configmaps", "pods"] {
+            if self
+                .resource_access_allowed("", "v1", resource, Some(&self.namespace), "list")
+                .await?
+            {
+                return Err(SandboxError::Unsupported(format!(
+                    "Kubernetes identity unexpectedly has list authority for {resource} in namespace {}",
+                    self.namespace
+                )));
+            }
+        }
+        for verb in ["get", "list", "delete"] {
+            if self
+                .resource_access_allowed(
+                    BATCH_SANDBOX_GROUP,
+                    BATCH_SANDBOX_VERSION,
+                    BATCH_SANDBOX_PLURAL,
+                    None,
+                    verb,
+                )
+                .await?
+            {
+                return Err(SandboxError::Unsupported(format!(
+                    "Kubernetes identity unexpectedly has cluster-wide {verb} authority for BatchSandbox resources"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    async fn resource_access_allowed(
+        &self,
+        group: &str,
+        version: &str,
+        resource: &str,
+        namespace: Option<&str>,
+        verb: &str,
+    ) -> Result<bool, SandboxError> {
+        let review = SelfSubjectAccessReview {
+            spec: SelfSubjectAccessReviewSpec {
+                resource_attributes: Some(ResourceAttributes {
+                    group: Some(group.into()),
+                    version: Some(version.into()),
+                    resource: Some(resource.into()),
+                    namespace: namespace.map(str::to_owned),
+                    verb: Some(verb.into()),
+                    ..ResourceAttributes::default()
+                }),
+                ..SelfSubjectAccessReviewSpec::default()
+            },
+            ..SelfSubjectAccessReview::default()
+        };
+        let scope = namespace.unwrap_or("all namespaces");
+        let reviewed: SelfSubjectAccessReview = Api::all(self.client.clone())
+            .create(&PostParams::default(), &review)
+            .await
+            .map_err(|error| {
+                kube_error(
+                    &format!("check {scope} {group}/{resource} {verb} authorization"),
+                    error,
+                )
+            })?;
+        let status = reviewed.status.ok_or_else(|| {
+            SandboxError::Malformed(format!(
+                "Kubernetes returned no authorization status for {scope} {group}/{resource} {verb}"
+            ))
+        })?;
+        if status
+            .evaluation_error
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+            || (status.allowed && status.denied == Some(true))
+        {
+            return Err(SandboxError::Malformed(format!(
+                "Kubernetes returned an ambiguous authorization status for {scope} {group}/{resource} {verb}"
+            )));
+        }
+        Ok(status.allowed)
+    }
+
+    /// Restrict every discovery and destructive operation to one exact
+    /// canonical kernel identity.
+    #[must_use]
+    pub fn for_kernel(mut self, kernel: impl Into<String>) -> Self {
+        self.expected_kernel = Some(kernel.into());
+        self
     }
 
     /// Capture the provider object currently carrying this handle.
@@ -186,6 +379,12 @@ impl BatchSandboxReclaimer {
             ),
             Expression::Equal(RESERVATION_METADATA_KEY.into(), reservation.token.clone()),
         ]);
+        if let Some(kernel) = self.expected_kernel.as_ref() {
+            selector.extend([Expression::Equal(
+                KERNEL_METADATA_KEY.into(),
+                kernel.clone(),
+            )]);
+        }
 
         let mut handles = Vec::new();
         let mut continue_token = None;
@@ -226,6 +425,7 @@ impl BatchSandboxReclaimer {
         let labels = object.metadata.labels.as_ref().ok_or_else(|| {
             identity_mismatch(&identity.handle, "has no provider metadata labels")
         })?;
+        self.verify_kernel(labels, &identity.handle)?;
         require_label(
             labels,
             SESSION_METADATA_KEY,
@@ -256,6 +456,12 @@ impl BatchSandboxReclaimer {
         handle: &RuntimeHandle,
     ) -> Result<CapturedSandbox, SandboxError> {
         self.verify_object_envelope(object, handle)?;
+        let labels = object
+            .metadata
+            .labels
+            .as_ref()
+            .ok_or_else(|| identity_mismatch(handle, "has no provider metadata labels"))?;
+        self.verify_kernel(labels, handle)?;
         self.captured_version(object, handle)
     }
 
@@ -295,6 +501,7 @@ impl BatchSandboxReclaimer {
             .labels
             .as_ref()
             .ok_or_else(|| identity_mismatch(&handle, "has no provider metadata labels"))?;
+        self.verify_kernel(labels, &handle)?;
         require_label(labels, SESSION_METADATA_KEY, &reservation.session, &handle)?;
         require_label(
             labels,
@@ -334,6 +541,27 @@ impl BatchSandboxReclaimer {
             .as_ref()
             .ok_or_else(|| identity_mismatch(handle, "has no provider metadata labels"))?;
         require_label(labels, SANDBOX_ID_LABEL, &handle.0, handle)
+    }
+
+    fn verify_kernel(
+        &self,
+        labels: &BTreeMap<String, String>,
+        handle: &RuntimeHandle,
+    ) -> Result<(), SandboxError> {
+        let Some(kernel) = self.expected_kernel.as_deref() else {
+            return Ok(());
+        };
+        require_label(labels, KERNEL_METADATA_KEY, kernel, handle)?;
+        if labels
+            .get(LEGACY_KERNEL_METADATA_KEY)
+            .is_some_and(|legacy| legacy != kernel)
+        {
+            return Err(identity_mismatch(
+                handle,
+                "has conflicting canonical and legacy kernel metadata",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -403,6 +631,7 @@ fn kube_error(operation: &str, error: kube::Error) -> SandboxError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::num::NonZeroU64;
     use std::sync::{Arc, Mutex};
 
@@ -442,6 +671,58 @@ mod tests {
                 .to_string(),
             }
         }
+
+        fn access_review_for(
+            group: &str,
+            version: &str,
+            resource: &str,
+            namespace: Option<&str>,
+            verb: &str,
+            allowed: bool,
+        ) -> Self {
+            Self {
+                status: 201,
+                body: serde_json::json!({
+                    "apiVersion": "authorization.k8s.io/v1",
+                    "kind": "SelfSubjectAccessReview",
+                    "metadata": {},
+                    "spec": {
+                        "resourceAttributes": {
+                            "group": group,
+                            "version": version,
+                            "resource": resource,
+                            "namespace": namespace,
+                            "verb": verb,
+                        }
+                    },
+                    "status": { "allowed": allowed, "denied": !allowed },
+                })
+                .to_string(),
+            }
+        }
+
+        fn access_review(verb: &str, allowed: bool) -> Self {
+            Self::access_review_for(
+                BATCH_SANDBOX_GROUP,
+                BATCH_SANDBOX_VERSION,
+                BATCH_SANDBOX_PLURAL,
+                Some(TEST_NAMESPACE),
+                verb,
+                allowed,
+            )
+        }
+
+        fn empty_list() -> Self {
+            Self::ok(
+                serde_json::json!({
+                    "apiVersion": "sandbox.opensandbox.io/v1alpha1",
+                    "kind": "BatchSandboxList",
+                    "metadata": {},
+                    "items": [],
+                })
+                .to_string(),
+            )
+        }
     }
 
     struct Fixture {
@@ -457,6 +738,10 @@ mod tests {
             config.default_retry = false;
             let client = kube::Client::try_from(config).expect("fixture client builds");
             BatchSandboxReclaimer::namespaced(client, TEST_NAMESPACE)
+        }
+
+        fn reclaimer_for_kernel(&self, kernel: &str) -> BatchSandboxReclaimer {
+            self.reclaimer().for_kernel(kernel)
         }
 
         async fn finish(mut self) -> Vec<String> {
@@ -486,6 +771,8 @@ mod tests {
 
                 let reason = match response.status {
                     200 => "OK",
+                    201 => "Created",
+                    403 => "Forbidden",
                     404 => "Not Found",
                     409 => "Conflict",
                     status => panic!("fixture does not name HTTP status {status}"),
@@ -556,6 +843,11 @@ mod tests {
         let mut labels = BTreeMap::from([
             (SANDBOX_ID_LABEL.to_string(), handle.to_string()),
             (SESSION_METADATA_KEY.to_string(), session.to_string()),
+            (KERNEL_METADATA_KEY.to_string(), "test-kernel".to_string()),
+            (
+                LEGACY_KERNEL_METADATA_KEY.to_string(),
+                "test-kernel".to_string(),
+            ),
         ]);
         if let Some(generation) = generation {
             labels.insert(GENERATION_METADATA_KEY.into(), generation.to_string());
@@ -604,6 +896,212 @@ mod tests {
             .split_once("\r\n\r\n")
             .expect("request separates headers from body");
         serde_json::from_str(body).expect("request body is JSON")
+    }
+
+    fn request_url(request: &str) -> reqwest::Url {
+        let target = request_line(request)
+            .split_whitespace()
+            .nth(1)
+            .expect("request target");
+        reqwest::Url::parse(&format!("http://fixture.invalid{target}"))
+            .expect("request target is a relative URL")
+    }
+
+    fn allowed_preflight_responses() -> Vec<FixtureResponse> {
+        let mut responses = ["get", "list", "delete"]
+            .into_iter()
+            .map(|verb| FixtureResponse::access_review(verb, true))
+            .collect::<Vec<_>>();
+        responses.push(FixtureResponse::empty_list());
+        responses
+    }
+
+    fn forbidden_trigger_access_reviews() -> Vec<(
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+        &'static str,
+    )> {
+        let mut reviews = ["watch", "create", "update", "patch", "deletecollection"]
+            .into_iter()
+            .map(|verb| {
+                (
+                    BATCH_SANDBOX_GROUP,
+                    BATCH_SANDBOX_VERSION,
+                    BATCH_SANDBOX_PLURAL,
+                    Some(TEST_NAMESPACE),
+                    verb,
+                )
+            })
+            .collect::<Vec<_>>();
+        reviews.extend(
+            ["secrets", "configmaps", "pods"]
+                .into_iter()
+                .map(|resource| ("", "v1", resource, Some(TEST_NAMESPACE), "list")),
+        );
+        reviews.extend(["get", "list", "delete"].into_iter().map(|verb| {
+            (
+                BATCH_SANDBOX_GROUP,
+                BATCH_SANDBOX_VERSION,
+                BATCH_SANDBOX_PLURAL,
+                None,
+                verb,
+            )
+        }));
+        reviews
+    }
+
+    fn exclusive_preflight_responses(
+        widened_forbidden_index: Option<usize>,
+    ) -> Vec<FixtureResponse> {
+        let mut responses = allowed_preflight_responses();
+        for (index, (group, version, resource, namespace, verb)) in
+            forbidden_trigger_access_reviews().into_iter().enumerate()
+        {
+            responses.push(FixtureResponse::access_review_for(
+                group,
+                version,
+                resource,
+                namespace,
+                verb,
+                widened_forbidden_index == Some(index),
+            ));
+            if widened_forbidden_index == Some(index) {
+                break;
+            }
+        }
+        responses
+    }
+
+    #[tokio::test]
+    async fn cleanup_preflight_proves_exact_verbs_namespace_and_resource_access() {
+        let fixture = serve(allowed_preflight_responses()).await;
+        fixture
+            .reclaimer_for_kernel("test-kernel")
+            .preflight_cleanup_authority()
+            .await
+            .expect("the complete namespaced authority is usable");
+
+        let requests = fixture.finish().await;
+        assert_eq!(requests.len(), 4);
+        for (request, verb) in requests.iter().take(3).zip(["get", "list", "delete"]) {
+            assert!(request_line(request).starts_with("POST "));
+            assert!(request_line(request).contains("/selfsubjectaccessreviews"));
+            let body = request_body(request);
+            let attributes = &body["spec"]["resourceAttributes"];
+            assert_eq!(attributes["group"], BATCH_SANDBOX_GROUP);
+            assert_eq!(attributes["version"], BATCH_SANDBOX_VERSION);
+            assert_eq!(attributes["resource"], BATCH_SANDBOX_PLURAL);
+            assert_eq!(attributes["namespace"], TEST_NAMESPACE);
+            assert_eq!(attributes["verb"], verb);
+        }
+        let list = request_url(&requests[3]);
+        assert!(list
+            .path()
+            .contains(&format!("/namespaces/{TEST_NAMESPACE}/batchsandboxes")));
+        assert_eq!(
+            list.query_pairs()
+                .find(|(key, _)| key == "limit")
+                .map(|(_, value)| value.into_owned()),
+            Some("1".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_cleanup_preflight_proves_the_complete_negative_authority_inventory() {
+        let fixture = serve(exclusive_preflight_responses(None)).await;
+        fixture
+            .reclaimer_for_kernel("test-kernel")
+            .preflight_exclusive_cleanup_authority()
+            .await
+            .expect("the exact dedicated Trigger authority is usable");
+
+        let requests = fixture.finish().await;
+        let forbidden = forbidden_trigger_access_reviews();
+        assert_eq!(requests.len(), 4 + forbidden.len());
+        for (request, (group, version, resource, namespace, verb)) in
+            requests.iter().skip(4).zip(forbidden)
+        {
+            let body = request_body(request);
+            let attributes = &body["spec"]["resourceAttributes"];
+            assert_eq!(attributes["group"], group);
+            assert_eq!(attributes["version"], version);
+            assert_eq!(attributes["resource"], resource);
+            assert_eq!(attributes["verb"], verb);
+            match namespace {
+                Some(namespace) => assert_eq!(attributes["namespace"], namespace),
+                None => assert!(
+                    attributes.get("namespace").is_none() || attributes["namespace"].is_null()
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn trigger_cleanup_preflight_refuses_every_widened_authority() {
+        for (index, (_, _, resource, namespace, verb)) in
+            forbidden_trigger_access_reviews().into_iter().enumerate()
+        {
+            let fixture = serve(exclusive_preflight_responses(Some(index))).await;
+            let error = fixture
+                .reclaimer_for_kernel("test-kernel")
+                .preflight_exclusive_cleanup_authority()
+                .await
+                .expect_err("any broader Trigger provider authority must keep admission closed");
+            assert!(matches!(error, SandboxError::Unsupported(_)));
+            assert_eq!(fixture.finish().await.len(), 5 + index);
+            if resource == BATCH_SANDBOX_PLURAL {
+                assert!(error.to_string().contains("BatchSandbox"));
+            } else {
+                assert!(error.to_string().contains(resource));
+            }
+            assert!(error.to_string().contains(verb));
+            if namespace.is_none() {
+                assert!(error.to_string().contains("cluster-wide"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_preflight_refuses_each_missing_required_verb() {
+        for (denied_index, denied_verb) in ["get", "list", "delete"].into_iter().enumerate() {
+            let responses = ["get", "list", "delete"]
+                .into_iter()
+                .take(denied_index + 1)
+                .map(|verb| FixtureResponse::access_review(verb, verb != denied_verb))
+                .collect();
+            let fixture = serve(responses).await;
+            let error = fixture
+                .reclaimer_for_kernel("test-kernel")
+                .preflight_cleanup_authority()
+                .await
+                .expect_err("a denied cleanup verb must keep admission closed");
+            assert!(matches!(error, SandboxError::Unsupported(_)));
+            assert_eq!(fixture.finish().await.len(), denied_index + 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_preflight_refuses_a_missing_or_unreachable_resource_endpoint() {
+        for response in [
+            FixtureResponse::rejected(404, "BatchSandbox resource not found"),
+            FixtureResponse::rejected(403, "BatchSandbox list forbidden"),
+        ] {
+            let mut responses = ["get", "list", "delete"]
+                .into_iter()
+                .map(|verb| FixtureResponse::access_review(verb, true))
+                .collect::<Vec<_>>();
+            responses.push(response);
+            let fixture = serve(responses).await;
+            let error = fixture
+                .reclaimer_for_kernel("test-kernel")
+                .preflight_cleanup_authority()
+                .await
+                .expect_err("an unusable resource endpoint must keep admission closed");
+            assert!(matches!(error, SandboxError::Rejected { .. }));
+            assert_eq!(fixture.finish().await.len(), 4);
+        }
     }
 
     #[test]
@@ -762,6 +1260,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn kernel_bound_reclaimer_never_deletes_another_provider_lane() {
+        let object = batch_sandbox("sbx-1", "sesn_1", Some(7), None, "uid-1", "rv-7");
+        let fixture = serve(vec![FixtureResponse::ok(object.to_string())]).await;
+        let reclaimer = fixture.reclaimer_for_kernel("other-kernel");
+
+        let error = reclaimer
+            .delete_if_identity(&identity("sesn_1", Some(7)))
+            .await
+            .expect_err("a different kernel lane cannot be deleted");
+        assert!(matches!(error, SandboxError::IdentityMismatch(_)));
+        let requests = fixture.finish().await;
+        assert_eq!(requests.len(), 1);
+        assert!(request_line(&requests[0]).starts_with("GET "));
+    }
+
+    #[tokio::test]
+    async fn conflicting_legacy_kernel_metadata_is_never_captured_or_deleted() {
+        let mut object = batch_sandbox("sbx-1", "sesn_1", Some(7), None, "uid-1", "rv-7");
+        object["metadata"]["labels"][LEGACY_KERNEL_METADATA_KEY] =
+            serde_json::Value::String("other-kernel".into());
+        let fixture = serve(vec![FixtureResponse::ok(object.to_string())]).await;
+        let reclaimer = fixture.reclaimer_for_kernel("test-kernel");
+
+        let error = reclaimer
+            .delete_if_identity(&identity("sesn_1", Some(7)))
+            .await
+            .expect_err("conflicting dual labels cannot authorize deletion");
+        assert!(matches!(error, SandboxError::IdentityMismatch(_)));
+        let requests = fixture.finish().await;
+        assert_eq!(requests.len(), 1);
+        assert!(request_line(&requests[0]).starts_with("GET "));
+    }
+
+    #[tokio::test]
     async fn resource_version_conflict_is_not_acknowledged_as_cleanup() {
         let fixture = serve(vec![
             FixtureResponse::ok(
@@ -770,7 +1302,7 @@ mod tests {
             FixtureResponse::rejected(409, "Conflict"),
         ])
         .await;
-        let reclaimer = fixture.reclaimer();
+        let reclaimer = fixture.reclaimer_for_kernel("test-kernel");
 
         let error = reclaimer
             .delete_if_identity(&identity("sesn_1", Some(7)))
@@ -826,7 +1358,7 @@ mod tests {
             ),
         ])
         .await;
-        let reclaimer = fixture.reclaimer();
+        let reclaimer = fixture.reclaimer_for_kernel("test-kernel");
         let reservation = RuntimeReservationIdentity {
             session: "sesn_1".into(),
             generation: NonZeroU64::new(7).expect("non-zero generation"),
@@ -844,8 +1376,98 @@ mod tests {
         );
         let requests = fixture.finish().await;
         assert_eq!(requests.len(), 2);
-        assert!(request_line(&requests[0]).contains("labelSelector="));
-        assert!(request_line(&requests[0]).contains("limit=100"));
+        let first = request_url(&requests[0]);
+        assert!(first
+            .path()
+            .contains(&format!("/namespaces/{TEST_NAMESPACE}/batchsandboxes")));
+        let query = first.query_pairs().collect::<BTreeMap<_, _>>();
+        assert_eq!(query.get("limit").map(|value| value.as_ref()), Some("100"));
+        let selector = query
+            .get("labelSelector")
+            .expect("discovery carries an exact selector")
+            .split(',')
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            selector,
+            BTreeSet::from([
+                "cma/kernel=test-kernel",
+                "cma/runtime-generation=7",
+                "cma/runtime-reservation=rres_1",
+                "cma/session=sesn_1",
+            ])
+        );
         assert!(request_line(&requests[1]).contains("continue=next-page"));
+    }
+
+    #[tokio::test]
+    async fn discovery_rejects_a_provider_result_from_another_kernel() {
+        let candidate = batch_sandbox(
+            "sbx-other",
+            "sesn_1",
+            Some(7),
+            Some("rres_1"),
+            "uid-other",
+            "rv-other",
+        );
+        let fixture = serve(vec![FixtureResponse::ok(
+            serde_json::json!({
+                "apiVersion": "sandbox.opensandbox.io/v1alpha1",
+                "kind": "BatchSandboxList",
+                "metadata": {},
+                "items": [candidate],
+            })
+            .to_string(),
+        )])
+        .await;
+        let reclaimer = fixture.reclaimer_for_kernel("different-kernel");
+        let reservation = RuntimeReservationIdentity {
+            session: "sesn_1".into(),
+            generation: NonZeroU64::new(7).expect("non-zero generation"),
+            token: "rres_1".into(),
+        };
+
+        let error = reclaimer
+            .discover_runtime_candidates(&reservation)
+            .await
+            .expect_err("a provider cannot smuggle a different kernel through listing");
+        assert!(matches!(error, SandboxError::IdentityMismatch(_)));
+        assert_eq!(fixture.finish().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discovery_rejects_conflicting_legacy_kernel_metadata() {
+        let mut candidate = batch_sandbox(
+            "sbx-conflict",
+            "sesn_1",
+            Some(7),
+            Some("rres_1"),
+            "uid-conflict",
+            "rv-conflict",
+        );
+        candidate["metadata"]["labels"][LEGACY_KERNEL_METADATA_KEY] =
+            serde_json::Value::String("other-kernel".into());
+        let fixture = serve(vec![FixtureResponse::ok(
+            serde_json::json!({
+                "apiVersion": "sandbox.opensandbox.io/v1alpha1",
+                "kind": "BatchSandboxList",
+                "metadata": {},
+                "items": [candidate],
+            })
+            .to_string(),
+        )])
+        .await;
+        let reservation = RuntimeReservationIdentity {
+            session: "sesn_1".into(),
+            generation: NonZeroU64::new(7).expect("non-zero generation"),
+            token: "rres_1".into(),
+        };
+
+        let error = fixture
+            .reclaimer_for_kernel("test-kernel")
+            .discover_runtime_candidates(&reservation)
+            .await
+            .expect_err("conflicting dual labels cannot authorize discovery");
+        assert!(matches!(error, SandboxError::IdentityMismatch(_)));
+        assert_eq!(fixture.finish().await.len(), 1);
     }
 }

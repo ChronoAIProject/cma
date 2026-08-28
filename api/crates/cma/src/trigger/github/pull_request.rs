@@ -370,16 +370,16 @@ impl GithubBroker {
             return Err(GithubBrokerError::AuthorityDrift);
         }
         let upstream = self
-            .repository_by_id(
+            .repository_by_id_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 context.upstream.repository_id,
             )
             .await?;
         let fork = self
-            .repository_by_id(
+            .repository_by_id_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 context.fork.repository.repository_id,
             )
             .await?;
@@ -414,17 +414,17 @@ impl GithubBroker {
         repositories: &CurrentRepositories,
     ) -> Result<(String, String), GithubBrokerError> {
         let base_revision = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 &repositories.upstream,
                 &context.record.intent.base_ref,
             )
             .await?;
         let head_revision = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 &repositories.fork,
                 &context.record.intent.head_branch,
             )
@@ -451,9 +451,9 @@ impl GithubBroker {
         for page_number in 1..=MAX_PULL_REQUEST_PAGES {
             let page = page_number.to_string();
             let response: Observed<Vec<PullRequestWire>> = self
-                .github_json(
+                .github_json_with_connection(
                     &context.owner,
-                    &context.connection.service_id,
+                    &context.connection,
                     Method::GET,
                     &[
                         "repos",
@@ -522,9 +522,9 @@ impl GithubBroker {
             repositories.fork.canonical_owner, context.record.intent.head_branch
         );
         let created: Result<Observed<PullRequestWire>, GithubBrokerError> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::POST,
                 &[
                     "repos",
@@ -662,9 +662,9 @@ impl GithubBroker {
             self.current_pull_request_revisions(context, &repositories)
                 .await?;
             let response: Observed<PullRequestWire> = self
-                .github_json(
+                .github_json_with_connection(
                     &context.owner,
-                    &context.connection.service_id,
+                    &context.connection,
                     Method::PATCH,
                     &[
                         "repos",
@@ -804,9 +804,9 @@ impl GithubBroker {
         let expected_number = number;
         let number = expected_number.to_string();
         let response: Observed<PullRequestWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -832,9 +832,9 @@ impl GithubBroker {
         head_revision: &str,
     ) -> CheckSummaryState {
         let checks: Result<Observed<CheckRunsWire>, GithubBrokerError> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -849,9 +849,9 @@ impl GithubBroker {
             )
             .await;
         let runs: Result<Observed<WorkflowRunsWire>, GithubBrokerError> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -1081,8 +1081,12 @@ mod tests {
 
     use super::*;
     use crate::trigger::github::{
-        SubjectAuthoritySource, SubjectRequestAuthority, PUBLIC_REPOSITORY_SCOPE,
+        SubjectAuthoritySource, SubjectRequestAuthority, GITHUB_API_ORIGIN, GITHUB_SERVICE_SLUG,
+        NYXID_PROXY_SERVICE_PAGE_SIZE, PUBLIC_REPOSITORY_SCOPE,
     };
+
+    const PROVIDER_GITHUB_CATALOG_ID: &str = "123e4567-e89b-42d3-a456-426614174200";
+    const PROVIDER_GITHUB_PROVIDER_ID: &str = "123e4567-e89b-42d3-a456-426614174100";
 
     #[derive(Debug, Clone, Copy)]
     enum CreateBehavior {
@@ -1129,6 +1133,7 @@ mod tests {
     #[derive(Clone)]
     struct ProviderFixture {
         requests: Arc<Mutex<Vec<RecordedRequest>>>,
+        nyxid_base_url: String,
         pull_request: Arc<Mutex<Option<ProviderPullRequest>>>,
         create_behavior: CreateBehavior,
         create_barrier: Option<Arc<tokio::sync::Barrier>>,
@@ -1156,6 +1161,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 requests: Arc::new(Mutex::new(Vec::new())),
+                nyxid_base_url: String::new(),
                 pull_request: Arc::new(Mutex::new(None)),
                 create_behavior: CreateBehavior::Confirmed,
                 create_barrier: None,
@@ -1338,12 +1344,25 @@ mod tests {
         let body = (!bytes.is_empty()).then(|| serde_json::from_slice(&bytes).unwrap());
         let method = parts.method.as_str().to_string();
         let uri = parts.uri.to_string();
-        let path = parts.uri.path().to_string();
-        fixture.requests.lock().await.push(RecordedRequest {
-            method: method.clone(),
-            uri,
-            body: body.clone(),
-        });
+        let original_path = parts.uri.path();
+        let path = original_path
+            .strip_prefix("/api/v1/proxy/")
+            .and_then(|remainder| remainder.split_once('/'))
+            .filter(|(route, _)| *route != "s" && *route != "services")
+            .map_or_else(
+                || original_path.to_string(),
+                |(_, suffix)| format!("/api/v1/proxy/s/api-github/{suffix}"),
+            );
+        if !matches!(
+            original_path,
+            "/api/v1/catalog/api-github" | "/api/v1/proxy/services"
+        ) {
+            fixture.requests.lock().await.push(RecordedRequest {
+                method: method.clone(),
+                uri,
+                body: body.clone(),
+            });
+        }
 
         let upstream_name = fixture.current_upstream_name().to_string();
         let fork_name = fixture.current_fork_name().to_string();
@@ -1365,6 +1384,34 @@ mod tests {
         );
         let actions_path = format!("{upstream_prefix}/actions/runs");
         match (method.as_str(), path.as_str()) {
+            ("GET", "/api/v1/catalog/api-github") => (
+                StatusCode::OK,
+                Json(json!({
+                    "slug": GITHUB_SERVICE_SLUG,
+                    "resource_uri": format!(
+                        "{}/api/v1/proxy/s/{GITHUB_SERVICE_SLUG}",
+                        fixture.nyxid_base_url
+                    ),
+                    "base_url": GITHUB_API_ORIGIN,
+                    "auth_method": "bearer",
+                    "auth_key_name": "Authorization",
+                    "provider_config_id": PROVIDER_GITHUB_PROVIDER_ID,
+                    "provider_type": "oauth2"
+                })),
+            ),
+            ("GET", "/api/v1/proxy/services") => (
+                StatusCode::OK,
+                Json(json!({
+                    "services": [{
+                        "id": PROVIDER_GITHUB_CATALOG_ID,
+                        "slug": GITHUB_SERVICE_SLUG
+                    }],
+                    "custom_services": [],
+                    "total": 1,
+                    "page": 1,
+                    "per_page": NYXID_PROXY_SERVICE_PAGE_SIZE
+                })),
+            ),
             ("GET", "/api/v1/user-services") => {
                 let rebound = fixture.observe_connection_preflight();
                 (
@@ -1373,7 +1420,11 @@ mod tests {
                         "services": [{
                             "id": "service-1",
                             "slug": "api-github",
-                            "resource_uri": "https://nyxid.test/api/v1/proxy/s/api-github",
+                            "catalog_service_id": PROVIDER_GITHUB_CATALOG_ID,
+                            "resource_uri": format!(
+                                "{}/api/v1/proxy/s/api-github",
+                                fixture.nyxid_base_url
+                            ),
                             "api_key_id": fixture.backing_key_id(rebound),
                             "is_active": fixture.service_is_active(rebound),
                             "state_version": fixture.service_state_version(rebound),
@@ -1696,16 +1747,20 @@ mod tests {
         })
     }
 
-    async fn provider_server(fixture: ProviderFixture) -> (String, tokio::task::JoinHandle<()>) {
+    async fn provider_server(
+        mut fixture: ProviderFixture,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let base_url = format!("http://{address}");
+        fixture.nyxid_base_url = base_url.clone();
         let app = Router::new()
             .fallback(any(provider_answer))
             .with_state(fixture);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        (format!("http://{address}"), server)
+        (base_url, server)
     }
 
     fn provider_broker(base_url: &str) -> GithubBroker {
@@ -1729,6 +1784,12 @@ mod tests {
         update_metadata: bool,
     ) -> Launch {
         let mut launch = crate::trigger::worker::tests::launch_fixture();
+        let connection = launch
+            .connection
+            .as_mut()
+            .expect("provider Launch has a selected connection");
+        connection.github_catalog_service_id = Some(PROVIDER_GITHUB_CATALOG_ID.into());
+        connection.github_user_service_slug = Some(GITHUB_SERVICE_SLUG.into());
         launch.id = provider_launch_id();
         launch.fork = Some(ForkRecord {
             repository: RepositoryIdentity {
@@ -1910,13 +1971,13 @@ mod tests {
         assert_eq!(boundary[1].uri, "/api/v1/user-services");
         assert!(boundary[2]
             .uri
-            .starts_with("/api/v1/proxy/s/api-github/user?"));
+            .starts_with("/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/user?"));
         assert!(boundary[3]
             .uri
-            .starts_with("/api/v1/proxy/s/api-github/repositories/10?"));
+            .starts_with("/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/10?"));
         assert!(boundary[4]
             .uri
-            .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+            .starts_with("/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/30?"));
         assert!(boundary[5].uri.contains("/git/ref/heads/main?"));
         assert!(boundary[6]
             .uri
@@ -1962,7 +2023,9 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(GithubBrokerError::AuthorityDrift) | Err(GithubBrokerError::ConnectionInactive)
+                Err(GithubBrokerError::AuthorityDrift)
+                    | Err(GithubBrokerError::ConnectionInactive)
+                    | Err(GithubBrokerError::UnapprovedScope { .. })
             ),
             "{operation:?} with {rebound_authority:?} returned {result:?}"
         );

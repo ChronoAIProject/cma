@@ -10,12 +10,37 @@ pub(crate) mod workspace_diff;
 
 use async_trait::async_trait;
 use layer2_core::{
-    LaunchAuthority, PublisherAuthority, SubjectId, TriggerAuthorityVerifier, TriggerConnection,
-    TriggerConnectionAuthorization, TriggerConnectionManager, TriggerRepositorySelection,
-    TriggerRevision, TriggerRevisionContent, TriggerServiceError,
+    Launch, LaunchAuthority, PublisherAuthority, SubjectId, TriggerAuthorityVerifier,
+    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager,
+    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerServiceError,
 };
 
-pub(crate) const TRIGGER_KERNEL_ID: &str = "codex";
+/// Durable routing identity for the first production Trigger runtime lane.
+///
+/// Never rename this in place after a Launch has recorded it. A future lane is
+/// a new adapter ID kept alongside this one until session and cleanup-debt
+/// inventory proves this generation retired.
+pub(crate) const TRIGGER_KERNEL_ID: &str = "codex-trigger-native-v1";
+
+/// Pre-versioned Trigger routing identity retained only for owner reads,
+/// normal README re-click, cancellation, reconciliation, revocation, and
+/// cleanup. New review, Start, provisioning, and provider polling compare
+/// against `TRIGGER_KERNEL_ID`, so this identity cannot authorize fresh work.
+pub(crate) const LEGACY_TRIGGER_KERNEL_ID: &str = "codex";
+
+/// Whether a retained Launch carries the complete admission authority for new
+/// work on the current Trigger runtime lane. Historical or partial snapshots
+/// remain available only to reconciliation, revocation, and fenced cleanup.
+pub(crate) fn has_current_trigger_runtime_admission(launch: &Launch) -> bool {
+    matches!(
+        launch.runtime_admission_route(
+            TRIGGER_KERNEL_ID,
+            LEGACY_TRIGGER_KERNEL_ID,
+            &layer2_core::CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        ),
+        layer2_core::RuntimeAdmissionRoute::Current
+    )
+}
 
 /// Explicit adapter used by trusted local mode, where no renewable NyxID
 /// subject authority exists. Resource reads still work; provider effects fail
