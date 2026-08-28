@@ -229,7 +229,14 @@ impl SessionService {
                 .trigger_origin
                 .as_ref()
                 .ok_or(RuntimeGatewayReachabilityError::ProtocolViolation)?;
-            if origin.github_service_id != request.service_id {
+            if origin.github_service_id != request.service_id
+                || origin.github_binding().ok()
+                    != Some((
+                        request.service_id.as_str(),
+                        request.catalog_service_id.as_str(),
+                        request.user_service_slug.as_str(),
+                    ))
+            {
                 return Err(RuntimeGatewayReachabilityError::ProtocolViolation);
             }
             let runtime = entry

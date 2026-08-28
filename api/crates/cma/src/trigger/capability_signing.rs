@@ -14,8 +14,8 @@ use serde::Serialize;
 use crate::config::GithubCapabilitySigningConfig;
 
 pub(crate) const POLICY_VERSION: u32 = CAPABILITY_POLICY_VERSION;
-pub(crate) const POLICY_AUDIENCE: &str = "cma-layer4-github-capability-v1";
-const SIGNING_DOMAIN: &[u8] = b"CMA_GITHUB_CAPABILITY_V1\0";
+pub(crate) const POLICY_AUDIENCE: &str = "cma-layer4-github-capability-v2";
+const SIGNING_DOMAIN: &[u8] = b"CMA_GITHUB_CAPABILITY_V2\0";
 const MAX_KEYS: usize = 8;
 
 pub(crate) struct CapabilitySigner {
@@ -112,6 +112,8 @@ impl CapabilitySigner {
             session_id: capability.session_id.0.clone(),
             runtime_audience: capability.runtime_audience.clone(),
             service_id: capability.service_id.clone(),
+            catalog_service_id: capability.github_catalog_service_id.clone(),
+            user_service_slug: capability.github_user_service_slug.clone(),
             upstream: Box::new(RepositoryBinding::from(&capability.upstream)),
             fork: Box::new(RepositoryBinding::from(&capability.fork)),
             allowed_ref: capability.allowed_ref.clone(),
@@ -235,6 +237,8 @@ enum CapabilityDocument {
         session_id: String,
         runtime_audience: String,
         service_id: String,
+        catalog_service_id: String,
+        user_service_slug: String,
         upstream: Box<RepositoryBinding>,
         fork: Box<RepositoryBinding>,
         allowed_ref: String,
@@ -346,6 +350,8 @@ mod tests {
             session_id: SessionId("session-wire".into()),
             runtime_audience: "runtime-wire".into(),
             service_id: "service-wire".into(),
+            github_catalog_service_id: "catalog-github".into(),
+            github_user_service_slug: "api-github-2".into(),
             upstream: repository(10, 20, "upstream", None, None),
             fork: repository(30, 40, "contributor", Some(10), Some(10)),
             allowed_ref: "refs/heads/cma/launch-wire".into(),
@@ -376,11 +382,13 @@ mod tests {
             document,
             serde_json::json!({
                 "kind": "policy",
-                "version": 1,
+                "version": 2,
                 "launch_id": "launch-wire",
                 "session_id": "session-wire",
                 "runtime_audience": "runtime-wire",
                 "service_id": "service-wire",
+                "catalog_service_id": "catalog-github",
+                "user_service_slug": "api-github-2",
                 "upstream": {
                     "repository_id": 10,
                     "repository_node_id": "R_10",
@@ -406,7 +414,7 @@ mod tests {
                 "not_before_epoch_seconds": 1000,
                 "expires_at_epoch_seconds": 1060,
                 "issuer": "cma-trigger",
-                "audience": "cma-layer4-github-capability-v1",
+                "audience": "cma-layer4-github-capability-v2",
                 "signature_key_id": "key-current",
                 "numeric_binding_observed_at": "2026-08-27T00:00:00Z",
             })

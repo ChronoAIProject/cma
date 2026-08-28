@@ -939,6 +939,12 @@ async fn killed_trigger_runtime_restores_the_exact_pair_without_replaying_the_ta
         .clone()
         .expect("the replacement spec is observable");
     assert_eq!(restored.session_id, ready.id.0);
+    assert!(restored
+        .platform_briefing
+        .contains("nyxid proxy request catalog-github <path> --by-id --via-service service-1"));
+    assert!(restored
+        .platform_briefing
+        .contains("per-user route slug is `api-github-2`"));
     assert_eq!(
         restored.restore_from.as_deref(),
         Some(pair.conversation.as_slice())
@@ -1187,6 +1193,12 @@ async fn trigger_session_creation_is_deterministic_and_hands_over_exact_workspac
     }
     assert!(service.trigger_credential_ready(&created.id).await);
     let provisioned = adapter.last_spec.lock().await.clone().unwrap();
+    assert!(provisioned
+        .platform_briefing
+        .contains("nyxid proxy request catalog-github <path> --by-id --via-service service-1"));
+    assert!(provisioned
+        .platform_briefing
+        .contains("per-user route slug is `api-github-2`"));
     assert_eq!(
         provisioned.timeout_seconds,
         Some(u64::from(launch.effective.timeout_seconds))
@@ -1666,6 +1678,18 @@ async fn successful_trigger_rotations_capture_then_retire_h1_and_advance_generat
         let settled = await_settled(&service, &caller, &ready.id).await;
         assert_eq!(settled.status, SessionStatus::Ready);
         assert_eq!(settled.rotations, 1);
+        let replacement = adapter
+            .last_spec
+            .lock()
+            .await
+            .clone()
+            .expect("the replacement Trigger spec is observable");
+        assert!(replacement
+            .platform_briefing
+            .contains("nyxid proxy request catalog-github <path> --by-id --via-service service-1"));
+        assert!(replacement
+            .platform_briefing
+            .contains("per-user route slug is `api-github-2`"));
         assert_eq!(workspaces.committed.load(Ordering::SeqCst), 1);
         assert!(adapter.terminated.lock().await.contains(&h1));
         assert!(!adapter.running.lock().await.contains_key(&h1));
@@ -1844,6 +1868,45 @@ async fn unsupported_trigger_sandbox_profile_is_refused_before_provisioning() {
         .expect_err("a retained unsupported profile fails closed at provisioning");
     assert!(matches!(error, CoreError::InvalidRequest(_)));
     assert!(error.to_string().contains("session.sandbox_profile"));
+    assert!(profiles.profiles.lock().await.is_empty());
+    assert!(store.sessions.lock().await.is_empty());
+    assert_eq!(adapter.provision_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn legacy_trigger_route_authority_is_readable_but_cannot_authorize_fresh_provisioning() {
+    let archive = b"legacy trigger archive".to_vec();
+    let archive_sha256 = format!("{:x}", Sha256::digest(&archive));
+    let mut wire = serde_json::to_value(crate::trigger::tests::session_launch(&archive_sha256))
+        .expect("the current Launch fixture serializes");
+    let connection = wire
+        .get_mut("connection")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the Launch retains its connection");
+    connection.remove("github_catalog_service_id");
+    connection.remove("github_user_service_slug");
+    let launch: crate::Launch =
+        serde_json::from_value(wire).expect("the historical Launch remains readable");
+    assert_eq!(
+        launch
+            .connection
+            .as_ref()
+            .unwrap()
+            .github_catalog_service_id,
+        None
+    );
+    assert_eq!(
+        launch.connection.as_ref().unwrap().github_user_service_slug,
+        None
+    );
+
+    let (service, store, adapter, profiles, _workspaces) = trigger_session_service(archive);
+    let error = service
+        .ensure_trigger_session(&launch)
+        .await
+        .expect_err("legacy route authority cannot authorize a new runtime");
+    assert!(matches!(error, CoreError::InvalidRequest(_)));
+    assert!(error.to_string().contains("GitHub"));
     assert!(profiles.profiles.lock().await.is_empty());
     assert!(store.sessions.lock().await.is_empty());
     assert_eq!(adapter.provision_calls.load(Ordering::SeqCst), 0);
@@ -4055,6 +4118,22 @@ async fn runtime_policy_and_gateway_probe_share_one_handle_and_lifecycle_fence()
             .unwrap()
             .service_id
             .clone(),
+        catalog_service_id: fixture
+            .launch
+            .connection
+            .as_ref()
+            .unwrap()
+            .github_catalog_service_id
+            .clone()
+            .unwrap(),
+        user_service_slug: fixture
+            .launch
+            .connection
+            .as_ref()
+            .unwrap()
+            .github_user_service_slug
+            .clone()
+            .unwrap(),
         resource_id: fixture
             .launch
             .fork
@@ -4115,20 +4194,56 @@ async fn invalid_gateway_probe_bindings_never_reach_the_runtime_adapter() {
         .unwrap()
         .service_id
         .clone();
+    let catalog_service_id = fixture
+        .launch
+        .connection
+        .as_ref()
+        .unwrap()
+        .github_catalog_service_id
+        .clone()
+        .unwrap();
+    let user_service_slug = fixture
+        .launch
+        .connection
+        .as_ref()
+        .unwrap()
+        .github_user_service_slug
+        .clone()
+        .unwrap();
     for request in [
         layer3_adapter::RuntimeGatewayProbeRequest {
             version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION + 1,
             service_id: service_id.clone(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: user_service_slug.clone(),
             resource_id: 30,
         },
         layer3_adapter::RuntimeGatewayProbeRequest {
             version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: "another-service".into(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: user_service_slug.clone(),
             resource_id: 30,
         },
         layer3_adapter::RuntimeGatewayProbeRequest {
             version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: service_id.clone(),
+            catalog_service_id: "another-catalog".into(),
+            user_service_slug: user_service_slug.clone(),
+            resource_id: 30,
+        },
+        layer3_adapter::RuntimeGatewayProbeRequest {
+            version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: service_id.clone(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: "another-github-route".into(),
+            resource_id: 30,
+        },
+        layer3_adapter::RuntimeGatewayProbeRequest {
+            version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: service_id.clone(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: user_service_slug.clone(),
             resource_id: 0,
         },
     ] {

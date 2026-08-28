@@ -28,12 +28,14 @@ const GATEWAY_PROBE_COMMAND = JSON.stringify([
   "cma-trigger",
   "--",
   "/usr/local/bin/layer4-runtime",
-  "runtime-gateway-probe-helper-v1",
+  "runtime-gateway-probe-helper-v2",
 ]);
 const LAUNCH_ID = "12345678-1234-1234-1234-1234567890ab";
 const SESSION_ID = `sesn_trg_${LAUNCH_ID.replaceAll("-", "")}`;
 const RUNTIME_AUDIENCE = "runtime-d09";
 const SERVICE_ID = "service-1";
+const CATALOG_SERVICE_ID = "catalog-service-github";
+const USER_SERVICE_SLUG = "api-github-2";
 const FORK_REPOSITORY_ID = 30;
 const FIXTURE_CREDENTIAL = "d09-synthetic-agent-key";
 const PROVIDER_BODY_MARKER = "D09_PROVIDER_BODY_MUST_NOT_ESCAPE";
@@ -73,7 +75,7 @@ allow_local_binding = false
 
 const FIXTURE_SERVER = String.raw`
 const http = require("node:http");
-const expectedPath = "/api/v1/proxy/s/api-github/repositories/30?_nyxid_via=service-1";
+const expectedPath = "/api/v1/proxy/catalog-service-github/repositories/30?_nyxid_via=service-1";
 const state = {
   githubCalls: 0,
   modelCalls: 0,
@@ -699,7 +701,7 @@ function baseEnvironment(fixtureName, keyring) {
     CHRONO_GITHUB_CAPABILITY_REQUIRED: "true",
     CHRONO_GITHUB_CAPABILITY_VERIFY_KEYS: keyring,
     CHRONO_SESSION_ID: SESSION_ID,
-    CHRONO_SESSION_REACHES: "api-github",
+    CHRONO_SESSION_REACHES: USER_SERVICE_SLUG,
     CHRONO_RUNTIME_GATEWAY_PROBE_COMMAND: GATEWAY_PROBE_COMMAND,
     INITIAL_AGENT_MODE: "cma-trigger",
   };
@@ -716,11 +718,13 @@ function signingFixture() {
       const now = Math.floor(Date.now() / 1000);
       const document = {
         kind: "policy",
-        version: 1,
+        version: 2,
         launch_id: LAUNCH_ID,
         session_id: SESSION_ID,
         runtime_audience: RUNTIME_AUDIENCE,
         service_id: SERVICE_ID,
+        catalog_service_id: CATALOG_SERVICE_ID,
+        user_service_slug: USER_SERVICE_SLUG,
         upstream: {
           repository_id: 10,
           repository_node_id: "R_upstream",
@@ -753,17 +757,17 @@ function signingFixture() {
         not_before_epoch_seconds: now,
         expires_at_epoch_seconds: now + 59,
         issuer: "cma-d09",
-        audience: "cma-layer4-github-capability-v1",
+        audience: "cma-layer4-github-capability-v2",
         signature_key_id: keyId,
         numeric_binding_observed_at: new Date().toISOString(),
       };
       const payload = Buffer.from(JSON.stringify(document));
       const message = Buffer.concat([
-        Buffer.from("CMA_GITHUB_CAPABILITY_V1\0"),
+        Buffer.from("CMA_GITHUB_CAPABILITY_V2\0"),
         payload,
       ]);
       return JSON.stringify({
-        version: 1,
+        version: 2,
         key_id: keyId,
         payload: payload.toString("base64url"),
         signature: crypto.sign(null, message, privateKey).toString("base64url"),
@@ -818,13 +822,22 @@ async function fetchJson(url, options) {
   return JSON.parse(text);
 }
 
-async function gatewayProbe(baseUrl, serviceId, resourceId, expected) {
+async function gatewayProbe(
+  baseUrl,
+  serviceId,
+  resourceId,
+  expected,
+  catalogServiceId = CATALOG_SERVICE_ID,
+  userServiceSlug = USER_SERVICE_SLUG,
+) {
   const receipt = await fetchJson(`${baseUrl}/runtime/gateway-probe`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      version: 1,
+      version: 2,
       service_id: serviceId,
+      catalog_service_id: catalogServiceId,
+      user_service_slug: userServiceSlug,
       resource_id: resourceId,
     }),
   });
@@ -834,7 +847,7 @@ async function gatewayProbe(baseUrl, serviceId, resourceId, expected) {
       "inconclusive",
     );
   }
-  assert.deepEqual(receipt, { version: 1, outcome: expected });
+  assert.deepEqual(receipt, { version: 2, outcome: expected });
   const rendered = JSON.stringify(receipt);
   assert(!rendered.includes(PROVIDER_BODY_MARKER));
   assert(!rendered.includes(FIXTURE_CREDENTIAL));
@@ -1549,6 +1562,10 @@ async function main() {
     );
     assert.equal(ready.githubCapability.runtime.required, true);
     assert.equal(ready.githubCapability.runtime.installed, false);
+    assert.equal(ready.githubCapability.name, "github_capability_v2");
+    assert.equal(ready.githubCapability.version, 2);
+    assert.equal(ready.runtimeGatewayProbe.name, "runtime_gateway_probe_v2");
+    assert.equal(ready.runtimeGatewayProbe.version, 2);
     assert.equal(ready.runtimeGatewayProbe.supported, true);
     assert.deepEqual(ready.workspaceCheckpoint, { version: 4 });
 
@@ -1653,32 +1670,55 @@ async function main() {
       {
         form: "literal-dot-dot",
         target:
-          "/api/v1/proxy/s/api-github/../chrono-llm/models?_nyxid_via=service-1",
+          "/api/v1/proxy/catalog-service-github/../chrono-llm/models?_nyxid_via=service-1",
       },
       {
         form: "encoded-dot-dot",
         target:
-          "/api/v1/proxy/s/api-github/%2e%2e/chrono-llm/models?_nyxid_via=service-1",
+          "/api/v1/proxy/catalog-service-github/%2e%2e/chrono-llm/models?_nyxid_via=service-1",
       },
       {
         form: "double-encoded-dot-dot",
         target:
-          "/api/v1/proxy/s/api-github/%252e%252e/chrono-llm/models?_nyxid_via=service-1",
+          "/api/v1/proxy/catalog-service-github/%252e%252e/chrono-llm/models?_nyxid_via=service-1",
       },
       {
         form: "mixed-dot-dot",
         target:
-          "/api/v1/proxy/s/api-github/.%2e/chrono-llm/models?_nyxid_via=service-1",
+          "/api/v1/proxy/catalog-service-github/.%2e/chrono-llm/models?_nyxid_via=service-1",
       },
       {
         form: "encoded-slash",
         target:
-          "/api/v1/proxy/s/api-github/repositories%2f30?_nyxid_via=service-1",
+          "/api/v1/proxy/catalog-service-github/repositories%2f30?_nyxid_via=service-1",
       },
       {
         form: "backslash",
         target:
-          "/api/v1/proxy/s/api-github/..\\chrono-llm/models?_nyxid_via=service-1",
+          "/api/v1/proxy/catalog-service-github/..\\chrono-llm/models?_nyxid_via=service-1",
+      },
+      {
+        form: "canonical-github-slug-route",
+        target:
+          "/api/v1/proxy/s/api-github/repositories/30?_nyxid_via=service-1",
+      },
+      {
+        form: "suffixed-github-slug-route",
+        target:
+          "/api/v1/proxy/s/api-github-2/repositories/30?_nyxid_via=service-1",
+      },
+      {
+        form: "pat-lookalike-slug-route",
+        target:
+          "/api/v1/proxy/s/api-github-pat/repositories/30?_nyxid_via=service-1",
+      },
+      {
+        form: "user-service-id-as-slug-route",
+        target: `/api/v1/proxy/s/${SERVICE_ID}/repositories/30?_nyxid_via=${SERVICE_ID}`,
+      },
+      {
+        form: "catalog-service-id-as-slug-route",
+        target: `/api/v1/proxy/s/${CATALOG_SERVICE_ID}/repositories/30?_nyxid_via=${SERVICE_ID}`,
       },
     ];
     const traversal = [];
@@ -1755,6 +1795,31 @@ async function main() {
       "service-other",
       FORK_REPOSITORY_ID,
       "policy_denied",
+    );
+    policyGeneration = await installCapability(
+      control,
+      signing,
+      policyGeneration + 1,
+    );
+    outcomes.wrongCatalogService = await gatewayProbe(
+      baseUrl,
+      SERVICE_ID,
+      FORK_REPOSITORY_ID,
+      "policy_denied",
+      "catalog-service-other",
+    );
+    policyGeneration = await installCapability(
+      control,
+      signing,
+      policyGeneration + 1,
+    );
+    outcomes.wrongUserServiceSlug = await gatewayProbe(
+      baseUrl,
+      SERVICE_ID,
+      FORK_REPOSITORY_ID,
+      "policy_denied",
+      CATALOG_SERVICE_ID,
+      "api-github-3",
     );
     policyGeneration = await installCapability(
       control,

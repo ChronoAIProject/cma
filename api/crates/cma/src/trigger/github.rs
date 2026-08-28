@@ -39,10 +39,14 @@ pub(crate) use pull_request::{PullRequestAdvance, PullRequestContext};
 
 const GITHUB_SERVICE_SLUG: &str = "api-github";
 const GITHUB_PROVIDER_SLUG: &str = "github";
+const GITHUB_API_ORIGIN: &str = "https://api.github.com";
 const PUBLIC_REPOSITORY_SCOPE: &str = "public_repo";
+const PUBLIC_MVP_ALLOWED_SCOPES: &[&str] = &[PUBLIC_REPOSITORY_SCOPE, "read:user", "user:email"];
 const MAX_MANAGEMENT_BODY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_GITHUB_BODY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_NYXID_PROVIDERS: usize = 1_024;
+const NYXID_PROXY_SERVICE_PAGE_SIZE: u64 = 100;
+const MAX_NYXID_PROXY_SERVICES: u64 = 10_000;
 const MAX_USER_REPOSITORY_PAGES: u32 = 100;
 const USER_REPOSITORY_PAGE_SIZE: usize = 100;
 const MAX_GITHUB_TREE_ENTRIES: usize = 100_000;
@@ -115,6 +119,8 @@ pub(crate) enum GithubBrokerError {
     ConnectionDisconnected,
     #[error("the selected GitHub connection is missing required scope {required}")]
     InsufficientScope { required: &'static str },
+    #[error("the selected GitHub connection grants unapproved scope {scope}")]
+    UnapprovedScope { scope: String },
     #[error("the selected GitHub authority changed since preflight")]
     AuthorityDrift,
     #[error("NyxID refused this subject or exact UserService")]
@@ -175,6 +181,7 @@ impl From<GithubBrokerError> for TriggerServiceError {
             GithubBrokerError::InsufficientScope { required } => Authority::InsufficientScope {
                 required: required.to_string(),
             },
+            GithubBrokerError::UnapprovedScope { scope } => Authority::UnapprovedScope { scope },
             GithubBrokerError::AuthorityDrift => Authority::AuthorityDrift,
             GithubBrokerError::Forbidden => Authority::Forbidden,
             GithubBrokerError::NotFound => Authority::ResourceNotFound,
@@ -203,6 +210,26 @@ pub(crate) struct GithubBroker {
     authority: Arc<dyn SubjectAuthoritySource>,
     revocations: Arc<dyn ConnectionRevocationStore>,
     public_github_service_slug: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubCatalogIdentity {
+    catalog_service_id: String,
+    provider_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubRoutingIdentity {
+    user_service_id: String,
+    user_service_slug: String,
+    catalog_service_id: String,
+}
+
+#[derive(Debug)]
+struct VerifiedGithubService {
+    service: UserServiceWire,
+    route: GithubRoutingIdentity,
+    catalog: GithubCatalogIdentity,
 }
 
 #[derive(Clone)]
@@ -645,6 +672,7 @@ impl GithubBroker {
         &self,
         subject: &SubjectId,
     ) -> Result<Vec<GithubConnectionView>, GithubBrokerError> {
+        let catalog = self.github_catalog_identity(subject).await?;
         let services: Observed<UserServiceListWire> = self
             .nyxid_json(
                 subject,
@@ -657,10 +685,10 @@ impl GithubBroker {
             .await?;
         let mut result = Vec::new();
         for service in services.value.services {
-            if service.slug != GITHUB_SERVICE_SLUG {
+            if service.catalog_service_id.as_deref() != Some(catalog.catalog_service_id.as_str()) {
                 continue;
             }
-            validate_resource_uri(&service.resource_uri)?;
+            let route = github_routing_identity(&self.base_url, &service, &catalog)?;
             let personal = matches!(service.credential_source, CredentialSourceWire::Personal);
             let evidence = self.authorization_evidence(subject, &service.id).await;
             let (state, scopes, consent) = match evidence {
@@ -675,7 +703,19 @@ impl GithubBroker {
                 Err(error) => return Err(error),
             };
             let account = if personal && state == ConnectionState::Active {
-                Some(self.github_user(subject, &service.id).await?.value.into())
+                Some(
+                    self.github_json_with_route::<GithubUserWire>(
+                        subject,
+                        &route,
+                        Method::GET,
+                        &["user"],
+                        &[],
+                        None,
+                    )
+                    .await?
+                    .value
+                    .into(),
+                )
             } else {
                 None
             };
@@ -706,6 +746,7 @@ impl GithubBroker {
         service_id: &str,
     ) -> Result<Option<TriggerConnection>, GithubBrokerError> {
         validate_opaque_id(service_id, "UserService ID")?;
+        let catalog = self.github_catalog_identity(subject).await?;
         let services: Observed<UserServiceListWire> = self
             .nyxid_json(
                 subject,
@@ -716,21 +757,23 @@ impl GithubBroker {
                 MAX_MANAGEMENT_BODY_BYTES,
             )
             .await?;
-        let Some(service) = services
-            .value
-            .services
-            .into_iter()
-            .find(|service| service.id == service_id && service.slug == GITHUB_SERVICE_SLUG)
-        else {
+        let Some(service) = services.value.services.into_iter().find(|service| {
+            service.id == service_id
+                && service.catalog_service_id.as_deref()
+                    == Some(catalog.catalog_service_id.as_str())
+        }) else {
             return Ok(None);
         };
-        validate_resource_uri(&service.resource_uri)?;
+        github_routing_identity(&self.base_url, &service, &catalog)?;
         if service.state_version <= 0 {
             return Err(GithubBrokerError::Malformed(
                 "the UserService has no usable state version".into(),
             ));
         }
         let personal = matches!(service.credential_source, CredentialSourceWire::Personal);
+        if !personal {
+            return Ok(None);
+        }
         let evidence = match self.authorization_evidence(subject, service_id).await {
             Ok(evidence) => Some(evidence),
             Err(GithubBrokerError::NotFound) => None,
@@ -756,11 +799,7 @@ impl GithubBroker {
         Ok(Some(TriggerConnection {
             service_id: service.id,
             state_version: service.state_version,
-            state: if personal {
-                state
-            } else {
-                ConnectionState::Disconnected
-            },
+            state,
             account: None,
             granted_scopes,
             consent_observed_at,
@@ -1024,6 +1063,7 @@ impl GithubBroker {
                 "OAuth connection label is outside NyxID's bound".into(),
             ));
         }
+        let catalog = self.github_catalog_identity(subject).await?;
         let body = serde_json::json!({
             "service_slug": GITHUB_SERVICE_SLUG,
             "label": label,
@@ -1038,17 +1078,18 @@ impl GithubBroker {
                 MAX_MANAGEMENT_BODY_BYTES,
             )
             .await?;
-        if created.value.slug != GITHUB_SERVICE_SLUG
+        if created.value.catalog_service_id.as_deref() != Some(catalog.catalog_service_id.as_str())
             || !matches!(
                 created.value.credential_source,
                 CredentialSourceWire::Personal
             )
-            || created.value.id.trim().is_empty()
         {
             return Err(GithubBrokerError::Malformed(
                 "NyxID created a different service than requested".into(),
             ));
         }
+        validate_opaque_id(&created.value.id, "UserService ID")?;
+        validate_user_service_slug(&created.value.slug)?;
         Ok(created.value.id)
     }
 
@@ -1057,6 +1098,7 @@ impl GithubBroker {
         subject: &SubjectId,
         label: &str,
     ) -> Result<String, GithubBrokerError> {
+        let catalog = self.github_catalog_identity(subject).await?;
         let services: Observed<UserServiceListWire> = self
             .nyxid_json(
                 subject,
@@ -1068,17 +1110,17 @@ impl GithubBroker {
             )
             .await?;
         let mut matching = services.value.services.into_iter().filter(|service| {
-            service.slug == GITHUB_SERVICE_SLUG
-                && matches!(service.credential_source, CredentialSourceWire::Personal)
+            matches!(service.credential_source, CredentialSourceWire::Personal)
                 && service.label.as_deref() == Some(label)
+                && service.catalog_service_id.as_deref()
+                    == Some(catalog.catalog_service_id.as_str())
         });
         let existing = matching.next();
         if matching.next().is_some() {
             return Err(GithubBrokerError::AuthorityDrift);
         }
         if let Some(service) = existing {
-            validate_resource_uri(&service.resource_uri)?;
-            validate_opaque_id(&service.id, "UserService ID")?;
+            github_routing_identity(&self.base_url, &service, &catalog)?;
             return Ok(service.id);
         }
         self.create_oauth_placeholder(subject, label).await
@@ -1090,8 +1132,19 @@ impl GithubBroker {
         service_id: &str,
     ) -> Result<GithubOAuthStart, GithubBrokerError> {
         validate_opaque_id(service_id, "UserService ID")?;
-        self.require_service(subject, service_id).await?;
+        let verified = self.require_service(subject, service_id).await?;
+        if !matches!(
+            verified.service.credential_source,
+            CredentialSourceWire::Personal
+        ) {
+            return Err(GithubBrokerError::ConnectionNotPersonal);
+        }
         let provider_id = self.github_oauth_provider_id(subject).await?;
+        if provider_id != verified.catalog.provider_id {
+            return Err(GithubBrokerError::Malformed(
+                "the GitHub catalog and OAuth provider identities disagree".into(),
+            ));
+        }
         let query = [
             ("flow", "cc"),
             ("scope_override", PUBLIC_REPOSITORY_SCOPE),
@@ -1127,6 +1180,114 @@ impl GithubBroker {
             authorization_url: response.value.authorization_url,
             attempt_nonce: nonce,
         })
+    }
+
+    async fn github_catalog_identity(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<GithubCatalogIdentity, GithubBrokerError> {
+        let catalog: Observed<CatalogEntryWire> = match self
+            .nyxid_json(
+                subject,
+                Method::GET,
+                &["api", "v1", "catalog", GITHUB_SERVICE_SLUG],
+                &[],
+                None,
+                MAX_MANAGEMENT_BODY_BYTES,
+            )
+            .await
+        {
+            Err(GithubBrokerError::NotFound) => {
+                return Err(GithubBrokerError::ProviderAuthenticationUnavailable)
+            }
+            result => result?,
+        };
+        let provider_id = validate_github_catalog_entry(&self.base_url, &catalog.value)?;
+        let catalog_service_id = self.discover_github_catalog_service_id(subject).await?;
+        Ok(GithubCatalogIdentity {
+            catalog_service_id,
+            provider_id,
+        })
+    }
+
+    async fn discover_github_catalog_service_id(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<String, GithubBrokerError> {
+        let mut expected_total = None;
+        let mut seen = 0_u64;
+        let mut page = 1_u64;
+        let mut matches = Vec::new();
+        loop {
+            let page_value = page.to_string();
+            let per_page_value = NYXID_PROXY_SERVICE_PAGE_SIZE.to_string();
+            let query = [
+                ("page", page_value.as_str()),
+                ("per_page", per_page_value.as_str()),
+            ];
+            let response: Observed<ProxyServiceListWire> = self
+                .nyxid_json(
+                    subject,
+                    Method::GET,
+                    &["api", "v1", "proxy", "services"],
+                    &query,
+                    None,
+                    MAX_MANAGEMENT_BODY_BYTES,
+                )
+                .await?;
+            let response = response.value;
+            if response.page != page
+                || response.per_page != NYXID_PROXY_SERVICE_PAGE_SIZE
+                || response.services.len() as u64 > NYXID_PROXY_SERVICE_PAGE_SIZE
+                || response.total > MAX_NYXID_PROXY_SERVICES
+                || expected_total.is_some_and(|total| total != response.total)
+            {
+                return Err(GithubBrokerError::Malformed(
+                    "NyxID returned an invalid proxy-service page".into(),
+                ));
+            }
+            expected_total = Some(response.total);
+            let page_len = response.services.len() as u64;
+            seen = seen.checked_add(page_len).ok_or_else(|| {
+                GithubBrokerError::Malformed(
+                    "NyxID returned an unbounded proxy-service inventory".into(),
+                )
+            })?;
+            if seen > response.total {
+                return Err(GithubBrokerError::Malformed(
+                    "NyxID returned an inconsistent proxy-service total".into(),
+                ));
+            }
+            for service in response.services {
+                if service.slug == GITHUB_SERVICE_SLUG {
+                    matches.push(service.id);
+                }
+            }
+            if seen == response.total {
+                break;
+            }
+            if page_len == 0 || page >= MAX_NYXID_PROXY_SERVICES {
+                return Err(GithubBrokerError::Malformed(
+                    "NyxID returned a non-progressing proxy-service inventory".into(),
+                ));
+            }
+            page = page.checked_add(1).ok_or_else(|| {
+                GithubBrokerError::Malformed(
+                    "NyxID returned an unbounded proxy-service inventory".into(),
+                )
+            })?;
+        }
+
+        if matches.len() != 1 {
+            return Err(if matches.is_empty() {
+                GithubBrokerError::ProviderAuthenticationUnavailable
+            } else {
+                GithubBrokerError::Malformed(
+                    "NyxID returned duplicate GitHub catalog services".into(),
+                )
+            });
+        }
+        canonical_non_nil_uuid(&matches[0], "the NyxID GitHub catalog service ID")
     }
 
     async fn github_oauth_provider_id(
@@ -1204,7 +1365,8 @@ impl GithubBroker {
         if !evidence.is_active {
             return Err(GithubBrokerError::ConnectionInactive);
         }
-        let service = self.require_service(subject, service_id).await?;
+        let verified = self.require_service(subject, service_id).await?;
+        let service = verified.service;
         if !matches!(service.credential_source, CredentialSourceWire::Personal) {
             return Err(GithubBrokerError::ConnectionNotPersonal);
         }
@@ -1231,22 +1393,19 @@ impl GithubBroker {
         {
             return Err(GithubBrokerError::ConnectionDisconnected);
         }
-        let granted_scopes = normalize_scopes(evidence.granted_scopes.unwrap_or_default())?;
-        if !granted_scopes
-            .iter()
-            .any(|scope| scope == PUBLIC_REPOSITORY_SCOPE)
-        {
-            return Err(GithubBrokerError::InsufficientScope {
-                required: PUBLIC_REPOSITORY_SCOPE,
-            });
-        }
+        let granted_scopes =
+            validate_public_mvp_scopes(evidence.granted_scopes.unwrap_or_default())?;
         let consent_observed_at = evidence.last_authorized_at.ok_or_else(|| {
             GithubBrokerError::Malformed("OAuth authorization has no completion timestamp".into())
         })?;
-        let account = self.github_user(subject, service_id).await?;
+        let account: Observed<GithubUserWire> = self
+            .github_json_with_route(subject, &verified.route, Method::GET, &["user"], &[], None)
+            .await?;
         Ok(ConnectionEvidence {
             snapshot: ConnectionSnapshot {
                 service_id: service.id,
+                github_catalog_service_id: Some(verified.route.catalog_service_id),
+                github_user_service_slug: Some(verified.route.user_service_slug),
                 service_state_version: service.state_version,
                 backing_key_id,
                 account: account.value.into(),
@@ -1260,10 +1419,10 @@ impl GithubBroker {
         })
     }
 
-    pub(crate) async fn repository_by_id(
+    pub(crate) async fn repository_by_id_with_connection(
         &self,
         subject: &SubjectId,
-        service_id: &str,
+        connection: &ConnectionSnapshot,
         repository_id: u64,
     ) -> Result<RepositoryEvidence, GithubBrokerError> {
         if repository_id == 0 {
@@ -1273,9 +1432,9 @@ impl GithubBroker {
         }
         let id = repository_id.to_string();
         let response: Observed<GithubRepositoryWire> = self
-            .github_json(
+            .github_json_with_connection(
                 subject,
-                service_id,
+                connection,
                 Method::GET,
                 &["repositories", &id],
                 &[],
@@ -1288,19 +1447,19 @@ impl GithubBroker {
         repository_evidence(response.value, response.token_generation)
     }
 
-    pub(crate) async fn repository_by_name(
+    async fn repository_by_name_with_connection(
         &self,
         subject: &SubjectId,
-        service_id: &str,
+        connection: &ConnectionSnapshot,
         owner: &str,
         name: &str,
     ) -> Result<RepositoryEvidence, GithubBrokerError> {
         validate_repository_locator(owner, "repository owner")?;
         validate_repository_locator(name, "repository name")?;
         let response: Observed<GithubRepositoryWire> = self
-            .github_json(
+            .github_json_with_connection(
                 subject,
-                service_id,
+                connection,
                 Method::GET,
                 &["repos", owner, name],
                 &[],
@@ -1328,9 +1487,9 @@ impl GithubBroker {
         for page_number in 1..=MAX_USER_REPOSITORY_PAGES {
             let page = page_number.to_string();
             let repositories: Observed<Vec<GithubRepositoryWire>> = self
-                .github_json(
+                .github_json_with_connection(
                     &context.owner,
-                    &connection.service_id,
+                    connection,
                     Method::GET,
                     &["user", "repos"],
                     &[
@@ -1401,11 +1560,7 @@ impl GithubBroker {
         }
         let expected = &context.upstream;
         let mut upstream = self
-            .repository_by_id(
-                &context.owner,
-                &connection.service_id,
-                expected.repository_id,
-            )
+            .repository_by_id_with_connection(&context.owner, connection, expected.repository_id)
             .await?;
         upstream.identity.selected_ref = expected.selected_ref.clone();
         if !upstream.identity.allow_forking {
@@ -1417,9 +1572,9 @@ impl GithubBroker {
         }
         validate_repository_url(&upstream.html_url, &upstream.identity)?;
         let response: Observed<GithubRepositoryWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &connection.service_id,
+                connection,
                 Method::POST,
                 &[
                     "repos",
@@ -1457,7 +1612,7 @@ impl GithubBroker {
     ) -> Result<ForkReconciliation, GithubBrokerError> {
         let connection = &context.connection;
         let mut fork = match self
-            .repository_by_id(&context.owner, &connection.service_id, repository_id)
+            .repository_by_id_with_connection(&context.owner, connection, repository_id)
             .await
         {
             Ok(fork) => fork,
@@ -1482,9 +1637,9 @@ impl GithubBroker {
         validate_repository_url(&fork.html_url, &fork.identity)?;
         let default_ref = fork.identity.default_branch.clone();
         match self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &connection.service_id,
+                connection,
                 &fork.identity,
                 &default_ref,
             )
@@ -1499,9 +1654,9 @@ impl GithubBroker {
             Err(error) => return Err(error),
         }
         match self
-            .require_commit(
+            .require_commit_with_connection(
                 &context.owner,
-                &connection.service_id,
+                connection,
                 &fork.identity,
                 &context.source_sha,
             )
@@ -1552,9 +1707,9 @@ impl GithubBroker {
         let repository = self.current_branch_fork(context).await?;
         let branch = context.branch_name();
         let head = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 &repository,
                 &branch,
             )
@@ -1577,9 +1732,9 @@ impl GithubBroker {
         }
 
         let repository = self.current_branch_fork(context).await?;
-        self.require_commit(
+        self.require_commit_with_connection(
             &context.owner,
-            &context.connection.service_id,
+            &context.connection,
             &repository,
             &context.source_sha,
         )
@@ -1599,9 +1754,9 @@ impl GithubBroker {
         let repository = self.current_branch_fork(context).await?;
         let branch = context.branch_name();
         let response: Observed<GithubRefWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 Method::POST,
                 &[
                     "repos",
@@ -1652,9 +1807,9 @@ impl GithubBroker {
     ) -> Result<RepositoryIdentity, GithubBrokerError> {
         let expected = &context.fork.repository;
         let mut observed = self
-            .repository_by_id(
+            .repository_by_id_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 expected.repository_id,
             )
             .await?;
@@ -1670,18 +1825,18 @@ impl GithubBroker {
         Ok(observed.identity)
     }
 
-    async fn require_commit(
+    async fn require_commit_with_connection(
         &self,
         subject: &SubjectId,
-        service_id: &str,
+        connection: &ConnectionSnapshot,
         repository: &RepositoryIdentity,
         sha: &str,
     ) -> Result<(), GithubBrokerError> {
         validate_commit_sha(sha)?;
         let response: Observed<GithubCommitWire> = self
-            .github_json(
+            .github_json_with_connection(
                 subject,
-                service_id,
+                connection,
                 Method::GET,
                 &[
                     "repos",
@@ -1701,18 +1856,18 @@ impl GithubBroker {
         Ok(())
     }
 
-    async fn workflow_paths(
+    async fn workflow_paths_with_connection(
         &self,
         subject: &SubjectId,
-        service_id: &str,
+        connection: &ConnectionSnapshot,
         repository: &RepositoryIdentity,
         source_sha: &str,
     ) -> Result<Vec<String>, GithubBrokerError> {
         validate_commit_sha(source_sha)?;
         let response: Observed<GithubTreeWire> = self
-            .github_json(
+            .github_json_with_connection(
                 subject,
-                service_id,
+                connection,
                 Method::GET,
                 &[
                     "repos",
@@ -1764,10 +1919,10 @@ impl GithubBroker {
         Ok(paths)
     }
 
-    async fn resolve_branch_sha(
+    async fn resolve_branch_sha_with_connection(
         &self,
         subject: &SubjectId,
-        service_id: &str,
+        connection: &ConnectionSnapshot,
         repository: &RepositoryIdentity,
         selected_ref: &str,
     ) -> Result<String, GithubBrokerError> {
@@ -1782,7 +1937,7 @@ impl GithubBroker {
         ];
         path.extend(components);
         let response: Observed<GithubRefWire> = self
-            .github_json(subject, service_id, Method::GET, &path, &[], None)
+            .github_json_with_connection(subject, connection, Method::GET, &path, &[], None)
             .await?;
         if response.value.reference != format!("refs/heads/{selected_ref}")
             || response.value.object.kind != "commit"
@@ -1803,8 +1958,9 @@ impl GithubBroker {
         &self,
         subject: &SubjectId,
         service_id: &str,
-    ) -> Result<UserServiceWire, GithubBrokerError> {
+    ) -> Result<VerifiedGithubService, GithubBrokerError> {
         validate_opaque_id(service_id, "UserService ID")?;
+        let catalog = self.github_catalog_identity(subject).await?;
         let response: Observed<UserServiceListWire> = self
             .nyxid_json(
                 subject,
@@ -1819,10 +1975,18 @@ impl GithubBroker {
             .value
             .services
             .into_iter()
-            .find(|service| service.id == service_id && service.slug == GITHUB_SERVICE_SLUG)
+            .find(|service| {
+                service.id == service_id
+                    && service.catalog_service_id.as_deref()
+                        == Some(catalog.catalog_service_id.as_str())
+            })
             .ok_or(GithubBrokerError::ConnectionNotFound)?;
-        validate_resource_uri(&service.resource_uri)?;
-        Ok(service)
+        let route = github_routing_identity(&self.base_url, &service, &catalog)?;
+        Ok(VerifiedGithubService {
+            service,
+            route,
+            catalog,
+        })
     }
 
     async fn authorization_evidence(
@@ -1900,29 +2064,41 @@ impl GithubBroker {
         )
     }
 
-    async fn github_user(
+    async fn github_json_with_connection<T: DeserializeOwned>(
         &self,
         subject: &SubjectId,
-        service_id: &str,
-    ) -> Result<Observed<GithubUserWire>, GithubBrokerError> {
-        self.github_json(subject, service_id, Method::GET, &["user"], &[], None)
-            .await
-    }
-
-    async fn github_json<T: DeserializeOwned>(
-        &self,
-        subject: &SubjectId,
-        service_id: &str,
+        connection: &ConnectionSnapshot,
         method: Method,
         github_path: &[&str],
         query: &[(&str, &str)],
         body: Option<Value>,
     ) -> Result<Observed<T>, GithubBrokerError> {
-        validate_opaque_id(service_id, "UserService ID")?;
-        let mut path = vec!["api", "v1", "proxy", "s", GITHUB_SERVICE_SLUG];
+        validate_opaque_id(&connection.service_id, "UserService ID")?;
+        let (catalog_service_id, user_service_slug) = connection
+            .github_binding()
+            .map_err(|_| GithubBrokerError::AuthorityDrift)?;
+        let route = GithubRoutingIdentity {
+            user_service_id: connection.service_id.clone(),
+            user_service_slug: user_service_slug.to_string(),
+            catalog_service_id: catalog_service_id.to_string(),
+        };
+        self.github_json_with_route(subject, &route, method, github_path, query, body)
+            .await
+    }
+
+    async fn github_json_with_route<T: DeserializeOwned>(
+        &self,
+        subject: &SubjectId,
+        route: &GithubRoutingIdentity,
+        method: Method,
+        github_path: &[&str],
+        query: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Result<Observed<T>, GithubBrokerError> {
+        let mut path = vec!["api", "v1", "proxy", route.catalog_service_id.as_str()];
         path.extend_from_slice(github_path);
         let mut owned_query: Vec<(&str, &str)> = query.to_vec();
-        owned_query.push(("_nyxid_via", service_id));
+        owned_query.push(("_nyxid_via", route.user_service_id.as_str()));
         self.nyxid_json(
             subject,
             method,
@@ -2160,9 +2336,9 @@ impl TriggerAuthorityVerifier for GithubBroker {
             .preflight_connection(subject, selected_service_id)
             .await?;
         let mut repository = self
-            .repository_by_id(
+            .repository_by_id_with_connection(
                 subject,
-                selected_service_id,
+                &connection.snapshot,
                 content.upstream.repository.repository_id,
             )
             .await?;
@@ -2171,9 +2347,9 @@ impl TriggerAuthorityVerifier for GithubBroker {
             return Err(GithubBrokerError::ForkingDisabled.into());
         }
         let observed_head = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 subject,
-                selected_service_id,
+                &connection.snapshot,
                 &repository.identity,
                 &repository.identity.selected_ref,
             )
@@ -2219,9 +2395,9 @@ impl TriggerAuthorityVerifier for GithubBroker {
             return Err(GithubBrokerError::AuthorityDrift.into());
         }
         let mut repository = self
-            .repository_by_id(
+            .repository_by_id_with_connection(
                 subject,
-                selected_service_id,
+                &connection.snapshot,
                 revision.content.upstream.repository.repository_id,
             )
             .await?;
@@ -2235,9 +2411,9 @@ impl TriggerAuthorityVerifier for GithubBroker {
             return Err(GithubBrokerError::ForkingDisabled.into());
         }
         let observed_head = self
-            .resolve_branch_sha(
+            .resolve_branch_sha_with_connection(
                 subject,
-                selected_service_id,
+                &connection.snapshot,
                 &repository.identity,
                 &repository.identity.selected_ref,
             )
@@ -2258,9 +2434,9 @@ impl TriggerAuthorityVerifier for GithubBroker {
             SourceMode::BranchHeadAtLaunch => observed_head,
         };
         let workflow_paths = self
-            .workflow_paths(
+            .workflow_paths_with_connection(
                 subject,
-                selected_service_id,
+                &connection.snapshot,
                 &repository.identity,
                 &source_sha,
             )
@@ -2270,6 +2446,8 @@ impl TriggerAuthorityVerifier for GithubBroker {
                 subject: subject.clone(),
                 subject_token_generation: repository.subject_token_generation,
                 service_id: connection.snapshot.service_id.clone(),
+                github_catalog_service_id: connection.snapshot.github_catalog_service_id.clone(),
+                github_user_service_slug: connection.snapshot.github_user_service_slug.clone(),
                 service_state_version: connection.snapshot.service_state_version,
                 backing_key_id: connection.snapshot.backing_key_id.clone(),
                 session_credential_authority: None,
@@ -2441,14 +2619,19 @@ impl TriggerConnectionManager for GithubBroker {
         repository_id: u64,
         selected_ref: &str,
     ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
-        GithubBroker::preflight_connection(self, subject, service_id).await?;
+        let connection = GithubBroker::preflight_connection(self, subject, service_id).await?;
         let mut repository = self
-            .repository_by_id(subject, service_id, repository_id)
+            .repository_by_id_with_connection(subject, &connection.snapshot, repository_id)
             .await?;
         repository.identity.selected_ref = selected_ref.to_string();
         repository.identity.validate_public_upstream()?;
         let source_sha = self
-            .resolve_branch_sha(subject, service_id, &repository.identity, selected_ref)
+            .resolve_branch_sha_with_connection(
+                subject,
+                &connection.snapshot,
+                &repository.identity,
+                selected_ref,
+            )
             .await?;
         Ok(TriggerRepositorySelection {
             repository: repository.identity,
@@ -2463,15 +2646,20 @@ impl TriggerConnectionManager for GithubBroker {
         owner: &str,
         name: &str,
     ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
-        GithubBroker::preflight_connection(self, subject, service_id).await?;
+        let connection = GithubBroker::preflight_connection(self, subject, service_id).await?;
         let mut repository = self
-            .repository_by_name(subject, service_id, owner, name)
+            .repository_by_name_with_connection(subject, &connection.snapshot, owner, name)
             .await?;
         let selected_ref = repository.identity.default_branch.clone();
         repository.identity.selected_ref = selected_ref.clone();
         repository.identity.validate_public_upstream()?;
         let source_sha = self
-            .resolve_branch_sha(subject, service_id, &repository.identity, &selected_ref)
+            .resolve_branch_sha_with_connection(
+                subject,
+                &connection.snapshot,
+                &repository.identity,
+                &selected_ref,
+            )
             .await?;
         Ok(TriggerRepositorySelection {
             repository: repository.identity,
@@ -2512,6 +2700,31 @@ struct ProviderWire {
 }
 
 #[derive(Debug, Deserialize)]
+struct CatalogEntryWire {
+    slug: String,
+    resource_uri: String,
+    base_url: String,
+    auth_method: String,
+    auth_key_name: String,
+    provider_config_id: Option<String>,
+    provider_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProxyServiceListWire {
+    services: Vec<ProxyServiceWire>,
+    total: u64,
+    page: u64,
+    per_page: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProxyServiceWire {
+    id: String,
+    slug: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct UserServiceListWire {
     services: Vec<UserServiceWire>,
 }
@@ -2520,6 +2733,7 @@ struct UserServiceListWire {
 struct UserServiceWire {
     id: String,
     slug: String,
+    catalog_service_id: Option<String>,
     #[serde(default)]
     label: Option<String>,
     resource_uri: String,
@@ -2555,6 +2769,7 @@ struct KeyAuthorizationWire {
 struct CreateKeyWire {
     id: String,
     slug: String,
+    catalog_service_id: Option<String>,
     credential_source: CredentialSourceWire,
 }
 
@@ -2901,12 +3116,32 @@ fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>, GithubBrokerErro
     Ok(normalized.into_iter().collect())
 }
 
+fn validate_public_mvp_scopes(scopes: Vec<String>) -> Result<Vec<String>, GithubBrokerError> {
+    let scopes = normalize_scopes(scopes)?;
+    if let Some(scope) = scopes
+        .iter()
+        .find(|scope| !PUBLIC_MVP_ALLOWED_SCOPES.contains(&scope.as_str()))
+    {
+        return Err(GithubBrokerError::UnapprovedScope {
+            scope: scope.clone(),
+        });
+    }
+    if !scopes.iter().any(|scope| scope == PUBLIC_REPOSITORY_SCOPE) {
+        return Err(GithubBrokerError::InsufficientScope {
+            required: PUBLIC_REPOSITORY_SCOPE,
+        });
+    }
+    Ok(scopes)
+}
+
 fn normalized_set(scopes: &[String]) -> BTreeSet<&str> {
     scopes.iter().map(String::as_str).collect()
 }
 
 fn connection_drifted(previous: &ConnectionSnapshot, current: &ConnectionSnapshot) -> bool {
     previous.service_id != current.service_id
+        || previous.github_catalog_service_id != current.github_catalog_service_id
+        || previous.github_user_service_slug != current.github_user_service_slug
         || previous.service_state_version != current.service_state_version
         || previous.backing_key_id != current.backing_key_id
         || previous.account.account_id != current.account.account_id
@@ -2950,6 +3185,34 @@ fn validate_opaque_id(value: &str, field: &str) -> Result<(), GithubBrokerError>
     Ok(())
 }
 
+fn canonical_non_nil_uuid(value: &str, field: &str) -> Result<String, GithubBrokerError> {
+    let parsed = uuid::Uuid::parse_str(value)
+        .map_err(|_| GithubBrokerError::Malformed(format!("{field} is not a UUID")))?;
+    let canonical = parsed.hyphenated().to_string();
+    if parsed.is_nil() || value != canonical {
+        return Err(GithubBrokerError::Malformed(format!(
+            "{field} is not canonical"
+        )));
+    }
+    Ok(canonical)
+}
+
+fn validate_user_service_slug(value: &str) -> Result<(), GithubBrokerError> {
+    if value.is_empty()
+        || value.len() > 80
+        || value.starts_with('-')
+        || value.ends_with('-')
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(GithubBrokerError::Malformed(
+            "the GitHub UserService slug is not canonical".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_public_service_slug(value: &str) -> Result<(), GithubBrokerError> {
     if value.is_empty()
         || value.len() > 63
@@ -2966,22 +3229,68 @@ fn validate_public_service_slug(value: &str) -> Result<(), GithubBrokerError> {
     Ok(())
 }
 
-fn validate_resource_uri(value: &str) -> Result<(), GithubBrokerError> {
+fn validate_resource_uri(
+    nyxid_base: &Url,
+    value: &str,
+    user_service_slug: &str,
+) -> Result<(), GithubBrokerError> {
+    validate_user_service_slug(user_service_slug)?;
     let url = Url::parse(value).map_err(|_| {
         GithubBrokerError::Malformed("the UserService resource URI is invalid".into())
     })?;
+    let expected_path = format!("/api/v1/proxy/s/{user_service_slug}");
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
-        || url.path() != "/api/v1/proxy/s/api-github"
+        || url.origin() != nyxid_base.origin()
+        || url.path() != expected_path
     {
         return Err(GithubBrokerError::Malformed(
-            "the UserService resource URI is not api-github".into(),
+            "the UserService resource URI does not match its NyxID route".into(),
         ));
     }
     Ok(())
+}
+
+fn validate_github_catalog_entry(
+    nyxid_base: &Url,
+    entry: &CatalogEntryWire,
+) -> Result<String, GithubBrokerError> {
+    validate_resource_uri(nyxid_base, &entry.resource_uri, GITHUB_SERVICE_SLUG)?;
+    if entry.slug != GITHUB_SERVICE_SLUG
+        || entry.base_url != GITHUB_API_ORIGIN
+        || entry.auth_method != "bearer"
+        || entry.auth_key_name != "Authorization"
+        || entry.provider_type.as_deref() != Some("oauth2")
+    {
+        return Err(GithubBrokerError::Malformed(
+            "NyxID returned an invalid GitHub catalog entry".into(),
+        ));
+    }
+    canonical_non_nil_uuid(
+        entry.provider_config_id.as_deref().unwrap_or_default(),
+        "the NyxID GitHub catalog provider ID",
+    )
+}
+
+fn github_routing_identity(
+    nyxid_base: &Url,
+    service: &UserServiceWire,
+    catalog: &GithubCatalogIdentity,
+) -> Result<GithubRoutingIdentity, GithubBrokerError> {
+    if service.catalog_service_id.as_deref() != Some(catalog.catalog_service_id.as_str()) {
+        return Err(GithubBrokerError::AuthorityDrift);
+    }
+    validate_opaque_id(&service.id, "UserService ID")?;
+    validate_user_service_slug(&service.slug)?;
+    validate_resource_uri(nyxid_base, &service.resource_uri, &service.slug)?;
+    Ok(GithubRoutingIdentity {
+        user_service_id: service.id.clone(),
+        user_service_slug: service.slug.clone(),
+        catalog_service_id: catalog.catalog_service_id.clone(),
+    })
 }
 
 fn endpoint(base: &Url, path: &[&str], query: &[(&str, &str)]) -> Result<Url, GithubBrokerError> {
@@ -3307,6 +3616,7 @@ mod tests {
     const NONCE: &str = "123e4567-e89b-12d3-a456-426614174000";
     const GITHUB_PROVIDER_UUID: &str = "123e4567-e89b-42d3-a456-426614174100";
     const SECOND_GITHUB_PROVIDER_UUID: &str = "123e4567-e89b-42d3-a456-426614174101";
+    const GITHUB_CATALOG_SERVICE_UUID: &str = "123e4567-e89b-42d3-a456-426614174200";
     const GITHUB_PROVIDER_OAUTH_PATH: &str =
         "/api/v1/providers/123e4567-e89b-42d3-a456-426614174100/connect/oauth";
 
@@ -3445,6 +3755,24 @@ mod tests {
         uri: String,
         authorization: Option<String>,
         body: Option<Value>,
+    }
+
+    fn assert_proxy_requests_use_catalog_route(
+        requests: &[RecordedRequest],
+        retained_catalog_id: &str,
+        rejected_catalog_id: &str,
+    ) {
+        let proxy_requests = requests
+            .iter()
+            .filter(|request| request.uri.starts_with("/api/v1/proxy/"))
+            .collect::<Vec<_>>();
+        assert!(!proxy_requests.is_empty());
+        assert!(proxy_requests.iter().all(|request| request
+            .uri
+            .starts_with(&format!("/api/v1/proxy/{retained_catalog_id}/"))));
+        assert!(proxy_requests
+            .iter()
+            .all(|request| !request.uri.contains(rejected_catalog_id)));
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -3593,8 +3921,26 @@ mod tests {
         authority_preflight_reads: Arc<AtomicUsize>,
         authority_drift_after: Option<usize>,
         scopes: Vec<String>,
+        service_slug: String,
+        service_catalog_service_id: Option<String>,
         resource_uri: String,
         label: Option<String>,
+        additional_services: Vec<Value>,
+        created_service_slug: String,
+        created_catalog_service_id: Option<String>,
+        created_service_visible: bool,
+        created_resource_uri: String,
+        catalog_resource_uri: String,
+        catalog_base_url: String,
+        catalog_auth_method: String,
+        catalog_auth_key_name: String,
+        catalog_provider_id: Option<String>,
+        catalog_provider_type: Option<String>,
+        catalog_identity_reads: Arc<AtomicUsize>,
+        catalog_drift_after: Option<usize>,
+        rebound_catalog_service_id: Option<String>,
+        rebound_catalog_provider_id: Option<String>,
+        proxy_services: Vec<Value>,
         providers: Vec<Value>,
         include_service: bool,
         authorization_not_found: bool,
@@ -3639,8 +3985,29 @@ mod tests {
                 authority_preflight_reads: Arc::new(AtomicUsize::new(0)),
                 authority_drift_after: None,
                 scopes: vec![PUBLIC_REPOSITORY_SCOPE.to_string()],
-                resource_uri: "https://nyxid.test/api/v1/proxy/s/api-github".to_string(),
+                service_slug: GITHUB_SERVICE_SLUG.to_string(),
+                service_catalog_service_id: Some(GITHUB_CATALOG_SERVICE_UUID.to_string()),
+                resource_uri: String::new(),
                 label: None,
+                additional_services: Vec::new(),
+                created_service_slug: GITHUB_SERVICE_SLUG.to_string(),
+                created_catalog_service_id: Some(GITHUB_CATALOG_SERVICE_UUID.to_string()),
+                created_service_visible: false,
+                created_resource_uri: String::new(),
+                catalog_resource_uri: String::new(),
+                catalog_base_url: GITHUB_API_ORIGIN.to_string(),
+                catalog_auth_method: "bearer".to_string(),
+                catalog_auth_key_name: "Authorization".to_string(),
+                catalog_provider_id: Some(GITHUB_PROVIDER_UUID.to_string()),
+                catalog_provider_type: Some("oauth2".to_string()),
+                catalog_identity_reads: Arc::new(AtomicUsize::new(0)),
+                catalog_drift_after: None,
+                rebound_catalog_service_id: None,
+                rebound_catalog_provider_id: None,
+                proxy_services: vec![json!({
+                    "id": GITHUB_CATALOG_SERVICE_UUID,
+                    "slug": GITHUB_SERVICE_SLUG
+                })],
                 providers: vec![github_provider(GITHUB_PROVIDER_UUID)],
                 include_service: true,
                 authorization_not_found: false,
@@ -3679,6 +4046,40 @@ mod tests {
     }
 
     impl Fixture {
+        fn catalog_has_drifted(&self) -> bool {
+            let read_index = self
+                .catalog_identity_reads
+                .load(Ordering::SeqCst)
+                .saturating_sub(1);
+            self.catalog_drift_after
+                .is_some_and(|threshold| read_index >= threshold)
+        }
+
+        fn current_catalog_provider_id(&self) -> Option<&str> {
+            if self.catalog_has_drifted() {
+                self.rebound_catalog_provider_id
+                    .as_deref()
+                    .or(self.catalog_provider_id.as_deref())
+            } else {
+                self.catalog_provider_id.as_deref()
+            }
+        }
+
+        fn current_proxy_services(&self) -> Vec<Value> {
+            let mut services = self.proxy_services.clone();
+            if self.catalog_has_drifted() {
+                if let Some(rebound_id) = self.rebound_catalog_service_id.as_deref() {
+                    for service in &mut services {
+                        if service.get("slug").and_then(Value::as_str) == Some(GITHUB_SERVICE_SLUG)
+                        {
+                            service["id"] = json!(rebound_id);
+                        }
+                    }
+                }
+            }
+            services
+        }
+
         fn authority_has_drifted(&self, read_index: usize) -> bool {
             self.authority_drift_after
                 .is_some_and(|threshold| read_index >= threshold)
@@ -3733,16 +4134,30 @@ mod tests {
             .then(|| serde_json::from_slice(&body).expect("fixture receives JSON"));
         let method = parts.method.as_str().to_string();
         let uri = parts.uri.to_string();
-        fixture.requests.lock().await.push(RecordedRequest {
-            method: method.clone(),
-            uri,
-            authorization: parts
-                .headers
-                .get(AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_string),
-            body: parsed_body,
-        });
+        let original_path = parts.uri.path();
+        if !matches!(
+            original_path,
+            "/api/v1/catalog/api-github" | "/api/v1/proxy/services"
+        ) {
+            fixture.requests.lock().await.push(RecordedRequest {
+                method: method.clone(),
+                uri: uri.clone(),
+                authorization: parts
+                    .headers
+                    .get(AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string),
+                body: parsed_body,
+            });
+        }
+        let canonical_path = original_path
+            .strip_prefix("/api/v1/proxy/")
+            .and_then(|remainder| remainder.split_once('/'))
+            .filter(|(route, _)| *route != "s" && *route != "services")
+            .map_or_else(
+                || original_path.to_string(),
+                |(_, suffix)| format!("/api/v1/proxy/s/api-github/{suffix}"),
+            );
 
         let fork_name = fixture.current_fork_name().to_string();
         let upstream_owner = if fixture.upstream_owner_id == 11 {
@@ -3781,7 +4196,45 @@ mod tests {
             fixture.upstream_name
         );
 
-        let response = match (method.as_str(), parts.uri.path()) {
+        let response = match (method.as_str(), canonical_path.as_str()) {
+            ("GET", "/api/v1/catalog/api-github") => {
+                fixture
+                    .catalog_identity_reads
+                    .fetch_add(1, Ordering::SeqCst);
+                json!({
+                    "slug": GITHUB_SERVICE_SLUG,
+                    "resource_uri": fixture.catalog_resource_uri,
+                    "base_url": fixture.catalog_base_url,
+                    "auth_method": fixture.catalog_auth_method,
+                    "auth_key_name": fixture.catalog_auth_key_name,
+                    "provider_config_id": fixture.current_catalog_provider_id(),
+                    "provider_type": fixture.catalog_provider_type
+                })
+            }
+            ("GET", "/api/v1/proxy/services") => {
+                let page = query(&uri, "page")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(1);
+                let per_page = query(&uri, "per_page")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(50)
+                    .min(100);
+                let start = page.saturating_sub(1).saturating_mul(per_page);
+                let proxy_services = fixture.current_proxy_services();
+                let services = proxy_services
+                    .iter()
+                    .skip(start)
+                    .take(per_page)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                json!({
+                    "services": services,
+                    "custom_services": [],
+                    "total": proxy_services.len(),
+                    "page": page,
+                    "per_page": per_page
+                })
+            }
             ("GET", "/api/v1/user-services") => {
                 if let Some(revocation) = fixture.revocation.as_ref() {
                     if !revocation.management_available.load(Ordering::SeqCst) {
@@ -3793,7 +4246,8 @@ mod tests {
                     let services = if revocation.active.load(Ordering::SeqCst) {
                         vec![json!({
                             "id": "service-1",
-                            "slug": GITHUB_SERVICE_SLUG,
+                            "slug": fixture.service_slug,
+                            "catalog_service_id": fixture.service_catalog_service_id,
                             "label": fixture.label,
                             "resource_uri": fixture.resource_uri,
                             "api_key_id": "key-1",
@@ -3810,7 +4264,8 @@ mod tests {
                     let state_version = fixture.current_service_state_version();
                     vec![json!({
                         "id": "service-1",
-                        "slug": GITHUB_SERVICE_SLUG,
+                        "slug": fixture.service_slug,
+                        "catalog_service_id": fixture.service_catalog_service_id,
                         "label": fixture.label,
                         "resource_uri": fixture.resource_uri,
                         "api_key_id": "key-1",
@@ -3821,6 +4276,21 @@ mod tests {
                 } else {
                     Vec::new()
                 };
+                let mut services = services;
+                services.extend(fixture.additional_services.clone());
+                if fixture.created_service_visible {
+                    services.push(json!({
+                        "id": "service-created",
+                        "slug": fixture.created_service_slug,
+                        "catalog_service_id": fixture.created_catalog_service_id,
+                        "label": null,
+                        "resource_uri": fixture.created_resource_uri,
+                        "api_key_id": "key-created",
+                        "is_active": true,
+                        "state_version": 1,
+                        "credential_source": { "type": "personal" }
+                    }));
+                }
                 json!({ "services": services })
             }
             ("GET", "/api/v1/keys/service-1/authorization") => {
@@ -3919,6 +4389,7 @@ mod tests {
                 })
             }
             ("GET", "/api/v1/proxy/s/api-github/repositories/10")
+            | ("GET", "/api/v1/proxy/s/api-github/repos/owner/upstream")
             | ("GET", "/public/s/api-github/repositories/10") => {
                 if parts.uri.path().starts_with("/public/")
                     && fixture.public_observer_unavailable
@@ -4282,7 +4753,8 @@ mod tests {
             }
             ("POST", "/api/v1/keys") => json!({
                 "id": "service-created",
-                "slug": GITHUB_SERVICE_SLUG,
+                "slug": fixture.created_service_slug,
+                "catalog_service_id": fixture.created_catalog_service_id,
                 "credential_source": { "type": "personal" }
             }),
             ("GET", "/api/v1/providers") => json!({
@@ -4337,7 +4809,7 @@ mod tests {
     }
 
     async fn fixture_server(
-        fixture: Fixture,
+        mut fixture: Fixture,
     ) -> (
         String,
         Arc<Mutex<Vec<RecordedRequest>>>,
@@ -4348,13 +4820,29 @@ mod tests {
             .await
             .expect("bind NyxID fixture");
         let address = listener.local_addr().expect("fixture address");
+        let base_url = format!("http://{address}");
+        if fixture.resource_uri.is_empty() {
+            fixture.resource_uri = format!("{base_url}/api/v1/proxy/s/{}", fixture.service_slug);
+        } else if fixture.resource_uri.starts_with('/') {
+            fixture.resource_uri = format!("{base_url}{}", fixture.resource_uri);
+        }
+        if fixture.created_resource_uri.is_empty() {
+            fixture.created_resource_uri =
+                format!("{base_url}/api/v1/proxy/s/{}", fixture.created_service_slug);
+        } else if fixture.created_resource_uri.starts_with('/') {
+            fixture.created_resource_uri = format!("{base_url}{}", fixture.created_resource_uri);
+        }
+        if fixture.catalog_resource_uri.is_empty() {
+            fixture.catalog_resource_uri =
+                format!("{base_url}/api/v1/proxy/s/{GITHUB_SERVICE_SLUG}");
+        }
         let app = Router::new().fallback(any(answer)).with_state(fixture);
         let server = tokio::spawn(async move {
             axum::serve(listener, app)
                 .await
                 .expect("serve NyxID fixture");
         });
-        (format!("http://{address}"), requests, server)
+        (base_url, requests, server)
     }
 
     fn broker(base_url: &str, available: bool) -> GithubBroker {
@@ -4448,8 +4936,21 @@ mod tests {
             )
             .await;
             let broker = broker(&base_url, true);
+            let route = GithubRoutingIdentity {
+                user_service_id: "service-1".into(),
+                user_service_slug: GITHUB_SERVICE_SLUG.into(),
+                catalog_service_id: GITHUB_CATALOG_SERVICE_UUID.into(),
+            };
             let (result, observed) =
-                observe_provider_requests(broker.github_user(&subject(), "service-1")).await;
+                observe_provider_requests(broker.github_json_with_route::<GithubUserWire>(
+                    &subject(),
+                    &route,
+                    Method::GET,
+                    &["user"],
+                    &[],
+                    None,
+                ))
+                .await;
             assert_eq!(observed.as_deref(), Some(request_id));
             if status == StatusCode::OK {
                 assert!(result.is_ok());
@@ -4472,8 +4973,21 @@ mod tests {
         )
         .await;
         let broker = broker(&base_url, true);
+        let route = GithubRoutingIdentity {
+            user_service_id: "service-1".into(),
+            user_service_slug: GITHUB_SERVICE_SLUG.into(),
+            catalog_service_id: GITHUB_CATALOG_SERVICE_UUID.into(),
+        };
         let (result, observed) =
-            observe_provider_requests(broker.github_user(&subject(), "service-1")).await;
+            observe_provider_requests(broker.github_json_with_route::<GithubUserWire>(
+                &subject(),
+                &route,
+                Method::GET,
+                &["user"],
+                &[],
+                None,
+            ))
+            .await;
         assert!(result.is_ok());
         assert_eq!(observed, None);
         assert!(!format!("{result:?}").contains(secret));
@@ -4602,6 +5116,8 @@ mod tests {
             owner: subject(),
             connection: ConnectionSnapshot {
                 service_id: "service-1".into(),
+                github_catalog_service_id: Some(GITHUB_CATALOG_SERVICE_UUID.into()),
+                github_user_service_slug: Some(GITHUB_SERVICE_SLUG.into()),
                 service_state_version: 4,
                 backing_key_id: "key-1".into(),
                 account: ConnectedAccount {
@@ -4872,6 +5388,101 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn publisher_authority_reads_keep_the_preflight_catalog_route() {
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let catalog_identity_reads = Arc::clone(&fixture.catalog_identity_reads);
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let revision = preview_revision();
+
+        let result = broker(&base_url, true)
+            .verify_publisher(&subject(), &revision.content, "service-1")
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(TriggerServiceError::Authority(
+                layer2_core::TriggerAuthorityError::Forbidden
+            ))
+        ));
+        assert_eq!(catalog_identity_reads.load(Ordering::SeqCst), 1);
+        assert_proxy_requests_use_catalog_route(
+            &requests.lock().await,
+            GITHUB_CATALOG_SERVICE_UUID,
+            rebound_catalog_id,
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_authority_capture_keeps_the_preflight_catalog_route() {
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let catalog_identity_reads = Arc::clone(&fixture.catalog_identity_reads);
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        let authority = broker(&base_url, true)
+            .verify_launch(&subject(), &preview_revision(), "service-1", None)
+            .await
+            .expect("capture launch authority through one exact catalog route");
+        server.abort();
+
+        assert_eq!(
+            authority.connection.github_catalog_service_id.as_deref(),
+            Some(GITHUB_CATALOG_SERVICE_UUID)
+        );
+        assert_eq!(catalog_identity_reads.load(Ordering::SeqCst), 1);
+        assert_proxy_requests_use_catalog_route(
+            &requests.lock().await,
+            GITHUB_CATALOG_SERVICE_UUID,
+            rebound_catalog_id,
+        );
+    }
+
+    #[tokio::test]
+    async fn effect_admission_reads_keep_the_retained_catalog_route() {
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let catalog_identity_reads = Arc::clone(&fixture.catalog_identity_reads);
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let context = fork_context();
+        let mut launch = crate::trigger::worker::tests::launch_fixture();
+        launch.owner = context.owner.clone();
+        launch.connection = Some(context.connection.clone());
+        launch.revision.content.upstream.repository = context.upstream.clone();
+        launch.source_sha = context.source_sha;
+
+        crate::trigger::github_effects::preflight_github_authority_for_test(
+            &broker(&base_url, true),
+            &launch,
+            layer2_core::LaunchEffectKind::Fork,
+            false,
+        )
+        .await
+        .expect("admit the effect through the retained catalog route");
+        server.abort();
+
+        assert_eq!(catalog_identity_reads.load(Ordering::SeqCst), 1);
+        assert_proxy_requests_use_catalog_route(
+            &requests.lock().await,
+            GITHUB_CATALOG_SERVICE_UUID,
+            rebound_catalog_id,
+        );
+    }
+
     fn branch_context() -> BranchContext {
         let fork = fork_context();
         BranchContext {
@@ -5126,6 +5737,14 @@ mod tests {
 
         assert_eq!(evidence.subject_token_generation, 7);
         assert_eq!(evidence.snapshot.service_id, "service-1");
+        assert_eq!(
+            evidence.snapshot.github_catalog_service_id.as_deref(),
+            Some(GITHUB_CATALOG_SERVICE_UUID)
+        );
+        assert_eq!(
+            evidence.snapshot.github_user_service_slug.as_deref(),
+            Some(GITHUB_SERVICE_SLUG)
+        );
         assert_eq!(evidence.snapshot.backing_key_id, "key-1");
         assert_eq!(evidence.snapshot.account.account_id, 21);
         assert_eq!(
@@ -5138,7 +5757,7 @@ mod tests {
         assert_eq!(requests[1].uri, "/api/v1/user-services");
         assert_eq!(
             requests[2].uri,
-            "/api/v1/proxy/s/api-github/user?_nyxid_via=service-1"
+            format!("/api/v1/proxy/{GITHUB_CATALOG_SERVICE_UUID}/user?_nyxid_via=service-1")
         );
         assert!(requests
             .iter()
@@ -5180,6 +5799,196 @@ mod tests {
             })
         ));
         assert_eq!(requests.lock().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn suffixed_github_service_lists_and_preflights_with_exact_route_binding() {
+        let fixture = Fixture {
+            service_slug: "api-github-2".into(),
+            scopes: vec![
+                PUBLIC_REPOSITORY_SCOPE.into(),
+                "read:user".into(),
+                "user:email".into(),
+            ],
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let broker = broker(&base_url, true);
+
+        let listed = broker
+            .list_connections(&subject())
+            .await
+            .expect("catalog-backed suffixed service lists");
+        let preflight = broker
+            .preflight_connection(&subject(), "service-1")
+            .await
+            .expect("catalog-backed suffixed service preflights");
+        server.abort();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].service_id, "service-1");
+        assert_eq!(
+            preflight.snapshot.github_catalog_service_id.as_deref(),
+            Some(GITHUB_CATALOG_SERVICE_UUID)
+        );
+        assert_eq!(
+            preflight.snapshot.github_user_service_slug.as_deref(),
+            Some("api-github-2")
+        );
+        assert_eq!(
+            preflight.snapshot.granted_scopes,
+            vec!["public_repo", "read:user", "user:email"]
+        );
+        let requests = requests.lock().await;
+        assert!(
+            requests
+                .iter()
+                .filter(|request| {
+                    request.uri
+                        == format!(
+                            "/api/v1/proxy/{GITHUB_CATALOG_SERVICE_UUID}/user?_nyxid_via=service-1"
+                        )
+                })
+                .count()
+                >= 2
+        );
+    }
+
+    #[tokio::test]
+    async fn preflight_rejects_every_scope_above_the_public_mvp_ceiling() {
+        for (case, scopes, rejected) in [
+            ("classic private-repository grant", vec!["repo"], "repo"),
+            (
+                "live broad grant",
+                vec!["read:user", "repo", "user:email"],
+                "repo",
+            ),
+            (
+                "workflow grant",
+                vec![PUBLIC_REPOSITORY_SCOPE, "workflow"],
+                "workflow",
+            ),
+            (
+                "unknown grant",
+                vec![PUBLIC_REPOSITORY_SCOPE, "admin:unknown"],
+                "admin:unknown",
+            ),
+        ] {
+            let fixture = Fixture {
+                scopes: scopes.into_iter().map(str::to_string).collect(),
+                ..Fixture::default()
+            };
+            let (base_url, requests, server) = fixture_server(fixture).await;
+            let result = broker(&base_url, true)
+                .preflight_connection(&subject(), "service-1")
+                .await;
+            server.abort();
+
+            assert!(
+                matches!(
+                    result,
+                    Err(GithubBrokerError::UnapprovedScope { ref scope }) if scope == rejected
+                ),
+                "{case} was not refused with its exact unapproved scope: {result:?}"
+            );
+            assert!(requests.lock().await.iter().all(|request| {
+                !request
+                    .uri
+                    .starts_with(&format!("/api/v1/proxy/{GITHUB_CATALOG_SERVICE_UUID}/"))
+            }));
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_discovery_paginates_and_duplicate_github_entries_fail_closed() {
+        let mut paginated = (0..100)
+            .map(|index| {
+                json!({
+                    "id": format!("other-{index}"),
+                    "slug": format!("other-{index}")
+                })
+            })
+            .collect::<Vec<_>>();
+        paginated.push(json!({
+            "id": GITHUB_CATALOG_SERVICE_UUID,
+            "slug": GITHUB_SERVICE_SLUG
+        }));
+        let fixture = Fixture {
+            proxy_services: paginated,
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        broker(&base_url, true)
+            .preflight_connection(&subject(), "service-1")
+            .await
+            .expect("the canonical GitHub service on page two is discovered");
+        server.abort();
+
+        let mut ambiguous = (0..99)
+            .map(|index| {
+                json!({
+                    "id": format!("other-{index}"),
+                    "slug": format!("other-{index}")
+                })
+            })
+            .collect::<Vec<_>>();
+        ambiguous.insert(
+            0,
+            json!({
+                "id": GITHUB_CATALOG_SERVICE_UUID,
+                "slug": GITHUB_SERVICE_SLUG
+            }),
+        );
+        ambiguous.push(json!({
+            "id": "123e4567-e89b-42d3-a456-426614174201",
+            "slug": GITHUB_SERVICE_SLUG
+        }));
+        let fixture = Fixture {
+            proxy_services: ambiguous,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true)
+            .preflight_connection(&subject(), "service-1")
+            .await;
+        server.abort();
+
+        assert!(matches!(result, Err(GithubBrokerError::Malformed(_))));
+        assert!(requests.lock().await.iter().all(|request| {
+            !request
+                .uri
+                .starts_with(&format!("/api/v1/proxy/{GITHUB_CATALOG_SERVICE_UUID}/"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn catalog_id_drift_is_revalidated_before_a_second_github_read() {
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let broker = broker(&base_url, true);
+        broker
+            .preflight_connection(&subject(), "service-1")
+            .await
+            .expect("initial catalog binding preflights");
+        let result = broker.preflight_connection(&subject(), "service-1").await;
+        server.abort();
+
+        assert!(matches!(result, Err(GithubBrokerError::ConnectionNotFound)));
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.uri.starts_with("/api/v1/proxy/"))
+                .count(),
+            1,
+            "the drifted catalog lineage must be refused before a second GitHub call"
+        );
     }
 
     #[tokio::test]
@@ -5304,6 +6113,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_accepts_a_suffixed_slug_and_oauth_rereads_the_exact_service() {
+        let fixture = Fixture {
+            created_service_slug: "api-github-2".into(),
+            created_service_visible: true,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let broker = broker(&base_url, true);
+        let service_id = broker
+            .create_oauth_placeholder(&subject(), "cma-trigger:intent-created")
+            .await
+            .expect("suffixed catalog-backed create response is accepted");
+        let start = broker
+            .begin_oauth(&subject(), &service_id)
+            .await
+            .expect("OAuth begins only after the created service is reread");
+        server.abort();
+
+        assert_eq!(service_id, "service-created");
+        assert_eq!(start.service_id, "service-created");
+        let requests = requests.lock().await;
+        assert_eq!(requests[0].uri, "/api/v1/keys");
+        assert_eq!(requests[1].uri, "/api/v1/user-services");
+        assert_eq!(requests[2].uri, "/api/v1/providers");
+        assert_eq!(
+            query(&requests[3].uri, "key_id").as_deref(),
+            Some("service-created")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_rejects_missing_or_wrong_catalog_lineage() {
+        for catalog_service_id in [
+            None,
+            Some("123e4567-e89b-42d3-a456-426614174201".to_string()),
+        ] {
+            let fixture = Fixture {
+                created_service_slug: "api-github-2".into(),
+                created_catalog_service_id: catalog_service_id,
+                ..Fixture::default()
+            };
+            let (base_url, _requests, server) = fixture_server(fixture).await;
+            let result = broker(&base_url, true)
+                .create_oauth_placeholder(&subject(), "cma-trigger:intent-lineage")
+                .await;
+            server.abort();
+
+            assert!(matches!(result, Err(GithubBrokerError::Malformed(_))));
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth_revalidates_catalog_provider_configuration_on_every_attempt() {
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_provider_id: Some(SECOND_GITHUB_PROVIDER_UUID.into()),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let broker = broker(&base_url, true);
+        broker
+            .begin_oauth(&subject(), "service-1")
+            .await
+            .expect("initial catalog/provider pair begins OAuth");
+        let result = broker.begin_oauth(&subject(), "service-1").await;
+        server.abort();
+
+        assert!(matches!(result, Err(GithubBrokerError::Malformed(_))));
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.uri.starts_with(GITHUB_PROVIDER_OAUTH_PATH))
+                .count(),
+            1,
+            "the changed catalog provider ID must be rejected before a second OAuth redirect"
+        );
+    }
+
+    #[tokio::test]
     async fn oauth_rejects_a_missing_github_provider() {
         let mut other = github_provider(GITHUB_PROVIDER_UUID);
         other["slug"] = json!("google");
@@ -5423,10 +6313,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_reconciles_a_prior_placeholder_by_deterministic_label() {
+    async fn connect_reconciles_a_suffixed_prior_placeholder_by_label_and_catalog_lineage() {
         let intent = "123e4567-e89b-12d3-a456-426614174001";
         let fixture = Fixture {
             label: Some(format!("cma-trigger:{intent}")),
+            service_slug: "api-github-2".into(),
             ..Fixture::default()
         };
         let (base_url, requests, server) = fixture_server(fixture).await;
@@ -5454,7 +6345,14 @@ mod tests {
 
     #[tokio::test]
     async fn repository_resolution_uses_numeric_identity_and_an_exact_ref() {
-        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let catalog_identity_reads = Arc::clone(&fixture.catalog_identity_reads);
+        let (base_url, requests, server) = fixture_server(fixture).await;
         let selection = TriggerConnectionManager::resolve_repository(
             &broker(&base_url, true),
             &subject(),
@@ -5470,15 +6368,54 @@ mod tests {
         assert_eq!(selection.repository.owner_id, 11);
         assert_eq!(selection.repository.selected_ref, "main");
         assert_eq!(selection.source_sha, "a".repeat(40));
+        assert_eq!(catalog_identity_reads.load(Ordering::SeqCst), 1);
         let requests = requests.lock().await;
         assert_eq!(requests.len(), 5);
         assert_eq!(
             requests[3].uri,
-            "/api/v1/proxy/s/api-github/repositories/10?_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/10?_nyxid_via=service-1"
         );
         assert_eq!(
             requests[4].uri,
-            "/api/v1/proxy/s/api-github/repos/owner/upstream/git/ref/heads/main?_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repos/owner/upstream/git/ref/heads/main?_nyxid_via=service-1"
+        );
+        assert_proxy_requests_use_catalog_route(
+            &requests,
+            GITHUB_CATALOG_SERVICE_UUID,
+            rebound_catalog_id,
+        );
+    }
+
+    #[tokio::test]
+    async fn repository_locator_resolution_keeps_the_preflight_catalog_route() {
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let catalog_identity_reads = Arc::clone(&fixture.catalog_identity_reads);
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        let selection = TriggerConnectionManager::resolve_repository_locator(
+            &broker(&base_url, true),
+            &subject(),
+            "service-1",
+            "owner",
+            "upstream",
+        )
+        .await
+        .expect("resolve the repository locator through one exact catalog route");
+        server.abort();
+
+        assert_eq!(selection.repository.repository_id, 10);
+        assert_eq!(selection.repository.selected_ref, "main");
+        assert_eq!(selection.source_sha, "a".repeat(40));
+        assert_eq!(catalog_identity_reads.load(Ordering::SeqCst), 1);
+        assert_proxy_requests_use_catalog_route(
+            &requests.lock().await,
+            GITHUB_CATALOG_SERVICE_UUID,
+            rebound_catalog_id,
         );
     }
 
@@ -5487,9 +6424,9 @@ mod tests {
         let (base_url, requests, server) = fixture_server(Fixture::default()).await;
         let context = fork_context();
         let paths = broker(&base_url, true)
-            .workflow_paths(
+            .workflow_paths_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 &context.upstream,
                 &context.source_sha,
             )
@@ -5508,7 +6445,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(
             requests[0].uri,
-            "/api/v1/proxy/s/api-github/repos/owner/upstream/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1&_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repos/owner/upstream/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1&_nyxid_via=service-1"
         );
     }
 
@@ -5521,9 +6458,9 @@ mod tests {
         let (base_url, _requests, server) = fixture_server(fixture).await;
         let context = fork_context();
         let result = broker(&base_url, true)
-            .workflow_paths(
+            .workflow_paths_with_connection(
                 &context.owner,
-                &context.connection.service_id,
+                &context.connection,
                 &context.upstream,
                 &context.source_sha,
             )
@@ -5559,7 +6496,7 @@ mod tests {
         );
         assert_eq!(
             requests[1].uri,
-            "/api/v1/proxy/s/api-github/repositories/30?_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/30?_nyxid_via=service-1"
         );
         assert!(requests[3]
             .uri
@@ -5663,9 +6600,40 @@ mod tests {
             .unwrap();
         assert_eq!(
             create.uri,
-            "/api/v1/proxy/s/api-github/repos/owner/upstream/forks?_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repos/owner/upstream/forks?_nyxid_via=service-1"
         );
         assert_eq!(create.body, Some(json!({})));
+    }
+
+    #[tokio::test]
+    async fn fork_write_keeps_the_retained_catalog_route_after_preflight() {
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            fork_parent_id: None,
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let catalog_identity_reads = Arc::clone(&fixture.catalog_identity_reads);
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        let result = broker(&base_url, true)
+            .create_fork(&fork_context())
+            .await
+            .expect("create fork through the retained catalog route");
+        server.abort();
+
+        assert!(matches!(result, ForkReconciliation::Ready(_)));
+        assert_eq!(
+            catalog_identity_reads.load(Ordering::SeqCst),
+            1,
+            "the admitted workflow must not rediscover the catalog after preflight"
+        );
+        assert_proxy_requests_use_catalog_route(
+            &requests.lock().await,
+            GITHUB_CATALOG_SERVICE_UUID,
+            rebound_catalog_id,
+        );
     }
 
     #[tokio::test]
@@ -5690,7 +6658,7 @@ mod tests {
             .expect("fork create request");
         assert_eq!(
             create.uri,
-            "/api/v1/proxy/s/api-github/repos/owner/upstream-renamed/forks?_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repos/owner/upstream-renamed/forks?_nyxid_via=service-1"
         );
     }
 
@@ -5925,7 +6893,7 @@ mod tests {
         assert_eq!(posts.len(), 1);
         assert_eq!(
             posts[0].uri,
-            "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs?_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repos/contributor/upstream/git/refs?_nyxid_via=service-1"
         );
         assert_eq!(
             posts[0].body,
@@ -5938,6 +6906,36 @@ mod tests {
             .body
             .as_ref()
             .is_some_and(|body| body.get("force").is_none()));
+    }
+
+    #[tokio::test]
+    async fn branch_write_keeps_the_retained_catalog_route_after_preflight() {
+        let rebound_catalog_id = "123e4567-e89b-42d3-a456-426614174201";
+        let fixture = Fixture {
+            catalog_drift_after: Some(1),
+            rebound_catalog_service_id: Some(rebound_catalog_id.into()),
+            ..Fixture::default()
+        };
+        let catalog_identity_reads = Arc::clone(&fixture.catalog_identity_reads);
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        let result = broker(&base_url, true)
+            .create_branch(&branch_context())
+            .await
+            .expect("create branch through the retained catalog route");
+        server.abort();
+
+        assert!(matches!(result, BranchReconciliation::Ready(_)));
+        assert_eq!(
+            catalog_identity_reads.load(Ordering::SeqCst),
+            1,
+            "the admitted workflow must not rediscover the catalog after preflight"
+        );
+        assert_proxy_requests_use_catalog_route(
+            &requests.lock().await,
+            GITHUB_CATALOG_SERVICE_UUID,
+            rebound_catalog_id,
+        );
     }
 
     #[tokio::test]
@@ -5970,7 +6968,7 @@ mod tests {
             .expect("branch create request");
         assert_eq!(
             create.uri,
-            "/api/v1/proxy/s/api-github/repos/contributor/upstream-renamed/git/refs?_nyxid_via=service-1"
+            "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repos/contributor/upstream-renamed/git/refs?_nyxid_via=service-1"
         );
         let create_index = requests
             .iter()
@@ -5978,7 +6976,7 @@ mod tests {
             .unwrap();
         assert!(requests[create_index - 1]
             .uri
-            .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+            .starts_with("/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/30?"));
     }
 
     #[tokio::test]
@@ -6139,10 +7137,10 @@ mod tests {
             assert_eq!(requests[index - 3].uri, "/api/v1/user-services");
             assert!(requests[index - 2]
                 .uri
-                .starts_with("/api/v1/proxy/s/api-github/user?"));
-            assert!(requests[index - 1]
-                .uri
-                .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+                .starts_with("/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/user?"));
+            assert!(requests[index - 1].uri.starts_with(
+                "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/30?"
+            ));
         }
         assert_eq!(
             writes[0].1.body,
@@ -6538,9 +7536,9 @@ mod tests {
             assert!(request
                 .uri
                 .contains("/repos/contributor/upstream-renamed/git/"));
-            assert!(requests[index - 1]
-                .uri
-                .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+            assert!(requests[index - 1].uri.starts_with(
+                "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/30?"
+            ));
         }
     }
 
@@ -6657,7 +7655,7 @@ mod tests {
             .contains("/repos/contributor/upstream-renamed/git/refs/"));
         assert!(requests[patch_index + 1]
             .uri
-            .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+            .starts_with("/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/repositories/30?"));
         assert!(requests[patch_index + 2]
             .uri
             .contains("/repos/contributor/upstream-renamed/git/ref/"));
@@ -7006,11 +8004,9 @@ mod tests {
         );
         server.abort();
 
-        assert!(requests
-            .lock()
-            .await
-            .iter()
-            .all(|request| request.uri != "/api/v1/proxy/s/api-github/user"));
+        assert!(requests.lock().await.iter().all(
+            |request| request.uri != "/api/v1/proxy/123e4567-e89b-42d3-a456-426614174200/user"
+        ));
     }
 
     #[tokio::test]
@@ -7217,17 +8213,93 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn listed_github_service_must_have_the_typed_resource_uri() {
+    async fn github_service_resource_uri_must_match_nyxid_origin_and_actual_slug() {
+        for (case, service_slug, resource_uri) in [
+            (
+                "different origin",
+                GITHUB_SERVICE_SLUG,
+                "https://nyxid.test/api/v1/proxy/s/api-github",
+            ),
+            (
+                "different dynamic slug",
+                "api-github-2",
+                "/api/v1/proxy/s/api-github",
+            ),
+        ] {
+            let fixture = Fixture {
+                service_slug: service_slug.into(),
+                resource_uri: resource_uri.into(),
+                ..Fixture::default()
+            };
+            let (base_url, requests, server) = fixture_server(fixture).await;
+            let result = broker(&base_url, true)
+                .preflight_connection(&subject(), "service-1")
+                .await;
+            server.abort();
+
+            assert!(
+                matches!(result, Err(GithubBrokerError::Malformed(_))),
+                "{case} resource URI was accepted"
+            );
+            assert!(requests.lock().await.iter().all(|request| {
+                !request
+                    .uri
+                    .starts_with(&format!("/api/v1/proxy/{GITHUB_CATALOG_SERVICE_UUID}/"))
+            }));
+        }
+    }
+
+    #[tokio::test]
+    async fn github_named_custom_service_without_catalog_lineage_is_ignored() {
         let fixture = Fixture {
-            resource_uri: "https://nyxid.test/api/v1/proxy/s/not-github".to_string(),
+            include_service: false,
+            additional_services: vec![json!({
+                "id": "custom-github",
+                "slug": GITHUB_SERVICE_SLUG,
+                "catalog_service_id": null,
+                "label": "lookalike",
+                "resource_uri": "https://attacker.test/api/v1/proxy/s/api-github",
+                "api_key_id": "key-custom",
+                "is_active": true,
+                "state_version": 1,
+                "credential_source": { "type": "personal" }
+            })],
             ..Fixture::default()
         };
         let (base_url, requests, server) = fixture_server(fixture).await;
-        let result = broker(&base_url, true).list_connections(&subject()).await;
+        let listed = broker(&base_url, true)
+            .list_connections(&subject())
+            .await
+            .expect("custom lookalike is ignored");
         server.abort();
 
-        assert!(matches!(result, Err(GithubBrokerError::Malformed(_))));
+        assert!(listed.is_empty());
         assert_eq!(requests.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn exact_service_with_missing_or_wrong_catalog_lineage_never_reaches_github() {
+        for catalog_service_id in [
+            None,
+            Some("123e4567-e89b-42d3-a456-426614174201".to_string()),
+        ] {
+            let fixture = Fixture {
+                service_catalog_service_id: catalog_service_id,
+                ..Fixture::default()
+            };
+            let (base_url, requests, server) = fixture_server(fixture).await;
+            let result = broker(&base_url, true)
+                .preflight_connection(&subject(), "service-1")
+                .await;
+            server.abort();
+
+            assert!(matches!(result, Err(GithubBrokerError::ConnectionNotFound)));
+            assert!(requests.lock().await.iter().all(|request| {
+                !request
+                    .uri
+                    .starts_with(&format!("/api/v1/proxy/{GITHUB_CATALOG_SERVICE_UUID}/"))
+            }));
+        }
     }
 
     #[test]
