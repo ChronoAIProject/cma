@@ -748,8 +748,16 @@ async fn compatibility_termination_retry_clears_a_terminal_residual_handover_des
         .terminate_session(&caller, &created.id)
         .await
         .expect("the session first reaches its normal terminal boundary");
-
-    let mut residual = store.get(&created.id).await.unwrap().unwrap();
+    let mut residual = None;
+    for _ in 0..400 {
+        let record = store.get(&created.id).await.unwrap().unwrap();
+        if record.skill_packs == crate::store::SkillPackState::Cleaned {
+            residual = Some(record);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let mut residual = residual.expect("termination's detached custody cleanup settled");
     assert_eq!(residual.session.status, SessionStatus::Terminated);
     assert_eq!(residual.runtime_id, None);
     assert_eq!(residual.rotation_claim, None);
