@@ -1,16 +1,22 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, TransportError } from '../api/client';
 import {
   BrowserCommandLedger,
   COMMAND_LEASE_MS,
   COMMAND_RETENTION_MS,
   CommandDescriptorMismatchError,
+  CommandLedgerUnavailableError,
   CommandRequestUnavailableError,
+  commandExecutionIsClaimed,
   useIdempotentCommand,
 } from './useIdempotentCommand';
 
 const RESOURCE = 'launch:11111111-1111-4111-8111-111111111111';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function command(request: unknown = { expectedRevision: 7 }, persistRequest = true) {
   return {
@@ -187,13 +193,33 @@ describe('durable browser command ledger', () => {
 
     const first = tabA.execute(command(), 'Launch start', firstSend);
     await waitFor(() => expect(firstSend).toHaveBeenCalledOnce());
-    await expect(tabB.execute(command(), 'Launch start', secondSend)).rejects.toBeInstanceOf(
-      TransportError,
-    );
+    const competing = tabB.execute(command(), 'Launch start', secondSend);
+    const competingOutcome = await competing.catch((cause: unknown) => cause);
+    expect(commandExecutionIsClaimed(competingOutcome)).toBe(true);
     expect(secondSend).not.toHaveBeenCalled();
 
     finish('one result');
     await expect(first).resolves.toBe('one result');
+  });
+
+  it('allocates a fresh key when a completed command is submitted again', async () => {
+    const tabA = new BrowserCommandLedger({
+      ownerId: 'owner-a',
+      instanceId: 'tab-a',
+    });
+    const tabB = new BrowserCommandLedger({
+      ownerId: 'owner-a',
+      instanceId: 'tab-b',
+    });
+    const firstSend = vi.fn().mockResolvedValue('one result');
+    const replaySend = vi.fn().mockResolvedValue('replayed result');
+
+    await expect(tabA.execute(command(), 'Launch start', firstSend)).resolves.toBe('one result');
+    await expect(tabB.execute(command(), 'Launch start', replaySend)).resolves.toBe(
+      'replayed result',
+    );
+    expect(replaySend.mock.calls[0]?.[0]).not.toBe(firstSend.mock.calls[0]?.[0]);
+    expect(await tabB.pending([RESOURCE])).toBeNull();
   });
 
   it.each(['finite', 'unresolved'] as const)(
@@ -333,6 +359,55 @@ describe('durable browser command ledger', () => {
     await expect(ledger.execute(command(), 'Launch start', next)).resolves.toBe('submitted');
     expect(next).toHaveBeenCalledOnce();
   });
+
+  it('returns a successful HTTP result when durable completion cleanup fails', async () => {
+    const values = new Map<string, string>();
+    let writes = 0;
+    const storage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        writes += 1;
+        if (writes === 2) throw new Error('completion write failed');
+        values.set(key, value);
+      }),
+      removeItem: vi.fn((key: string) => values.delete(key)),
+      clear: vi.fn(() => values.clear()),
+      key: vi.fn((index: number) => [...values.keys()][index] ?? null),
+      get length() {
+        return values.size;
+      },
+    } satisfies Storage;
+    const ledger = new BrowserCommandLedger({ ownerId: 'owner-a', storage });
+
+    await expect(ledger.execute(command(), 'Launch start', async () => 'landed')).resolves.toBe(
+      'landed',
+    );
+    expect(ledger.takeFailure()?.message).toMatch(/completion write failed/);
+    await expect(ledger.pending([RESOURCE])).resolves.toMatchObject({ action: 'start' });
+  });
+
+  it('preserves a finite API error when command removal fails', async () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+      removeItem: vi.fn(() => {
+        throw new Error('cleanup removal failed');
+      }),
+      clear: vi.fn(() => values.clear()),
+      key: vi.fn((index: number) => [...values.keys()][index] ?? null),
+      get length() {
+        return values.size;
+      },
+    } satisfies Storage;
+    const ledger = new BrowserCommandLedger({ ownerId: 'owner-a', storage });
+    const finite = new ApiError(422, 'invalid transition', 'launch_invalid_transition');
+
+    await expect(
+      ledger.execute(command(), 'Launch start', async () => Promise.reject(finite)),
+    ).rejects.toBe(finite);
+    expect(ledger.takeFailure()?.message).toMatch(/cleanup removal failed/);
+  });
 });
 
 describe('idempotent command reconciliation hook', () => {
@@ -357,5 +432,80 @@ describe('idempotent command reconciliation hook', () => {
     });
     expect(send.mock.calls[0]?.[0]).toBe(send.mock.calls[2]?.[0]);
     expect(result.current.pending).toBeNull();
+  });
+
+  it('exposes an initial ledger read failure without an unhandled rejection', async () => {
+    vi.spyOn(BrowserCommandLedger.prototype, 'pending').mockRejectedValue(
+      new CommandLedgerUnavailableError('initial ledger read failed'),
+    );
+    const unhandled = vi.fn();
+    window.addEventListener('unhandledrejection', unhandled);
+    try {
+      const { result } = renderHook(() => useIdempotentCommand('owner-a', [RESOURCE]));
+      await waitFor(() => expect(result.current.failure).toMatch(/initial ledger read failed/));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandled);
+    }
+  });
+
+  it('exposes a cross-tab refresh failure without discarding known pending state', async () => {
+    const known = {
+      slot: command().slot,
+      label: 'Launch start',
+      resource: RESOURCE,
+      action: 'start',
+      request: { expectedRevision: 7 },
+      requiresRequestReconstruction: false,
+      expiresAt: Date.now() + COMMAND_RETENTION_MS,
+    };
+    vi.spyOn(BrowserCommandLedger.prototype, 'pending')
+      .mockResolvedValueOnce(known)
+      .mockRejectedValue(new CommandLedgerUnavailableError('cross-tab ledger read failed'));
+    const { result } = renderHook(() => useIdempotentCommand('owner-a', [RESOURCE]));
+    await waitFor(() => expect(result.current.pending).toEqual(known));
+
+    window.dispatchEvent(new StorageEvent('storage', { key: null }));
+
+    await waitFor(() => expect(result.current.failure).toMatch(/cross-tab ledger read failed/));
+    expect(result.current.pending).toEqual(known);
+  });
+
+  it('reports cleanup failure without replacing a successful command result', async () => {
+    const pending = vi.spyOn(BrowserCommandLedger.prototype, 'pending').mockResolvedValue(null);
+    const takeFailure = vi
+      .spyOn(BrowserCommandLedger.prototype, 'takeFailure')
+      .mockReturnValue(null);
+    const execute = vi.spyOn(BrowserCommandLedger.prototype, 'execute').mockResolvedValue('landed');
+    const { result } = renderHook(() => useIdempotentCommand('owner-a', [RESOURCE]));
+    await waitFor(() => expect(pending).toHaveBeenCalled());
+    takeFailure.mockReturnValueOnce(new CommandLedgerUnavailableError('completion storage failed'));
+
+    let value: unknown;
+    await act(async () => {
+      value = await result.current.execute(command(), 'Launch start', vi.fn());
+    });
+
+    expect(value).toBe('landed');
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result.current.failure).toMatch(/completion storage failed/);
+  });
+
+  it('reports cleanup failure without replacing a finite API error', async () => {
+    const pending = vi.spyOn(BrowserCommandLedger.prototype, 'pending').mockResolvedValue(null);
+    const takeFailure = vi
+      .spyOn(BrowserCommandLedger.prototype, 'takeFailure')
+      .mockReturnValue(null);
+    const finite = new ApiError(422, 'invalid transition', 'launch_invalid_transition');
+    vi.spyOn(BrowserCommandLedger.prototype, 'execute').mockRejectedValue(finite);
+    const { result } = renderHook(() => useIdempotentCommand('owner-a', [RESOURCE]));
+    await waitFor(() => expect(pending).toHaveBeenCalled());
+    takeFailure.mockReturnValueOnce(new CommandLedgerUnavailableError('cleanup storage failed'));
+
+    await act(async () => {
+      await expect(result.current.execute(command(), 'Launch start', vi.fn())).rejects.toBe(finite);
+    });
+
+    expect(result.current.failure).toMatch(/cleanup storage failed/);
   });
 });

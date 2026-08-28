@@ -24,7 +24,12 @@ import {
   retireTriggerRevision,
   updateTrigger,
 } from '../api/client';
-import { authorizeTriggerConnection, isActiveTriggerConnection } from '../trigger/connectionFlow';
+import {
+  INACTIVE_TRIGGER_CONNECTION_GUIDANCE,
+  authorizeTriggerConnection,
+  isActiveTriggerConnection,
+  isReconnectableTriggerConnection,
+} from '../trigger/connectionFlow';
 import {
   commandObject,
   exactString,
@@ -32,10 +37,13 @@ import {
   nonNegativeInteger,
 } from '../trigger/commandValidation';
 import {
+  CommandRequestUnavailableError,
   commandOutcomeIsUnresolved,
+  retainedCommandMetadata,
   retainedCommandRequest,
   useIdempotentCommand,
 } from '../trigger/useIdempotentCommand';
+import type { PendingBrowserCommand } from '../trigger/useIdempotentCommand';
 import { Button } from '../ui/Button';
 import { InlineConfirm } from '../ui/InlineConfirm';
 import { Input } from '../ui/Input';
@@ -75,10 +83,141 @@ type Operation =
   | 'resolving'
   | 'saving'
   | 'publishing'
-  | 'retiring';
+  | 'retiring'
+  | 'refreshing';
 
 interface Conflict {
   readonly current: TriggerDraft;
+}
+
+interface PendingDraftSave {
+  readonly slot: string;
+  readonly resource: string;
+  readonly action: 'create-trigger' | 'update-trigger';
+  readonly draftId: string | null;
+  readonly expectedVersion: number | null;
+  readonly serviceId: string | null;
+}
+
+interface PendingPublication {
+  readonly slot: string;
+  readonly resource: string;
+  readonly triggerId: string;
+  readonly expectedVersion: number;
+  readonly serviceId: string;
+  readonly revisionNumber: number;
+}
+
+interface PendingRetirement {
+  readonly slot: string;
+  readonly resource: string;
+  readonly revisionId: string;
+}
+
+interface PublishedDraftRefresh {
+  readonly triggerId: string;
+  readonly revision: TriggerRevision;
+  readonly failure: string;
+}
+
+type ConnectionIssue = 'inactive' | 'reauthorization' | null;
+
+function connectionIssue(cause: unknown): ConnectionIssue {
+  if (!(cause instanceof ApiError)) return null;
+  if (cause.code === 'trigger_connection_inactive') return 'inactive';
+  if (cause.code === 'trigger_reauthorization_required') return 'reauthorization';
+  return null;
+}
+
+function pendingDraftSave(command: PendingBrowserCommand | null): PendingDraftSave | null {
+  if (
+    command === null ||
+    (command.action !== 'create-trigger' && command.action !== 'update-trigger')
+  ) {
+    return null;
+  }
+  const retained = retainedCommandMetadata<{
+    readonly draftId: string | null;
+    readonly expectedVersion: number | null;
+    readonly serviceId: string | null;
+  }>(command, command, (value) => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const draftId = record.draftId;
+    const expectedVersion = record.expectedVersion;
+    const serviceId = record.serviceId;
+    if (draftId !== null && nonEmptyString(draftId) === null) return null;
+    if (
+      expectedVersion !== null &&
+      expectedVersion !== undefined &&
+      nonNegativeInteger(expectedVersion) === null
+    ) {
+      return null;
+    }
+    if (serviceId !== null && serviceId !== undefined && nonEmptyString(serviceId) === null) {
+      return null;
+    }
+    return {
+      draftId: draftId as string | null,
+      expectedVersion: (expectedVersion ?? null) as number | null,
+      serviceId: (serviceId ?? null) as string | null,
+    };
+  });
+  if (retained === undefined) return null;
+  if (command.action === 'create-trigger') {
+    if (
+      command.slot !== 'trigger:create' ||
+      command.resource !== 'publisher' ||
+      retained.draftId !== null ||
+      retained.expectedVersion !== null
+    ) {
+      return null;
+    }
+  } else if (
+    retained.draftId === null ||
+    retained.expectedVersion === null ||
+    command.slot !== `trigger:update:${retained.draftId}` ||
+    command.resource !== `trigger:${retained.draftId}`
+  ) {
+    return null;
+  }
+  return { ...retained, slot: command.slot, resource: command.resource, action: command.action };
+}
+
+function pendingPublication(command: PendingBrowserCommand | null): PendingPublication | null {
+  if (command === null || command.action !== 'publish-trigger') return null;
+  const request = commandObject<{
+    readonly triggerId: string;
+    readonly expectedVersion: number;
+    readonly serviceId: string;
+  }>(command.request, {
+    triggerId: nonEmptyString,
+    expectedVersion: nonNegativeInteger,
+    serviceId: nonEmptyString,
+  });
+  if (request === null || command.resource !== `trigger:${request.triggerId}`) return null;
+  const prefix = `trigger:publish:${request.triggerId}:`;
+  if (!command.slot.startsWith(prefix)) return null;
+  const revisionText = command.slot.slice(prefix.length);
+  if (!/^(0|[1-9][0-9]*)$/.test(revisionText)) return null;
+  const revisionNumber = Number(revisionText);
+  if (!Number.isSafeInteger(revisionNumber)) return null;
+  return { ...request, slot: command.slot, resource: command.resource, revisionNumber };
+}
+
+function pendingRetirement(command: PendingBrowserCommand | null): PendingRetirement | null {
+  if (command === null || command.action !== 'retire-trigger') return null;
+  const request = commandObject<{ readonly revisionId: string }>(command.request, {
+    revisionId: nonEmptyString,
+  });
+  if (
+    request === null ||
+    command.slot !== `trigger:retire:${request.revisionId}` ||
+    command.resource !== `revision:${request.revisionId}`
+  ) {
+    return null;
+  }
+  return { ...request, slot: command.slot, resource: command.resource };
 }
 
 interface PublisherSurfaceProps {
@@ -136,8 +275,23 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   const [copied, setCopied] = useState<string | null>(null);
   const [readAttempt, setReadAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [selectedConnectionIssue, setSelectedConnectionIssue] = useState<ConnectionIssue>(null);
+  const [publishedDraftRefresh, setPublishedDraftRefresh] = useState<PublishedDraftRefresh | null>(
+    null,
+  );
   const authorization = useRef<AbortController | null>(null);
+  const repositoryResolution = useRef<{
+    readonly generation: number;
+    readonly controller: AbortController;
+    readonly serviceId: string;
+    readonly owner: string;
+    readonly name: string;
+  } | null>(null);
+  const repositoryResolutionGeneration = useRef(0);
+  const editorRef = useRef(editor);
   const heading = useRef<HTMLHeadingElement>(null);
+  const alignedSaveSlot = useRef<string | null>(null);
+  const alignedPublicCommandSlot = useRef<string | null>(null);
   const commandResources = useMemo(
     () => [
       'publisher',
@@ -146,7 +300,11 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
     ],
     [drafts, revisions],
   );
-  const { execute: executeCommand, pending } = useIdempotentCommand(ownerId, commandResources);
+  const {
+    execute: executeCommand,
+    pending,
+    failure: commandFailure,
+  } = useIdempotentCommand(ownerId, commandResources);
 
   const validation = useMemo(() => validatePublisherEditor(editor), [editor]);
   const dirty = editorIsDirty(editor);
@@ -156,6 +314,11 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   const activeConnection =
     checkedConnection?.service_id === editor.selectedServiceId &&
     isActiveTriggerConnection(checkedConnection);
+  const reconnectableConnection =
+    selectedConnectionIssue === 'reauthorization' ||
+    isReconnectableTriggerConnection(selectedConnection);
+  const inactiveConnection =
+    selectedConnectionIssue === 'inactive' || selectedConnection?.state === 'inactive';
   const pendingBegin = pending?.slot === 'connection:begin';
   const pendingReconnect = pending?.slot === `connection:reconnect:${editor.selectedServiceId}`;
   const pendingRevoke = pending?.action === 'revoke-connection';
@@ -166,10 +329,13 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   const revokeConnectionAccount =
     connections.find((connection) => connection.service_id === revokeServiceId)?.account_login ??
     null;
-  const pendingSave =
-    pending?.slot.startsWith('trigger:create') || pending?.slot.startsWith('trigger:update:');
-  const pendingPublish = pending?.slot.startsWith('trigger:publish:') ?? false;
-  const pendingRetirement = pending?.slot.startsWith('trigger:retire:') ?? false;
+  const saveCommand = useMemo(() => pendingDraftSave(pending), [pending]);
+  const publicationCommand = useMemo(() => pendingPublication(pending), [pending]);
+  const retirementCommand = useMemo(() => pendingRetirement(pending), [pending]);
+  const pendingSave = saveCommand !== null;
+  const pendingPublish = publicationCommand !== null;
+  const reconstructingPrivateSave = pendingSave && pending?.requiresRequestReconstruction === true;
+  const refreshRequired = publishedDraftRefresh !== null;
 
   const currentRevisions = useMemo(() => {
     if (editor.server === null) return [];
@@ -177,10 +343,19 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
       .filter((revision) => revision.content.trigger_id === editor.server?.id)
       .sort((left, right) => right.content.revision_number - left.content.revision_number);
   }, [editor.server, revisions]);
+  const publicationDraft =
+    publicationCommand === null
+      ? editor.server
+      : (drafts.find((draft) => draft.id === publicationCommand.triggerId) ?? null);
+  const publicationEditor = publicationDraft === null ? editor : editorFromDraft(publicationDraft);
 
   useEffect(() => {
     heading.current?.focus();
   }, []);
+
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
 
   useEffect(() => {
     let live = true;
@@ -192,6 +367,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
         setConnections(loadedConnections);
         setLoaded(true);
         setCheckedConnection(null);
+        setSelectedConnectionIssue(null);
         const first = loadedDrafts[0];
         setEditor(
           first === undefined ? newPublisherEditor(displayIdentity) : editorFromDraft(first),
@@ -209,11 +385,79 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   }, [displayIdentity, readAttempt]);
 
   useEffect(() => {
+    if (saveCommand === null || pending?.requiresRequestReconstruction !== true) {
+      alignedSaveSlot.current = null;
+      return;
+    }
+    if (!loaded || alignedSaveSlot.current === saveCommand.slot) return;
+    let next: PublisherEditor;
+    if (saveCommand.draftId === null) {
+      next = newPublisherEditor(displayIdentity);
+    } else {
+      const target = drafts.find((draft) => draft.id === saveCommand.draftId);
+      if (target === undefined) return;
+      next = editorFromDraft(target);
+    }
+    if (saveCommand.serviceId !== null) {
+      next = { ...next, selectedServiceId: saveCommand.serviceId };
+    }
+    let live = true;
+    void Promise.resolve().then(() => {
+      if (!live) return;
+      alignedSaveSlot.current = saveCommand.slot;
+      setCheckedConnection(null);
+      setSelectedConnectionIssue(null);
+      setEditor(next);
+      setConflict(null);
+      setFailure(null);
+      setStatus(null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [displayIdentity, drafts, loaded, pending?.requiresRequestReconstruction, saveCommand]);
+
+  useEffect(() => {
+    const slot = publicationCommand?.slot ?? retirementCommand?.slot ?? null;
+    if (slot === null) {
+      alignedPublicCommandSlot.current = null;
+      return;
+    }
+    if (!loaded || alignedPublicCommandSlot.current === slot) return;
+    const triggerId =
+      publicationCommand?.triggerId ??
+      revisions.find((revision) => revision.id === retirementCommand?.revisionId)?.content
+        .trigger_id;
+    if (triggerId === undefined) return;
+    const target = drafts.find((draft) => draft.id === triggerId);
+    if (target === undefined) return;
+    if (editor.server?.id === target.id) {
+      alignedPublicCommandSlot.current = slot;
+      return;
+    }
+    let live = true;
+    void Promise.resolve().then(() => {
+      if (!live) return;
+      alignedPublicCommandSlot.current = slot;
+      setCheckedConnection(null);
+      setSelectedConnectionIssue(null);
+      setEditor(editorFromDraft(target));
+      setConflict(null);
+      setFailure(null);
+      setStatus(null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [drafts, editor.server?.id, loaded, publicationCommand, retirementCommand, revisions]);
+
+  useEffect(() => {
     const serviceId = editor.selectedServiceId;
     if (serviceId === '') return;
     const controller = new AbortController();
     void preflightTriggerConnection(serviceId, controller.signal)
       .then((connection) => {
+        setSelectedConnectionIssue(null);
         setCheckedConnection(connection);
         setConnections((items) => [
           connection,
@@ -221,6 +465,8 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
         ]);
       })
       .catch((cause: unknown) => {
+        const issue = connectionIssue(cause);
+        if (!controller.signal.aborted && issue !== null) setSelectedConnectionIssue(issue);
         if (
           !controller.signal.aborted &&
           (!(cause instanceof ApiError) ||
@@ -238,9 +484,17 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   useEffect(
     () => () => {
       authorization.current?.abort();
+      repositoryResolution.current?.controller.abort();
     },
     [],
   );
+
+  const invalidateRepositoryResolution = useCallback(() => {
+    repositoryResolutionGeneration.current += 1;
+    repositoryResolution.current?.controller.abort();
+    repositoryResolution.current = null;
+    setOperation((current) => (current === 'resolving' ? null : current));
+  }, []);
 
   const changeContent = useCallback(
     (change: (content: TriggerContentDraft) => TriggerContentDraft) => {
@@ -259,6 +513,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
       return;
     }
     setCheckedConnection(null);
+    setSelectedConnectionIssue(null);
     setEditor(next);
     setConflict(null);
     setFailure(null);
@@ -271,6 +526,10 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   }
 
   async function authorize(mode: 'begin' | 'reconnect'): Promise<void> {
+    if (mode === 'reconnect' && !reconnectableConnection) {
+      setFailure(INACTIVE_TRIGGER_CONNECTION_GUIDANCE);
+      return;
+    }
     authorization.current?.abort();
     const controller = new AbortController();
     authorization.current = controller;
@@ -280,6 +539,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
     try {
       const connection = await authorizeTriggerConnection({
         signal: controller.signal,
+        inactiveIsPending: mode === 'begin',
         begin: () => {
           if (mode === 'begin') {
             const identity = {
@@ -328,6 +588,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
         preflight: preflightTriggerConnection,
         onService: (serviceId) => {
           setCheckedConnection(null);
+          setSelectedConnectionIssue(null);
           setEditor((current) => ({
             ...current,
             selectedServiceId: serviceId,
@@ -335,6 +596,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
           }));
         },
       });
+      setSelectedConnectionIssue(null);
       setCheckedConnection(connection);
       await refreshConnections();
       setStatus(`Connected as ${connection.account_login ?? 'GitHub user'}`);
@@ -358,12 +620,15 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
     setFailure(null);
     try {
       const connection = await preflightTriggerConnection(editor.selectedServiceId);
+      setSelectedConnectionIssue(null);
       setCheckedConnection(connection);
       await refreshConnections();
       setStatus(`Connection verified for ${connection.account_login ?? 'GitHub user'}`);
     } catch (cause) {
+      const issue = connectionIssue(cause);
+      setSelectedConnectionIssue(issue);
       setCheckedConnection(null);
-      setFailure(message(cause));
+      setFailure(issue === 'inactive' ? INACTIVE_TRIGGER_CONNECTION_GUIDANCE : message(cause));
     } finally {
       setOperation((current) => (current === 'checking' ? null : current));
     }
@@ -396,6 +661,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
         ...items.filter((item) => item.service_id !== revoked.service_id),
       ]);
       setCheckedConnection(null);
+      setSelectedConnectionIssue(revoked.state === 'inactive' ? 'inactive' : null);
       setEditor((current) =>
         current.selectedServiceId === serviceId ? { ...current, repository: null } : current,
       );
@@ -425,22 +691,56 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
       setFailure(message(cause));
       return;
     }
+    repositoryResolution.current?.controller.abort();
+    const generation = repositoryResolutionGeneration.current + 1;
+    repositoryResolutionGeneration.current = generation;
+    const serviceId = editor.selectedServiceId;
+    const controller = new AbortController();
+    repositoryResolution.current = {
+      generation,
+      controller,
+      serviceId,
+      owner: locator.owner,
+      name: locator.name,
+    };
     setOperation('resolving');
     setFailure(null);
     try {
       const selection = await resolveTriggerRepository(
-        editor.selectedServiceId,
+        serviceId,
         locator.owner,
         locator.name,
+        controller.signal,
       );
+      const current = editorRef.current;
+      let currentLocator;
+      try {
+        currentLocator = parseGithubRepositoryUrl(current.repositoryUrl);
+      } catch {
+        return;
+      }
+      if (
+        controller.signal.aborted ||
+        repositoryResolutionGeneration.current !== generation ||
+        current.selectedServiceId !== serviceId ||
+        currentLocator.owner !== locator.owner ||
+        currentLocator.name !== locator.name
+      ) {
+        return;
+      }
       setEditor((current) => applyRepository(current, selection));
       setStatus(
         `Verified ${selection.repository.canonical_owner}/${selection.repository.canonical_name}`,
       );
     } catch (cause) {
-      setFailure(message(cause));
+      if (!controller.signal.aborted && repositoryResolutionGeneration.current === generation) {
+        setFailure(message(cause));
+      }
     } finally {
-      setOperation((current) => (current === 'resolving' ? null : current));
+      if (repositoryResolutionGeneration.current === generation) {
+        repositoryResolution.current = null;
+        setOperation((current) => (current === 'resolving' ? null : current));
+      }
     }
   }
 
@@ -449,7 +749,25 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
     setEditor(editorFromDraft(saved));
     setConflict(null);
     setFailure(null);
+    setPublishedDraftRefresh(null);
     setStatus(notice);
+  }
+
+  async function refreshPublishedDraft(): Promise<void> {
+    const retained = publishedDraftRefresh;
+    if (retained === null) return;
+    setOperation('refreshing');
+    try {
+      const refreshed = await readTrigger(retained.triggerId);
+      acceptDraft(
+        refreshed,
+        `Revision ${String(retained.revision.content.revision_number)} published`,
+      );
+    } catch (cause) {
+      setPublishedDraftRefresh({ ...retained, failure: message(cause) });
+    } finally {
+      setOperation((current) => (current === 'refreshing' ? null : current));
+    }
   }
 
   async function save(expectedVersion?: number): Promise<TriggerDraft | null> {
@@ -458,31 +776,44 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
       setFailure(problem);
       return null;
     }
-    if (!activeConnection) {
+    if (saveCommand === null && !activeConnection) {
       setFailure('Check the selected GitHub connection before saving.');
       return null;
     }
     setOperation('saving');
     setFailure(null);
     const server = editor.server;
-    const slot = server === null ? 'trigger:create' : `trigger:update:${server.id}`;
+    const draftId = saveCommand?.draftId ?? server?.id ?? null;
+    const retainedVersion =
+      saveCommand === null
+        ? server === null
+          ? null
+          : (expectedVersion ?? server.version)
+        : saveCommand.expectedVersion;
+    const serviceId = saveCommand?.serviceId ?? editor.selectedServiceId;
+    const slot =
+      saveCommand?.slot ?? (draftId === null ? 'trigger:create' : `trigger:update:${draftId}`);
+    const resource =
+      saveCommand?.resource ?? (draftId === null ? 'publisher' : `trigger:${draftId}`);
+    const action = saveCommand?.action ?? (draftId === null ? 'create-trigger' : 'update-trigger');
     try {
       const request = {
-        draftId: server?.id ?? null,
-        expectedVersion: server === null ? null : (expectedVersion ?? server.version),
-        serviceId: editor.selectedServiceId,
+        draftId,
+        expectedVersion: retainedVersion,
+        serviceId,
         content: editor.content,
       };
       const saved = await executeCommand(
         {
           slot,
-          resource: server === null ? 'publisher' : `trigger:${server.id}`,
-          action: server === null ? 'create-trigger' : 'update-trigger',
+          resource,
+          action,
           request,
-          retained:
-            server === null
-              ? { draftId: null }
-              : { draftId: server.id, expectedVersion: request.expectedVersion },
+          retained: {
+            draftId,
+            expectedVersion: retainedVersion,
+            serviceId,
+          },
         },
         'Trigger draft save',
         (idempotencyKey, frozen) => {
@@ -501,23 +832,27 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
           );
         },
       );
-      acceptDraft(saved, server === null ? 'Trigger draft created' : 'Draft saved');
+      acceptDraft(saved, draftId === null ? 'Trigger draft created' : 'Draft saved');
       return saved;
     } catch (cause) {
-      if (server !== null && cause instanceof ApiError && cause.status === 409) {
+      if (commandOutcomeIsUnresolved(cause)) {
+        setFailure(
+          'The save outcome is still unknown. Your edits and command key are retained; retry to reconcile it.',
+        );
+      } else if (cause instanceof CommandRequestUnavailableError) {
+        setFailure(
+          'The re-entered draft does not match the retained private save. Restore the exact original values and choose Reconcile save again; CMA sent nothing.',
+        );
+      } else if (draftId !== null && cause instanceof ApiError && cause.status === 409) {
         try {
-          const current = await readTrigger(server.id);
+          const current = await readTrigger(draftId);
           setConflict({ current });
           setFailure('This draft changed elsewhere. Your edits are retained.');
         } catch (readCause) {
           setFailure(`${message(cause)} ${message(readCause)}`);
         }
       } else {
-        setFailure(
-          commandOutcomeIsUnresolved(cause)
-            ? 'The save outcome is still unknown. Your edits and command key are retained; retry to reconcile it.'
-            : message(cause),
-        );
+        setFailure(message(cause));
       }
       return null;
     } finally {
@@ -526,29 +861,41 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   }
 
   async function publish(): Promise<void> {
-    const server = editor.server;
-    if (server === null || dirty || !activeConnection) return;
+    const server = publicationDraft;
+    if (
+      refreshRequired ||
+      (publicationCommand === null && (server === null || dirty || !activeConnection))
+    ) {
+      return;
+    }
+    const triggerId = publicationCommand?.triggerId ?? server?.id;
+    const expectedVersion = publicationCommand?.expectedVersion ?? server?.version;
+    const serviceId = publicationCommand?.serviceId ?? editor.selectedServiceId;
+    const revisionNumber = publicationCommand?.revisionNumber ?? server?.next_revision_number;
+    if (triggerId === undefined || expectedVersion === undefined || revisionNumber === undefined) {
+      return;
+    }
     setOperation('publishing');
     setFailure(null);
     try {
       const identity = {
-        slot: `trigger:publish:${server.id}:${String(server.next_revision_number)}`,
-        resource: `trigger:${server.id}`,
+        slot: publicationCommand?.slot ?? `trigger:publish:${triggerId}:${String(revisionNumber)}`,
+        resource: publicationCommand?.resource ?? `trigger:${triggerId}`,
         action: 'publish-trigger',
       } as const;
       const request = retainedCommandRequest(
         pending,
         identity,
         {
-          triggerId: server.id,
-          expectedVersion: server.version,
-          serviceId: editor.selectedServiceId,
+          triggerId,
+          expectedVersion,
+          serviceId,
         },
         (value) =>
           commandObject(value, {
-            triggerId: exactString(server.id),
+            triggerId: exactString(triggerId),
             expectedVersion: nonNegativeInteger,
-            serviceId: exactString(editor.selectedServiceId),
+            serviceId: exactString(serviceId),
           }),
       );
       const revision = await executeCommand(
@@ -559,10 +906,19 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
             idempotencyKey,
           }),
       );
-      const refreshed = await readTrigger(server.id);
       setRevisions((items) => [revision, ...items.filter((item) => item.id !== revision.id)]);
-      acceptDraft(refreshed, `Revision ${String(revision.content.revision_number)} published`);
+      setStatus(`Revision ${String(revision.content.revision_number)} published`);
       setPublishOpen(false);
+      try {
+        const refreshed = await readTrigger(triggerId);
+        acceptDraft(refreshed, `Revision ${String(revision.content.revision_number)} published`);
+      } catch (readCause) {
+        setPublishedDraftRefresh({
+          triggerId,
+          revision,
+          failure: message(readCause),
+        });
+      }
     } catch (cause) {
       setFailure(
         commandOutcomeIsUnresolved(cause)
@@ -575,19 +931,17 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
   }
 
   async function retire(revision: TriggerRevision): Promise<void> {
+    const revisionId = retirementCommand?.revisionId ?? revision.id;
     setOperation('retiring');
     setFailure(null);
     try {
       const identity = {
-        slot: `trigger:retire:${revision.id}`,
-        resource: `revision:${revision.id}`,
+        slot: retirementCommand?.slot ?? `trigger:retire:${revisionId}`,
+        resource: retirementCommand?.resource ?? `revision:${revisionId}`,
         action: 'retire-trigger',
       } as const;
-      const request = retainedCommandRequest(
-        pending,
-        identity,
-        { revisionId: revision.id },
-        (value) => commandObject(value, { revisionId: exactString(revision.id) }),
+      const request = retainedCommandRequest(pending, identity, { revisionId }, (value) =>
+        commandObject(value, { revisionId: exactString(revisionId) }),
       );
       const retired = await executeCommand(
         { ...identity, request, persistRequest: true },
@@ -702,7 +1056,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
         <Button
           size="sm"
           icon={<IconPlusOutline16 />}
-          disabled={pending !== null}
+          disabled={pending !== null || refreshRequired}
           onClick={() => {
             chooseEditor(newPublisherEditor(displayIdentity));
           }}
@@ -711,6 +1065,34 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
         </Button>
       </div>
 
+      {publishedDraftRefresh === null ? null : (
+        <div className="notice notice--quiet publisher__notice" role="alert">
+          <IconWarningOutline16 />
+          <div>
+            <p className="notice__title">
+              Revision {String(publishedDraftRefresh.revision.content.revision_number)} was
+              published.
+            </p>
+            <p className="notice__detail">
+              CMA retained the returned immutable revision, but could not refresh the advanced
+              mutable draft: {publishedDraftRefresh.failure}
+            </p>
+            <p className="notice__detail">
+              Draft edits and another publication stay disabled until the mutable draft is read
+              again.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<IconRefreshOutline16 />}
+              disabled={operation === 'refreshing'}
+              onClick={() => void refreshPublishedDraft()}
+            >
+              {operation === 'refreshing' ? 'Refreshing draft' : 'Retry draft refresh'}
+            </Button>
+          </div>
+        </div>
+      )}
       {failure === null ? null : (
         <div className="notice notice--fail publisher__notice" role="alert">
           <IconWarningOutline16 />
@@ -720,13 +1102,24 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
           </div>
         </div>
       )}
+      {commandFailure === null ? null : (
+        <div className="notice notice--fail publisher__notice" role="alert">
+          <IconWarningOutline16 />
+          <div>
+            <p className="notice__title">Command recovery is unavailable.</p>
+            <p className="notice__detail">{commandFailure}</p>
+          </div>
+        </div>
+      )}
       {pending === null ? null : (
         <div className="notice notice--quiet publisher__notice" role="status">
           <IconRefreshOutline16 />
           <div>
             <p className="notice__title">Reconciling {pending.label}</p>
             <p className="notice__detail">
-              Only the retained same-key command can run until CMA returns a finite result.
+              {reconstructingPrivateSave
+                ? 'CMA did not retain the private draft body. Re-enter the exact original values below, then choose Reconcile save. CMA compares the complete request fingerprint and sends nothing unless it matches.'
+                : 'Only the retained same-key command can run until CMA returns a finite result.'}
             </p>
           </div>
         </div>
@@ -766,7 +1159,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                   type="button"
                   className={`publisher__draft${editor.server?.id === draft.id ? ' publisher__draft--on' : ''}`}
                   aria-current={editor.server?.id === draft.id ? 'page' : undefined}
-                  disabled={pending !== null}
+                  disabled={pending !== null || refreshRequired}
                   onClick={() => {
                     chooseEditor(editorFromDraft(draft));
                   }}
@@ -785,7 +1178,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
               <span>Draft</span>
               <select
                 value={editor.server?.id ?? 'new'}
-                disabled={pending !== null}
+                disabled={pending !== null || refreshRequired}
                 onChange={(event) => {
                   const selected = drafts.find((draft) => draft.id === event.target.value);
                   chooseEditor(
@@ -831,9 +1224,15 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                   <select
                     className="publisher-select"
                     value={editor.selectedServiceId}
-                    disabled={pending !== null}
+                    disabled={
+                      refreshRequired ||
+                      (pending !== null &&
+                        !(reconstructingPrivateSave && saveCommand?.serviceId === null))
+                    }
                     onChange={(event) => {
+                      invalidateRepositoryResolution();
                       setCheckedConnection(null);
+                      setSelectedConnectionIssue(null);
                       setEditor((current) => ({
                         ...current,
                         selectedServiceId: event.target.value,
@@ -860,7 +1259,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                     >
                       {pendingBegin ? 'Reconcile connection' : 'Connect GitHub'}
                     </Button>
-                  ) : selectedConnection?.state !== 'active' ? (
+                  ) : reconnectableConnection ? (
                     <Button
                       icon={<IconRefreshOutline16 />}
                       disabled={
@@ -908,6 +1307,11 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                   ) : null}
                 </div>
               </div>
+              {inactiveConnection ? (
+                <p className="publisher-connection-guidance">
+                  {INACTIVE_TRIGGER_CONNECTION_GUIDANCE}
+                </p>
+              ) : null}
               {selectedConnection === null ? null : (
                 <dl className="publisher-facts">
                   <div>
@@ -926,7 +1330,10 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
               )}
             </section>
 
-            <fieldset className="publisher__form" disabled={pending !== null}>
+            <fieldset
+              className="publisher__form"
+              disabled={refreshRequired || (pending !== null && !reconstructingPrivateSave)}
+            >
               <legend className="sr-only">Trigger configuration</legend>
               <section className="publisher-section" aria-labelledby="publisher-repository">
                 <h3 id="publisher-repository">Repository</h3>
@@ -940,6 +1347,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                       value={editor.repositoryUrl}
                       onChange={(event) => {
                         const repositoryUrl = event.target.value;
+                        invalidateRepositoryResolution();
                         setEditor((current) => ({ ...current, repositoryUrl, repository: null }));
                         setFailure(null);
                         setStatus(null);
@@ -1340,7 +1748,9 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
             <div className="publisher-savebar">
               <span>
                 {pending !== null
-                  ? `Reconciling ${pending.label}`
+                  ? reconstructingPrivateSave
+                    ? 'Re-enter the exact private draft'
+                    : `Reconciling ${pending.label}`
                   : dirty
                     ? 'Unsaved changes'
                     : 'Draft saved'}
@@ -1348,7 +1758,12 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
               <div className="publisher-actions">
                 <Button
                   variant="outline"
-                  disabled={!dirty || busy || (pending !== null && !pendingSave)}
+                  disabled={
+                    (!dirty && !reconstructingPrivateSave) ||
+                    busy ||
+                    refreshRequired ||
+                    (pending !== null && !pendingSave)
+                  }
                   onClick={() => void save()}
                 >
                   {operation === 'saving'
@@ -1360,7 +1775,12 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                 <Button
                   variant="primary"
                   disabled={
-                    editor.server === null || dirty || !activeConnection || busy || pending !== null
+                    editor.server === null ||
+                    dirty ||
+                    !activeConnection ||
+                    busy ||
+                    pending !== null ||
+                    refreshRequired
                   }
                   onClick={() => {
                     setPublishOpen(true);
@@ -1392,18 +1812,21 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                           </time>
                           <span>{revision.authority.account_login}</span>
                         </div>
-                        {retiringId === revision.id ? (
+                        {retiringId === revision.id ||
+                        retirementCommand?.revisionId === revision.id ? (
                           <InlineConfirm
                             question={`Retire revision ${String(revision.content.revision_number)}? Existing Launches continue; new Launches stop.`}
                             confirmLabel={
-                              pendingRetirement ? 'Reconcile retirement' : 'Retire revision'
+                              retirementCommand?.revisionId === revision.id
+                                ? 'Reconcile retirement'
+                                : 'Retire revision'
                             }
                             busy={
                               operation === 'retiring' ||
                               (pending !== null &&
                                 pending?.slot !== `trigger:retire:${revision.id}`)
                             }
-                            cancelDisabled={pending?.slot === `trigger:retire:${revision.id}`}
+                            cancelDisabled={retirementCommand?.revisionId === revision.id}
                             onCancel={() => {
                               setRetiringId(null);
                             }}
@@ -1432,7 +1855,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
                                 aria-label={`Retire revision ${String(revision.content.revision_number)}`}
                                 title="Retire revision"
                                 icon={<IconTrashOutline16 />}
-                                disabled={pending !== null}
+                                disabled={pending !== null || refreshRequired}
                                 onClick={() => {
                                   setRetiringId(revision.id);
                                 }}
@@ -1489,7 +1912,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
       </Modal>
 
       <Modal
-        open={publishOpen}
+        open={publishOpen || pendingPublish}
         title="Publish immutable revision"
         description="Publishing creates a new public README destination. This revision cannot be edited."
         onClose={() => {
@@ -1508,7 +1931,7 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
             </Button>
             <Button
               variant="primary"
-              disabled={busy || (pending !== null && !pendingPublish)}
+              disabled={busy || refreshRequired || (pending !== null && !pendingPublish)}
               onClick={() => void publish()}
             >
               {pendingPublish ? 'Reconcile publication' : 'Publish immutable revision'}
@@ -1519,23 +1942,29 @@ export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceP
         <dl className="publisher-publish-facts">
           <div>
             <dt>Revision</dt>
-            <dd>{String(editor.server?.next_revision_number ?? 1)}</dd>
+            <dd>
+              {String(
+                publicationCommand?.revisionNumber ??
+                  publicationEditor.server?.next_revision_number ??
+                  1,
+              )}
+            </dd>
           </div>
           <div>
             <dt>Repository</dt>
             <dd>
-              {editor.repository === null
+              {publicationEditor.repository === null
                 ? 'Unverified'
-                : canonicalRepositoryUrl(editor.repository)}
+                : canonicalRepositoryUrl(publicationEditor.repository)}
             </dd>
           </div>
           <div>
             <dt>Source mode</dt>
-            <dd>{editor.content.repository.source_mode.replaceAll('_', ' ')}</dd>
+            <dd>{publicationEditor.content.repository.source_mode.replaceAll('_', ' ')}</dd>
           </div>
           <div>
             <dt>Summary</dt>
-            <dd>{editor.content.task.public_summary}</dd>
+            <dd>{publicationEditor.content.task.public_summary}</dd>
           </div>
         </dl>
       </Modal>

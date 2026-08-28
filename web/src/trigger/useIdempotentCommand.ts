@@ -3,6 +3,8 @@ import {
   BrowserCommandLedger,
   COMMAND_LEDGER_EVENT,
   COMMAND_STORAGE_PREFIX,
+  CommandLedgerUnavailableError,
+  commandExecutionIsClaimed,
   commandOutcomeIsUnresolved,
 } from './BrowserCommandLedger';
 import type { BrowserCommandIntent, PendingBrowserCommand } from './BrowserCommandLedger';
@@ -14,6 +16,7 @@ export {
   CommandDescriptorMismatchError,
   CommandLedgerUnavailableError,
   CommandRequestUnavailableError,
+  commandExecutionIsClaimed,
   commandOutcomeIsUnresolved,
   retainedCommandMetadata,
   retainedCommandRequest,
@@ -22,6 +25,7 @@ export type { BrowserCommandIntent, PendingBrowserCommand } from './BrowserComma
 
 interface IdempotentCommands {
   readonly pending: PendingBrowserCommand | null;
+  readonly failure: string | null;
   readonly execute: <TRequest, TResult>(
     intent: BrowserCommandIntent<TRequest>,
     label: string,
@@ -39,6 +43,7 @@ export function useIdempotentCommand(
 ): IdempotentCommands {
   const ledger = useMemo(() => new BrowserCommandLedger({ ownerId }), [ownerId]);
   const [pending, setPending] = useState<PendingBrowserCommand | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const resourcesKey = resources.join('\u0000');
   const currentResources = useRef<readonly string[]>([]);
 
@@ -47,15 +52,37 @@ export function useIdempotentCommand(
   }, [resourcesKey]);
 
   const refreshPending = useCallback(async (): Promise<void> => {
-    setPending(await ledger.pending(currentResources.current));
+    try {
+      const next = await ledger.pending(currentResources.current);
+      setPending(next);
+      setFailure(ledger.takeFailure()?.message ?? null);
+    } catch (cause) {
+      setFailure(
+        cause instanceof Error
+          ? cause.message
+          : 'This browser could not read the retained command ledger.',
+      );
+    }
   }, [ledger]);
 
   useEffect(() => {
     let live = true;
     const refresh = () => {
-      void ledger.pending(currentResources.current).then((next) => {
-        if (live) setPending(next);
-      });
+      void ledger
+        .pending(currentResources.current)
+        .then((next) => {
+          if (!live) return;
+          setPending(next);
+          setFailure(ledger.takeFailure()?.message ?? null);
+        })
+        .catch((cause: unknown) => {
+          if (!live) return;
+          setFailure(
+            cause instanceof Error
+              ? cause.message
+              : 'This browser could not read the retained command ledger.',
+          );
+        });
     };
     const storageChanged = (event: StorageEvent) => {
       if (event.key === null || event.key.startsWith(COMMAND_STORAGE_PREFIX)) refresh();
@@ -84,6 +111,10 @@ export function useIdempotentCommand(
         return result;
       } catch (cause) {
         await refreshPending();
+        if (cause instanceof CommandLedgerUnavailableError) setFailure(cause.message);
+        // This tab sent no bytes. The tab holding the lease owns reconciliation,
+        // so an immediate retry here can only race it again.
+        if (commandExecutionIsClaimed(cause)) throw cause;
         if (!commandOutcomeIsUnresolved(cause)) throw cause;
       }
 
@@ -93,11 +124,12 @@ export function useIdempotentCommand(
         return result;
       } catch (cause) {
         await refreshPending();
+        if (cause instanceof CommandLedgerUnavailableError) setFailure(cause.message);
         throw cause;
       }
     },
     [ledger, refreshPending],
   );
 
-  return { pending, execute };
+  return { pending, failure, execute };
 }

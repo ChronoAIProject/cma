@@ -30,7 +30,7 @@ export const REPOSITORY_OPERATIONS: readonly TriggerRepositoryOperationClass[] =
 
 export const EDITABLE_FIELDS: readonly TriggerEditableField[] = [
   'task_input',
-  'branch_suffix',
+  'work_label',
   'resource_size',
   'timeout',
 ];
