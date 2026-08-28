@@ -54,6 +54,8 @@ function resource(launch: Launch) {
     launch,
     loading: false,
     failure: null,
+    failureDisposition: null,
+    nextRetryAt: null,
     offline: false,
     lastUpdated: Date.now(),
     liveSummary: 'Launch ready',
@@ -68,14 +70,59 @@ beforeEach(() => {
 });
 
 describe('Launch command reconciliation', () => {
+  it('shows the display-only work label independently from the Launch branch', () => {
+    const labeled: Launch = {
+      ...FIXTURE,
+      effective: { ...FIXTURE.effective, work_label: 'Documentation fix' },
+    };
+    launchResource.use.mockReturnValue(resource(labeled));
+    render(<LaunchSurface ownerId="test-owner" launchId={labeled.id} navigate={vi.fn()} />);
+
+    const label = screen.getByText('Work label').closest('div');
+    const branch = screen.getByText('Launch branch').closest('div');
+    expect(label).toHaveTextContent('Documentation fix');
+    expect(branch).toHaveTextContent('Not created');
+    expect(branch).not.toHaveTextContent('Documentation fix');
+  });
+
   it('discloses an online refresh failure and retries the retained Launch read', async () => {
-    const current = { ...resource(FIXTURE), failure: 'CMA returned a rate-limit response.' };
+    const current = {
+      ...resource(FIXTURE),
+      failure: 'CMA returned a rate-limit response.',
+      failureDisposition: 'retryable' as const,
+    };
     launchResource.use.mockReturnValue(current);
     render(<LaunchSurface ownerId="test-owner" launchId={FIXTURE.id} navigate={vi.fn()} />);
 
     expect(screen.getByRole('alert')).toHaveTextContent('Launch data may be stale.');
     await userEvent.click(screen.getByRole('button', { name: 'Retry refresh' }));
     expect(current.refresh).toHaveBeenCalledOnce();
+  });
+
+  it('does not offer retry for a terminal Launch read failure', () => {
+    launchResource.use.mockReturnValue({
+      ...resource(FIXTURE),
+      failure: 'This Launch does not exist.',
+      failureDisposition: 'terminal',
+    });
+    render(<LaunchSurface ownerId="test-owner" launchId={FIXTURE.id} navigate={vi.fn()} />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('This Launch does not exist.');
+    expect(screen.queryByRole('button', { name: 'Retry refresh' })).toBeNull();
+  });
+
+  it('does not retry before the server-owned polling deadline', () => {
+    const retryAt = Date.now() + 60_000;
+    launchResource.use.mockReturnValue({
+      ...resource(FIXTURE),
+      failure: 'CMA returned a rate-limit response.',
+      failureDisposition: 'retryable',
+      nextRetryAt: retryAt,
+    });
+    render(<LaunchSurface ownerId="test-owner" launchId={FIXTURE.id} navigate={vi.fn()} />);
+
+    expect(screen.getByText(/Automatic retry after/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry refresh' })).toBeDisabled();
   });
 
   it('routes an authentication-blocked Launch back to same-Launch recovery', async () => {

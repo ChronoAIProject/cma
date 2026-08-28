@@ -6,6 +6,10 @@ export const COMMAND_LEASE_MS = 60 * 1_000;
 export const COMMAND_STORAGE_PREFIX = 'cma:trigger-command-ledger:v1:';
 export const COMMAND_LEDGER_EVENT = 'cma:trigger-command-ledger-change';
 const VERSION = 1;
+const COMMAND_DATABASE_NAME = 'cma-trigger-command-ledger';
+const COMMAND_DATABASE_VERSION = 1;
+const COMMAND_DATABASE_STORE = 'owner-envelopes';
+const COMMAND_BROADCAST_CHANNEL = 'cma:trigger-command-ledger:v1';
 
 export interface BrowserCommandIntent<TRequest = unknown> {
   readonly slot: string;
@@ -97,6 +101,7 @@ interface StoredCommand {
   readonly retained?: unknown;
   readonly createdAt: number;
   readonly expiresAt: number;
+  readonly completedAt?: number;
   readonly leaseHolder: string | null;
   readonly leaseToken: string | null;
   readonly leaseExpiresAt: number | null;
@@ -131,6 +136,12 @@ interface BrowserCommandLedgerOptions {
   readonly coordinator?: CommandCoordinator;
   readonly now?: () => number;
   readonly instanceId?: string;
+}
+
+interface CommandStorage {
+  readonly getItem: (key: string) => Promise<string | null>;
+  readonly setItem: (key: string, value: string) => Promise<void>;
+  readonly removeItem: (key: string) => Promise<void>;
 }
 
 export class CommandDescriptorMismatchError extends Error {
@@ -170,6 +181,11 @@ class CommandExecutionClaimedError extends TransportError {
     super('This exact command is still being submitted by another CMA tab.');
     this.name = 'CommandExecutionClaimedError';
   }
+}
+
+/** True only when another same-origin CMA tab owns the live command lease. */
+export function commandExecutionIsClaimed(cause: unknown): boolean {
+  return cause instanceof CommandExecutionClaimedError;
 }
 
 export function commandOutcomeIsUnresolved(cause: unknown): boolean {
@@ -277,6 +293,134 @@ function browserStorage(): Storage {
   }
 }
 
+class SynchronousCommandStorage implements CommandStorage {
+  readonly #storage: Storage;
+
+  constructor(storage: Storage) {
+    this.#storage = storage;
+  }
+
+  async getItem(key: string): Promise<string | null> {
+    return this.#storage.getItem(key);
+  }
+
+  async setItem(key: string, value: string): Promise<void> {
+    this.#storage.setItem(key, value);
+  }
+
+  async removeItem(key: string): Promise<void> {
+    this.#storage.removeItem(key);
+  }
+}
+
+function commandDatabase(factory: IDBFactory): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      reject(new CommandLedgerUnavailableError(message));
+    };
+    const request = factory.open(COMMAND_DATABASE_NAME, COMMAND_DATABASE_VERSION);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(COMMAND_DATABASE_STORE)) {
+        database.createObjectStore(COMMAND_DATABASE_STORE);
+      }
+    };
+    request.onerror = () => {
+      fail('This browser could not open the durable command ledger.');
+    };
+    request.onblocked = () => {
+      fail('Another browser context blocked the durable command ledger upgrade.');
+    };
+    request.onsuccess = () => {
+      if (settled) {
+        request.result.close();
+        return;
+      }
+      settled = true;
+      const database = request.result;
+      database.onversionchange = () => database.close();
+      resolve(database);
+    };
+  });
+}
+
+function commandRequest<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(new CommandLedgerUnavailableError('The durable command ledger request failed.'));
+  });
+}
+
+function commandTransaction(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(new CommandLedgerUnavailableError('The durable command ledger transaction failed.'));
+    transaction.onabort = () =>
+      reject(new CommandLedgerUnavailableError('The durable command ledger transaction aborted.'));
+  });
+}
+
+/**
+ * IndexedDB commits are visible across renderer processes before completion.
+ * localStorage does not provide that transaction boundary even when its callers
+ * are serialized with Web Locks, so it cannot be the production claim store.
+ */
+class IndexedDbCommandStorage implements CommandStorage {
+  readonly #database: Promise<IDBDatabase>;
+
+  constructor(factory: IDBFactory) {
+    this.#database = commandDatabase(factory);
+  }
+
+  async getItem(key: string): Promise<string | null> {
+    const database = await this.#database;
+    const transaction = database.transaction(COMMAND_DATABASE_STORE, 'readonly');
+    const completion = commandTransaction(transaction);
+    const [result] = await Promise.all([
+      commandRequest<unknown>(transaction.objectStore(COMMAND_DATABASE_STORE).get(key)),
+      completion,
+    ]);
+    if (result === undefined) return null;
+    if (typeof result !== 'string') {
+      throw new CommandLedgerUnavailableError('The durable command ledger record is malformed.');
+    }
+    return result;
+  }
+
+  async setItem(key: string, value: string): Promise<void> {
+    const database = await this.#database;
+    const transaction = database.transaction(COMMAND_DATABASE_STORE, 'readwrite');
+    const completion = commandTransaction(transaction);
+    await Promise.all([
+      commandRequest(transaction.objectStore(COMMAND_DATABASE_STORE).put(value, key)),
+      completion,
+    ]);
+  }
+
+  async removeItem(key: string): Promise<void> {
+    const database = await this.#database;
+    const transaction = database.transaction(COMMAND_DATABASE_STORE, 'readwrite');
+    const completion = commandTransaction(transaction);
+    await Promise.all([
+      commandRequest(transaction.objectStore(COMMAND_DATABASE_STORE).delete(key)),
+      completion,
+    ]);
+  }
+}
+
+function commandStorage(storage: Storage | undefined): CommandStorage {
+  if (storage !== undefined) return new SynchronousCommandStorage(storage);
+  if (typeof window !== 'undefined' && window.indexedDB !== undefined) {
+    return new IndexedDbCommandStorage(window.indexedDB);
+  }
+  return new SynchronousCommandStorage(browserStorage());
+}
+
 const browserCoordinator: CommandCoordinator = {
   async exclusive<T>(name: string, task: () => Promise<T>): Promise<T> {
     if (typeof navigator === 'undefined' || navigator.locks === undefined) {
@@ -291,7 +435,18 @@ const browserCoordinator: CommandCoordinator = {
 function notifyLedgerChange(storageKey: string): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(COMMAND_LEDGER_EVENT, { detail: storageKey }));
+  ledgerBroadcastChannel?.postMessage(storageKey);
 }
+
+const ledgerBroadcastChannel =
+  typeof window !== 'undefined' && typeof window.BroadcastChannel === 'function'
+    ? new window.BroadcastChannel(COMMAND_BROADCAST_CHANNEL)
+    : null;
+
+ledgerBroadcastChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
+  if (typeof event.data !== 'string' || !event.data.startsWith(COMMAND_STORAGE_PREFIX)) return;
+  window.dispatchEvent(new CustomEvent(COMMAND_LEDGER_EVENT, { detail: event.data }));
+});
 
 function hasOwn(value: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -328,6 +483,19 @@ async function parseCommand(value: unknown): Promise<StoredCommand> {
   )) {
     throw new CommandLedgerUnavailableError('The retained command has an invalid execution lease.');
   }
+  const completedAt = hasOwn(item, 'completedAt')
+    ? checkedTime(item.completedAt, 'completion time')
+    : undefined;
+  if (
+    completedAt !== undefined &&
+    (completedAt < createdAt ||
+      completedAt >= expiresAt ||
+      leaseHolder !== null ||
+      leaseToken !== null ||
+      leaseExpiresAt !== null)
+  ) {
+    throw new CommandLedgerUnavailableError('The retained command has an invalid completion.');
+  }
   const fingerprint = checkedString(item.fingerprint, 'request fingerprint', 64);
   if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
     throw new CommandLedgerUnavailableError('The retained command fingerprint is malformed.');
@@ -348,6 +516,7 @@ async function parseCommand(value: unknown): Promise<StoredCommand> {
     ...(hasOwn(item, 'retained') ? { retained: item.retained } : {}),
     createdAt,
     expiresAt,
+    ...(completedAt === undefined ? {} : { completedAt }),
     leaseHolder,
     leaseToken,
     leaseExpiresAt,
@@ -373,22 +542,23 @@ async function parseCommand(value: unknown): Promise<StoredCommand> {
  * once. A crashed tab relinquishes only the lease, never the command key.
  */
 export class BrowserCommandLedger {
-  readonly #storage: Storage;
+  readonly #storage: CommandStorage;
   readonly #coordinator: CommandCoordinator;
   readonly #now: () => number;
   readonly #instanceId: string;
   readonly #runtime = new Map<string, RuntimeCommand>();
   readonly #scope: Promise<{ readonly storageKey: string; readonly lockName: string }>;
+  #lastFailure: CommandLedgerUnavailableError | null = null;
 
   constructor({
     ownerId,
-    storage = browserStorage(),
+    storage,
     coordinator = browserCoordinator,
     now = Date.now,
     instanceId = crypto.randomUUID(),
   }: BrowserCommandLedgerOptions) {
     const checkedOwner = checkedString(ownerId, 'owner scope', 2048);
-    this.#storage = storage;
+    this.#storage = commandStorage(storage);
     this.#coordinator = coordinator;
     this.#now = now;
     this.#instanceId = checkedString(instanceId, 'browser instance', 128);
@@ -428,7 +598,7 @@ export class BrowserCommandLedger {
     return this.#coordinator.exclusive(scope.lockName, async () => {
       const commands = await this.#load(scope.storageKey);
       const command = commands
-        .filter((item) => wanted.has(item.resource))
+        .filter((item) => item.completedAt === undefined && wanted.has(item.resource))
         .sort((left, right) => left.createdAt - right.createdAt)[0];
       return command === undefined ? null : this.#public(command);
     });
@@ -439,9 +609,19 @@ export class BrowserCommandLedger {
     return this.#coordinator.exclusive(scope.lockName, async () => {
       const commands = await this.#load(scope.storageKey);
       return commands.some(
-        (item) => item.resource === resource && (action === undefined || item.action === action),
+        (item) =>
+          item.completedAt === undefined &&
+          item.resource === resource &&
+          (action === undefined || item.action === action),
       );
     });
+  }
+
+  /** Return and clear a non-authoritative cleanup failure from the last command attempt. */
+  takeFailure(): CommandLedgerUnavailableError | null {
+    const failure = this.#lastFailure;
+    this.#lastFailure = null;
+    return failure;
   }
 
   async #prepare<TRequest>(
@@ -475,9 +655,14 @@ export class BrowserCommandLedger {
     return this.#coordinator.exclusive(scope.lockName, async () => {
       const now = this.#now();
       const commands = await this.#load(scope.storageKey);
-      const sameResource = commands.find(
-        (command) => command.resource === prepared.intent.resource,
-      );
+      let available = commands;
+      let sameResource = commands.find((command) => command.resource === prepared.intent.resource);
+      if (sameResource?.completedAt !== undefined) {
+        // Completion settles the old user intent. Only a still-pending command
+        // may lend its key to a retry; an identical later action is a new intent.
+        available = commands.filter((item) => item.key !== sameResource?.key);
+        sameResource = undefined;
+      }
       let command: StoredCommand;
       if (sameResource === undefined) {
         command = {
@@ -548,8 +733,8 @@ export class BrowserCommandLedger {
       await this.#save(
         scope.storageKey,
         sameResource === undefined
-          ? [...commands, claimed]
-          : commands.map((item) => (item.key === claimed.key ? claimed : item)),
+          ? [...available, claimed]
+          : available.map((item) => (item.key === claimed.key ? claimed : item)),
       );
       return claimed;
     });
@@ -557,21 +742,49 @@ export class BrowserCommandLedger {
 
   async #attempt<TResult>(stored: StoredCommand, runtime: RuntimeCommand): Promise<TResult> {
     if (runtime.inFlight !== null) return runtime.inFlight as Promise<TResult>;
-    const attempt = Promise.resolve().then(() => runtime.send(stored.key, runtime.request));
-    runtime.inFlight = attempt;
-    try {
-      const result = await attempt;
-      await this.#finish(stored, true);
+    const send = Promise.resolve().then(() => runtime.send(stored.key, runtime.request));
+    const attempt = (async (): Promise<TResult> => {
+      let result: unknown;
+      try {
+        result = await send;
+      } catch (cause) {
+        try {
+          await this.#finish(stored, commandOutcomeIsUnresolved(cause) ? 'retain' : 'remove');
+        } catch (cleanupCause) {
+          // The HTTP outcome remains authoritative. Leaving the same-key record
+          // behind is fail-closed and lets a later read reconcile browser state.
+          this.#rememberFailure(cleanupCause);
+        }
+        throw cause;
+      }
+      try {
+        await this.#finish(stored, 'complete');
+      } catch (cleanupCause) {
+        // Do not turn a successful server command into a second logical intent.
+        // A retained record is safer than erasing the only durable command key.
+        this.#rememberFailure(cleanupCause);
+      }
       return result as TResult;
-    } catch (cause) {
-      await this.#finish(stored, !commandOutcomeIsUnresolved(cause));
-      throw cause;
-    } finally {
+    })().finally(() => {
       runtime.inFlight = null;
-    }
+    });
+    runtime.inFlight = attempt;
+    return attempt;
   }
 
-  async #finish(claim: StoredCommand, remove: boolean): Promise<void> {
+  #rememberFailure(cause: unknown): void {
+    this.#lastFailure =
+      cause instanceof CommandLedgerUnavailableError
+        ? cause
+        : new CommandLedgerUnavailableError(
+            cause instanceof Error ? cause.message : 'The command ledger cleanup failed.',
+          );
+  }
+
+  async #finish(
+    claim: StoredCommand,
+    disposition: 'complete' | 'remove' | 'retain',
+  ): Promise<void> {
     const scope = await this.#scope;
     await this.#coordinator.exclusive(scope.lockName, async () => {
       const commands = await this.#load(scope.storageKey);
@@ -587,22 +800,31 @@ export class BrowserCommandLedger {
       ) {
         return;
       }
-      const next = remove
-        ? commands.filter((item) => item.key !== claim.key)
-        : commands.map((item) =>
-            item.key === claim.key
-              ? { ...item, leaseHolder: null, leaseToken: null, leaseExpiresAt: null }
-              : item,
-          );
+      const next =
+        disposition === 'remove'
+          ? commands.filter((item) => item.key !== claim.key)
+          : commands.map((item) =>
+              item.key !== claim.key
+                ? item
+                : disposition === 'complete'
+                  ? {
+                      ...item,
+                      completedAt: this.#now(),
+                      leaseHolder: null,
+                      leaseToken: null,
+                      leaseExpiresAt: null,
+                    }
+                  : { ...item, leaseHolder: null, leaseToken: null, leaseExpiresAt: null },
+            );
       await this.#save(scope.storageKey, next);
-      if (remove) this.#runtime.delete(claim.key);
+      if (disposition !== 'retain') this.#runtime.delete(claim.key);
     });
   }
 
   async #load(storageKey: string): Promise<readonly StoredCommand[]> {
     let raw: string | null;
     try {
-      raw = this.#storage.getItem(storageKey);
+      raw = await this.#storage.getItem(storageKey);
     } catch (cause) {
       throw new CommandLedgerUnavailableError(
         cause instanceof Error
@@ -645,10 +867,10 @@ export class BrowserCommandLedger {
   async #save(storageKey: string, commands: readonly StoredCommand[]): Promise<void> {
     try {
       if (commands.length === 0) {
-        this.#storage.removeItem(storageKey);
+        await this.#storage.removeItem(storageKey);
       } else {
         const envelope: StoredEnvelope = { version: VERSION, commands };
-        this.#storage.setItem(storageKey, JSON.stringify(envelope));
+        await this.#storage.setItem(storageKey, JSON.stringify(envelope));
       }
     } catch (cause) {
       throw new CommandLedgerUnavailableError(

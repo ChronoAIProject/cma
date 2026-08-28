@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Launch, LaunchProgress } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '../api/client';
 import { useLaunchResource } from './useLaunchResource';
 
 const api = vi.hoisted(() => ({
@@ -185,5 +186,111 @@ describe('Launch progress recovery', () => {
     await act(async () => second.resolve(progress(current.id)));
     await waitFor(() => expect(view.result.current.launch?.id).toBe(current.id));
     expect(api.readLaunch).toHaveBeenCalledOnce();
+  });
+
+  it('clears a stale polling failure after a successful empty-event response', async () => {
+    const current = launch('launch-empty-recovery', 3);
+    api.readLaunchProgress
+      .mockResolvedValueOnce(progress(current.id))
+      .mockRejectedValueOnce(new TransportError('progress temporarily unavailable'))
+      .mockResolvedValueOnce(progress(current.id));
+    api.readLaunch.mockResolvedValue(current);
+    const view = renderHook(() => useLaunchResource(current.id));
+
+    await waitFor(() => expect(view.result.current.launch?.id).toBe(current.id));
+    act(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(() =>
+      expect(view.result.current).toMatchObject({
+        failure: 'progress temporarily unavailable',
+        failureDisposition: 'retryable',
+      }),
+    );
+
+    act(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(() =>
+      expect(view.result.current).toMatchObject({
+        failure: null,
+        failureDisposition: null,
+        nextRetryAt: null,
+        offline: false,
+      }),
+    );
+  });
+
+  it('stops automatic polling after a terminal API failure but permits focus recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const current = launch('launch-terminal-poll', 1);
+      api.readLaunchProgress
+        .mockRejectedValueOnce(new ApiError(404, 'Launch not found', 'not_found'))
+        .mockResolvedValueOnce(progress(current.id));
+      api.readLaunch.mockResolvedValue(current);
+      const view = renderHook(() => useLaunchResource(current.id));
+
+      await act(async () => Promise.resolve());
+      expect(view.result.current).toMatchObject({
+        failure: 'Launch not found',
+        failureDisposition: 'terminal',
+        nextRetryAt: null,
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(120_000));
+      expect(api.readLaunchProgress).toHaveBeenCalledOnce();
+
+      act(() => window.dispatchEvent(new Event('focus')));
+      await act(async () => Promise.resolve());
+      expect(api.readLaunchProgress).toHaveBeenCalledTimes(2);
+      expect(view.result.current.failure).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('honors Retry-After before polling a rate-limited Launch again', async () => {
+    vi.useFakeTimers();
+    try {
+      const current = launch('launch-rate-limit', 4);
+      api.readLaunchProgress
+        .mockRejectedValueOnce(
+          new ApiError(429, 'Progress rate limited', 'rate_limited', undefined, 10_000),
+        )
+        .mockResolvedValueOnce(progress(current.id));
+      api.readLaunch.mockResolvedValue(current);
+      const startedAt = Date.now();
+      const view = renderHook(() => useLaunchResource(current.id));
+
+      await act(async () => Promise.resolve());
+      expect(view.result.current).toMatchObject({
+        failureDisposition: 'retryable',
+        nextRetryAt: startedAt + 10_000,
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(9_999));
+      expect(api.readLaunchProgress).toHaveBeenCalledOnce();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(api.readLaunchProgress).toHaveBeenCalledTimes(2);
+      expect(view.result.current.failure).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requires explicit retry when a 429 omits a usable Retry-After bound', async () => {
+    vi.useFakeTimers();
+    try {
+      const current = launch('launch-unbounded-rate-limit', 1);
+      api.readLaunchProgress.mockRejectedValue(
+        new ApiError(429, 'Progress rate limited', 'rate_limited'),
+      );
+      const view = renderHook(() => useLaunchResource(current.id));
+
+      await act(async () => Promise.resolve());
+      expect(view.result.current).toMatchObject({
+        failureDisposition: 'retryable',
+        nextRetryAt: null,
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(120_000));
+      expect(api.readLaunchProgress).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

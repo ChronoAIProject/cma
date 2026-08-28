@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   DiffReview,
@@ -140,6 +140,9 @@ function openPullRequest(): PullRequestRecord {
     updated_at: '2026-08-27T00:00:15Z',
     provider_created_at: '2026-08-27T00:00:15Z',
     provider_updated_at: '2026-08-27T00:00:15Z',
+    status_failure: null,
+    provider_request_id: 'github-request-17',
+    head_matches_launch: true,
   };
 }
 
@@ -370,7 +373,9 @@ describe('CMA Trigger contributor journey', () => {
       ),
     );
 
-    await user.click(await screen.findByRole('button', { name: 'Open pull request' }));
+    const openPullRequest = await screen.findByRole('button', { name: 'Open pull request' });
+    await waitFor(() => expect(openPullRequest).toBeEnabled());
+    await user.click(openPullRequest);
     const proposal = await screen.findByRole('dialog', { name: 'Open pull request?' });
     await user.click(within(proposal).getByRole('button', { name: 'Open pull request' }));
 
