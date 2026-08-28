@@ -118,22 +118,22 @@ As of 2026-08-28:
   proxied, the evidence gate must also close its behavior-bearing DNS,
   origin/TLS, redirect, cache, transform, header, and routing configuration and
   retain stable versioned identities around the probe set;
-- production client-IP authority remains a choose-one gate. The current
-  `CHRONO_SERVER_TRUSTED_PROXY_HOPS=1` direct-GFE contract safely selects
-  Cloudflare egress rather than the visitor on the observed chain and therefore
-  merges unrelated users' anonymous/admission budgets. The reviewed release
-  must either make both hostnames DNS-only/direct-to-GFE, fence direct origin
-  access to an authenticated Cloudflare path, or implement conditional
-  chain-aware selection: an approved GFE peer must report an upstream in the
-  reviewed pinned official Cloudflare CIDRs before CMA selects the next-left
-  Cloudflare-normalized visitor; otherwise it uses the GFE-observed upstream and
-  ignores caller prefixes. Retaining edge-shared budgets instead requires an
-  explicit weaker product contract with revised claims, limits, tests, and
-  alerts. A blind hop-count increase is prohibited because a direct-origin
-  caller could spoof the selected prefix. Production adoption, `--adopt`, and
-  step 10 remain disabled until the selected branch passes a live Cloudflare
-  header-shape drill plus direct-origin, spoofed-prefix,
-  non-Cloudflare-upstream, malformed-chain, CIDR-drift, IPv4, and IPv6 evidence;
+- the release candidate selects and implements the conditional chain-aware
+  client-IP authority contract. The deployed v0.7 configuration still selects
+  the GFE-observed Cloudflare egress address and therefore merges unrelated
+  users' anonymous/admission budgets. In the candidate, an approved GFE peer
+  must report an upstream in the build-pinned complete official Cloudflare CIDR
+  set before CMA may select the next-left visitor token, and that token must
+  exactly match the single valid `CF-Connecting-IP` header without a Worker or
+  Pseudo-IPv4-overwrite marker. Otherwise CMA retains the GFE-observed upstream
+  and ignores caller prefixes. Startup accepts only an empty Cloudflare set or
+  the exact build-pinned set and rejects overlap with the GFE ranges. This
+  closes the source and deployment-configuration decision, but not its live
+  evidence gate. Production adoption, `--adopt`, and step 10 remain disabled
+  until the selected branch passes a live Cloudflare header-shape drill, an
+  official-CIDR comparison in both directions, and direct-origin,
+  spoofed-prefix, non-Cloudflare-upstream, malformed-chain, CIDR-drift, IPv4,
+  and IPv6 evidence;
 - the checked adoption and traffic-restoration mutation entry points are
   hard-disabled by a reviewed source constant while those gates remain open.
   Every Compute truth read runs `gcloud` under `env -i` with only the operator's

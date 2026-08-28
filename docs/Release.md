@@ -101,7 +101,8 @@ Branch protection on `main` requires these contexts, and `enforce_admins` is on 
 Repository structure   Secret scanning   Backend   Frontend   Manifests
 Images (api)           Images (web)      Images (runtime)
 TypeScript SDK         Rust SDK          Source branch
-Release declaration    Commit hygiene
+Release declaration    Commit hygiene    Trigger release contract
+Trigger provider smoke contract
 ```
 
 A context is the job's `name:`, so **renaming a job is a branch-protection change.** Rename one without updating the list and every later pull request into `main` waits forever on a check that no longer exists. Update the two together, in the same rollout:
@@ -111,6 +112,14 @@ REPOSITORY="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
 gh api -X PATCH "repos/$REPOSITORY/branches/main/protection/required_status_checks" \
   -F strict=true -f 'contexts[]=Release declaration' ...
 ```
+
+Use the `checks` form of the branch-protection API for the two Trigger jobs and
+bind each to the same non-null GitHub Actions App ID required on `develop`.
+Legacy context-only entries accept a status from any app with that name and do
+not close this gate. As of 2026-08-29, `main` is missing both `Trigger release
+contract` and `Trigger provider smoke contract`; the release pull request must
+remain draft until a reviewed protection update is re-read from
+`required_status_checks.checks` and proves both exact context/app bindings.
 
 `Images (runtime)`, `TypeScript SDK`, and `Rust SDK` are required on both
 protected branches. The SDK jobs prove the repository-only packages build and
@@ -640,29 +649,24 @@ present, production mutation remains hard-disabled by the checked source
 constant. Do not run adoption or traffic restoration merely because the
 read-only campaigns pass.
 
-Production is also blocked on one explicitly selected and tested client-IP
-authority contract. The current
-`CHRONO_SERVER_TRUSTED_PROXY_HOPS=1` contract describes a direct GFE chain; with
-the observed Cloudflare proxy path its safely selected upstream is Cloudflare
-egress rather than the visitor, collapsing anonymous/admission budgets across
-users. The release decision must choose exactly one of these contracts:
+Production is also blocked on live validation of the selected conditional
+chain-aware client-IP authority contract. The deployed v0.7 configuration
+selects the GFE-observed Cloudflare egress address and therefore collapses
+anonymous/admission budgets across users. The release candidate implements the
+replacement contract in source and deployment configuration: it trusts the
+forwarded chain only from an approved GFE peer, requires the GFE-observed
+upstream token to belong to the build-pinned complete official Cloudflare CIDR
+set, and advances to the next-left visitor token only when that token exactly
+matches the single valid `CF-Connecting-IP` header without a Worker or
+Pseudo-IPv4-overwrite marker. Otherwise it uses the GFE-observed upstream and
+ignores every caller-controlled prefix. Startup accepts only an empty
+Cloudflare set or the exact build-pinned set and rejects overlap with the GFE
+ranges.
 
-1. make both hostnames DNS-only/direct-to-GFE, prove Cloudflare is no longer a
-   request hop, and retain a closed direct-GFE header contract;
-2. keep Cloudflare proxying but fence direct origin access to an authenticated
-   Cloudflare-to-GFE path and validate the resulting visitor header contract; or
-3. implement conditional chain-aware selection: trust the forwarded chain only
-   from an approved GFE peer, require the GFE-observed upstream token to be in a
-   reviewed pinned set of official Cloudflare CIDRs, and only then select the
-   next-left Cloudflare-normalized visitor token. Otherwise use that
-   GFE-observed upstream and ignore every caller-controlled prefix.
-
-Intentionally retaining Cloudflare-egress-shared budgets is permitted only if
-the public isolation and rate-limit claims, limits, tests, and operational alerts
-are revised to that weaker product contract before approval. Blindly increasing
-the hop count to two is prohibited: a direct-origin caller could supply the newly
-selected prefix unless the Cloudflare hop is authenticated. Until the selected
-branch is implemented in source and deployment configuration and passes a live
+That implementation closes the architecture choice, not the live evidence
+gate. Before exposure, compare the official Cloudflare IPv4 and IPv6 sets with
+the build pin in both directions and prove the reviewed Cloudflare behavior
+preserves the required headers. Until the selected branch passes the live
 Cloudflare header-shape drill plus direct-origin, spoofed-prefix,
 non-Cloudflare-upstream, malformed-chain, CIDR-drift, IPv4, and IPv6 tests,
 production adoption, `--adopt`, and step 10 traffic restoration remain disabled.
