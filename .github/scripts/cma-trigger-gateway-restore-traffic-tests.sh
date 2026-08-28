@@ -393,6 +393,7 @@ cma_test_fence_production_gate_case() {
         printf '%s\n' kubectl >>"${case_log}"
         return 97
       }
+      # shellcheck disable=SC2317 # Boundary sentinel is reached through the production entrypoint.
       cma_step10_gcloud() {
         printf '%s\n' gcloud >>"${case_log}"
         return 97
