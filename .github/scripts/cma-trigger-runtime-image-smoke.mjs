@@ -29,7 +29,8 @@ const GATEWAY_PROBE_COMMAND = JSON.stringify([
   "/usr/local/bin/layer4-runtime",
   "runtime-gateway-probe-helper-v1",
 ]);
-const SESSION_ID = "sesn_d09_123456781234123412341234567890ab";
+const LAUNCH_ID = "12345678-1234-1234-1234-1234567890ab";
+const SESSION_ID = `sesn_trg_${LAUNCH_ID.replaceAll("-", "")}`;
 const RUNTIME_AUDIENCE = "runtime-d09";
 const SERVICE_ID = "service-1";
 const FORK_REPOSITORY_ID = 30;
@@ -535,7 +536,7 @@ function signingFixture() {
       const document = {
         kind: "policy",
         version: 1,
-        launch_id: "12345678-1234-1234-1234-1234567890ab",
+        launch_id: LAUNCH_ID,
         session_id: SESSION_ID,
         runtime_audience: RUNTIME_AUDIENCE,
         service_id: SERVICE_ID,
@@ -900,6 +901,16 @@ function failureFrom(error) {
   return { code: "campaign_failed", result: "fail" };
 }
 
+function campaignErrorFrom(error, stage) {
+  if (error instanceof CampaignFailure) return error;
+  const closedStage = closedCode(stage) || "unknown";
+  return new CampaignFailure(
+    error instanceof assert.AssertionError
+      ? `assertion_${closedStage}`
+      : `campaign_${closedStage}_failed`,
+  );
+}
+
 function imageEvidence(options, inspected) {
   if (!inspected) return null;
   const revision =
@@ -1076,6 +1087,24 @@ function runSelfTests() {
   assert.equal(guardedCookie.failure.code, "evidence_redaction_guard");
   assert.equal(CODEX_NATIVE_HASHES.x64.length, 64);
   assert.equal(CODEX_NATIVE_HASHES.arm64.length, 64);
+  assert.match(SESSION_ID, /^sesn_trg_[0-9a-f]{32}$/);
+  assert.equal(
+    campaignErrorFrom(new Error("unsafe diagnostic"), "runtime-startup").code,
+    "campaign_runtime_startup_failed",
+  );
+  const retained = new CampaignFailure("typed_failure", "inconclusive");
+  assert.equal(campaignErrorFrom(retained, "runtime-startup"), retained);
+  assert.equal(
+    campaignErrorFrom(
+      new assert.AssertionError({
+        actual: "actual",
+        expected: "expected",
+        operator: "strictEqual",
+      }),
+      "runtime-startup",
+    ).code,
+    "assertion_runtime_startup",
+  );
   process.stdout.write("CMA Trigger D-09 self-test passed\n");
 }
 
@@ -1716,10 +1745,7 @@ async function main() {
       redaction: REDACTION_STATEMENT,
     };
   } catch (error) {
-    campaignError =
-      error instanceof assert.AssertionError
-        ? new CampaignFailure(`assertion_${closedCode(campaignStage)}`)
-        : error;
+    campaignError = campaignErrorFrom(error, campaignStage);
   }
 
   const cleanupFailures = await cleanupCampaign(
