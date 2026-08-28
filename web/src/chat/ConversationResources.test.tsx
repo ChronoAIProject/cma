@@ -285,4 +285,75 @@ describe('the projected state in its reading column', () => {
       'data-pressure',
     );
   });
+
+  it('draws and clears a durable CPU-pressure episode independently of memory', async () => {
+    const transport = new ControlledTransport();
+    const current = session();
+    render(
+      <ConversationSurface
+        session={current}
+        capabilities={current.capabilities}
+        transport={transport}
+        readResourceStatus={waiting}
+      />,
+    );
+    await settle();
+
+    act(() => {
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_cpu_pressure',
+          seq: 10,
+          live: true,
+          patches: [
+            {
+              op: 'replace',
+              path: 'resources',
+              value: { ...READING, cpuMillisUsed: 850 },
+            },
+          ],
+        }),
+      );
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_cpu_pressure',
+          seq: 11,
+          patches: [
+            {
+              op: 'replace',
+              path: 'cpuPressure',
+              value: {
+                usedMillis: 850,
+                limitMillis: 1000,
+                occupancyPermille: 850,
+                since: '2026-08-23T04:12:02Z',
+              },
+            },
+          ],
+        }),
+      );
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('CPU pressure is high');
+    expect(screen.getByText('CPU under pressure · 850m / 1 core')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Memory' })).not.toHaveAttribute(
+      'data-pressure',
+    );
+
+    act(() => {
+      transport.emit(
+        stateFrame({
+          threadId: current.id,
+          runId: 'run_cpu_pressure',
+          seq: 12,
+          patches: [{ op: 'replace', path: 'cpuPressure', value: null }],
+        }),
+      );
+    });
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('progressbar', { name: 'CPU' })).not.toHaveAttribute('data-pressure');
+  });
 });

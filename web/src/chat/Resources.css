@@ -52,7 +52,7 @@
   transition: width var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
-/* Pressure belongs to memory alone; CPU remains neutral beside it. */
+/* Only a reading with an open durable episode spends the failure ink. */
 .resources__track[data-pressure='true'] .resources__fill {
   background: var(--fail);
 }

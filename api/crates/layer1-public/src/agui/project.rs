@@ -512,6 +512,37 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
          * It does not end the run: pressure is something to act on while the
          * agent remains working, not a failure in the run lifecycle.
          */
+        EventKind::CpuPressureOpened {
+            used_millis,
+            limit_millis,
+            occupancy_permille,
+        } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/cpuPressure",
+                    "value": {
+                        "usedMillis": used_millis,
+                        "limitMillis": limit_millis,
+                        "occupancyPermille": occupancy_permille,
+                        "since": timestamp.clone(),
+                    },
+                }] }),
+            )],
+            ending: None,
+        },
+        EventKind::CpuPressureClosed { .. } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/cpuPressure",
+                    "value": null,
+                }] }),
+            )],
+            ending: None,
+        },
         EventKind::MemoryPressureOpened {
             used_bytes,
             limit_bytes,

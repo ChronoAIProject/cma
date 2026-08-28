@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::store::{PlatformSettingsStore, StoreError, StoredSettings};
-use crate::{MemoryPressurePolicy, PlatformSettings, PlatformSettingsService};
+use crate::{CpuPressurePolicy, MemoryPressurePolicy, PlatformSettings, PlatformSettingsService};
 
 #[derive(Clone)]
 struct StoredDocument(serde_json::Value);
@@ -63,16 +63,20 @@ fn an_older_settings_document_receives_the_shipped_pressure_policy() {
         "live_sessions": 3
     }))
     .expect("an older document remains readable");
+    assert_eq!(settings.cpu_pressure, CpuPressurePolicy::default());
     assert_eq!(settings.memory_pressure, MemoryPressurePolicy::default());
 }
 
 #[test]
 fn the_policy_is_a_named_serialized_setting() {
     let settings = PlatformSettings {
+        cpu_pressure: CpuPressurePolicy::new(825, 675, 6, 18, 180).expect("valid policy"),
         memory_pressure: MemoryPressurePolicy::new(850, 650, 6, 18, 180).expect("valid policy"),
         ..PlatformSettings::default()
     };
     let value = serde_json::to_value(&settings).expect("settings serialize");
+    assert_eq!(value["cpu_pressure"]["enter_permille"], 825);
+    assert_eq!(value["cpu_pressure"]["settle_seconds"], 180);
     assert_eq!(value["memory_pressure"]["enter_permille"], 850);
     assert_eq!(value["memory_pressure"]["settle_seconds"], 180);
     assert_eq!(
