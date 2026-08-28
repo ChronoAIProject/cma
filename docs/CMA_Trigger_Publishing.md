@@ -170,7 +170,7 @@ or workspace needed for recovery. GitHub work remains owned by the contributor.
 | Upstream not forkable | Current repository or organization policy refuses an MVP fork | Ask the repository owner about policy or stop; CMA does not bypass it |
 | Fork network occupied | The account already has another fork in the same network | Review the named safe remediation; CMA never deletes or repurposes it |
 | Authentication required | Delegated CMA authority expired or was revoked | Reauthenticate, then resume the same Launch |
-| Service inactive | The selected NyxID UserService is inactive | Reconnect that exact service, then resume |
+| Service inactive | The selected NyxID UserService is inactive | Enable that exact service in NyxID and recheck, or select another active connection. CMA cannot safely reconnect an inactive service until NyxID provides callback-bound reactivation and state-version advancement. Active or disconnected services may still use the normal reauthorization flow. |
 | Rate limited or provider unavailable | GitHub or NyxID asked CMA to wait | Leave the Launch intact and follow its retry time |
 | Feature paused | Operators paused new Trigger effects at a durable boundary | Existing session and GitHub work remain available; wait for resume |
 | Recovery required | A possible external write or initial delivery is ambiguous | Follow the disclosed recovery flow; do not Start another Launch |

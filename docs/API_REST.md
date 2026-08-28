@@ -44,7 +44,7 @@ on that code and the status, never on its prose.
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
-| Idempotency | Optional `Idempotency-Key` is honoured by `POST /sessions` and `POST /sessions/{id}/input`. Claims remain for 24 hours from the first request |
+| Idempotency | Optional `Idempotency-Key` is honoured by `POST /sessions` and `POST /sessions/{id}/input`. Execution has a two-minute lease; only a finite stored outcome starts the 24-hour replay-retention period |
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
@@ -134,33 +134,50 @@ pull-request review do not read the header.
 A key contains 1 to 255 visible ASCII bytes. It is scoped to the authenticated
 subject and the particular operation, so one subject cannot consume another's
 key and a session-create key does not collide with a session-input key. The
-first request reserves the key durably before doing any work. Its status,
-representation headers, and body are retained until that claim expires, 24
-hours after the first reservation. A retry with the exact same request body
-bytes receives the same status and byte-identical response body without
-performing the operation again. Per-request transport headers, including
-`X-Request-Id` and CORS headers, are generated for the retry rather than copied
-from the first request.
+first request reserves the key durably before doing any work and receives a
+two-minute execution lease. Lease expiry never authorizes another execution.
+Once the owner stores a finite result, its status, representation headers, and
+body are retained for 24 hours from that completion. A retry with the exact same
+request body bytes receives the same status and byte-identical response body
+without performing the operation again. Per-request transport headers,
+including `X-Request-Id` and CORS headers, are generated for the retry rather
+than copied from the first request.
 
 A completed refusal is an outcome too. In particular, if session input records
 `409 session_rotating`, the same key and body continue to replay that refusal
 after the handover finishes. Wait until the session is usable, then mint a new
 key for the intended post-rotation attempt.
 
-Three refusals make ambiguous retries explicit:
+Four refusals make ambiguous retries explicit:
 
 | Status and code | Meaning |
 |---|---|
 | `400 invalid_idempotency_key` | The key is empty, longer than 255 bytes, contains non-visible ASCII, or was supplied more than once |
-| `409 idempotency_in_flight` | The first request still owns the reservation. Retry shortly with the same key and body |
+| `409 idempotency_in_flight` | The first request still owns its two-minute execution lease. Retry shortly with the same key and body |
+| `409 idempotency_recovery_required` | The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required |
 | `422 idempotency_key_reused` | The key already names a different request body. Mint a new key; replaying the first response would be incorrect |
 
 If the durable claim store cannot be reached while reserving a key, the request
 fails with `503` and code `store_failed` before the session or prompt operation
 starts. The service never falls back to unprotected execution. If recording the
-result fails after the operation, the response is `503` and the pending claim
-continues to block duplicate execution. After 24 hours the claim expires and
-the key may be used again.
+result fails after the operation, the response is `503` and the claim continues
+to block duplicate execution. Once its two-minute lease ends without a receipt,
+the claim becomes durable `idempotency_recovery_required`; it has no TTL and is
+never deleted, reacquired, or automatically re-executed. Only an exact late
+result from the original claim generation can turn that claim into a replay
+receipt, which then replays normally for 24 hours from the time the finite
+outcome is stored. CMA has no generic background or operator process that takes
+over an abandoned operation claim.
+
+Only a positively proven pre-write failure is retryable as execution. A finite
+refusal recorded before any domain write is replayable under its same key; when
+the refusal's own remediation permits a later semantic attempt, that later
+attempt uses a new key. A lost process, elapsed lease, transport ambiguity, or
+failure to store a post-operation receipt is not proof that no bytes or domain
+mutation occurred, so no caller or replica may infer permission to execute it
+again. Manual review must establish durable domain truth before an operator or
+caller decides any later, semantically distinct action. That review does not
+clear the original claim or manufacture its missing replay receipt.
 
 ### Trigger and Launch projection
 
@@ -264,6 +281,13 @@ required capabilities, default and ceiling resources, default and ceiling
 timeouts, billing mode, pricing-policy reference, and revision digest. It contains
 neither the rendered/private prompt nor configured credential material.
 
+`estimated_cost` is a closed public cost state for the immutable default
+resources and timeout. `exact_zero` carries an exact USD zero under the
+deployment-owned zero-cost policy. `contributor_estimate` carries a server-formatted
+USD amount and `quoted_at`, but is provisional: authenticated Launch review
+recalculates and pins the contributor's selected configuration. `quote_unavailable`
+carries no amount; clients must not render it as zero or invent a fallback price.
+
 ### NyxID GitHub connection routes
 
 | Method and path | Purpose | Idempotency-Key | Success |
@@ -304,7 +328,7 @@ confirmed agent-key revocation, or the bounded credential expiry.
 |---|---|---|---|
 | `POST /api/v1/triggers/public/{public_id}/launches` | Create or resume this subject's current Launch for the immutable revision | required | `201` `Launch` |
 | `POST /api/v1/triggers/public/{public_id}/launches/new` | Create a separate Launch after `acknowledge_additional_resources: true` | required | `201` `Launch` |
-| `GET /api/v1/launches?state=&trigger_public_id=&limit=&cursor=` | List owned Launches with bounded cursor paging | absent | `200` `LaunchPage` |
+| `GET /api/v1/launches?state=&trigger_public_id=&session_id=&limit=&cursor=` | List owned Launches with bounded cursor paging, optionally narrowed to one exact session | absent | `200` `LaunchPage` |
 | `GET /api/v1/launches/{launch_id}` | Read the complete owned Launch review and current state | absent | `200` `Launch` |
 | `PATCH /api/v1/launches/{launch_id}/overrides` | Replace allowed overrides under `expected_revision` | required | `200` `Launch` |
 | `PUT /api/v1/launches/{launch_id}/connection` | Select one exact reusable service under `expected_revision` | required | `200` `Launch` |
@@ -316,6 +340,8 @@ confirmed agent-key revocation, or the bounded credential expiry.
 | `POST /api/v1/launches/{launch_id}/pull-request/review` | Seal an Open or Update proposal without writing GitHub | absent | `200` `PullRequestDraft` |
 | `POST /api/v1/launches/{launch_id}/pull-request/open` | Explicitly confirm exactly the sealed Open proposal | required | `202` `Launch` |
 | `POST /api/v1/launches/{launch_id}/pull-request/update` | Explicitly confirm exactly the sealed Update proposal | required | `202` `Launch` |
+| `POST /api/v1/launches/{launch_id}/pull-request/refresh` | Queue an immediate fenced read-only provider status observation under `expected_revision` | required | `202` `Launch` |
+| `POST /api/v1/launches/{launch_id}/complete` | Explicitly finish CMA orchestration after handing an open provider PR to its maintainers | required | `200` `Launch` |
 | `GET /api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download` | Download one owned, retained, digest-verified immutable artifact | absent | `200 application/octet-stream` |
 | `POST /api/v1/launches/{launch_id}/cancel` | Cancel safely while retaining durable history | required | `200` `Launch` |
 | `GET /api/v1/launches/{launch_id}/events?after=&limit=` | Replay durable progress strictly after a sequence cursor | absent | `200` `LaunchProgress` |
@@ -326,9 +352,12 @@ while it is nonterminal. A new `Idempotency-Key` may represent a later click and
 still resolves through that durable marker. Only `/launches/new`, with its explicit
 resource acknowledgement, requests another Launch.
 
-`LaunchPage` uses `{"items": [...], "next_cursor": string|null}`. Its filters are
-bound into the opaque cursor. Malformed cursors, cross-collection cursors, and
-unknown query fields are refused rather than silently changing the result set.
+`LaunchPage` uses `{"items": [...], "next_cursor": string|null}`. `state`,
+`trigger_public_id`, and `session_id` are optional conjunctive filters. The
+session filter compares the exact session identifier retained on an owned
+Launch; it cannot discover another subject's Launch. All filters are bound into
+the opaque cursor. Malformed cursors, cross-collection cursors, and unknown query
+fields are refused rather than silently changing the result set.
 
 ### Launch representation
 
@@ -419,7 +448,7 @@ references.
   "expected_revision": 7,
   "overrides": {
     "task_inputs": {"area": "documentation"},
-    "branch_suffix": "docs-fix",
+    "work_label": "Documentation fix",
     "resource_size": {"cpu_millis": 1000, "memory_mib": 2048},
     "timeout_seconds": 3600,
     "optional_checks": []
@@ -428,9 +457,11 @@ references.
 ```
 
 Only publisher-declared editable fields within publisher and deployment ceilings
-are accepted. Each successful edit increments `revision_number` and produces a
-new `effective.digest`. Repository identity, credential route, permission ceiling,
-setup policy, kernel, and signed capability policy are not overrideable.
+are accepted. `work_label` is display-only and never changes the immutable
+`cma/<launch-id>` Git ref. Each successful edit increments `revision_number` and
+produces a new `effective.digest`. Repository identity, credential route,
+permission ceiling, setup policy, kernel, and signed capability policy are not
+overrideable.
 Configured checks remain an empty compatibility field in the public MVP.
 Non-empty publisher declarations or Launch selections are rejected until CMA
 has a reviewed resource- and network-bounded sandbox runner.
@@ -458,6 +489,14 @@ Admission failures use stable Problem Details codes:
 Each response includes actionable `remediation`. Capability refusal also
 includes the canonical `capability`; draft expiry includes
 `field: "draft_expires_at"`. Clients must branch on `code`, not English detail.
+
+Publisher request-policy failures keep `code: "invalid_trigger_request"` and
+HTTP `422`. Their safe `field`, closed `validation_category`, and fixed
+`remediation` distinguish `repository_identity`, `repository_policy`,
+`repository_ref`, `scope_capability`, `commercial_policy`, and the fallback
+`trigger_policy`. The server never copies the rejected value, provider response,
+or internal validation detail into these fields. Create, replace, and publish
+document this `422` response explicitly in OpenAPI.
 
 Every irreversible or user-significant command carries both
 `expected_revision` and `snapshot_digest`. The digest target is deliberately not
@@ -512,6 +551,9 @@ duplicate, any sequence gap, or a mixed-Launch stream must be rejected.
 `next_cursor` is the last unique accepted sequence, or `after` for an empty
 page. Events never contain credentials, raw provider payloads, internal
 idempotency hashes, worker fences, or object references.
+`pull_request_status_refresh_requested` records the accepted queued command;
+`pull_request_status_changed` carries the observed PR state, mergeability,
+checks, and nullable safe failure.
 
 REST `GET /api/v1/launches/{launch_id}/events` remains a bounded JSON page for
 SDK and request/response clients. AG-UI
@@ -550,14 +592,37 @@ confirmation routes; neither can silently become the other.
 The reconciled pull-request record adds provider numeric/node id and number,
 canonical URL, `creating|updating|open|closed_unmerged|merged|recovery_required`
 state, observed base/head/title/body, mergeability/checks, confirmation and
-provider times. An ambiguous provider response is reconciled by marker and numeric
-identity before retry; unresolved ambiguity becomes `recovery_required`.
+provider times. Its nullable `status_failure` is the latest safe status-read
+failure, `provider_request_id` is safe provider correlation metadata, and
+`head_matches_launch` reports whether the observed provider head still equals
+the retained contribution head. A false match leaves the PR readable and
+disables Update. An ambiguous provider response is reconciled by marker and
+numeric identity before retry; unresolved ambiguity becomes
+`recovery_required`.
+
+Positive PR creation settles at top-level `pr_open`, not `completed`. While it
+remains there, the same Launch can capture another reviewed diff and explicitly
+Update its still-matching open PR. CMA also polls open PR status independently of
+the browser. The refresh route only makes the next fenced observation due and
+returns the revision that recorded that request; it does not call the provider
+on the HTTP request thread.
+
+Completion has two closed paths from `pr_open`. A positively observed merge
+atomically advances the Launch to `completed`. Alternatively, while the provider
+record is still `open`, the contributor may POST `/complete` with
+`expected_revision`, the current `effective.digest` as `snapshot_digest`, and an
+idempotency key. That exact-snapshot confirmation returns `200`, performs no
+provider request, starts revocation of remaining Launch reach, and retains the
+fork, branch, contribution commit, and open PR unchanged for maintainers. Once
+completed, CMA accepts no further contribution, Update, or status-refresh command
+for that Launch. `closed_unmerged` remains top-level `pr_open`, is not eligible
+for explicit open-PR handoff, and offers New Launch; CMA never reopens it.
 
 The server-owned fixture corpus under
 `api/crates/layer1-public/tests/fixtures/rest-sdk/` is serialized and parsed by
 server DTOs and copied byte-identically into both SDKs. The TypeScript SDK decodes
 the response fixtures through its public transport; the Rust SDK deserializes
-them into independent public types. `/openapi.json` enumerates all 30 operations
+them into independent public types. `/openapi.json` enumerates every operation
 above and references concrete schemas for every owned nested representation.
 
 ---
@@ -1875,7 +1940,7 @@ X-Request-Id: 94ea38a2-c2cb-4a43-9fe2-d25a60b59ec5
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
 | `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
-| `409` | Conflicts with current state - session rotating, session terminated, live-session limit reached, quoted rate card changed, or an operation with this key is still running (`code: "idempotency_in_flight"`) |
+| `409` | Conflicts with current state - session rotating, session terminated, live-session limit reached, quoted rate card changed, an operation with this key is still running (`code: "idempotency_in_flight"`), or its execution lease ended without a replay receipt (`code: "idempotency_recovery_required"`) |
 | `413` | The request body exceeds 2 MiB / 2,097,152 bytes (`code: "request_too_large"`) |
 | `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
 | `422` | Well-formed but semantically invalid — zero terminal dimension, invalid session size, or an operation key reused with another body (`code: "idempotency_key_reused"`) |

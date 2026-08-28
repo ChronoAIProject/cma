@@ -43,6 +43,11 @@ and alert/dashboard intervals are linked from
 The public preview, review, and support surfaces can run without provider
 workers. The in-process scheduler starts only when all of these exist:
 
+Anonymous contributor-cost preview also remains readable during pricing-store
+or rate-card unavailability. It returns `quote_unavailable` without an amount;
+authenticated review remains fail-closed until it can calculate and pin a valid
+current quote. An immutable zero-cost policy continues to return exact zero.
+
 1. CMA runs in provider authentication mode and constructed the typed NyxID
    GitHub broker.
 2. `CHRONO_PLATFORM_BASE_URL`, `CHRONO_STORAGE_CLIENT_ID`,
@@ -81,6 +86,7 @@ values fail startup rather than falling back to a broader policy.
 | `CHRONO_TRIGGER_REPOSITORY_IDS` | empty | Comma-separated numeric upstream GitHub repository IDs. Names are not accepted. Empty denies all. |
 | `CHRONO_TRIGGER_USER_COHORT_PERCENT` | `0` | Stable SHA-256 subject cohort from 0 through 100. Zero admits no contributor. |
 | `CHRONO_TRIGGER_CHANGED_FILE_LIMIT` | `1000` | Maximum files in one reviewed publication, bounded from 1 through the complete-review schema ceiling of 1,000. Retain pinned-provider measurement evidence for the selected deployment value. |
+| `CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS` | `300` | Persisted asynchronous fork-readiness deadline, bounded from 1 through 3,600 seconds. The five-minute default is GitHub's support-escalation threshold, not a provider completion guarantee. |
 | `CHRONO_TRIGGER_CLEANUP_MODE` | `dry_run` | `dry_run` persists an exact plan but has no deletion port. `execute` sends eligible cleanup through the normal fenced effect worker. |
 | `CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS` | `5` | Cadence of each independent lane, 1 through 300 seconds. Missed ticks are skipped. |
 | `CHRONO_TRIGGER_WORKER_PAGE_SIZE` | `50` | Candidate rows per page, bounded by the public core maximum. |
@@ -184,9 +190,10 @@ change record.
    emit heartbeats and no provider worker prerequisite is missing.
 2. Keep orchestration paused and the capability kill switch on. Set
    `CHRONO_TRIGGER_RUNTIME_CAPABILITIES` to the exact capabilities demonstrated
-   by the pinned runtime image, then verify one supported and one deliberately
-   omitted-capability review. Add one approved publisher subject and one
-   disposable public fixture's numeric repository ID.
+   by the pinned runtime image only after linked, independently reviewed `D-09`
+   evidence passes for that exact deployed image digest. Then verify one
+   supported and one deliberately omitted-capability review. Add one approved
+   publisher subject and one disposable public fixture's numeric repository ID.
 3. Set the user cohort to a small non-zero percentage. Record deterministic
    in-cohort and out-of-cohort fixture subjects; admission remains masked by the
    environment and orchestration gates until the later steps.
@@ -222,7 +229,7 @@ always claimed only after a durable Launch lease and a fresh rollout decision.
 | `prompt_pending` | Do not claim a not-yet-dispatched prompt. A committed dispatch fence follows the seven-state at-most-once recovery contract and is never blindly resent. | Revoke subsequent GitHub reach without ending the session. | Conversation, workspace, and visible history remain. |
 | `ready` | No new automatic GitHub/checkpoint effect is claimed. | Stop renewal and converge to effective revocation. | The session remains available for conversation, inspection, export, and recovery subject to the now-revoked GitHub reach. |
 | `contributing`, `pr_pending` | Freeze the next effect. Reconcile a possibly written checkpoint, branch, or PR before settling. | Stop subsequent session GitHub use; CMA-owned ambiguous writes still reconcile under their retained intent. | Workspace, fork, branch, commits, and PR are preserved. |
-| `pr_open` | No new Trigger write is claimed. | Revoke remaining session reach. | The open PR remains on GitHub and the session is not terminated. |
+| `pr_open` | No provider status read or write is claimed while rollout is paused. When permitted, fenced read-only status observation and explicit same-Launch Update resume; CMA never merges, reopens, or rewrites the PR automatically. Contributor-confirmed completion is a CMA-only handoff with no provider call. | A kill switch revokes remaining session reach and therefore prevents further agent GitHub work without ending the session. Completion also converges remaining reach to revocation. | Until completion, an open PR remains updateable through the reviewed flow. Contributor-confirmed handoff of an open PR or a positively observed merge advances to `completed`; either path preserves the fork, branch, commit, and PR. Closed-unmerged state remains readable and offers New Launch. |
 | `failed_retryable` | Preserve retry time and durable intent but do not retry while denied. | Revoke reach independently. | Recovery information and session linkage remain visible. |
 | `completed`, `failed_terminal`, `cancelled` | No ordinary orchestration. Retention execution is also frozen in `execute` mode until rollout permits it. | Converge any remaining reach to revocation before cleanup eligibility. | GitHub work and sandboxes are never selected by Trigger cleanup. |
 
@@ -258,9 +265,56 @@ not_acquired, no_work, errors, page_budget_exhausted, actionable,
 elapsed_milliseconds
 ```
 
+The same event carries `event_name=cma_trigger_scheduler_pass` and
+`schema_version=1`. Every candidate emits
+`event_name=cma_trigger_scheduler_candidate` with the closed `lane` and
+`outcome` values plus `elapsed_milliseconds`. Log-based metric extraction may
+use only the closed `lane` and `outcome` dimensions; Launch and correlation IDs
+remain exemplars for investigation, never metric labels. This makes pass count,
+candidate count, outcome rate, and latency distributions executable without
+introducing a second telemetry transport.
+
+A raw threshold observation emits
+`event_name=cma_trigger_alert_candidate`, `schema_version=1`, the stable
+`alert_id`, severity, lane, and bounded pass counters. The process emits
+candidates for scheduler failure/page exhaustion, majority lease contention
+without completion, closed provider outage/rate-limit failures, capability
+failure, and cleanup failure/debt. Deployment-owned rules apply the sustained
+windows in section 7; an emitted candidate is not by itself a delivered page or
+release evidence.
+
+The activity recorder emits a separate info-level
+`event_name=cma_trigger_activity_counter`, `schema_version=1`, `increment=1`
+event after each successful `TriggerLaunchCreate` or
+`TriggerLaunchPullRequestOpen` request. Its only differentiating field is the
+closed `activity_counter` value `launch_create_succeeded` or
+`pull_request_open_succeeded`; it carries no subject, Launch, repository,
+provider, request, or correlation identifier. A deployment rule sums each
+counter independently over completed five-minute windows and compares it with
+the absolute rollout envelope approved in `O-02`. The envelope is an integer,
+not a learned unbounded baseline, and must be installed before a nonzero public
+cohort is allowed.
+
+These are accepted control-plane request counts, not unique-resource counts.
+README re-clicks and idempotent response replays can increment them without
+creating another Launch or pull request. They are therefore a safe anomaly
+detector and investigation trigger; only durable owner-safe Launch/PR evidence
+can establish external resource multiplicity.
+
 Every worker settlement also emits `launch_id`, `correlation_id`, action/effect,
-outcome, fence, and safe policy generation or rollout reason. The durable
-activity record may additionally contain only these allowlisted identifiers:
+outcome, fence, and safe policy generation or rollout reason.
+
+Effect, capability, and cleanup settlements carry the stable event names
+`cma_trigger_effect_settlement`, `cma_trigger_capability_settlement`, and
+`cma_trigger_cleanup_plan`, all at `schema_version=1`. Effect settlements also
+carry closed effect/mode/outcome/state/failure-class fields and the bounded
+public failure code. Provider-degradation candidates are emitted only for the
+closed GitHub/broker rate-limit, authentication-unavailable, and temporary
+outage codes; validation, user-action, ambiguity, and quota results do not
+masquerade as a provider outage.
+
+The durable activity record may additionally contain only these allowlisted
+identifiers:
 
 ```text
 subject, launch ID target, correlation ID, revision digest,
@@ -293,13 +347,15 @@ success and not an infinite spinner.
 | Cleanup eligibility | 99% of eligible plans appear within 15 minutes; execute completions within 24 hours | Warn on a 15-minute plan backlog; page on a 24-hour execute backlog or any widened/tampered target rejection. |
 | Session continuity | 100% across Trigger flags and cleanup | Page immediately if a flag or Trigger cleanup stops, rotates, blanks, or deletes a running session. |
 | Credential/content leakage | Zero | Page immediately on any credential, prompt, repository path/content, or provider body detected in logs, activity, support, or artifacts. Preserve the evidence under incident policy and revoke authority. |
+| Accepted Launch/PR request volume | Each successful Launch-create and PR-open activity counter stays within its deployment-approved absolute five-minute envelope; a disabled/zero cohort expects zero | Warn at or above 80% for 3 completed windows. Fire `TRIGGER-LAUNCH-PR-VOLUME` at an envelope breach in any completed window; missing counter/rule/envelope wiring blocks public exposure under `O-02`. |
 
 Dashboard panels must include README preview-to-review, review-to-Start, and
 Start-to-ready conversion; state duration percentiles; effect execute versus
 reconcile; retry/defer/failure class; fork readiness; initial dispatch state;
 checkpoint/restore; branch/PR result; capability generation and revocation;
-provider status/rate limiting; lease contention; scheduler page budget; and
-cleanup backlog. Repository/dashboard infrastructure is owned outside this
+provider status/rate limiting; accepted Launch/PR activity counters and their
+approved envelopes; lease contention; scheduler page budget; and cleanup
+backlog. Repository/dashboard infrastructure is owned outside this
 repository, so its saved view must use the stable fields above and carry a link
 to this runbook. The deployment-specific dashboard and alert-rule URLs are
 release evidence, not values that this repository can invent. Public exposure
@@ -311,7 +367,7 @@ are attached and exercised.
 | Severity | Meaning | Acknowledge and route |
 |---|---|---|
 | `SEV-0` | Credential/content disclosure, cross-owner or unauthorized effect, session loss/interruption, destructive cleanup, automatic duplicate task, or accepted policy beyond the security bound | Page the platform on-call and runbook owner immediately; appoint an incident commander; engage security plus the affected identity/runtime owner within 15 minutes |
-| `SEV-1` | Systematic inability to Start or recover, unknown external-write outcome without safe evidence, broken revocation lane, missing audit authority, or sustained SLO breach affecting multiple users | Page the platform on-call and runbook owner; assign identity, runtime, storage, or provider owner as indicated; update at least every 30 minutes |
+| `SEV-1` | Systematic inability to Start or recover, unknown external-write outcome without safe evidence, broken revocation lane, missing audit authority, accepted Launch/PR volume outside the approved rollout envelope, or sustained SLO breach affecting multiple users | Page the platform on-call and runbook owner; assign identity, runtime, storage, or provider owner as indicated; update at least every 30 minutes |
 | `SEV-2` | Bounded provider degradation, retry/backlog growth inside safety bounds, isolated stuck Launch, or expected legacy-runtime acknowledgement noise | Notify the owning team during the staffed window; assign a responder and review before widening rollout |
 | `SEV-3` | Isolated usability/documentation defect with no authority, data, continuity, or duplicate-effect risk | File and triage through the ordinary product queue |
 
@@ -329,6 +385,7 @@ notification target in release evidence:
 | [`TRIGGER-SESSION-CONTINUITY`](#trigger-session-continuity) | SEV-0 | Stop rollout changes, preserve the session ledger/runtime evidence, and apply forward-safe rollback |
 | [`TRIGGER-DUPLICATE-DISPATCH`](#trigger-duplicate-dispatch) | SEV-0 | Fence the Launch, pause orchestration, and preserve all delivery generations; never send a compensating prompt |
 | [`TRIGGER-UNAUTHORIZED-EFFECT`](#trigger-unauthorized-effect) | SEV-0 | Enable both pause and capability kill switch and preserve numeric identity/policy evidence |
+| [`TRIGGER-LAUNCH-PR-VOLUME`](#trigger-launch-pr-volume) | SEV-1 | Stop cohort widening, compare safe request counters with unique durable Launch/PR records, and never delete or close user GitHub work as containment |
 | [`TRIGGER-CAPABILITY-BOUND`](#trigger-capability-bound) | SEV-1 | Keep revocation pending, stop renewal, inspect acknowledgement/expiry, and do not claim effective revocation early |
 | [`TRIGGER-STUCK-LAUNCH`](#trigger-stuck-launch) | SEV-1 | Use the owner-safe support lookup, inspect lease/effect evidence, and schedule only read-only reconciliation |
 | [`TRIGGER-SCHEDULER-HEALTH`](#trigger-scheduler-health) | SEV-1 | Compare all four lane heartbeats, page budget, cursor, and lease contention before changing concurrency |
@@ -362,6 +419,18 @@ automatic second owner turn was actually accepted before downgrading severity.
 capability kill switch. Preserve numeric upstream/fork/account IDs, exact
 UserService ID, policy digest/generation, ref identity, and provider request ID.
 Do not delete or rewrite the resulting GitHub resource as incident response.
+
+<a id="trigger-launch-pr-volume"></a>
+**TRIGGER-LAUNCH-PR-VOLUME.** Stop cohort widening and new Trigger admission
+through the section 11 controls without stopping or degrading an existing
+session. Preserve the completed alert window, its approved integer envelopes,
+and both closed counter totals. Use the authorized activity/support views to
+compare accepted requests with unique durable Launches and pull-request records;
+do not add identity or repository labels to the metric. Separate README
+re-clicks and idempotent replays from genuinely distinct resources. If unique
+external work is abnormal, keep new effects paused, follow the duplicate-effect
+and provider procedures as applicable, and contact affected owners or upstream
+maintainers. Never close, delete, or rewrite a pull request as containment.
 
 <a id="trigger-capability-bound"></a>
 **TRIGGER-CAPABILITY-BOUND.** Inspect the signed-policy generation and expiry,
@@ -639,6 +708,58 @@ Evidence must name the build revision, environment, UTC interval, configuration
 revision, numeric fixture repository, expected result, actual result, and
 redaction applied. A production restart is never performed solely to collect a
 drill transcript.
+
+### Git Data publication-capacity measurement
+
+`CHRONO_TRIGGER_CHANGED_FILE_LIMIT=1000` is the schema/configuration ceiling,
+not provider evidence. Unit tests and local GitHub/NyxID fakes prove request
+shape, batching, recovery, and refusal classification; they cannot establish a
+safe file-count value against the deployed proxy/provider pair. Until the
+following drill passes, select a lower value supported by retained evidence or
+keep public branch publication disabled.
+
+The default preparation pass is non-mutating. Against local fakes or retained
+redacted artifacts, reconstruct the exact reviewed mix of deletions, mode-only
+entries, inline UTF-8 content, and separate binary/large-text blob writes. Verify
+the request count, 128 KiB per-file and 4 MiB cumulative inline decisions,
+digest-sealed blob/tree/commit recipe, one-at-a-time object cursor, final
+`force=false` ref body, 32 MiB response bound, and typed rate-limit/refusal
+projections. Label this result **simulation only**; it does not satisfy the
+provider measurement gate and must not create, update, or delete a GitHub
+resource.
+
+A real measurement requires explicit owner authorization for a disposable
+GitHub fork/branch and an approved staging/canary deployment. It must not target
+an upstream branch, a contributor's existing fork, or production solely for
+evidence collection. For each candidate changed-file value and representative
+byte mix:
+
+1. Pin and record the CMA build, NyxID build/service identity, GitHub API
+   version, configuration revision, UTC interval, numeric upstream/fork/account
+   identities, expected branch head, and cleanup owner.
+2. Record exact counts and bytes for deletions, mode-only changes, inline text,
+   separate text blobs, binary blobs, executable/symlink modes, and workflow
+   paths. Include the resulting blob, tree, commit, ref-read, ref-write, and
+   verification-read request counts.
+3. Publish only through the normal reviewed confirmation path. Capture redacted
+   request/response timings, HTTP statuses, provider request IDs, `Retry-After`
+   and rate-limit headers, object cursor transitions, expected/resulting heads,
+   and whether every blob, tree, commit, guarded ref, and final verification
+   phase completed.
+4. Repeat the authorized lost-response and stale-head cases. Prove recovery
+   reconstructs only the sealed recipe, performs no blind ref retry, creates no
+   divergent logical commit, and preserves a manually changed head.
+5. Record the pass/fail threshold and reason, independent review, and rollout
+   decision. A pass supports only the measured provider/build/configuration and
+   file/byte mix; it is not a mutable GitHub limit baked into product logic.
+6. Remove only the disposable resources named in the authorization, using the
+   approved cleanup owner and provider procedure. Attach resource-count and
+   branch/ref evidence before and after cleanup; CMA cleanup itself must not be
+   broadened to delete GitHub resources.
+
+The evidence package must explicitly say **not run** when this provider drill
+has not occurred. In particular, the current 1,000-file ceiling must not be
+reported as measured or release-ready based on local tests alone.
 
 ## 15. Recovery drill procedure
 

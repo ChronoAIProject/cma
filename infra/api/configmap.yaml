@@ -167,6 +167,10 @@ data:
   # complete review schema's 1,000-file bound. Change it only with pinned-provider
   # measurement evidence and keep the recorded value with the release evidence.
   CHRONO_TRIGGER_CHANGED_FILE_LIMIT: "1000"
+  # Bound asynchronous fork readiness reconciliation. GitHub's documented
+  # support-escalation threshold supplies the five-minute default; it is an
+  # operational deadline, not a provider completion guarantee.
+  CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: "300"
   # Dry-run retains the exact CMA-owned baseline/checkpoint/diff plan but has no
   # deletion port. Promote to execute only after reviewing dry-run inventory;
   # execute reuses the normal fenced effect worker. Neither mode enumerates or

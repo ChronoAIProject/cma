@@ -11,7 +11,7 @@ four-layer architecture, the branch model, and the CI gates. Those rules are bin
 | Path | Contents |
 |---|---|
 | `api/` | Backend — a single Rust workspace. Layers 1–4. |
-| `web/` | Frontend — a single React project. Read-only dashboard plus the terminal surface. |
+| `web/` | Frontend — a single React project. Interactive session, Trigger, contribution, publishing, and terminal surfaces. |
 | `infra/` | Dockerfiles and Kubernetes manifests. Fixed file list; must never diverge from the code. |
 | `docs/` | All documentation, markdown only. |
 
