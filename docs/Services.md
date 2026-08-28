@@ -127,8 +127,14 @@ Recorded here rather than left in an issue, because a page that describes the in
 **Established by the Trigger enforcement contract and deterministic tests:**
 
 - A Trigger runtime receives a signed, Launch- and session-bound GitHub policy
-  only when it advertises `github_capability_v1`; an old runtime or a missing,
+  only when it advertises `github_capability_v2`; an old runtime or a missing,
   expired, revoked, malformed, or stale-generation policy fails closed.
+- The policy binds the canonical NyxID GitHub catalog service ID, exact
+  UserService ID, and current per-user slug. The slug may be suffixed and is
+  evidence rather than authority. GitHub calls use
+  `/api/v1/proxy/{catalog_service_id}/{github_path}` with `_nyxid_via` equal to
+  the exact UserService ID; slug routes and UserService-ID direct routes fail
+  closed.
 - Before issue and every renewal, CMA resolves the numeric repository through
   the exact NyxID UserService and signs only the provider-returned canonical
   owner/name binding. The policy lifetime is at most 60 seconds with at most 5
@@ -143,6 +149,13 @@ Recorded here rather than left in an issue, because a page that describes the in
 - Pull-request creation/update and other CMA-owned irreversible effects remain
   typed server-side writers. A session policy never authorizes upstream writes
   or pull-request mutation.
+- Capability-required MVP runtimes allow non-GitHub slug passthrough only for
+  the frozen deployment baseline `chrono-llm`, `ornn-api`, and `ornn`. A
+  baseline change requires a reviewed Layer 4 update and built-image evidence;
+  an arbitrary configured reach is never silently promoted to passthrough.
+- Historical v1 Trigger records remain readable, but missing catalog/UserService
+  route bindings cannot authorize a new provision, readoption, rotation,
+  recovery, renewal, or GitHub effect.
 
 **Not yet established**, and each needs a signed-in identity with a service actually granted:
 

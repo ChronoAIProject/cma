@@ -35,7 +35,8 @@ link through an untrusted redirect or analytics service.
 For the public MVP, the publisher needs:
 
 - a CMA account;
-- a NyxID `api-github` UserService connected to the GitHub identity that will
+- a personal NyxID GitHub OAuth UserService linked to the canonical
+  `api-github` catalog service and connected to the GitHub identity that will
   authorize publication;
 - `admin` or `maintain` permission on the exact upstream repository, or
   ownership of that personal repository;
@@ -48,6 +49,12 @@ Generic `push`, `triage`, or organization membership is not enough to publish.
 CMA resolves and stores GitHub's numeric repository and account identities
 through the selected NyxID service. A typed refusal is not safely fixed by
 typing a different owner/name pair or asking for broader scopes.
+
+For the public MVP, `public_repo` is required and only `read:user` and
+`user:email` may accompany it. A broader `repo`, `workflow`, organization,
+admin, write, delete, package, gist, or unknown scope is refused even when it
+could perform the requested operation. Reauthorize with the least-privilege
+grant; do not ask CMA to accept the broader connection.
 
 No Trigger API key is required. CMA authenticates the publisher when the draft
 is created and published. NyxID owns the GitHub OAuth access and refresh tokens;
@@ -167,6 +174,7 @@ or workspace needed for recovery. GitHub work remains owned by the contributor.
 | Sign-in required | CMA does not yet have a current contributor session | Sign in and return to the same Trigger |
 | GitHub connection required | No suitable active NyxID GitHub service is selected | Connect, reconnect, or select the intended account |
 | Scope insufficient | The service cannot perform a required operation class | Review NyxID/GitHub consent; do not paste a token into CMA |
+| Scope unapproved | The service grants authority broader than the public MVP permits | Reauthorize or select a connection with `public_repo` and only the allowed ancillary identity scopes |
 | Upstream not forkable | Current repository or organization policy refuses an MVP fork | Ask the repository owner about policy or stop; CMA does not bypass it |
 | Fork network occupied | The account already has another fork in the same network | Review the named safe remediation; CMA never deletes or repurposes it |
 | Authentication required | Delegated CMA authority expired or was revoked | Reauthenticate, then resume the same Launch |

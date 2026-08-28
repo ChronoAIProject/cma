@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{SessionCredentialAuthority, SessionId, SubjectId};
 
-pub const CAPABILITY_POLICY_VERSION: u32 = 1;
+pub const CAPABILITY_POLICY_VERSION: u32 = 2;
 pub const CAPABILITY_MAX_LIFETIME_SECONDS: u64 = 60;
 pub const CAPABILITY_MAX_CLOCK_SKEW_SECONDS: u64 = 5;
 
@@ -33,6 +33,16 @@ pub enum ConnectionState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionSnapshot {
     pub service_id: String,
+    /// Canonical NyxID catalog identity for the selected GitHub service.
+    ///
+    /// The fields are optional only so authority captured before policy v2
+    /// remains readable. Fresh preflights and effects must call
+    /// [`Self::validate_for`], which rejects a missing binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_catalog_service_id: Option<String>,
+    /// Exact per-user NyxID route slug paired with `service_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_user_service_slug: Option<String>,
     pub service_state_version: i64,
     pub backing_key_id: String,
     pub account: ConnectedAccount,
@@ -47,6 +57,18 @@ pub struct ConnectionSnapshot {
 
 impl ConnectionSnapshot {
     pub fn validate_for(&self, required: &[ScopeClass]) -> Result<(), TriggerValidationError> {
+        self.validate_historical_for(required)?;
+        self.github_binding()?;
+        Ok(())
+    }
+
+    /// Validate authority fields that existed before the exact GitHub route
+    /// binding was persisted. This is limited to historical record reads; it
+    /// must not be used to authorize a fresh provider effect or policy.
+    pub(crate) fn validate_historical_for(
+        &self,
+        required: &[ScopeClass],
+    ) -> Result<(), TriggerValidationError> {
         if self.service_id.trim().is_empty()
             || self.service_state_version <= 0
             || self.backing_key_id.trim().is_empty()
@@ -83,6 +105,22 @@ impl ConnectionSnapshot {
         }
         Ok(())
     }
+
+    /// Return the exact GitHub catalog and per-user route identities required
+    /// at every fresh authority boundary.
+    pub fn github_binding(&self) -> Result<(&str, &str), TriggerValidationError> {
+        let catalog_service_id = self
+            .github_catalog_service_id
+            .as_deref()
+            .ok_or_else(|| missing_github_binding("connection.github_catalog_service_id"))?;
+        let user_service_slug = self
+            .github_user_service_slug
+            .as_deref()
+            .ok_or_else(|| missing_github_binding("connection.github_user_service_slug"))?;
+        validate_catalog_service_id("connection.github_catalog_service_id", catalog_service_id)?;
+        validate_user_service_slug("connection.github_user_service_slug", user_service_slug)?;
+        Ok((catalog_service_id, user_service_slug))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +141,10 @@ pub struct AuthorityProvenance {
     pub subject: SubjectId,
     pub subject_token_generation: u64,
     pub service_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_catalog_service_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_user_service_slug: Option<String>,
     pub service_state_version: i64,
     pub backing_key_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,6 +156,8 @@ pub struct AuthorityProvenance {
 impl AuthorityProvenance {
     pub fn detects_drift(&self, connection: &ConnectionSnapshot) -> bool {
         self.service_id != connection.service_id
+            || self.github_catalog_service_id != connection.github_catalog_service_id
+            || self.github_user_service_slug != connection.github_user_service_slug
             || self.service_state_version != connection.service_state_version
             || self.backing_key_id != connection.backing_key_id
     }
@@ -141,6 +185,8 @@ pub struct LaunchCapability {
     pub session_id: SessionId,
     pub runtime_audience: String,
     pub service_id: String,
+    pub github_catalog_service_id: String,
+    pub github_user_service_slug: String,
     pub upstream: RepositoryIdentity,
     pub fork: RepositoryIdentity,
     pub allowed_ref: String,
@@ -189,6 +235,10 @@ impl LaunchCapability {
                 self.runtime_audience.as_str(),
             ),
             ("capability.service_id", self.service_id.as_str()),
+            (
+                "capability.github_catalog_service_id",
+                self.github_catalog_service_id.as_str(),
+            ),
             ("capability.allowed_ref", self.allowed_ref.as_str()),
             ("capability.issuer", self.issuer.as_str()),
             ("capability.audience", self.audience.as_str()),
@@ -201,6 +251,14 @@ impl LaunchCapability {
                 return Err(TriggerValidationError::field(field, "is not usable"));
             }
         }
+        validate_catalog_service_id(
+            "capability.github_catalog_service_id",
+            &self.github_catalog_service_id,
+        )?;
+        validate_user_service_slug(
+            "capability.github_user_service_slug",
+            &self.github_user_service_slug,
+        )?;
         self.upstream.validate_public_upstream()?;
         if self.fork.repository_id == 0
             || self.fork.owner_id == 0
@@ -227,6 +285,48 @@ impl LaunchCapability {
         }
         Ok(())
     }
+}
+
+fn missing_github_binding(field: &'static str) -> TriggerValidationError {
+    TriggerValidationError::field(
+        field,
+        "is required before fresh GitHub authority can be exercised",
+    )
+}
+
+fn validate_catalog_service_id(
+    field: &'static str,
+    value: &str,
+) -> Result<(), TriggerValidationError> {
+    if value.is_empty()
+        || value.len() > 256
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(TriggerValidationError::field(field, "is not usable"));
+    }
+    Ok(())
+}
+
+fn validate_user_service_slug(
+    field: &'static str,
+    value: &str,
+) -> Result<(), TriggerValidationError> {
+    if value.is_empty()
+        || value.len() > 80
+        || value.starts_with('-')
+        || value.ends_with('-')
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(TriggerValidationError::field(
+            field,
+            "is not a canonical NyxID service slug",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

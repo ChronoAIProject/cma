@@ -944,7 +944,7 @@ impl TriggerRevision {
         }
         authority
             .connection
-            .validate_for(&self.content.repository_access.required_scope_classes)?;
+            .validate_historical_for(&self.content.repository_access.required_scope_classes)?;
         match self.availability {
             TriggerAvailability::Published if self.retired_at.is_some() => {
                 Err(TriggerValidationError::field(

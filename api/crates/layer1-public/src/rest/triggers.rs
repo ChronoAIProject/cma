@@ -3205,6 +3205,11 @@ impl IntoResponse for TriggerProblem {
                             "trigger-scope-insufficient",
                             "trigger_scope_insufficient",
                         ),
+                        Authority::UnapprovedScope { .. } => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "trigger-scope-unapproved",
+                            "trigger_scope_unapproved",
+                        ),
                         Authority::AuthorityDrift => (
                             StatusCode::CONFLICT,
                             "trigger-authority-drift",

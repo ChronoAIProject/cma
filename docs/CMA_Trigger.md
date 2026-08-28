@@ -37,7 +37,8 @@ complete diff and explicitly publishes or updates a pull request.
 The MVP includes:
 
 - public GitHub repositories whose policy currently permits forking;
-- user-owned NyxID `api-github` OAuth connections;
+- user-owned NyxID GitHub OAuth UserServices linked to the canonical
+  `api-github` catalog service;
 - Codex sessions that advertise the required capabilities;
 - GitHub REST and Git Data operations through NyxID;
 - one contributor-owned fork per GitHub fork network;
@@ -374,6 +375,39 @@ deployment has no usable managed GitHub authentication path. Duplicate GitHub
 providers, a noncanonical/nil/invalid UUID, the wrong provider type, or a
 malformed inventory is `trigger_provider_response_invalid` (`502`): NyxID
 returned contradictory or malformed evidence.
+
+CMA separately resolves the canonical `api-github` catalog entry and exactly
+one catalog service with that slug. The catalog entry must identify
+`https://api.github.com`, bearer authorization, OAuth2, and the same canonical
+provider UUID. An eligible per-user UserService is recognized by its
+`catalog_service_id` lineage, not by its mutable per-user slug. CMA captures the
+exact catalog service ID, UserService ID, per-user slug, same-origin resource
+URI, backing key, and state version. A valid slug may be `api-github`,
+`api-github-2`, or another NyxID-assigned suffix; the slug is signed routing
+evidence, never GitHub authority by itself. A custom or PAT-backed service with
+a similar slug cannot substitute for the canonical OAuth lineage.
+
+Every credentialed GitHub call uses NyxID's catalog-ID route and exact
+UserService selector:
+
+```text
+/api/v1/proxy/{catalog_service_id}/{github_path}
+    ?_nyxid_via={user_service_id}
+```
+
+Putting the UserService ID directly after `/proxy/`, or using
+`/proxy/s/{user_service_slug}`, is not the Trigger route. Catalog and service
+identity are freshly revalidated at preflight and effect boundaries; duplicate,
+missing, cross-origin, malformed, or lineage-mismatched evidence fails closed.
+
+The public MVP also applies a scope ceiling, not only a minimum. `public_repo`
+is required; `read:user` and `user:email` are the only allowed ancillary scopes.
+The broad `repo` scope, `workflow`, organization/admin/write/delete/package or
+gist scopes, and every unknown scope are refused as
+`trigger_scope_unapproved`. Missing `public_repo` remains the distinct
+`trigger_scope_insufficient` result. CMA never widens or silently accepts a
+broad grant to make a Launch proceed.
+
 Because NyxID's UserService listing is active-only, Launch preflight first reads
 the exact service authorization by ID: an exact inactive record is
 `connection_inactive`, an exact 404 is `connection_not_found`, and active
@@ -453,7 +487,7 @@ Launch creation requires the selected kernel/runtime cohort to advertise:
 - conversation input and output;
 - durable conversation snapshot/runtime carry;
 - complete workspace capture/restore through the selected #662 transport;
-- the Layer 4 `github_capability_v1` policy evaluator;
+- the Layer 4 `github_capability_v2` policy evaluator;
 - credential refresh and revoke-tombstone acknowledgement; and
 - the selected, closed GitHub operation classes.
 
@@ -473,8 +507,9 @@ The control plane and session have separate writers:
   only use its closed operation classes.
 - Fork, branch publication, and pull-request effects are typed CMA workers.
   PR creation/update never becomes a session capability.
-- Both paths use the exact NyxID UserService ID. Neither receives a GitHub
-  bearer.
+- Both paths use the exact NyxID catalog service ID plus UserService ID tuple.
+  Session calls use the catalog-ID route with `_nyxid_via` set to that exact
+  UserService ID. Neither path receives a GitHub bearer.
 
 ### Layer and crate ownership
 
@@ -511,10 +546,12 @@ same implementation change.
 
 ## 8. GitHub credential architecture
 
-The MVP selects the contributor's user-owned NyxID `api-github` OAuth
-connection. The choice is not based on OAuth being repository-scoped; it is
-not. Repository and branch isolation come from the signed Layer 4 policy for
-session calls and typed CMA writers for control-plane effects.
+The MVP selects the contributor's user-owned NyxID GitHub OAuth UserService by
+canonical `api-github` catalog lineage. The per-user slug is not authority and
+may carry a NyxID-assigned suffix. The choice is not based on OAuth being
+repository-scoped; it is not. Repository and branch isolation come from the
+signed Layer 4 policy for session calls and typed CMA writers for control-plane
+effects, while the public-MVP scope ceiling refuses any broader grant.
 
 | Property                        | NyxID GitHub OAuth                                                    | GitHub App installation                                                                 |
 | ------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -924,6 +961,9 @@ refresh is transparent and does not rotate the session key.
 Before each irreversible CMA effect and each signed-capability renewal, CMA:
 
 - reloads the exact UserService by ID;
+- freshly resolves the canonical GitHub catalog identity and requires the
+  UserService's `catalog_service_id`, per-user slug, and same-origin resource URI
+  to match the retained routing tuple;
 - requires it to be active and still owned/available to the subject;
 - compares its public state version and backing key ID with the Launch
   preflight snapshot;
@@ -968,6 +1008,7 @@ Each signed policy binds:
 ```text
 Launch and session/runtime audience
 exact NyxID UserService ID
+exact NyxID catalog service ID and per-user UserService slug
 upstream and fork numeric IDs and node IDs
 owner numeric IDs and node IDs
 current canonical owner/name binding
@@ -990,7 +1031,10 @@ Git Data and pull-request write routes are owner/name-addressed. NyxID remote
 the provider surface and does **not** contain the numeric-repository, fork,
 ref, or Git Data routes CMA requires. That catalog is therefore neither route
 evidence nor an allowlist for this workflow: the generic proxy remains
-passthrough when `proxy_operation_policy` is absent. The guarded P-01 provider
+passthrough when `proxy_operation_policy` is absent. This operation-catalog
+limitation is separate from transport routing: all Trigger calls still use the
+exact catalog service ID with `_nyxid_via` bound to the exact UserService ID.
+The guarded P-01 provider
 campaign must prove those exact passthrough routes against GitHub before
 release. Provider numeric lookup returns the authoritative repository ID,
 node ID, owner IDs, and canonical name; the required write routes remain
@@ -1031,7 +1075,18 @@ Revocation is also state-dependent:
   skew.
 
 Old runtime images do not understand this policy. Trigger provisioning is
-disabled for any cohort that does not advertise `github_capability_v1`.
+disabled for any cohort that does not advertise `github_capability_v2`.
+Historical v1 Launch/session records remain deserializable for audit, but a
+record without the exact catalog service ID and per-user slug cannot authorize
+new provisioning, readoption, rotation, recovery, policy renewal, or a GitHub
+effect. Because v1 was never publicly enabled, operators replace or explicitly
+revalidate any pre-release canary instead of synthesizing missing authority.
+
+For the public MVP, capability-required runtimes freeze non-GitHub platform
+passthrough to the deployed baseline `chrono-llm`, `ornn-api`, and `ornn`.
+Configured reaches outside that set cannot become slug-route passthroughs. A
+baseline-service change therefore requires a reviewed Layer 4 update and new
+D-09 image evidence; it is not a ConfigMap-only rollout.
 
 ## 15. Workspace capture decision
 
@@ -1097,7 +1152,7 @@ the same proof in D-09.
 | Trigger is edited after publication                  | Immutable revision digest captured by Launch and outbox                                                                                   | Retirement affects only new Launches                                               |
 | Former maintainer's revision remains linked directly | Role is verified at publish; Start revalidates repository identity/policy; publisher/operator retirement and README removal are available | Role loss alone cannot retroactively rewrite an immutable public revision          |
 | OAuth CSRF/replay/open redirect                      | Durable single-use state, PKCE, subject/browser binding, fixed return allowlist                                                           | Expired state restarts sign-in without starting work                               |
-| Confused deputy or service-slug swap                 | Exact UserService ID, current subject ownership, three-authority preflight                                                                | Generic provider epoch is bounded as ADR-002 states                                |
+| Confused deputy, catalog swap, or service-slug swap  | Fresh canonical catalog lineage, exact catalog/UserService IDs, signed per-user slug, current subject ownership, three-authority preflight | Generic provider epoch is bounded as ADR-002 states                                |
 | Token/key disclosure                                 | NyxID custody, inert sandbox placeholder, redacted typed records, no values in logs/events/artifacts                                      | Terminal incident if secret scanning or runtime inspection finds a value           |
 | Broad GitHub OAuth reaches another repository        | Signed Layer 4 policy with typed parsers and numeric/name binding; typed CMA writers                                                      | Binding freshness is bounded, not atomic, as ADR-003 states                        |
 | Non-agent code in bot pod calls loopback proxy       | Policy is session/runtime-wide, not prompt trust; every process is constrained above credential injection                                 | Bot pod code can use allowed classes; it cannot escape them                        |

@@ -234,6 +234,18 @@ and snapshot support and the configured workspace and credential ports. A
 missing capability refuses review and is checked again at Start and immediately
 before sandbox provisioning. It never silently weakens a Trigger session.
 
+For every public-MVP preflight and irreversible GitHub boundary, require the
+fresh canonical `api-github` catalog service ID, the exact contributor
+UserService ID, its current NyxID-assigned slug and resource URI, and personal
+OAuth custody to match the retained authority tuple. GitHub requests must have
+the wire shape
+`/api/v1/proxy/{catalog_service_id}/{github_path}?_nyxid_via={user_service_id}`.
+The per-user slug is routing evidence only; a matching custom/PAT slug, a slug
+route, or a UserService-ID direct route is never acceptable authority. Also
+require `public_repo`, permit only ancillary `read:user` and `user:email`, and
+stop on `trigger_scope_unapproved` for `repo`, `workflow`, any organization,
+admin, write, delete, package or gist scope, or any unknown scope.
+
 ### Trigger runtime listener boundary
 
 Codex permission-profile host rules do not scope ports. The Trigger profile
@@ -256,14 +268,30 @@ startup. The supervisor does not bind and expose `/readyz` until both denial
 fronts and both credential proxies have bound successfully, so a partial
 topology is never Ready.
 
-Every Reach activation runs the pinned `runtime_gateway_probe_v1` through the
+Every Reach activation runs the pinned `runtime_gateway_probe_v2` through the
 same Codex command sandbox that will receive the first prompt. The probe must
 positively observe both closed denial fronts, a `blocked-by-allowlist` denial
 for an unlisted private loopback address and a public destination, and an
-allowed numeric-resource read through `127.0.0.2:9092`. Connection refusal,
-missing or different headers, malformed receipts, or any broader reach is a
-typed failure and no prompt is sent. Release evidence must additionally show
-that raw `CONNECT` cannot tunnel to the real supervisor or model proxy.
+allowed numeric-resource read through `127.0.0.2:9092` using the complete signed
+catalog ID, UserService ID, per-user slug, and repository-ID tuple. A wrong
+catalog, UserService, slug, repository, or policy generation is denied before
+the helper is spawned. Connection refusal, missing or different headers,
+malformed receipts, or any broader reach is a typed failure and no prompt is
+sent. Release evidence must additionally show that raw `CONNECT` cannot tunnel
+to the real supervisor or model proxy.
+
+The built-image campaign also sends raw sandboxed requests through
+`127.0.0.2:9092` using `/proxy/s/` with the canonical `api-github` slug, a
+NyxID-suffixed GitHub slug, a PAT-looking slug, the exact UserService ID, and the
+catalog service ID. Every form must return `403`/`policy_denied` with zero
+provider calls. The only GitHub transport admitted is the signed catalog-ID
+route with the exact `_nyxid_via` selector.
+
+The MVP runtime permits non-GitHub slug passthrough only for `chrono-llm`,
+`ornn-api`, and `ornn`. That list is deliberately frozen above credential
+injection. Treat any baseline-service change as a runtime protocol change: keep
+Trigger rollout closed, update the Layer 4 closed set and its tests, and attach
+new D-09 evidence before admitting a Launch.
 
 The pinned image carries the distribution `bubblewrap` at `/usr/bin/bwrap` so
 Codex does not fall back to its anonymous bundled helper. Following the
@@ -357,6 +385,11 @@ change record.
 Never combine a runtime-image adoption with the Trigger cohort change. A runtime
 image change rotates sessions under the normal session continuity protocol and
 must be evaluated independently.
+
+A historical Trigger record missing the v2 catalog/UserService route tuple is
+readable evidence only. It must not be restarted, readopted, rotated, recovered,
+or renewed. Replace or explicitly revalidate a pre-release v1 canary before
+opening rollout; never infer the missing binding from a slug.
 
 ## 5. Pause and kill-switch matrix
 
