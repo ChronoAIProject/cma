@@ -44,7 +44,9 @@ cma_test_configure_mocks() {
   }
   cma_step10_validate_fence_projection() { return 0; }
   cma_step10_validate_source_projection() { return 0; }
+  # shellcheck disable=SC2317 # Harness override is invoked by sourced production code.
   cma_step10_projection_check_live() { return 0; }
+  # shellcheck disable=SC2317 # Harness override is invoked by sourced production code.
   cma_step10_gcloud() { return 1; }
 
   cma_step10_kubectl() {
@@ -322,6 +324,7 @@ cma_test_production_gate_case() {
         printf '%s\n' kubectl >>"${case_log}"
         return 97
       }
+      # shellcheck disable=SC2317 # Boundary sentinel is reached through the production entrypoint.
       cma_step10_gcloud() {
         printf '%s\n' gcloud >>"${case_log}"
         return 97
@@ -893,6 +896,7 @@ cma_test_fence_case() {
       fi
       return 93
     }
+    # shellcheck disable=SC2317 # Boundary sentinel is reached through the production entrypoint.
     cma_step10_gcloud() {
       printf '%s\n' unexpected-gcloud >>"${case_dir}/boundaries.log"
       return 92

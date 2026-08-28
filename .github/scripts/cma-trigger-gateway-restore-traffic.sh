@@ -301,10 +301,10 @@ cma_step10_projection_capture() {
     echo "projection custody parent is not an exact owned absolute directory" >&2
     return 1
   fi
-  [ -f "${cma_predecessor_file}" ] && [ ! -L "${cma_predecessor_file}" ] || {
+  if [ ! -f "${cma_predecessor_file}" ] || [ -L "${cma_predecessor_file}" ]; then
     echo "projection predecessor is not a regular non-symlink receipt" >&2
     return 1
-  }
+  fi
   [ "$(jq -er .lifecycle.stage "${cma_predecessor_file}")" = \
     "${cma_expected_predecessor_stage}" ] || {
     echo "projection predecessor has the wrong lifecycle stage" >&2
@@ -460,12 +460,12 @@ cma_step10_write_fence_receipt() {
     echo "CMA_GATEWAY_FENCE_RECEIPT_CONFIRM must authorize durable-prepatch-root-v1" >&2
     return 1
   }
-  [[ "${cma_receipt_dir}" == /* && "${cma_receipt_dir}" != / ]] && \
-    [ -d "${cma_receipt_dir}" ] && [ ! -L "${cma_receipt_dir}" ] && \
-    [ -O "${cma_receipt_dir}" ] || {
+  if [[ "${cma_receipt_dir}" != /* || "${cma_receipt_dir}" == / ]] || \
+     [ ! -d "${cma_receipt_dir}" ] || [ -L "${cma_receipt_dir}" ] || \
+     [ ! -O "${cma_receipt_dir}" ]; then
     echo "CMA_GATEWAY_FENCE_RECEIPT_DIR must be the preselected owned off-host custody directory" >&2
     return 1
-  }
+  fi
   cma_bundle_dir="${cma_receipt_dir%/}/fence-root-${CMA_GATEWAY_RELEASE_REVISION}"
   if [ -d "${cma_bundle_dir}" ] && [ ! -L "${cma_bundle_dir}" ]; then
     cma_receipt_file="${cma_bundle_dir}/receipt.json"
