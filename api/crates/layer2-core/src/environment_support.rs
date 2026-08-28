@@ -71,10 +71,14 @@ impl FakeProfileStore {
 impl EnvironmentProfileStore for FakeProfileStore {
     async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError> {
         self.guard().await?;
-        self.profiles
-            .lock()
-            .await
-            .insert(profile.id.0.clone(), profile.clone());
+        let mut profiles = self.profiles.lock().await;
+        if profiles.contains_key(&profile.id.0) {
+            return Err(StoreError::Malformed(format!(
+                "profile {} already exists",
+                profile.id
+            )));
+        }
+        profiles.insert(profile.id.0.clone(), profile.clone());
         Ok(())
     }
 

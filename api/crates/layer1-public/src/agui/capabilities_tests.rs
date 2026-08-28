@@ -55,6 +55,17 @@ async fn the_documented_capability_is_the_served_document() {
 }
 
 #[tokio::test]
+async fn trigger_companions_are_declared_read_only() {
+    let document = served_document().await;
+    let trigger = &document["features"]["custom"]["cma:trigger"];
+    assert_eq!(trigger["preview"], true);
+    assert_eq!(trigger["launchSnapshot"], true);
+    assert_eq!(trigger["progressReplay"], true);
+    assert_eq!(trigger["diffReview"], true);
+    assert_eq!(trigger["mutations"], false);
+}
+
+#[tokio::test]
 async fn every_event_the_projection_emits_is_declared() {
     // The map is the contract a client branches on. An event emitted but not
     // declared is one a correct client is entitled to have thrown away.

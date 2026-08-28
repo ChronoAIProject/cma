@@ -225,6 +225,7 @@ fn pending_handovers_round_trip_with_their_exact_target_shape() {
             claim: "rotn_recoverable".into(),
             snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
             snapshot_at: "2026-08-27T01:02:03Z".into(),
+            trigger_recovery: None,
             rotations_from: 4,
             rotations_to: 5,
             target,
@@ -280,6 +281,7 @@ fn pending_handover_bson_uses_the_versioned_nested_field_names() {
             claim: "rotn_wire".into(),
             snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
             snapshot_at: "2026-08-27T01:02:03Z".into(),
+            trigger_recovery: None,
             rotations_from: 7,
             rotations_to: 8,
             target: pending_target,
@@ -335,6 +337,7 @@ fn a_pending_handover_can_survive_after_its_live_rotation_claim_is_cleared() {
         claim: "rotn_revive_later".into(),
         snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
         snapshot_at: "2026-08-27T01:02:03Z".into(),
+        trigger_recovery: None,
         rotations_from: 8,
         rotations_to: 9,
         target: PendingHandoverTarget::RuntimeVersion {
@@ -357,6 +360,7 @@ fn a_document_without_pending_handover_reads_as_having_no_recovery_snapshot() {
         claim: "rotn_not_present_in_legacy".into(),
         snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
         snapshot_at: "2026-08-27T01:02:03Z".into(),
+        trigger_recovery: None,
         rotations_from: 2,
         rotations_to: 3,
         target: PendingHandoverTarget::RuntimeVersion {

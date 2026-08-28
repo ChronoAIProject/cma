@@ -201,6 +201,36 @@ describe('the Developer entry point', () => {
   });
 });
 
+describe('the GitHub Trigger publisher entry point', () => {
+  it('is an account action available to every signed-in user', async () => {
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onPublisher={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.getByRole('menuitem', { name: 'GitHub Triggers' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitemradio')).toBeNull();
+  });
+
+  it('names the return destination while the publisher is active', async () => {
+    const user = userEvent.setup();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onPublisher={vi.fn()} publisherActive />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.getByRole('menuitem', { name: 'Back to sessions' })).toBeInTheDocument();
+  });
+
+  it('opens the publisher and closes the menu', async () => {
+    const user = userEvent.setup();
+    const onPublisher = vi.fn();
+    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onPublisher={onPublisher} />);
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'GitHub Triggers' }));
+    expect(onPublisher).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+});
+
 describe('the terminal palette', () => {
   it('is not an account setting', async () => {
     /*

@@ -6,6 +6,180 @@ use crate::ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 use crate::options::AgentOptions;
 use crate::terminal::TerminalGeometry;
 
+/// Exact non-secret authority of one credential acknowledged by a session runtime.
+///
+/// The custody generation is assigned when CMA commits the provider key into
+/// current or pending custody and remains unchanged when a pending key is
+/// promoted. Provider key values and OAuth bearer material are deliberately not
+/// represented here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCredentialAuthority {
+    pub session_id: SessionId,
+    pub custody_generation: u64,
+    pub provider_key_id: String,
+    pub provider_state_version: i64,
+    pub provider_expires_at_epoch_milliseconds: u64,
+    pub grant_fingerprint: String,
+}
+
+impl SessionCredentialAuthority {
+    /// Reject incomplete, expired, or non-canonical authority evidence.
+    pub fn is_valid_at(&self, now_epoch_milliseconds: u64) -> bool {
+        !self.session_id.0.trim().is_empty()
+            && self.custody_generation != 0
+            && !self.provider_key_id.trim().is_empty()
+            && self.provider_state_version > 0
+            && self.provider_expires_at_epoch_milliseconds > now_epoch_milliseconds
+            && self.grant_fingerprint.len() == 64
+            && self
+                .grant_fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+
+    /// Whether this is the same credential, or a later credential with the
+    /// identical provider grant committed by a later custody CAS.
+    pub fn is_same_or_successor_of(&self, previous: &Self) -> bool {
+        self == previous
+            || (self.session_id == previous.session_id
+                && self.custody_generation > previous.custody_generation
+                && self.provider_key_id != previous.provider_key_id
+                && self.grant_fingerprint == previous.grant_fingerprint)
+    }
+}
+
+/// Durable provenance for a session created by one CMA Trigger Launch.
+///
+/// This is control-plane state, not part of the public [`Session`] projection.
+/// It carries only identities and integrity metadata; the object reference is
+/// never a credential and is resolved through an owner- and Launch-scoped
+/// machine port before each runtime is provisioned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TriggerSessionOrigin {
+    pub launch_id: crate::trigger::LaunchId,
+    pub revision_digest: String,
+    pub sandbox_profile: String,
+    pub github_service_id: String,
+    pub workspace_epoch: u64,
+    pub source_revision: String,
+    pub manifest_digest: String,
+    pub object_reference: String,
+    pub archive_sha256: String,
+    /// Exact provider lifetime reviewed for this Launch. Runtime replacement
+    /// reuses this value rather than a mutable deployment default.
+    pub timeout_seconds: u32,
+    /// Commercial policy and exact capacity terms accepted at Start.
+    pub pricing_policy_reference: String,
+    pub billing_mode: crate::BillingMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<crate::SessionPricing>,
+}
+
+impl TriggerSessionOrigin {
+    /// Stable session identity for this Launch, shared by every retry.
+    pub fn session_id(&self) -> Result<SessionId, crate::TriggerValidationError> {
+        trigger_session_id(&self.launch_id)
+    }
+
+    /// Stable contributor-owned environment profile for this Launch.
+    pub fn environment_profile_id(
+        &self,
+    ) -> Result<EnvironmentProfileId, crate::TriggerValidationError> {
+        Ok(EnvironmentProfileId(format!(
+            "envp_trg_{}",
+            self.launch_uuid()?.simple()
+        )))
+    }
+
+    pub fn validate(&self) -> Result<(), crate::TriggerValidationError> {
+        self.launch_uuid()?;
+        require_hex("revision_digest", &self.revision_digest, 64)?;
+        require_text("sandbox_profile", &self.sandbox_profile, 128)?;
+        require_text("github_service_id", &self.github_service_id, 255)?;
+        if self.workspace_epoch == 0 {
+            return Err(crate::TriggerValidationError::field(
+                "workspace_epoch",
+                "must be positive",
+            ));
+        }
+        require_hex("source_revision", &self.source_revision, 40)?;
+        require_hex("manifest_digest", &self.manifest_digest, 64)?;
+        require_text("object_reference", &self.object_reference, 2_048)?;
+        if self.timeout_seconds == 0 || self.timeout_seconds > 86_400 {
+            return Err(crate::TriggerValidationError::field(
+                "timeout_seconds",
+                "must be between one second and one day",
+            ));
+        }
+        require_text(
+            "pricing_policy_reference",
+            &self.pricing_policy_reference,
+            255,
+        )?;
+        match self.billing_mode {
+            crate::BillingMode::ZeroCost if self.pricing.is_none() => {}
+            crate::BillingMode::Contributor if self.pricing.is_some() => {}
+            _ => {
+                return Err(crate::TriggerValidationError::field(
+                    "pricing",
+                    "does not match the Trigger billing mode",
+                ));
+            }
+        }
+        require_hex("archive_sha256", &self.archive_sha256, 64)
+    }
+
+    fn launch_uuid(&self) -> Result<uuid::Uuid, crate::TriggerValidationError> {
+        uuid::Uuid::parse_str(&self.launch_id.0)
+            .map_err(|_| crate::TriggerValidationError::field("launch_id", "is not a UUID"))
+    }
+}
+
+/// Stable session identity reserved for one Trigger Launch.
+///
+/// This depends only on the Launch UUID, so terminal credential retirement can
+/// fence a late or response-lost session setup even before `Launch.session` is
+/// committed. It does not imply that a session or runtime ever existed.
+pub fn trigger_session_id(
+    launch_id: &crate::trigger::LaunchId,
+) -> Result<SessionId, crate::TriggerValidationError> {
+    let launch_uuid = uuid::Uuid::parse_str(&launch_id.0)
+        .map_err(|_| crate::TriggerValidationError::field("launch_id", "is not a UUID"))?;
+    Ok(SessionId(format!("sesn_trg_{}", launch_uuid.simple())))
+}
+
+fn require_text(
+    field: &'static str,
+    value: &str,
+    maximum: usize,
+) -> Result<(), crate::TriggerValidationError> {
+    if value.trim().is_empty() || value.len() > maximum {
+        return Err(crate::TriggerValidationError::field(
+            field,
+            format!("must contain between 1 and {maximum} bytes"),
+        ));
+    }
+    Ok(())
+}
+
+fn require_hex(
+    field: &'static str,
+    value: &str,
+    length: usize,
+) -> Result<(), crate::TriggerValidationError> {
+    if value.len() != length
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(crate::TriggerValidationError::field(
+            field,
+            format!("must be {length} lowercase hexadecimal characters"),
+        ));
+    }
+    Ok(())
+}
+
 /// A named step in bringing a session up.
 ///
 /// Ordered, and each knows its position, so a client can show how far along

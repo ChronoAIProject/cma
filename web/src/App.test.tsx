@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { UserEvent } from '@testing-library/user-event';
 import { App } from './App';
@@ -170,6 +170,7 @@ function isAttached(id: string): boolean {
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/');
   sockets.length = 0;
   created = 0;
   streams.length = 0;
@@ -200,6 +201,15 @@ beforeEach(() => {
 
       if (path === '/api/v1/environment-profiles' && method === 'GET') {
         return json(200, []);
+      }
+      if (path === '/api/v1/triggers' && method === 'GET') {
+        return json(200, { items: [], next_cursor: null });
+      }
+      if (path === '/api/v1/trigger-revisions' && method === 'GET') {
+        return json(200, { items: [], next_cursor: null });
+      }
+      if (path === '/api/v1/trigger-connections' && method === 'GET') {
+        return json(200, { connections: [] });
       }
       if (path === '/api/v1/kernels' && method === 'GET') {
         return json(200, {
@@ -329,6 +339,22 @@ describe('App', () => {
     await renderApp(createMockAuthProvider());
 
     expect(screen.getByLabelText(/what would you like cma to build/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    '/launches/launch-one',
+    '/launches/launch-one/recover',
+    '/launches/launch-one/contribute',
+    '/sessions/session-one',
+  ])('preserves the owner deep link through sign-in from %s', async (pathname) => {
+    window.history.replaceState(null, '', pathname);
+    const provider = createMockAuthProvider();
+    const signIn = vi.spyOn(provider, 'signIn').mockResolvedValue();
+    await renderApp(provider);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(signIn).toHaveBeenCalledWith(pathname);
   });
 
   it('shows the live console to a signed-in user', async () => {
@@ -764,7 +790,7 @@ describe('App', () => {
     // Every session except the first is put ahead of it in the history, so
     // recency alone exhausts the budget once the focused one is gone.
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
-      await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
+      fireEvent.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
     // Delete is in the session's lifecycle menu (§12), gated behind an
     // acknowledgement (§7).
@@ -781,5 +807,77 @@ describe('App', () => {
       'true',
     );
     expect(isAttached('sesn_0')).toBe(true);
+  });
+
+  it('restores the owner-visible session named by a canonical deep link', async () => {
+    seedSessions(2);
+    window.history.replaceState(null, '', '/sessions/sesn_1');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    const requested = screen.getByRole('tab', { name: /14 Aug 11:01/ });
+    expect(requested).toHaveAttribute('aria-selected', 'true');
+    expect(window.location.pathname).toBe('/sessions/sesn_1');
+    expect(await screen.findByRole('button', { name: 'Manage lifecycle' })).toBeEnabled();
+  });
+
+  it('opens GitHub Triggers from a deep link by replacing it with the home frame', async () => {
+    seedSessions(1);
+    window.history.replaceState(null, '', '/sessions/sesn_0');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'GitHub Triggers' }));
+
+    expect(await screen.findByRole('heading', { name: 'GitHub Triggers' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Back to sessions' }));
+    expect(await screen.findByRole('button', { name: 'Manage lifecycle' })).toBeInTheDocument();
+  });
+
+  it('keeps an unknown or wrong-owner session route as a typed read-only view', async () => {
+    seedSessions(1);
+    window.history.replaceState(null, '', '/sessions/sesn_not_owned');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This session does not exist or is not available to this account.',
+    );
+    expect(screen.getByRole('tab')).toHaveAttribute('aria-selected', 'false');
+    expect(sockets).toHaveLength(0);
+    expect(window.location.pathname).toBe('/sessions/sesn_not_owned');
+  });
+
+  it('writes session selections to history and restores them with browser Back', async () => {
+    seedSessions(2);
+    window.history.replaceState(null, '', '/sessions/sesn_0');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('tab', { name: /14 Aug 11:01/ }));
+    expect(window.location.pathname).toBe('/sessions/sesn_1');
+    expect(screen.getByRole('tab', { name: /14 Aug 11:01/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/sessions/sesn_0');
+      expect(screen.getByRole('tab', { name: /14 Aug 11:00/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+    });
   });
 });

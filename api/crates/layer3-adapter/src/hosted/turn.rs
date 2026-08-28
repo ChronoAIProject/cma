@@ -61,29 +61,41 @@ impl Bridge {
                             // A response ends the scope in which permission
                             // request ids and their duplicate answers are live.
                             answered_permissions.lock().await.clear();
-                            let outcome = match answered {
+                            let (outcome, prompt_evidence) = match answered {
                                 // Nothing at all, for an hour. Said rather
                                 // than left running: a turn nobody will ever
                                 // answer looks exactly like a turn in
                                 // progress, and only one of them is worth
                                 // waiting for.
-                                Err(_) => Outcome::Failed {
-                                    message: "the agent did not answer this turn".to_string(),
-                                    capability: None,
-                                },
-                                Ok(Ok(frame)) => turn_outcome(frame),
+                                Err(_) => (
+                                    Outcome::Failed {
+                                        message: "the agent did not answer this turn".to_string(),
+                                        capability: None,
+                                    },
+                                    false,
+                                ),
+                                // A matched JSON-RPC prompt response is the
+                                // recipient-side terminal evidence. Its result
+                                // or error is correlated even though the wire
+                                // carries no id on intermediate updates.
+                                Ok(Ok(frame)) => (turn_outcome(frame), true),
                                 // The bridge went away mid-turn. This is a
                                 // failure, not an ending: the agent did not
                                 // answer, and reporting it as a completed turn
                                 // is what made a dead bridge look like an
                                 // agent with nothing to say.
-                                Ok(Err(_)) => Outcome::Failed {
-                                    message: "the agent stopped answering before the turn finished"
-                                        .to_string(),
-                                    capability: None,
-                                },
+                                Ok(Err(_)) => (
+                                    Outcome::Failed {
+                                        message:
+                                            "the agent stopped answering before the turn finished"
+                                                .to_string(),
+                                        capability: None,
+                                    },
+                                    false,
+                                ),
                             };
-                            let _ = updates.send(outcome.into_update()).await;
+                            let update = scoped_turn_outcome(outcome, prompt_evidence);
+                            let _ = updates.send(update).await;
                         });
                         Ok(())
                     }
@@ -97,10 +109,15 @@ impl Bridge {
                         debug_assert!(previous > 0, "a failed prompt releases its waiter");
                         tracing::warn!(error = %e, "could not send a prompt");
                         let _ = updates
-                            .send(ConversationUpdate::Failed {
-                                message: format!("the prompt could not be sent to the agent: {e}"),
-                                capability: None,
-                            })
+                            .send(scoped_turn_outcome(
+                                Outcome::Failed {
+                                    message: format!(
+                                        "the prompt could not be sent to the agent: {e}"
+                                    ),
+                                    capability: None,
+                                },
+                                false,
+                            ))
                             .await;
                         Err(e)
                     }
@@ -194,6 +211,18 @@ impl Outcome {
                 capability,
             },
         }
+    }
+}
+
+/// Preserve a locally observed failure without presenting it as proof that the
+/// runtime received the prompt. Only a matched JSON-RPC prompt response is
+/// recipient-side terminal evidence on ACP v1.
+pub(super) fn scoped_turn_outcome(outcome: Outcome, prompt_evidence: bool) -> ConversationUpdate {
+    let update = outcome.into_update();
+    if prompt_evidence {
+        update
+    } else {
+        update.without_prompt_evidence()
     }
 }
 

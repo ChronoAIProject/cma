@@ -35,9 +35,12 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use layer1_public::{rest::HttpProblem, ActedUpon, AuthenticatedSubject, SettingsTouched};
+use layer1_public::{
+    rest::HttpProblem, ActedUpon, AuthenticatedSubject, SettingsTouched, TriggerSupportObserved,
+};
 use layer2_core::{
-    ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, DetailKey, SubjectId,
+    ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget, DetailKey,
+    SubjectId,
 };
 
 use crate::activity::classify::{classify, detail_from_body, detail_from_query, Classified};
@@ -60,7 +63,7 @@ pub async fn record(
     req: Request,
     next: Next,
 ) -> Response {
-    let Some(classified) = classify(req.method(), req.uri().path()) else {
+    let Some(mut classified) = classify(req.method(), req.uri().path()) else {
         // Not something this service serves, or something it serves to nobody
         // in particular. Passed through untouched, body included.
         return next.run(req).await;
@@ -75,6 +78,12 @@ pub async fn record(
         .extensions
         .get::<AuthenticatedSubject>()
         .map(|s| s.0.clone());
+    let request_correlation_id = classified
+        .action
+        .is_trigger()
+        .then(|| layer1_public::rest::request_id_from_headers(&parts.headers))
+        .flatten()
+        .map(str::to_string);
 
     let (req, mut detail) = if classified.reads_body {
         match axum::body::to_bytes(body, crate::REQUEST_BODY_LIMIT_BYTES).await {
@@ -104,6 +113,9 @@ pub async fn record(
         (Request::from_parts(parts, body), ActivityDetail::new())
     };
     detail_from_query(query.as_deref(), &mut detail);
+    if let Some(correlation_id) = request_correlation_id {
+        detail.record(DetailKey::CorrelationId, correlation_id);
+    }
 
     let response = next.run(req).await;
     let outcome = outcome_of(response.status());
@@ -124,6 +136,12 @@ pub async fn record(
             detail.record(DetailKey::RateCard, card.clone());
         }
     }
+    if let Some(observed) = response.extensions().get::<TriggerSupportObserved>() {
+        classified.target = Some(ActivityTarget::Launch(observed.launch_id.clone()));
+        if let Some(correlation_id) = observed.correlation_id.as_ref() {
+            detail.record(DetailKey::CorrelationId, correlation_id);
+        }
+    }
     store(&recorder, &classified, actor, detail, outcome).await;
     response
 }
@@ -140,7 +158,7 @@ async fn store(
     entry.actor = actor;
     entry.target = classified.target.clone();
     entry.detail = detail;
-    recorder.activity.record(entry).await;
+    crate::trigger::observability::record_activity(&recorder.activity, entry).await;
 }
 
 /// How a response's status reads as an outcome.

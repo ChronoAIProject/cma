@@ -93,12 +93,50 @@ async fn a_bridge_that_exits_is_reported_rather_than_going_quiet() {
     // A stream that stops and a runtime that died look identical from the
     // outside, and only one of them is somebody's session ending.
     let bridge = Bridge::start("true").expect("true starts");
+    let writer_root = bridge
+        .writer_session_root()
+        .expect("the bridge has a process-session root");
     assert!(
         tokio::time::timeout(std::time::Duration::from_secs(5), bridge.ended())
             .await
             .is_ok(),
         "the end of the bridge process must be observable"
     );
+    assert_eq!(
+        bridge.writer_session_root(),
+        Some(writer_root),
+        "primary exit must not discard authority over possible descendants"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_ended_bridge_retains_authority_over_a_live_descendant() {
+    let bridge = Bridge::start("/bin/sh").expect("the bridge shell starts");
+    let root = bridge
+        .writer_session_root()
+        .expect("the bridge has a process-session root");
+    assert!(
+        bridge
+            .send(b"trap '' HUP TERM; sleep 3 & exit 0".to_vec())
+            .await
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(1), bridge.ended())
+        .await
+        .expect("the primary bridge exits while its child remains");
+
+    assert_eq!(bridge.writer_session_root(), Some(root));
+    let writer_count = tokio::task::spawn_blocking(move || {
+        let mut fence = crate::writer_fence::WriterFence::quiesce([root])?;
+        let count = fence.writer_count()?;
+        fence.resume()?;
+        Ok::<_, String>(count)
+    })
+    .await
+    .expect("the writer-fence task joins")
+    .expect("the retained process session quiesces");
+
+    assert!(writer_count >= 1, "the live descendant must be fenced");
 }
 
 #[tokio::test]

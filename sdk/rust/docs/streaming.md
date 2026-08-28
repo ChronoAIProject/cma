@@ -47,7 +47,7 @@ returns `Error::Protocol`.
 An unrecognised event discriminator becomes `EventKind::Unknown` with the complete
 JSON payload, so an older client can advance its cursor without pretending it
 understood the event. Known discriminators remain strict. The full vocabulary and
-replay rules are in [REST Events](../../../docs/API_REST.md#5-events).
+replay rules are in [REST Events](../../../docs/API_REST.md#6-events).
 
 `EventKind::RuntimeHandoverStarted` is a unit event written immediately before
 every marker-aware handover enters `Rotating`. It permanently enables

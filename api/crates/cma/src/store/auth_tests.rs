@@ -184,6 +184,9 @@ fn credential_state() -> SessionCredentialState {
             issued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
             expires_at: None,
             scope_fingerprint: "scope-a".into(),
+            custody_generation: 7,
+            provider_state_version: 3,
+            grant_fingerprint: "a".repeat(64),
             revocation_credential: Some(SecretValue::new("current-revoke-plaintext".into())),
         }),
         pending: Some(DurableCredential {
@@ -193,6 +196,9 @@ fn credential_state() -> SessionCredentialState {
             issued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_001),
             expires_at: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_001)),
             scope_fingerprint: "scope-b".into(),
+            custody_generation: 8,
+            provider_state_version: 4,
+            grant_fingerprint: "b".repeat(64),
             revocation_credential: Some(SecretValue::new("pending-revoke-plaintext".into())),
         }),
         pending_target: None,
@@ -595,7 +601,7 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64, AUTH_SCHEMA_VERSION] } },
             ],
             "revoke_debt.0": { "$exists": true },
             "revoke_debt_ordered": { "$ne": true },
@@ -808,7 +814,7 @@ fn legacy_subject_bson_defaults_incarnation_generation_and_retention() {
 }
 
 #[test]
-fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
+fn schema_compatibility_accepts_v1_through_v5_and_rejects_future_documents() {
     let cipher = cipher();
 
     let mut legacy_subject = subject_to_doc(subject_state(), &cipher).unwrap();
@@ -825,6 +831,9 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
     let mut v4_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     v4_subject.auth_schema_version = 4;
     assert!(subject_from_doc(v4_subject, &cipher).is_ok());
+    let mut v5_subject = subject_to_doc(subject_state(), &cipher).unwrap();
+    v5_subject.auth_schema_version = 5;
+    assert!(subject_from_doc(v5_subject, &cipher).is_ok());
     let mut future_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     future_subject.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -845,6 +854,9 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
     v4_credential.auth_schema_version = 4;
     v4_credential.pending_target = None;
     assert!(credential_state_from_doc(v4_credential, &cipher).is_ok());
+    let mut v5_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    v5_credential.auth_schema_version = 5;
+    assert!(credential_state_from_doc(v5_credential, &cipher).is_ok());
     let mut future_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     future_credential.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -857,7 +869,7 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64] } },
             ]
         }
     );
@@ -866,7 +878,7 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64, AUTH_SCHEMA_VERSION] } },
             ]
         }
     );
@@ -2265,6 +2277,9 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
         issued_at,
         expires_at: None,
         scope_fingerprint: "scope".into(),
+        custody_generation: 0,
+        provider_state_version: 0,
+        grant_fingerprint: String::new(),
         revocation_credential: None,
     };
     let mut current_a = credential_state();
@@ -3242,10 +3257,13 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     );
 
     let login_id = SecretDigest::identify("login-attempt", "oauth-state");
+    let browser_binding = SecretDigest::identify("login-browser-binding", "browser-binding");
     first
         .put_login_attempt(LoginAttempt {
             id: login_id.clone(),
+            browser_binding: browser_binding.clone(),
             verifier: SecretValue::new("pkce-plaintext".into()),
+            return_to: Some("/triggers/123e4567-e89b-12d3-a456-426614174000".into()),
             expires_at: SystemTime::now() + Duration::from_secs(300),
         })
         .await
@@ -3258,22 +3276,26 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
         .unwrap()
         .unwrap();
     assert!(!format!("{raw_login:?}").contains("pkce-plaintext"));
+    assert!(first
+        .take_login_attempt(
+            &login_id,
+            &SecretDigest::identify("login-browser-binding", "other-browser"),
+        )
+        .await
+        .unwrap()
+        .is_none());
 
     let (left, right) = tokio::join!(
-        first.take_login_attempt(&login_id),
-        second.take_login_attempt(&login_id)
+        first.take_login_attempt(&login_id, &browser_binding),
+        second.take_login_attempt(&login_id, &browser_binding)
     );
     let consumed = [left.unwrap(), right.unwrap()];
     assert_eq!(consumed.iter().filter(|value| value.is_some()).count(), 1);
+    let consumed = consumed.into_iter().flatten().next().unwrap();
+    assert_eq!(consumed.verifier.expose(), "pkce-plaintext");
     assert_eq!(
-        consumed
-            .into_iter()
-            .flatten()
-            .next()
-            .unwrap()
-            .verifier
-            .expose(),
-        "pkce-plaintext"
+        consumed.return_to.as_deref(),
+        Some("/triggers/123e4567-e89b-12d3-a456-426614174000")
     );
 
     let mut initial = subject_state();

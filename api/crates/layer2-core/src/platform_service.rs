@@ -82,6 +82,15 @@ impl PlatformSettingsService {
         }
     }
 
+    /// Read policy for a new Trigger promise, failing closed on storage loss.
+    ///
+    /// Provisioning may use shipped defaults to restore an existing promise.
+    /// Launch admission is different: it is about making a new pricing and
+    /// quota promise, so a failed read cannot honestly be replaced by defaults.
+    pub(crate) async fn for_trigger_admission(&self) -> Result<PlatformSettings, CoreError> {
+        Ok(self.current().await?.settings)
+    }
+
     /// Change the settings, refusing if somebody has written since `expected`.
     pub async fn write(
         &self,

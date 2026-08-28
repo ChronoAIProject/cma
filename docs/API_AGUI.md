@@ -53,6 +53,14 @@ Consequently AG-UI projects **seven** of the ten core operations. `resize_termin
 
 It projects **conversation sessions**. A session created in terminal mode carries no conversation capability, and a run against it is refused with the typed capability error naming `conversation` — before a stream opens, because a stream that opened and then said nothing would look like an agent thinking.
 
+The `cma:trigger` extension is a deliberately read-only companion to that
+session projection. It can preview a Trigger and read an owned Launch,
+repository, pull-request, progress, or diff snapshot. It cannot draft, Start,
+cancel, retry, publish, or confirm a pull request. Those commands use REST and
+its shared idempotency store, so there is one write admission mechanism rather
+than an AG-UI-specific duplicate. These workflow reads are not additional core
+session operations and never reinterpret a Launch id as a thread id.
+
 ### The conformance table
 
 One row per core operation, for a **conversation session**. It is the claim behind "a chat client can drive a CMA session", and it is narrower than that sentence sounds: two operations are terminal facts this protocol does not carry, and three depend on what the kernel behind the session offers.
@@ -82,17 +90,49 @@ This table is the per-session view of the same fact `API_Overview.md` §1 states
 POST /api/v1/agui/run          → text/event-stream
 GET  /api/v1/agui/events       → text/event-stream
 GET  /api/v1/agui/capabilities → application/json
+GET  /api/v1/agui/triggers/{public_id}                    → application/json
+GET  /api/v1/agui/launches/{launch_id}                    → application/json
+GET  /api/v1/agui/launches/{launch_id}/events             → text/event-stream
+GET  /api/v1/agui/launches/{launch_id}/diff               → application/json
 ```
 
 A run is one request. The response is an SSE stream of AG-UI events that ends when the turn ends.
 
+The four `cma:trigger` companion routes are resource reads rather than AG-UI run
+commands. Trigger preview is public and side-effect-free. Launch, progress, and
+diff reads require the Launch owner. Launch and diff return the same JSON
+projections as REST. The events companion is a resumable SSE stream: each frame's
+`id` is the durable Launch event sequence and its `data` is the exact public
+`LaunchEvent` JSON used inside REST `LaunchProgress`. It accepts
+`starting_after` (with `after` as a compatibility alias), a bounded `limit`, and
+`follow`; a valid numeric `Last-Event-ID` takes precedence over the query cursor.
+`follow=false` returns one deterministic bounded page and closes. The default
+follows new durable events. A cursor beyond the owned Launch's high-water mark
+is rejected as `400 cursor_beyond_end`; owner concealment happens first. The
+diff response includes the sealed review artifact and safe repository/PR status,
+never credentials, internal effect keys, or provider request bodies.
+
+The shared `PullRequestRecord` projection includes nullable `status_failure`,
+`provider_request_id`, and `head_matches_launch`. The request ID is safe provider
+correlation metadata, not a credential. A false head match keeps the PR readable
+but means CMA Update is unavailable for that manually changed head. Launch event
+frames carry `pull_request_status_changed` and
+`pull_request_status_refresh_requested` byte-for-byte with REST progress. AG-UI
+does not add a refresh command: callers queue that command through the keyed,
+revision-checked REST endpoint, then observe its durable event here.
+
+The public Trigger preview has the same response policy as its REST companion:
+`Cache-Control: public, max-age=60` and `Referrer-Policy: no-referrer`, with no
+cookie or side effect. Owned companion responses are not made public merely
+because this preview is cacheable.
+
 `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>` is the same event vocabulary, read rather than driven: a session's whole history and then everything after it, projected through the same mapping and never ending on its own. Every AG-UI event frame on this route carries the session id in both `threadId` and `runId`; a run response instead echoes that turn's accepted run id. Raw SSE keepalive comments are transport frames rather than AG-UI events and carry neither identifier. This route is what §7 means by recovering a dropped stream, and it exists because §7 used to send clients to `/api/v1/sessions/{id}/events` — a REST route, which answers in the core's vocabulary and not this one. A client that followed that advice received frames it could not read.
 
-Both streaming responses emit a raw SSE comment at least every **15 seconds** while otherwise idle. The comment carries neither an SSE `id:` nor an `event:` name. A fetch-based SSE reader sees those comments and should treat roughly two intervals — about 30 seconds — with no bytes as a dead connection, then reconnect to the session stream with its last complete cursor as described in §7. This is the required transport for a cross-origin Bearer client and the recommended transport for any client that needs to enforce the read timeout.
+All three streaming responses emit a raw SSE comment at least every **15 seconds** while otherwise idle. The comment carries neither an SSE `id:` nor an `event:` name. A fetch-based SSE reader sees those comments and should treat roughly two intervals — about 30 seconds — with no bytes as a dead connection, then reconnect with its last complete cursor. This is the required transport for a cross-origin Bearer client and the recommended transport for any client that needs to enforce the read timeout.
 
 The same-origin cookie clients that can use native `EventSource` do not receive SSE comments in application code. Such a client must detect a dead connection at the transport level rather than wait for a comment callback that can never occur. CMA deliberately does not emit application heartbeat events: doing so would add protocol vocabulary and require special exemptions from the durable-event cursor rules for frames that are only transport liveness.
 
-**The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
+For the two session AG-UI streams, **the sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The Launch companion differs deliberately: one durable Launch event maps to one frame, and its exact REST-compatible JSON includes the same sequence carried by the SSE `id`.
 
 Every accepted run stream begins with `RUN_STARTED`. For an ordinary prompt on
 an existing ready session it projects the durable `turn_started` boundary and
@@ -137,7 +177,7 @@ Content-Type: application/json
 | Field | Meaning in CMA |
 |---|---|
 | `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected. The new session gets an identifier chosen by the service, not the one you sent, and every event on the run carries it: read `threadId` off the first event and use that from then on |
-| `runId` | Client-generated id for this turn; echoed on every event of the run stream. An explicit value names one subject- and effective-session-scoped admission for 24 hours. Reusing it with the same final prompt or normalized approval resolutions replays that finite admission rather than delivering another action; changing that semantic action returns HTTP 422 with code `agui_operation_reused`. It must contain a non-whitespace character and differ from the effective `threadId`, or CMA returns HTTP 422 with code `invalid_request`. Frames read over `GET /api/v1/agui/events` carry the session's own id here — see §7 |
+| `runId` | Client-generated id for this turn; echoed on every event of the run stream. An explicit value names one subject- and effective-session-scoped admission with a five-minute execution lease; a finite stored outcome is replayable for 24 hours from its completion. Reusing it with the same final prompt or normalized approval resolutions replays that finite admission rather than delivering another action; changing that semantic action returns HTTP 422 with code `agui_operation_reused`. It must contain a non-whitespace character and differ from the effective `threadId`, or CMA returns HTTP 422 with code `invalid_request`. Frames read over `GET /api/v1/agui/events` carry the session's own id here — see §7 |
 | `messages` | The conversation. The final user message is the turn's input |
 | `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the profile it names or from what the deployment configured, and no interface chooses one |
 | `resume` | Present only when answering an interrupt — see §4 |
@@ -161,8 +201,9 @@ explicit `runId` records that refusal like every other finite outcome, so
 reposting it still replays the `409` after the session becomes ready. Wait for
 readiness and use a fresh `runId` for the intended post-rotation run.
 
-A requested fresh `threadId` is itself a subject-scoped creation alias retained
-for 24 hours. Retrying it with the same creation-affecting properties resolves
+A requested fresh `threadId` is itself a subject-scoped creation alias whose
+finite creation outcome is retained for 24 hours from completion. Retrying it
+with the same creation-affecting properties resolves
 to the same core-minted session, and using the minted id directly reaches that
 same session. Reusing the requested alias with a different
 `environmentProfile` returns `agui_operation_reused`; it never provisions a
@@ -661,11 +702,17 @@ GET /api/v1/agui/capabilities
     "custom":         { "cma:terminal": false, "cma:usage": true,
                         "cma:resources": true,
                         "cma:changePlane": false, "cma:planeChangeObserved": true,
-                        "cma:liveFrames": true }
+                        "cma:liveFrames": true,
+                        "cma:trigger": {
+                          "preview": true, "launchSnapshot": true,
+                          "progressReplay": true, "diffReview": true,
+                          "mutations": false
+                        } }
   },
   "conformsTo": [
     "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
-    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/agui-trigger-read"
   ]
 }
 ```
@@ -673,6 +720,12 @@ GET /api/v1/agui/capabilities
 `websocket: false` is deliberate. AG-UI here rides SSE; the terminal has its own WebSocket and is not an AG-UI transport.
 
 The `events` map is the machine-readable form of §3 and is the contract. Read it rather than assuming.
+
+The closed `cma:trigger` object declares companion availability. A missing
+object means this deployment does not project the workflow through AG-UI; it
+does not authorize probing undocumented paths. `mutations: false` is permanent
+for this version of the extension. A client sends every Trigger or Launch
+command through the documented REST/SDK operation instead.
 
 ---
 
@@ -682,8 +735,8 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Do not treat `RUN_FINISHED` as "session over."** Check `outcome`. An interrupt outcome means the session is alive and waiting for you.
 - **A dropped stream is not a cancellation.** The turn keeps running. Recover by reading the log, not by re-posting the run — and if you meant to stop it, say so with the interrupt route (§5).
 - **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`. Read the cursor off the last SSE `id`; it is not in the body. Reposting an explicit `runId` is an admission retry, not a stream reconnect: it recovers the finite decision and boundary, while the events route recovers everything the turn emitted afterwards. Reposting without an explicit id starts a new admission.
-- **An explicit `runId` is a 24-hour admission key.** Within one authenticated subject and effective session, reposting the same semantic action replays its recorded acceptance or refusal and never sends the prompt or approval resolutions twice. The same id with a changed final prompt or changed normalized approval resolutions is refused as HTTP 422 `agui_operation_reused`.
-- **Pending operation claims are bounded for callers, not automatically taken over.** A duplicate waits for the current owner for up to two seconds, then returns HTTP 409 `agui_operation_in_flight`. Claims have no renewal, abandonment, or takeover protocol. If a CMA process crashes after acquiring one, it can remain pending until its 24-hour expiry. There is also an unavoidable crash window between a runtime side effect and recording its finite outcome; the durable claim prevents ordinary retries and request cancellation from duplicating work, but the current store contract cannot prove cross-process exactly-once execution through that crash window.
+- **An explicit `runId` is a fenced admission key.** Within one authenticated subject and effective session, reposting the same semantic action replays its recorded acceptance or refusal for 24 hours from the time that finite outcome was stored and never sends the prompt or approval resolutions twice. The same id with a changed final prompt or changed normalized approval resolutions is refused as HTTP 422 `agui_operation_reused`.
+- **Pending operation claims have a finite execution lease and no takeover.** A duplicate waits for the current owner for up to two seconds, then returns HTTP 409 `agui_operation_in_flight` while the five-minute lease remains live. If the lease ends without a replay receipt, the claim durably becomes HTTP 409 `agui_operation_recovery_required` with the detail `The previous AG-UI execution ended without a replay receipt. This runId remains fenced unless the original execution records its exact result; manual review of durable state is required.` It has no TTL, is never reacquired, and never authorizes automatic replay. Only an exact late outcome from the original claim generation can turn it into a finite receipt with the normal 24-hour retention; CMA has no generic background or operator process that takes over an abandoned AG-UI claim. Only positively proven pre-write failure permits another execution. A process loss, elapsed lease, dropped stream, runtime-side effect without a stored receipt, or any other ambiguous boundary requires manual review of durable domain state and must not be retried under a new `runId`. That review does not clear the original claim or manufacture its missing receipt.
 - **A cursor beyond the log's head is refused before an SSE stream opens.** The response is HTTP 400 `application/problem+json`, with type `https://spec.chrono-ai.fun/cma/1.0/problems/cursor-beyond-end` and code `cursor_beyond_end`. Its detail names both the offered cursor and the current durable head, and its numeric `head` field is the position a client can resynchronise from. A cursor at or below the head remains valid; one exactly at the head opens a followed stream and waits for the next durable event.
 - **Native `EventSource` automatic reconnect replays from its original query cursor.** This endpoint deliberately ignores the browser's `Last-Event-ID` request header, so the retry does not advance `starting_after`. Deduplication of complete durable projections by their SSE `id` is therefore mandatory for this client class, even when the client also closes and reconstructs the source as described below.
 - **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Group the prefixes with their next numbered final and deduplicate that complete projection by the final id. Do not deduplicate prefixes only by `messageId`, `toolCallId`, or kind: one tool call can have several distinct durable updates, and future unknown kinds may also be prefixes. Advance the stored cursor only after the complete group was accepted.

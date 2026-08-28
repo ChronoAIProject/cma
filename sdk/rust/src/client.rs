@@ -24,6 +24,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const USER_AGENT: &str = concat!("cma-sdk/", env!("CARGO_PKG_VERSION"));
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+const IDEMPOTENCY_KEY: HeaderName = HeaderName::from_static("idempotency-key");
 
 type CredentialProvider = dyn Fn() -> std::result::Result<String, ()> + Send + Sync;
 type RequestIdProvider = dyn Fn() -> std::result::Result<String, ()> + Send + Sync;
@@ -623,6 +624,71 @@ impl Client {
         .await
     }
 
+    pub(crate) async fn request_public_json<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &[&str],
+        query: &[(&str, String)],
+        body: Option<serde_json::Value>,
+        expected: StatusCode,
+        anonymous: bool,
+    ) -> Result<T> {
+        let mut url = self.endpoint(path)?;
+        if !query.is_empty() {
+            let mut pairs = url.query_pairs_mut();
+            for (name, value) in query {
+                pairs.append_pair(name, value);
+            }
+        }
+        let mut request = RequestSpec::new(method, url, body, false);
+        if anonymous {
+            request = request.anonymous();
+        }
+        self.execute(request, move |response| async move {
+            decode_public_json(response, expected).await
+        })
+        .await
+    }
+
+    pub(crate) async fn request_public_command<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &[&str],
+        body: serde_json::Value,
+        expected: StatusCode,
+        idempotency_key: &str,
+    ) -> Result<T> {
+        let request = RequestSpec::new(method, self.endpoint(path)?, Some(body), false)
+            .idempotent(idempotency_key)?;
+        self.execute(request, move |response| async move {
+            decode_public_json(response, expected).await
+        })
+        .await
+    }
+
+    pub(crate) async fn request_public_bytes(
+        &self,
+        path: &[&str],
+        expected: StatusCode,
+    ) -> Result<Vec<u8>> {
+        let request = RequestSpec::new(Method::GET, self.endpoint(path)?, None, false);
+        self.execute(request, move |response| async move {
+            let status = response.status();
+            if !status.is_success() {
+                return Err(decode_problem(response).await);
+            }
+            if status != expected {
+                return Err(Error::protocol(format!(
+                    "operation expected status {} but received {}",
+                    expected.as_u16(),
+                    status.as_u16()
+                )));
+            }
+            read_bounded(response).await
+        })
+        .await
+    }
+
     pub(crate) async fn connect_events(
         &self,
         session_id: &SessionId,
@@ -758,6 +824,9 @@ impl Client {
         if let Some(request_id) = &request.request_id {
             builder = builder.header(X_REQUEST_ID, request_id.clone());
         }
+        if let Some(idempotency_key) = &request.idempotency_key {
+            builder = builder.header(IDEMPOTENCY_KEY, idempotency_key.clone());
+        }
         if let Some(cursor) = request.last_event_id {
             builder = builder.header("last-event-id", cursor.to_string());
         }
@@ -844,6 +913,7 @@ struct RequestSpec {
     streaming: bool,
     last_event_id: Option<u64>,
     request_id: Option<HeaderValue>,
+    idempotency_key: Option<HeaderValue>,
 }
 
 impl RequestSpec {
@@ -856,12 +926,29 @@ impl RequestSpec {
             streaming,
             last_event_id: None,
             request_id: None,
+            idempotency_key: None,
         }
     }
 
     fn anonymous(mut self) -> Self {
         self.authenticate = false;
         self
+    }
+
+    fn idempotent(mut self, key: &str) -> Result<Self> {
+        if key.is_empty()
+            || key.len() > 255
+            || !key.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+        {
+            return Err(Error::protocol(
+                "idempotency key must contain 1 to 255 visible ASCII characters",
+            ));
+        }
+        self.idempotency_key = Some(
+            HeaderValue::from_str(key)
+                .map_err(|_| Error::protocol("idempotency key is not a valid HTTP header"))?,
+        );
+        Ok(self)
     }
 }
 
@@ -896,6 +983,104 @@ async fn decode_json<T: DeserializeOwned>(response: Response, expected: StatusCo
             "success response does not match its JSON wire shape: {error}"
         ))
     })
+}
+
+async fn decode_public_json<T: DeserializeOwned>(
+    response: Response,
+    expected: StatusCode,
+) -> Result<T> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(decode_problem(response).await);
+    }
+    if status != expected {
+        return Err(Error::protocol(format!(
+            "operation expected status {} but received {}",
+            expected.as_u16(),
+            status.as_u16()
+        )));
+    }
+    let bytes = read_bounded(response).await?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        Error::protocol(format!(
+            "success response does not match its JSON wire shape: {error}"
+        ))
+    })?;
+    reject_internal_fields(&value)?;
+    serde_json::from_value(value).map_err(|error| {
+        Error::protocol(format!(
+            "success response does not match its JSON wire shape: {error}"
+        ))
+    })
+}
+
+fn reject_internal_fields(value: &serde_json::Value) -> Result<()> {
+    const FORBIDDEN: [&str; 19] = [
+        "idempotency_key_hash",
+        "intent_key",
+        "provider_request_id",
+        "object_reference",
+        "baseline_object_reference",
+        "backing_key_id",
+        "worker_fencing_token",
+        "fencing_counter",
+        "subject_token_generation",
+        "session_credential_generation",
+        "session_credential_authority",
+        "custody_generation",
+        "provider_key_id",
+        "provider_state_version",
+        "grant_fingerprint",
+        "checkpoint_object",
+        "diff_artifact_object",
+        "prompt_origin_key",
+        "prompt_payload_hash",
+    ];
+    reject_internal_fields_at(value, &FORBIDDEN, &mut Vec::new())
+}
+
+fn reject_internal_fields_at(
+    value: &serde_json::Value,
+    forbidden: &[&str],
+    path: &mut Vec<String>,
+) -> Result<()> {
+    match value {
+        serde_json::Value::Array(values) => {
+            path.push("*".into());
+            for value in values {
+                reject_internal_fields_at(value, forbidden, path)?;
+            }
+            path.pop();
+        }
+        serde_json::Value::Object(values) => {
+            for (name, value) in values {
+                path.push(name.clone());
+                let public_pull_request_status = name == "provider_request_id"
+                    && (path_matches(path, &["pull_request", "provider_request_id"])
+                        || path_matches(
+                            path,
+                            &["items", "*", "pull_request", "provider_request_id"],
+                        ));
+                if forbidden.contains(&name.as_str()) && !public_pull_request_status {
+                    return Err(Error::protocol(format!(
+                        "public response leaked internal field {name}"
+                    )));
+                }
+                reject_internal_fields_at(value, forbidden, path)?;
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn path_matches(path: &[String], expected: &[&str]) -> bool {
+    path.len() == expected.len()
+        && path
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual == expected)
 }
 
 async fn decode_json_page<T: DeserializeOwned>(
