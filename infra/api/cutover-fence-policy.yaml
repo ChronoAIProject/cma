@@ -1,0 +1,56 @@
+# The cutover Service selector uses this label value because no Pod may ever
+# carry it. Keep the reservation permanent: point-in-time Pod inventories alone
+# cannot protect the full multi-process database cutover window.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: cma-cutover-fence-label-reservation
+  labels:
+    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/part-of: cma
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: chrono-bot
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+        scope: Namespaced
+  matchConditions:
+    - name: exact-chrono-bot-namespace
+      expression: request.namespace == 'chrono-bot'
+  validations:
+    - expression: >-
+        !has(object.metadata.labels) ||
+        !('release.chrono-ai.fun/cutover-fence' in object.metadata.labels) ||
+        object.metadata.labels['release.chrono-ai.fun/cutover-fence'] != 'mongodb-715'
+      message: Pods in chrono-bot must not use the reserved CMA cutover-fence label value mongodb-715
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: cma-cutover-fence-label-reservation
+  labels:
+    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/part-of: cma
+spec:
+  policyName: cma-cutover-fence-label-reservation
+  validationActions:
+    - Deny
+  matchResources:
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: chrono-bot
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+        scope: Namespaced
