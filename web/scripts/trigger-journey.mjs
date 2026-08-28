@@ -1,7 +1,7 @@
 /** A real-browser CMA Trigger journey against a deterministic control-plane fake. */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { open, ready, settle } from './browser.mjs';
+import { open, ready, settle, visit } from './browser.mjs';
 
 const PORT = 4321;
 const FIXTURES = new URL('../../sdk/typescript/tests/fixtures/', import.meta.url);
@@ -521,9 +521,7 @@ async function screenshot(page, name) {
 }
 
 async function openTrigger(page) {
-  await page.goto(`http://localhost:${String(PORT)}/triggers/${PREVIEW.public_id}`, {
-    waitUntil: 'domcontentloaded',
-  });
+  await visit(page, PORT, 'domcontentloaded', `/triggers/${PREVIEW.public_id}`);
 }
 
 async function main() {
