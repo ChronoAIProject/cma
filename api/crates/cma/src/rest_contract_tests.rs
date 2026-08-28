@@ -4511,10 +4511,21 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             &[
                 "briefing",
                 "deployment_capacity",
+                "cpu_pressure",
                 "memory_pressure",
                 "pricing",
                 "size_bounds",
                 "live_sessions",
+            ][..],
+        ),
+        (
+            "CpuPressurePolicy",
+            &[
+                "enter_permille",
+                "exit_permille",
+                "enter_samples",
+                "exit_samples",
+                "settle_seconds",
             ][..],
         ),
         (

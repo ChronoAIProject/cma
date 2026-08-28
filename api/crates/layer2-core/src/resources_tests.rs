@@ -344,11 +344,19 @@ async fn resource_readings_never_reach_the_durable_log() {
         .expect("readable")
         .last_seq;
     let sender = resource_sender(&adapter).await;
+    let below_pressure = |n| {
+        let mut sample = sample(n);
+        sample.cpu_millis_limit = sample.cpu_millis_used.map(|used| used.saturating_mul(2));
+        sample
+    };
 
     for n in 1..=100 {
-        sender.send(sample(n)).await.expect("watch remains open");
+        sender
+            .send(below_pressure(n))
+            .await
+            .expect("watch remains open");
     }
-    await_held(&service, &session.id, &reading(100)).await;
+    await_held(&service, &session.id, &reading_from(below_pressure(100))).await;
 
     let after_events = serde_json::to_value(
         service

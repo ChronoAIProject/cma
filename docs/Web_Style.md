@@ -692,8 +692,8 @@ colour: making room is a conversation fact, not a fault.
 ## 13a. A session's resources
 
 Live resource readings sit at the **foot of the reading column**, immediately beside usage on the
-same centred 748px axis as the stream. An open memory-pressure episode is the exception: it sits at
-the **head of the reading column**, above the stream and beside the notices already there. Placement
+same centred 748px axis as the stream. An open CPU- or memory-pressure episode is the exception: it
+sits at the **head of the reading column**, above the stream and beside the notices already there. Placement
 does the substantive work. A condition somebody can still act on belongs where they are already
 looking, and neither the reading nor its notice replaces or destroys work that did not fail.
 
@@ -725,12 +725,13 @@ no predecessor, so it says **CPU · measuring**, never 0. This resolves within o
 by construction and is therefore a word in the row, not a notice. Missing network figures likewise
 say **not reported**, never `↓ 0 B` or `↑ 0 B`.
 
-An open memory-pressure episode uses the existing failure notice at the head of the column. It is
-still and dismissible, has alert semantics, and states the used and limit figures and the time the
-episode opened. Dismissing one episode does not silence a later one: a new opening time re-arms the
-notice. Its tracks may take the failure ink while pressure is open, but their accessible labels and
-visible figures also state the condition; colour never carries it alone. All tracks are neutral when
-no pressure episode is open, so state colour is spent once and only on the reading that warrants it.
+An open CPU- or memory-pressure episode uses the existing failure notice at the head of the column.
+Each resource has its own still, dismissible alert so simultaneous episodes remain visible. The
+notice states the resource, used and limit figures, and the time the episode opened. Dismissing one
+episode does not silence the other or a later one: a new opening time re-arms that resource's notice.
+Its track may take the failure ink while pressure is open, but its accessible label and visible figure
+also state the condition; colour never carries it alone. All tracks are neutral when no pressure
+episode is open, so state colour is spent only on a reading that warrants it.
 
 The notice may fade in once at its final position and then holds still. It never flashes, pulses, or
 loops, and nothing in this component starts a keyframe animation. A track changing length uses only
@@ -1551,3 +1552,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-27 | Added §19b and amended §§1 and 10 for the authenticated GitHub Trigger publisher. Admitted Publisher as the sixth view without adding a persistent route; defined deep-route return, the account-menu action, desktop and narrow draft navigation, exact NyxID UserService selection, bounded popup OAuth preflight, canonical repository verification, typed unframed policy editing, fixed MVP controls, optimistic concurrency and idempotent reconciliation, immutable publish confirmation, revision copying and retirement, retained failure state, untrusted-text rendering, and keyboard, focus, live-region, reduced-motion and narrow-target behavior. |
 | 2026-08-27 | Amended §§12.4 and 13b for explicit ambiguous initial-task recovery. Bounded the control to the exact Launch, blocked-reason, delivery-state, and retained-payload conjunction; required plain disclosure that CMA cannot establish whether the previous task started and that another dispatch may execute it twice; reused the acknowledgement safeguard as the one non-loss exception; and fixed ambiguous browser outcomes to a mounted, non-dismissible, same-key reconciliation state with frozen revision and payload authority. |
 | 2026-08-28 | Amended §13b to record the existing owner-only `/launches/:launchId/recover` route in the binding route vocabulary. The route restores retained GitHub authorization state after sign-in and does not itself perform a provider write. |
+| 2026-08-29 | Amended §13a so sustained CPU pressure receives the same durable, still warning treatment as memory pressure. Kept the episodes independently dismissible and allowed only the affected track to spend failure ink, so simultaneous pressure remains explicit without turning an absent CPU rate or limit into a healthy zero or an invented percentage. |

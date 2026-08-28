@@ -116,6 +116,17 @@ fn every_durable_kind() -> Vec<EventKind> {
             runtime_id: "runtime_example".into(),
             cause: None,
         },
+        EventKind::CpuPressureOpened {
+            used_millis: 900,
+            limit_millis: 1_000,
+            occupancy_permille: 900,
+        },
+        EventKind::CpuPressureClosed {
+            peak_millis: 950,
+            limit_millis: 1_000,
+            peak_permille: 950,
+            duration_seconds: 8,
+        },
         EventKind::MemoryPressureOpened {
             used_bytes: 900,
             limit_bytes: 1_000,
@@ -161,6 +172,8 @@ fn every_durable_kind() -> Vec<EventKind> {
             | EventKind::ApprovalResolved { .. }
             | EventKind::PlaneChanged { .. }
             | EventKind::RuntimeLost { .. }
+            | EventKind::CpuPressureOpened { .. }
+            | EventKind::CpuPressureClosed { .. }
             | EventKind::MemoryPressureOpened { .. }
             | EventKind::MemoryPressureClosed { .. }
             | EventKind::RuntimeHandoverStarted

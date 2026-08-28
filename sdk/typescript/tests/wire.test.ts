@@ -228,6 +228,7 @@ describe('the paths match what the service emits', () => {
     '/availableCommands',
     '/configOptions',
     '/contextCompactions/-',
+    '/cpuPressure',
     '/gaps/-',
     '/memoryPressure',
     '/mode',

@@ -365,6 +365,7 @@ export {
   type AvailableCommand,
   type ConfigOption,
   type ContextCompactionEntry,
+  type CpuPressure,
   type Entry,
   type FailureEntry,
   type GapEntry,
