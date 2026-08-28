@@ -11,10 +11,13 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest as _, Sha256};
-use similar::TextDiff;
+use similar::{ChangeTag, TextDiff};
 
 const WORKSPACE_ARCHIVE_VERSION: u32 = 1;
 const MAX_WORKSPACE_HEADER_BYTES: usize = 128 * 1024 * 1024;
+/// Bounds exact Myers line-diff work as well as rendered patch input. Larger
+/// changed text fails to a compact review outcome instead of using approximate
+/// or time-dependent line statistics.
 const MAX_PATCH_INPUT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PATCH_BYTES_PER_FILE: usize = 1024 * 1024;
 const MAX_COMPLETE_PATCH_BYTES: usize = 48 * 1024 * 1024;
@@ -379,7 +382,27 @@ pub(crate) fn build_diff_artifact(
             .ok_or_else(|| DiffBuildError::Invalid("changed byte count overflowed".into()))?;
         let binary = old.is_some_and(|entry| is_binary(entry.bytes))
             || new.is_some_and(|entry| is_binary(entry.bytes));
-        let (mut patch, mut patch_complete) = build_patch(old, new, binary);
+        let built_patch = match build_patch(old, new, binary) {
+            Ok(patch) => patch,
+            Err(DiffBuildError::ArtifactTooLarge) => {
+                return build_invalid_diff_artifact(
+                    launch,
+                    checkpoint,
+                    observed_branch_head,
+                    changed_file_limit,
+                    artifact_id,
+                    created_at,
+                    DiffValidationOutcome::ArtifactTooLarge,
+                );
+            }
+            Err(error) => return Err(error),
+        };
+        let BuiltPatch {
+            additions,
+            deletions,
+            mut patch,
+            mut patch_complete,
+        } = built_patch;
         if let Some(rendered) = patch.as_ref() {
             let next = complete_patch_bytes.saturating_add(rendered.len());
             if next > MAX_COMPLETE_PATCH_BYTES {
@@ -404,6 +427,8 @@ pub(crate) fn build_diff_artifact(
             new_provider_object_id: new.and_then(|entry| entry.metadata.provider_object_id.clone()),
             old_bytes: old_size,
             new_bytes: new_size,
+            additions,
+            deletions,
             patch,
             patch_complete,
         });
@@ -692,35 +717,84 @@ fn change_kind(old: Option<&WorkspaceEntry>, new: Option<&WorkspaceEntry>) -> Di
     }
 }
 
+struct BuiltPatch {
+    additions: Option<u64>,
+    deletions: Option<u64>,
+    patch: Option<String>,
+    patch_complete: bool,
+}
+
 fn build_patch(
     old: Option<&OpenedEntry<'_>>,
     new: Option<&OpenedEntry<'_>>,
     binary: bool,
-) -> (Option<String>, bool) {
+) -> Result<BuiltPatch, DiffBuildError> {
     let old_bytes = old.map_or(&[][..], |entry| entry.bytes);
     let new_bytes = new.map_or(&[][..], |entry| entry.bytes);
-    if old_bytes == new_bytes {
-        return (None, true);
+    if binary {
+        return Ok(BuiltPatch {
+            additions: None,
+            deletions: None,
+            patch: None,
+            patch_complete: old_bytes == new_bytes,
+        });
     }
-    if binary || old_bytes.len().saturating_add(new_bytes.len()) > MAX_PATCH_INPUT_BYTES {
-        return (None, false);
+    if old_bytes == new_bytes {
+        return Ok(BuiltPatch {
+            additions: Some(0),
+            deletions: Some(0),
+            patch: None,
+            patch_complete: true,
+        });
+    }
+    if old_bytes
+        .len()
+        .checked_add(new_bytes.len())
+        .is_none_or(|bytes| bytes > MAX_PATCH_INPUT_BYTES)
+    {
+        return Err(DiffBuildError::ArtifactTooLarge);
     }
     let (Ok(old_text), Ok(new_text)) = (
         std::str::from_utf8(old_bytes),
         std::str::from_utf8(new_bytes),
     ) else {
-        return (None, false);
+        return Err(DiffBuildError::Invalid(
+            "non-binary diff content is not UTF-8".into(),
+        ));
     };
-    let patch = TextDiff::from_lines(old_text, new_text)
+    let diff = TextDiff::from_lines(old_text, new_text);
+    let (additions, deletions) = diff
+        .iter_all_changes()
+        .try_fold(
+            (0_u64, 0_u64),
+            |(additions, deletions), change| match change.tag() {
+                ChangeTag::Insert => additions
+                    .checked_add(1)
+                    .map(|additions| (additions, deletions)),
+                ChangeTag::Delete => deletions
+                    .checked_add(1)
+                    .map(|deletions| (additions, deletions)),
+                ChangeTag::Equal => Some((additions, deletions)),
+            },
+        )
+        .ok_or_else(|| DiffBuildError::Invalid("diff line count overflowed".into()))?;
+
+    let patch = diff
         .unified_diff()
         .context_radius(3)
         .header("baseline", "checkpoint")
         .to_string();
-    if patch.len() > MAX_PATCH_BYTES_PER_FILE {
-        (None, false)
-    } else {
+    let (patch, patch_complete) = if patch.len() <= MAX_PATCH_BYTES_PER_FILE {
         (Some(patch), true)
-    }
+    } else {
+        (None, false)
+    };
+    Ok(BuiltPatch {
+        additions: Some(additions),
+        deletions: Some(deletions),
+        patch,
+        patch_complete,
+    })
 }
 
 fn bounded_summary(files: &[DiffFile]) -> Vec<DiffFile> {
@@ -956,12 +1030,16 @@ mod tests {
             .map(|file| (file.path.as_str(), file))
             .collect::<BTreeMap<_, _>>();
         assert_eq!(files["added.txt"].change, DiffChangeKind::Added);
+        assert_eq!(files["added.txt"].additions, Some(1));
+        assert_eq!(files["added.txt"].deletions, Some(0));
         assert!(files["added.txt"]
             .patch
             .as_deref()
             .unwrap()
             .contains("+added"));
         assert_eq!(files["modified.txt"].change, DiffChangeKind::Modified);
+        assert_eq!(files["modified.txt"].additions, Some(1));
+        assert_eq!(files["modified.txt"].deletions, Some(1));
         assert!(files["modified.txt"]
             .patch
             .as_deref()
@@ -969,14 +1047,22 @@ mod tests {
             .contains("-before"));
         assert_eq!(files["deleted.bin"].change, DiffChangeKind::Deleted);
         assert!(files["deleted.bin"].binary);
+        assert_eq!(files["deleted.bin"].additions, None);
+        assert_eq!(files["deleted.bin"].deletions, None);
         assert!(!files["deleted.bin"].patch_complete);
         assert_eq!(files["binary.dat"].change, DiffChangeKind::Modified);
         assert!(files["binary.dat"].binary);
+        assert_eq!(files["binary.dat"].additions, None);
+        assert_eq!(files["binary.dat"].deletions, None);
         assert!(files["binary.dat"].patch.is_none());
         assert_eq!(files["mode.sh"].change, DiffChangeKind::ModeChanged);
         assert_eq!(files["mode.sh"].old_sha256, files["mode.sh"].new_sha256);
+        assert_eq!(files["mode.sh"].additions, Some(0));
+        assert_eq!(files["mode.sh"].deletions, Some(0));
         assert!(files["mode.sh"].patch_complete);
         assert_eq!(files["link"].change, DiffChangeKind::SymlinkChanged);
+        assert_eq!(files["link"].additions, Some(1));
+        assert_eq!(files["link"].deletions, Some(1));
         assert!(files["link"]
             .patch
             .as_deref()
@@ -995,6 +1081,92 @@ mod tests {
         retained.object_reference = "test/diff-object.json".into();
         retained.validate_for_review(&fixture.launch).unwrap();
         retained.validate_for_publication(&fixture.launch).unwrap();
+    }
+
+    #[test]
+    fn oversized_rendered_patch_keeps_full_text_line_stats() {
+        let bytes_per_side = MAX_PATCH_BYTES_PER_FILE / 2;
+        let fixture = fixture(
+            vec![regular("large.txt", 0o100644, &vec![b'a'; bytes_per_side])],
+            vec![regular("large.txt", 0o100644, &vec![b'b'; bytes_per_side])],
+        );
+        let built = build(
+            &fixture,
+            &fixture.launch.branch.as_ref().unwrap().current_head,
+            10,
+        )
+        .expect("a bounded exact diff does not require retaining its rendered patch");
+        let file = &built.artifact.files[0];
+        assert_eq!(file.additions, Some(1));
+        assert_eq!(file.deletions, Some(1));
+        assert!(file.patch.is_none());
+        assert!(!file.patch_complete);
+    }
+
+    #[test]
+    fn text_diff_input_beyond_the_exact_computation_bound_is_compact() {
+        let bytes_per_side = MAX_PATCH_INPUT_BYTES / 2 + 1;
+        let fixture = fixture(
+            vec![regular(
+                "unbounded.txt",
+                0o100644,
+                &vec![b'a'; bytes_per_side],
+            )],
+            vec![regular(
+                "unbounded.txt",
+                0o100644,
+                &vec![b'b'; bytes_per_side],
+            )],
+        );
+        let built = build(
+            &fixture,
+            &fixture.launch.branch.as_ref().unwrap().current_head,
+            10,
+        )
+        .expect("unsafe exact-diff input becomes a typed compact artifact");
+
+        assert_eq!(
+            built.artifact.validation,
+            DiffValidationOutcome::ArtifactTooLarge
+        );
+        assert!(built.artifact.files.is_empty());
+        assert_eq!(built.artifact.total_changed_files, 0);
+        assert_eq!(built.artifact.changed_bytes, 0);
+    }
+
+    #[test]
+    fn launch_summary_patch_omission_preserves_artifact_line_stats() {
+        let fixture = fixture(
+            vec![regular(
+                "wide.txt",
+                0o100644,
+                &vec![b'a'; MAX_SUMMARY_PATCH_BYTES_PER_FILE],
+            )],
+            vec![regular(
+                "wide.txt",
+                0o100644,
+                &vec![b'b'; MAX_SUMMARY_PATCH_BYTES_PER_FILE],
+            )],
+        );
+        let built = build(
+            &fixture,
+            &fixture.launch.branch.as_ref().unwrap().current_head,
+            10,
+        )
+        .expect("the complete artifact and bounded summary build");
+
+        let summary = &built.artifact.files[0];
+        assert_eq!(summary.additions, Some(1));
+        assert_eq!(summary.deletions, Some(1));
+        assert!(summary.patch.is_none());
+        assert!(!summary.patch_complete);
+
+        let document: serde_json::Value = serde_json::from_slice(&built.object).unwrap();
+        let complete = &document["files"][0];
+        assert_eq!(complete["additions"], 1);
+        assert_eq!(complete["deletions"], 1);
+        assert!(complete["patch"].is_string());
+        assert_eq!(complete["patch_complete"], true);
     }
 
     #[test]

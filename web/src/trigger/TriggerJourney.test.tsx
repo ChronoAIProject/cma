@@ -146,12 +146,17 @@ function openPullRequest(): PullRequestRecord {
   };
 }
 
-function Journey() {
-  const [signedIn, setSignedIn] = useState(false);
-  const [route, setRoute] = useState<AppRoute>({
-    kind: 'trigger',
-    publicId: PREVIEW.public_id,
-  });
+interface JourneyProps {
+  readonly initialSignedIn?: boolean;
+  readonly initialRoute?: AppRoute;
+}
+
+function Journey({
+  initialSignedIn = false,
+  initialRoute = { kind: 'trigger', publicId: PREVIEW.public_id },
+}: JourneyProps = {}) {
+  const [signedIn, setSignedIn] = useState(initialSignedIn);
+  const [route, setRoute] = useState<AppRoute>(initialRoute);
   const navigate: AppRouter['navigate'] = (next: NavigableRoute) => setRoute(next);
 
   if (!signedIn) {
@@ -291,6 +296,46 @@ describe('CMA sign-in return', () => {
   );
 });
 
+describe('dynamic public Trigger availability', () => {
+  it.each([
+    [
+      'upstream_not_forkable',
+      'This repository is not currently forkable',
+      "no longer meets this Trigger's public fork policy",
+    ],
+    [
+      'upstream_unavailable',
+      'This repository is unavailable',
+      'cannot find or access the upstream repository',
+    ],
+    [
+      'upstream_identity_changed',
+      'This Trigger no longer matches its repository',
+      'repository identity changed after this Trigger was published',
+    ],
+    [
+      'repository_policy_unavailable',
+      'Repository policy cannot be verified',
+      "cannot safely verify the upstream repository's current fork policy",
+    ],
+  ] as const)('suppresses Launch review for %s', async (reason, title, detail) => {
+    api.readTriggerPreview.mockResolvedValue({
+      ...PREVIEW,
+      availability: 'unavailable',
+      unavailable_reason: reason,
+    });
+    const onSignIn = vi.fn();
+    render(<PublicTriggerPreview publicId={PREVIEW.public_id} onSignIn={onSignIn} />);
+
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(detail);
+    expect(screen.queryByRole('button', { name: 'Sign in to review' })).toBeNull();
+    expect(onSignIn).not.toHaveBeenCalled();
+    expect(api.createOrResumeLaunch).not.toHaveBeenCalled();
+    expect(api.startLaunch).not.toHaveBeenCalled();
+  });
+});
+
 describe('public Trigger route identity', () => {
   it('clears a failed preview before a different Trigger succeeds', async () => {
     const next = {
@@ -334,6 +379,41 @@ describe('public Trigger route identity', () => {
 });
 
 describe('CMA Trigger contributor journey', () => {
+  it('keeps the historical route inspectable without reopening its write journey', async () => {
+    if (DRAFT.runtime_admission === null) throw new Error('fixture omitted runtime admission');
+    currentLaunch = {
+      ...readyLaunch(),
+      runtime_admission: { ...DRAFT.runtime_admission, kernel: 'codex' },
+      diff: REVIEWED.artifact,
+    };
+    currentReview = {
+      ...REVIEWED,
+      launch_id: currentLaunch.id,
+      revision_number: currentLaunch.revision_number,
+      state: currentLaunch.state,
+      artifact: currentLaunch.diff,
+      contribution: currentLaunch.contribution,
+      pull_request: currentLaunch.pull_request,
+    };
+    const user = userEvent.setup();
+    render(
+      <Journey initialSignedIn initialRoute={{ kind: 'launch', launchId: currentLaunch.id }} />,
+    );
+
+    expect(await screen.findByText('Historical Launch is read-only')).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: 'Inspect retained contribution' }));
+    expect(await screen.findByText('Historical contribution is read-only')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download artifact' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'New Launch' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Refresh diff' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Publish branch' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open pull request' })).toBeNull();
+    expect(api.requestLaunchDiff).not.toHaveBeenCalled();
+    expect(api.publishLaunchBranch).not.toHaveBeenCalled();
+    expect(api.reviewPullRequest).not.toHaveBeenCalled();
+    expect(api.confirmPullRequest).not.toHaveBeenCalled();
+  });
+
   it('uses one explicit command at every write boundary from README preview to PR', async () => {
     const user = userEvent.setup();
     render(<Journey />);

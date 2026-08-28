@@ -293,10 +293,12 @@ fn start_process(
         cmd.cwd(home);
     }
 
+    let spawn = crate::writer_fence::ManagedSpawnPermit::begin();
     let child = pair
         .slave
         .spawn_command(cmd)
         .map_err(std::io::Error::other)?;
+    let managed_child = spawn.register(child.process_id());
     drop(pair.slave);
 
     #[cfg(unix)]
@@ -339,9 +341,10 @@ fn start_process(
             &out,
             exit_tx,
             writer_session_root,
+            managed_child,
         );
         #[cfg(not(unix))]
-        supervise_process(child, &mut reader, &out, exit_tx);
+        supervise_process(child, &mut reader, &out, exit_tx, managed_child);
     });
 
     Ok((
@@ -380,6 +383,7 @@ fn supervise_process(
     output: &broadcast::Sender<Vec<u8>>,
     exit: watch::Sender<Option<ProcessExit>>,
     process_group: Option<i32>,
+    managed_child: crate::writer_fence::ManagedChild,
 ) {
     let mut terminal_open = true;
 
@@ -395,6 +399,7 @@ fn supervise_process(
                 }
                 tracing::info!(?status, "runtime process exited");
                 exit.send_replace(Some(process_exit(&status)));
+                drop(managed_child);
                 return;
             }
             Ok(None) => {}
@@ -520,6 +525,7 @@ fn supervise_process(
     reader: &mut Box<dyn Read + Send>,
     output: &broadcast::Sender<Vec<u8>>,
     exit: watch::Sender<Option<ProcessExit>>,
+    managed_child: crate::writer_fence::ManagedChild,
 ) {
     while forward_one_chunk(reader, output) {}
     match child.wait() {
@@ -529,6 +535,7 @@ fn supervise_process(
         }
         Err(error) => tracing::warn!(%error, "waiting on runtime process failed"),
     }
+    drop(managed_child);
 }
 
 #[cfg(test)]
@@ -682,7 +689,10 @@ mod tests {
 
         assert_eq!(registry.writer_session_roots().await, vec![root]);
         let writer_count = tokio::task::spawn_blocking(move || {
-            let mut fence = crate::writer_fence::WriterFence::quiesce([root])?;
+            let mut fence = crate::writer_fence::WriterFence::quiesce(
+                [root],
+                crate::writer_fence::SupervisorBoundary::default(),
+            )?;
             let count = fence.writer_count()?;
             fence.resume()?;
             Ok::<_, String>(count)

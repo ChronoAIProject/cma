@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+require "digest"
+require "json"
 require "yaml"
 
 ROOT = File.expand_path("../..", __dir__)
@@ -40,6 +42,75 @@ ARTIFACT_KEYS = %w[
   runtimeHash
   uid
 ].freeze
+IMAGE_KEYS = %w[architecture id os reference repoDigests revision].freeze
+PASS_EVIDENCE_KEYS = %w[
+  artifacts
+  buildCommit
+  capability
+  cleanup
+  connect
+  evidenceClass
+  image
+  isolationDenials
+  listeners
+  managedDenials
+  outcomes
+  permissionProfile
+  providerFixture
+  recordedAt
+  redaction
+  result
+  schema
+  startedAt
+  startupRefusals
+  traversal
+  workspaceFence
+].freeze
+FALLBACK_EVIDENCE_KEYS = %w[
+  artifacts
+  buildCommit
+  cleanup
+  evidenceClass
+  failure
+  image
+  recordedAt
+  redaction
+  result
+  schema
+  startedAt
+].freeze
+GATEWAY_PROBE_COMMAND = [
+  "codex",
+  "sandbox",
+  "--permission-profile",
+  "cma-trigger",
+  "--",
+  "/usr/local/bin/layer4-runtime",
+  "runtime-gateway-probe-helper-v2",
+].freeze
+PERMISSION_PROFILE_SHA256 =
+  "65ce3deca2d907481d999d1ec56a52ad3017644417e262a89cdf9ca1ad649be2"
+PERMISSION_CONFIG = <<~'TOML'
+  model = "gpt-5.6-sol"
+  approval_policy = "never"
+  default_permissions = "cma-trigger"
+
+  [features]
+  network_proxy = true
+
+  [permissions.cma-trigger]
+  extends = ":workspace"
+
+  [permissions.cma-trigger.network]
+  enabled = true
+  enable_socks5 = false
+  enable_socks5_udp = false
+  allow_upstream_proxy = false
+  allow_local_binding = false
+
+  [permissions.cma-trigger.network.domains]
+  "127.0.0.2" = "allow"
+TOML
 
 class ContractError < StandardError; end
 
@@ -87,6 +158,451 @@ def normalized_shell(source)
   source.to_s.gsub(/\\\s*\n/, " ").gsub(/\s+/, " ").strip
 end
 
+def jq_string_list_after(source, prefix)
+  match = source.match(/#{Regexp.escape(prefix)}\s*\[(.*?)\]/m)
+  match ? match[1].scan(/"([^"]+)"/).flatten : []
+end
+
+def require_jq_predicate(filter, predicate, message)
+  check(
+    normalized_shell(filter).include?(normalized_shell(predicate)),
+    message,
+  )
+end
+
+def extract_evidence_filter(close_run, scope)
+  match = close_run.match(
+    /'(?<filter>def sha256:.*?\n\s*end\))' \\\n\s*"\$D09_EVIDENCE_PATH"/m,
+  )
+  check(
+    match,
+    "#{scope} D-09 evidence closure must feed its evidence path through the jq validator",
+  )
+  match[:filter]
+end
+
+def verify_evidence_filter(close_run, scope)
+  filter = extract_evidence_filter(close_run, scope)
+  check(
+    jq_string_list_after(filter, "then ((keys ==") == PASS_EVIDENCE_KEYS,
+    "passing #{scope} D-09 evidence must enforce the exact top-level schema",
+  )
+  check(
+    jq_string_list_after(filter, "else ((keys ==") == FALLBACK_EVIDENCE_KEYS,
+    "closed #{scope} D-09 fallback evidence must enforce the exact top-level schema",
+  )
+  check(
+    jq_string_list_after(filter, "(.image | keys) ==") == IMAGE_KEYS,
+    "passing #{scope} D-09 evidence must enforce the exact image schema",
+  )
+  check(
+    jq_string_list_after(filter, "(.artifacts | keys) ==") == ARTIFACT_KEYS,
+    "passing #{scope} D-09 evidence must enforce the exact artifact schema",
+  )
+
+  contracts = [
+    [
+      <<~'JQ',
+        def sha256:
+          (type == "string") and test("^[0-9a-f]{64}$");
+      JQ
+      "#{scope} D-09 evidence must use the exact SHA-256 predicate",
+    ],
+    [
+      <<~'JQ',
+        def bounded_body:
+          ((.bodyBytes | type) == "number")
+          and (.bodyBytes >= 0 and .bodyBytes <= 65536)
+          and ((.bodyBytes | floor) == .bodyBytes)
+          and (.bodySha256 | sha256);
+      JQ
+      "#{scope} D-09 denial evidence must retain bounded hashed bodies",
+    ],
+    [
+      <<~'JQ',
+        type == "object"
+          and (.schema == "cma-trigger-d09-v3")
+          and (.evidenceClass == "D")
+          and (.result == "pass" or .result == "fail" or .result == "inconclusive")
+          and ((.startedAt | type) == "string" and (.startedAt | length) > 0)
+          and ((.recordedAt | type) == "string" and (.recordedAt | length) > 0)
+          and (.buildCommit == $build_commit)
+          and (has("image"))
+          and (has("artifacts"))
+          and ((.cleanup | type) == "object")
+          and ((.cleanup.status | type) == "string")
+          and ((.cleanup.failureCodes | type) == "array")
+          and (.redaction == "Only closed outcomes, status classes, artifact hashes, synthetic identities, and counts are retained; provider bodies and credential values are discarded.")
+      JQ
+      "#{scope} D-09 evidence must retain the exact common envelope",
+    ],
+    [
+      <<~'JQ',
+        and (.image.reference == $source_reference)
+        and (.image.id | test("^sha256:[0-9a-f]{64}$"))
+        and ((.image.repoDigests | type) == "array")
+        and (all(.image.repoDigests[];
+          (type == "string") and test("@sha256:[0-9a-f]{64}$")
+        ))
+        and (.image.os == "linux")
+        and (.image.architecture == "amd64")
+        and (.image.revision == $build_commit)
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact image identity",
+    ],
+    [
+      <<~'JQ',
+        and (.artifacts.codexVersion == "codex-cli 0.147.0")
+        and (.artifacts.acpVersion == "1.4.0")
+        and (.artifacts.acpHash == "2c370f2337a5cc689d9a76b4bba1289d42afe6c17de824e2ca48004ba9670ab6")
+        and (.artifacts.bwrapPath == "/usr/bin/bwrap")
+        and (.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\.[0-9]+(\\.[0-9]+)?([-+~].*)?$"))
+        and (.artifacts.bwrapHash | sha256)
+        and (.artifacts.codexLauncherHash == "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477")
+        and (.artifacts.codexNativeHash == "cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40")
+        and (.artifacts.runtimeHash | sha256)
+        and (.artifacts.uid == 10001)
+        and (.artifacts.platform == "linux")
+        and (.artifacts.architecture == "x64")
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact runtime artifacts",
+    ],
+    [
+      <<~JQ,
+        and (.permissionProfile == {
+          name: "cma-trigger",
+          approvalPolicy: "never",
+          sha256: "#{PERMISSION_PROFILE_SHA256}",
+          allowedDomains: ["127.0.0.2"],
+          socks5: false,
+          upstreamProxy: false,
+          localBinding: false
+        })
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact permission profile",
+    ],
+    [
+      <<~'JQ',
+        and ((.listeners | type) == "array")
+        and ((.listeners | length) == 5)
+        and (.listeners == (.listeners | sort))
+        and ((.listeners | map(select(startswith("127.")))) == [
+          "127.0.0.1:9091", "127.0.0.2:9090",
+          "127.0.0.2:9091", "127.0.0.2:9092"
+        ])
+        and ((.listeners | map(select(startswith("127.") | not)) | length) == 1)
+        and ((.listeners | map(select(startswith("127.") | not))[0]
+          | test("^[0-9]{1,3}(\\.[0-9]{1,3}){3}:9090$")
+            and (startswith("0.0.0.0:") | not)))
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact listener inventory",
+    ],
+    [
+      <<~'JQ',
+        and (.outcomes == {
+          missingPolicy: "policy_denied",
+          wrongGeneration: "stale_generation",
+          allowed: "allowed",
+          providerDenied: "provider_denied",
+          brokerTransient: "transient_broker_failure",
+          wrongService: "policy_denied",
+          wrongCatalogService: "policy_denied",
+          wrongUserServiceSlug: "policy_denied",
+          wrongResource: "policy_denied"
+        })
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact provider outcomes",
+    ],
+    [
+      <<~'JQ',
+        and (.capability == {
+          firstGeneration: 2,
+          lastGeneration: 9,
+          renewedBeforeEveryProviderProbe: true
+        })
+      JQ
+      "passing #{scope} D-09 evidence must bind capability renewal and generations",
+    ],
+    [
+      <<~'JQ',
+        and ((.workspaceFence | keys) == [
+          "adoptedBySupervisor", "boundary",
+          "escapedOriginalSession", "fullyDaemonized",
+          "quiescedWriters", "reapedAfterExit", "resumed",
+          "stableWhileHeld"
+        ])
+        and (.workspaceFence.boundary == "linux_child_subreaper_v1")
+        and (.workspaceFence.fullyDaemonized == true)
+        and (.workspaceFence.adoptedBySupervisor == true)
+        and (.workspaceFence.escapedOriginalSession == true)
+        and ((.workspaceFence.quiescedWriters | type) == "number")
+        and (.workspaceFence.quiescedWriters >= 2)
+        and ((.workspaceFence.quiescedWriters | floor) == .workspaceFence.quiescedWriters)
+        and (.workspaceFence.stableWhileHeld == true)
+        and (.workspaceFence.resumed == true)
+        and (.workspaceFence.reapedAfterExit == true)
+      JQ
+      "passing #{scope} D-09 evidence must prove coherent daemon-writer checkpointing",
+    ],
+    [
+      <<~'JQ',
+        and ((.managedDenials | map(.target)) == [
+          "127.0.0.1", "localhost", "public-destination",
+          "pod-address"
+        ])
+        and (all(.managedDenials[];
+          (keys == ["bodyBytes", "bodySha256", "marker", "status", "target"])
+          and (.status == 403)
+          and (.marker == "blocked-by-allowlist")
+          and bounded_body
+        ))
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact managed denials",
+    ],
+    [
+      <<~'JQ',
+        and ((.isolationDenials | map(.target)) == [
+          "supervisor-front", "model-front"
+        ])
+        and (all(.isolationDenials[];
+          (keys == ["bodyBytes", "bodySha256", "marker", "status", "target"])
+          and (.status == 403)
+          and (.marker == "denied")
+          and (.bodyBytes == 0)
+          and (.bodySha256 == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        ))
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact isolation denials",
+    ],
+    [
+      <<~'JQ',
+        and ((.traversal | map(.form)) == [
+          "literal-dot-dot", "encoded-dot-dot",
+          "double-encoded-dot-dot", "mixed-dot-dot",
+          "encoded-slash", "backslash",
+          "canonical-github-slug-route", "suffixed-github-slug-route",
+          "pat-lookalike-slug-route", "user-service-id-as-slug-route",
+          "catalog-service-id-as-slug-route"
+        ])
+        and (all(.traversal[];
+          (keys == ["bodyBytes", "bodySha256", "form", "outcome", "status"])
+          and (.status == 403)
+          and (.outcome == "policy_denied")
+          and bounded_body
+        ))
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact traversal denials",
+    ],
+    [
+      <<~'JQ',
+        and ((.connect | map([.path, .target])) == [
+          ["direct-listener", "supervisor"],
+          ["direct-listener", "model-proxy"],
+          ["direct-listener", "platform-upstream"],
+          ["direct-listener", "public-destination"],
+          ["cma-trigger-sandbox", "supervisor"],
+          ["cma-trigger-sandbox", "model-proxy"],
+          ["cma-trigger-sandbox", "platform-upstream"],
+          ["cma-trigger-sandbox", "public-via-gateway"],
+          ["cma-trigger-sandbox", "public-direct"],
+          ["cma-trigger-sandbox", "platform-direct"]
+        ])
+        and (all(.connect[];
+          ((.status | type) == "number")
+          and ((.status | floor) == .status)
+          and (.status < 200 or .status >= 300)
+          and bounded_body
+          and (if .path == "direct-listener"
+               then (keys == ["bodyBytes", "bodySha256", "path", "status", "target"])
+               else (keys == ["bodyBytes", "bodySha256", "marker", "path", "status", "target"])
+               end)
+        ))
+        and ([.connect[] | select(.path == "cma-trigger-sandbox") | [.target, .marker]] == [
+          ["supervisor", "blocked-by-allowlist"],
+          ["model-proxy", "blocked-by-allowlist"],
+          ["platform-upstream", null],
+          ["public-via-gateway", null],
+          ["public-direct", "blocked-by-allowlist"],
+          ["platform-direct", "blocked-by-allowlist"]
+        ])
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact CONNECT denials",
+    ],
+    [
+      <<~'JQ',
+        and ((.startupRefusals | map(.name)) == [
+          "occupied-supervisor-ingress", "occupied-model-proxy",
+          "occupied-supervisor-denial", "occupied-model-denial",
+          "occupied-platform-gateway", "loopback-supervisor-ingress",
+          "missing-model-upstream", "missing-platform-upstream",
+          "missing-gateway-command", "missing-policy-keyring"
+        ])
+        and (all(.startupRefusals[];
+          (keys == [
+            "exitCode", "markerObserved", "name", "readyAnswered",
+            "readyStatusCount", "signal"
+          ])
+          and (.exitCode == 2)
+          and (.signal == null)
+          and (.readyAnswered == false)
+          and (.readyStatusCount == 0)
+          and (.markerObserved == true)
+        ))
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact startup refusals",
+    ],
+    [
+      <<~'JQ',
+        and (.providerFixture == {
+          githubCalls: 3,
+          modelCalls: 0,
+          connectCalls: 0,
+          unexpectedCalls: 0,
+          authorizationFailures: 0,
+          probeHeaderLeaks: 0
+        })
+      JQ
+      "passing #{scope} D-09 evidence must bind the exact provider fixture counts",
+    ],
+    [
+      'and (.cleanup == {status: "verified", failureCodes: []})',
+      "passing #{scope} D-09 evidence must prove exact cleanup",
+    ],
+    [
+      <<~'JQ',
+        and (.result == "fail" or .result == "inconclusive")
+        and (.image == null or (.image | type) == "object")
+        and (.artifacts == null or (.artifacts | type) == "object")
+        and ((.failure | type) == "object")
+        and ((.failure | keys) == ["code"])
+        and ((.failure.code | type) == "string")
+        and ((.failure.code | length) > 0)
+        and ((.cleanup | keys) == ["failureCodes", "status"])
+        and (.cleanup.status == "not_started"
+             or .cleanup.status == "verified"
+             or .cleanup.status == "failed")
+        and (all(.cleanup.failureCodes[];
+          (type == "string") and (length > 0)
+        ))
+      JQ
+      "closed #{scope} D-09 fallback evidence must retain an honest failure and cleanup receipt",
+    ],
+  ]
+  contracts.each do |predicate, message|
+    require_jq_predicate(filter, predicate, message)
+  end
+  filter
+end
+
+def verify_smoke_sandbox_contract(smoke_source)
+  gateway_match = smoke_source.match(
+    /const GATEWAY_PROBE_COMMAND = JSON\.stringify\(\[(?<arguments>.*?)\]\);/m,
+  )
+  check(gateway_match, "D-09 smoke must define its gateway probe command as JSON")
+  gateway_source = gateway_match[:arguments].sub(/,\s*\z/, "")
+  gateway_command = begin
+    JSON.parse("[#{gateway_source}]")
+  rescue JSON::ParserError
+    nil
+  end
+  check(
+    gateway_command == GATEWAY_PROBE_COMMAND,
+    "D-09 gateway probes must use the exact cma-trigger Codex sandbox command",
+  )
+
+  permission_match = smoke_source.match(/const PERMISSION_CONFIG = `(?<config>.*?)`;/m)
+  check(permission_match, "D-09 smoke must define its Trigger permission profile")
+  permission_config = permission_match[:config]
+  check(
+    permission_config == PERMISSION_CONFIG,
+    "D-09 smoke must retain the exact cma-trigger permission profile",
+  )
+  check(
+    Digest::SHA256.hexdigest(permission_config) == PERMISSION_PROFILE_SHA256,
+    "D-09 smoke permission profile must match its retained SHA-256",
+  )
+  check(
+    smoke_source.include?("CHRONO_RUNTIME_CONFIG: PERMISSION_CONFIG,") &&
+      smoke_source.include?(
+        "CHRONO_RUNTIME_GATEWAY_PROBE_COMMAND: GATEWAY_PROBE_COMMAND,",
+      ),
+    "D-09 runtime environment must install the exact profile and sandboxed gateway command",
+  )
+  check(
+    smoke_source.include?("assert.equal(configResult.stdout, PERMISSION_CONFIG);"),
+    "D-09 smoke must verify the installed permission profile byte for byte",
+  )
+
+  workspace_restore = "await restoreWorkspace(baseUrl, workspace);"
+  sandbox_probe = "await sandboxObservation("
+  gateway_probe = "await gatewayProbe("
+  restore_index = smoke_source.index(workspace_restore)
+  sandbox_index = smoke_source.index(sandbox_probe)
+  gateway_index = smoke_source.index(gateway_probe)
+  check(
+    smoke_source.scan(workspace_restore).length == 1,
+    "D-09 smoke must restore its repository exactly once",
+  )
+  check(
+    restore_index && sandbox_index && gateway_index &&
+      restore_index < sandbox_index && restore_index < gateway_index,
+    "D-09 smoke must restore its repository before the first sandboxed command",
+  )
+  check(
+    smoke_source.include?(
+      "\"--workdir\",\n      WORKSPACE_ROOT,\n      container,",
+    ),
+    "D-09 raw probes must execute from the restored repository root",
+  )
+
+  sandbox_wrapper =
+    '? ["codex", "sandbox", "--permission-profile", "cma-trigger", "--"]'
+  check(
+    smoke_source.scan(sandbox_wrapper).length == 1,
+    "D-09 direct probes must use the exact cma-trigger Codex sandbox wrapper",
+  )
+  initialization_failure = <<~'JAVASCRIPT'
+    if (receipt?.outcome === "command_sandbox_initialization_failed") {
+      throw new CampaignFailure(
+        "command_sandbox_initialization_failed",
+        "inconclusive",
+      );
+    }
+  JAVASCRIPT
+  check(
+    normalized_shell(smoke_source).include?(normalized_shell(initialization_failure)),
+    "D-09 command-sandbox initialization failure must remain inconclusive",
+  )
+
+  prohibited_options = [
+    [/['"]--privileged(?:=[^'"]*)?['"]/, "--privileged"],
+    [/['"]--cap-add(?:=[^'"]*)?['"]/, "--cap-add"],
+    [
+      /['"]--network=host['"]|['"]--network['"]\s*,\s*['"]host['"]/m,
+      "host networking",
+    ],
+    [/['"]--userns(?:=[^'"]*)?['"]/, "--userns"],
+    [/['"]--pid(?:=[^'"]*)?['"]/, "--pid"],
+  ]
+  prohibited_options.each do |pattern, label|
+    check(
+      !smoke_source.match?(pattern),
+      "D-09 smoke must not use #{label} on any container",
+    )
+  end
+end
+
+def workflow_run_source(workflow)
+  jobs = workflow["jobs"]
+  return "" unless jobs.is_a?(Hash)
+
+  jobs.values.flat_map do |job|
+    next [] unless job.is_a?(Hash) && job["steps"].is_a?(Array)
+
+    job["steps"].map { |step| step.is_a?(Hash) ? step["run"].to_s : "" }
+  end.join("\n")
+end
+
 def verify_bwrap_host_preparation(step, scope)
   run = normalized_shell(step["run"])
   expected = normalized_shell(<<~SHELL)
@@ -99,12 +615,10 @@ def verify_bwrap_host_preparation(step, scope)
       /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
       /etc/apparmor.d/bwrap-userns-restrict
     sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-    sudo grep -Fx 'bwrap (enforce)' /sys/kernel/security/apparmor/profiles
-    sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles
   SHELL
   check(
     run == expected,
-    "#{scope} D-09 host preparation must exactly install, load, and verify the targeted bubblewrap AppArmor profiles",
+    "#{scope} D-09 host preparation must exactly install and load the targeted bubblewrap AppArmor profile",
   )
   check(
     !step.key?("continue-on-error"),
@@ -113,6 +627,18 @@ def verify_bwrap_host_preparation(step, scope)
 end
 
 def verify_d09_host_contract(ci_workflow, publish_workflow, smoke_source)
+  {
+    "CI" => ci_workflow,
+    "release" => publish_workflow,
+  }.each do |scope, workflow|
+    run_source = workflow_run_source(workflow)
+    check(
+      !run_source.match?(/\bsysctl\b/) &&
+        !run_source.include?("apparmor_restrict_unprivileged_userns"),
+      "#{scope} D-09 workflow must not disable the global AppArmor unprivileged user-namespace restriction",
+    )
+  end
+
   ci_jobs = required_hash(ci_workflow, "ci.yml must contain a workflow mapping")["jobs"]
   ci_jobs = required_hash(ci_jobs, "ci.yml must contain jobs")
   images = required_hash(ci_jobs["images"], "ci.yml must retain the images job")
@@ -131,7 +657,7 @@ def verify_d09_host_contract(ci_workflow, publish_workflow, smoke_source)
   )
   initialize_run = ci_initialize["run"].to_s
   [
-    'schema: "cma-trigger-d09-v2"',
+    'schema: "cma-trigger-d09-v3"',
     'result: "inconclusive"',
     'failure: {code: "ci_runtime_gate_incomplete"}',
     '"$D09_FALLBACK_PATH"',
@@ -155,32 +681,8 @@ def verify_d09_host_contract(ci_workflow, publish_workflow, smoke_source)
     "CI D-09 evidence closure must always run for the runtime image",
   )
   ci_close_run = ci_close["run"].to_s
-  ci_artifact_schema_match = ci_close_run.match(/\.artifacts \| keys\) == \[(.*?)\]\)/m)
-  ci_artifact_keys = if ci_artifact_schema_match
-                       ci_artifact_schema_match[1].scan(/"([^"]+)"/).flatten
-                     else
-                       []
-                     end
-  check(
-    ci_artifact_keys == ARTIFACT_KEYS,
-    "passing CI D-09 evidence must bind the exact artifact-facts schema",
-  )
+  ci_filter = verify_evidence_filter(ci_close_run, "CI")
   [
-    '.schema == "cma-trigger-d09-v2"',
-    '.result == "pass" or .result == "fail" or .result == "inconclusive"',
-    '.buildCommit == $build_commit',
-    '.image.reference == $source_reference',
-    '.image.architecture == "amd64"',
-    '.image.revision == $build_commit',
-    '.artifacts.bwrapPath == "/usr/bin/bwrap"',
-    '.artifacts.bwrapHash | test("^[0-9a-f]{64}$")',
-    '.artifacts.uid == 10001',
-    '.artifacts.platform == "linux"',
-    '.artifacts.architecture == "x64"',
-    '.cleanup.status == "verified"',
-    '.cleanup.failureCodes == []',
-    '(has("failure") | not)',
-    '(.failure.code | length) > 0',
     "end)' \\",
     '.failure = {code: "evidence_record_invalid"}',
     '"$D09_FALLBACK_PATH" > "$D09_EVIDENCE_PATH.tmp"',
@@ -228,6 +730,10 @@ def verify_d09_host_contract(ci_workflow, publish_workflow, smoke_source)
     "release D-09 runner must stay pinned to Ubuntu 24.04",
   )
   gate_steps = required_steps(gate, "runtime-image-gate")
+  release_initialize = required_step(
+    gate_steps,
+    "Initialize closed release-image evidence",
+  )
   pull = required_step(gate_steps, "Pull the immutable runtime image")
   release_prepare = required_step(
     gate_steps,
@@ -243,10 +749,17 @@ def verify_d09_host_contract(ci_workflow, publish_workflow, smoke_source)
     "CI and release D-09 host preparation must remain identical",
   )
   campaign = required_step(gate_steps, "Prove the release runtime network boundary")
+  release_close = required_step(gate_steps, "Close release-image evidence")
+  release_filter = verify_evidence_filter(release_close["run"].to_s, "release")
   check(
-    gate_steps.index(pull) < gate_steps.index(release_prepare) &&
+    release_filter == ci_filter,
+    "CI and release D-09 evidence closures must use the identical jq validator",
+  )
+  check(
+    gate_steps.index(release_initialize) < gate_steps.index(pull) &&
+      gate_steps.index(pull) < gate_steps.index(release_prepare) &&
       gate_steps.index(release_prepare) < gate_steps.index(campaign),
-    "release D-09 must pull the image, prepare the host, then run the campaign",
+    "release D-09 must initialize evidence, pull the image, prepare the host, then run the campaign",
   )
 
   launch_match = smoke_source.match(
@@ -264,15 +777,10 @@ def verify_d09_host_contract(ci_workflow, publish_workflow, smoke_source)
     "D-09 runtime must retain exactly its three reviewed outer security options",
   )
   check(
-    !launch.include?('"--privileged"') &&
-      !launch.include?('"--cap-add"') &&
-      !launch.match?(/"--network",\s*"host"/m),
-    "D-09 runtime must not gain privilege, capabilities, or host networking",
-  )
-  check(
-    smoke_source.scan(/"--security-opt"/).length == 3,
+    smoke_source.scan(/"--security-opt(?:=[^"]*)?"/).length == 3,
     "D-09 outer security options must remain scoped to its main runtime",
   )
+  verify_smoke_sandbox_contract(smoke_source)
 end
 
 def verify_contract(workflow, release_doc, readiness_doc)
@@ -367,7 +875,7 @@ def verify_contract(workflow, release_doc, readiness_doc)
   check(always_condition?(initialize["if"]), "closed fallback initialization must always run")
   initialize_run = initialize["run"].to_s
   [
-    'schema: "cma-trigger-d09-v2"',
+    'schema: "cma-trigger-d09-v3"',
     'result: "inconclusive"',
     'failure: {code: "release_image_gate_incomplete"}',
     '"$D09_FALLBACK_PATH"',
@@ -490,34 +998,8 @@ def verify_contract(workflow, release_doc, readiness_doc)
   close = required_step(gate_steps, "Close release-image evidence")
   check(always_condition?(close["if"]), "D-09 evidence closure must always run")
   close_run = close["run"].to_s
-  artifact_schema_match = close_run.match(/\.artifacts \| keys\) == \[(.*?)\]\)/m)
-  artifact_keys = artifact_schema_match ? artifact_schema_match[1].scan(/"([^"]+)"/).flatten : []
-  check(artifact_keys == ARTIFACT_KEYS, "passing D-09 evidence must bind the exact artifact-facts schema")
+  verify_evidence_filter(close_run, "release")
   [
-    ['.schema == "cma-trigger-d09-v2"', "closed D-09 evidence must bind its schema"],
-    ['.evidenceClass == "D"', "closed D-09 evidence must bind evidence class D"],
-    ['.buildCommit == $build_commit', "closed D-09 evidence must bind the release commit"],
-    ['.image.reference == $source_reference', "passing D-09 evidence must bind the immutable image"],
-    ['.image.architecture == "amd64"', "passing D-09 evidence must bind amd64"],
-    ['.image.revision == $build_commit', "passing D-09 evidence must bind image revision"],
-    ['(.artifacts | type) == "object"', "passing D-09 evidence must retain artifact identity"],
-    ['(.artifacts.codexVersion | type) == "string"', "passing D-09 evidence must bind the Codex version"],
-    ['(.artifacts.codexVersion | length) > 0', "passing D-09 evidence must retain a non-empty Codex version"],
-    ['(.artifacts.acpVersion | type) == "string"', "passing D-09 evidence must bind the ACP version"],
-    ['(.artifacts.acpVersion | length) > 0', "passing D-09 evidence must retain a non-empty ACP version"],
-    ['.artifacts.acpHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the ACP hash"],
-    ['.artifacts.bwrapPath == "/usr/bin/bwrap"', "passing D-09 evidence must bind the system bubblewrap path"],
-    ['.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\\\.[0-9]+(\\\\.[0-9]+)?([-+~].*)?$")', "passing D-09 evidence must bind the bubblewrap version"],
-    ['.artifacts.bwrapHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the bubblewrap hash"],
-    ['.artifacts.codexLauncherHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the Codex launcher hash"],
-    ['.artifacts.codexNativeHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the Codex native hash"],
-    ['.artifacts.runtimeHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the runtime hash"],
-    ['.artifacts.uid == 10001', "passing D-09 evidence must bind the runtime uid"],
-    ['.artifacts.platform == "linux"', "passing D-09 evidence must bind Linux"],
-    ['.artifacts.architecture == "x64"', "passing D-09 evidence must bind the runtime architecture"],
-    ['.cleanup.status == "verified"', "passing D-09 evidence must prove cleanup"],
-    ['.cleanup.failureCodes == []', "passing D-09 evidence must have no cleanup failures"],
-    ['(has("failure") | not)', "passing D-09 evidence must not retain a failure"],
     ['.failure.code = "evidence_record_invalid"', "malformed D-09 evidence must close inconclusive"],
     ['"$D09_FALLBACK_PATH" > "$D09_EVIDENCE_PATH"', "malformed D-09 evidence must replace output with the closed fallback"],
   ].each do |contract, message|
@@ -623,6 +1105,30 @@ def replace_once!(source, before, after)
   raise "self-test fixture is missing #{before.inspect}" unless changed
 end
 
+def ci_close_filter_mutation(before, after)
+  lambda do |ci, _publish, _smoke|
+    run = mutation_step(ci, "images", "Close Trigger runtime evidence").fetch("run")
+    replace_once!(run, before, after)
+  end
+end
+
+def release_close_filter_mutation(before, after)
+  lambda do |_ci, publish, _smoke|
+    run = mutation_step(
+      publish,
+      "runtime-image-gate",
+      "Close release-image evidence",
+    ).fetch("run")
+    replace_once!(run, before, after)
+  end
+end
+
+def smoke_source_mutation(before, after)
+  lambda do |_ci, _publish, smoke|
+    replace_once!(smoke, before, after)
+  end
+end
+
 def run_self_tests(workflow, release_doc, readiness_doc)
   tests = [
     [
@@ -683,7 +1189,7 @@ def run_self_tests(workflow, release_doc, readiness_doc)
     ],
     [
       "system bubblewrap path evidence removed",
-      "passing D-09 evidence must bind the system bubblewrap path",
+      "passing release D-09 evidence must bind the exact runtime artifacts",
       lambda do |candidate, _release, _readiness|
         run = mutation_step(candidate, "runtime-image-gate", "Close release-image evidence").fetch("run")
         replace_once!(
@@ -740,7 +1246,7 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
     ],
     [
       "CI bubblewrap profile load removed",
-      "CI D-09 host preparation must exactly install, load, and verify",
+      "CI D-09 host preparation must exactly install and load",
       lambda do |ci, _publish, _smoke|
         run = mutation_step(ci, "images", "Prepare Codex bubblewrap AppArmor profile").fetch("run")
         replace_once!(
@@ -751,8 +1257,8 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
       end,
     ],
     [
-      "release bubblewrap profile verification removed",
-      "release D-09 host preparation must exactly install, load, and verify",
+      "release bubblewrap profile load removed",
+      "release D-09 host preparation must exactly install and load",
       lambda do |_ci, publish, _smoke|
         run = mutation_step(
           publish,
@@ -761,8 +1267,8 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
         ).fetch("run")
         replace_once!(
           run,
-          "sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles",
-          "true # profile verification removed",
+          "sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict",
+          "true # profile load removed",
         )
       end,
     ],
@@ -810,19 +1316,19 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
     ],
     [
       "CI malformed pass cleanup accepted",
-      "CI D-09 evidence closure is missing .cleanup.status == \"verified\"",
+      "passing CI D-09 evidence must prove exact cleanup",
       lambda do |ci, _publish, _smoke|
         run = mutation_step(ci, "images", "Close Trigger runtime evidence").fetch("run")
         replace_once!(
           run,
-          '.cleanup.status == "verified"',
+          'and (.cleanup == {status: "verified", failureCodes: []})',
           '(.cleanup.status | type) == "string"',
         )
       end,
     ],
     [
       "CI evidence input detached from jq validation",
-      "CI D-09 evidence closure is missing end)' \\",
+      "CI D-09 evidence closure must feed its evidence path through the jq validator",
       lambda do |ci, _publish, _smoke|
         run = mutation_step(ci, "images", "Close Trigger runtime evidence").fetch("run")
         replace_once!(
@@ -894,14 +1400,19 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
     ],
     [
       "global AppArmor restriction weakened",
-      "CI D-09 host preparation must exactly install, load, and verify",
+      "CI D-09 workflow must not disable the global AppArmor unprivileged user-namespace restriction",
       lambda do |ci, _publish, _smoke|
-        run = mutation_step(
-          ci,
-          "images",
-          "Prepare Codex bubblewrap AppArmor profile",
-        ).fetch("run")
-        run << "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n"
+        steps = ci.fetch("jobs").fetch("images").fetch("steps")
+        prepare_index = steps.index do |step|
+          step["name"] == "Prepare Codex bubblewrap AppArmor profile"
+        end
+        steps.insert(
+          prepare_index,
+          {
+            "name" => "Disable the global AppArmor restriction",
+            "run" => "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n",
+          },
+        )
       end,
     ],
     [
@@ -913,23 +1424,23 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
     ],
     [
       "capability added to D-09 runtime",
-      "D-09 runtime must not gain privilege, capabilities, or host networking",
+      "D-09 smoke must not use --cap-add on any container",
       lambda do |_ci, _publish, smoke|
         replace_once!(
           smoke,
           "        \"--publish\",\n",
-          "        \"--cap-add\",\n        \"SYS_ADMIN\",\n        \"--publish\",\n",
+          "        \"--cap-add=SYS_ADMIN\",\n        \"--publish\",\n",
         )
       end,
     ],
     [
       "host network added to D-09 runtime",
-      "D-09 runtime must not gain privilege, capabilities, or host networking",
+      "D-09 smoke must not use host networking on any container",
       lambda do |_ci, _publish, smoke|
         replace_once!(
           smoke,
           "        runtime,\n        \"--label\",\n        resourceLabel,\n        \"--network\",\n        network,\n",
-          "        runtime,\n        \"--label\",\n        resourceLabel,\n        \"--network\",\n        \"host\",\n",
+          "        runtime,\n        \"--label\",\n        resourceLabel,\n        \"--network=host\",\n",
         )
       end,
     ],
@@ -955,16 +1466,358 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
     ],
     [
       "privileged D-09 runtime added",
-      "D-09 runtime must not gain privilege, capabilities, or host networking",
+      "D-09 smoke must not use --privileged on any container",
       lambda do |_ci, _publish, smoke|
         replace_once!(
           smoke,
           "        \"--publish\",\n",
-          "        \"--privileged\",\n        \"--publish\",\n",
+          "        \"--privileged=true\",\n        \"--publish\",\n",
         )
       end,
     ],
   ]
+
+  tests.concat(
+    [
+      [
+        "CI pass top-level schema weakened",
+        "passing CI D-09 evidence must enforce the exact top-level schema",
+        ci_close_filter_mutation(
+          '"artifacts", "buildCommit", "capability", "cleanup",',
+          '"artifacts", "buildCommit", "cleanup",',
+        ),
+      ],
+      [
+        "CI permission-profile name changed",
+        "passing CI D-09 evidence must bind the exact permission profile",
+        ci_close_filter_mutation(
+          'name: "cma-trigger",',
+          'name: "workspace",',
+        ),
+      ],
+      [
+        "CI permission-profile domain broadened",
+        "passing CI D-09 evidence must bind the exact permission profile",
+        ci_close_filter_mutation(
+          'allowedDomains: ["127.0.0.2"],',
+          'allowedDomains: ["127.0.0.2", "localhost"],',
+        ),
+      ],
+      [
+        "CI permission-profile digest changed",
+        "passing CI D-09 evidence must bind the exact permission profile",
+        ci_close_filter_mutation(
+          PERMISSION_PROFILE_SHA256,
+          "05ce3deca2d907481d999d1ec56a52ad3017644417e262a89cdf9ca1ad649be2",
+        ),
+      ],
+      [
+        "CI listener count weakened",
+        "passing CI D-09 evidence must bind the exact listener inventory",
+        ci_close_filter_mutation(
+          "((.listeners | length) == 5)",
+          "((.listeners | length) >= 4)",
+        ),
+      ],
+      [
+        "CI known listener changed",
+        "passing CI D-09 evidence must bind the exact listener inventory",
+        ci_close_filter_mutation(
+          '"127.0.0.1:9091", "127.0.0.2:9090",',
+          '"127.0.0.1:9090", "127.0.0.2:9090",',
+        ),
+      ],
+      [
+        "CI provider outcome changed",
+        "passing CI D-09 evidence must bind the exact provider outcomes",
+        ci_close_filter_mutation(
+          'wrongGeneration: "stale_generation",',
+          'wrongGeneration: "policy_denied",',
+        ),
+      ],
+      [
+        "CI first capability generation weakened",
+        "passing CI D-09 evidence must bind capability renewal and generations",
+        ci_close_filter_mutation("firstGeneration: 2,", "firstGeneration: 1,"),
+      ],
+      [
+        "CI capability renewal fact weakened",
+        "passing CI D-09 evidence must bind capability renewal and generations",
+        ci_close_filter_mutation(
+          "renewedBeforeEveryProviderProbe: true",
+          "renewedBeforeEveryProviderProbe: false",
+        ),
+      ],
+      [
+        "CI managed-denial targets weakened",
+        "passing CI D-09 evidence must bind the exact managed denials",
+        ci_close_filter_mutation(
+          '"127.0.0.1", "localhost", "public-destination",',
+          '"127.0.0.1", "public-destination",',
+        ),
+      ],
+      [
+        "CI managed-denial marker weakened",
+        "passing CI D-09 evidence must bind the exact managed denials",
+        ci_close_filter_mutation(
+          '(.marker == "blocked-by-allowlist")',
+          '((.marker | type) == "string")',
+        ),
+      ],
+      [
+        "CI denial body bound broadened",
+        "CI D-09 denial evidence must retain bounded hashed bodies",
+        ci_close_filter_mutation(
+          ".bodyBytes <= 65536",
+          ".bodyBytes <= 1048576",
+        ),
+      ],
+      [
+        "CI isolation-denial marker weakened",
+        "passing CI D-09 evidence must bind the exact isolation denials",
+        ci_close_filter_mutation(
+          '(.marker == "denied")',
+          '((.marker | type) == "string")',
+        ),
+      ],
+      [
+        "CI isolation-denial empty body weakened",
+        "passing CI D-09 evidence must bind the exact isolation denials",
+        ci_close_filter_mutation("(.bodyBytes == 0)", "(.bodyBytes >= 0)"),
+      ],
+      [
+        "CI traversal form changed",
+        "passing CI D-09 evidence must bind the exact traversal denials",
+        ci_close_filter_mutation(
+          '"literal-dot-dot", "encoded-dot-dot",',
+          '"literal-dot-dot", "plain-path",',
+        ),
+      ],
+      [
+        "CI traversal outcome weakened",
+        "passing CI D-09 evidence must bind the exact traversal denials",
+        ci_close_filter_mutation(
+          '(.outcome == "policy_denied")',
+          '((.outcome | type) == "string")',
+        ),
+      ],
+      [
+        "CI CONNECT path changed",
+        "passing CI D-09 evidence must bind the exact CONNECT denials",
+        ci_close_filter_mutation(
+          '["direct-listener", "supervisor"],',
+          '["direct", "supervisor"],',
+        ),
+      ],
+      [
+        "CI CONNECT target changed",
+        "passing CI D-09 evidence must bind the exact CONNECT denials",
+        ci_close_filter_mutation(
+          '["cma-trigger-sandbox", "public-direct"],',
+          '["cma-trigger-sandbox", "public-destination"],',
+        ),
+      ],
+      [
+        "CI CONNECT status weakened",
+        "passing CI D-09 evidence must bind the exact CONNECT denials",
+        ci_close_filter_mutation(
+          "(.status < 200 or .status >= 300)",
+          "(.status != 200)",
+        ),
+      ],
+      [
+        "CI CONNECT marker weakened",
+        "passing CI D-09 evidence must bind the exact CONNECT denials",
+        ci_close_filter_mutation(
+          '["supervisor", "blocked-by-allowlist"],',
+          '["supervisor", null],',
+        ),
+      ],
+      [
+        "CI startup-refusal name changed",
+        "passing CI D-09 evidence must bind the exact startup refusals",
+        ci_close_filter_mutation(
+          '"missing-gateway-command", "missing-policy-keyring"',
+          '"missing-gateway-command", "missing-permission-profile"',
+        ),
+      ],
+      [
+        "CI startup-refusal exit code weakened",
+        "passing CI D-09 evidence must bind the exact startup refusals",
+        ci_close_filter_mutation(
+          "(.exitCode == 2)",
+          "((.exitCode | type) == \"number\")",
+        ),
+      ],
+      [
+        "CI startup-refusal readiness answer weakened",
+        "passing CI D-09 evidence must bind the exact startup refusals",
+        ci_close_filter_mutation(
+          "(.readyAnswered == false)",
+          "((.readyAnswered | type) == \"boolean\")",
+        ),
+      ],
+      [
+        "CI startup-refusal readiness count weakened",
+        "passing CI D-09 evidence must bind the exact startup refusals",
+        ci_close_filter_mutation(
+          "(.readyStatusCount == 0)",
+          "(.readyStatusCount >= 0)",
+        ),
+      ],
+      [
+        "CI startup-refusal marker weakened",
+        "passing CI D-09 evidence must bind the exact startup refusals",
+        ci_close_filter_mutation(
+          "(.markerObserved == true)",
+          "((.markerObserved | type) == \"boolean\")",
+        ),
+      ],
+      [
+        "CI provider fixture GitHub count changed",
+        "passing CI D-09 evidence must bind the exact provider fixture counts",
+        ci_close_filter_mutation("githubCalls: 3,", "githubCalls: 2,"),
+      ],
+      [
+        "CI provider fixture zero-count fact changed",
+        "passing CI D-09 evidence must bind the exact provider fixture counts",
+        ci_close_filter_mutation("modelCalls: 0,", "modelCalls: 1,"),
+      ],
+      [
+        "CI fallback top-level schema weakened",
+        "closed CI D-09 fallback evidence must enforce the exact top-level schema",
+        ci_close_filter_mutation(
+          '"artifacts", "buildCommit", "cleanup", "evidenceClass",',
+          '"artifacts", "buildCommit", "evidenceClass",',
+        ),
+      ],
+      [
+        "CI fallback result admits pass",
+        "closed CI D-09 fallback evidence must retain an honest failure and cleanup receipt",
+        ci_close_filter_mutation(
+          'and (.result == "fail" or .result == "inconclusive")',
+          'and (.result == "pass" or .result == "fail" or .result == "inconclusive")',
+        ),
+      ],
+      [
+        "CI fallback failure code weakened",
+        "closed CI D-09 fallback evidence must retain an honest failure and cleanup receipt",
+        ci_close_filter_mutation(
+          '((.failure | keys) == ["code"])',
+          '(.failure | has("code"))',
+        ),
+      ],
+      [
+        "release evidence validator drifted from CI",
+        "CI and release D-09 evidence closures must use the identical jq validator",
+        release_close_filter_mutation(
+          "     (type == \"string\") and test(\"^[0-9a-f]{64}$\");",
+          "      (type == \"string\") and test(\"^[0-9a-f]{64}$\");",
+        ),
+      ],
+      [
+        "gateway probe command made unsandboxed",
+        "D-09 gateway probes must use the exact cma-trigger Codex sandbox command",
+        smoke_source_mutation(
+          "  \"codex\",\n  \"sandbox\",\n  \"--permission-profile\",\n  \"cma-trigger\",\n  \"--\",\n",
+          "",
+        ),
+      ],
+      [
+        "gateway permission-profile name changed",
+        "D-09 gateway probes must use the exact cma-trigger Codex sandbox command",
+        smoke_source_mutation(
+          "  \"cma-trigger\",\n  \"--\",\n",
+          "  \"workspace\",\n  \"--\",\n",
+        ),
+      ],
+      [
+        "permission profile domain broadened",
+        "D-09 smoke must retain the exact cma-trigger permission profile",
+        smoke_source_mutation(
+          "\"127.0.0.2\" = \"allow\"\n",
+          "\"127.0.0.2\" = \"allow\"\n\"localhost\" = \"allow\"\n",
+        ),
+      ],
+      [
+        "installed permission-profile equality removed",
+        "D-09 smoke must verify the installed permission profile byte for byte",
+        smoke_source_mutation(
+          "assert.equal(configResult.stdout, PERMISSION_CONFIG);",
+          "assert.equal(typeof configResult.stdout, \"string\");",
+        ),
+      ],
+      [
+        "workspace restore moved after the first sandboxed command",
+        "D-09 smoke must restore its repository before the first sandboxed command",
+        lambda do |_ci, _publish, smoke|
+          restore =
+            "    campaignStage = \"workspace-restore\";\n" \
+            "    const workspace = workspaceFixture();\n" \
+            "    await restoreWorkspace(baseUrl, workspace);\n\n"
+          replace_once!(smoke, restore, "")
+          first_probe = "    requireManagedDenial(sandboxPreflight);\n"
+          replace_once!(smoke, first_probe, "#{first_probe}\n#{restore}")
+        end,
+      ],
+      [
+        "sandbox initialization failure made a test failure",
+        "D-09 command-sandbox initialization failure must remain inconclusive",
+        smoke_source_mutation(
+          "\"command_sandbox_initialization_failed\",\n      \"inconclusive\",",
+          "\"command_sandbox_initialization_failed\",\n      \"fail\",",
+        ),
+      ],
+      [
+        "direct raw-probe sandbox wrapper changed",
+        "D-09 direct probes must use the exact cma-trigger Codex sandbox wrapper",
+        smoke_source_mutation(
+          '? ["codex", "sandbox", "--permission-profile", "cma-trigger", "--"]',
+          '? ["codex", "sandbox", "--permission-profile", "workspace", "--"]',
+        ),
+      ],
+      [
+        "provider fixture made privileged",
+        "D-09 smoke must not use --privileged on any container",
+        smoke_source_mutation(
+          "        fixture,\n        \"--label\",\n",
+          "        fixture,\n        \"--privileged\",\n        \"--label\",\n",
+        ),
+      ],
+      [
+        "startup-refusal container gained SYS_ADMIN",
+        "D-09 smoke must not use --cap-add on any container",
+        smoke_source_mutation(
+          "      \"--rm\",\n      \"--network\",\n",
+          "      \"--rm\",\n      \"--cap-add=SYS_ADMIN\",\n      \"--network\",\n",
+        ),
+      ],
+      [
+        "provider fixture gained host networking",
+        "D-09 smoke must not use host networking on any container",
+        smoke_source_mutation(
+          "        fixture,\n        \"--label\",\n        resourceLabel,\n        \"--network\",\n        network,\n",
+          "        fixture,\n        \"--label\",\n        resourceLabel,\n        \"--network=host\",\n",
+        ),
+      ],
+      [
+        "provider fixture shared the host user namespace",
+        "D-09 smoke must not use --userns on any container",
+        smoke_source_mutation(
+          "        fixture,\n        \"--label\",\n",
+          "        fixture,\n        \"--userns=host\",\n        \"--label\",\n",
+        ),
+      ],
+      [
+        "startup-refusal container shared the host PID namespace",
+        "D-09 smoke must not use --pid on any container",
+        smoke_source_mutation(
+          "      \"--rm\",\n      \"--network\",\n",
+          "      \"--rm\",\n      \"--pid=host\",\n      \"--network\",\n",
+        ),
+      ],
+    ],
+  )
 
   tests.each do |name, expected_error, mutation|
     candidate_ci = cloned(ci_workflow)

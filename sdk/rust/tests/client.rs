@@ -19,9 +19,9 @@ use cma_sdk::{
     PullRequestStatusRefreshRequest, RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy,
     ScreenSnapshot, SelectLaunchConnectionRequest, Session, SessionId, SessionInput,
     SessionPageRequest, SessionStatus, TerminalGeometry, TriggerConnection, TriggerConnectionState,
-    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewCost,
-    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
-    UpdateTriggerRequest, Usage,
+    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewAvailability,
+    TriggerPreviewCost, TriggerPreviewUnavailableReason, TriggerRepositorySelection,
+    TriggerRevision, UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -364,6 +364,8 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     let preview: TriggerPreview =
         serde_json::from_str(TRIGGER_PREVIEW).expect("Trigger preview fixture is typed");
     assert_eq!(preview.repository_id, 10);
+    assert_eq!(preview.availability, TriggerPreviewAvailability::Published);
+    assert_eq!(preview.unavailable_reason, None);
     assert!(matches!(
         preview.estimated_cost,
         TriggerPreviewCost::ExactZero {
@@ -399,6 +401,26 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     let mut unknown_cost = fixture(TRIGGER_PREVIEW);
     unknown_cost["estimated_cost"] = serde_json::json!({ "kind": "future_quote" });
     assert!(serde_json::from_value::<TriggerPreview>(unknown_cost).is_err());
+    let mut unavailable = fixture(TRIGGER_PREVIEW);
+    unavailable["availability"] = serde_json::json!("unavailable");
+    unavailable["unavailable_reason"] = serde_json::json!("upstream_not_forkable");
+    let unavailable: TriggerPreview =
+        serde_json::from_value(unavailable).expect("dynamic unavailable preview is typed");
+    assert_eq!(
+        unavailable.unavailable_reason,
+        Some(TriggerPreviewUnavailableReason::UpstreamNotForkable)
+    );
+    for (availability, reason) in [
+        ("published", serde_json::json!("upstream_not_forkable")),
+        ("retired", serde_json::json!("upstream_unavailable")),
+        ("unavailable", serde_json::Value::Null),
+        ("unavailable", serde_json::json!("future_reason")),
+    ] {
+        let mut malformed = fixture(TRIGGER_PREVIEW);
+        malformed["availability"] = serde_json::json!(availability);
+        malformed["unavailable_reason"] = reason;
+        assert!(serde_json::from_value::<TriggerPreview>(malformed).is_err());
+    }
     for malformed in [
         serde_json::json!({
             "kind": "exact_zero",
@@ -440,8 +462,21 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
             .runtime_admission
             .as_ref()
             .map(|runtime| runtime.kernel),
-        Some(cma_sdk::TriggerKernel::Codex)
+        Some(cma_sdk::TriggerKernel::CodexTriggerNativeV1)
     );
+    assert!(cma_sdk::TriggerKernel::CodexTriggerNativeV1.is_current());
+    assert!(!cma_sdk::TriggerKernel::CodexTriggerNativeV1.is_legacy_read_only());
+    let mut legacy_kernel = fixture(LAUNCH);
+    legacy_kernel["runtime_admission"]["kernel"] = serde_json::json!("codex");
+    let legacy_kernel: Launch = serde_json::from_value(legacy_kernel)
+        .expect("the exact historical Trigger kernel remains decodable");
+    let legacy_kernel = legacy_kernel
+        .runtime_admission
+        .expect("the historical Launch retains its admission snapshot")
+        .kernel;
+    assert_eq!(legacy_kernel, cma_sdk::TriggerKernel::Codex);
+    assert!(legacy_kernel.is_legacy_read_only());
+    assert!(!legacy_kernel.is_current());
     let mut unknown_kernel = fixture(LAUNCH);
     unknown_kernel["runtime_admission"]["kernel"] = serde_json::json!("future_kernel");
     assert!(serde_json::from_value::<Launch>(unknown_kernel).is_err());
@@ -455,15 +490,43 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     ));
     let review: DiffReview =
         serde_json::from_str(DIFF_REVIEW).expect("diff-review fixture is typed");
-    assert_eq!(
-        review
-            .artifact
-            .as_ref()
-            .expect("fixture has an artifact")
-            .files
-            .len(),
-        1
-    );
+    let reviewed_files = &review
+        .artifact
+        .as_ref()
+        .expect("fixture has an artifact")
+        .files;
+    assert_eq!(reviewed_files.len(), 1);
+    assert_eq!(reviewed_files[0].additions, Some(1));
+    assert_eq!(reviewed_files[0].deletions, Some(0));
+
+    let mut missing_stats = fixture(DIFF_REVIEW);
+    missing_stats["artifact"]["files"][0]
+        .as_object_mut()
+        .expect("fixture file is an object")
+        .remove("additions");
+    assert!(serde_json::from_value::<DiffReview>(missing_stats).is_err());
+    for (binary, additions, deletions) in [
+        (false, serde_json::Value::Null, serde_json::json!(0)),
+        (false, serde_json::Value::Null, serde_json::Value::Null),
+        (true, serde_json::json!(0), serde_json::json!(0)),
+    ] {
+        let mut malformed = fixture(DIFF_REVIEW);
+        malformed["artifact"]["files"][0]["binary"] = serde_json::json!(binary);
+        malformed["artifact"]["files"][0]["additions"] = additions;
+        malformed["artifact"]["files"][0]["deletions"] = deletions;
+        assert!(serde_json::from_value::<DiffReview>(malformed).is_err());
+    }
+    let mut binary = fixture(DIFF_REVIEW);
+    binary["artifact"]["files"][0]["binary"] = serde_json::json!(true);
+    binary["artifact"]["files"][0]["additions"] = serde_json::Value::Null;
+    binary["artifact"]["files"][0]["deletions"] = serde_json::Value::Null;
+    let binary: DiffReview =
+        serde_json::from_value(binary).expect("binary line statistics are explicitly unavailable");
+    let binary_artifact = binary.artifact.expect("fixture has an artifact");
+    let binary_file = &binary_artifact.files[0];
+    let binary_wire = serde_json::to_value(binary_file).expect("DiffFile serializes");
+    assert_eq!(binary_wire["additions"], serde_json::Value::Null);
+    assert_eq!(binary_wire["deletions"], serde_json::Value::Null);
     let pull_request = review
         .pull_request
         .as_ref()

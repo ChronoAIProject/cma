@@ -438,9 +438,9 @@ async fn preflight_github_authority(
     })?;
     let expected_upstream = &launch.revision.content.upstream.repository;
     let mut upstream = github
-        .repository_by_id(
+        .repository_by_id_with_connection(
             &launch.owner,
-            &expected_connection.service_id,
+            expected_connection,
             expected_upstream.repository_id,
         )
         .await?;
@@ -464,9 +464,9 @@ async fn preflight_github_authority(
             .ok_or_else(|| GithubBrokerError::Malformed("the Launch has no fork".into()))?
             .repository;
         let mut fork = github
-            .repository_by_id(
+            .repository_by_id_with_connection(
                 &launch.owner,
-                &expected_connection.service_id,
+                expected_connection,
                 expected_fork.repository_id,
             )
             .await?;
@@ -511,6 +511,8 @@ async fn preflight_github_authority(
             subject: launch.owner.clone(),
             subject_token_generation: current.subject_token_generation,
             service_id: current.snapshot.service_id.clone(),
+            github_catalog_service_id: current.snapshot.github_catalog_service_id.clone(),
+            github_user_service_slug: current.snapshot.github_user_service_slug.clone(),
             service_state_version: current.snapshot.service_state_version,
             backing_key_id: current.snapshot.backing_key_id.clone(),
             session_credential_authority: None,
@@ -521,6 +523,18 @@ async fn preflight_github_authority(
         fork,
         branch,
     })
+}
+
+#[cfg(test)]
+pub(super) async fn preflight_github_authority_for_test(
+    github: &GithubBroker,
+    launch: &Launch,
+    kind: LaunchEffectKind,
+    require_retained_branch_head: bool,
+) -> Result<(), GithubBrokerError> {
+    preflight_github_authority(github, launch, kind, require_retained_branch_head)
+        .await
+        .map(|_| ())
 }
 
 #[async_trait]
@@ -663,6 +677,8 @@ impl GithubEffectPort for GithubBroker {
 
 fn same_connection_authority(expected: &ConnectionSnapshot, current: &ConnectionSnapshot) -> bool {
     expected.service_id == current.service_id
+        && expected.github_catalog_service_id == current.github_catalog_service_id
+        && expected.github_user_service_slug == current.github_user_service_slug
         && expected.service_state_version == current.service_state_version
         && expected.backing_key_id == current.backing_key_id
         && expected.account.account_id == current.account.account_id
@@ -1843,6 +1859,20 @@ impl GithubEffectExecutor {
                 ),
             };
         }
+        let (github_catalog_service_id, github_user_service_slug) =
+            match authority.connection.github_binding() {
+                Ok((catalog_service_id, user_service_slug)) => (
+                    catalog_service_id.to_string(),
+                    user_service_slug.to_string(),
+                ),
+                Err(_) => {
+                    return authority_admission_failure(
+                        claim,
+                        "trigger_github_binding_missing",
+                        "The committed Reach admission has no exact GitHub catalog route binding.",
+                    )
+                }
+            };
         let capability = LaunchCapability {
             version: CAPABILITY_POLICY_VERSION,
             launch_id: launch.id.clone(),
@@ -1851,6 +1881,8 @@ impl GithubEffectExecutor {
             // the session lifecycle fence.
             runtime_audience: String::new(),
             service_id: authority.connection.service_id.clone(),
+            github_catalog_service_id: github_catalog_service_id.clone(),
+            github_user_service_slug: github_user_service_slug.clone(),
             upstream: authority.upstream.clone(),
             fork: authority.fork.clone(),
             allowed_ref: format!("refs/heads/{}", branch.name),
@@ -1911,6 +1943,8 @@ impl GithubEffectExecutor {
                 layer3_adapter::RuntimeGatewayProbeRequest {
                     version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
                     service_id: authority.connection.service_id.clone(),
+                    catalog_service_id: github_catalog_service_id.clone(),
+                    user_service_slug: github_user_service_slug.clone(),
                     resource_id: authority.fork.repository_id,
                 },
             )
@@ -1935,6 +1969,8 @@ impl GithubEffectExecutor {
         }
         let mut resources = retained_resources(launch, claim);
         resources.insert("service_id".into(), authority.connection.service_id.clone());
+        resources.insert("catalog_service_id".into(), github_catalog_service_id);
+        resources.insert("user_service_slug".into(), github_user_service_slug);
         resources.insert("policy_generation".into(), generation.to_string());
         resources.insert("policy_fence".into(), claim.fence.to_string());
         resources.insert("runtime_audience".into(), runtime_audience.clone());
@@ -3035,6 +3071,30 @@ impl GithubEffectExecutor {
 
 #[async_trait]
 impl EffectExecutor for GithubEffectExecutor {
+    fn refuse_execute(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+        correlation_id: &str,
+    ) -> Option<LaunchFailure> {
+        if claim.kind == LaunchEffectKind::Cleanup
+            || super::has_current_trigger_runtime_admission(launch)
+        {
+            return None;
+        }
+        Some(LaunchFailure {
+            class: FailureClass::TerminalSecurity,
+            code: "launch_runtime_route_quarantined".into(),
+            detail: "The retained Launch runtime route is not authorized for new Trigger effects."
+                .into(),
+            remediation: "CMA will preserve reconciliation evidence, revoke remaining session authority, and permit only fenced cleanup on this historical Launch. Open a New Launch to continue."
+                .into(),
+            correlation_id: correlation_id.into(),
+            retry_at: None,
+            observed_at: rfc3339_at(SystemTime::now()),
+        })
+    }
+
     async fn refresh_pull_request_status(
         &self,
         launch: &Launch,
@@ -3244,6 +3304,12 @@ fn pull_request_status_failure(
             "github_service_inactive",
             "The selected GitHub connection is inactive.",
             "Enable the exact service in NyxID or choose another active connection, then refresh.",
+        ),
+        Error::UnapprovedScope { .. } => fail_launch(
+            FailureClass::TerminalSecurity,
+            "github_scope_unapproved",
+            "The selected GitHub connection grants a scope outside CMA's approved authority ceiling.",
+            "Reconnect with only CMA-approved GitHub scopes before retrying this status read.",
         ),
         Error::ConnectionNotFound
         | Error::ConnectionDisconnected
@@ -3767,7 +3833,7 @@ fn runtime_gateway_reachability_failure(
             FailureClass::TerminalValidation,
             "trigger_runtime_gateway_probe_unsupported",
             "The eligible runtime image does not support the required gateway proof protocol.",
-            "Roll out a runtime that advertises runtime_gateway_probe_v1 before enabling Trigger admission.",
+            "Roll out a runtime that advertises runtime_gateway_probe_v2 before enabling Trigger admission.",
         ),
         ReachabilityError::ProtocolViolation => terminal(
             FailureClass::TerminalSecurity,
@@ -3903,6 +3969,16 @@ fn broker_failure(
                 "github_service_inactive",
                 "The selected GitHub connection is inactive.",
                 "Activate or reconnect the same GitHub connection, then resume this Launch.",
+                claim,
+                None,
+            ),
+        },
+        Error::UnapprovedScope { .. } => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::TerminalSecurity,
+                "github_scope_unapproved",
+                "The selected GitHub connection grants a scope outside CMA's approved authority ceiling.",
+                "Reconnect with only CMA-approved GitHub scopes before resuming this Launch.",
                 claim,
                 None,
             ),
@@ -4125,6 +4201,11 @@ fn service_failure(error: TriggerServiceError, claim: &EffectClaim) -> EffectExe
                 claim,
                 false,
             ),
+            TriggerAuthorityError::UnapprovedScope { scope } => broker_failure(
+                GithubBrokerError::UnapprovedScope { scope },
+                claim,
+                false,
+            ),
             TriggerAuthorityError::AuthorityDrift => {
                 broker_failure(GithubBrokerError::AuthorityDrift, claim, false)
             }
@@ -4213,7 +4294,9 @@ fn service_failure(error: TriggerServiceError, claim: &EffectClaim) -> EffectExe
                 ),
             },
         },
-        TriggerServiceError::Validation(_) | TriggerServiceError::CursorBeyondEnd { .. } => {
+        TriggerServiceError::Validation(_)
+        | TriggerServiceError::CursorBeyondEnd { .. }
+        | TriggerServiceError::RuntimeRouteUnavailable { .. } => {
             EffectExecution::Failed {
                 failure: failure(
                     FailureClass::TerminalValidation,
@@ -8596,6 +8679,79 @@ pub(in crate::trigger) mod tests {
         assert_eq!(actual.intent_key, expected.intent_key);
     }
 
+    #[test]
+    fn incomplete_runtime_admission_refuses_new_effects_but_preserves_cleanup() {
+        let executor = GithubEffectExecutor::with_port(
+            Arc::new(FakeGithub::new([])),
+            DEFAULT_FORK_READINESS_TIMEOUT,
+        );
+        let claim = claim_for(LaunchEffectKind::Fork, EffectClaimMode::Execute);
+        let cleanup = claim_for(LaunchEffectKind::Cleanup, EffectClaimMode::Execute);
+
+        for corruption in [
+            "missing",
+            "historical-kernel",
+            "missing-version",
+            "malformed-time",
+            "missing-capability",
+            "duplicate-capability",
+        ] {
+            let mut launch = fork_launch();
+            match corruption {
+                "missing" => launch.runtime_admission = None,
+                "historical-kernel" => {
+                    launch.runtime_admission.as_mut().unwrap().kernel =
+                        layer2_core::KernelId::new(super::super::LEGACY_TRIGGER_KERNEL_ID);
+                }
+                "missing-version" => {
+                    launch.runtime_admission.as_mut().unwrap().runtime_version = String::new();
+                }
+                "malformed-time" => {
+                    launch.runtime_admission.as_mut().unwrap().observed_at = "invalid".into();
+                }
+                "missing-capability" => {
+                    launch
+                        .runtime_admission
+                        .as_mut()
+                        .unwrap()
+                        .supported_capabilities
+                        .pop();
+                }
+                "duplicate-capability" => {
+                    let runtime = launch.runtime_admission.as_mut().unwrap();
+                    runtime
+                        .supported_capabilities
+                        .push(runtime.supported_capabilities[0]);
+                }
+                _ => unreachable!("the table contains only declared corruptions"),
+            }
+
+            let failure = executor
+                .refuse_execute(&launch, &claim, corruption)
+                .expect("an incomplete admission cannot execute a new provider effect");
+            assert_eq!(
+                failure.class,
+                FailureClass::TerminalSecurity,
+                "{corruption}"
+            );
+            assert_eq!(
+                failure.code, "launch_runtime_route_quarantined",
+                "{corruption}"
+            );
+            assert!(
+                executor
+                    .refuse_execute(&launch, &cleanup, corruption)
+                    .is_none(),
+                "cleanup remains available for {corruption}"
+            );
+        }
+
+        let launch = fork_launch();
+        assert!(executor
+            .refuse_execute(&launch, &claim, "complete-runtime-admission")
+            .is_none());
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
@@ -9291,7 +9447,7 @@ pub(in crate::trigger) mod tests {
             options: Default::default(),
             id: layer2_core::SessionId("sesn_trigger_effect".into()),
             owner: launch.owner.clone(),
-            kernel: layer2_core::KernelId::new("codex"),
+            kernel: layer2_core::KernelId::new(super::super::TRIGGER_KERNEL_ID),
             status,
             recovery_state: layer2_core::RecoveryState::Normal,
             stop_reason: None,
