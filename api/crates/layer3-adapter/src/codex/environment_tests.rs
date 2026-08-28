@@ -17,8 +17,10 @@ use crate::{AdapterError, KernelAdapter, RuntimeSpec, TermSize};
 fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment,
@@ -27,6 +29,7 @@ fn spec_with(environment: crate::RuntimeEnvironment) -> RuntimeSpec {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: Default::default(),
     }
@@ -68,8 +71,10 @@ async fn permission_intent_reaches_this_kernel_through_the_file_it_reads() {
         let a = adapter("http://127.0.0.1:1");
         let spec = RuntimeSpec {
             restore_from: None,
+            workspace: None,
             skills: Vec::new(),
             reaches: Vec::new(),
+            runtime_policy_required: false,
             platform_briefing: String::new(),
             created_by: None,
             environment: Default::default(),
@@ -78,6 +83,7 @@ async fn permission_intent_reaches_this_kernel_through_the_file_it_reads() {
             reservation_token: None,
             size: TermSize { cols: 80, rows: 24 },
             capacity: None,
+            timeout_seconds: None,
             subject_credential: None,
             options: RuntimeOptions {
                 permission,
@@ -111,14 +117,39 @@ fn the_supervisor_is_told_where_this_kernels_file_goes() {
     );
 }
 
+#[test]
+fn only_a_trigger_runtime_gets_the_fixed_gateway_probe_command() {
+    let a = adapter("http://127.0.0.1:1");
+    let ordinary = a.environment_for(&spec_with(Default::default()));
+    assert!(!ordinary.contains_key("CHRONO_RUNTIME_GATEWAY_PROBE_COMMAND"));
+    assert!(!ordinary.contains_key("INITIAL_AGENT_MODE"));
+
+    let mut trigger = spec_with(Default::default());
+    trigger.runtime_policy_required = true;
+    let env = a.environment_for(&trigger);
+    assert_eq!(
+        env.get("CHRONO_RUNTIME_GATEWAY_PROBE_COMMAND")
+            .map(String::as_str),
+        Some(
+            r#"["codex","sandbox","--permission-profile","cma-trigger","--","/usr/local/bin/layer4-runtime","runtime-gateway-probe-helper-v1"]"#
+        )
+    );
+    assert_eq!(
+        env.get("INITIAL_AGENT_MODE").map(String::as_str),
+        Some("cma-trigger")
+    );
+}
+
 #[tokio::test]
 async fn a_session_model_overrides_the_deployment_default() {
     use crate::RuntimeOptions;
     let a = adapter("http://127.0.0.1:1");
     let spec = RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
@@ -127,6 +158,7 @@ async fn a_session_model_overrides_the_deployment_default() {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: RuntimeOptions {
             model: Some("a-chosen-model".into()),
@@ -155,8 +187,10 @@ async fn an_own_account_session_is_given_no_upstream_of_ours() {
     let a = adapter("http://127.0.0.1:1");
     let spec = RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
@@ -165,6 +199,7 @@ async fn an_own_account_session_is_given_no_upstream_of_ours() {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: RuntimeOptions {
             own_credential: true,
@@ -194,8 +229,10 @@ async fn the_delegated_credential_provisions_exactly_as_before() {
     let err = a
         .provision(&RuntimeSpec {
             restore_from: None,
+            workspace: None,
             skills: Vec::new(),
             reaches: Vec::new(),
+            runtime_policy_required: false,
             platform_briefing: String::new(),
             created_by: None,
             environment: Default::default(),
@@ -204,6 +241,7 @@ async fn the_delegated_credential_provisions_exactly_as_before() {
             reservation_token: None,
             size: TermSize { cols: 80, rows: 24 },
             capacity: None,
+            timeout_seconds: None,
             subject_credential: None,
             options: Default::default(),
         })
@@ -221,8 +259,10 @@ fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
     let a = adapter("http://127.0.0.1:1");
     let env = a.environment_for(&RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
@@ -231,6 +271,7 @@ fn no_credential_mode_is_exported_to_a_runtime_that_cannot_read_one() {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: RuntimeOptions {
             own_credential: true,

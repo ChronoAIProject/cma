@@ -48,6 +48,10 @@ pub(crate) struct BringUpContext {
     pub(crate) outcome: crate::provision_failure::Abandonment,
     pub(crate) lease: Option<SessionLease>,
     pub(crate) handover: Option<crate::rotate::CoordinatedHandover>,
+    /// One exact Launch-authorized workspace/conversation pair. Kept
+    /// separate from skill and credential custody because those authorities
+    /// have independent lifetimes and replacement rules.
+    pub(crate) trigger_recovery: Option<crate::TriggerRecoveryPair>,
     /// Exact bytes resolved before H1 was touched, when this is a handover.
     pub(crate) prepared_skills: Option<PreparedSkillPacks>,
     /// Exact durable rotation claim this bring-up must publish or abandon.
@@ -63,6 +67,7 @@ impl BringUpContext {
             outcome,
             lease: None,
             handover: None,
+            trigger_recovery: None,
             prepared_skills: None,
             rotation_claim,
         }
@@ -1476,6 +1481,7 @@ impl SessionService {
             outcome,
             mut lease,
             handover,
+            trigger_recovery,
             mut prepared_skills,
             rotation_claim,
         } = context;
@@ -1538,11 +1544,22 @@ impl SessionService {
             }
         };
         if credential_failure.is_none() && !credential_available {
-            tracing::warn!(
-                session_id = %id,
-                "no credential could be minted for this session; it will start unable to act \
-                 on its owner's behalf until the top-up sweep supplies one"
-            );
+            if id.is_trigger_managed() {
+                credential_failure = Some(crate::provision_failure::StartFailure::transient(
+                    "the exact Trigger service credential is unavailable; no runtime was created"
+                        .to_string(),
+                ));
+                tracing::warn!(
+                    session_id = %id,
+                    "Trigger runtime creation refused without its exact service credential"
+                );
+            } else {
+                tracing::warn!(
+                    session_id = %id,
+                    "no credential could be minted for this session; it will start unable to act \
+                     on its owner's behalf until the top-up sweep supplies one"
+                );
+            }
         }
         let operation = if session.status.is_rotating() || rotation_claim.is_some() {
             SessionOperation::Handover
@@ -1553,6 +1570,7 @@ impl SessionService {
         let start = crate::provision::RuntimeStartContext {
             geometry,
             restore: restore.as_ref(),
+            trigger_recovery: trigger_recovery.as_ref(),
             platform_briefing: &platform_briefing,
             handover: handover.as_ref(),
             publication_token: &publication_token,
@@ -1635,6 +1653,8 @@ impl SessionService {
                 lease
                     .as_mut()
                     .expect("a restorable handover still holds its lease"),
+                handover.writer_hold.as_ref(),
+                handover.trigger_recovery.as_ref(),
             )
             .await;
             return;
@@ -2586,6 +2606,7 @@ pub(crate) fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
             PermissionMode::Unrestricted => RuntimePermission::Unrestricted,
         },
         own_credential: matches!(options.credential, crate::options::CredentialMode::Own),
+        restricted_service_gateway: false,
         // Nothing to rejoin: this is a runtime being started, which has no
         // conversation yet. Taking one back over is the readopt path's, and it
         // reads the name from the record rather than from anything held here.

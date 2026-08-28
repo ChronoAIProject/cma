@@ -54,7 +54,7 @@ interface SessionActionHandles {
   readonly sessions: readonly Session[];
   readonly activeId: string | null;
   readonly setSessions: React.Dispatch<React.SetStateAction<readonly Session[]>>;
-  readonly setActiveId: React.Dispatch<React.SetStateAction<string | null>>;
+  readonly clearSelection: () => void;
   readonly setOpeningForId: React.Dispatch<React.SetStateAction<string | null>>;
   readonly setNotice: (notice: FailureNotice | null) => void;
   readonly setActing: (acting: boolean) => void;
@@ -84,7 +84,7 @@ export function useSessionActions({
   sessions,
   activeId,
   setSessions,
-  setActiveId,
+  clearSelection,
   setOpeningForId,
   setNotice,
   setActing,
@@ -231,7 +231,7 @@ export function useSessionActions({
            */
           const successor = sessions.find((s) => s.id !== id);
           if (successor === undefined) {
-            setActiveId(null);
+            clearSelection();
           } else {
             select(successor.id);
           }
@@ -245,12 +245,12 @@ export function useSessionActions({
     },
     [
       activeId,
+      clearSelection,
       refreshAllowance,
       report,
       select,
       sessions,
       setActing,
-      setActiveId,
       setFocusHistory,
       setNotice,
       setSessions,

@@ -9,9 +9,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing,
-    RuntimeLossReason, RuntimeMode, RuntimeSpec, TerminalChannel, TerminalInput,
-    TerminalInputSender, TerminalOutput,
+    AdapterError, KernelAdapter, RuntimeGatewayProbeReceipt, RuntimeGatewayProbeRequest,
+    RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeLossReason,
+    RuntimeMode, RuntimePolicyObservation, RuntimePolicyReceipt, RuntimeSpec, TerminalChannel,
+    TerminalInput, TerminalInputSender, TerminalOutput, WorkspaceCheckpointPackage,
+    WorkspaceCheckpointRequest,
 };
 use tokio::sync::{mpsc, Mutex, Notify, Semaphore};
 
@@ -167,6 +169,31 @@ pub(crate) struct FakeAdapter {
     pub(crate) fail_watch: bool,
     /// Resource watch attempts, including refusals and transient failures.
     pub(crate) resource_watch_calls: std::sync::atomic::AtomicUsize,
+    /// A sealed workspace capture returned to Layer 2 when a test configures
+    /// this runtime to support the v2 checkpoint capability.
+    pub(crate) checkpoint: Mutex<Option<WorkspaceCheckpointPackage>>,
+    pub(crate) checkpoint_calls: std::sync::atomic::AtomicUsize,
+    pub(crate) checkpoint_requests: Mutex<Vec<(String, WorkspaceCheckpointRequest)>>,
+    pub(crate) hold_checkpoint: std::sync::atomic::AtomicBool,
+    pub(crate) checkpoint_started: Semaphore,
+    pub(crate) continue_checkpoint: Semaphore,
+    /// Exact runtime/token pairs Layer 2 asked to reopen after a failed move.
+    pub(crate) workspace_resumes: Mutex<Vec<(String, String)>>,
+    pub(crate) fail_workspace_resumes: std::sync::atomic::AtomicUsize,
+    /// Policy/probe calls and their configured closed receipts.
+    pub(crate) runtime_policies: Mutex<Vec<(String, String)>>,
+    pub(crate) runtime_policy_receipt: Mutex<Option<RuntimePolicyReceipt>>,
+    pub(crate) runtime_policy_observations: Mutex<Vec<String>>,
+    pub(crate) runtime_policy_observation: Mutex<Option<RuntimePolicyObservation>>,
+    pub(crate) runtime_policy_observation_error: Mutex<Option<AdapterError>>,
+    pub(crate) hold_runtime_policy_observation: std::sync::atomic::AtomicBool,
+    pub(crate) runtime_policy_observation_started: Semaphore,
+    pub(crate) continue_runtime_policy_observation: Semaphore,
+    pub(crate) gateway_probes: Mutex<Vec<(String, RuntimeGatewayProbeRequest)>>,
+    pub(crate) gateway_probe_receipt: Mutex<Option<RuntimeGatewayProbeReceipt>>,
+    pub(crate) hold_gateway_probe: std::sync::atomic::AtomicBool,
+    pub(crate) gateway_probe_started: Semaphore,
+    pub(crate) continue_gateway_probe: Semaphore,
 }
 
 impl Default for FakeAdapter {
@@ -237,6 +264,27 @@ impl Default for FakeAdapter {
             refuse_watch: false,
             fail_watch: false,
             resource_watch_calls: std::sync::atomic::AtomicUsize::new(0),
+            checkpoint: Mutex::default(),
+            checkpoint_calls: std::sync::atomic::AtomicUsize::new(0),
+            checkpoint_requests: Mutex::default(),
+            hold_checkpoint: std::sync::atomic::AtomicBool::new(false),
+            checkpoint_started: Semaphore::new(0),
+            continue_checkpoint: Semaphore::new(0),
+            workspace_resumes: Mutex::default(),
+            fail_workspace_resumes: std::sync::atomic::AtomicUsize::new(0),
+            runtime_policies: Mutex::default(),
+            runtime_policy_receipt: Mutex::default(),
+            runtime_policy_observations: Mutex::default(),
+            runtime_policy_observation: Mutex::default(),
+            runtime_policy_observation_error: Mutex::default(),
+            hold_runtime_policy_observation: std::sync::atomic::AtomicBool::new(false),
+            runtime_policy_observation_started: Semaphore::new(0),
+            continue_runtime_policy_observation: Semaphore::new(0),
+            gateway_probes: Mutex::default(),
+            gateway_probe_receipt: Mutex::default(),
+            hold_gateway_probe: std::sync::atomic::AtomicBool::new(false),
+            gateway_probe_started: Semaphore::new(0),
+            continue_gateway_probe: Semaphore::new(0),
         }
     }
 }
@@ -659,6 +707,90 @@ impl KernelAdapter for FakeAdapter {
         Ok(())
     }
 
+    async fn install_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+        envelope: &str,
+    ) -> Result<RuntimePolicyReceipt, AdapterError> {
+        self.runtime_policies
+            .lock()
+            .await
+            .push((handle.0.clone(), envelope.to_string()));
+        self.runtime_policy_receipt
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| {
+                AdapterError::Unsupported(
+                    "the fake runtime has no authenticated policy receipt".into(),
+                )
+            })
+    }
+
+    async fn observe_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<RuntimePolicyObservation, AdapterError> {
+        self.runtime_policy_observations
+            .lock()
+            .await
+            .push(handle.0.clone());
+        if self
+            .hold_runtime_policy_observation
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.runtime_policy_observation_started.add_permits(1);
+            self.continue_runtime_policy_observation
+                .acquire()
+                .await
+                .expect("the runtime-policy observation test gate remains open")
+                .forget();
+        }
+        if let Some(error) = self.runtime_policy_observation_error.lock().await.take() {
+            return Err(error);
+        }
+        self.runtime_policy_observation
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| {
+                AdapterError::Unsupported(
+                    "the fake runtime has no authenticated policy observation".into(),
+                )
+            })
+    }
+
+    async fn probe_runtime_gateway(
+        &self,
+        handle: &RuntimeHandle,
+        request: &RuntimeGatewayProbeRequest,
+    ) -> Result<RuntimeGatewayProbeReceipt, AdapterError> {
+        self.gateway_probes
+            .lock()
+            .await
+            .push((handle.0.clone(), request.clone()));
+        if self
+            .hold_gateway_probe
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.gateway_probe_started.add_permits(1);
+            self.continue_gateway_probe
+                .acquire()
+                .await
+                .expect("the gateway probe test gate remains open")
+                .forget();
+        }
+        self.gateway_probe_receipt
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| {
+                AdapterError::Unsupported(
+                    "the fake runtime has no restricted gateway probe receipt".into(),
+                )
+            })
+    }
+
     async fn watch_resources(
         &self,
         _handle: &RuntimeHandle,
@@ -741,6 +873,64 @@ impl KernelAdapter for FakeAdapter {
             self.snapshot_resume.notified().await;
         }
         Ok(snapshot)
+    }
+
+    async fn checkpoint_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        self.checkpoint_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        self.checkpoint_requests
+            .lock()
+            .await
+            .push((handle.0.clone(), request.clone()));
+        if self
+            .hold_checkpoint
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.checkpoint_started.add_permits(1);
+            self.continue_checkpoint
+                .acquire()
+                .await
+                .expect("the test adapter remains alive")
+                .forget();
+        }
+        self.checkpoint.lock().await.clone().ok_or_else(|| {
+            AdapterError::Unsupported("this test runtime cannot checkpoint its workspace".into())
+        })
+    }
+
+    async fn resume_workspace_writers(
+        &self,
+        handle: &RuntimeHandle,
+        resume_token: &str,
+    ) -> Result<(), AdapterError> {
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        if self
+            .fail_workspace_resumes
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(AdapterError::Unavailable(
+                "workspace writer resume unavailable".into(),
+            ));
+        }
+        self.workspace_resumes
+            .lock()
+            .await
+            .push((handle.0.clone(), resume_token.to_string()));
+        Ok(())
     }
 
     async fn switch_plane(

@@ -14,9 +14,10 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, EnvironmentProfileService, OperationStore, PublicIdentity, Quote, Session,
-    SessionCapabilities, SessionCapability, SessionId, SessionService, SessionSpec,
-    TerminalGeometry, UserDirectory,
+    Caller, CoreError, DiffArtifactObjectStore, EnvironmentProfileService, OperationStore,
+    PublicIdentity, Quote, Session, SessionCapabilities, SessionCapability, SessionId,
+    SessionService, SessionSpec, TerminalGeometry, TriggerConnectionManager, TriggerService,
+    UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -31,8 +32,10 @@ mod openapi_shapes;
 mod operate;
 mod problems;
 mod tickets;
+mod trigger_openapi_shapes;
+pub(crate) mod triggers;
 
-pub(crate) use problems::{problem_document, problem_response};
+pub(crate) use problems::{problem_document, problem_response, TriggerValidationCategory};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
@@ -43,6 +46,39 @@ use pagination::SessionPageParams;
 /// Base URI for problem types this interface returns.
 pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/problems";
 
+/// Exact accepted caller correlation identifier length, in ASCII bytes.
+pub const REQUEST_ID_LENGTH: usize = 36;
+
+/// OpenAPI expression for the exact caller correlation identifier vocabulary.
+pub const REQUEST_ID_PATTERN: &str =
+    "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+/// Return one canonical caller request identifier, if the header map contains
+/// exactly one usable value.
+///
+/// Surrounding ASCII whitespace is normalized away. Only the canonical,
+/// lowercase, hyphenated rendering of an RFC UUID is accepted. Everything
+/// else, including multiple values, is rejected before it can reach logs,
+/// durable Trigger events, or a response header.
+pub fn request_id_from_headers(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all("x-request-id").iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    normalize_request_id(value.to_str().ok()?)
+}
+
+/// Normalize and validate the textual value of one `X-Request-Id` header.
+pub fn normalize_request_id(value: &str) -> Option<&str> {
+    let normalized = value.trim_matches(|character: char| character.is_ascii_whitespace());
+    if normalized.len() != REQUEST_ID_LENGTH {
+        return None;
+    }
+    let parsed = uuid::Uuid::parse_str(normalized).ok()?;
+    (parsed.hyphenated().to_string() == normalized).then_some(normalized)
+}
+
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[
     "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
@@ -52,6 +88,7 @@ const CONFORMS_TO: &[&str] = &[
     "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
     "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
     "https://spec.chrono-ai.fun/cma/1.0/conf/usage",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/trigger",
 ];
 
 const BUILD_SHA: &str = match option_env!("CHRONO_BUILD_SHA") {
@@ -117,6 +154,18 @@ impl InterfaceProfile for RestInterface {
             Operation::GetUsage,
             Operation::GetSpend,
             Operation::ChangePlane,
+            Operation::ReadTriggerPreview,
+            Operation::ManageTriggers,
+            Operation::ManageTriggerConnections,
+            Operation::CreateLaunch,
+            Operation::ReadLaunch,
+            Operation::UpdateLaunchDraft,
+            Operation::StartLaunch,
+            Operation::CancelLaunch,
+            Operation::ReplayLaunchProgress,
+            Operation::ReadLaunchDiff,
+            Operation::PublishLaunchContribution,
+            Operation::ManageLaunchPullRequest,
         ]
     }
 }
@@ -722,6 +771,8 @@ pub enum RequestFailure {
     Refused(Problem),
     /// Durable state could not be read or written.
     Store(crate::auth::StoreUnavailable),
+    /// A Trigger, connection, or Launch command was refused.
+    Trigger(layer2_core::TriggerServiceError),
 }
 
 impl From<CoreError> for RequestFailure {
@@ -739,6 +790,12 @@ impl From<Problem> for RequestFailure {
 impl From<layer2_core::store::StoreError> for RequestFailure {
     fn from(_: layer2_core::store::StoreError) -> Self {
         Self::Store(crate::auth::StoreUnavailable)
+    }
+}
+
+impl From<layer2_core::TriggerServiceError> for RequestFailure {
+    fn from(error: layer2_core::TriggerServiceError) -> Self {
+        Self::Trigger(error)
     }
 }
 
@@ -767,6 +824,7 @@ impl IntoResponse for RequestFailure {
             Self::Query(e) => e.into_response(),
             Self::Refused(e) => e.into_response(),
             Self::Store(e) => e.into_response(),
+            Self::Trigger(e) => triggers::TriggerProblem(e).into_response(),
         }
     }
 }
@@ -967,6 +1025,21 @@ mod pagination;
 /// route at a time.
 pub mod admin;
 
+/// Trigger resources share REST's operation claims while retaining their own
+/// domain and reusable-connection ports.
+#[derive(Clone)]
+pub struct TriggersState {
+    /// Provider-neutral Trigger and Launch commands.
+    pub triggers: Arc<TriggerService>,
+    /// Reusable contributor connection operations.
+    pub connections: Arc<dyn TriggerConnectionManager>,
+    /// The same durable operation claims used by the existing REST commands.
+    pub operations: Arc<dyn OperationStore>,
+    /// Complete immutable review artifacts, when durable Trigger workspace
+    /// storage is configured for this deployment.
+    pub diff_artifacts: Option<Arc<dyn DiffArtifactObjectStore>>,
+}
+
 /// What the session routes are served from.
 ///
 /// The session service and collaborators used to render its public view.
@@ -990,6 +1063,8 @@ pub struct SessionsState {
     pub environments: Arc<EnvironmentProfileService>,
     /// Durable claims used by the operations that promise one execution.
     pub operations: Arc<dyn OperationStore>,
+    /// Trigger workflow surface, when composed by this deployment.
+    pub triggers: Option<TriggersState>,
 }
 
 impl FromRef<SessionsState> for Arc<SessionService> {
@@ -1030,11 +1105,14 @@ pub fn router(state: SessionsState) -> Router {
 /// Compose every REST resource and the generated anonymous contract route.
 pub fn complete_router(state: SessionsState, admin: Arc<admin::AdminState>) -> Router {
     let environments = Arc::clone(&state.environments);
-    openapi::finish(
-        documented_router(state)
-            .merge(environments::documented_router(environments))
-            .merge(admin::documented_router(admin)),
-    )
+    let triggers = state.triggers.clone();
+    let mut documented = documented_router(state)
+        .merge(environments::documented_router(environments))
+        .merge(admin::documented_router(admin));
+    if let Some(triggers) = triggers {
+        documented = documented.merge(triggers::documented_router(triggers));
+    }
+    openapi::finish(documented)
 }
 
 fn documented_router(state: SessionsState) -> OpenApiRouter {

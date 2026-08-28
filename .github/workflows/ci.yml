@@ -14,6 +14,34 @@ permissions:
   contents: read
 
 jobs:
+  trigger-release-contract:
+    name: Trigger release contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Runtime provenance and release evidence stay mandatory
+        run: |
+          ruby .github/scripts/cma-trigger-publish-contract.rb
+          ruby .github/scripts/cma-trigger-publish-contract.rb --self-test
+
+  trigger-provider-smoke-contract:
+    name: Trigger provider smoke contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Harness and fixture configuration are closed and valid
+        run: |
+          set -euo pipefail
+          node --check .github/scripts/cma-trigger-provider-smoke.mjs
+          node .github/scripts/cma-trigger-provider-smoke.mjs --self-test
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-config .github/cma-trigger-provider-smoke.example.json
+      - name: Provider workflow is valid YAML
+        run: ruby .github/scripts/cma-trigger-provider-contract.rb
+
   structure:
     name: Repository structure
     runs-on: ubuntu-latest
@@ -335,6 +363,9 @@ jobs:
         # options shipped underneath a green suite because of that.
         timeout-minutes: 5
         run: npm run check:surfaces
+      - name: Trigger browser journey
+        timeout-minutes: 5
+        run: npm run check:trigger-journey
       - name: Dependency audit
         run: npm audit --audit-level=high
 
@@ -369,7 +400,7 @@ jobs:
 
   images:
     name: Images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A build that hangs should fail rather than occupy a runner for six hours.
     # Well above a cold cacheless build, so this catches a stall, not slowness.
     timeout-minutes: 45
@@ -434,6 +465,138 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
+      - name: Initialize closed Trigger runtime evidence
+        if: ${{ always() && matrix.component == 'runtime' }}
+        env:
+          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09.json
+          D09_FALLBACK_PATH: ${{ runner.temp }}/cma-trigger-d09-fallback.json
+        run: |
+          set -euo pipefail
+          now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          jq -n \
+            --arg started_at "$now" \
+            --arg recorded_at "$now" \
+            --arg build_commit "$GITHUB_SHA" \
+            '{
+              schema: "cma-trigger-d09-v2",
+              evidenceClass: "D",
+              result: "inconclusive",
+              startedAt: $started_at,
+              recordedAt: $recorded_at,
+              buildCommit: $build_commit,
+              image: null,
+              artifacts: null,
+              failure: {code: "ci_runtime_gate_incomplete"},
+              cleanup: {status: "not_started", failureCodes: []},
+              redaction: "Only closed outcomes, status classes, artifact hashes, synthetic identities, and counts are retained; provider bodies and credential values are discarded."
+            }' > "$D09_FALLBACK_PATH"
+          cp "$D09_FALLBACK_PATH" "$D09_EVIDENCE_PATH"
+      - uses: actions/setup-node@v6
+        if: matrix.component == 'runtime'
+        with:
+          node-version: 26
+      - name: Prepare Codex bubblewrap AppArmor profile
+        if: matrix.component == 'runtime'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            apparmor-profiles \
+            apparmor-utils
+          sudo install -m 0644 \
+            /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+            /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          sudo grep -Fx 'bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+          sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+      - name: Pinned Trigger runtime network boundary
+        if: matrix.component == 'runtime'
+        run: |
+          node --check .github/scripts/cma-trigger-runtime-image-smoke.mjs
+          node .github/scripts/cma-trigger-runtime-image-smoke.mjs --self-test
+          node .github/scripts/cma-trigger-runtime-image-smoke.mjs \
+            --image cma-runtime:ci \
+            --build-commit "${{ github.sha }}" \
+            --expected-architecture amd64 \
+            --output "$RUNNER_TEMP/cma-trigger-d09.json"
+      - name: Close Trigger runtime evidence
+        if: ${{ always() && matrix.component == 'runtime' }}
+        env:
+          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09.json
+          D09_FALLBACK_PATH: ${{ runner.temp }}/cma-trigger-d09-fallback.json
+        run: |
+          set -euo pipefail
+          if ! jq -e \
+            --arg build_commit "$GITHUB_SHA" \
+            --arg source_reference "cma-runtime:ci" \
+            'type == "object"
+              and (.schema == "cma-trigger-d09-v2")
+              and (.evidenceClass == "D")
+              and (.result == "pass" or .result == "fail" or .result == "inconclusive")
+              and ((.startedAt | type) == "string" and (.startedAt | length) > 0)
+              and ((.recordedAt | type) == "string" and (.recordedAt | length) > 0)
+              and (.buildCommit == $build_commit)
+              and (has("image"))
+              and (has("artifacts"))
+              and ((.cleanup | type) == "object")
+              and ((.cleanup.status | type) == "string")
+              and ((.cleanup.failureCodes | type) == "array")
+              and ((.redaction | type) == "string" and (.redaction | length) > 0)
+              and (if .result == "pass"
+                   then (((.image | type) == "object")
+                         and (.image.reference == $source_reference)
+                         and (.image.architecture == "amd64")
+                         and (.image.revision == $build_commit)
+                         and ((.artifacts | type) == "object")
+                         and ((.artifacts | keys) == [
+                           "acpHash", "acpVersion", "architecture",
+                           "bwrapHash", "bwrapPath", "bwrapVersion",
+                           "codexLauncherHash", "codexNativeHash", "codexVersion",
+                           "platform", "runtimeHash", "uid"
+                         ])
+                         and ((.artifacts.codexVersion | type) == "string"
+                              and (.artifacts.codexVersion | length) > 0)
+                         and ((.artifacts.acpVersion | type) == "string"
+                              and (.artifacts.acpVersion | length) > 0)
+                         and (.artifacts.acpHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.bwrapPath == "/usr/bin/bwrap")
+                         and (.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\.[0-9]+(\\.[0-9]+)?([-+~].*)?$"))
+                         and (.artifacts.bwrapHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.codexLauncherHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.codexNativeHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.runtimeHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.uid == 10001)
+                         and (.artifacts.platform == "linux")
+                         and (.artifacts.architecture == "x64")
+                         and (.cleanup.status == "verified")
+                         and (.cleanup.failureCodes == [])
+                         and (has("failure") | not))
+                   else (((.failure | type) == "object")
+                         and ((.failure.code | type) == "string")
+                         and ((.failure.code | length) > 0))
+                   end)' \
+            "$D09_EVIDENCE_PATH" >/dev/null 2>&1; then
+            now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            jq \
+              --arg recorded_at "$now" \
+              '.recordedAt = $recorded_at
+                | .failure = {code: "evidence_record_invalid"}' \
+              "$D09_FALLBACK_PATH" > "$D09_EVIDENCE_PATH.tmp"
+            mv "$D09_EVIDENCE_PATH.tmp" "$D09_EVIDENCE_PATH"
+          fi
+      - name: Retain Trigger runtime boundary evidence
+        if: ${{ always() && matrix.component == 'runtime' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cma-trigger-d09-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-trigger-d09.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require passing Trigger runtime evidence
+        if: ${{ always() && matrix.component == 'runtime' }}
+        env:
+          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09.json
+        run: jq -e '.result == "pass"' "$D09_EVIDENCE_PATH" >/dev/null
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:

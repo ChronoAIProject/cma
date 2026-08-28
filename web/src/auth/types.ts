@@ -113,7 +113,7 @@ export interface AuthProvider {
    * return; the Promise exists so a mock can resolve inline and so callers can
    * await any pre-navigation work.
    */
-  signIn(): Promise<void>;
+  signIn(returnTo?: string): Promise<void>;
 
   /** End the session and clear the cookie. */
   signOut(): Promise<void>;
