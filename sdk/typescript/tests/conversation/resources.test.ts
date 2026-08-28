@@ -95,3 +95,124 @@ describe('durable memory-pressure state', () => {
     expect(state.memoryPressure).toBeUndefined();
   });
 });
+
+describe('durable CPU-pressure state', () => {
+  const opened = delta(10, {
+    op: 'replace',
+    path: PATHS.cpuPressure,
+    value: {
+      usedMillis: 850,
+      limitMillis: 1000,
+      occupancyPermille: 850,
+      since: '2026-08-23T04:12:02Z',
+    },
+  });
+
+  it('folds an open episode and remains idempotent', () => {
+    const once = reduce(EMPTY, opened);
+    expect(reduce(once, opened)).toEqual(once);
+    expect(once.cpuPressure).toEqual({
+      usedMillis: 850,
+      limitMillis: 1000,
+      occupancyPermille: 850,
+      since: '2026-08-23T04:12:02Z',
+    });
+  });
+
+  it('clears on the canonical null value', () => {
+    const patch = {
+      op: 'replace',
+      path: PATHS.cpuPressure,
+      value: null,
+    } satisfies JsonPatch;
+    const state = reduce(reduce(EMPTY, opened), delta(11, patch));
+    expect(state.cpuPressure).toBeUndefined();
+  });
+});
+
+describe('pressure lifecycle', () => {
+  function bothOpen() {
+    return reduce(EMPTY, {
+      type: 'STATE_DELTA',
+      seq: 20,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [
+        {
+          op: 'replace',
+          path: PATHS.cpuPressure,
+          value: {
+            usedMillis: 850,
+            limitMillis: 1000,
+            occupancyPermille: 850,
+            since: '2026-08-23T04:12:02Z',
+          },
+        },
+        {
+          op: 'replace',
+          path: PATHS.memoryPressure,
+          value: {
+            usedBytes: 912_680_550,
+            limitBytes: 1_073_741_824,
+            occupancyPermille: 850,
+            since: '2026-08-23T04:12:00Z',
+          },
+        },
+      ],
+    });
+  }
+
+  it('clears both derived episodes when the session leaves an interactive status', () => {
+    const opened = bothOpen();
+
+    const stopped = reduce(
+      opened,
+      delta(21, { op: 'replace', path: PATHS.status, value: 'rotating' }),
+    );
+
+    expect(opened.cpuPressure).toBeDefined();
+    expect(opened.memoryPressure).toBeDefined();
+    expect(stopped.cpuPressure).toBeUndefined();
+    expect(stopped.memoryPressure).toBeUndefined();
+  });
+
+  it('clears both episodes on the returning run error used for rotation', () => {
+    const rotated = reduce(bothOpen(), {
+      type: 'RUN_ERROR',
+      seq: 21,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      message: 'moving this session to a replacement runtime',
+      returns: true,
+    });
+
+    expect(rotated.cpuPressure).toBeUndefined();
+    expect(rotated.memoryPressure).toBeUndefined();
+  });
+
+  it('clears both episodes on a failing run error', () => {
+    const failed = reduce(bothOpen(), {
+      type: 'RUN_ERROR',
+      seq: 21,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      message: 'the runtime went away',
+    });
+
+    expect(failed.cpuPressure).toBeUndefined();
+    expect(failed.memoryPressure).toBeUndefined();
+  });
+
+  it('preserves both episodes on a cursorless admission error', () => {
+    const refused = reduce(bothOpen(), {
+      type: 'RUN_ERROR',
+      seq: 0,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      message: 'this session is not accepting another input',
+    });
+
+    expect(refused.cpuPressure).toBeDefined();
+    expect(refused.memoryPressure).toBeDefined();
+  });
+});

@@ -1,2 +1,2 @@
 export * from './fold.js';
-export { memoryPressureFrom, resourcesFrom } from './resources.js';
+export { cpuPressureFrom, memoryPressureFrom, resourcesFrom } from './resources.js';

@@ -268,6 +268,7 @@ emitted.
   "planeChanges": [],
   "contextCompactions": [],
   "runtimeLosses": [],
+  "cpuPressure": null,
   "memoryPressure": null,
   "resources": null
 }
@@ -283,7 +284,8 @@ command list are real reports, arriving as `0` and `[]` rather than remaining
 unknown. `/usage/contextUsed` is different only at the core event boundary:
 zero there is the established "no context reading" sentinel, so its projection
 omits that operation and preserves the canonical `null` or last positive value.
-For `/memoryPressure`, `null` means no pressure episode is currently open.
+For `/cpuPressure` and `/memoryPressure`, `null` means no pressure episode is
+currently open.
 For `/status` and `/progress`, `null` means that no durable lifecycle or
 provisioning value has reached this stream yet.
 
@@ -298,6 +300,7 @@ of the current contract.
 | `/availableCommands` | `replace` | array of `{name: string, description: string}` | the kernel announces the complete command list; projected durably and on the cursorless live lane |
 | `/configOptions` | `replace` | array of `{id: string, name: string, kind: string}` | the kernel reports the complete set of configurable options |
 | `/contextCompactions/-` | `add` | `{was: integer, now: integer, window?: integer}` | the agent summarises its conversation to make room; `window` is omitted where unstated |
+| `/cpuPressure` | `replace` | `{usedMillis: integer, limitMillis: integer, occupancyPermille: integer, since: string or null}` or `null` | a durable processor-pressure episode opens or closes |
 | `/gaps/-` | `add` | `{frames: integer}` | the runtime reports that conversation frames were dropped |
 | `/memoryPressure` | `replace` | `{usedBytes: integer, limitBytes: integer, occupancyPermille: integer, since: string or null}` or `null` | a durable memory-pressure episode opens or closes |
 | `/mode` | `replace` | permission-mode string in the kernel's own vocabulary | the session's permission mode changes |
@@ -483,13 +486,14 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 
 **`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A positive current reading is written at `/usage/contextUsed`. Core turn accounting uses zero in that field to mean that it carried no context reading; that sentinel is not projected, so the initial `null` or prior positive reading remains. The ceiling is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
 
-Memory pressure is durable state folded from those ephemeral readings. An
-opening edge replaces `/memoryPressure` with `usedBytes`, `limitBytes`,
-`occupancyPermille`, and `since`, where `since` is the durable event's own
-timestamp. A closing edge replaces the path with `null`, never removes it: a
-client that joined after the open may not have the path, and RFC 6902 would
-reject removing it. Neither edge ends the run; a squeeze is something to show
-while the agent remains working, not a `RUN_ERROR`.
+Processor and memory pressure are independent durable states folded from those
+ephemeral readings. An opening edge replaces `/cpuPressure` with `usedMillis`,
+`limitMillis`, `occupancyPermille`, and `since`, or `/memoryPressure` with the
+corresponding byte figures. `since` is the durable event's own timestamp. A
+closing edge replaces its path with `null`, never removes it: a client that
+joined after the open may not have the path, and RFC 6902 would reject removing
+it. Neither edge ends the run; pressure is something to show while the agent
+remains working, not a `RUN_ERROR`.
 
 When the agent summarises the conversation to make room, a patch is appended to `/contextCompactions/-` with `was`, `now`, and `window` where a ceiling was stated. `window` is omitted rather than null where none is known. This is a durable boundary and precedes the lower `/usage/contextUsed` reading that revealed it, so a replay explains why the conversation became smaller instead of leaving its reader to infer that from the figures.
 

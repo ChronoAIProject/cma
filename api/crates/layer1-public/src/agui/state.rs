@@ -17,6 +17,7 @@ pub(super) const STATE_DELTA_PATHS: &[&str] = &[
     "/availableCommands",
     "/configOptions",
     "/contextCompactions/-",
+    "/cpuPressure",
     "/gaps/-",
     "/memoryPressure",
     "/mode",
@@ -53,6 +54,7 @@ pub(super) const INITIAL_STATE_JSON: &str = r#"{
   "planeChanges": [],
   "contextCompactions": [],
   "runtimeLosses": [],
+  "cpuPressure": null,
   "memoryPressure": null,
   "resources": null
 }"#;

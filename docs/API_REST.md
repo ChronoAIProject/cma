@@ -1592,29 +1592,36 @@ data: {"seq":1048,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","
 
 `runtime_lost` carries `runtime_id`, the opaque identifier of the runtime that is gone, and `cause` where the service could establish one. The cause is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`; when nothing supplied a reason, `cause` is omitted rather than invented.
 
-Memory pressure is recorded as two edge-triggered events. Raw resource
-readings are never written to the event log: each reading replaces the prior
-live value, while an episode is something that happened once and must survive
-a reconnect.
+Processor and memory pressure are each recorded as two edge-triggered events.
+Raw resource readings are never written to the event log: each reading replaces
+the prior live value, while an episode is something that happened once and must
+survive a reconnect.
 
 ```json
+{"type":"cpu_pressure_opened","used_millis":850,"limit_millis":1000,"occupancy_permille":850}
+{"type":"cpu_pressure_closed","peak_millis":970,"limit_millis":1000,"peak_permille":970,"duration_seconds":181}
 {"type":"memory_pressure_opened","used_bytes":912680550,"limit_bytes":1073741824,"occupancy_permille":850}
 {"type":"memory_pressure_closed","peak_bytes":1041529569,"limit_bytes":1073741824,"peak_permille":970,"duration_seconds":181}
 ```
 
-`memory_pressure_opened` appears only after occupancy has stayed at or above
-the configured entry threshold for the configured consecutive-reading dwell;
-a brief build spike therefore produces no event. `memory_pressure_closed`
-appears after occupancy has stayed below the exit threshold and the settle
-floor has elapsed. It carries the episode's peak and a duration measured by a
-monotonic clock, not by subtracting the event timestamps.
+An opening event appears only after that resource's occupancy has stayed at or
+above its configured entry threshold for the configured consecutive-reading
+dwell; a brief spike therefore produces no event. Its closing event appears
+after occupancy has stayed below the exit threshold and the settle floor has
+elapsed. It carries the episode's peak and a duration measured by a monotonic
+clock, not by subtracting the event timestamps. The shipped CPU and memory
+policies enter at 800 permille after five readings, exit below 700 permille
+after fifteen readings, and hold a close for 120 seconds. At the two-second
+cadence that bounds each resource to at most 46 edges in an adversarial hour,
+or 92 total if both resources oscillate adversarially and independently.
 
 For client folding, an open episode ends as soon as the session leaves an
 interactive status, even if no close was written (for example, if the control
-plane stopped during the episode). A second `memory_pressure_opened` without a
-close replaces the first; pressure is state, not a stack. A reading with no
-memory figure or no limit says nothing about pressure and neither opens nor
-closes an episode.
+plane stopped during the episode). A second opening for the same resource with
+no close replaces the first; pressure is state, not a stack. A reading with no
+CPU rate, no memory figure, or no corresponding reported positive limit says
+nothing about that resource's pressure and neither opens nor closes an episode.
+The requested session size is never substituted for an absent observed limit.
 
 ---
 
@@ -2189,6 +2196,20 @@ exists:
       "memory_mib": 40960,
       "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
     },
+    "cpu_pressure": {
+      "enter_permille": 800,
+      "exit_permille": 700,
+      "enter_samples": 5,
+      "exit_samples": 15,
+      "settle_seconds": 120
+    },
+    "memory_pressure": {
+      "enter_permille": 850,
+      "exit_permille": 650,
+      "enter_samples": 6,
+      "exit_samples": 18,
+      "settle_seconds": 180
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -2211,6 +2232,20 @@ exists:
       "cpu_millis": null,
       "memory_mib": null,
       "assumed_session_size": null
+    },
+    "cpu_pressure": {
+      "enter_permille": 800,
+      "exit_permille": 700,
+      "enter_samples": 5,
+      "exit_samples": 15,
+      "settle_seconds": 120
+    },
+    "memory_pressure": {
+      "enter_permille": 800,
+      "exit_permille": 700,
+      "enter_samples": 5,
+      "exit_samples": 15,
+      "settle_seconds": 120
     },
     "pricing": { "cards": [] },
     "size_bounds": {
@@ -2256,6 +2291,20 @@ Content-Type: application/json
       "cpu_millis": 20000,
       "memory_mib": 40960,
       "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
+    },
+    "cpu_pressure": {
+      "enter_permille": 800,
+      "exit_permille": 700,
+      "enter_samples": 5,
+      "exit_samples": 15,
+      "settle_seconds": 120
+    },
+    "memory_pressure": {
+      "enter_permille": 850,
+      "exit_permille": 650,
+      "enter_samples": 6,
+      "exit_samples": 18,
+      "settle_seconds": 180
     },
     "pricing": {
       "cards": [
@@ -2349,6 +2398,20 @@ as `GET`. The object it replaced becomes `previous`:
       "memory_mib": 40960,
       "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
     },
+    "cpu_pressure": {
+      "enter_permille": 800,
+      "exit_permille": 700,
+      "enter_samples": 5,
+      "exit_samples": 15,
+      "settle_seconds": 120
+    },
+    "memory_pressure": {
+      "enter_permille": 850,
+      "exit_permille": 650,
+      "enter_samples": 6,
+      "exit_samples": 18,
+      "settle_seconds": 180
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -2375,6 +2438,20 @@ as `GET`. The object it replaced becomes `previous`:
       "memory_mib": 32768,
       "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
     },
+    "cpu_pressure": {
+      "enter_permille": 800,
+      "exit_permille": 700,
+      "enter_samples": 5,
+      "exit_samples": 15,
+      "settle_seconds": 120
+    },
+    "memory_pressure": {
+      "enter_permille": 850,
+      "exit_permille": 650,
+      "enter_samples": 6,
+      "exit_samples": 18,
+      "settle_seconds": 180
+    },
     "pricing": { "cards": [] },
     "size_bounds": {
       "min_cpu_millis": 250,
@@ -2397,6 +2474,12 @@ The four settings accepted by `PATCH` have distinct replacement rules.
 | `size_bounds` | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
 | `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation. |
 
+`cpu_pressure` and `memory_pressure` are independently editable only inside the
+complete document sent to `PUT`; `PATCH` does not accept either policy. Each
+policy requires an entry threshold from 1 through 1000 permille, an exit
+threshold at least 50 permille below it, at least two entry samples, at least as
+many exit samples as entry samples, and a settle floor of at least 60 seconds.
+
 Deployment capacity is a ledger over durable records whose desired state wants
 a runtime. Pausing a session releases its reservation. Existing work is never
 stopped when the declaration is lowered, and reconciliation and rotation are
@@ -2405,8 +2488,8 @@ has no size, and `assumed_session_size` is `null`, the sum cannot be computed
 honestly: the entire capacity check is skipped and creation proceeds with an
 operator warning. An unsized session is never counted as zero.
 
-For example, this removes only the live-session limit and preserves the
-briefing, deployment capacity, and size bounds:
+For example, this removes only the live-session limit and preserves every
+other setting:
 
 ```json
 { "expected_revision": 13, "live_sessions": null }

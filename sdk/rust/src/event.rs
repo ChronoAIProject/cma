@@ -201,6 +201,26 @@ pub enum EventKind {
         /// Snapshot moment used for the move, in RFC 3339 form.
         snapshot_at: String,
     },
+    /// Sustained processor pressure began.
+    CpuPressureOpened {
+        /// Processor use over the opening interval, in thousandths of one core.
+        used_millis: u32,
+        /// Reported processor limit in thousandths of one core.
+        limit_millis: u32,
+        /// Occupancy as parts per thousand.
+        occupancy_permille: u16,
+    },
+    /// Sustained processor pressure ended.
+    CpuPressureClosed {
+        /// Peak processor use during the episode.
+        peak_millis: u32,
+        /// Reported processor limit used for the readings.
+        limit_millis: u32,
+        /// Peak occupancy as parts per thousand.
+        peak_permille: u16,
+        /// Episode length from a monotonic clock.
+        duration_seconds: u32,
+    },
     /// Sustained memory pressure began.
     MemoryPressureOpened {
         /// Bytes in use when the episode opened.
@@ -354,6 +374,8 @@ const KNOWN_EVENT_TYPES: &[&str] = &[
     "approval_requested",
     "approval_resolved",
     "plane_changed",
+    "cpu_pressure_opened",
+    "cpu_pressure_closed",
     "memory_pressure_opened",
     "memory_pressure_closed",
     "runtime_handover_started",
@@ -485,6 +507,17 @@ enum KnownEventKind {
         to: SessionPlane,
         snapshot_at: String,
     },
+    CpuPressureOpened {
+        used_millis: u32,
+        limit_millis: u32,
+        occupancy_permille: u16,
+    },
+    CpuPressureClosed {
+        peak_millis: u32,
+        limit_millis: u32,
+        peak_permille: u16,
+        duration_seconds: u32,
+    },
     MemoryPressureOpened {
         used_bytes: u64,
         limit_bytes: u64,
@@ -604,6 +637,26 @@ impl From<KnownEventKind> for EventKind {
                 from,
                 to,
                 snapshot_at,
+            },
+            KnownEventKind::CpuPressureOpened {
+                used_millis,
+                limit_millis,
+                occupancy_permille,
+            } => Self::CpuPressureOpened {
+                used_millis,
+                limit_millis,
+                occupancy_permille,
+            },
+            KnownEventKind::CpuPressureClosed {
+                peak_millis,
+                limit_millis,
+                peak_permille,
+                duration_seconds,
+            } => Self::CpuPressureClosed {
+                peak_millis,
+                limit_millis,
+                peak_permille,
+                duration_seconds,
             },
             KnownEventKind::MemoryPressureOpened {
                 used_bytes,
@@ -812,6 +865,19 @@ mod tests {
                 "from": "terminal",
                 "to": "conversation",
                 "snapshot_at": "2026-08-24T08:00:00Z"
+            }),
+            serde_json::json!({
+                "type": "cpu_pressure_opened",
+                "used_millis": 850,
+                "limit_millis": 1000,
+                "occupancy_permille": 850
+            }),
+            serde_json::json!({
+                "type": "cpu_pressure_closed",
+                "peak_millis": 970,
+                "limit_millis": 1000,
+                "peak_permille": 970,
+                "duration_seconds": 181
             }),
             serde_json::json!({
                 "type": "memory_pressure_opened",

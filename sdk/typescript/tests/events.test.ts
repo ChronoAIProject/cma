@@ -143,6 +143,19 @@ describe('core event envelopes', () => {
       snapshot_at: '2026-08-24T08:00:00Z',
     },
     {
+      type: 'cpu_pressure_opened',
+      used_millis: 850,
+      limit_millis: 1000,
+      occupancy_permille: 850,
+    },
+    {
+      type: 'cpu_pressure_closed',
+      peak_millis: 970,
+      limit_millis: 1000,
+      peak_permille: 970,
+      duration_seconds: 181,
+    },
+    {
       type: 'memory_pressure_opened',
       used_bytes: 100,
       limit_bytes: 200,
@@ -262,6 +275,25 @@ describe('core event envelopes', () => {
         snapshot_at: 'now',
       },
       /to/i,
+    ],
+    [
+      {
+        type: 'cpu_pressure_opened',
+        used_millis: 1,
+        limit_millis: 2,
+        occupancy_permille: -1,
+      },
+      /occupancy/i,
+    ],
+    [
+      {
+        type: 'cpu_pressure_closed',
+        peak_millis: 1,
+        limit_millis: 2,
+        peak_permille: 500,
+        duration_seconds: -1,
+      },
+      /duration/i,
     ],
     [
       {
