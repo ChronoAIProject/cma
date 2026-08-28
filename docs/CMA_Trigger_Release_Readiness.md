@@ -36,9 +36,13 @@ As of 2026-08-28:
 - production serves CMA API/web `v0.7.0` and advertises only the core and
   terminal conformance classes; it has no Trigger surface and cannot provide a
   Trigger smoke or rollout result;
-- the current NyxID GitHub OAuth/proxy path is valid, which establishes a
-  prerequisite but not a Launch, session-side capability, restart, expiry,
-  revocation, or pull-request result;
+- a read-only probe through `chronoai-shining` proved that NyxID's catalog-ID
+  route plus the exact `_nyxid_via` UserService ID reaches fixture repository
+  `1349237845`, while placing that UserService ID directly after `/proxy/`
+  returns a catalog-mismatch `400`. This establishes transport wiring, not a
+  Launch, session-side capability, restart, expiry, revocation, or pull-request
+  result. The same maintainer grant includes broad `repo` and is deliberately
+  ineligible under the public-MVP scope ceiling;
 - `ChronoAIProject/cma-trigger-fixture` is provisioned as a public, forkable,
   synthetic fixture at repository ID `1349237845` / node ID
   `R_kgDOUGu8VQ`, pinned by `fixture-v1` to
@@ -141,14 +145,17 @@ reviewable run:
   safe transport headers, and `127.0.0.1`, `localhost`, a public destination,
   and the supervisor's non-loopback address return the managed proxy's closed
   `blocked-by-allowlist` denial;
-- a valid probe reaches only the signed `api-github` numeric-resource route,
-  while missing policy, wrong service/resource/generation, provider refusal,
-  and broker transience return their closed outcomes without retaining bodies;
+- a valid probe reaches only the signed catalog-ID numeric-resource route with
+  `_nyxid_via` bound to the exact UserService ID, while missing policy, wrong
+  catalog/UserService/per-user-slug/resource/generation, provider refusal, and
+  broker transience return their closed outcomes without retaining bodies;
 - literal, encoded, double-encoded, mixed-dot, encoded-slash, and backslash
   path traversal use a valid HTTP authority and are rejected while a real
   sentinel credential is installed, with the fixture recording no outbound
-  call. This image evidence does not claim to observe whether an in-memory
-  credential lookup occurred; and
+  call. The same raw sandboxed campaign rejects `/proxy/s/` routes using
+  `api-github`, a suffixed GitHub slug, a PAT-looking slug, the exact UserService
+  ID, or the catalog service ID. This image evidence does not claim to observe
+  whether an in-memory credential lookup occurred; and
 - HTTP `CONNECT`, including authority-form requests executed through the actual
   `cma-trigger` Codex permission sandbox as well as directly against each
   listener, cannot tunnel to the real supervisor, model proxy, platform
@@ -221,7 +228,7 @@ The fixture record must be committed or linked before `P-01` runs:
 | Contents               | `LICENSE`, `README.md`, `FIXTURE_POLICY.md`, `.gitignore`, `bin/fixture-check`, `docs/task.md`, and `src/message.txt`; the committed policy excludes production source, user data, external dependencies, secrets, workflows, webhooks, deploy keys, environment secrets, and execution of fixture content                            |
 | Default/source refs    | Default branch `main`; immutable source commit `878dcb6288f94721de6724899ea0680e1086d511`; lightweight tag `fixture-v1` resolves to that exact commit                                                                                                                                                                                 |
 | Accounts               | Open: dedicated disposable publisher and contributor identities with least privilege are still required; `chronoai-shining` is the fixture steward and is not evidence of that two-identity separation                                                                                                                                |
-| NyxID service          | Open: a disposable `api-github` UserService for the disposable contributor is still required; the existing maintainer service proves API reachability only and is not the `P-01` credential                                                                                                                                           |
+| NyxID service          | Open: a disposable canonical-catalog GitHub OAuth UserService for the disposable contributor is still required. The existing maintainer service proves catalog-ID route reachability only; its `repo,read:user,user:email` grant is intentionally refused as `trigger_scope_unapproved` and is not the least-privilege `P-01` credential                                                                 |
 | NyxID public observer  | Open: a dedicated credential-free public service slug, bounded `GET /repositories/**` anonymous rule and daily quota are still required; evidence must prove identity propagation, access-token forwarding, delegation-token injection, and resale billing are disabled and that CMA narrows the request to one numeric repository ID |
 | Retention              | Evidence metadata follows the security evidence policy; contributor-owned GitHub fixture resources remain until review, while session stop removes the live `BatchSandbox` and retained `before_launch`, `live_session`, and `after_stop` metadata records that reconciliation                                                        |
 | Cleanup                | Trigger cleanup never deletes or resets a fork, branch, commit, or pull request and never enumerates or deletes a sandbox. The existing session lifecycle remains the only sandbox teardown authority. The fixture steward manually closes/archive-marks test PRs and archives a superseded fixture only after evidence review        |

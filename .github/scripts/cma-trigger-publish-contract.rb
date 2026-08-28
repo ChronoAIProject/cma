@@ -86,7 +86,7 @@ GATEWAY_PROBE_COMMAND = [
   "cma-trigger",
   "--",
   "/usr/local/bin/layer4-runtime",
-  "runtime-gateway-probe-helper-v1",
+  "runtime-gateway-probe-helper-v2",
 ].freeze
 PERMISSION_PROFILE_SHA256 =
   "65ce3deca2d907481d999d1ec56a52ad3017644417e262a89cdf9ca1ad649be2"
@@ -306,6 +306,8 @@ def verify_evidence_filter(close_run, scope)
           providerDenied: "provider_denied",
           brokerTransient: "transient_broker_failure",
           wrongService: "policy_denied",
+          wrongCatalogService: "policy_denied",
+          wrongUserServiceSlug: "policy_denied",
           wrongResource: "policy_denied"
         })
       JQ
@@ -315,7 +317,7 @@ def verify_evidence_filter(close_run, scope)
       <<~'JQ',
         and (.capability == {
           firstGeneration: 2,
-          lastGeneration: 7,
+          lastGeneration: 9,
           renewedBeforeEveryProviderProbe: true
         })
       JQ
@@ -377,7 +379,10 @@ def verify_evidence_filter(close_run, scope)
         and ((.traversal | map(.form)) == [
           "literal-dot-dot", "encoded-dot-dot",
           "double-encoded-dot-dot", "mixed-dot-dot",
-          "encoded-slash", "backslash"
+          "encoded-slash", "backslash",
+          "canonical-github-slug-route", "suffixed-github-slug-route",
+          "pat-lookalike-slug-route", "user-service-id-as-slug-route",
+          "catalog-service-id-as-slug-route"
         ])
         and (all(.traversal[];
           (keys == ["bodyBytes", "bodySha256", "form", "outcome", "status"])

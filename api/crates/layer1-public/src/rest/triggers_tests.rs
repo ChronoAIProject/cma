@@ -2923,6 +2923,13 @@ async fn authority_failures_keep_auth_drift_rate_limit_and_outage_distinct() {
             "trigger_connection_inactive",
         ),
         (
+            Authority::UnapprovedScope {
+                scope: "repo".into(),
+            },
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "trigger_scope_unapproved",
+        ),
+        (
             Authority::AuthorityDrift,
             StatusCode::CONFLICT,
             "trigger_authority_drift",
@@ -4468,6 +4475,8 @@ fn upstream() -> RepositoryIdentity {
 fn connection() -> ConnectionSnapshot {
     ConnectionSnapshot {
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "backing-key".into(),
         account: ConnectedAccount {
@@ -4489,6 +4498,8 @@ fn provenance() -> AuthorityProvenance {
         subject: SubjectId(OWNER.into()),
         subject_token_generation: 1,
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "backing-key".into(),
         session_credential_authority: None,

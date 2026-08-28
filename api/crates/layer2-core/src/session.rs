@@ -60,6 +60,10 @@ pub struct TriggerSessionOrigin {
     pub revision_digest: String,
     pub sandbox_profile: String,
     pub github_service_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_catalog_service_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_user_service_slug: Option<String>,
     pub workspace_epoch: u64,
     pub source_revision: String,
     pub manifest_digest: String,
@@ -76,6 +80,41 @@ pub struct TriggerSessionOrigin {
 }
 
 impl TriggerSessionOrigin {
+    pub fn github_binding(&self) -> Result<(&str, &str, &str), crate::TriggerValidationError> {
+        let catalog_service_id = self.github_catalog_service_id.as_deref().ok_or_else(|| {
+            crate::TriggerValidationError::field(
+                "github_catalog_service_id",
+                "is required for fresh Trigger GitHub authority",
+            )
+        })?;
+        let user_service_slug = self.github_user_service_slug.as_deref().ok_or_else(|| {
+            crate::TriggerValidationError::field(
+                "github_user_service_slug",
+                "is required for fresh Trigger GitHub authority",
+            )
+        })?;
+        require_opaque_id("github_service_id", &self.github_service_id)?;
+        require_opaque_id("github_catalog_service_id", catalog_service_id)?;
+        if user_service_slug.is_empty()
+            || user_service_slug.len() > 80
+            || user_service_slug.starts_with('-')
+            || user_service_slug.ends_with('-')
+            || !user_service_slug
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err(crate::TriggerValidationError::field(
+                "github_user_service_slug",
+                "is not a canonical NyxID service slug",
+            ));
+        }
+        Ok((
+            self.github_service_id.as_str(),
+            catalog_service_id,
+            user_service_slug,
+        ))
+    }
+
     /// Stable session identity for this Launch, shared by every retry.
     pub fn session_id(&self) -> Result<SessionId, crate::TriggerValidationError> {
         trigger_session_id(&self.launch_id)
@@ -133,6 +172,21 @@ impl TriggerSessionOrigin {
         uuid::Uuid::parse_str(&self.launch_id.0)
             .map_err(|_| crate::TriggerValidationError::field("launch_id", "is not a UUID"))
     }
+}
+
+fn require_opaque_id(
+    field: &'static str,
+    value: &str,
+) -> Result<(), crate::TriggerValidationError> {
+    if value.is_empty()
+        || value.len() > 256
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(crate::TriggerValidationError::field(field, "is not usable"));
+    }
+    Ok(())
 }
 
 /// Stable session identity reserved for one Trigger Launch.

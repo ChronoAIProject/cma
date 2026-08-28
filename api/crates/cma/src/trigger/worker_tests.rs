@@ -3011,6 +3011,8 @@ fn upstream() -> RepositoryIdentity {
 fn connection() -> ConnectionSnapshot {
     ConnectionSnapshot {
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
         account: ConnectedAccount {
@@ -3032,6 +3034,8 @@ fn provenance(subject: SubjectId) -> AuthorityProvenance {
         subject,
         subject_token_generation: 1,
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
         session_credential_authority: None,

@@ -480,7 +480,7 @@ pub struct RuntimePolicyObservation {
 }
 
 /// Version of the runtime-side restricted gateway probe protocol.
-pub const RUNTIME_GATEWAY_PROBE_VERSION: u32 = 1;
+pub const RUNTIME_GATEWAY_PROBE_VERSION: u32 = 2;
 
 /// One non-secret target for a runtime-side restricted gateway read.
 ///
@@ -491,6 +491,8 @@ pub const RUNTIME_GATEWAY_PROBE_VERSION: u32 = 1;
 pub struct RuntimeGatewayProbeRequest {
     pub version: u32,
     pub service_id: String,
+    pub catalog_service_id: String,
+    pub user_service_slug: String,
     pub resource_id: u64,
 }
 

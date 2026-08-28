@@ -1674,7 +1674,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         "prelude": prelude::SUPPORTED,
         "workspaceCheckpoint": workspace_checkpoint_readiness(),
         "githubCapability": {
-            "name": "github_capability_v1",
+            "name": "github_capability_v2",
             "version": github_capability::POLICY_VERSION,
             "operationClasses": github_capability::GithubOperationClass::ALL
                 .iter()
@@ -1699,6 +1699,23 @@ async fn runtime_gateway_probe(
     State(state): State<AppState>,
     axum::Json(request): axum::Json<gateway_probe::ProbeRequest>,
 ) -> impl IntoResponse {
+    let now_epoch_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if !state
+        .github_capability
+        .matches_probe_binding(
+            &request.service_id,
+            &request.catalog_service_id,
+            &request.user_service_slug,
+            request.resource_id,
+            now_epoch_seconds,
+        )
+        .await
+    {
+        return axum::Json(gateway_probe::ProbeReceipt::policy_denied());
+    }
     // The helper is another process with workspace visibility. Serialize its
     // entire lifetime with checkpoint admission so Layer 4 cannot start a new
     // potential writer after the fence's final procfs observation.
