@@ -1586,6 +1586,10 @@ async function main() {
     );
     assert.equal(configResult.stdout, PERMISSION_CONFIG);
 
+    campaignStage = "workspace-restore";
+    const workspace = workspaceFixture();
+    await restoreWorkspace(baseUrl, workspace);
+
     // The runtime protocol deliberately collapses command-sandbox diagnostics
     // to one closed outcome. Run one release-only preflight first so CI can
     // distinguish a runner namespace failure from a policy failure without
@@ -1606,10 +1610,6 @@ async function main() {
       "policy_denied",
     );
     assert.equal((await fixtureState(fixture)).githubCalls, 0);
-
-    campaignStage = "workspace-restore";
-    const workspace = workspaceFixture();
-    await restoreWorkspace(baseUrl, workspace);
 
     campaignStage = "capability-installation";
     control = await openControlSocket(

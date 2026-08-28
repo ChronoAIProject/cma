@@ -528,6 +528,28 @@ def verify_smoke_sandbox_contract(smoke_source)
     "D-09 smoke must verify the installed permission profile byte for byte",
   )
 
+  workspace_restore = "await restoreWorkspace(baseUrl, workspace);"
+  sandbox_probe = "await sandboxObservation("
+  gateway_probe = "await gatewayProbe("
+  restore_index = smoke_source.index(workspace_restore)
+  sandbox_index = smoke_source.index(sandbox_probe)
+  gateway_index = smoke_source.index(gateway_probe)
+  check(
+    smoke_source.scan(workspace_restore).length == 1,
+    "D-09 smoke must restore its repository exactly once",
+  )
+  check(
+    restore_index && sandbox_index && gateway_index &&
+      restore_index < sandbox_index && restore_index < gateway_index,
+    "D-09 smoke must restore its repository before the first sandboxed command",
+  )
+  check(
+    smoke_source.include?(
+      "\"--workdir\",\n      WORKSPACE_ROOT,\n      container,",
+    ),
+    "D-09 raw probes must execute from the restored repository root",
+  )
+
   sandbox_wrapper =
     '? ["codex", "sandbox", "--permission-profile", "cma-trigger", "--"]'
   check(
@@ -1719,6 +1741,19 @@ def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
           "assert.equal(configResult.stdout, PERMISSION_CONFIG);",
           "assert.equal(typeof configResult.stdout, \"string\");",
         ),
+      ],
+      [
+        "workspace restore moved after the first sandboxed command",
+        "D-09 smoke must restore its repository before the first sandboxed command",
+        lambda do |_ci, _publish, smoke|
+          restore =
+            "    campaignStage = \"workspace-restore\";\n" \
+            "    const workspace = workspaceFixture();\n" \
+            "    await restoreWorkspace(baseUrl, workspace);\n\n"
+          replace_once!(smoke, restore, "")
+          first_probe = "    requireManagedDenial(sandboxPreflight);\n"
+          replace_once!(smoke, first_probe, "#{first_probe}\n#{restore}")
+        end,
       ],
       [
         "sandbox initialization failure made a test failure",
