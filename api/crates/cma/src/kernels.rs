@@ -45,12 +45,100 @@ pub async fn registry(
             None
         }
     };
-    registry_with_reclaimer(config, reclaimer.as_ref(), runtime_policy_verification_keys)
+    let trigger_reclaimer = match config.trigger_sandbox_provider.as_ref() {
+        Some(provider) => match reclaimer.as_ref() {
+            Some(ordinary_reclaimer)
+                if provider_namespaces_are_separate(
+                    Some(ordinary_reclaimer.namespace()),
+                    &provider.namespace,
+                ) =>
+            {
+                let trigger_reclaimer = ordinary_reclaimer
+                    .in_namespace(&provider.namespace)
+                    .for_kernel(crate::trigger::TRIGGER_KERNEL_ID);
+                match trigger_reclaimer
+                    .preflight_exclusive_cleanup_authority()
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            namespace = %provider.namespace,
+                            kernel = crate::trigger::TRIGGER_KERNEL_ID,
+                            "dedicated Trigger sandbox discovery and fenced cleanup authority are verified"
+                        );
+                        Some(trigger_reclaimer)
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            %error,
+                            namespace = %provider.namespace,
+                            kernel = crate::trigger::TRIGGER_KERNEL_ID,
+                            "dedicated Trigger sandbox cleanup authority failed preflight; Trigger admission remains closed"
+                        );
+                        None
+                    }
+                }
+            }
+            Some(_) => {
+                tracing::error!(
+                    namespace = %provider.namespace,
+                    kernel = crate::trigger::TRIGGER_KERNEL_ID,
+                    "dedicated Trigger sandbox namespace reuses the ordinary provider namespace; Trigger admission remains closed"
+                );
+                None
+            }
+            None => {
+                tracing::error!(
+                    namespace = %provider.namespace,
+                    kernel = crate::trigger::TRIGGER_KERNEL_ID,
+                    "dedicated Trigger sandbox lane has no Kubernetes identity for cleanup preflight; Trigger admission remains closed"
+                );
+                None
+            }
+        },
+        None => {
+            tracing::info!("dedicated Trigger sandbox lane is not configured");
+            None
+        }
+    };
+    let trigger_lane = match (
+        config.trigger_sandbox_provider.as_ref(),
+        trigger_reclaimer.as_ref(),
+    ) {
+        (Some(provider), Some(reclaimer)) => Some(TriggerSandboxLane {
+            client: sandbox_client_from_parts(
+                &provider.base_url,
+                &provider.api_key,
+                Some(reclaimer),
+            ),
+        }),
+        _ => None,
+    };
+    registry_with_lanes(
+        config,
+        reclaimer.as_ref(),
+        trigger_lane,
+        runtime_policy_verification_keys,
+    )
 }
 
-fn registry_with_reclaimer(
+fn provider_namespaces_are_separate(ordinary: Option<&str>, trigger: &str) -> bool {
+    ordinary.is_none_or(|ordinary| ordinary != trigger)
+}
+
+/// A complete Trigger provider authority.
+///
+/// Construction stays at the composition root: a client is never handed to
+/// the registry unless the endpoint/key tuple and the exact namespaced,
+/// kernel-bound cleanup authority are both available.
+struct TriggerSandboxLane {
+    client: SandboxClient,
+}
+
+fn registry_with_lanes(
     config: &Config,
     reclaimer: Option<&BatchSandboxReclaimer>,
+    trigger_lane: Option<TriggerSandboxLane>,
     runtime_policy_verification_keys: &str,
 ) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
@@ -70,6 +158,34 @@ fn registry_with_reclaimer(
         KernelId::new("codex"),
         Arc::new(CodexAdapter::new(sandbox_client(config, reclaimer), codex)),
     );
+
+    // Trigger sessions never fall back to the ordinary provider. OpenSandbox
+    // chooses its OCI runtime server-wide rather than per create request, so the
+    // versioned adapter exists only when its dedicated provider and exact
+    // namespaced reclamation authority are both usable.
+    if let Some(trigger_lane) = trigger_lane {
+        let mut trigger_codex = CodexSandboxSpec::default();
+        deploy(
+            config,
+            runtime_policy_verification_keys,
+            &mut trigger_codex.deployment,
+        );
+        trigger_codex.deployment.upstream_base_url = config.upstream_base_url.clone();
+        trigger_codex.deployment.upstream_model = config.upstream_model.clone();
+        trigger_codex.deployment.upstream_wire_api = config.upstream_wire_api.clone();
+        // Keep the atomic repository tree below the provider's writable
+        // workspace boundary. A mounted volume cannot itself be replaced by
+        // Layer 4's verified staging-directory rename.
+        trigger_codex.deployment.shape.workspace = "/home/chrono/workspace/repository".to_string();
+        adapters.insert(
+            KernelId::new(crate::trigger::TRIGGER_KERNEL_ID),
+            Arc::new(CodexAdapter::named(
+                crate::trigger::TRIGGER_KERNEL_ID,
+                trigger_lane.client,
+                trigger_codex,
+            )),
+        );
+    }
 
     // The request shape this one speaks is its own rather than a deployment's
     // choice, so nothing here touches it.
@@ -120,10 +236,15 @@ fn registry_with_reclaimer(
 }
 
 fn sandbox_client(config: &Config, reclaimer: Option<&BatchSandboxReclaimer>) -> SandboxClient {
-    let client = SandboxClient::new(
-        config.sandbox_base_url.clone(),
-        config.sandbox_api_key.clone(),
-    );
+    sandbox_client_from_parts(&config.sandbox_base_url, &config.sandbox_api_key, reclaimer)
+}
+
+fn sandbox_client_from_parts(
+    base_url: &str,
+    api_key: &str,
+    reclaimer: Option<&BatchSandboxReclaimer>,
+) -> SandboxClient {
+    let client = SandboxClient::new(base_url.to_string(), api_key.to_string());
     match reclaimer {
         Some(reclaimer) => client.with_reclaimer(reclaimer.clone()),
         None => client,
@@ -267,7 +388,7 @@ mod tests {
         // request and here checks that the two agree. They must, or a session
         // asking for a kernel this deployment runs is told there is no such
         // kernel.
-        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None, "") {
+        for (id, adapter) in registry_with_lanes(&Config::sample(), None, None, "") {
             assert_eq!(id.0, adapter.kernel_name(), "registered under the wrong id");
         }
     }
@@ -276,12 +397,46 @@ mod tests {
     fn every_kernel_can_do_at_least_one_thing() {
         // A kernel that declares nothing is the stub this milestone replaced.
         // Registering one would offer a session that cannot be started.
-        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None, "") {
+        for (id, adapter) in registry_with_lanes(&Config::sample(), None, None, "") {
             let c = adapter.capabilities();
             assert!(
                 c.conversation || c.terminal,
                 "{id} offers no plane a session could run on"
             );
         }
+    }
+
+    #[test]
+    fn trigger_kernel_is_registered_only_with_a_complete_dedicated_lane() {
+        let config = Config::sample();
+        let unavailable = registry_with_lanes(&config, None, None, "");
+        assert!(unavailable.contains_key(&KernelId::new("codex")));
+        assert!(!unavailable.contains_key(&KernelId::new(crate::trigger::TRIGGER_KERNEL_ID)));
+
+        let available = registry_with_lanes(
+            &config,
+            None,
+            Some(TriggerSandboxLane {
+                client: SandboxClient::new("http://trigger-provider.invalid", "test-key"),
+            }),
+            "",
+        );
+        let adapter = available
+            .get(&KernelId::new(crate::trigger::TRIGGER_KERNEL_ID))
+            .expect("a complete dedicated lane registers the Trigger kernel");
+        assert_eq!(adapter.kernel_name(), crate::trigger::TRIGGER_KERNEL_ID);
+    }
+
+    #[test]
+    fn trigger_and_ordinary_provider_namespaces_must_not_overlap() {
+        assert!(provider_namespaces_are_separate(
+            Some("ordinary-runtimes"),
+            "trigger-runtimes"
+        ));
+        assert!(provider_namespaces_are_separate(None, "trigger-runtimes"));
+        assert!(!provider_namespaces_are_separate(
+            Some("shared-runtimes"),
+            "shared-runtimes"
+        ));
     }
 }

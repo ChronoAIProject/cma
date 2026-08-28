@@ -307,6 +307,8 @@ mod tests {
             revision_digest: "b".repeat(64),
             sandbox_profile: "sandbox".into(),
             github_service_id: "github".into(),
+            github_catalog_service_id: Some("github-catalog".into()),
+            github_user_service_slug: Some("api-github".into()),
             workspace_epoch: 3,
             source_revision: source_revision.clone(),
             manifest_digest: baseline.digest.clone(),

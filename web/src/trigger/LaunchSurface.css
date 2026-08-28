@@ -137,15 +137,30 @@
 
 .launch-progress > li[data-status='running'] .launch-progress__icon,
 .launch-progress > li[data-status='retryable'] .launch-progress__icon,
+.launch-progress > li[data-feature-paused='true'] .launch-progress__icon,
 .launch-progress > li[data-status='blocked'] .launch-progress__icon {
   color: var(--dsw-alias-state-warn-primary);
+}
+
+.launch-progress > li[data-feature-paused='true'] {
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.launch-progress > li[data-feature-paused='true'] .launch-progress__status {
+  color: var(--dsw-alias-state-warn-label);
+  font-weight: 600;
+  text-transform: none;
 }
 
 .launch-progress > li[data-status='failed'] .launch-progress__icon {
   color: var(--dsw-alias-state-error-primary);
 }
 
-.launch-progress > li[data-status='running'] .launch-progress__icon svg {
+.launch-progress
+  > li[data-status='running']:not([data-feature-paused='true'])
+  .launch-progress__icon
+  svg {
   animation: launch-spin 1.2s linear infinite;
 }
 
@@ -203,6 +218,10 @@
 .launch__blocked,
 .launch__failure {
   margin-top: 16px;
+}
+
+.launch__blocked--paused {
+  border-left: 2px solid var(--dsw-alias-state-warn-primary);
 }
 
 .launch__failure code {
@@ -297,7 +316,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .launch-progress > li[data-status='running'] .launch-progress__icon svg {
+  .launch-progress
+    > li[data-status='running']:not([data-feature-paused='true'])
+    .launch-progress__icon
+    svg {
     animation: none;
   }
 }

@@ -24,6 +24,7 @@ const STARTED_AT: &str = "2026-08-26T12:01:00Z";
 const RUNTIME_V1: &str = "cma-trigger-test-runtime@sha256:admitted";
 const RUNTIME_V2: &str = "cma-trigger-test-runtime@sha256:replacement";
 const TEST_KERNEL: &str = "trigger-test-kernel";
+const ORDINARY_TEST_KERNEL: &str = "ordinary-test-kernel";
 
 struct MutableSettings(StdMutex<StoredSettings>);
 
@@ -237,7 +238,8 @@ fn build_service(
 ) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
-    adapters.insert(KernelId::new(TEST_KERNEL), adapter);
+    adapters.insert(KernelId::new(TEST_KERNEL), adapter.clone());
+    adapters.insert(KernelId::new(ORDINARY_TEST_KERNEL), adapter);
     let profiles = Arc::new(crate::test_support::FakeProfileStore::default());
     let environments = EnvironmentProfileService::new(
         profiles,
@@ -245,7 +247,7 @@ fn build_service(
         None,
         None,
         AgentConfiguration {
-            kernel: KernelId::new(TEST_KERNEL),
+            kernel: KernelId::new(ORDINARY_TEST_KERNEL),
             mode: SessionMode::Conversation,
             ..AgentConfiguration::default()
         },

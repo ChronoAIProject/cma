@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Launch, PromptDelivery } from '@chronoai/cma-sdk';
+import type { DiffReview, Launch, PromptDelivery } from '@chronoai/cma-sdk';
 import { TransportError } from '../api/client';
 import { LaunchSurface } from './LaunchSurface';
 
@@ -26,6 +26,9 @@ vi.mock('./useLaunchResource', () => ({
 const FIXTURE = JSON.parse(
   readFileSync('../sdk/typescript/tests/fixtures/launch.json', 'utf8'),
 ) as Launch;
+const RETAINED_REVIEW = JSON.parse(
+  readFileSync('../sdk/typescript/tests/fixtures/diff_review.json', 'utf8'),
+) as DiffReview;
 
 const RECOVERY_DELIVERY: PromptDelivery = {
   launch_id: FIXTURE.id,
@@ -70,6 +73,35 @@ beforeEach(() => {
 });
 
 describe('Launch command reconciliation', () => {
+  it('keeps a historical Launch inspectable and cancellable without offering new work', async () => {
+    if (FIXTURE.runtime_admission === null) throw new Error('fixture omitted runtime admission');
+    const legacy: Launch = {
+      ...RECOVERY_LAUNCH,
+      runtime_admission: { ...FIXTURE.runtime_admission, kernel: 'codex' },
+      session: { session_id: 'session_historical' },
+      diff: RETAINED_REVIEW.artifact,
+    };
+    const navigate = vi.fn();
+    launchResource.use.mockReturnValue(resource(legacy));
+    render(<LaunchSurface ownerId="test-owner" launchId={legacy.id} navigate={navigate} />);
+
+    expect(screen.getByText('Historical Launch is read-only')).toBeInTheDocument();
+    expect(screen.getByText('Codex (historical, read-only)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'New Launch' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel Launch' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Recover initial task' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Resume GitHub access' })).toBeNull();
+
+    const session = screen.getByRole('link', { name: /Open CMA session/ });
+    const contribution = screen.getByRole('link', { name: 'Inspect retained contribution' });
+    await userEvent.click(session);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'session', sessionId: 'session_historical' });
+    await userEvent.click(contribution);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'contribute', launchId: legacy.id });
+    expect(api.recoverInitialPrompt).not.toHaveBeenCalled();
+  });
+
   it('shows the display-only work label independently from the Launch branch', () => {
     const labeled: Launch = {
       ...FIXTURE,
@@ -142,6 +174,36 @@ describe('Launch command reconciliation', () => {
       kind: 'trigger_recovery',
       launchId: blocked.id,
     });
+  });
+
+  it('renders a feature pause as a frozen CMA boundary without implying session failure', () => {
+    const paused: Launch = {
+      ...FIXTURE,
+      state: 'prompt_pending',
+      blocked_reason: 'feature_paused',
+      steps: FIXTURE.steps.map((step) => ({
+        ...step,
+        status:
+          step.key === 'initial_prompt'
+            ? 'running'
+            : step.sequence < 10
+              ? 'completed'
+              : step.status,
+      })),
+    };
+    launchResource.use.mockReturnValue(resource(paused));
+
+    render(<LaunchSurface ownerId="test-owner" launchId={paused.id} navigate={vi.fn()} />);
+
+    const frozenRow = screen.getByText('Send initial task').closest('li');
+    expect(frozenRow).toHaveAttribute('data-status', 'running');
+    expect(frozenRow).toHaveAttribute('data-feature-paused', 'true');
+    expect(frozenRow).toHaveTextContent('Paused by CMA');
+    expect(screen.getAllByText('Paused by CMA')).toHaveLength(2);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Any active CMA session remains available and was not interrupted.',
+    );
+    expect(screen.queryByText('This Launch remains resumable.')).toBeNull();
   });
 
   it('offers prompt recovery only for the exact retained recovery state', () => {

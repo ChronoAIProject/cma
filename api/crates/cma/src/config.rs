@@ -45,6 +45,8 @@ impl TriggerCleanupMode {
 #[derive(Debug, Clone)]
 pub struct TriggerRuntimeConfig {
     pub rollout: TriggerRolloutPolicy,
+    /// NyxID public-proxy service exposing only credential-free repository metadata.
+    pub public_github_service_slug: Option<String>,
     pub runtime_capabilities: Vec<RequiredCapability>,
     pub cleanup_mode: TriggerCleanupMode,
     pub changed_file_limit: u32,
@@ -89,6 +91,10 @@ impl TriggerRuntimeConfig {
             user_cohort_percent,
         )
         .map_err(|error| error.to_string())?;
+        let public_github_service_slug = parse_optional_service_slug(
+            "CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG",
+            &var_or("CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG", ""),
+        )?;
         let runtime_capabilities = parse_trigger_runtime_capabilities(
             "CHRONO_TRIGGER_RUNTIME_CAPABILITIES",
             &var_or("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", ""),
@@ -146,6 +152,7 @@ impl TriggerRuntimeConfig {
         )?;
         Ok(Self {
             rollout,
+            public_github_service_slug,
             runtime_capabilities,
             cleanup_mode,
             changed_file_limit,
@@ -163,6 +170,7 @@ impl TriggerRuntimeConfig {
     fn sample() -> Self {
         Self {
             rollout: TriggerRolloutPolicy::allow_all(),
+            public_github_service_slug: Some("api-github".into()),
             runtime_capabilities: all_trigger_runtime_capabilities(),
             cleanup_mode: TriggerCleanupMode::DryRun,
             changed_file_limit: DEFAULT_TRIGGER_CHANGED_FILE_LIMIT as u32,
@@ -175,6 +183,24 @@ impl TriggerRuntimeConfig {
             concurrency: 4,
         }
     }
+}
+
+fn parse_optional_service_slug(key: &str, raw: &str) -> Result<Option<String>, String> {
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.len() > 63
+        || raw.starts_with('-')
+        || raw.ends_with('-')
+        || !raw
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(format!(
+            "{key} must be one lowercase service slug containing only letters, digits, and hyphens"
+        ));
+    }
+    Ok(Some(raw.to_string()))
 }
 
 fn parse_trigger_cleanup_mode(key: &str, raw: &str) -> Result<TriggerCleanupMode, String> {
@@ -406,6 +432,13 @@ pub struct Config {
     pub sandbox_base_url: String,
     /// API key for the sandbox provider.
     pub sandbox_api_key: String,
+    /// Dedicated provider lane for Trigger-owned Codex runtimes.
+    ///
+    /// `None` keeps Trigger admission fail-closed while leaving ordinary
+    /// sessions available. The separate endpoint is what lets OpenSandbox
+    /// apply a compatible secure runtime without changing the runtime class of
+    /// every other session on this deployment.
+    pub trigger_sandbox_provider: Option<SandboxProviderConfig>,
     /// Image each sandbox runs.
     pub sandbox_image: String,
     /// CPU a sandbox reserves when its session names no size, in Kubernetes quantity form.
@@ -532,6 +565,29 @@ pub struct Config {
     pub storage_client_secret: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
+}
+
+/// One sandbox-provider authority held by the composition root.
+#[derive(Clone)]
+pub struct SandboxProviderConfig {
+    pub base_url: String,
+    pub api_key: String,
+    /// Namespace containing this provider lane's BatchSandbox resources.
+    ///
+    /// This is both discovery scope and deletion authority. It is never
+    /// inferred from the ordinary session lane for Trigger runtimes.
+    pub namespace: String,
+}
+
+impl std::fmt::Debug for SandboxProviderConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SandboxProviderConfig")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"<redacted>")
+            .field("namespace", &self.namespace)
+            .finish()
+    }
 }
 
 /// Secret signing material and public-key rotation inputs.
@@ -716,9 +772,10 @@ impl Config {
         };
         let storage_client_id = var_or("CHRONO_STORAGE_CLIENT_ID", "");
         let storage_client_secret = var_or("CHRONO_STORAGE_CLIENT_SECRET", "");
-        // The key is read from a file rather than an environment variable so it
-        // can be delivered by a mounted secret and rotated without a restart of
-        // the surrounding config, matching how neighbouring control planes do it.
+        // The key is read from a file rather than an environment variable so a
+        // mounted secret keeps it out of the pod spec and process environment.
+        // Configuration is resolved once at startup; adopting a rotated file
+        // therefore requires a controlled process restart.
         let sandbox_api_key = match std::env::var("CHRONO_SANDBOX_API_KEY_FILE")
             .ok()
             .filter(|v| !v.trim().is_empty())
@@ -729,6 +786,24 @@ impl Config {
                 .to_string(),
             None => require("CHRONO_SANDBOX_API_KEY")?,
         };
+        let trigger_sandbox_base_url = strict_env("CHRONO_TRIGGER_SANDBOX_BASE_URL")?
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.trim().trim_end_matches('/').to_string());
+        let trigger_sandbox_namespace = strict_env("CHRONO_TRIGGER_SANDBOX_NAMESPACE")?
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.trim().to_string());
+        let trigger_sandbox_api_key = optional_file_secret(
+            "CHRONO_TRIGGER_SANDBOX_API_KEY_FILE",
+            "CHRONO_TRIGGER_SANDBOX_API_KEY",
+        )?;
+        let trigger_sandbox_provider = resolve_trigger_sandbox_provider(
+            trigger.rollout.environment_enabled,
+            &sandbox_base_url,
+            &sandbox_api_key,
+            trigger_sandbox_base_url,
+            trigger_sandbox_namespace,
+            trigger_sandbox_api_key,
+        )?;
 
         let cors_origins = var_or("CHRONO_SERVER_CORS_ORIGIN", "http://localhost:5173")
             .split(',')
@@ -773,6 +848,7 @@ impl Config {
             trusted_proxies,
             sandbox_base_url,
             sandbox_api_key,
+            trigger_sandbox_provider,
             sandbox_image,
             sandbox_cpu,
             sandbox_memory,
@@ -856,6 +932,123 @@ fn require(key: &str) -> Result<String, String> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
+fn optional_file_secret(
+    file_key: &str,
+    forbidden_inline_key: &str,
+) -> Result<Option<String>, String> {
+    optional_file_secret_from_values(
+        file_key,
+        forbidden_inline_key,
+        strict_env(file_key)?,
+        strict_env(forbidden_inline_key)?,
+    )
+}
+
+fn optional_file_secret_from_values(
+    file_key: &str,
+    forbidden_inline_key: &str,
+    path: Option<String>,
+    inline: Option<String>,
+) -> Result<Option<String>, String> {
+    if inline.is_some_and(|value| !value.trim().is_empty()) {
+        return Err(format!(
+            "{forbidden_inline_key} is not accepted; mount the dedicated provider key and set {file_key}"
+        ));
+    }
+    if let Some(path) = path.filter(|value| !value.trim().is_empty()) {
+        let value = std::fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?;
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(format!("{file_key} at {path} contains an empty secret"));
+        }
+        return Ok(Some(value.to_string()));
+    }
+    Ok(None)
+}
+
+fn resolve_trigger_sandbox_provider(
+    trigger_enabled: bool,
+    ordinary_base_url: &str,
+    ordinary_api_key: &str,
+    base_url: Option<String>,
+    namespace: Option<String>,
+    api_key: Option<String>,
+) -> Result<Option<SandboxProviderConfig>, String> {
+    match (base_url, namespace, api_key) {
+        (Some(base_url), Some(namespace), Some(api_key)) => {
+            let parsed = reqwest::Url::parse(&base_url).map_err(|_| {
+                "CHRONO_TRIGGER_SANDBOX_BASE_URL must be an absolute HTTP(S) provider origin"
+                    .to_string()
+            })?;
+            if !matches!(parsed.scheme(), "http" | "https")
+                || parsed.host_str().is_none()
+                || parsed.username() != ""
+                || parsed.password().is_some()
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || parsed.path() != "/"
+            {
+                return Err(
+                    "CHRONO_TRIGGER_SANDBOX_BASE_URL must be an absolute HTTP(S) provider origin"
+                        .into(),
+                );
+            }
+            if same_http_origin(&parsed, ordinary_base_url) {
+                return Err(
+                    "CHRONO_TRIGGER_SANDBOX_BASE_URL must not reuse the ordinary sandbox provider origin"
+                        .into(),
+                );
+            }
+            if api_key == ordinary_api_key {
+                return Err(
+                    "the Trigger sandbox provider key must not reuse the ordinary sandbox provider key"
+                        .into(),
+                );
+            }
+            if !is_dns1123_label(&namespace) {
+                return Err(
+                    "CHRONO_TRIGGER_SANDBOX_NAMESPACE must be one lowercase DNS-1123 label"
+                        .into(),
+                );
+            }
+            Ok(Some(SandboxProviderConfig {
+                base_url,
+                api_key,
+                namespace,
+            }))
+        }
+        (None, None, None) if !trigger_enabled => Ok(None),
+        (None, None, None) => Err(
+            "CHRONO_TRIGGER_SANDBOX_BASE_URL, CHRONO_TRIGGER_SANDBOX_NAMESPACE, and CHRONO_TRIGGER_SANDBOX_API_KEY_FILE are required when CHRONO_TRIGGER_ENABLED=true"
+                .into(),
+        ),
+        _ => Err(
+            "CHRONO_TRIGGER_SANDBOX_BASE_URL, CHRONO_TRIGGER_SANDBOX_NAMESPACE, and CHRONO_TRIGGER_SANDBOX_API_KEY_FILE must be set together"
+                .into(),
+        ),
+    }
+}
+
+fn same_http_origin(left: &reqwest::Url, right: &str) -> bool {
+    let Ok(right) = reqwest::Url::parse(right) else {
+        return false;
+    };
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn is_dns1123_label(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let edge = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    !bytes.is_empty()
+        && bytes.len() <= 63
+        && edge(bytes[0])
+        && edge(bytes[bytes.len() - 1])
+        && bytes.iter().all(|byte| edge(*byte) || *byte == b'-')
 }
 
 fn strict_bool(key: &str, raw: &str) -> Result<bool, String> {
@@ -1021,6 +1214,11 @@ impl Config {
             trusted_proxies: TrustedProxyConfig::sample(),
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
+            trigger_sandbox_provider: Some(SandboxProviderConfig {
+                base_url: "http://trigger-r".into(),
+                api_key: "trigger-k".into(),
+                namespace: "trigger-runtimes".into(),
+            }),
             sandbox_image: "img".into(),
             sandbox_cpu: "1".into(),
             sandbox_memory: "1Gi".into(),
@@ -1105,6 +1303,27 @@ mod tests {
             assert!(
                 error.contains("CHRONO_TRIGGER_RUNTIME_CAPABILITIES"),
                 "the startup error must name its deployment key: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn trigger_public_github_observer_slug_is_optional_and_canonical() {
+        assert_eq!(
+            parse_optional_service_slug("CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG", "api-github")
+                .unwrap()
+                .as_deref(),
+            Some("api-github")
+        );
+        assert_eq!(
+            parse_optional_service_slug("CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG", "").unwrap(),
+            None
+        );
+        for invalid in ["API-GitHub", "api/github", "-api-github", "api-github-"] {
+            assert!(
+                parse_optional_service_slug("CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG", invalid)
+                    .is_err(),
+                "{invalid}"
             );
         }
     }
@@ -1354,6 +1573,157 @@ mod tests {
     }
 
     #[test]
+    fn trigger_provider_lane_is_complete_authority_or_absent() {
+        assert!(resolve_trigger_sandbox_provider(
+            false,
+            "http://ordinary-provider",
+            "ordinary-secret",
+            None,
+            None,
+            None,
+        )
+        .expect("a disabled, undeclared lane is valid")
+        .is_none());
+        let missing = resolve_trigger_sandbox_provider(
+            true,
+            "http://ordinary-provider",
+            "ordinary-secret",
+            Some("http://trigger-provider".into()),
+            None,
+            Some("secret".into()),
+        )
+        .expect_err("a provider without a reclamation namespace must fail closed");
+        assert!(missing.contains("CHRONO_TRIGGER_SANDBOX_NAMESPACE"));
+
+        let provider = resolve_trigger_sandbox_provider(
+            true,
+            "http://ordinary-provider",
+            "ordinary-secret",
+            Some("http://trigger-provider".into()),
+            Some("chrono-bot-trigger".into()),
+            Some("secret".into()),
+        )
+        .expect("the complete lane is valid")
+        .expect("the lane is present");
+        assert_eq!(provider.base_url, "http://trigger-provider");
+        assert_eq!(provider.namespace, "chrono-bot-trigger");
+        assert_eq!(provider.api_key, "secret");
+        assert!(!format!("{provider:?}").contains("secret"));
+
+        for namespace in ["", "Trigger", "two.parts", "-prefix", "suffix-"] {
+            assert!(resolve_trigger_sandbox_provider(
+                true,
+                "http://ordinary-provider",
+                "ordinary-secret",
+                Some("http://trigger-provider".into()),
+                Some(namespace.into()),
+                Some("secret".into()),
+            )
+            .is_err());
+        }
+        for base_url in [
+            "trigger-provider",
+            "ftp://trigger-provider",
+            "http://user:password@trigger-provider",
+            "http://trigger-provider/v1",
+            "http://trigger-provider?lane=kata",
+        ] {
+            assert!(resolve_trigger_sandbox_provider(
+                true,
+                "http://ordinary-provider",
+                "ordinary-secret",
+                Some(base_url.into()),
+                Some("chrono-bot-trigger".into()),
+                Some("secret".into()),
+            )
+            .is_err());
+        }
+
+        for (ordinary_origin, trigger_origin) in [
+            ("http://same-provider", "http://same-provider"),
+            ("http://same-provider/v1", "http://same-provider"),
+            ("https://SAME-provider:443/api", "https://same-provider"),
+        ] {
+            let error = resolve_trigger_sandbox_provider(
+                true,
+                ordinary_origin,
+                "ordinary-secret",
+                Some(trigger_origin.into()),
+                Some("chrono-bot-trigger".into()),
+                Some("trigger-secret".into()),
+            )
+            .expect_err("one origin cannot back both provider authorities");
+            assert!(error.contains("ordinary sandbox provider origin"));
+        }
+        let error = resolve_trigger_sandbox_provider(
+            true,
+            "http://ordinary-provider",
+            "reused-secret",
+            Some("http://trigger-provider".into()),
+            Some("chrono-bot-trigger".into()),
+            Some("reused-secret".into()),
+        )
+        .expect_err("one credential cannot back both provider authorities");
+        assert!(error.contains("must not reuse"));
+        assert!(!error.contains("reused-secret"));
+    }
+
+    #[test]
+    fn trigger_provider_secret_is_file_only_nonempty_and_unambiguous() {
+        static FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "cma-trigger-provider-secret-{}-{sequence}",
+            std::process::id()
+        ));
+
+        std::fs::write(&path, " \n").expect("the empty secret fixture is written");
+        let error = optional_file_secret_from_values(
+            "TRIGGER_FILE",
+            "TRIGGER_INLINE",
+            Some(path.to_string_lossy().into_owned()),
+            None,
+        )
+        .expect_err("an empty mounted secret fails closed");
+        assert!(error.contains("TRIGGER_FILE"));
+
+        std::fs::write(&path, "mounted-secret\n").expect("the secret fixture is replaced");
+        let error = optional_file_secret_from_values(
+            "TRIGGER_FILE",
+            "TRIGGER_INLINE",
+            Some(path.to_string_lossy().into_owned()),
+            Some("inline-secret".into()),
+        )
+        .expect_err("an inline value cannot coexist with mounted custody");
+        assert!(error.contains("TRIGGER_INLINE"));
+        assert!(!error.contains("inline-secret"));
+
+        let resolved = optional_file_secret_from_values(
+            "TRIGGER_FILE",
+            "TRIGGER_INLINE",
+            Some(path.to_string_lossy().into_owned()),
+            None,
+        )
+        .expect("the mounted secret is readable");
+        assert_eq!(resolved.as_deref(), Some("mounted-secret"));
+
+        std::fs::remove_file(path).expect("the secret fixture is removed");
+        assert!(optional_file_secret_from_values(
+            "TRIGGER_FILE",
+            "TRIGGER_INLINE",
+            None,
+            Some(" inline-secret ".into()),
+        )
+        .expect_err("inline provider credentials are never accepted")
+        .contains("TRIGGER_INLINE"));
+        assert!(
+            optional_file_secret_from_values("TRIGGER_FILE", "TRIGGER_INLINE", None, None)
+                .expect("an undeclared secret is absent")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn the_legacy_cutover_stage_accepts_only_its_exact_flag_tuple() {
         let config = staged_config(&[
             (MONGODB_CUTOVER_STAGE, "legacy"),
@@ -1409,6 +1779,10 @@ mod tests {
             ("CHRONO_TRIGGER_ORCHESTRATION_PAUSED", "true"),
             ("CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH", "true"),
             ("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", ""),
+            ("CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG", ""),
+            ("CHRONO_TRIGGER_SANDBOX_BASE_URL", ""),
+            ("CHRONO_TRIGGER_SANDBOX_NAMESPACE", ""),
+            ("CHRONO_TRIGGER_SANDBOX_API_KEY_FILE", ""),
             ("CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS", ""),
             ("CHRONO_TRIGGER_REPOSITORY_IDS", ""),
             ("CHRONO_TRIGGER_USER_COHORT_PERCENT", "0"),

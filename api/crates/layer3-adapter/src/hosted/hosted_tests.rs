@@ -28,6 +28,37 @@ fn hosted(base: &str) -> HostedKernel {
     )
 }
 
+#[test]
+fn dedicated_lanes_require_exact_nonconflicting_kernel_metadata() {
+    let ordinary = hosted("http://ordinary.invalid");
+    let strict = HostedKernel::new_strict(
+        SandboxClient::new("http://trigger.invalid", "test-key"),
+        SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+    let metadata = |canonical: Option<&str>, legacy: Option<&str>| {
+        let mut values = BTreeMap::new();
+        if let Some(canonical) = canonical {
+            values.insert(KERNEL_METADATA_KEY.to_string(), canonical.to_string());
+        }
+        if let Some(legacy) = legacy {
+            values.insert(LEGACY_KERNEL_METADATA_KEY.to_string(), legacy.to_string());
+        }
+        values
+    };
+
+    assert!(ordinary.owns_sandbox(&metadata(None, None)));
+    assert!(ordinary.owns_sandbox(&metadata(None, Some("test-kernel"))));
+    assert!(!strict.owns_sandbox(&metadata(None, None)));
+    assert!(!strict.owns_sandbox(&metadata(None, Some("test-kernel"))));
+    assert!(strict.owns_sandbox(&metadata(Some("test-kernel"), None)));
+    assert!(strict.owns_sandbox(&metadata(Some("test-kernel"), Some("test-kernel"))));
+    assert!(!strict.owns_sandbox(&metadata(Some("other"), None)));
+    assert!(!strict.owns_sandbox(&metadata(Some("test-kernel"), Some("other"))));
+}
+
 fn input_link(
     capacity: usize,
 ) -> (
@@ -1280,6 +1311,71 @@ async fn canonical_correlation_metadata_wins_over_historical_values() {
 }
 
 #[tokio::test]
+async fn dedicated_lane_listing_returns_only_exact_canonical_kernel_metadata() {
+    let (base, server) = listing_provider(serde_json::json!({
+        "items": [
+            {
+                "id": "sbx-owned",
+                "status": {"state": "Running"},
+                "metadata": {
+                    "cma/kernel": "test-kernel",
+                    "chrono-bot/kernel": "test-kernel",
+                    "cma/session": "sesn_owned"
+                }
+            },
+            {
+                "id": "sbx-legacy-only",
+                "status": {"state": "Running"},
+                "metadata": {"chrono-bot/kernel": "test-kernel"}
+            },
+            {
+                "id": "sbx-untagged",
+                "status": {"state": "Running"},
+                "metadata": {}
+            },
+            {
+                "id": "sbx-other",
+                "status": {"state": "Running"},
+                "metadata": {"cma/kernel": "other-kernel"}
+            },
+            {
+                "id": "sbx-conflicting",
+                "status": {"state": "Running"},
+                "metadata": {
+                    "cma/kernel": "test-kernel",
+                    "chrono-bot/kernel": "other-kernel"
+                }
+            }
+        ],
+        "pagination": {
+            "page": 1,
+            "pageSize": 100,
+            "totalItems": 5,
+            "totalPages": 1,
+            "hasNextPage": false
+        }
+    }))
+    .await;
+    let kernel = HostedKernel::new_strict(
+        SandboxClient::new(&base, "test-key"),
+        SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+
+    let listed = kernel
+        .list_runtimes()
+        .await
+        .expect("the dedicated provider listing is usable");
+    server.await.expect("the provider fixture completes");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].handle, RuntimeHandle("sbx-owned".into()));
+    assert_eq!(listed[0].session.as_deref(), Some("sesn_owned"));
+}
+
+#[tokio::test]
 async fn attaching_against_a_dead_provider_reports_unavailable() {
     let k = hosted("http://127.0.0.1:1");
     let err = k
@@ -1841,16 +1937,16 @@ fn runtime_policy_readiness_requires_the_exact_name_version_and_runtime_support(
         .to_string()
     };
     assert!(super::readiness_supports_runtime_policy(
-        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, true).as_bytes()
+        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, true).as_bytes()
     ));
     for body in [
-        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, true),
+        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, true),
         ready(
-            "github_capability_v1",
+            "github_capability_v2",
             super::RUNTIME_POLICY_VERSION + 1,
             true,
         ),
-        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, false),
+        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, false),
         "{}".into(),
         "not-json".into(),
     ] {
@@ -1864,7 +1960,7 @@ fn runtime_policy_observation_accepts_only_consistent_closed_tuples() {
         serde_json::json!({
             "status": "ready",
             "githubCapability": {
-                "name": "github_capability_v1",
+                "name": "github_capability_v2",
                 "version": super::RUNTIME_POLICY_VERSION,
                 "runtime": runtime,
             }
@@ -1970,7 +2066,7 @@ fn runtime_gateway_probe_readiness_requires_the_exact_name_version_and_support_f
     };
     assert!(super::readiness_supports_runtime_gateway_probe(
         ready(
-            "runtime_gateway_probe_v1",
+            "runtime_gateway_probe_v2",
             super::RUNTIME_GATEWAY_PROBE_VERSION,
             true,
         )
@@ -1978,17 +2074,17 @@ fn runtime_gateway_probe_readiness_requires_the_exact_name_version_and_support_f
     ));
     for body in [
         ready(
-            "runtime_gateway_probe_v2",
+            "runtime_gateway_probe_v1",
             super::RUNTIME_GATEWAY_PROBE_VERSION,
             true,
         ),
         ready(
-            "runtime_gateway_probe_v1",
+            "runtime_gateway_probe_v2",
             super::RUNTIME_GATEWAY_PROBE_VERSION + 1,
             true,
         ),
         ready(
-            "runtime_gateway_probe_v1",
+            "runtime_gateway_probe_v2",
             super::RUNTIME_GATEWAY_PROBE_VERSION,
             false,
         ),
@@ -2126,22 +2222,27 @@ fn runtime_gateway_probe_wire_outcomes_are_closed_and_complete() {
 }
 
 #[tokio::test]
-async fn hosted_gateway_probe_sends_only_the_exact_numeric_binding() {
+async fn hosted_gateway_probe_sends_the_exact_catalog_and_user_service_binding() {
     let fixture = workspace_fixture(
         serde_json::json!({
             "runtimeGatewayProbe": {
-                "name": "runtime_gateway_probe_v1",
+                "name": "runtime_gateway_probe_v2",
                 "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 "supported": true,
             }
         }),
-        Some(serde_json::json!({ "version": 1, "outcome": "allowed" })),
+        Some(serde_json::json!({
+            "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            "outcome": "allowed"
+        })),
     )
     .await;
     let kernel = hosted(&fixture.base_url);
     let request = crate::RuntimeGatewayProbeRequest {
         version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
-        service_id: "service-1.a_b".into(),
+        service_id: "service-1_a_b".into(),
+        catalog_service_id: "catalog-github".into(),
+        user_service_slug: "api-github-2".into(),
         resource_id: 30,
     };
 
@@ -2159,7 +2260,9 @@ async fn hosted_gateway_probe_sends_only_the_exact_numeric_binding() {
         serde_json::from_slice::<serde_json::Value>(&requests[2].1).unwrap(),
         serde_json::json!({
             "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
-            "service_id": "service-1.a_b",
+            "service_id": "service-1_a_b",
+            "catalog_service_id": "catalog-github",
+            "user_service_slug": "api-github-2",
             "resource_id": 30,
         })
     );
@@ -2172,16 +2275,36 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
         crate::RuntimeGatewayProbeRequest {
             version: crate::RUNTIME_GATEWAY_PROBE_VERSION + 1,
             service_id: "service-1".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "api-github-2".into(),
             resource_id: 30,
         },
         crate::RuntimeGatewayProbeRequest {
             version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: "service/credential=secret".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "api-github-2".into(),
             resource_id: 30,
         },
         crate::RuntimeGatewayProbeRequest {
             version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: "service-1".into(),
+            catalog_service_id: "catalog/id".into(),
+            user_service_slug: "api-github-2".into(),
+            resource_id: 30,
+        },
+        crate::RuntimeGatewayProbeRequest {
+            version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: "service-1".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "API-github".into(),
+            resource_id: 30,
+        },
+        crate::RuntimeGatewayProbeRequest {
+            version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: "service-1".into(),
+            catalog_service_id: "catalog-github".into(),
+            user_service_slug: "api-github-2".into(),
             resource_id: 0,
         },
     ] {
@@ -2200,6 +2323,8 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
             &crate::RuntimeGatewayProbeRequest {
                 version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 service_id: "service-1".into(),
+                catalog_service_id: "catalog-github".into(),
+                user_service_slug: "api-github-2".into(),
                 resource_id: 30,
             },
         )
@@ -2211,12 +2336,15 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
     let unknown = workspace_fixture(
         serde_json::json!({
             "runtimeGatewayProbe": {
-                "name": "runtime_gateway_probe_v1",
+                "name": "runtime_gateway_probe_v2",
                 "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 "supported": true,
             }
         }),
-        Some(serde_json::json!({ "version": 1, "outcome": "future_outcome" })),
+        Some(serde_json::json!({
+            "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            "outcome": "future_outcome"
+        })),
     )
     .await;
     let error = hosted(&unknown.base_url)
@@ -2225,6 +2353,8 @@ async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_re
             &crate::RuntimeGatewayProbeRequest {
                 version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
                 service_id: "service-1".into(),
+                catalog_service_id: "catalog-github".into(),
+                user_service_slug: "api-github-2".into(),
                 resource_id: 30,
             },
         )
