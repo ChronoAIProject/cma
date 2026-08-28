@@ -3,7 +3,9 @@
 require "yaml"
 
 ROOT = File.expand_path("../..", __dir__)
+CI_WORKFLOW_PATH = File.join(ROOT, ".github/workflows/ci.yml")
 WORKFLOW_PATH = File.join(ROOT, ".github/workflows/publish.yml")
+RUNTIME_SMOKE_PATH = File.join(ROOT, ".github/scripts/cma-trigger-runtime-image-smoke.mjs")
 RELEASE_DOC_PATH = File.join(ROOT, "docs/Release.md")
 READINESS_DOC_PATH = File.join(ROOT, "docs/CMA_Trigger_Release_Readiness.md")
 
@@ -28,6 +30,9 @@ ARTIFACT_KEYS = %w[
   acpHash
   acpVersion
   architecture
+  bwrapHash
+  bwrapPath
+  bwrapVersion
   codexLauncherHash
   codexNativeHash
   codexVersion
@@ -76,6 +81,198 @@ def contains_in_order?(source, needles)
     offset = found + needle.length
     true
   end
+end
+
+def normalized_shell(source)
+  source.to_s.gsub(/\\\s*\n/, " ").gsub(/\s+/, " ").strip
+end
+
+def verify_bwrap_host_preparation(step, scope)
+  run = normalized_shell(step["run"])
+  expected = normalized_shell(<<~SHELL)
+    set -euo pipefail
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends \
+      apparmor-profiles \
+      apparmor-utils
+    sudo install -m 0644 \
+      /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+      /etc/apparmor.d/bwrap-userns-restrict
+    sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+    sudo grep -Fx 'bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+    sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+  SHELL
+  check(
+    run == expected,
+    "#{scope} D-09 host preparation must exactly install, load, and verify the targeted bubblewrap AppArmor profiles",
+  )
+  check(
+    !step.key?("continue-on-error"),
+    "#{scope} D-09 host preparation must fail closed",
+  )
+end
+
+def verify_d09_host_contract(ci_workflow, publish_workflow, smoke_source)
+  ci_jobs = required_hash(ci_workflow, "ci.yml must contain a workflow mapping")["jobs"]
+  ci_jobs = required_hash(ci_jobs, "ci.yml must contain jobs")
+  images = required_hash(ci_jobs["images"], "ci.yml must retain the images job")
+  check(
+    images["runs-on"] == "ubuntu-24.04",
+    "CI D-09 runner must stay pinned to Ubuntu 24.04",
+  )
+  image_steps = required_steps(images, "CI images")
+  ci_initialize = required_step(
+    image_steps,
+    "Initialize closed Trigger runtime evidence",
+  )
+  check(
+    ci_initialize["if"] == "${{ always() && matrix.component == 'runtime' }}",
+    "CI D-09 fallback initialization must always run for the runtime image",
+  )
+  initialize_run = ci_initialize["run"].to_s
+  [
+    'schema: "cma-trigger-d09-v2"',
+    'result: "inconclusive"',
+    'failure: {code: "ci_runtime_gate_incomplete"}',
+    '"$D09_FALLBACK_PATH"',
+    'cp "$D09_FALLBACK_PATH" "$D09_EVIDENCE_PATH"',
+  ].each do |contract|
+    check(
+      initialize_run.include?(contract),
+      "CI D-09 fallback initialization is missing #{contract}",
+    )
+  end
+  ci_prepare = required_step(image_steps, "Prepare Codex bubblewrap AppArmor profile")
+  check(
+    ci_prepare["if"] == "matrix.component == 'runtime'",
+    "CI D-09 host preparation must remain scoped to the runtime image",
+  )
+  verify_bwrap_host_preparation(ci_prepare, "CI")
+  ci_campaign = required_step(image_steps, "Pinned Trigger runtime network boundary")
+  ci_close = required_step(image_steps, "Close Trigger runtime evidence")
+  check(
+    ci_close["if"] == "${{ always() && matrix.component == 'runtime' }}",
+    "CI D-09 evidence closure must always run for the runtime image",
+  )
+  ci_close_run = ci_close["run"].to_s
+  ci_artifact_schema_match = ci_close_run.match(/\.artifacts \| keys\) == \[(.*?)\]\)/m)
+  ci_artifact_keys = if ci_artifact_schema_match
+                       ci_artifact_schema_match[1].scan(/"([^"]+)"/).flatten
+                     else
+                       []
+                     end
+  check(
+    ci_artifact_keys == ARTIFACT_KEYS,
+    "passing CI D-09 evidence must bind the exact artifact-facts schema",
+  )
+  [
+    '.schema == "cma-trigger-d09-v2"',
+    '.result == "pass" or .result == "fail" or .result == "inconclusive"',
+    '.buildCommit == $build_commit',
+    '.image.reference == $source_reference',
+    '.image.architecture == "amd64"',
+    '.image.revision == $build_commit',
+    '.artifacts.bwrapPath == "/usr/bin/bwrap"',
+    '.artifacts.bwrapHash | test("^[0-9a-f]{64}$")',
+    '.artifacts.uid == 10001',
+    '.artifacts.platform == "linux"',
+    '.artifacts.architecture == "x64"',
+    '.cleanup.status == "verified"',
+    '.cleanup.failureCodes == []',
+    '(has("failure") | not)',
+    '(.failure.code | length) > 0',
+    "end)' \\",
+    '.failure = {code: "evidence_record_invalid"}',
+    '"$D09_FALLBACK_PATH" > "$D09_EVIDENCE_PATH.tmp"',
+    'mv "$D09_EVIDENCE_PATH.tmp" "$D09_EVIDENCE_PATH"',
+  ].each do |contract|
+    check(ci_close_run.include?(contract), "CI D-09 evidence closure is missing #{contract}")
+  end
+  ci_upload = required_step(image_steps, "Retain Trigger runtime boundary evidence")
+  check(
+    always_condition?(ci_upload["if"]),
+    "CI D-09 evidence upload must always run",
+  )
+  ci_require_pass = required_step(
+    image_steps,
+    "Require passing Trigger runtime evidence",
+  )
+  check(
+    ci_require_pass["if"] == "${{ always() && matrix.component == 'runtime' }}",
+    "CI D-09 pass assertion must always run for the runtime image",
+  )
+  check(
+    ci_require_pass["run"].to_s.include?('.result == "pass"'),
+    "CI image success must require passing D-09 evidence",
+  )
+  check(
+    image_steps.index(ci_initialize) < image_steps.index(ci_prepare) &&
+      image_steps.index(ci_prepare) < image_steps.index(ci_campaign) &&
+      image_steps.index(ci_campaign) < image_steps.index(ci_close) &&
+      image_steps.index(ci_close) < image_steps.index(ci_upload) &&
+      image_steps.index(ci_upload) < image_steps.index(ci_require_pass),
+    "CI D-09 must initialize evidence, prepare the host, run, close, upload, then require pass",
+  )
+
+  publish_jobs = required_hash(
+    publish_workflow,
+    "publish.yml must contain a workflow mapping",
+  )["jobs"]
+  publish_jobs = required_hash(publish_jobs, "publish.yml must contain jobs")
+  gate = required_hash(
+    publish_jobs["runtime-image-gate"],
+    "publish.yml must retain the runtime-image-gate job",
+  )
+  check(
+    gate["runs-on"] == "ubuntu-24.04",
+    "release D-09 runner must stay pinned to Ubuntu 24.04",
+  )
+  gate_steps = required_steps(gate, "runtime-image-gate")
+  pull = required_step(gate_steps, "Pull the immutable runtime image")
+  release_prepare = required_step(
+    gate_steps,
+    "Prepare Codex bubblewrap AppArmor profile",
+  )
+  check(
+    !release_prepare.key?("if"),
+    "release D-09 host preparation must not be optional",
+  )
+  verify_bwrap_host_preparation(release_prepare, "release")
+  check(
+    normalized_shell(ci_prepare["run"]) == normalized_shell(release_prepare["run"]),
+    "CI and release D-09 host preparation must remain identical",
+  )
+  campaign = required_step(gate_steps, "Prove the release runtime network boundary")
+  check(
+    gate_steps.index(pull) < gate_steps.index(release_prepare) &&
+      gate_steps.index(release_prepare) < gate_steps.index(campaign),
+    "release D-09 must pull the image, prepare the host, then run the campaign",
+  )
+
+  launch_match = smoke_source.match(
+    /campaignStage = "runtime-startup";(?<launch>.*?)"start D-09 runtime"/m,
+  )
+  check(launch_match, "D-09 smoke must retain its reviewed runtime launch block")
+  launch = launch_match[:launch]
+  security_options = launch.scan(/"--security-opt",\s*"([^"]+)"/m).flatten
+  check(
+    security_options == %w[
+      seccomp=unconfined
+      apparmor=unconfined
+      systempaths=unconfined
+    ],
+    "D-09 runtime must retain exactly its three reviewed outer security options",
+  )
+  check(
+    !launch.include?('"--privileged"') &&
+      !launch.include?('"--cap-add"') &&
+      !launch.match?(/"--network",\s*"host"/m),
+    "D-09 runtime must not gain privilege, capabilities, or host networking",
+  )
+  check(
+    smoke_source.scan(/"--security-opt"/).length == 3,
+    "D-09 outer security options must remain scoped to its main runtime",
+  )
 end
 
 def verify_contract(workflow, release_doc, readiness_doc)
@@ -309,6 +506,9 @@ def verify_contract(workflow, release_doc, readiness_doc)
     ['(.artifacts.acpVersion | type) == "string"', "passing D-09 evidence must bind the ACP version"],
     ['(.artifacts.acpVersion | length) > 0', "passing D-09 evidence must retain a non-empty ACP version"],
     ['.artifacts.acpHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the ACP hash"],
+    ['.artifacts.bwrapPath == "/usr/bin/bwrap"', "passing D-09 evidence must bind the system bubblewrap path"],
+    ['.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\\\.[0-9]+(\\\\.[0-9]+)?([-+~].*)?$")', "passing D-09 evidence must bind the bubblewrap version"],
+    ['.artifacts.bwrapHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the bubblewrap hash"],
     ['.artifacts.codexLauncherHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the Codex launcher hash"],
     ['.artifacts.codexNativeHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the Codex native hash"],
     ['.artifacts.runtimeHash | test("^[0-9a-f]{64}$")', "passing D-09 evidence must bind the runtime hash"],
@@ -401,6 +601,13 @@ rescue Psych::Exception => error
   raise ContractError, "publish.yml must remain valid YAML: #{error.message}"
 end
 
+def load_d09_host_inputs
+  ci_workflow = YAML.safe_load(File.read(CI_WORKFLOW_PATH), aliases: true)
+  [ci_workflow, File.read(RUNTIME_SMOKE_PATH)]
+rescue Psych::Exception => error
+  raise ContractError, "ci.yml must remain valid YAML: #{error.message}"
+end
+
 def cloned(value)
   Marshal.load(Marshal.dump(value))
 end
@@ -475,6 +682,18 @@ def run_self_tests(workflow, release_doc, readiness_doc)
       end,
     ],
     [
+      "system bubblewrap path evidence removed",
+      "passing D-09 evidence must bind the system bubblewrap path",
+      lambda do |candidate, _release, _readiness|
+        run = mutation_step(candidate, "runtime-image-gate", "Close release-image evidence").fetch("run")
+        replace_once!(
+          run,
+          '.artifacts.bwrapPath == "/usr/bin/bwrap"',
+          '(.artifacts.bwrapPath | type) == "string"',
+        )
+      end,
+    ],
+    [
       "honest GHCR limitation removed from release documentation",
       "Release documentation must state that D-09 cannot prevent or retract GHCR image tags",
       lambda do |_candidate, release, _readiness|
@@ -503,15 +722,282 @@ def run_self_tests(workflow, release_doc, readiness_doc)
   puts "CMA Trigger publish contract self-tests passed (#{tests.length} mutations)"
 end
 
+def run_d09_host_self_tests(ci_workflow, publish_workflow, smoke_source)
+  tests = [
+    [
+      "CI D-09 runner floated",
+      "CI D-09 runner must stay pinned to Ubuntu 24.04",
+      lambda do |ci, _publish, _smoke|
+        ci.fetch("jobs").fetch("images")["runs-on"] = "ubuntu-latest"
+      end,
+    ],
+    [
+      "release D-09 runner floated",
+      "release D-09 runner must stay pinned to Ubuntu 24.04",
+      lambda do |_ci, publish, _smoke|
+        publish.fetch("jobs").fetch("runtime-image-gate")["runs-on"] = "ubuntu-latest"
+      end,
+    ],
+    [
+      "CI bubblewrap profile load removed",
+      "CI D-09 host preparation must exactly install, load, and verify",
+      lambda do |ci, _publish, _smoke|
+        run = mutation_step(ci, "images", "Prepare Codex bubblewrap AppArmor profile").fetch("run")
+        replace_once!(
+          run,
+          "sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict",
+          "true # profile load removed",
+        )
+      end,
+    ],
+    [
+      "release bubblewrap profile verification removed",
+      "release D-09 host preparation must exactly install, load, and verify",
+      lambda do |_ci, publish, _smoke|
+        run = mutation_step(
+          publish,
+          "runtime-image-gate",
+          "Prepare Codex bubblewrap AppArmor profile",
+        ).fetch("run")
+        replace_once!(
+          run,
+          "sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles",
+          "true # profile verification removed",
+        )
+      end,
+    ],
+    [
+      "CI fallback moved after host preparation",
+      "CI D-09 must initialize evidence, prepare the host, run, close, upload, then require pass",
+      lambda do |ci, _publish, _smoke|
+        steps = ci.fetch("jobs").fetch("images").fetch("steps")
+        initialize_index = steps.index do |step|
+          step["name"] == "Initialize closed Trigger runtime evidence"
+        end
+        initialize = steps.delete_at(initialize_index)
+        prepare_index = steps.index do |step|
+          step["name"] == "Prepare Codex bubblewrap AppArmor profile"
+        end
+        steps.insert(prepare_index + 1, initialize)
+      end,
+    ],
+    [
+      "CI fallback stopped running after failure",
+      "CI D-09 fallback initialization must always run for the runtime image",
+      lambda do |ci, _publish, _smoke|
+        mutation_step(
+          ci,
+          "images",
+          "Initialize closed Trigger runtime evidence",
+        )["if"] = "matrix.component == 'runtime'"
+      end,
+    ],
+    [
+      "CI evidence closure moved before the campaign",
+      "CI D-09 must initialize evidence, prepare the host, run, close, upload, then require pass",
+      lambda do |ci, _publish, _smoke|
+        steps = ci.fetch("jobs").fetch("images").fetch("steps")
+        close_index = steps.index { |step| step["name"] == "Close Trigger runtime evidence" }
+        campaign_index = steps.index do |step|
+          step["name"] == "Pinned Trigger runtime network boundary"
+        end
+        close = steps.delete_at(close_index)
+        campaign_index = steps.index do |step|
+          step["name"] == "Pinned Trigger runtime network boundary"
+        end
+        steps.insert(campaign_index, close)
+      end,
+    ],
+    [
+      "CI malformed pass cleanup accepted",
+      "CI D-09 evidence closure is missing .cleanup.status == \"verified\"",
+      lambda do |ci, _publish, _smoke|
+        run = mutation_step(ci, "images", "Close Trigger runtime evidence").fetch("run")
+        replace_once!(
+          run,
+          '.cleanup.status == "verified"',
+          '(.cleanup.status | type) == "string"',
+        )
+      end,
+    ],
+    [
+      "CI evidence input detached from jq validation",
+      "CI D-09 evidence closure is missing end)' \\",
+      lambda do |ci, _publish, _smoke|
+        run = mutation_step(ci, "images", "Close Trigger runtime evidence").fetch("run")
+        replace_once!(
+          run,
+          "end)' \\" + "\n",
+          "end)'\n",
+        )
+      end,
+    ],
+    [
+      "CI pass assertion weakened",
+      "CI image success must require passing D-09 evidence",
+      lambda do |ci, _publish, _smoke|
+        run = mutation_step(
+          ci,
+          "images",
+          "Require passing Trigger runtime evidence",
+        ).fetch("run")
+        replace_once!(run, '.result == "pass"', '.result != null')
+      end,
+    ],
+    [
+      "CI pass assertion moved before evidence upload",
+      "CI D-09 must initialize evidence, prepare the host, run, close, upload, then require pass",
+      lambda do |ci, _publish, _smoke|
+        steps = ci.fetch("jobs").fetch("images").fetch("steps")
+        pass_index = steps.index do |step|
+          step["name"] == "Require passing Trigger runtime evidence"
+        end
+        pass = steps.delete_at(pass_index)
+        upload_index = steps.index do |step|
+          step["name"] == "Retain Trigger runtime boundary evidence"
+        end
+        steps.insert(upload_index, pass)
+      end,
+    ],
+    [
+      "CI host preparation allowed to fail",
+      "CI D-09 host preparation must fail closed",
+      lambda do |ci, _publish, _smoke|
+        mutation_step(
+          ci,
+          "images",
+          "Prepare Codex bubblewrap AppArmor profile",
+        )["continue-on-error"] = true
+      end,
+    ],
+    [
+      "CI host preparation made permissive",
+      "CI D-09 host preparation must remain scoped to the runtime image",
+      lambda do |ci, _publish, _smoke|
+        mutation_step(
+          ci,
+          "images",
+          "Prepare Codex bubblewrap AppArmor profile",
+        )["if"] = "always()"
+      end,
+    ],
+    [
+      "release host preparation made optional",
+      "release D-09 host preparation must not be optional",
+      lambda do |_ci, publish, _smoke|
+        mutation_step(
+          publish,
+          "runtime-image-gate",
+          "Prepare Codex bubblewrap AppArmor profile",
+        )["if"] = "success()"
+      end,
+    ],
+    [
+      "global AppArmor restriction weakened",
+      "CI D-09 host preparation must exactly install, load, and verify",
+      lambda do |ci, _publish, _smoke|
+        run = mutation_step(
+          ci,
+          "images",
+          "Prepare Codex bubblewrap AppArmor profile",
+        ).fetch("run")
+        run << "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n"
+      end,
+    ],
+    [
+      "AppArmor outer option removed",
+      "D-09 runtime must retain exactly its three reviewed outer security options",
+      lambda do |_ci, _publish, smoke|
+        replace_once!(smoke, "        \"apparmor=unconfined\",\n", "")
+      end,
+    ],
+    [
+      "capability added to D-09 runtime",
+      "D-09 runtime must not gain privilege, capabilities, or host networking",
+      lambda do |_ci, _publish, smoke|
+        replace_once!(
+          smoke,
+          "        \"--publish\",\n",
+          "        \"--cap-add\",\n        \"SYS_ADMIN\",\n        \"--publish\",\n",
+        )
+      end,
+    ],
+    [
+      "host network added to D-09 runtime",
+      "D-09 runtime must not gain privilege, capabilities, or host networking",
+      lambda do |_ci, _publish, smoke|
+        replace_once!(
+          smoke,
+          "        runtime,\n        \"--label\",\n        resourceLabel,\n        \"--network\",\n        network,\n",
+          "        runtime,\n        \"--label\",\n        resourceLabel,\n        \"--network\",\n        \"host\",\n",
+        )
+      end,
+    ],
+    [
+      "outer security option leaked to startup refusal",
+      "D-09 outer security options must remain scoped to its main runtime",
+      lambda do |_ci, _publish, smoke|
+        marker = "      \"--entrypoint\",\n      \"node\",\n      ...environmentArguments(environment),"
+        replacement = "      \"--security-opt\",\n      \"seccomp=unconfined\",\n      \"--entrypoint\",\n      \"node\",\n      ...environmentArguments(environment),"
+        replace_once!(smoke, marker, replacement)
+      end,
+    ],
+    [
+      "system-path outer option replaced",
+      "D-09 runtime must retain exactly its three reviewed outer security options",
+      lambda do |_ci, _publish, smoke|
+        replace_once!(
+          smoke,
+          '"systempaths=unconfined"',
+          '"no-new-privileges=true"',
+        )
+      end,
+    ],
+    [
+      "privileged D-09 runtime added",
+      "D-09 runtime must not gain privilege, capabilities, or host networking",
+      lambda do |_ci, _publish, smoke|
+        replace_once!(
+          smoke,
+          "        \"--publish\",\n",
+          "        \"--privileged\",\n        \"--publish\",\n",
+        )
+      end,
+    ],
+  ]
+
+  tests.each do |name, expected_error, mutation|
+    candidate_ci = cloned(ci_workflow)
+    candidate_publish = cloned(publish_workflow)
+    candidate_smoke = smoke_source.dup
+    mutation.call(candidate_ci, candidate_publish, candidate_smoke)
+    begin
+      verify_d09_host_contract(candidate_ci, candidate_publish, candidate_smoke)
+    rescue ContractError => error
+      unless error.message.include?(expected_error)
+        raise ContractError,
+              "self-test #{name.inspect} failed for the wrong reason: #{error.message}"
+      end
+      next
+    end
+    raise ContractError, "self-test #{name.inspect} was not rejected"
+  end
+
+  puts "CMA Trigger D-09 host contract self-tests passed (#{tests.length} mutations)"
+end
+
 unless ARGV.empty? || ARGV == ["--self-test"]
   warn "usage: #{File.basename($PROGRAM_NAME)} [--self-test]"
   exit 2
 end
 
 workflow, release_doc, readiness_doc = load_inputs
+ci_workflow, smoke_source = load_d09_host_inputs
 verify_contract(workflow, release_doc, readiness_doc)
+verify_d09_host_contract(ci_workflow, workflow, smoke_source)
 if ARGV == ["--self-test"]
   run_self_tests(workflow, release_doc, readiness_doc)
+  run_d09_host_self_tests(ci_workflow, workflow, smoke_source)
 else
   puts "CMA Trigger publish contract passed"
 end

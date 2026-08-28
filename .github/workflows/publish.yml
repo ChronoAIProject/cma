@@ -418,7 +418,7 @@ jobs:
     name: Runtime image D-09 gate
     needs: [plan, images, image-exports]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       actions: read
@@ -583,6 +583,20 @@ jobs:
           set -euo pipefail
           docker pull "$SOURCE_REFERENCE"
 
+      - name: Prepare Codex bubblewrap AppArmor profile
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            apparmor-profiles \
+            apparmor-utils
+          sudo install -m 0644 \
+            /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+            /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          sudo grep -Fx 'bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+          sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+
       - name: Prove the release runtime network boundary
         env:
           SOURCE_REFERENCE: ${{ steps.runtime_identity.outputs.source_reference }}
@@ -629,14 +643,18 @@ jobs:
                          and ((.artifacts | type) == "object")
                          and ((.artifacts | keys) == [
                            "acpHash", "acpVersion", "architecture",
-                           "codexLauncherHash", "codexNativeHash",
-                           "codexVersion", "platform", "runtimeHash", "uid"
+                           "bwrapHash", "bwrapPath", "bwrapVersion",
+                           "codexLauncherHash", "codexNativeHash", "codexVersion",
+                           "platform", "runtimeHash", "uid"
                          ])
                          and ((.artifacts.codexVersion | type) == "string"
                               and (.artifacts.codexVersion | length) > 0)
                          and ((.artifacts.acpVersion | type) == "string"
                               and (.artifacts.acpVersion | length) > 0)
                          and (.artifacts.acpHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.bwrapPath == "/usr/bin/bwrap")
+                         and (.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\.[0-9]+(\\.[0-9]+)?([-+~].*)?$"))
+                         and (.artifacts.bwrapHash | test("^[0-9a-f]{64}$"))
                          and (.artifacts.codexLauncherHash | test("^[0-9a-f]{64}$"))
                          and (.artifacts.codexNativeHash | test("^[0-9a-f]{64}$"))
                          and (.artifacts.runtimeHash | test("^[0-9a-f]{64}$"))

@@ -77,10 +77,14 @@ ARG TARGETARCH
 # was current when trixie-slim was built and never moves — which means the scan
 # gate starts failing on a Dockerfile nobody has touched, the first time a
 # vulnerability is published in anything the base image already carried.
+# Codex uses the first bwrap on PATH. The distro path lets a Linux host apply
+# its targeted user-namespace AppArmor profile; without it Codex falls back to
+# an anonymous bundled helper that restricted hosts reject.
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         bash \
+        bubblewrap \
         ca-certificates \
         curl \
         git \

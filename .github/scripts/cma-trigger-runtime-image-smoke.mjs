@@ -18,6 +18,7 @@ const CODEX_NATIVE_HASHES = Object.freeze({
   x64: "cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40",
   arm64: "e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2",
 });
+const BWRAP_PATH = "/usr/bin/bwrap";
 const IMAGE_ARCHITECTURES = Object.freeze({ amd64: "x64", arm64: "arm64" });
 const EVIDENCE_SCHEMA = "cma-trigger-d09-v2";
 const GATEWAY_PROBE_COMMAND = JSON.stringify([
@@ -132,10 +133,14 @@ const native = {
   arm64: "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex",
 }[process.arch];
 if (!native) throw new Error("unsupported Codex native architecture");
+fs.accessSync("${BWRAP_PATH}", fs.constants.X_OK);
 const facts = {
   codexVersion: cp.execFileSync("codex", ["--version"], { encoding: "utf8" }).trim(),
   acpVersion: require("/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json").version,
   acpHash: digest("/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"),
+  bwrapPath: "${BWRAP_PATH}",
+  bwrapVersion: cp.execFileSync("${BWRAP_PATH}", ["--version"], { encoding: "utf8" }).trim(),
+  bwrapHash: digest("${BWRAP_PATH}"),
   codexLauncherHash: digest("/usr/local/lib/node_modules/@openai/codex/bin/codex.js"),
   codexNativeHash: digest(native),
   runtimeHash: digest("/usr/local/bin/layer4-runtime"),
@@ -1166,6 +1171,9 @@ async function main() {
     assert.equal(facts.codexVersion, CODEX_VERSION);
     assert.equal(facts.acpVersion, ACP_VERSION);
     assert.equal(facts.acpHash, ACP_HASH);
+    assert.equal(facts.bwrapPath, BWRAP_PATH);
+    assert.match(facts.bwrapVersion, /^bubblewrap \d+\.\d+(?:\.\d+)?(?:[-+~].*)?$/);
+    assert.match(facts.bwrapHash, /^[0-9a-f]{64}$/);
     assert.equal(facts.codexLauncherHash, CODEX_LAUNCHER_HASH);
     assert.equal(
       facts.codexNativeHash,
@@ -1223,12 +1231,19 @@ async function main() {
         resourceLabel,
         "--network",
         network,
-        // Docker's default seccomp profile blocks the user-namespace syscall
-        // used by Codex's nested bwrap boundary. The release runner relaxes
-        // that outer syscall filter only; it does not grant host networking,
-        // extra Linux capabilities, or a privileged container.
+        // These outer-container accommodations let the system bwrap establish
+        // Codex's nested user/mount boundary: the seccomp filter permits its
+        // namespace syscalls, dropping docker-default lets /usr/bin/bwrap
+        // attach the targeted host AppArmor profile, and unmasking system paths
+        // permits the sandbox's fresh /proc mount. No capabilities, privileged
+        // mode, or host network are granted; the inner permission profile is
+        // still mandatory and is exercised below.
         "--security-opt",
         "seccomp=unconfined",
+        "--security-opt",
+        "apparmor=unconfined",
+        "--security-opt",
+        "systempaths=unconfined",
         "--publish",
         "127.0.0.1::9090",
         "--tmpfs",
