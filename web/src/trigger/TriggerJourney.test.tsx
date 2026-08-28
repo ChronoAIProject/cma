@@ -354,7 +354,9 @@ describe('public Trigger route identity', () => {
     expect(firstSignal.aborted).toBe(true);
     expect(screen.queryByText('preview A unavailable')).toBeNull();
     expect(await screen.findByRole('heading', { name: next.public_summary })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: next.public_summary })).toHaveFocus();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: next.public_summary })).toHaveFocus();
+    });
   });
 
   it('clears a successful preview before a different Trigger returns 404', async () => {
@@ -373,7 +375,9 @@ describe('public Trigger route identity', () => {
     expect(firstSignal.aborted).toBe(true);
     expect(screen.queryByRole('heading', { name: PREVIEW.public_summary })).toBeNull();
     expect(await screen.findByRole('heading', { name: 'Trigger not found' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Trigger not found' })).toHaveFocus();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Trigger not found' })).toHaveFocus();
+    });
     expect(screen.queryByText('provider detail must not render')).toBeNull();
   });
 });
