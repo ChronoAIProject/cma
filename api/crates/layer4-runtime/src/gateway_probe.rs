@@ -114,12 +114,19 @@ impl GatewayProbe {
             // may retain, so diagnostic output is deliberately discarded.
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let output = match tokio::time::timeout(PROBE_DEADLINE, child.output()).await {
+        let spawn = crate::writer_fence::ManagedSpawnPermit::begin();
+        let child = match child.spawn() {
+            Ok(child) => child,
+            Err(_) => return ProbeReceipt::new(ProbeOutcome::CommandSandboxInitializationFailed),
+        };
+        let managed_child = spawn.register(child.id());
+        let output = match tokio::time::timeout(PROBE_DEADLINE, child.wait_with_output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(_)) | Err(_) => {
                 return ProbeReceipt::new(ProbeOutcome::CommandSandboxInitializationFailed)
             }
         };
+        drop(managed_child);
         if !output.status.success() {
             return ProbeReceipt::new(ProbeOutcome::CommandSandboxInitializationFailed);
         }

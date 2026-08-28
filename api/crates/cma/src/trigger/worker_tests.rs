@@ -181,6 +181,39 @@ async fn claim_is_committed_before_the_executor_and_success_releases_the_lease()
 }
 
 #[tokio::test]
+async fn execution_refusal_is_settled_before_adapter_admission_or_execution() {
+    let fixture = Fixture::new();
+    let executor = Arc::new(ExecutionRefusingExecutor::default());
+    let worker = test_worker(
+        fixture.service(),
+        executor.clone(),
+        "runtime-route-fence",
+        &[NOW, LATER],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&fixture.launch.id, 0, "runtime-route-fence")
+            .await
+            .unwrap(),
+        EffectRunOutcome::Failed
+    );
+    assert_eq!(executor.admit_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.execute_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.reconcile_calls.load(Ordering::SeqCst), 0);
+    let retained = fixture.store.current();
+    assert_eq!(
+        retained.failure.as_ref().unwrap().code,
+        "launch_runtime_route_quarantined"
+    );
+    assert_eq!(
+        retained.effects.last().unwrap().state,
+        layer2_core::EffectState::FailedTerminal
+    );
+    assert!(retained.lease.is_none());
+}
+
+#[tokio::test]
 async fn observed_session_wait_is_durable_without_a_failure_or_budget_spend() {
     let mut launch = Fixture::new().launch;
     launch.state = LaunchState::SandboxPending;
@@ -1190,6 +1223,80 @@ async fn pull_request_status_deadline_survives_worker_and_browser_restarts() {
 }
 
 #[tokio::test]
+async fn pull_request_status_never_reaches_the_provider_for_quarantined_runtime_routes() {
+    for corruption in [
+        "legacy",
+        "missing",
+        "blank-version",
+        "malformed-time",
+        "missing-capability",
+        "duplicate-capability",
+    ] {
+        let mut launch = pull_request_status_launch();
+        match corruption {
+            "legacy" => {
+                launch.runtime_admission.as_mut().unwrap().kernel =
+                    layer2_core::KernelId::new(super::super::LEGACY_TRIGGER_KERNEL_ID);
+            }
+            "missing" => launch.runtime_admission = None,
+            "blank-version" => {
+                launch.runtime_admission.as_mut().unwrap().runtime_version = String::new();
+            }
+            "malformed-time" => {
+                launch.runtime_admission.as_mut().unwrap().observed_at = "not-a-time".into();
+            }
+            "missing-capability" => {
+                launch
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = launch.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        let store = Arc::new(TestStore::new(launch.clone()));
+        let service = Arc::new(TriggerService::new(
+            store.clone(),
+            store.clone(),
+            Arc::new(NeverAuthority),
+        ));
+        let executor = Arc::new(PullRequestStatusExecutor::new(Vec::<
+            PullRequestStatusDisposition,
+        >::new()));
+        let worker = test_worker(
+            service,
+            executor.clone(),
+            &format!("pr-status-quarantine-{corruption}"),
+            &[NOW],
+        );
+
+        assert_eq!(
+            worker
+                .run_once(
+                    &launch.id,
+                    launch.revision_number,
+                    &format!("pr-status-quarantine-{corruption}"),
+                )
+                .await
+                .unwrap(),
+            EffectRunOutcome::NoWork,
+            "{corruption}",
+        );
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 0, "{corruption}");
+        let retained = store.current();
+        assert_eq!(retained.state, LaunchState::PrOpen, "{corruption}");
+        assert!(retained.lease.is_none(), "{corruption}");
+    }
+}
+
+#[tokio::test]
 async fn pull_request_status_retry_and_provider_request_id_are_durable() {
     let launch = pull_request_status_launch();
     let request_id = "48800000-0000-4000-8000-000000000103";
@@ -1923,6 +2030,52 @@ fn prompt_delivery(
         dispatch_fence_sequence: (state != layer2_core::PromptDeliveryState::Queued).then_some(42),
         queued_at: NOW.into(),
         updated_at: LATER.into(),
+    }
+}
+
+#[derive(Default)]
+struct ExecutionRefusingExecutor {
+    admit_calls: AtomicUsize,
+    execute_calls: AtomicUsize,
+    reconcile_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl EffectExecutor for ExecutionRefusingExecutor {
+    fn refuse_execute(
+        &self,
+        _launch: &Launch,
+        _claim: &EffectClaim,
+        correlation_id: &str,
+    ) -> Option<LaunchFailure> {
+        Some(LaunchFailure {
+            class: layer2_core::FailureClass::TerminalSecurity,
+            code: "launch_runtime_route_quarantined".into(),
+            detail: "The retained route cannot execute new work.".into(),
+            remediation: "Reconcile or clean up the historical Launch.".into(),
+            correlation_id: correlation_id.into(),
+            retry_at: None,
+            observed_at: NOW.into(),
+        })
+    }
+
+    async fn admit(
+        &self,
+        _launch: &Launch,
+        _claim: &EffectClaim,
+    ) -> Result<Option<AuthorityAdmissionSnapshot>, EffectExecution> {
+        self.admit_calls.fetch_add(1, Ordering::SeqCst);
+        panic!("execution refusal must precede authority admission")
+    }
+
+    async fn execute(&self, _launch: &Launch, _claim: &EffectClaim) -> EffectExecution {
+        self.execute_calls.fetch_add(1, Ordering::SeqCst);
+        panic!("execution refusal must precede adapter execution")
+    }
+
+    async fn reconcile(&self, _launch: &Launch, _claim: &EffectClaim) -> EffectExecution {
+        self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
+        panic!("a fresh refusal must not enter reconciliation")
     }
 }
 

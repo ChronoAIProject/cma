@@ -39,7 +39,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::sandbox_reclaimer::{
-    CREATOR_METADATA_KEY, GENERATION_METADATA_KEY, RESERVATION_METADATA_KEY, SESSION_METADATA_KEY,
+    CREATOR_METADATA_KEY, GENERATION_METADATA_KEY, KERNEL_METADATA_KEY, LEGACY_KERNEL_METADATA_KEY,
+    RESERVATION_METADATA_KEY, SESSION_METADATA_KEY,
 };
 use crate::task_retirement::TaskRetirement;
 use crate::terminal_input::WeakTerminalInputSender;
@@ -110,12 +111,6 @@ const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 /// naming it once is what keeps them in step.
 /// Historical session key, kept while old-only sandboxes remain live.
 const LEGACY_SESSION_METADATA_KEY: &str = "chrono-bot/session";
-
-/// Canonical metadata key naming which kernel a sandbox is running.
-const KERNEL_METADATA_KEY: &str = "cma/kernel";
-
-/// Historical kernel key, kept for old control planes during the transition.
-const LEGACY_KERNEL_METADATA_KEY: &str = "chrono-bot/kernel";
 
 /// Read a canonical correlation value, falling back only when it is absent.
 fn correlation_value(
@@ -929,6 +924,10 @@ pub struct HostedKernel {
     shape: SandboxShape,
     /// Which kernel this is, recorded on the sandboxes it creates.
     kernel: &'static str,
+    /// Whether this lane refuses runtimes without exact canonical kernel
+    /// metadata. New dedicated lanes set this; ordinary lanes retain only the
+    /// explicitly documented pre-metadata compatibility behavior.
+    strict_kernel_metadata: bool,
     /// Where this kernel reads its skills, relative to the pod's home.
     ///
     /// Held so paths are composed here rather than by anything above: the pod
@@ -968,16 +967,50 @@ impl HostedKernel {
         skills_root: impl Into<String>,
         agent_notes: impl Into<String>,
     ) -> Self {
+        Self::new_with_kernel_metadata(client, shape, kernel, skills_root, agent_notes, false)
+    }
+
+    /// Host a new isolated lane that accepts only its canonical kernel label.
+    pub fn new_strict(
+        client: SandboxClient,
+        shape: SandboxShape,
+        kernel: &'static str,
+        skills_root: impl Into<String>,
+        agent_notes: impl Into<String>,
+    ) -> Self {
+        Self::new_with_kernel_metadata(client, shape, kernel, skills_root, agent_notes, true)
+    }
+
+    fn new_with_kernel_metadata(
+        client: SandboxClient,
+        shape: SandboxShape,
+        kernel: &'static str,
+        skills_root: impl Into<String>,
+        agent_notes: impl Into<String>,
+        strict_kernel_metadata: bool,
+    ) -> Self {
         Self {
             client,
             shape,
             kernel,
+            strict_kernel_metadata,
             skills_root: skills_root.into(),
             agent_notes: agent_notes.into(),
             links: std::sync::Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             switch_waiters: SwitchWaiters::default(),
             credential_waiters: CredentialWaiters::default(),
             runtime_policy_waiters: RuntimePolicyWaiters::default(),
+        }
+    }
+
+    fn owns_sandbox(&self, metadata: &BTreeMap<String, String>) -> bool {
+        let canonical = metadata.get(KERNEL_METADATA_KEY).map(String::as_str);
+        let legacy = metadata.get(LEGACY_KERNEL_METADATA_KEY).map(String::as_str);
+        match (canonical, legacy) {
+            (Some(canonical), Some(legacy)) => canonical == self.kernel && legacy == self.kernel,
+            (Some(canonical), None) => canonical == self.kernel,
+            (None, Some(legacy)) => !self.strict_kernel_metadata && legacy == self.kernel,
+            (None, None) => !self.strict_kernel_metadata,
         }
     }
 
@@ -1618,6 +1651,7 @@ impl HostedKernel {
             .map_err(|e| AdapterError::Unavailable(e.to_string()))?;
         Ok(sandboxes
             .into_iter()
+            .filter(|sandbox| self.owns_sandbox(&sandbox.metadata))
             .map(|s| RuntimeListing {
                 session: correlation_value(
                     &s.metadata,

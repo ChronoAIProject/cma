@@ -13,8 +13,8 @@ use layer2_core::{
     DelegationState, ForkRecord, Launch, LaunchAuthority, PublisherAuthority,
     PublisherRepositoryRole, RepositoryIdentity, RepositoryVisibility, ScopeClass, SourceMode,
     SubjectId, TriggerAuthorityVerifier, TriggerConnection, TriggerConnectionAuthorization,
-    TriggerConnectionManager, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
-    TriggerServiceError,
+    TriggerConnectionManager, TriggerPreviewRepositoryPolicy, TriggerRepositorySelection,
+    TriggerRevision, TriggerRevisionContent, TriggerServiceError,
 };
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
@@ -202,6 +202,7 @@ pub(crate) struct GithubBroker {
     http: reqwest::Client,
     authority: Arc<dyn SubjectAuthoritySource>,
     revocations: Arc<dyn ConnectionRevocationStore>,
+    public_github_service_slug: Option<String>,
 }
 
 #[derive(Clone)]
@@ -588,8 +589,9 @@ impl GithubBroker {
         base_url: &str,
         auth: Arc<AuthState>,
         revocations: Arc<dyn ConnectionRevocationStore>,
+        public_github_service_slug: Option<String>,
     ) -> Result<Self, GithubBrokerError> {
-        Self::with_ports(base_url, auth, revocations)
+        Self::with_ports(base_url, auth, revocations, public_github_service_slug)
     }
 
     #[cfg(test)]
@@ -601,6 +603,7 @@ impl GithubBroker {
             base_url,
             authority,
             Arc::new(TestConnectionRevocationStore::default()),
+            Some(GITHUB_SERVICE_SLUG.into()),
         )
     }
 
@@ -608,6 +611,7 @@ impl GithubBroker {
         base_url: &str,
         authority: Arc<dyn SubjectAuthoritySource>,
         revocations: Arc<dyn ConnectionRevocationStore>,
+        public_github_service_slug: Option<String>,
     ) -> Result<Self, GithubBrokerError> {
         let base_url = Url::parse(base_url)
             .map_err(|_| GithubBrokerError::Malformed("NyxID base URL is invalid".into()))?;
@@ -620,6 +624,9 @@ impl GithubBroker {
                 "NyxID base URL must be an HTTP origin without credentials".into(),
             ));
         }
+        if let Some(slug) = public_github_service_slug.as_deref() {
+            validate_public_service_slug(slug)?;
+        }
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
@@ -630,6 +637,7 @@ impl GithubBroker {
             http,
             authority,
             revocations,
+            public_github_service_slug,
         })
     }
 
@@ -1876,9 +1884,7 @@ impl GithubBroker {
         }
         if status.is_success() {
             let _ = bounded_body(response, 16 * 1024).await;
-            return Err(GithubBrokerError::Malformed(
-                "NyxID returned an unexpected connection-revocation status".into(),
-            ));
+            return Err(GithubBrokerError::AmbiguousWrite);
         }
         let evidence = bounded_body(response, 16 * 1024)
             .await
@@ -1926,6 +1932,83 @@ impl GithubBroker {
             MAX_GITHUB_BODY_BYTES,
         )
         .await
+    }
+
+    /// Read the one public metadata route authorized for anonymous Trigger
+    /// preview. NyxID remote `main` at
+    /// 245600cb15110c43aafed77c8a8ee73f655ac060
+    /// (`handlers/public_proxy.rs`, blob
+    /// 17a227775d996b41e248e196902419a37268c78b) strips credentials and identity
+    /// propagation. NyxID's smallest configurable rule is
+    /// `GET /repositories/**`; CMA narrows that family to one nonzero decimal
+    /// segment and supplies no subject, bearer, UserService, query, body, or
+    /// caller-selected downstream path here.
+    async fn public_repository_by_id(
+        &self,
+        repository_id: u64,
+    ) -> Result<RepositoryEvidence, GithubBrokerError> {
+        if repository_id == 0 {
+            return Err(GithubBrokerError::Malformed(
+                "repository ID must be non-zero".into(),
+            ));
+        }
+        let slug = self
+            .public_github_service_slug
+            .as_deref()
+            .ok_or(GithubBrokerError::ProviderAuthenticationUnavailable)?;
+        let expected_repository_id = repository_id;
+        let repository_id = repository_id.to_string();
+        let url = endpoint(
+            &self.base_url,
+            &["public", "s", slug, "repositories", &repository_id],
+            &[],
+        )?;
+        begin_provider_request();
+        let response = self
+            .http
+            .get(url)
+            .header("accept", "application/vnd.github+json")
+            .header("x-github-api-version", "2022-11-28")
+            .send()
+            .await
+            .map_err(|_| GithubBrokerError::Transient { status: None })?;
+        observe_provider_response(response.headers());
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.len() <= 128)
+            .map(str::to_string);
+        let rate_limit_exhausted = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim() == "0");
+        if !status.is_success() {
+            let bytes = bounded_body(response, 16 * 1024).await.unwrap_or_default();
+            if status == StatusCode::UNAUTHORIZED
+                || (status == StatusCode::NOT_FOUND
+                    && (is_nyxid_public_endpoint_missing(&bytes)
+                        || !is_github_repository_not_found(&bytes)))
+            {
+                return Err(GithubBrokerError::ProviderAuthenticationUnavailable);
+            }
+            return Err(classify_status(
+                status,
+                retry_after,
+                rate_limit_exhausted,
+                parse_rejection(&bytes),
+            ));
+        }
+        let bytes = bounded_body(response, MAX_GITHUB_BODY_BYTES).await?;
+        let repository: GithubRepositoryWire = serde_json::from_slice(&bytes).map_err(|_| {
+            GithubBrokerError::Malformed("the response is not the declared JSON shape".into())
+        })?;
+        if repository.id != expected_repository_id {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        repository_evidence(repository, 0)
     }
 
     async fn nyxid_json<T: DeserializeOwned>(
@@ -1990,14 +2073,35 @@ impl GithubBroker {
                 },
             );
         }
-        let bytes = bounded_body(response, max_bytes).await?;
+        // A successful status proves the provider accepted the request, not
+        // that CMA received a complete receipt. Once a mutating request may
+        // have taken effect, every body transport, bound, or decode failure is
+        // an unknown write outcome and must enter reconciliation rather than
+        // becoming an automatically retryable read/shape error.
+        let bytes = bounded_body(response, max_bytes)
+            .await
+            .map_err(|error| successful_response_failure(mutating, error))?;
         let value = serde_json::from_slice(&bytes).map_err(|_| {
-            GithubBrokerError::Malformed("the response is not the declared JSON shape".into())
+            successful_response_failure(
+                mutating,
+                GithubBrokerError::Malformed("the response is not the declared JSON shape".into()),
+            )
         })?;
         Ok(Observed {
             value,
             token_generation: authority.token_generation,
         })
+    }
+}
+
+fn successful_response_failure(
+    mutating: bool,
+    read_failure: GithubBrokerError,
+) -> GithubBrokerError {
+    if mutating {
+        GithubBrokerError::AmbiguousWrite
+    } else {
+        read_failure
     }
 }
 
@@ -2123,7 +2227,11 @@ impl TriggerAuthorityVerifier for GithubBroker {
             .await?;
         repository.identity.selected_ref =
             revision.content.upstream.repository.selected_ref.clone();
-        if !repository.identity.allow_forking {
+        if repository.identity.visibility != RepositoryVisibility::Public
+            || !repository.identity.allow_forking
+            || repository.archived
+            || repository.disabled
+        {
             return Err(GithubBrokerError::ForkingDisabled.into());
         }
         let observed_head = self
@@ -2134,9 +2242,7 @@ impl TriggerAuthorityVerifier for GithubBroker {
                 &repository.identity.selected_ref,
             )
             .await?;
-        if repository.identity != revision.content.upstream.repository
-            || repository.archived
-            || repository.disabled
+        if repository_authority_drifted(&revision.content.upstream.repository, &repository.identity)
         {
             return Err(GithubBrokerError::AuthorityDrift.into());
         }
@@ -2173,6 +2279,30 @@ impl TriggerAuthorityVerifier for GithubBroker {
             connection: connection.snapshot,
             source_sha,
             workflow_paths,
+        })
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        let mut repository = self
+            .public_repository_by_id(revision.content.upstream.repository.repository_id)
+            .await?;
+        repository.identity.selected_ref =
+            revision.content.upstream.repository.selected_ref.clone();
+        if repository_authority_drifted(&revision.content.upstream.repository, &repository.identity)
+        {
+            return Err(GithubBrokerError::AuthorityDrift.into());
+        }
+
+        let public_forkable = repository.identity.visibility == RepositoryVisibility::Public
+            && repository.identity.allow_forking
+            && !repository.archived
+            && !repository.disabled;
+        Ok(TriggerPreviewRepositoryPolicy {
+            repository: repository.identity,
+            public_forkable,
         })
     }
 }
@@ -2784,6 +2914,18 @@ fn connection_drifted(previous: &ConnectionSnapshot, current: &ConnectionSnapsho
         || normalized_set(&previous.granted_scopes) != normalized_set(&current.granted_scopes)
 }
 
+fn repository_authority_drifted(
+    expected: &RepositoryIdentity,
+    current: &RepositoryIdentity,
+) -> bool {
+    expected.repository_id != current.repository_id
+        || expected.repository_node_id != current.repository_node_id
+        || expected.owner_id != current.owner_id
+        || expected.owner_node_id != current.owner_node_id
+        || expected.fork_parent_id != current.fork_parent_id
+        || expected.fork_source_id != current.fork_source_id
+}
+
 fn required(value: String, field: &str) -> Result<String, GithubBrokerError> {
     if value.trim().is_empty() || value.len() > 1_024 {
         Err(GithubBrokerError::Malformed(format!(
@@ -2804,6 +2946,22 @@ fn validate_opaque_id(value: &str, field: &str) -> Result<(), GithubBrokerError>
         return Err(GithubBrokerError::Malformed(format!(
             "{field} is not usable"
         )));
+    }
+    Ok(())
+}
+
+fn validate_public_service_slug(value: &str) -> Result<(), GithubBrokerError> {
+    if value.is_empty()
+        || value.len() > 63
+        || value.starts_with('-')
+        || value.ends_with('-')
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(GithubBrokerError::Malformed(
+            "the public GitHub observer service slug is not canonical".into(),
+        ));
     }
     Ok(())
 }
@@ -2948,6 +3106,37 @@ struct GithubErrorWire {
     message: String,
     #[serde(default)]
     errors: Vec<GithubErrorItemWire>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NyxidPublicErrorWire {
+    error: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GithubPublicNotFoundWire {
+    message: String,
+    documentation_url: String,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+fn is_nyxid_public_endpoint_missing(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<NyxidPublicErrorWire>(bytes).is_ok_and(|wire| {
+        wire.error == "not_found" && wire.message.contains("Public endpoint not found")
+    })
+}
+
+fn is_github_repository_not_found(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<GithubPublicNotFoundWire>(bytes).is_ok_and(|wire| {
+        wire.message == "Not Found"
+            && wire
+                .documentation_url
+                .starts_with("https://docs.github.com/rest/repos/")
+            && wire.status.as_deref().is_none_or(|status| status == "404")
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -3096,18 +3285,20 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use axum::body::to_bytes;
+    use axum::body::{to_bytes, Body};
     use axum::extract::{Request, State};
     use axum::http::header::AUTHORIZATION;
     use axum::http::{HeaderName, HeaderValue};
-    use axum::response::IntoResponse;
+    use axum::response::{IntoResponse, Response};
     use axum::routing::any;
     use axum::{Json, Router};
     use layer2_core::{
         CommitIdentity, Confirmation, ConfirmationAction, ContributionId, ContributionRecord,
-        DiffArtifactId, DiffChangeKind, LaunchId, PublicationObjectPhase, PublicationState,
+        DiffArtifactId, DiffChangeKind, LaunchId, PublicTriggerId, PublicationObjectPhase,
+        PublicationState, TriggerAvailability, TriggerRevisionId,
     };
     use serde_json::{json, Value};
+    use tokio::io::AsyncWriteExt;
     use tokio::sync::Mutex;
 
     use super::*;
@@ -3173,6 +3364,67 @@ mod tests {
             axum::serve(listener, app)
                 .await
                 .expect("serve request-ID fixture");
+        });
+        (format!("http://{address}"), server)
+    }
+
+    #[derive(Clone)]
+    struct BodyResponse {
+        status: StatusCode,
+        body: Arc<Vec<u8>>,
+    }
+
+    async fn body_answer(State(state): State<BodyResponse>) -> Response {
+        Response::builder()
+            .status(state.status)
+            .header("content-type", "application/json")
+            .body(Body::from(state.body.as_ref().clone()))
+            .expect("build body-response fixture")
+    }
+
+    async fn body_server(
+        status: StatusCode,
+        body: Vec<u8>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind body-response fixture");
+        let address = listener
+            .local_addr()
+            .expect("body-response fixture address");
+        let app = Router::new()
+            .fallback(any(body_answer))
+            .with_state(BodyResponse {
+                status,
+                body: Arc::new(body),
+            });
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve body-response fixture");
+        });
+        (format!("http://{address}"), server)
+    }
+
+    async fn truncated_body_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind truncated-body fixture");
+        let address = listener
+            .local_addr()
+            .expect("truncated-body fixture address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("accept truncated-body request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 64\r\nconnection: close\r\n\r\n{",
+                )
+                .await
+                .expect("write intentionally truncated response");
+            stream.shutdown().await.expect("close truncated response");
         });
         (format!("http://{address}"), server)
     }
@@ -3304,6 +3556,7 @@ mod tests {
         active: Arc<AtomicBool>,
         state_version: Arc<AtomicI64>,
         delete_calls: Arc<AtomicUsize>,
+        delete_success_status: StatusCode,
         lose_delete_response_once: Arc<AtomicBool>,
         delete_returns_not_found_once: Arc<AtomicBool>,
         management_available: Arc<AtomicBool>,
@@ -3316,6 +3569,7 @@ mod tests {
                 active: Arc::new(AtomicBool::new(true)),
                 state_version: Arc::new(AtomicI64::new(4)),
                 delete_calls: Arc::new(AtomicUsize::new(0)),
+                delete_success_status: StatusCode::NO_CONTENT,
                 lose_delete_response_once: Arc::new(AtomicBool::new(false)),
                 delete_returns_not_found_once: Arc::new(AtomicBool::new(false)),
                 management_available: Arc::new(AtomicBool::new(true)),
@@ -3349,7 +3603,12 @@ mod tests {
         fork_source_id: u64,
         fork_default_head: String,
         allow_forking: bool,
+        upstream_visibility: &'static str,
+        upstream_archived: bool,
+        upstream_disabled: bool,
+        upstream_default_branch: String,
         upstream_lookup_failure: Option<StatusCode>,
+        public_observer_unavailable: bool,
         tree_truncated: bool,
         workspace_tree: bool,
         workspace_lfs: bool,
@@ -3390,7 +3649,12 @@ mod tests {
                 fork_source_id: 10,
                 fork_default_head: "a".repeat(40),
                 allow_forking: true,
+                upstream_visibility: "public",
+                upstream_archived: false,
+                upstream_disabled: false,
+                upstream_default_branch: "main".into(),
                 upstream_lookup_failure: None,
+                public_observer_unavailable: false,
                 tree_truncated: false,
                 workspace_tree: false,
                 workspace_lfs: false,
@@ -3634,7 +3898,7 @@ mod tests {
                         Json(json!({ "error": "concurrent deactivate won" })),
                     );
                 }
-                return (StatusCode::NO_CONTENT, Json(Value::Null));
+                return (revocation.delete_success_status, Json(Value::Null));
             }
             ("GET", "/api/v1/proxy/s/api-github/user") => {
                 if fixture
@@ -3654,7 +3918,20 @@ mod tests {
                     "avatar_url": "https://avatars.githubusercontent.com/u/21"
                 })
             }
-            ("GET", "/api/v1/proxy/s/api-github/repositories/10") => {
+            ("GET", "/api/v1/proxy/s/api-github/repositories/10")
+            | ("GET", "/public/s/api-github/repositories/10") => {
+                if parts.uri.path().starts_with("/public/")
+                    && fixture.public_observer_unavailable
+                {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({
+                            "error": "not_found",
+                            "error_code": 10004,
+                            "message": "Not found: Public endpoint not found"
+                        })),
+                    );
+                }
                 if let Some(status) = fixture.upstream_lookup_failure {
                     return (
                         status,
@@ -3663,7 +3940,9 @@ mod tests {
                                 "API rate limit exceeded"
                             } else {
                                 "Not Found"
-                            }
+                            },
+                            "documentation_url": "https://docs.github.com/rest/repos/repos#get-a-repository",
+                            "status": status.as_u16().to_string()
                         })),
                     );
                 }
@@ -3676,12 +3955,12 @@ mod tests {
                         "node_id": upstream_owner_node,
                         "login": upstream_owner
                     },
-                    "private": false,
-                    "visibility": "public",
-                    "default_branch": "main",
+                    "private": fixture.upstream_visibility != "public",
+                    "visibility": fixture.upstream_visibility,
+                    "default_branch": fixture.upstream_default_branch,
                     "allow_forking": fixture.allow_forking,
-                    "archived": false,
-                    "disabled": false,
+                    "archived": fixture.upstream_archived,
+                    "disabled": fixture.upstream_disabled,
                     "html_url": format!("https://github.com/{upstream_owner}/{}", fixture.upstream_name),
                     "permissions": { "pull": fixture.upstream_pull }
                 })
@@ -4100,6 +4379,7 @@ mod tests {
                 }),
             }),
             store,
+            Some(GITHUB_SERVICE_SLUG.into()),
         )
         .expect("construct broker with durable revocations")
     }
@@ -4216,6 +4496,107 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn successful_mutation_body_and_decode_failures_are_always_ambiguous() {
+        for (body, max_bytes) in [(b"not-json".to_vec(), 1024), (vec![b'x'; 64], 8)] {
+            let (base_url, server) = body_server(StatusCode::OK, body).await;
+            let broker = broker(&base_url, true);
+
+            for method in [Method::POST, Method::PATCH, Method::PUT, Method::DELETE] {
+                let result: Result<Observed<Value>, GithubBrokerError> = broker
+                    .nyxid_json(
+                        &subject(),
+                        method,
+                        &["mutation-receipt"],
+                        &[],
+                        Some(json!({ "intent": "retained" })),
+                        max_bytes,
+                    )
+                    .await;
+                assert!(
+                    matches!(result, Err(GithubBrokerError::AmbiguousWrite)),
+                    "a successful mutation with no trustworthy receipt must be ambiguous: {result:?}"
+                );
+            }
+
+            let read: Result<Observed<Value>, GithubBrokerError> = broker
+                .nyxid_json(
+                    &subject(),
+                    Method::GET,
+                    &["read-receipt"],
+                    &[],
+                    None,
+                    max_bytes,
+                )
+                .await;
+            assert!(
+                matches!(read, Err(GithubBrokerError::Malformed(_))),
+                "read-only response shape/bound failures remain non-write errors: {read:?}"
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_mutation_stream_loss_is_ambiguous_but_read_stream_loss_is_transient() {
+        let (base_url, server) = truncated_body_server().await;
+        let mutation: Result<Observed<Value>, GithubBrokerError> = broker(&base_url, true)
+            .nyxid_json(
+                &subject(),
+                Method::POST,
+                &["mutation-receipt"],
+                &[],
+                Some(json!({ "intent": "retained" })),
+                1024,
+            )
+            .await;
+        assert!(matches!(mutation, Err(GithubBrokerError::AmbiguousWrite)));
+        server.await.expect("truncated mutation fixture exits");
+
+        let (base_url, server) = truncated_body_server().await;
+        let read: Result<Observed<Value>, GithubBrokerError> = broker(&base_url, true)
+            .nyxid_json(&subject(), Method::GET, &["read-receipt"], &[], None, 1024)
+            .await;
+        assert!(matches!(read, Err(GithubBrokerError::Transient { .. })));
+        server.await.expect("truncated read fixture exits");
+    }
+
+    #[tokio::test]
+    async fn unexpected_successful_revocation_response_is_ambiguous_and_reconcilable() {
+        let revocation = RevocationFixture {
+            delete_success_status: StatusCode::OK,
+            ..RevocationFixture::default()
+        };
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let broker = broker(&base_url, true);
+
+        assert!(matches!(
+            broker.delete_user_service(&subject(), "service-1").await,
+            Err(GithubBrokerError::AmbiguousWrite)
+        ));
+        let evidence = broker
+            .authorization_evidence(&subject(), "service-1")
+            .await
+            .expect("read-only reconciliation observes the applied revocation");
+        server.abort();
+
+        assert!(!evidence.is_active);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.method == "DELETE")
+                .count(),
+            1
+        );
+    }
+
     fn fork_context() -> ForkContext {
         ForkContext {
             owner: subject(),
@@ -4250,6 +4631,244 @@ mod tests {
                 fork_source_id: None,
             },
             source_sha: "a".repeat(40),
+        }
+    }
+
+    fn preview_revision() -> TriggerRevision {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../layer1-public/tests/fixtures/rest-sdk/launch.json"
+        ))
+        .expect("Launch fixture is JSON");
+        let mut content: TriggerRevisionContent =
+            serde_json::from_value(fixture["revision_content"].clone())
+                .expect("Launch fixture carries Trigger revision content");
+        let context = fork_context();
+        content.publisher_subject_id = context.owner.clone();
+        content.upstream.repository = context.upstream.clone();
+        let digest = content.digest().expect("preview revision content is valid");
+        TriggerRevision {
+            id: TriggerRevisionId::new(),
+            public_id: PublicTriggerId::new(),
+            content,
+            publisher_authority: PublisherAuthority {
+                subject: context.owner,
+                subject_token_generation: 7,
+                connection: context.connection,
+                repository: context.upstream,
+                role: PublisherRepositoryRole::Admin,
+                verified_at: "2026-08-26T01:02:05Z".into(),
+            },
+            digest,
+            availability: TriggerAvailability::Published,
+            published_at: "2026-08-26T01:02:05Z".into(),
+            retired_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_policy_resolves_current_public_forkability_by_numeric_identity() {
+        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let policy = broker(&base_url, false)
+            .resolve_preview_repository_policy(&preview_revision())
+            .await
+            .expect("current repository policy is available");
+        server.abort();
+
+        assert!(policy.public_forkable);
+        assert_eq!(policy.repository.repository_id, 10);
+        assert_eq!(policy.repository.visibility, RepositoryVisibility::Public);
+        assert!(policy.repository.allow_forking);
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].uri, "/public/s/api-github/repositories/10");
+        assert_eq!(requests[0].authorization, None);
+    }
+
+    #[tokio::test]
+    async fn public_preview_observer_cannot_forward_extra_path_query_or_body() {
+        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let broker = broker(&base_url, false);
+        assert!(matches!(
+            broker.public_repository_by_id(0).await,
+            Err(GithubBrokerError::Malformed(_))
+        ));
+        broker
+            .public_repository_by_id(10)
+            .await
+            .expect("one numeric repository lookup is allowed");
+        server.abort();
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[0].uri, "/public/s/api-github/repositories/10");
+        assert_eq!(requests[0].authorization, None);
+        assert_eq!(requests[0].body, None);
+    }
+
+    #[tokio::test]
+    async fn preview_policy_reports_positive_ineligibility_without_provider_effects() {
+        for fixture in [
+            Fixture {
+                upstream_visibility: "private",
+                ..Fixture::default()
+            },
+            Fixture {
+                upstream_archived: true,
+                ..Fixture::default()
+            },
+            Fixture {
+                upstream_disabled: true,
+                ..Fixture::default()
+            },
+            Fixture {
+                allow_forking: false,
+                ..Fixture::default()
+            },
+        ] {
+            let (base_url, requests, server) = fixture_server(fixture).await;
+            let policy = broker(&base_url, true)
+                .resolve_preview_repository_policy(&preview_revision())
+                .await
+                .expect("a positive policy observation is public-safe");
+            server.abort();
+
+            assert!(!policy.public_forkable);
+            assert!(requests
+                .lock()
+                .await
+                .iter()
+                .all(|request| request.method == "GET"
+                    && request.authorization.is_none()
+                    && request.uri == "/public/s/api-github/repositories/10"));
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_policy_refreshes_mutable_locators_without_identity_drift() {
+        let fixture = Fixture {
+            upstream_name: "renamed-upstream".into(),
+            upstream_default_branch: "trunk".into(),
+            ..Fixture::default()
+        };
+        let (base_url, _, server) = fixture_server(fixture).await;
+        let policy = broker(&base_url, false)
+            .resolve_preview_repository_policy(&preview_revision())
+            .await
+            .expect("same numeric repository remains authoritative after a rename");
+        server.abort();
+
+        assert!(policy.public_forkable);
+        assert_eq!(policy.repository.canonical_name, "renamed-upstream");
+        assert_eq!(policy.repository.default_branch, "trunk");
+    }
+
+    #[tokio::test]
+    async fn preview_policy_fails_closed_when_nyxid_public_observer_is_not_provisioned() {
+        let fixture = Fixture {
+            public_observer_unavailable: true,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, false)
+            .resolve_preview_repository_policy(&preview_revision())
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(TriggerServiceError::Authority(
+                layer2_core::TriggerAuthorityError::ProviderAuthenticationUnavailable
+            ))
+        ));
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.authorization.is_none()));
+    }
+
+    #[tokio::test]
+    async fn preview_policy_never_falls_back_to_available_publisher_authority() {
+        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let broker = GithubBroker::with_ports(
+            &base_url,
+            Arc::new(TestAuthority {
+                value: Some(SubjectRequestAuthority {
+                    bearer: "publisher-token-must-not-be-used".into(),
+                    token_generation: 7,
+                }),
+            }),
+            Arc::new(TestConnectionRevocationStore::default()),
+            None,
+        )
+        .expect("construct a broker without a public observer");
+
+        let result = broker
+            .resolve_preview_repository_policy(&preview_revision())
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(TriggerServiceError::Authority(
+                layer2_core::TriggerAuthorityError::ProviderAuthenticationUnavailable
+            ))
+        ));
+        assert!(
+            requests.lock().await.is_empty(),
+            "publisher authority must not be exercised as a preview fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_policy_refuses_current_repository_identity_drift() {
+        let fixture = Fixture {
+            upstream_owner_id: 99,
+            ..Fixture::default()
+        };
+        let (base_url, _, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true)
+            .resolve_preview_repository_policy(&preview_revision())
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(TriggerServiceError::Authority(
+                layer2_core::TriggerAuthorityError::AuthorityDrift
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn launch_preflight_classifies_all_positive_policy_denials_as_not_forkable() {
+        for fixture in [
+            Fixture {
+                upstream_visibility: "private",
+                ..Fixture::default()
+            },
+            Fixture {
+                upstream_archived: true,
+                ..Fixture::default()
+            },
+            Fixture {
+                upstream_disabled: true,
+                ..Fixture::default()
+            },
+        ] {
+            let (base_url, _, server) = fixture_server(fixture).await;
+            let result = broker(&base_url, true)
+                .verify_launch(&subject(), &preview_revision(), "service-1", None)
+                .await;
+            server.abort();
+
+            assert!(matches!(
+                result,
+                Err(TriggerServiceError::Authority(
+                    layer2_core::TriggerAuthorityError::UpstreamNotForkable
+                ))
+            ));
         }
     }
 

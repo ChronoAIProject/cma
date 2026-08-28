@@ -10,13 +10,283 @@ use layer2_core::{
 };
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
-use super::super::worker::tests::{launch_fixture, service_for_launch};
+use super::super::worker::tests::{
+    launch_fixture, rollout_policy, service_for_launch, service_for_launch_with_rollout,
+};
 use super::*;
 
 fn candidate() -> Launch {
     let mut launch = launch_fixture();
     launch.id = LaunchId::new();
     launch
+}
+
+#[test]
+fn periodic_workspace_checkpoints_honor_the_orchestration_pause_boundary() {
+    let launch = launch_fixture();
+    let permitted =
+        service_for_launch_with_rollout(launch.clone(), rollout_policy(&launch, false, false));
+    let paused =
+        service_for_launch_with_rollout(launch.clone(), rollout_policy(&launch, true, false));
+
+    assert!(workspace_checkpoint_permitted(&permitted, &launch));
+    assert!(!workspace_checkpoint_permitted(&paused, &launch));
+}
+
+#[test]
+fn periodic_workspace_checkpoints_require_a_complete_runtime_admission() {
+    let launch = launch_fixture();
+    assert!(workspace_runtime_admission_permitted(&launch));
+
+    for corruption in [
+        "missing",
+        "missing-version",
+        "malformed-time",
+        "missing-capability",
+        "duplicate-capability",
+    ] {
+        let mut retained = launch.clone();
+        match corruption {
+            "missing" => retained.runtime_admission = None,
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = String::new();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "invalid".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        assert!(
+            !workspace_runtime_admission_permitted(&retained),
+            "{corruption}"
+        );
+    }
+}
+
+struct RecordingWorkspaceCheckpointer {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl WorkspaceCheckpointer for RecordingWorkspaceCheckpointer {
+    async fn checkpoint_trigger_lifecycle(
+        &self,
+        _session_id: &layer2_core::SessionId,
+        _purpose: WorkspaceCheckpointPurpose,
+        _now: &str,
+    ) -> Result<TriggerLifecycleCheckpointOutcome, CoreError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(TriggerLifecycleCheckpointOutcome::NotDue)
+    }
+}
+
+struct NeverScheduledExecutor;
+
+#[async_trait]
+impl EffectExecutor for NeverScheduledExecutor {
+    async fn execute(
+        &self,
+        _launch: &Launch,
+        _claim: &layer2_core::EffectClaim,
+    ) -> super::super::worker::EffectExecution {
+        panic!("the workspace lane must not execute a provider effect")
+    }
+
+    async fn reconcile(
+        &self,
+        _launch: &Launch,
+        _claim: &layer2_core::EffectClaim,
+    ) -> super::super::worker::EffectExecution {
+        panic!("the workspace lane must not reconcile a provider effect")
+    }
+}
+
+#[async_trait]
+impl CapabilityExecutor for NeverScheduledExecutor {
+    async fn runtime_observation(
+        &self,
+        _launch: &Launch,
+        _fence: u64,
+    ) -> Result<layer2_core::RuntimePolicyObservation, layer2_core::LaunchFailure> {
+        panic!("the workspace lane must not observe runtime capability policy")
+    }
+
+    async fn admit_renewal(
+        &self,
+        _launch: &Launch,
+        _fence: u64,
+        _target_policy_generation: u64,
+        _target_policy_expires_at_epoch_seconds: u64,
+    ) -> Result<layer2_core::CapabilityAuthorityAdmission, layer2_core::LaunchFailure> {
+        panic!("the workspace lane must not admit capability renewal")
+    }
+
+    async fn renew(
+        &self,
+        _launch: &Launch,
+        _fence: u64,
+    ) -> Result<super::super::github_effects::CapabilityRenewal, layer2_core::LaunchFailure> {
+        panic!("the workspace lane must not renew runtime capability policy")
+    }
+
+    async fn revoke(
+        &self,
+        _launch: &Launch,
+        _fence: u64,
+    ) -> Result<super::super::github_effects::CapabilityRevocation, layer2_core::LaunchFailure>
+    {
+        panic!("the workspace lane must not revoke runtime capability policy")
+    }
+
+    async fn retire_credential(
+        &self,
+        _launch: &Launch,
+        _fence: u64,
+    ) -> Result<layer2_core::SessionId, layer2_core::LaunchFailure> {
+        panic!("the workspace lane must not retire a runtime credential")
+    }
+}
+
+fn production_backend_for_workspace(
+    launch: &Launch,
+    workspaces: Arc<dyn WorkspaceCheckpointer>,
+) -> ProductionBackend {
+    let triggers =
+        service_for_launch_with_rollout(launch.clone(), rollout_policy(launch, false, false));
+    let executor = Arc::new(NeverScheduledExecutor);
+    let effect_executor: Arc<dyn EffectExecutor> = executor.clone();
+    let capability_executor: Arc<dyn CapabilityExecutor> = executor;
+    let effects = Arc::new(
+        EffectWorker::new(
+            Arc::clone(&triggers),
+            effect_executor,
+            "workspace-production-test-effects",
+        )
+        .unwrap(),
+    );
+    let capabilities = Arc::new(
+        CapabilityWorker::new(
+            Arc::clone(&triggers),
+            capability_executor,
+            "workspace-production-test-capabilities",
+        )
+        .unwrap(),
+    );
+    let activity = ActivityService::new(Arc::new(RecordingActivityStore::default()));
+    let cleanup = Arc::new(
+        CleanupPlanner::new(
+            Arc::clone(&triggers),
+            "workspace-production-test-cleanup",
+            activity,
+        )
+        .unwrap(),
+    );
+    ProductionBackend {
+        triggers,
+        effects,
+        capabilities,
+        workspaces,
+        cleanup,
+        cleanup_mode: TriggerCleanupMode::DryRun,
+    }
+}
+
+#[tokio::test]
+async fn production_workspace_lane_never_calls_sessions_for_quarantined_runtime_admission() {
+    let mut launch = launch_fixture();
+    launch.session = Some(layer2_core::SessionLink {
+        session_id: layer2_core::trigger_session_id(&launch.id).unwrap(),
+        environment_profile_id: "workspace-production-test".into(),
+        runtime_generation: 1,
+        created_at: "2026-08-27T00:00:00Z".into(),
+    });
+    let checkpointer = Arc::new(RecordingWorkspaceCheckpointer {
+        calls: AtomicUsize::new(0),
+    });
+    let backend = production_backend_for_workspace(&launch, checkpointer.clone());
+
+    assert_eq!(
+        backend
+            .run_candidate(
+                SchedulerLane::Workspaces,
+                launch.clone(),
+                "valid-workspace-candidate".into(),
+            )
+            .await
+            .unwrap(),
+        CandidateOutcome::NoWork,
+    );
+    assert_eq!(checkpointer.calls.load(Ordering::SeqCst), 1);
+
+    for corruption in [
+        "missing",
+        "wrong-kernel",
+        "missing-version",
+        "malformed-time",
+        "missing-capability",
+        "duplicate-capability",
+    ] {
+        let mut retained = launch.clone();
+        match corruption {
+            "missing" => retained.runtime_admission = None,
+            "wrong-kernel" => {
+                retained.runtime_admission.as_mut().unwrap().kernel =
+                    layer2_core::KernelId::new("codex");
+            }
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = String::new();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "invalid".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        assert_eq!(
+            backend
+                .run_candidate(
+                    SchedulerLane::Workspaces,
+                    retained,
+                    format!("quarantined-{corruption}"),
+                )
+                .await
+                .unwrap(),
+            CandidateOutcome::NoWork,
+            "{corruption}",
+        );
+        assert_eq!(
+            checkpointer.calls.load(Ordering::SeqCst),
+            1,
+            "{corruption} reached the production session checkpoint boundary",
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -28,6 +28,37 @@ fn hosted(base: &str) -> HostedKernel {
     )
 }
 
+#[test]
+fn dedicated_lanes_require_exact_nonconflicting_kernel_metadata() {
+    let ordinary = hosted("http://ordinary.invalid");
+    let strict = HostedKernel::new_strict(
+        SandboxClient::new("http://trigger.invalid", "test-key"),
+        SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+    let metadata = |canonical: Option<&str>, legacy: Option<&str>| {
+        let mut values = BTreeMap::new();
+        if let Some(canonical) = canonical {
+            values.insert(KERNEL_METADATA_KEY.to_string(), canonical.to_string());
+        }
+        if let Some(legacy) = legacy {
+            values.insert(LEGACY_KERNEL_METADATA_KEY.to_string(), legacy.to_string());
+        }
+        values
+    };
+
+    assert!(ordinary.owns_sandbox(&metadata(None, None)));
+    assert!(ordinary.owns_sandbox(&metadata(None, Some("test-kernel"))));
+    assert!(!strict.owns_sandbox(&metadata(None, None)));
+    assert!(!strict.owns_sandbox(&metadata(None, Some("test-kernel"))));
+    assert!(strict.owns_sandbox(&metadata(Some("test-kernel"), None)));
+    assert!(strict.owns_sandbox(&metadata(Some("test-kernel"), Some("test-kernel"))));
+    assert!(!strict.owns_sandbox(&metadata(Some("other"), None)));
+    assert!(!strict.owns_sandbox(&metadata(Some("test-kernel"), Some("other"))));
+}
+
 fn input_link(
     capacity: usize,
 ) -> (
@@ -1277,6 +1308,71 @@ async fn canonical_correlation_metadata_wins_over_historical_values() {
     assert_eq!(listed[0].session.as_deref(), Some("sesn_current"));
     assert_eq!(listed[0].generation, RuntimeGeneration::Legacy);
     assert_eq!(listed[0].created_by.as_deref(), Some("current-plane"));
+}
+
+#[tokio::test]
+async fn dedicated_lane_listing_returns_only_exact_canonical_kernel_metadata() {
+    let (base, server) = listing_provider(serde_json::json!({
+        "items": [
+            {
+                "id": "sbx-owned",
+                "status": {"state": "Running"},
+                "metadata": {
+                    "cma/kernel": "test-kernel",
+                    "chrono-bot/kernel": "test-kernel",
+                    "cma/session": "sesn_owned"
+                }
+            },
+            {
+                "id": "sbx-legacy-only",
+                "status": {"state": "Running"},
+                "metadata": {"chrono-bot/kernel": "test-kernel"}
+            },
+            {
+                "id": "sbx-untagged",
+                "status": {"state": "Running"},
+                "metadata": {}
+            },
+            {
+                "id": "sbx-other",
+                "status": {"state": "Running"},
+                "metadata": {"cma/kernel": "other-kernel"}
+            },
+            {
+                "id": "sbx-conflicting",
+                "status": {"state": "Running"},
+                "metadata": {
+                    "cma/kernel": "test-kernel",
+                    "chrono-bot/kernel": "other-kernel"
+                }
+            }
+        ],
+        "pagination": {
+            "page": 1,
+            "pageSize": 100,
+            "totalItems": 5,
+            "totalPages": 1,
+            "hasNextPage": false
+        }
+    }))
+    .await;
+    let kernel = HostedKernel::new_strict(
+        SandboxClient::new(&base, "test-key"),
+        SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+
+    let listed = kernel
+        .list_runtimes()
+        .await
+        .expect("the dedicated provider listing is usable");
+    server.await.expect("the provider fixture completes");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].handle, RuntimeHandle("sbx-owned".into()));
+    assert_eq!(listed[0].session.as_deref(), Some("sesn_owned"));
 }
 
 #[tokio::test]

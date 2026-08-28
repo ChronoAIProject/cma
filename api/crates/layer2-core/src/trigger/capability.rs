@@ -48,7 +48,7 @@ pub struct ConnectionSnapshot {
 impl ConnectionSnapshot {
     pub fn validate_for(&self, required: &[ScopeClass]) -> Result<(), TriggerValidationError> {
         if self.service_id.trim().is_empty()
-            || self.service_state_version < 0
+            || self.service_state_version <= 0
             || self.backing_key_id.trim().is_empty()
             || self.account.account_id == 0
             || self.account.account_node_id.trim().is_empty()

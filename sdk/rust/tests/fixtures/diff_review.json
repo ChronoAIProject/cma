@@ -24,6 +24,8 @@
         "new_sha256": "d08cdcc7af420d6fce393f84c6e27a7a9e2c3aa4bdc32c1c1e4f775e7acbf9f6",
         "old_bytes": 0,
         "new_bytes": 16,
+        "additions": 1,
+        "deletions": 0,
         "patch": "--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n",
         "patch_complete": true
       }

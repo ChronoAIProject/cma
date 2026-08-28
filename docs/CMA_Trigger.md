@@ -101,19 +101,19 @@ feature flag alone cannot admit them.
 
 ## 2. Resources and ownership
 
-| Resource | Authority and owner | Lifetime and immutability |
-|---|---|---|
-| Trigger | CMA publisher resource, owned by the authenticated publisher subject | Mutable draft container. It does not run work. |
-| Trigger revision | Published by a subject whose repository authority CMA verified through the exact NyxID UserService | Immutable content and digest. Retirement prevents new Launches but cannot alter existing ones. |
-| Public Trigger identifier | Opaque, non-sequential identifier for one published revision | Contains no credential, repository URL authority, callback URL, or mutable configuration. |
-| Launch | Durable CMA aggregate owned by the contributor subject | Survives browser close, refresh, API restart, and runtime replacement. It snapshots one exact revision plus approved overrides. |
-| GitHub connection | Reusable user-level NyxID UserService owned by the contributor | Never copied into or permanently bound to a Launch. A Launch stores identity, scope, and authority provenance only. |
-| Fork | GitHub resource owned by the contributor's selected GitHub account | CMA may create or reuse it. CMA never deletes, resets, synchronizes, or transfers it. |
-| Launch branch | GitHub ref in the contributor's fork, named and fenced by the Launch | CMA never force-pushes it and never treats an unrelated existing branch as disposable. |
-| Workspace | Launch-owned CMA state materialized inside one sandbox at a time | Checkpointed before an entitled sandbox is terminated. Retention cleanup never deletes GitHub work. |
-| Session | CMA session owned by the contributor and linked to the Launch | Keeps normal CMA continuity guarantees. Trigger flags cannot interrupt it. |
-| Initial dispatch | One durable Launch/session delivery record | The automatic path is at most once. Ambiguity requires disclosed explicit recovery. |
-| Pull request | GitHub cross-fork resource created only after contributor confirmation | Maintainers own review and merge policy. CMA may update the linked contributor branch after another reviewed diff. |
+| Resource                  | Authority and owner                                                                                | Lifetime and immutability                                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Trigger                   | CMA publisher resource, owned by the authenticated publisher subject                               | Mutable draft container. It does not run work.                                                                                  |
+| Trigger revision          | Published by a subject whose repository authority CMA verified through the exact NyxID UserService | Immutable content and digest. Retirement prevents new Launches but cannot alter existing ones.                                  |
+| Public Trigger identifier | Opaque, non-sequential identifier for one published revision                                       | Contains no credential, repository URL authority, callback URL, or mutable configuration.                                       |
+| Launch                    | Durable CMA aggregate owned by the contributor subject                                             | Survives browser close, refresh, API restart, and runtime replacement. It snapshots one exact revision plus approved overrides. |
+| GitHub connection         | Reusable user-level NyxID UserService owned by the contributor                                     | Never copied into or permanently bound to a Launch. A Launch stores identity, scope, and authority provenance only.             |
+| Fork                      | GitHub resource owned by the contributor's selected GitHub account                                 | CMA may create or reuse it. CMA never deletes, resets, synchronizes, or transfers it.                                           |
+| Launch branch             | GitHub ref in the contributor's fork, named and fenced by the Launch                               | CMA never force-pushes it and never treats an unrelated existing branch as disposable.                                          |
+| Workspace                 | Launch-owned CMA state materialized inside one sandbox at a time                                   | Checkpointed before an entitled sandbox is terminated. Retention cleanup never deletes GitHub work.                             |
+| Session                   | CMA session owned by the contributor and linked to the Launch                                      | Keeps normal CMA continuity guarantees. Trigger flags cannot interrupt it.                                                      |
+| Initial dispatch          | One durable Launch/session delivery record                                                         | The automatic path is at most once. Ambiguity requires disclosed explicit recovery.                                             |
+| Pull request              | GitHub cross-fork resource created only after contributor confirmation                             | Maintainers own review and merge policy. CMA may update the linked contributor branch after another reviewed diff.              |
 
 Repository authority is canonicalized as a tuple, never as display text alone:
 
@@ -313,38 +313,49 @@ Repeated clicks have stable behavior:
 
 ## 5. Consent, credentials, and audit
 
-| Action | Actor | Required consent or authority | Credential path | Required audit fact |
-|---|---|---|---|---|
-| Open preview | Anonymous visitor | None | None | Rate-limit decision and opaque revision outcome; no visitor credential |
-| Draft Trigger | Publisher | CMA sign-in | CMA subject credential | Trigger ID, publisher subject, schema version |
-| Verify and publish revision | Publisher | Explicit Publish and verified upstream role | JIT CMA subject access to exact NyxID GitHub UserService; NyxID injects GitHub credential | Canonical repository identity, UserService ID/version, safe scope set, revision digest |
-| Sign in to CMA | Contributor | Explicit sign-in | CMA/NyxID auth flow with durable CSRF/PKCE state | Subject and state-consumption result, without codes or tokens |
-| Connect or replace GitHub | Contributor | Explicit GitHub OAuth consent | NyxID owns access and refresh tokens | Exact UserService ID, GitHub account IDs/login, scopes, consent time, state version |
-| Save Launch draft | Contributor | Signed-in ownership | CMA subject credential | Revision digest, allowed overrides, validation result |
-| Start Launch | Contributor | Explicit Start, effective config, cost/quota, and workflow acknowledgement | CMA subject credential plus JIT NyxID preflight | Idempotency key, Launch ID, confirmation, authority snapshot |
-| Create/reuse fork | CMA worker | Valid Start and current preflight | Current CMA subject delegation to exact UserService; NyxID injects current GitHub credential | Intent, reconciliation key, source/parent/fork numeric identities, result |
-| Create Launch branch | CMA worker | Valid Start and compatible fork | Same JIT control-plane path | Expected source SHA, branch identity, result/ref SHA |
-| Provision session reach | CMA worker | Valid capability policy and active service | Per-session expiring NyxID agent key scoped to exact UserService; signed Layer 4 policy | Key handle, generation, policy digest/generation/expiry, no key value |
-| Call GitHub from session | Codex or another sandbox process | Request admitted by signed Layer 4 policy | Inert loopback placeholder; Layer 4 supplies session agent key; NyxID injects GitHub credential | Session, Launch, operation class, redacted resource IDs, allow/deny code |
-| Dispatch initial task | CMA Trigger dispatcher | Prerequisites ready and Layer 2 single-writer fence | Normal session message channel, no GitHub credential | Origin key, payload hash, seven-state delivery transition |
-| Review diff | Contributor | Launch ownership | CMA subject credential; checkpoint storage is CMA-authorized | Snapshot/manifest IDs and hashes, validation result |
-| Publish reviewed branch | CMA worker | Explicit diff publication confirmation | JIT CMA/NyxID control-plane writer | Expected and resulting refs, object IDs, author policy, reconciliation result |
-| Open/update PR | Contributor through CMA | Explicit Open or Update PR | JIT CMA/NyxID control-plane writer | Confirmation, marker, upstream/base/fork/head IDs, PR number/URL |
-| Review/merge PR | Repository maintainer | GitHub policy | GitHub, outside CMA | Outside CMA; CMA records only observed public-safe status |
-| Cancel/revoke | Contributor or authorized operator | Ownership or operator policy | CMA control plane; NyxID agent-key revoke and Layer 4 tombstone | Requested action, pending/effective state, acknowledgements |
+| Action                      | Actor                              | Required consent or authority                                              | Credential path                                                                                 | Required audit fact                                                                                                                                            |
+| --------------------------- | ---------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open preview                | Anonymous visitor                  | None                                                                       | None; CMA may use only the dedicated credential-free NyxID public repository observer           | Rate-limit decision, opaque revision outcome, current forkability result, and proof that no subject, bearer, UserService, or provider credential was forwarded |
+| Draft Trigger               | Publisher                          | CMA sign-in                                                                | CMA subject credential                                                                          | Trigger ID, publisher subject, schema version                                                                                                                  |
+| Verify and publish revision | Publisher                          | Explicit Publish and verified upstream role                                | JIT CMA subject access to exact NyxID GitHub UserService; NyxID injects GitHub credential       | Canonical repository identity, UserService ID/version, safe scope set, revision digest                                                                         |
+| Sign in to CMA              | Contributor                        | Explicit sign-in                                                           | CMA/NyxID auth flow with durable CSRF/PKCE state                                                | Subject and state-consumption result, without codes or tokens                                                                                                  |
+| Connect or replace GitHub   | Contributor                        | Explicit GitHub OAuth consent                                              | NyxID owns access and refresh tokens                                                            | Exact UserService ID, GitHub account IDs/login, scopes, consent time, state version                                                                            |
+| Save Launch draft           | Contributor                        | Signed-in ownership                                                        | CMA subject credential                                                                          | Revision digest, allowed overrides, validation result                                                                                                          |
+| Start Launch                | Contributor                        | Explicit Start, effective config, cost/quota, and workflow acknowledgement | CMA subject credential plus JIT NyxID preflight                                                 | Idempotency key, Launch ID, confirmation, authority snapshot                                                                                                   |
+| Create/reuse fork           | CMA worker                         | Valid Start and current preflight                                          | Current CMA subject delegation to exact UserService; NyxID injects current GitHub credential    | Intent, reconciliation key, source/parent/fork numeric identities, result                                                                                      |
+| Create Launch branch        | CMA worker                         | Valid Start and compatible fork                                            | Same JIT control-plane path                                                                     | Expected source SHA, branch identity, result/ref SHA                                                                                                           |
+| Provision session reach     | CMA worker                         | Valid capability policy and active service                                 | Per-session expiring NyxID agent key scoped to exact UserService; signed Layer 4 policy         | Key handle, generation, policy digest/generation/expiry, no key value                                                                                          |
+| Call GitHub from session    | Codex or another sandbox process   | Request admitted by signed Layer 4 policy                                  | Inert loopback placeholder; Layer 4 supplies session agent key; NyxID injects GitHub credential | Session, Launch, operation class, redacted resource IDs, allow/deny code                                                                                       |
+| Dispatch initial task       | CMA Trigger dispatcher             | Prerequisites ready and Layer 2 single-writer fence                        | Normal session message channel, no GitHub credential                                            | Origin key, payload hash, seven-state delivery transition                                                                                                      |
+| Review diff                 | Contributor                        | Launch ownership                                                           | CMA subject credential; checkpoint storage is CMA-authorized                                    | Snapshot/manifest IDs and hashes, validation result                                                                                                            |
+| Publish reviewed branch     | CMA worker                         | Explicit diff publication confirmation                                     | JIT CMA/NyxID control-plane writer                                                              | Expected and resulting refs, object IDs, author policy, reconciliation result                                                                                  |
+| Open/update PR              | Contributor through CMA            | Explicit Open or Update PR                                                 | JIT CMA/NyxID control-plane writer                                                              | Confirmation, marker, upstream/base/fork/head IDs, PR number/URL                                                                                               |
+| Review/merge PR             | Repository maintainer              | GitHub policy                                                              | GitHub, outside CMA                                                                             | Outside CMA; CMA records only observed public-safe status                                                                                                      |
+| Cancel/revoke               | Contributor or authorized operator | Ownership or operator policy                                               | CMA control plane; NyxID agent-key revoke and Layer 4 tombstone                                 | Requested action, pending/effective state, acknowledgements                                                                                                    |
+
+The anonymous preview observer is not the publisher's retained UserService and
+is not a contributor OAuth path. CMA issues only
+`GET /public/s/{deployment-owned-slug}/repositories/{one nonzero numeric ID}`
+without a subject, bearer, UserService selector, query, or body. NyxID strips
+identity and credential propagation on its public proxy. Missing configuration,
+an unavailable public route, exhausted observer quota, malformed evidence, or a
+transient read failure keeps the HTTP preview side-effect-free and returns the
+typed `repository_policy_unavailable` state. A positive current policy denial
+returns `upstream_not_forkable`; it never falls back to retained publisher
+OAuth.
 
 The participant permission boundary is:
 
-| Participant | May do | Must not do |
-|---|---|---|
-| Publisher/developer | Draft, validate, publish, and retire their Trigger revisions after repository-role verification; set defaults inside deployment ceilings | Start a Launch for another user, supply a credential in a revision, select another user's connection, or write a contributor fork |
-| Contributor | Select their NyxID GitHub connection, edit permitted fields, Start/cancel their Launch, use their session, review a diff, confirm branch/PR effects, and explicitly finish CMA orchestration after open-PR handoff | Change locked authority/policy, write upstream, bypass review, or operate another subject's Launch/workspace |
-| CMA control plane | Validate identities and policy, own durable Launch/effect state, perform typed fork/branch/PR calls, provision/revoke bounded session reach | Hold a GitHub bearer, infer authority from browser names, merge/approve, force-push, or delete user GitHub work |
-| Codex session and all bot-pod processes | Read/write only operation classes and repository/ref resources admitted by the current signed Layer 4 policy | Call an unparsed route, use upstream/admin/PR operations, access another Launch, or obtain raw NyxID/GitHub credentials |
-| NyxID | Own OAuth/provider credentials, verify the exact UserService and agent key, refresh provider access, inject the current credential, and proxy admitted requests | Decide CMA Launch/repository/ref policy or expose a provider token to CMA/the sandbox |
-| GitHub | Authoritatively resolve repository/account/ref/fork/PR state and enforce provider scopes and repository policy | Supply CMA's Launch ownership, idempotency, workspace, or user-confirmation semantics |
-| Repository maintainer | Review, request changes, close, or merge a PR under GitHub policy | Become a CMA contributor/session actor without their own authenticated action |
-| CMA operator | Use least-privilege support, pause orchestration, reconcile evidence, and retire abusive revisions under audited policy | Read raw credentials or repository contents without separate authority, manufacture user confirmation, or delete user GitHub work |
+| Participant                             | May do                                                                                                                                                                                                             | Must not do                                                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Publisher/developer                     | Draft, validate, publish, and retire their Trigger revisions after repository-role verification; set defaults inside deployment ceilings                                                                           | Start a Launch for another user, supply a credential in a revision, select another user's connection, or write a contributor fork |
+| Contributor                             | Select their NyxID GitHub connection, edit permitted fields, Start/cancel their Launch, use their session, review a diff, confirm branch/PR effects, and explicitly finish CMA orchestration after open-PR handoff | Change locked authority/policy, write upstream, bypass review, or operate another subject's Launch/workspace                      |
+| CMA control plane                       | Validate identities and policy, own durable Launch/effect state, perform typed fork/branch/PR calls, provision/revoke bounded session reach                                                                        | Hold a GitHub bearer, infer authority from browser names, merge/approve, force-push, or delete user GitHub work                   |
+| Codex session and all bot-pod processes | Read/write only operation classes and repository/ref resources admitted by the current signed Layer 4 policy                                                                                                       | Call an unparsed route, use upstream/admin/PR operations, access another Launch, or obtain raw NyxID/GitHub credentials           |
+| NyxID                                   | Own OAuth/provider credentials, verify the exact UserService and agent key, refresh provider access, inject the current credential, and proxy admitted requests                                                    | Decide CMA Launch/repository/ref policy or expose a provider token to CMA/the sandbox                                             |
+| GitHub                                  | Authoritatively resolve repository/account/ref/fork/PR state and enforce provider scopes and repository policy                                                                                                     | Supply CMA's Launch ownership, idempotency, workspace, or user-confirmation semantics                                             |
+| Repository maintainer                   | Review, request changes, close, or merge a PR under GitHub policy                                                                                                                                                  | Become a CMA contributor/session actor without their own authenticated action                                                     |
+| CMA operator                            | Use least-privilege support, pause orchestration, reconcile evidence, and retire abusive revisions under audited policy                                                                                            | Read raw credentials or repository contents without separate authority, manufacture user confirmation, or delete user GitHub work |
 
 README links never carry a Trigger API key. Developer key registration is a
 separate authenticated CMA operation. A revision may contain a reference to an
@@ -370,7 +381,7 @@ evidence must still match the subject's active-list service, backing key, and
 state version before any GitHub request.
 
 Inactive exact-service reconnect is intentionally unavailable against NyxID
-`main` at `52402f6a5510478b3601636a25572055f895c973`. OAuth completion updates
+remote `main` at `245600cb15110c43aafed77c8a8ee73f655ac060`. OAuth completion updates
 the backing `UserApiKey`, but does not reactivate the associated `UserService`
 or advance its `state_version`; starting that OAuth flow would therefore appear
 to succeed while leaving CMA preflight permanently closed. CMA returns
@@ -447,12 +458,14 @@ Launch creation requires the selected kernel/runtime cohort to advertise:
 - the selected, closed GitHub operation classes.
 
 The MVP is Codex-scoped because the product requires an underlying Codex
-session. Review discloses the locked `codex` kernel from authoritative Trigger
-admission configuration, and Start plus provisioning reject kernel drift.
-Capability admission remains an independent check: neither the runtime image
-name nor its capability inventory is used to infer the kernel. An unknown
-configured kernel or a missing capability is a typed pre-provision refusal. No
-old runtime image is given GitHub service reach it cannot filter.
+session. Review discloses the locked `codex-trigger-native-v1` kernel from
+authoritative Trigger admission configuration, and Start plus provisioning
+reject kernel drift. The versioned identity selects the dedicated native
+provider lane; the ordinary `codex` kernel is not a fallback. Capability
+admission remains an independent check: neither the runtime image name nor its
+capability inventory is used to infer the kernel. An unknown configured kernel
+or a missing capability is a typed pre-provision refusal. No old runtime image
+is given GitHub service reach it cannot filter.
 
 The control plane and session have separate writers:
 
@@ -503,15 +516,15 @@ connection. The choice is not based on OAuth being repository-scoped; it is
 not. Repository and branch isolation come from the signed Layer 4 policy for
 session calls and typed CMA writers for control-plane effects.
 
-| Property | NyxID GitHub OAuth | GitHub App installation |
-|---|---|---|
-| User experience | Reuses the contributor's NyxID GitHub consent and account | Requires an App installation and, for organizations, possible owner approval |
-| Provider custody | NyxID owns access/refresh tokens and injects the current credential | NyxID/CMA would need a new installation-token and user/installation binding contract |
-| Provider-level repository scope | OAuth scope can cover every public repository the user can access | Installation can be selected-repository scoped and short-lived |
-| CMA isolation requirement | Exact UserService plus ADR-003 policy and typed writers | Still needs Launch/session/ref binding; installation scope alone is not a branch policy |
-| Fork ownership | Naturally performs writes as the contributor to their user-owned fork | Installation must exist on or be permitted for that fork; this is not universal |
-| Refresh and revocation | Uses the demonstrated NyxID service/key model and ADR-002 bounds | Adds installation suspension, token minting, webhook, and installation-transfer states |
-| MVP readiness | Existing integration path; evidence gates remain explicit | No implemented or demonstrated CMA/NyxID path in the current milestone |
+| Property                        | NyxID GitHub OAuth                                                    | GitHub App installation                                                                 |
+| ------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| User experience                 | Reuses the contributor's NyxID GitHub consent and account             | Requires an App installation and, for organizations, possible owner approval            |
+| Provider custody                | NyxID owns access/refresh tokens and injects the current credential   | NyxID/CMA would need a new installation-token and user/installation binding contract    |
+| Provider-level repository scope | OAuth scope can cover every public repository the user can access     | Installation can be selected-repository scoped and short-lived                          |
+| CMA isolation requirement       | Exact UserService plus ADR-003 policy and typed writers               | Still needs Launch/session/ref binding; installation scope alone is not a branch policy |
+| Fork ownership                  | Naturally performs writes as the contributor to their user-owned fork | Installation must exist on or be permitted for that fork; this is not universal         |
+| Refresh and revocation          | Uses the demonstrated NyxID service/key model and ADR-002 bounds      | Adds installation suspension, token minting, webhook, and installation-transfer states  |
+| MVP readiness                   | Existing integration path; evidence gates remain explicit             | No implemented or demonstrated CMA/NyxID path in the current milestone                  |
 
 OAuth is therefore selected for the public user-fork MVP, conditional on the
 ADR-003 deny-by-default evidence. A GitHub App is the preferred later option
@@ -532,17 +545,17 @@ typed unsupported-operation/capability result if called; no dashboard-private
 route may fill the gap. A Launch identifier never appears as an AG-UI session
 `threadId` or turn `runId`.
 
-| Operation | REST | AG-UI | PTY | MCP | A2A |
-|---|---|---|---|---|---|
-| Anonymous Trigger preview | Full, subject-free GET | Read-only companion snapshot | Absent | Absent | Absent |
-| Publisher draft/publish/retire | Full authenticated resource API | Absent; browser uses REST/SDK | Absent | Absent in MVP | Absent in MVP |
-| GitHub connect/callback | Full auth start/callback/status | Absent; browser uses REST/SDK | Absent | Absent | Absent |
-| Launch draft/review/Start/cancel/finish | Full authenticated commands | Read-only review snapshot; commands use REST/SDK | Absent | Absent in MVP | Absent in MVP |
-| Launch progress/replay | Cursor-based resource/event API | Read-only cursor replay | Absent | Absent | Absent |
-| Session conversation | Existing REST subset | Existing full conversation projection | Existing terminal projection | Existing protocol projection | Existing protocol projection |
-| Repository/checkpoint/reach status | Full safe projection | Read-only companion snapshot | Absent | Absent | Absent |
-| Diff review and branch publication | Full read plus explicit publish command | Read-only diff; publish uses REST/SDK | Absent | Absent | Absent |
-| Open/update PR | Explicit idempotent command | Absent; browser uses REST/SDK | Absent | Absent | Absent |
+| Operation                               | REST                                    | AG-UI                                            | PTY                          | MCP                          | A2A                          |
+| --------------------------------------- | --------------------------------------- | ------------------------------------------------ | ---------------------------- | ---------------------------- | ---------------------------- |
+| Anonymous Trigger preview               | Full, subject-free GET                  | Read-only companion snapshot                     | Absent                       | Absent                       | Absent                       |
+| Publisher draft/publish/retire          | Full authenticated resource API         | Absent; browser uses REST/SDK                    | Absent                       | Absent in MVP                | Absent in MVP                |
+| GitHub connect/callback                 | Full auth start/callback/status         | Absent; browser uses REST/SDK                    | Absent                       | Absent                       | Absent                       |
+| Launch draft/review/Start/cancel/finish | Full authenticated commands             | Read-only review snapshot; commands use REST/SDK | Absent                       | Absent in MVP                | Absent in MVP                |
+| Launch progress/replay                  | Cursor-based resource/event API         | Read-only cursor replay                          | Absent                       | Absent                       | Absent                       |
+| Session conversation                    | Existing REST subset                    | Existing full conversation projection            | Existing terminal projection | Existing protocol projection | Existing protocol projection |
+| Repository/checkpoint/reach status      | Full safe projection                    | Read-only companion snapshot                     | Absent                       | Absent                       | Absent                       |
+| Diff review and branch publication      | Full read plus explicit publish command | Read-only diff; publish uses REST/SDK            | Absent                       | Absent                       | Absent                       |
+| Open/update PR                          | Explicit idempotent command             | Absent; browser uses REST/SDK                    | Absent                       | Absent                       | Absent                       |
 
 The README path is a frontend deep link backed by the subject-free Layer 1
 preview handler. The OAuth return and authenticated review use the existing SPA
@@ -746,17 +759,17 @@ the old reviewed head remains ambiguous/reconciling, and any other head is
 The publication broker has this closed provider-route surface, in addition to
 the NyxID authority calls needed to obtain current subject and service state:
 
-| Method | GitHub route | Purpose and restriction |
-|---|---|---|
-| `GET` | `/repositories/{numeric_fork_id}` | Rebind the retained fork to current canonical identity before writes and reconciliation |
-| `GET` | `/repos/{fork_owner}/{fork_repo}/git/ref/heads/{cma/launch-id}` | Read only the retained Launch branch head |
-| `GET` | `/repos/{fork_owner}/{fork_repo}/git/commits/{sha}` | Verify the reviewed parent or prepared commit |
-| `GET` | `/repos/{fork_owner}/{fork_repo}/git/blobs/{sha}` | Reconcile a content-addressed blob write |
-| `GET` | `/repos/{fork_owner}/{fork_repo}/git/trees/{sha}` | Reconcile a tree; final verification alone uses `recursive=1` |
-| `POST` | `/repos/{fork_owner}/{fork_repo}/git/blobs` | Create one non-inline reviewed blob using base64 |
-| `POST` | `/repos/{fork_owner}/{fork_repo}/git/trees` | Create the one sealed tree with `base_tree` |
-| `POST` | `/repos/{fork_owner}/{fork_repo}/git/commits` | Create the one sealed commit with an explicit parent |
-| `PATCH` | `/repos/{fork_owner}/{fork_repo}/git/refs/heads/{cma/launch-id}` | Guarded branch advance with `force=false` |
+| Method  | GitHub route                                                     | Purpose and restriction                                                                 |
+| ------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `GET`   | `/repositories/{numeric_fork_id}`                                | Rebind the retained fork to current canonical identity before writes and reconciliation |
+| `GET`   | `/repos/{fork_owner}/{fork_repo}/git/ref/heads/{cma/launch-id}`  | Read only the retained Launch branch head                                               |
+| `GET`   | `/repos/{fork_owner}/{fork_repo}/git/commits/{sha}`              | Verify the reviewed parent or prepared commit                                           |
+| `GET`   | `/repos/{fork_owner}/{fork_repo}/git/blobs/{sha}`                | Reconcile a content-addressed blob write                                                |
+| `GET`   | `/repos/{fork_owner}/{fork_repo}/git/trees/{sha}`                | Reconcile a tree; final verification alone uses `recursive=1`                           |
+| `POST`  | `/repos/{fork_owner}/{fork_repo}/git/blobs`                      | Create one non-inline reviewed blob using base64                                        |
+| `POST`  | `/repos/{fork_owner}/{fork_repo}/git/trees`                      | Create the one sealed tree with `base_tree`                                             |
+| `POST`  | `/repos/{fork_owner}/{fork_repo}/git/commits`                    | Create the one sealed commit with an explicit parent                                    |
+| `PATCH` | `/repos/{fork_owner}/{fork_repo}/git/refs/heads/{cma/launch-id}` | Guarded branch advance with `force=false`                                               |
 
 This writer has no upstream write, arbitrary owner/repository, ref deletion,
 force-push, admin, or pull-request route. Pull-request creation/update is a
@@ -765,14 +778,14 @@ separate explicitly confirmed effect with its own route contract.
 Implemented publication bounds are closed safety limits, not statements of
 current GitHub capacity:
 
-| Boundary | Enforced limit |
-|---|---|
+| Boundary                          | Enforced limit                                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Deployment-selected changed files | `CHRONO_TRIGGER_CHANGED_FILE_LIMIT`, startup-bounded from 1 through 1,000 and captured in the review artifact |
-| Publication changed bytes | 512 MiB |
-| Retained review artifact | 64 MiB |
-| Inline tree content | 128 KiB per UTF-8 file and 4 MiB cumulatively |
-| NyxID/GitHub JSON response | 32 MiB |
-| Complete recursive GitHub tree | Not truncated and at most 100,000 entries |
+| Publication changed bytes         | 512 MiB                                                                                                       |
+| Retained review artifact          | 64 MiB                                                                                                        |
+| Inline tree content               | 128 KiB per UTF-8 file and 4 MiB cumulatively                                                                 |
+| NyxID/GitHub JSON response        | 32 MiB                                                                                                        |
+| Complete recursive GitHub tree    | Not truncated and at most 100,000 entries                                                                     |
 
 The value 1,000 is the review-schema and configuration ceiling. It has not been
 proven as a safe deployment value against the pinned NyxID/GitHub provider.
@@ -782,35 +795,35 @@ selected value has that evidence.
 
 Named review and provider outcomes remain distinct:
 
-| Condition | Public outcome | Class and behavior |
-|---|---|---|
-| Changed-file deployment limit exceeded | `too_many_changes` | Review outcome; no publication is authorized |
-| Git LFS attributes or pointer content | `git_lfs_unsupported` | Typed unsupported-workspace refusal before any write |
-| Workflow update lacks provider authority | `github_workflow_scope_refused` | `policy_user_action`; retain provider status and require reconnect/removal plus a new review |
-| Branch protection or ruleset refusal | `github_branch_protection_refused` | `policy_user_action`; never bypass protection |
-| Other provider validation/policy refusal | `github_policy_refused` | `policy_user_action`; no blind retry |
-| Non-fast-forward or divergent head | `conflict_stale_head` | `conflict_stale_head`; stop without force update |
-| Provider rate or secondary-rate limit | `github_rate_limited` | `resource_quota`; retain retry/reset timing instead of flattening to forbidden |
-| Response lost after a possible write | `github_write_ambiguous` | `ambiguous_external`; reconcile read-only before any replacement write |
-| Exact resource missing | `github_resource_not_found` | `terminal_validation` |
-| Repository, object, or authority evidence drifts | `github_authority_drift` | `terminal_security`; fail closed |
+| Condition                                        | Public outcome                     | Class and behavior                                                                           |
+| ------------------------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| Changed-file deployment limit exceeded           | `too_many_changes`                 | Review outcome; no publication is authorized                                                 |
+| Git LFS attributes or pointer content            | `git_lfs_unsupported`              | Typed unsupported-workspace refusal before any write                                         |
+| Workflow update lacks provider authority         | `github_workflow_scope_refused`    | `policy_user_action`; retain provider status and require reconnect/removal plus a new review |
+| Branch protection or ruleset refusal             | `github_branch_protection_refused` | `policy_user_action`; never bypass protection                                                |
+| Other provider validation/policy refusal         | `github_policy_refused`            | `policy_user_action`; no blind retry                                                         |
+| Non-fast-forward or divergent head               | `conflict_stale_head`              | `conflict_stale_head`; stop without force update                                             |
+| Provider rate or secondary-rate limit            | `github_rate_limited`              | `resource_quota`; retain retry/reset timing instead of flattening to forbidden               |
+| Response lost after a possible write             | `github_write_ambiguous`           | `ambiguous_external`; reconcile read-only before any replacement write                       |
+| Exact resource missing                           | `github_resource_not_found`        | `terminal_validation`                                                                        |
+| Repository, object, or authority evidence drifts | `github_authority_drift`           | `terminal_security`; fail closed                                                             |
 
 ## 11. Failure and reconciliation taxonomy
 
-| Class | Examples | Automatic behavior | User/operator projection |
-|---|---|---|---|
-| `auth_required` | User revoked consent, scope is insufficient, selected connection changed | No retry until a new consent/preflight snapshot exists | Reconnect or select an eligible account, then resume same Launch |
-| `owner_credential_unavailable` | CMA's durable subject access expired and no refresh token is available, without evidence the user revoked GitHub | Pause; do not turn this into revocation or retry forever | Sign in again to rehydrate owner authority; distinct from user-caused reauthorization |
-| `service_inactive` | Exact NyxID UserService is connected but `is_active=false` | Bounded status recheck only; current CMA refuses an OAuth handoff that NyxID cannot complete safely | Select another active connection; inactive-service reconnect requires callback-bound NyxID reactivation; preserve draft/workspace |
-| `retryable_transient` | Provider timeout before a known-safe boundary, 429 with retry-after, 5xx, temporary capacity | Bounded exponential backoff with jitter and persisted next attempt | Show retry timing and correlation ID; manual retry reconciles first |
-| `ambiguous_external` | Timeout after fork/PR/ref request, worker crash around a side effect | Reconcile by numeric identity, marker, ref, SHA, or provider request ID before any retry | Pending/reconciling, then resolved or recovery required |
-| `conflict_stale_head` | Branch changed manually, CAS/ref mismatch, upstream/base drift | Never force or overwrite; stop the write sequence | Refresh diff/preflight and make an explicit resolution choice |
-| `resource_quota` | Deployment capacity, GitHub content limit, spend or launch quota | Retry only when a named reset/capacity signal permits | Show limit, reset/remediation, and preserve work |
-| `policy_user_action` | Forking disabled, occupied fork-network slot, workflow scope, branch protection | No blind retry | Name the exact policy and supported remediation |
-| `recovery_required` | Ambiguous prompt write, corrupt checkpoint, unresolved side-effect outcome | No automatic repeat of the unsafe effect | Explicit recovery with consequences disclosed; operator evidence retained |
-| `terminal_validation` | Retired/malformed revision, invalid ref, deleted upstream, unsupported LFS/path/type | No retry until a new valid resource/config exists | Explain what must change; retain safe records |
-| `terminal_security` | Repository identity mismatch, traversal, cross-subject snapshot access, policy signature/resource mismatch | Fail closed, revoke reach where possible, alert/audit | No unsafe retry; safe export remains available where authorized |
-| `feature_paused` | Trigger orchestration kill switch | Freeze new Launch effects at durable boundaries | Show paused, not failed; session continuity remains governed by `CLAUDE.md` section 5 |
+| Class                          | Examples                                                                                                         | Automatic behavior                                                                                  | User/operator projection                                                                                                          |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `auth_required`                | User revoked consent, scope is insufficient, selected connection changed                                         | No retry until a new consent/preflight snapshot exists                                              | Reconnect or select an eligible account, then resume same Launch                                                                  |
+| `owner_credential_unavailable` | CMA's durable subject access expired and no refresh token is available, without evidence the user revoked GitHub | Pause; do not turn this into revocation or retry forever                                            | Sign in again to rehydrate owner authority; distinct from user-caused reauthorization                                             |
+| `service_inactive`             | Exact NyxID UserService is connected but `is_active=false`                                                       | Bounded status recheck only; current CMA refuses an OAuth handoff that NyxID cannot complete safely | Select another active connection; inactive-service reconnect requires callback-bound NyxID reactivation; preserve draft/workspace |
+| `retryable_transient`          | Provider timeout before a known-safe boundary, 429 with retry-after, 5xx, temporary capacity                     | Bounded exponential backoff with jitter and persisted next attempt                                  | Show retry timing and correlation ID; manual retry reconciles first                                                               |
+| `ambiguous_external`           | Timeout after fork/PR/ref request, worker crash around a side effect                                             | Reconcile by numeric identity, marker, ref, SHA, or provider request ID before any retry            | Pending/reconciling, then resolved or recovery required                                                                           |
+| `conflict_stale_head`          | Branch changed manually, CAS/ref mismatch, upstream/base drift                                                   | Never force or overwrite; stop the write sequence                                                   | Refresh diff/preflight and make an explicit resolution choice                                                                     |
+| `resource_quota`               | Deployment capacity, GitHub content limit, spend or launch quota                                                 | Retry only when a named reset/capacity signal permits                                               | Show limit, reset/remediation, and preserve work                                                                                  |
+| `policy_user_action`           | Forking disabled, occupied fork-network slot, workflow scope, branch protection                                  | No blind retry                                                                                      | Name the exact policy and supported remediation                                                                                   |
+| `recovery_required`            | Ambiguous prompt write, corrupt checkpoint, unresolved side-effect outcome                                       | No automatic repeat of the unsafe effect                                                            | Explicit recovery with consequences disclosed; operator evidence retained                                                         |
+| `terminal_validation`          | Retired/malformed revision, invalid ref, deleted upstream, unsupported LFS/path/type                             | No retry until a new valid resource/config exists                                                   | Explain what must change; retain safe records                                                                                     |
+| `terminal_security`            | Repository identity mismatch, traversal, cross-subject snapshot access, policy signature/resource mismatch       | Fail closed, revoke reach where possible, alert/audit                                               | No unsafe retry; safe export remains available where authorized                                                                   |
+| `feature_paused`               | Trigger orchestration kill switch                                                                                | Freeze new Launch effects at durable boundaries                                                     | Show paused, not failed; session continuity remains governed by `CLAUDE.md` section 5                                             |
 
 Rules shared by every worker:
 
@@ -922,7 +935,7 @@ material preflight result is `authority_drift` and requires reauthorization.
 Routine GitHub token refresh with unchanged effective authority is transparent.
 
 NyxID remote `main` at
-`52402f6a5510478b3601636a25572055f895c973` contains a producer-owned
+`245600cb15110c43aafed77c8a8ee73f655ac060` contains a producer-owned
 execution-authority digest, including credential identity and epoch, for its
 exact-approval path. The generic proxy used by CMA exposes neither that digest
 nor request-time expected-version validation. The MVP therefore makes the
@@ -971,11 +984,17 @@ alternate encodings, and unbounded bodies. PR creation/update is never a
 session operation class.
 
 GitHub's public API can read repository metadata by numeric ID, but the REST
-Git Data and pull-request write routes are owner/name-addressed. The current
-GitHub REST description at
-`8114b0d0e23240dfe45374e2daf01651a4729210` confirms that blob, tree, commit,
-ref, fork, and pull routes use `/repos/{owner}/{repo}/...`; live numeric lookup
-also returns the authoritative ID, node ID, owner IDs, and canonical name.
+Git Data and pull-request write routes are owner/name-addressed. NyxID remote
+`main` at `245600cb15110c43aafed77c8a8ee73f655ac060` carries GitHub catalog blob
+`8901f68c090b289512c0aca6cdb7fe90ee259459`, which documents only a subset of
+the provider surface and does **not** contain the numeric-repository, fork,
+ref, or Git Data routes CMA requires. That catalog is therefore neither route
+evidence nor an allowlist for this workflow: the generic proxy remains
+passthrough when `proxy_operation_policy` is absent. The guarded P-01 provider
+campaign must prove those exact passthrough routes against GitHub before
+release. Provider numeric lookup returns the authoritative repository ID,
+node ID, owner IDs, and canonical name; the required write routes remain
+`/repos/{owner}/{repo}/...`.
 
 The MVP numeric/name rule is:
 
@@ -1025,11 +1044,10 @@ binary content, executable mode, and a relative symlink. Full and ranged
 downloads worked, and a destination manifest-hash check rejected a deliberately
 truncated upload before extraction.
 
-That round trip proves byte transport, not a coherent capture. Neither the
-provider nor the current Layer 4 wire can pause Codex and background writers,
-freeze the filesystem, or acknowledge writer quiescence. A provider-only
-archive can therefore mix workspace states while a turn or descendant process
-is writing, and it fails #662's consistency requirement.
+That round trip proves byte transport, not a coherent capture. A provider-only
+archive cannot pause Codex and background writers, freeze the filesystem, or
+acknowledge writer quiescence, so it can mix workspace states while a turn or
+descendant process is writing and fails #662's consistency requirement.
 
 The MVP selects a **versioned Layer 4 workspace checkpoint
 capability**, staged as a runtime-image rollout before any Trigger Launch uses
@@ -1059,33 +1077,44 @@ sealed archive. It is not the consistency authority. Conversation-only
 snapshotting is not workspace recovery, and an old image that does not
 advertise the checkpoint capability is ineligible for a Trigger Launch.
 
+The Layer 4 implementation establishes a Linux child-subreaper boundary before
+starting any agent process. Every checkpoint fences the complete descendant
+tree, including a process that double-forks, changes sessions, exits its
+ancestors, and is reparented to the supervisor. A managed-child registry keeps
+the adopted-child reaper from consuming PTY, bridge, or probe processes owned
+by their normal handles, and checkpoint admission prevents a new probe or agent
+process from starting between the final process-table observation and archive
+seal. Linux regression evidence must prove freeze, byte stability, resume, and
+zombie-free reap for that fully daemonized case; the exact release image repeats
+the same proof in D-09.
+
 ## 16. Threat model
 
-| Threat | Required control | Residual or refusal |
-|---|---|---|
-| README link leaks a credential | Opaque revision identifier only; no API key, OAuth state, or bearer | Public safe fields remain enumerable only within rate limits and opaque-ID entropy |
-| Link click or crawler causes work | Subject-free GET is preview-only; callbacks return to review; Start is explicit POST | None; any observed side effect on GET blocks release |
-| Trigger is edited after publication | Immutable revision digest captured by Launch and outbox | Retirement affects only new Launches |
-| Former maintainer's revision remains linked directly | Role is verified at publish; Start revalidates repository identity/policy; publisher/operator retirement and README removal are available | Role loss alone cannot retroactively rewrite an immutable public revision |
-| OAuth CSRF/replay/open redirect | Durable single-use state, PKCE, subject/browser binding, fixed return allowlist | Expired state restarts sign-in without starting work |
-| Confused deputy or service-slug swap | Exact UserService ID, current subject ownership, three-authority preflight | Generic provider epoch is bounded as ADR-002 states |
-| Token/key disclosure | NyxID custody, inert sandbox placeholder, redacted typed records, no values in logs/events/artifacts | Terminal incident if secret scanning or runtime inspection finds a value |
-| Broad GitHub OAuth reaches another repository | Signed Layer 4 policy with typed parsers and numeric/name binding; typed CMA writers | Binding freshness is bounded, not atomic, as ADR-003 states |
-| Non-agent code in bot pod calls loopback proxy | Policy is session/runtime-wide, not prompt trust; every process is constrained above credential injection | Bot pod code can use allowed classes; it cannot escape them |
-| Repository/prompt injection asks for wider access | Repository and prompt are untrusted; capability ignores model instructions | Deny and audit operation/resource mismatch |
-| Arbitrary URL/SSRF | Server-derived GitHub base URL and closed routes; reject user URLs and redirects outside policy | Unknown route is terminal policy denial |
-| Rename, transfer, or name reuse retargets a write | Numeric/node identity lookup and short-lived signed binding; server-derived canonical name | Request admitted within the declared bound may finish |
-| Existing fork belongs to wrong network | Reconcile `source.id` plus `parent.id`; named occupied-network outcome | Never delete or create an assumed second fork |
-| Existing branch/user work is overwritten | Launch-owned naming, expected head, `force=false`, guarded reconciliation | Conflict requires user review; no automatic reset |
-| Reused fork runs publisher Actions | Show workflow paths at pinned baseline and require acknowledgement; never claim unavailable permissions preflight | GitHub maintainer approval of fork workflows remains outside CMA |
-| Publisher bootstrap executes malicious code | Publisher-authored setup is disabled in the public MVP | A later executor policy requires a new approval and treats every step as untrusted |
-| Duplicate external effect after timeout | Persist intent, stable markers, idempotency where supported, reconcile before retry | Provider without idempotency may require recovery instead of retry |
-| Initial prompt executes twice | ADR-001 at-most-once automatic dispatch and durable fence | Explicit recovery discloses duplicate-execution risk |
-| Workspace loss or corrupt restore | Complete manifest, hashes, atomic commit, prior checkpoint retention, verify before resume | Last complete checkpoint is the recovery point |
-| Archive traversal or unsafe symlink | Canonical manifest paths, bounded extraction, supported symlink policy, fail closed | Unsupported type/path is terminal validation |
-| Cross-user object access | Launch/session ownership checks and Launch/version key prefix under CMA's one bucket identity | Platform bucket ownership does not provide CMA subject isolation |
-| Public abuse/quota exhaustion | Shared #484 limiter, subject/Trigger/session/spend quotas, rollout switch | Legitimate recovery remains available and rate-limit state is typed |
-| Kill switch interrupts active work | Freeze new Trigger effects at durable boundaries; never violate normal session continuity | Capability revoke follows acknowledgement/expiry semantics, not instant claims |
+| Threat                                               | Required control                                                                                                                          | Residual or refusal                                                                |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| README link leaks a credential                       | Opaque revision identifier only; no API key, OAuth state, or bearer                                                                       | Public safe fields remain enumerable only within rate limits and opaque-ID entropy |
+| Link click or crawler causes work                    | Subject-free GET is preview-only; callbacks return to review; Start is explicit POST                                                      | None; any observed side effect on GET blocks release                               |
+| Trigger is edited after publication                  | Immutable revision digest captured by Launch and outbox                                                                                   | Retirement affects only new Launches                                               |
+| Former maintainer's revision remains linked directly | Role is verified at publish; Start revalidates repository identity/policy; publisher/operator retirement and README removal are available | Role loss alone cannot retroactively rewrite an immutable public revision          |
+| OAuth CSRF/replay/open redirect                      | Durable single-use state, PKCE, subject/browser binding, fixed return allowlist                                                           | Expired state restarts sign-in without starting work                               |
+| Confused deputy or service-slug swap                 | Exact UserService ID, current subject ownership, three-authority preflight                                                                | Generic provider epoch is bounded as ADR-002 states                                |
+| Token/key disclosure                                 | NyxID custody, inert sandbox placeholder, redacted typed records, no values in logs/events/artifacts                                      | Terminal incident if secret scanning or runtime inspection finds a value           |
+| Broad GitHub OAuth reaches another repository        | Signed Layer 4 policy with typed parsers and numeric/name binding; typed CMA writers                                                      | Binding freshness is bounded, not atomic, as ADR-003 states                        |
+| Non-agent code in bot pod calls loopback proxy       | Policy is session/runtime-wide, not prompt trust; every process is constrained above credential injection                                 | Bot pod code can use allowed classes; it cannot escape them                        |
+| Repository/prompt injection asks for wider access    | Repository and prompt are untrusted; capability ignores model instructions                                                                | Deny and audit operation/resource mismatch                                         |
+| Arbitrary URL/SSRF                                   | Server-derived GitHub base URL and closed routes; reject user URLs and redirects outside policy                                           | Unknown route is terminal policy denial                                            |
+| Rename, transfer, or name reuse retargets a write    | Numeric/node identity lookup and short-lived signed binding; server-derived canonical name                                                | Request admitted within the declared bound may finish                              |
+| Existing fork belongs to wrong network               | Reconcile `source.id` plus `parent.id`; named occupied-network outcome                                                                    | Never delete or create an assumed second fork                                      |
+| Existing branch/user work is overwritten             | Launch-owned naming, expected head, `force=false`, guarded reconciliation                                                                 | Conflict requires user review; no automatic reset                                  |
+| Reused fork runs publisher Actions                   | Show workflow paths at pinned baseline and require acknowledgement; never claim unavailable permissions preflight                         | GitHub maintainer approval of fork workflows remains outside CMA                   |
+| Publisher bootstrap executes malicious code          | Publisher-authored setup is disabled in the public MVP                                                                                    | A later executor policy requires a new approval and treats every step as untrusted |
+| Duplicate external effect after timeout              | Persist intent, stable markers, idempotency where supported, reconcile before retry                                                       | Provider without idempotency may require recovery instead of retry                 |
+| Initial prompt executes twice                        | ADR-001 at-most-once automatic dispatch and durable fence                                                                                 | Explicit recovery discloses duplicate-execution risk                               |
+| Workspace loss or corrupt restore                    | Complete manifest, hashes, atomic commit, prior checkpoint retention, verify before resume                                                | Last complete checkpoint is the recovery point                                     |
+| Archive traversal or unsafe symlink                  | Canonical manifest paths, bounded extraction, supported symlink policy, fail closed                                                       | Unsupported type/path is terminal validation                                       |
+| Cross-user object access                             | Launch/session ownership checks and Launch/version key prefix under CMA's one bucket identity                                             | Platform bucket ownership does not provide CMA subject isolation                   |
+| Public abuse/quota exhaustion                        | Shared #484 limiter, subject/Trigger/session/spend quotas, rollout switch                                                                 | Legitimate recovery remains available and rate-limit state is typed                |
+| Kill switch interrupts active work                   | Freeze new Trigger effects at durable boundaries; never violate normal session continuity                                                 | Capability revoke follows acknowledgement/expiry semantics, not instant claims     |
 
 ## 17. Go/no-go checklists
 
