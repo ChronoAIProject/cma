@@ -1862,6 +1862,35 @@ impl SessionService {
                 .await;
             return;
         }
+        let expected_recovery = starting
+            .pending_handover
+            .as_ref()
+            .and_then(|pending| pending.trigger_recovery.as_ref());
+        let trigger_recovery = match self
+            .resolve_trigger_recovery_pair_for(&starting, expected_recovery)
+            .await
+        {
+            Ok(pair) => pair,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "Trigger recovery pair verification failed; leaving replacement fenced"
+                );
+                self.finish_failed_coordinated_recovery(&id, &lease, false, reclaimed)
+                    .await;
+                return;
+            }
+        };
+        if starting.trigger_origin.is_some() && trigger_recovery.is_none() {
+            tracing::warn!(
+                session_id = %id,
+                "Trigger runtime recovery has no complete workspace/conversation pair"
+            );
+            self.finish_failed_coordinated_recovery(&id, &lease, false, reclaimed)
+                .await;
+            return;
+        }
         if starting.session.status.is_rotating() && starting.rotation_claim.is_none() {
             starting.rotation_claim = Some(format!("rotn_{}", uuid::Uuid::new_v4().simple()));
         }
@@ -1939,6 +1968,7 @@ impl SessionService {
                         outcome: crate::provision_failure::Abandonment::Keep,
                         lease: Some(lease),
                         handover: None,
+                        trigger_recovery,
                         prepared_skills: None,
                         rotation_claim,
                     },
@@ -1976,8 +2006,11 @@ impl SessionService {
     /// this sweep declared dead would have every later sweep declare it dead
     /// again, filling the log with the same loss every five minutes.
     ///
-    /// The session moves to `Recovering`, which is what that state means. It is
-    /// not a failure state; the same pass starts a replacement runtime.
+    /// Ordinary sessions move to `Recovering` and the same pass starts a
+    /// replacement runtime. A Trigger session without a verified handover
+    /// snapshot instead moves to a non-interactive degraded boundary. Starting
+    /// a new agent conversation there would preserve the session id while
+    /// silently discarding its turn context.
     async fn record_runtime_lost(
         &self,
         record: &mut SessionRecord,
@@ -1985,28 +2018,85 @@ impl SessionService {
         cause: Option<RuntimeLossCause>,
     ) -> Result<(), StoreError> {
         let id = record.session.id.clone();
+        let has_trigger_recovery =
+            if record.trigger_origin.is_some() && record.pending_handover.is_none() {
+                match self.resolve_trigger_recovery_pair_for(record, None).await {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %id,
+                            %error,
+                            "the lost Trigger runtime has no presently verifiable recovery pair"
+                        );
+                        false
+                    }
+                }
+            } else {
+                false
+            };
         let previous = record.runtime_id.take();
         let previous_state = record.session.recovery_state;
-        record.session.recovery_state = RecoveryState::Recovering;
-        if let Err(e) = self
-            .persist_durably(
-                record,
-                vec![Event {
-                    session_id: id.clone(),
-                    seq: 0,
-                    kind: EventKind::RuntimeLost {
-                        runtime_id: runtime.to_string(),
-                        cause,
-                    },
-                    appended_at: String::new(),
-                }],
-            )
-            .await
-        {
+        let previous_status = record.session.status;
+        let previous_initial_prompt = record.initial_prompt.clone();
+        let requires_explicit_recovery = record.trigger_origin.is_some()
+            && record.pending_handover.is_none()
+            && !has_trigger_recovery;
+        let mut events = vec![Event {
+            session_id: id.clone(),
+            seq: 0,
+            kind: EventKind::RuntimeLost {
+                runtime_id: runtime.to_string(),
+                cause,
+            },
+            appended_at: String::new(),
+        }];
+        if requires_explicit_recovery {
+            record.session.status = SessionStatus::Rotating;
+            record.session.recovery_state = RecoveryState::Degraded;
+            if let Some(initial) = record.initial_prompt.as_mut() {
+                if matches!(
+                    initial.delivery.state,
+                    crate::PromptDeliveryState::DispatchFenced
+                        | crate::PromptDeliveryState::WriteConfirmed
+                        | crate::PromptDeliveryState::ExecutionObserved
+                ) {
+                    initial.delivery.state = crate::PromptDeliveryState::RecoveryRequired;
+                    initial.delivery.updated_at = crate::clock::now_rfc3339();
+                    events.push(Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::InitialPromptDeliveryChanged {
+                            state: crate::PromptDeliveryState::RecoveryRequired,
+                        },
+                        appended_at: String::new(),
+                    });
+                }
+            }
+            events.push(Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    stop_reason: None,
+                    detail: Some(
+                        "runtime continuity could not be verified; explicit recovery is required"
+                            .into(),
+                    ),
+                    capability: None,
+                },
+                appended_at: String::new(),
+            });
+        } else {
+            record.session.recovery_state = RecoveryState::Recovering;
+        }
+        if let Err(e) = self.persist_durably(record, events).await {
             // Nothing was recorded, so nothing is claimed. Put the local copy
             // back and let a later sweep establish the loss again.
             record.runtime_id = previous;
             record.session.recovery_state = previous_state;
+            record.session.status = previous_status;
+            record.initial_prompt = previous_initial_prompt;
             tracing::error!(session_id = %id, runtime = %runtime, error = %e,
                 "cannot record that this session's runtime is gone");
             return Err(e);
@@ -2038,9 +2128,9 @@ impl SessionService {
         if !self.begin_start(&id).await {
             return;
         }
-        let restore = if record.pending_handover.is_some() {
-            let snapshot = match self.load_pending_handover_snapshot(&record).await {
-                Ok(snapshot) => snapshot,
+        let (restore, trigger_recovery) = if record.pending_handover.is_some() {
+            let recovery = match self.load_pending_handover_recovery(&record).await {
+                Ok(recovery) => recovery,
                 Err(error) => {
                     tracing::warn!(
                         session_id = %id,
@@ -2065,17 +2155,53 @@ impl SessionService {
                     return;
                 }
             };
-            snapshot
+            (recovery.restore, recovery.trigger_recovery)
         } else if record.is_effectively_rotating() {
-            tracing::error!(
-                session_id = %id,
-                "refusing to provision a rotating session without a durable handover snapshot"
-            );
-            self.finish_start(&id).await;
-            reclaimed.deferred_sessions += 1;
-            return;
+            let trigger_recovery = match self.resolve_trigger_recovery_pair_for(&record, None).await
+            {
+                Ok(Some(pair)) if record.trigger_origin.is_some() => Some(pair),
+                Ok(_) => {
+                    tracing::error!(
+                        session_id = %id,
+                        "refusing to provision a rotating session without recoverable conversation authority"
+                    );
+                    self.finish_start(&id).await;
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "cannot verify the Trigger recovery pair; leaving the session fenced"
+                    );
+                    self.finish_start(&id).await;
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            (None, trigger_recovery)
         } else {
-            None
+            let trigger_recovery = match self.resolve_trigger_recovery_pair_for(&record, None).await
+            {
+                Ok(pair) => pair,
+                Err(error) => {
+                    tracing::warn!(session_id = %id, %error, "cannot verify the recovery pair");
+                    self.finish_start(&id).await;
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            if record.trigger_origin.is_some() && trigger_recovery.is_none() {
+                tracing::warn!(
+                    session_id = %id,
+                    "Trigger runtime recovery has no complete workspace/conversation pair"
+                );
+                self.finish_start(&id).await;
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+            (None, trigger_recovery)
         };
         let was_rotating = record.is_effectively_rotating();
         if was_rotating {
@@ -2119,10 +2245,14 @@ impl SessionService {
                     adapter,
                     geometry,
                     restore,
-                    crate::provision_support::BringUpContext::compatibility(
-                        crate::provision_failure::Abandonment::Keep,
+                    crate::provision_support::BringUpContext {
+                        outcome: crate::provision_failure::Abandonment::Keep,
+                        lease: None,
+                        handover: None,
+                        trigger_recovery,
+                        prepared_skills: None,
                         rotation_claim,
-                    ),
+                    },
                 )
                 .await;
         });

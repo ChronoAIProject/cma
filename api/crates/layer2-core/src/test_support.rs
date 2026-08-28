@@ -255,6 +255,23 @@ impl FakeStore {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Convert an established fixture to the generation-zero compatibility
+    /// shape used by staged-rollout tests.
+    pub(crate) async fn demote_runtime_authority_to_legacy(&self, id: &SessionId) {
+        let _transaction = self.transaction.lock().await;
+        let record = self
+            .sessions
+            .lock()
+            .await
+            .get(&id.0)
+            .cloned()
+            .expect("the session is durable before compatibility demotion");
+        self.coordination
+            .lock()
+            .await
+            .insert(id.0.clone(), FakeCoordination::legacy(&record));
+    }
+
     pub(crate) fn enable_coordination(&self) {
         self.coordination_disabled
             .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -277,6 +294,19 @@ impl FakeStore {
             .as_mut()
             .expect("an interaction lease is active");
         assert_eq!(held.lease.operation, SessionOperation::Interact);
+        held.expires_at = tokio::time::Instant::now();
+    }
+
+    /// Expire a coordinated handover after its replacement reached the final
+    /// pre-switch workspace capture boundary.
+    pub(crate) async fn expire_active_handover_lease(&self, id: &SessionId) {
+        let _transaction = self.transaction.lock().await;
+        let mut coordination = self.coordination.lock().await;
+        let state = coordination
+            .get_mut(&id.0)
+            .expect("the coordinated session has runtime authority");
+        let held = state.lease.as_mut().expect("a handover lease is active");
+        assert_eq!(held.lease.operation, SessionOperation::Handover);
         held.expires_at = tokio::time::Instant::now();
     }
 
@@ -2177,6 +2207,7 @@ pub(crate) fn service_over(
             handovers: Some(handovers),
             credentials: None,
             skills: None,
+            workspaces: None,
             skill_packs: None,
             settings: None,
         },
@@ -2236,6 +2267,7 @@ pub(crate) fn service_over_with_environments(
             handovers: Some(handovers),
             credentials: None,
             skills: None,
+            workspaces: None,
             skill_packs: None,
             settings: None,
         },

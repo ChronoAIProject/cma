@@ -392,6 +392,16 @@ pub(super) struct DueSubjectRefresh {
     pub(super) token_generation: u64,
 }
 
+/// One just-in-time subject authority snapshot for a provider request.
+///
+/// The bearer is deliberately crate-private and has no serialization or debug
+/// representation. Callers may use it for one outbound request; durable work
+/// records retain only `token_generation`.
+pub(crate) struct SubjectBearer {
+    pub(crate) bearer: String,
+    pub(crate) token_generation: u64,
+}
+
 /// Derive the PKCE challenge for a verifier, per S256.
 fn code_challenge(verifier: &str) -> String {
     use base64::Engine as _;
@@ -1375,13 +1385,28 @@ impl AuthState {
     /// The subject's current access token, if one is held.
     pub async fn access_token(&self, subject: &SubjectId) -> Result<Option<String>, StoreError> {
         Ok(self
-            .store
-            .subject(subject)
+            .subject_bearer(subject)
             .await?
-            .and_then(|state| state.tokens)
+            .map(|authority| authority.bearer))
+    }
+
+    /// Read the bearer and its token generation from one durable subject fact.
+    pub(crate) async fn subject_bearer(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Option<SubjectBearer>, StoreError> {
+        let Some(state) = self.store.subject(subject).await? else {
+            return Ok(None);
+        };
+        let generation = state.token_generation;
+        Ok(state
+            .tokens
             .filter(|tokens| tokens.expires_at > SystemTime::now())
             .and_then(|tokens| tokens.access_token)
-            .map(|access| access.into_inner()))
+            .map(|access| SubjectBearer {
+                bearer: access.into_inner(),
+                token_generation: generation,
+            }))
     }
 
     /// Subjects whose access token is close enough to expiry to renew.

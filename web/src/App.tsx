@@ -1,6 +1,8 @@
 import { Suspense, lazy } from 'react';
 import { Landing } from './landing/Landing';
 import { useAuth } from './auth/context';
+import { PublicTriggerPreview } from './trigger/PublicTriggerPreview';
+import { routePath, useAppRouter } from './routing/routes';
 /*
  * Mount order matters — `docs/Web_Style.md` §2. The palette sheets must be
  * parsed before anything reads an alias off them, and `tokens.css` first
@@ -34,14 +36,15 @@ const Console = lazy(async () => {
  * authenticated it is the same frame carrying the three views docs/Web_Style.md
  * §1 admits — sessions, operations and Developer.
  *
- * There is still no router and no second route. Account-menu actions choose
- * between views and nothing is pushed onto history, which is what keeps the
- * frame from becoming navigation. A view is where somebody is right now, so it
- * does not persist; an arrangement is a setting about how a list is drawn, and
- * that does.
+ * A deliberately small workflow router owns the canonical CMA Trigger deep
+ * links. Account-menu utility views remain transient and do not create more
+ * routes. A utility view is where somebody is right now, so it does not
+ * persist; an arrangement is a setting about how a list is drawn, and that
+ * does.
  */
 export function App() {
-  const { state, signOut } = useAuth();
+  const { state, signIn, signOut } = useAuth();
+  const router = useAppRouter();
 
   switch (state.status) {
     case 'checking':
@@ -55,7 +58,12 @@ export function App() {
         // Web_Style.md forbids a full-page spinner; the console arrives from
         // cache or a same-origin chunk, so an empty frame is the honest wait.
         <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
-          <Console user={state.user} onSignOut={() => void signOut()} />
+          <Console
+            user={state.user}
+            route={router.route}
+            onNavigate={router.navigate}
+            onSignOut={() => void signOut()}
+          />
         </Suspense>
       );
 
@@ -67,7 +75,24 @@ export function App() {
         </main>
       );
 
-    case 'anonymous':
+    case 'anonymous': {
+      if (router.route.kind === 'trigger') {
+        const returnTo = routePath(router.route);
+        return (
+          <PublicTriggerPreview
+            publicId={router.route.publicId}
+            authError={router.route.authError}
+            onSignIn={() => void signIn(returnTo)}
+          />
+        );
+      }
+      const returnTo =
+        router.route.kind === 'trigger_recovery' ||
+        router.route.kind === 'launch' ||
+        router.route.kind === 'contribute' ||
+        router.route.kind === 'session'
+          ? routePath(router.route)
+          : undefined;
       return (
         /*
          * No frame at all. §9's frame is three columns of session, and a
@@ -75,8 +100,9 @@ export function App() {
          * and an empty details column would draw two panels that say nothing
          * and cannot be opened.
          */
-        <Landing />
+        <Landing returnTo={returnTo} />
       );
+    }
 
     default: {
       const exhaustive: never = state;
