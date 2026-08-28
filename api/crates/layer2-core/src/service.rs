@@ -36,6 +36,21 @@ pub use crate::lease::{AttachmentHandle, Detached};
 pub(crate) use crate::service_state::{Attachment, SessionEntry, LIVE_BUFFER, RESOURCE_BUFFER};
 pub use crate::service_state::{Deployment, ScreenFactory, SessionPorts, SessionService};
 
+/// Whether this creation mints an identity or preserves one derived elsewhere.
+enum CreationIdentity {
+    Fresh,
+    Exact(SessionId),
+}
+
+impl CreationIdentity {
+    fn resolve_with(self, generate_fresh: impl FnOnce() -> SessionId) -> SessionId {
+        match self {
+            Self::Fresh => generate_fresh(),
+            Self::Exact(id) => id,
+        }
+    }
+}
+
 impl SessionService {
     /// Build a service over a set of runtime implementations.
     ///
@@ -373,17 +388,27 @@ impl SessionService {
         caller: &Caller,
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
-        self.create_session_with_identity(caller, spec, SessionId::generate(), None)
-            .await
+        self.create_session_with_identity(
+            caller,
+            spec,
+            CreationIdentity::Fresh,
+            None,
+            SessionId::generate,
+        )
+        .await
     }
 
-    async fn create_session_with_identity(
+    async fn create_session_with_identity<F>(
         self: &Arc<Self>,
         caller: &Caller,
         spec: SessionSpec,
-        id: SessionId,
+        identity: CreationIdentity,
         trigger_origin: Option<crate::TriggerSessionOrigin>,
-    ) -> Result<Session, CoreError> {
+        generate_fresh_id: F,
+    ) -> Result<Session, CoreError>
+    where
+        F: FnOnce() -> SessionId + Send,
+    {
         caller.authorization.require(Capability::CreateSession)?;
         // Checked before anything is recorded: a selection this caller may not
         // use, or a store that cannot be read, must fail the request rather
@@ -546,6 +571,7 @@ impl SessionService {
             .refuse_at_session_limit(caller, settings.live_sessions)
             .await?;
 
+        let id = identity.resolve_with(generate_fresh_id);
         let geometry = spec.geometry.unwrap_or_default();
         let session = Session {
             id: id.clone(),
@@ -604,9 +630,9 @@ impl SessionService {
             )
             .await
         {
-            // This identifier was generated for this request and never became
-            // a session the caller can use. Keeping its three reserved event
-            // positions would retain one strong map key per failed creation.
+            // This identifier never became a session the caller can use.
+            // Keeping its three reserved event positions would retain one
+            // strong map key per failed creation.
             self.sequences.forget(&id);
             return Err(store_failed(error));
         }
@@ -767,7 +793,13 @@ impl SessionService {
             quoted_rate_card: None,
         };
         let attempted = self
-            .create_session_with_identity(&caller, spec, id.clone(), Some(origin.clone()))
+            .create_session_with_identity(
+                &caller,
+                spec,
+                CreationIdentity::Exact(id.clone()),
+                Some(origin.clone()),
+                SessionId::generate,
+            )
             .await;
         drop(creation);
         match attempted {

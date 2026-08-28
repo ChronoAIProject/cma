@@ -125,6 +125,106 @@ async fn output_with_no_subscriber_is_not_an_error() {
     assert_eq!(screen.lock().await.repaint_bytes(), b"onetwo".to_vec());
 }
 
+async fn create_with_counted_fresh_identity(
+    service: &Arc<SessionService>,
+    identity: CreationIdentity,
+) -> (Result<Session, CoreError>, usize) {
+    let generations = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&generations);
+    let caller = user("owner");
+    let created = service
+        .create_session_with_identity(&caller, spec(), identity, None, move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            SessionId("sesn_counted_fresh_identity".into())
+        })
+        .await;
+    (created, generations.load(Ordering::SeqCst))
+}
+
+fn service_with_platform_settings(settings: crate::PlatformSettings) -> Arc<SessionService> {
+    crate::test_support::service_with_environments_and_settings(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+        crate::test_support::no_environments(),
+        settings,
+    )
+}
+
+#[tokio::test]
+async fn deployment_capacity_refusal_does_not_generate_a_fresh_session_id() {
+    let requested = crate::SessionSize::new(1_000, 1_024).expect("the test size is valid");
+    let service = service_with_platform_settings(crate::PlatformSettings {
+        deployment_capacity: crate::DeploymentCapacity {
+            cpu_millis: Some(500),
+            memory_mib: Some(512),
+            assumed_session_size: Some(requested),
+        },
+        ..Default::default()
+    });
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Fresh).await;
+
+    assert!(matches!(
+        result,
+        Err(CoreError::DeploymentAtCapacity { .. })
+    ));
+    assert_eq!(generations, 0);
+}
+
+#[tokio::test]
+async fn live_session_limit_refusal_does_not_generate_a_fresh_session_id() {
+    let service = service_with_platform_settings(crate::PlatformSettings {
+        live_sessions: std::num::NonZeroU32::new(1),
+        ..Default::default()
+    });
+    service
+        .create_session(&user("owner"), spec())
+        .await
+        .expect("the first session occupies the only slot");
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Fresh).await;
+
+    assert_eq!(
+        result.expect_err("the only live-session slot is occupied"),
+        CoreError::SessionLimitReached { limit: 1, live: 1 }
+    );
+    assert_eq!(generations, 0);
+}
+
+#[tokio::test]
+async fn admitted_ordinary_creation_generates_one_fresh_session_id() {
+    let service = service(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+    );
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Fresh).await;
+
+    assert_eq!(
+        result.expect("the ordinary session is admitted").id,
+        SessionId("sesn_counted_fresh_identity".into())
+    );
+    assert_eq!(generations, 1);
+}
+
+#[tokio::test]
+async fn admitted_exact_identity_creation_does_not_generate_a_fresh_session_id() {
+    let service = service(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+    );
+    let exact = SessionId("sesn_exact_identity".into());
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Exact(exact.clone())).await;
+
+    assert_eq!(result.expect("the exact identity is admitted").id, exact);
+    assert_eq!(generations, 0);
+}
+
 #[tokio::test]
 async fn a_session_runs_on_the_kernel_this_deployment_configured() {
     // A caller cannot name one, and the type is what says so: the field a
