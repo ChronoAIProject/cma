@@ -3,8 +3,8 @@ import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import type { MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
-import { MemoryPressureNotice, Resources, formatBytes } from './Resources';
+import type { CpuPressure, MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
+import { CpuPressureNotice, MemoryPressureNotice, Resources, formatBytes } from './Resources';
 
 function reading(overrides: Partial<ResourceReading> = {}): ResourceReading {
   return {
@@ -31,6 +31,13 @@ const PRESSURE: MemoryPressure = {
   limitBytes: 1024 ** 3,
   occupancyPermille: 871,
   since: '2026-08-23T04:12:00Z',
+};
+
+const CPU_PRESSURE: CpuPressure = {
+  usedMillis: 850,
+  limitMillis: 1000,
+  occupancyPermille: 850,
+  since: '2026-08-23T04:12:02Z',
 };
 
 describe('the seven resource sentences', () => {
@@ -154,7 +161,7 @@ describe('bounded and unbounded readings', () => {
           cpuMillisUsed: 500,
           cpuMillisLimit: 1000,
         })}
-        pressure={PRESSURE}
+        memoryPressure={PRESSURE}
       />,
     );
 
@@ -164,6 +171,30 @@ describe('bounded and unbounded readings', () => {
       'true',
     );
     expect(screen.getByRole('progressbar', { name: 'CPU' })).not.toHaveAttribute('data-pressure');
+  });
+
+  it('states CPU pressure in the processor figure and accessible label', () => {
+    render(
+      <Resources
+        granted
+        resources={reading({
+          cpuMillisUsed: CPU_PRESSURE.usedMillis,
+          cpuMillisLimit: CPU_PRESSURE.limitMillis,
+          memoryBytesUsed: PRESSURE.usedBytes,
+          memoryBytesLimit: PRESSURE.limitBytes,
+        })}
+        cpuPressure={CPU_PRESSURE}
+      />,
+    );
+
+    expect(screen.getByText('CPU under pressure · 850m / 1 core')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'CPU under pressure' })).toHaveAttribute(
+      'data-pressure',
+      'true',
+    );
+    expect(screen.getByRole('progressbar', { name: 'Memory' })).not.toHaveAttribute(
+      'data-pressure',
+    );
   });
 });
 
@@ -202,6 +233,24 @@ describe('the memory-pressure notice', () => {
 
   it('renders no notice without an open episode', () => {
     const { container } = render(<MemoryPressureNotice pressure={undefined} />);
+    expect(container.firstChild).toBeNull();
+  });
+});
+
+describe('the CPU-pressure notice', () => {
+  it('is actionable, uses processor units, and dismisses independently', async () => {
+    const person = userEvent.setup();
+    render(<CpuPressureNotice pressure={CPU_PRESSURE} />);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('CPU pressure is high');
+    expect(alert).toHaveTextContent('850m used of 1 core');
+    await person.click(screen.getByRole('button', { name: 'Dismiss cpu pressure notice' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('renders no notice without an open episode', () => {
+    const { container } = render(<CpuPressureNotice pressure={undefined} />);
     expect(container.firstChild).toBeNull();
   });
 });

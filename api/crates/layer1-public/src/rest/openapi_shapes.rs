@@ -239,6 +239,8 @@ pub(super) struct PlatformSettings {
     #[serde(default)]
     deployment_capacity: DeploymentCapacity,
     #[serde(default)]
+    cpu_pressure: CpuPressurePolicy,
+    #[serde(default)]
     memory_pressure: MemoryPressurePolicy,
     #[serde(default)]
     pricing: PriceList,
@@ -277,6 +279,16 @@ pub(super) struct DeploymentCapacity {
 /// The deployment's sustained memory-pressure policy.
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct MemoryPressurePolicy {
+    enter_permille: u16,
+    exit_permille: u16,
+    enter_samples: u16,
+    exit_samples: u16,
+    settle_seconds: u32,
+}
+
+/// The deployment's sustained processor-pressure policy.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct CpuPressurePolicy {
     enter_permille: u16,
     exit_permille: u16,
     enter_samples: u16,
@@ -755,6 +767,8 @@ mod tests {
                     core::SessionSize::new(1_000, 2_048).expect("test size is non-zero"),
                 ),
             },
+            cpu_pressure: core::CpuPressurePolicy::new(825, 675, 6, 18, 180)
+                .expect("test pressure policy is valid"),
             memory_pressure: core::MemoryPressurePolicy::new(800, 700, 5, 15, 120)
                 .expect("test pressure policy is valid"),
             pricing: core::PriceList {
@@ -795,6 +809,13 @@ mod tests {
                     cpu_millis: 1_000,
                     memory_mib: 2_048,
                 }),
+            },
+            cpu_pressure: CpuPressurePolicy {
+                enter_permille: 825,
+                exit_permille: 675,
+                enter_samples: 6,
+                exit_samples: 18,
+                settle_seconds: 180,
             },
             memory_pressure: MemoryPressurePolicy {
                 enter_permille: 800,
@@ -850,6 +871,7 @@ mod tests {
             &actual.memory_pressure,
             &mirror.memory_pressure,
         );
+        assert_object_mirror::<CpuPressurePolicy>(&actual.cpu_pressure, &mirror.cpu_pressure);
         assert_object_mirror::<PriceList>(&actual.pricing, &mirror.pricing);
         let actual_card = &actual.pricing.cards[0];
         let mirror_card = &mirror.pricing.cards[0];
@@ -881,6 +903,7 @@ mod tests {
             PlatformSettings::name(),
             SessionBriefing::name(),
             DeploymentCapacity::name(),
+            CpuPressurePolicy::name(),
             MemoryPressurePolicy::name(),
             PriceList::name(),
             RateCard::name(),

@@ -191,7 +191,9 @@ pub use platform::{
 };
 pub use platform_service::PlatformSettingsService;
 pub use pressure::{
-    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample, PressureTransition,
+    CpuPressure, CpuPressurePolicy, CpuPressureSample, CpuPressureTransition,
+    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample,
+    PressureTransition,
 };
 pub use reconcile::Reclaimed;
 pub use recovery_pair::{
