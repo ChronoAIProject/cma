@@ -2,7 +2,8 @@
 
 use super::super::TriggerValidationError;
 use super::lifecycle::{
-    ReportSponsoredUsage, RequestSponsoredUsage, SponsorshipError, SponsorshipService,
+    monotonic_record_time, ReportSponsoredUsage, RequestSponsoredUsage, SponsorshipError,
+    SponsorshipService,
 };
 use super::model::*;
 use super::ports::SponsorshipStoreError;
@@ -223,6 +224,7 @@ impl SponsorshipService {
         }
         let now = self.clock.now();
         validate_timestamp("now", &now)?;
+        let transition_time = monotonic_record_time(&reservation.updated_at, &now);
         let actual = match report.outcome {
             SponsoredUsageState::Settled => {
                 let actual_quota = report.actual_quota.ok_or_else(|| {
@@ -277,7 +279,7 @@ impl SponsorshipService {
             actual_quota: report.actual_quota,
             actual,
             outcome: report.outcome,
-            observed_at: now.clone(),
+            observed_at: transition_time.clone(),
         };
         let audit = SponsoredAuditEvent::privacy_safe(
             &self.audit,
@@ -291,7 +293,7 @@ impl SponsorshipService {
                 SponsoredUsageState::Ambiguous => "ambiguous",
                 SponsoredUsageState::Reserved => unreachable!(),
             },
-            now,
+            transition_time,
         );
         Ok(self.store.reconcile_usage(command, audit).await?)
     }

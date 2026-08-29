@@ -171,10 +171,12 @@ procedures. An AEAD predecessor may be removed only after every ciphertext
 candidate has been rewrapped under the current encryption key. An operational
 predecessor must remain configured while any credential, registration,
 operation, acceptance, activation, grant, cleanup, or usage document contains
-an `sp1` identity bearing that key id. CMA inventories those dependencies at
-startup and refuses to open if a required operational predecessor is absent;
-ciphertext rewrap does not authorize operational-key removal. Encryption and
-operational key ids and bytes must never be reused across the two key classes.
+an `sp1` identity bearing that key id. CMA inventories both key classes at
+startup, decrypts every retained credential, activation receipt, and grant
+receipt, and refuses to open if any referenced AEAD or operational predecessor
+is absent. Ciphertext rewrap does not authorize operational-key removal.
+Encryption and operational key ids and bytes must never be reused across the
+two key classes.
 
 `CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST` is the lowercase SHA-256 digest of
 the domain's canonical JSON tuple, in this exact order:
@@ -194,7 +196,20 @@ the domain's canonical JSON tuple, in this exact order:
 
 The kill switch is deliberately fenced separately and is not part of this
 digest. Changing `enabled` does change the digest. The configured epoch must
-also match the future durable gate fence; never lower, reuse, or guess it.
+also match the future durable gate fence; never lower, reuse, or guess it. At
+restart, the configured and durable fences must be exactly equal, except for
+one fail-closed recovery transition: configured open epoch `N` may resume a
+durably engaged fence at exactly epoch `N+1`, with the same configuration
+digest, so its bounded drain can finish. Every other epoch or switch-state
+drift aborts startup.
+
+Sponsorship recovery times are monotonic record fences, not trusted wall-clock
+observations. A backward service-clock step cannot move a usage reservation or
+grant behind its prior `updated_at`. Definitive global credential retirement
+may complete an earlier rejected uncommitted-grant cleanup only when the same
+Mongo transaction revalidates the exact activation, policy, and advanced
+credential lineage. That transaction releases its allocation and concurrency
+hold exactly once and never calls the provider again.
 
 Do not attempt activation from the current manifests. The implementation above
 does not provide usable sponsorship, release or deployment evidence, or the
