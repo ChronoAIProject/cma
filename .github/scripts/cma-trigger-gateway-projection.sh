@@ -113,7 +113,7 @@ cma_projection_lifecycle() {
     source:source)
       [[ "${predecessor}" == genesis ]] || return 1
       ;;
-    adopted:source|final-reopen:source|fenced-pre-scale:fenced|fenced-post-scale:fenced|fenced-pre-reopen:fenced)
+    adopted:source|final-reopen:source|rollback-source:source|fenced-pre-scale:fenced|fenced-post-scale:fenced|fenced-pre-reopen:fenced)
       [[ "${predecessor}" =~ ^[0-9a-f]{64}$ ]] || return 1
       ;;
     *) return 1 ;;
@@ -337,7 +337,7 @@ cma_projection_capture_state() {
   local state_dir="$1"
   local capture_purpose="${2:-release}"
   local gateway_file="${state_dir}/gateway.json"
-  local route_mode
+  local route_mode lifecycle_stage="${CMA_GATEWAY_PROJECTION_STAGE:-}"
 
   mkdir -m 700 "${state_dir}"
   cma_projection_kubectl "${CMA_GATEWAY_OWNER_NAMESPACE}" get gateway \
@@ -384,6 +384,70 @@ cma_projection_capture_state() {
   cma_projection_kubectl "${CMA_GATEWAY_NAMESPACE}" get service cma-api cma-web \
     -o json > "${state_dir}/services.json" || \
     cma_projection_die "could not capture CMA Services"
+  cma_projection_kubectl "${CMA_GATEWAY_NAMESPACE}" get deployment cma-api -o json | \
+    jq '{
+      apiVersion,kind,
+      metadata:{name:.metadata.name,namespace:.metadata.namespace,uid:.metadata.uid,
+                resourceVersion:.metadata.resourceVersion,generation:.metadata.generation,
+                deletionTimestamp:.metadata.deletionTimestamp},
+      spec,
+      status:{observedGeneration:.status.observedGeneration,
+              replicas:(.status.replicas // 0),updatedReplicas:(.status.updatedReplicas // 0),
+              readyReplicas:(.status.readyReplicas // 0),
+              availableReplicas:(.status.availableReplicas // 0),
+              unavailableReplicas:(.status.unavailableReplicas // 0),
+              collisionCount:(.status.collisionCount // 0)}
+    }' > "${state_dir}/api-deployment-workload.json" || \
+    cma_projection_die "could not capture the full cma-api Deployment workload proof"
+  jq '{
+      apiVersion,kind,
+      metadata:{name:.metadata.name,namespace:.metadata.namespace,uid:.metadata.uid,
+                resourceVersion:.metadata.resourceVersion,generation:.metadata.generation,
+                deletionTimestamp:.metadata.deletionTimestamp},
+      spec:{replicas:.spec.replicas},
+      status:{observedGeneration:.status.observedGeneration,
+              replicas:(.status.replicas // 0),updatedReplicas:(.status.updatedReplicas // 0),
+              readyReplicas:(.status.readyReplicas // 0),
+              availableReplicas:(.status.availableReplicas // 0),
+              unavailableReplicas:(.status.unavailableReplicas // 0)}
+    }' "${state_dir}/api-deployment-workload.json" \
+    > "${state_dir}/api-deployment-scale.json" || \
+    cma_projection_die "could not capture the cma-api Deployment scale root"
+  if [[ "${lifecycle_stage}" == fenced-pre-reopen || \
+        "${lifecycle_stage}" == final-reopen ]]; then
+    [[ -n "${CMA_FINAL_REPLICA_SET:-}" && -n "${CMA_FINAL_POD:-}" ]] || \
+      cma_projection_die "the retained ReplicaSet and Pod identities are required for reopen capture"
+    cma_projection_kubectl "${CMA_GATEWAY_NAMESPACE}" get replicaset \
+      "${CMA_FINAL_REPLICA_SET}" -o json | jq '{
+        apiVersion,kind,
+        metadata:{name:.metadata.name,namespace:.metadata.namespace,uid:.metadata.uid,
+                  resourceVersion:.metadata.resourceVersion,generation:.metadata.generation,
+                  deletionTimestamp:.metadata.deletionTimestamp,labels:.metadata.labels,
+                  ownerReferences:.metadata.ownerReferences},
+        spec,
+        status:{observedGeneration:.status.observedGeneration,
+                replicas:(.status.replicas // 0),fullyLabeledReplicas:(.status.fullyLabeledReplicas // 0),
+                readyReplicas:(.status.readyReplicas // 0),
+                availableReplicas:(.status.availableReplicas // 0)}
+      }' > "${state_dir}/api-replicaset-workload.json" || \
+      cma_projection_die "could not capture the retained cma-api ReplicaSet workload proof"
+    cma_projection_kubectl "${CMA_GATEWAY_NAMESPACE}" get pod \
+      "${CMA_FINAL_POD}" -o json | jq '{
+        apiVersion,kind,
+        metadata:{name:.metadata.name,namespace:.metadata.namespace,uid:.metadata.uid,
+                  resourceVersion:.metadata.resourceVersion,
+                  deletionTimestamp:.metadata.deletionTimestamp,labels:.metadata.labels,
+                  ownerReferences:.metadata.ownerReferences},
+        spec,
+        status:{podIP:.status.podIP,phase:.status.phase,conditions:.status.conditions,
+                containerStatuses:.status.containerStatuses}
+      }' > "${state_dir}/api-pod-workload.json" || \
+      cma_projection_die "could not capture the retained cma-api Pod workload proof"
+  else
+    printf '%s\n' null > "${state_dir}/api-replicaset-workload.json"
+    printf '%s\n' null > "${state_dir}/api-pod-workload.json"
+    printf '%s\n' null > "${state_dir}/api-deployment-workload.json"
+  fi
   for service_name in cma-api cma-web; do
     cma_projection_kubectl "${CMA_GATEWAY_NAMESPACE}" get endpointslice \
       -l "kubernetes.io/service-name=${service_name}" -o json \
@@ -460,6 +524,10 @@ cma_projection_capture_state() {
     --slurpfile health "${state_dir}/health-policy.json" \
     --slurpfile policies "${state_dir}/backend-policies.json" \
     --slurpfile services "${state_dir}/services.json" \
+    --slurpfile api_deployment_scale "${state_dir}/api-deployment-scale.json" \
+    --slurpfile api_deployment_workload "${state_dir}/api-deployment-workload.json" \
+    --slurpfile api_replicaset_workload "${state_dir}/api-replicaset-workload.json" \
+    --slurpfile api_pod_workload "${state_dir}/api-pod-workload.json" \
     --slurpfile api_slices "${state_dir}/cma-api-endpointslices.json" \
     --slurpfile web_slices "${state_dir}/cma-web-endpointslices.json" \
     --slurpfile api_pods "${state_dir}/cma-api-pods.json" \
@@ -484,6 +552,10 @@ cma_projection_capture_state() {
           admissionPolicy:$admission_policy[0],admissionBinding:$admission_binding[0],
           routes:$routes[0],healthPolicy:$health[0],
           backendPolicies:$policies[0],services:$services[0],
+          apiDeploymentScale:$api_deployment_scale[0],
+          apiDeploymentWorkload:$api_deployment_workload[0],
+          apiReplicaSetWorkload:$api_replicaset_workload[0],
+          apiPodWorkload:$api_pod_workload[0],
           endpointSlices:{"cma-api":$api_slices[0],"cma-web":$web_slices[0]},
           pods:{"cma-api":$api_pods[0],"cma-web":$web_pods[0]},nodes:$nodes[0]
         },
@@ -519,6 +591,8 @@ cma_projection_capture() {
       cma_projection_die "existing capture directory is partial, tampered, or not reusable"
     cma_projection_check_live "${output_dir}/projection.json" >/dev/null || \
       cma_projection_die "existing capture no longer equals live state"
+    cma_projection_sync_published_directory "${output_dir}" "${parent_dir}" || \
+      cma_projection_die "existing projection publication could not be durably re-synced"
     projection_sha256="$(cma_projection_sha256_file "${output_dir}/projection.json")"
     printf 'CMA Gateway projection directory: %s\n' "${output_dir}"
     printf 'CMA Gateway projection SHA-256: %s\n' "${projection_sha256}"
@@ -559,11 +633,16 @@ cma_projection_capture() {
   cma_projection_validate_published_capture \
     "${work_dir}" "${mode}" "${lifecycle}" || \
     cma_projection_die "projection receipt failed its closed pre-publication validation"
-  if ! cma_projection_publish_directory "${work_dir}" "${output_dir}"; then
+  if cma_projection_publish_directory "${work_dir}" "${output_dir}"; then
+    cma_projection_sync_published_directory "${output_dir}" "${parent_dir}" || \
+      cma_projection_die "projection publication directory entry could not be durably synced"
+  else
     cma_projection_validate_published_capture \
       "${output_dir}" "${mode}" "${lifecycle}" || \
       cma_projection_die "projection publication raced with a non-equivalent destination"
     rm -rf "${work_dir}"
+    cma_projection_sync_published_directory "${output_dir}" "${parent_dir}" || \
+      cma_projection_die "concurrent projection publication could not be durably re-synced"
     cma_projection_check_live "${output_dir}/projection.json" >/dev/null || \
       cma_projection_die "the concurrently published projection does not equal live state"
     projection_sha256="$(cma_projection_sha256_file "${output_dir}/projection.json")" || \
@@ -618,8 +697,26 @@ cma_projection_publish_directory() {
     source, destination = ARGV
     raise "destination exists" if File.exist?(destination) || File.symlink?(destination)
     File.rename(source, destination)
-    File.open(File.dirname(destination), File::RDONLY) { |directory| directory.fsync }
   ' "${source_dir}" "${destination_dir}"
+}
+
+cma_projection_sync_published_directory() {
+  local published_dir="$1"
+  local parent_dir="$2"
+
+  env -i PATH="${PATH}" LC_ALL=C ruby --disable-gems -e '
+    published, parent = ARGV
+    raise "published path is not an exact directory" unless
+      File.directory?(published) && !File.symlink?(published)
+    Dir.children(published).sort.each do |entry|
+      path = File.join(published, entry)
+      stat = File.lstat(path)
+      raise "published entry is not a regular file" unless stat.file? && !stat.symlink?
+      File.open(path, File::RDONLY) { |file| file.fsync }
+    end
+    File.open(published, File::RDONLY) { |directory| directory.fsync }
+    File.open(parent, File::RDONLY) { |directory| directory.fsync }
+  ' "${published_dir}" "${parent_dir}"
 }
 
 cma_projection_validate_review_capture() {
@@ -718,6 +815,8 @@ cma_projection_capture_review() {
     cma_projection_die "review evidence failed its closed self-validation"
   cma_projection_publish_directory "${work_dir}" "${output_dir}" || \
     cma_projection_die "review evidence could not be atomically published"
+  cma_projection_sync_published_directory "${output_dir}" "${parent_dir}" || \
+    cma_projection_die "review evidence publication could not be durably synced"
   trap - EXIT HUP INT QUIT TERM
   printf 'CMA Gateway non-consumable review capture: %s\n' "${output_dir}"
   printf 'CMA Gateway candidate behavior policy SHA-256: %s\n' "${candidate_digest}"
@@ -737,11 +836,15 @@ cma_projection_check_live() {
   lifecycle="$(jq -cer '
     if .lifecycle.stage == "source" and .lifecycle.predecessorSha256 == "genesis" then .lifecycle
     elif (.lifecycle.stage == "adopted" or .lifecycle.stage == "final-reopen" or
+          .lifecycle.stage == "rollback-source" or
           .lifecycle.stage == "fenced-pre-scale" or .lifecycle.stage == "fenced-post-scale" or
           .lifecycle.stage == "fenced-pre-reopen") and
          (.lifecycle.predecessorSha256 | test("^[0-9a-f]{64}$")) then .lifecycle
     else error("projection lifecycle binding is invalid") end
   ' "${receipt_file}")" || cma_projection_die "projection lifecycle binding could not be read"
+  CMA_GATEWAY_PROJECTION_STAGE="$(printf '%s' "${lifecycle}" | jq -er .stage)" || \
+    cma_projection_die "projection lifecycle stage could not be selected for live comparison"
+  export CMA_GATEWAY_PROJECTION_STAGE
   work_dir="$(mktemp -d)" || cma_projection_die "live comparison work directory could not be created"
   [[ -n "${work_dir}" && -d "${work_dir}" && ! -L "${work_dir}" ]] || \
     cma_projection_die "live comparison work directory is not exact"
