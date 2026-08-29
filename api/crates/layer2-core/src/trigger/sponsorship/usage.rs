@@ -81,11 +81,10 @@ impl SponsorshipService {
             .ok_or(SponsorshipError::PolicyUnavailable)?;
         let stored_credential = self
             .store
-            .credential(&policy.credential_id)
+            .credential_record(&policy.credential_id)
             .await?
             .ok_or(SponsorshipError::CredentialUnavailable)?;
-        stored_credential.validate()?;
-        let credential = stored_credential.record;
+        let credential = stored_credential;
         if !policy.is_available_at(&now)
             || credential.state != SponsoredCredentialState::Active
             || grant.policy_generation != policy.generation
