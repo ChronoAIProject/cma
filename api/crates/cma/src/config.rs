@@ -5,6 +5,7 @@
 //! production, so the two must be changed together.
 
 use std::collections::BTreeSet;
+use std::io::Read;
 use std::num::NonZeroU32;
 
 use axum::http::HeaderValue;
@@ -936,6 +937,7 @@ impl SponsorshipRuntimeConfig {
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING",
                 Some(encryption_keyring_file),
                 None,
+                Some(MAX_FILE_SECRET_BYTES),
             )?
             .ok_or_else(|| {
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE did not resolve a mounted secret"
@@ -948,6 +950,7 @@ impl SponsorshipRuntimeConfig {
                 "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING",
                 Some(operational_keyring_file),
                 None,
+                Some(MAX_FILE_SECRET_BYTES),
             )?
             .ok_or_else(|| {
                 "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE did not resolve a mounted secret"
@@ -960,6 +963,7 @@ impl SponsorshipRuntimeConfig {
                 "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY",
                 Some(audit_hmac_key_file),
                 None,
+                Some(MAX_FILE_SECRET_BYTES),
             )?
             .ok_or_else(|| {
                 "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE did not resolve a mounted secret"
@@ -1798,6 +1802,7 @@ fn optional_file_secret(
         forbidden_inline_key,
         strict_env(file_key)?,
         strict_env(forbidden_inline_key)?,
+        None,
     )
 }
 
@@ -1806,6 +1811,7 @@ fn optional_file_secret_from_values(
     forbidden_inline_key: &str,
     path: Option<String>,
     inline: Option<String>,
+    maximum_file_bytes: Option<usize>,
 ) -> Result<Option<String>, String> {
     let inline = inline.map(zeroize::Zeroizing::new);
     if inline
@@ -1817,10 +1823,28 @@ fn optional_file_secret_from_values(
         ));
     }
     if let Some(path) = path.filter(|value| !value.trim().is_empty()) {
-        let value = zeroize::Zeroizing::new(
-            std::fs::read_to_string(&path)
-                .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?,
-        );
+        let value = match maximum_file_bytes {
+            Some(maximum) => {
+                let file = std::fs::File::open(&path)
+                    .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?;
+                let mut bytes = zeroize::Zeroizing::new(Vec::new());
+                file.take(u64::try_from(maximum).unwrap_or(u64::MAX).saturating_add(1))
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?;
+                if bytes.len() > maximum {
+                    return Err(format!(
+                        "{file_key} exceeds the {maximum}-byte secret-file limit"
+                    ));
+                }
+                let decoded = std::str::from_utf8(bytes.as_slice())
+                    .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?;
+                zeroize::Zeroizing::new(decoded.to_owned())
+            }
+            None => zeroize::Zeroizing::new(
+                std::fs::read_to_string(&path)
+                    .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?,
+            ),
+        };
         let value = value.trim();
         if value.is_empty() {
             return Err(format!("{file_key} at {path} contains an empty secret"));
@@ -2864,6 +2888,15 @@ mod tests {
             .expect_err("an oversized sponsorship keyring fails closed");
         assert!(error.contains("secret-file limit"), "{error}");
 
+        let mut whitespace_padded = vec![b' '; MAX_FILE_SECRET_BYTES];
+        whitespace_padded.extend_from_slice(b"fixture-encryption-keyring\n");
+        std::fs::write(&files.keyring, whitespace_padded)
+            .expect("the whitespace-padded fixture is writable");
+        let error = sponsorship_config(&complete)
+            .expect_err("whitespace cannot bypass the complete-file byte limit");
+        assert!(error.contains("CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE"));
+        assert!(error.contains("secret-file limit"), "{error}");
+
         std::fs::write(&files.keyring, "fixture-encryption-keyring\n")
             .expect("the keyring fixture is restored");
         let config = sponsorship_config(&complete)
@@ -3356,6 +3389,7 @@ mod tests {
             "TRIGGER_INLINE",
             Some(path.to_string_lossy().into_owned()),
             None,
+            None,
         )
         .expect_err("an empty mounted secret fails closed");
         assert!(error.contains("TRIGGER_FILE"));
@@ -3366,6 +3400,7 @@ mod tests {
             "TRIGGER_INLINE",
             Some(path.to_string_lossy().into_owned()),
             Some("inline-secret".into()),
+            None,
         )
         .expect_err("an inline value cannot coexist with mounted custody");
         assert!(error.contains("TRIGGER_INLINE"));
@@ -3375,6 +3410,7 @@ mod tests {
             "TRIGGER_FILE",
             "TRIGGER_INLINE",
             Some(path.to_string_lossy().into_owned()),
+            None,
             None,
         )
         .expect("the mounted secret is readable");
@@ -3386,14 +3422,19 @@ mod tests {
             "TRIGGER_INLINE",
             None,
             Some(" inline-secret ".into()),
+            None,
         )
         .expect_err("inline provider credentials are never accepted")
         .contains("TRIGGER_INLINE"));
-        assert!(
-            optional_file_secret_from_values("TRIGGER_FILE", "TRIGGER_INLINE", None, None)
-                .expect("an undeclared secret is absent")
-                .is_none()
-        );
+        assert!(optional_file_secret_from_values(
+            "TRIGGER_FILE",
+            "TRIGGER_INLINE",
+            None,
+            None,
+            None
+        )
+        .expect("an undeclared secret is absent")
+        .is_none());
     }
 
     #[test]
