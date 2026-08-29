@@ -548,7 +548,7 @@ impl MongoSponsorshipStore {
                         )
                     })?;
                 let stored = read_gate(stored)?;
-                if stored.configuration_digest != initial.configuration_digest {
+                if !startup_gate_is_compatible(initial, &stored) {
                     return Err(SponsorshipStoreError::GateChanged);
                 }
                 Ok(())
@@ -842,7 +842,7 @@ impl MongoSponsorshipStore {
             .await
             .map_err(|error| stored_read_failure("inventory grant operational identities", error))?
         {
-            read_grant_record(&self.operational, &grant)?;
+            read_grant(&self.cipher, &self.operational, grant)?;
         }
         let mut reservation_aliases = BTreeSet::new();
         let mut reservations = self.reservations.find(doc! {}).await.map_err(|error| {
@@ -2070,6 +2070,34 @@ fn require_grant_policy_bindings(
         ));
     }
     Ok(())
+}
+
+fn credential_retirement_covers_activation(
+    activation: &GrantActivationIntent,
+    policy: &SponsorshipPolicy,
+    credential: &SponsoredCredentialRecord,
+) -> bool {
+    let confirmed_revocation =
+        credential
+            .last_completed_operation
+            .as_ref()
+            .is_some_and(|operation| {
+                operation.kind == ProviderOperationKind::RevokeCredential
+                    && operation.outcome == CompletedProviderOperationOutcome::Confirmed
+            });
+    credential.state == SponsoredCredentialState::Revoked
+        && credential.material_state == SponsoredCredentialMaterialState::Retired
+        && credential.revoked_at.is_some()
+        && confirmed_revocation
+        && policy.id == activation.policy_id
+        && policy.generation >= activation.policy_generation
+        && policy.credential_id == credential.id
+        && credential.generation > activation.credential_generation
+        && credential.owner == policy.owner
+        && credential.authority.provider == policy.provider_policy.provider
+        && credential.authority.provider_policy_key == policy.provider_policy.provider_policy_key
+        && activation.allocation.quota == policy.per_launch_quota
+        && activation.allocation.spend_micros == policy.per_launch_budget_micros
 }
 
 fn read_grant(
@@ -6711,6 +6739,25 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     .cleanup_operation
                     .as_ref()
                     .ok_or_else(|| custom(SponsorshipStoreError::StaleGeneration))?;
+                let global_credential_retirement = if command.global_credential_retirement {
+                    let (policy, _) = store
+                        .policy_in_transaction(session, &stored.policy_id)
+                        .await?
+                        .ok_or_else(|| custom(SponsorshipStoreError::StaleGeneration))?;
+                    let credential = store
+                        .credential_record_in_transaction(session, &policy.credential_id)
+                        .await?
+                        .ok_or_else(|| custom(SponsorshipStoreError::StaleGeneration))?;
+                    credential_retirement_covers_activation(&stored, &policy, &credential)
+                } else {
+                    false
+                };
+                let cleanup_completion_is_authorized = matches!(
+                    stored_operation.phase,
+                    ProviderOperationPhase::Attempting | ProviderOperationPhase::Ambiguous
+                ) || (stored_operation.phase
+                    == ProviderOperationPhase::Rejected
+                    && global_credential_retirement);
                 if stored.revision != command.expected_revision
                     || stored.lease.as_ref().map(|lease| lease.holder.as_str())
                         != Some(command.holder.as_str())
@@ -6724,10 +6771,8 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     || command.intent.capacity_held
                     || command.intent.lease.is_some()
                     || command.intent.cleanup_operation.is_some()
-                    || !matches!(
-                        stored_operation.phase,
-                        ProviderOperationPhase::Attempting | ProviderOperationPhase::Ambiguous
-                    )
+                    || (command.global_credential_retirement && !global_credential_retirement)
+                    || !cleanup_completion_is_authorized
                     || !operation_lineage_matches(stored_operation, &command.operation)
                     || command.intent.updated_at < stored.updated_at
                     || command.audit.occurred_at != command.intent.updated_at
@@ -7533,7 +7578,9 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         SponsoredUsageState::Settled
                             | SponsoredUsageState::Released
                             | SponsoredUsageState::Ambiguous
-                    ) {
+                    ) || command.observed_at < current.updated_at
+                        || audit.occurred_at != command.observed_at
+                    {
                         return Err(custom(SponsorshipStoreError::Conflict));
                     }
                     if let Some(actual) = command.actual.as_ref() {
@@ -7572,7 +7619,9 @@ impl SponsorshipStore for MongoSponsorshipStore {
                             .filter(|_| command.outcome == SponsoredUsageState::Settled)
                         {
                             grant.usage = summary_add(&grant.usage, actual).map_err(custom)?;
-                            grant.updated_at = replacement.updated_at.clone();
+                            if grant.updated_at < replacement.updated_at {
+                                grant.updated_at = replacement.updated_at.clone();
+                            }
                             let becomes_exhausted = !capacity_was_released
                                 && matches!(
                                     grant.state,
@@ -8338,6 +8387,17 @@ fn validate_transaction_topology_reply(reply: &Document) -> Result<(), Sponsorsh
     Err(SponsorshipStoreError::Unavailable(
         "Mongo sponsorship persistence requires a replica set or mongos; standalone deployments cannot enforce its transactions".into(),
     ))
+}
+
+fn startup_gate_is_compatible(
+    configured: &SponsorshipGateFence,
+    stored: &SponsorshipGateFence,
+) -> bool {
+    configured == stored
+        || (configured.configuration_digest == stored.configuration_digest
+            && !configured.kill_switch_engaged
+            && stored.kill_switch_engaged
+            && configured.epoch.checked_add(1) == Some(stored.epoch))
 }
 
 fn gate_doc(fence: &SponsorshipGateFence) -> Result<GateDoc, SponsorshipStoreError> {
@@ -9281,6 +9341,92 @@ mod tests {
             read_gate(negative),
             Err(SponsorshipStoreError::Malformed(_))
         ));
+
+        let mut missing_engagement = gate_doc(&fence).unwrap();
+        missing_engagement.kill_switch_engagement_id = None;
+        assert!(matches!(
+            read_gate(missing_engagement),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+
+        let mut malformed_engagement = gate_doc(&fence).unwrap();
+        malformed_engagement.kill_switch_engagement_id = Some("not-a-uuid".into());
+        assert!(matches!(
+            read_gate(malformed_engagement),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+
+        let mut unexpected_engagement = gate_doc(&SponsorshipGateFence {
+            kill_switch_engaged: false,
+            ..fence
+        })
+        .unwrap();
+        unexpected_engagement.kill_switch_engagement_id = Some(Uuid::new_v4().to_string());
+        assert!(matches!(
+            read_gate(unexpected_engagement),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn sponsorship_startup_gate_accepts_only_exact_or_single_engagement_transition() {
+        let configured = SponsorshipGateFence {
+            configuration_digest: "a".repeat(64),
+            epoch: 7,
+            kill_switch_engaged: false,
+        };
+        let engaged = SponsorshipGateFence {
+            epoch: 8,
+            kill_switch_engaged: true,
+            ..configured.clone()
+        };
+        assert!(startup_gate_is_compatible(&configured, &configured));
+        assert!(startup_gate_is_compatible(&configured, &engaged));
+
+        let configured_engaged = SponsorshipGateFence {
+            epoch: 8,
+            kill_switch_engaged: true,
+            ..configured.clone()
+        };
+        assert!(startup_gate_is_compatible(
+            &configured_engaged,
+            &configured_engaged
+        ));
+
+        for incompatible in [
+            SponsorshipGateFence {
+                epoch: 8,
+                ..configured.clone()
+            },
+            SponsorshipGateFence {
+                epoch: 9,
+                kill_switch_engaged: true,
+                ..configured.clone()
+            },
+            SponsorshipGateFence {
+                configuration_digest: "b".repeat(64),
+                epoch: 8,
+                kill_switch_engaged: true,
+            },
+        ] {
+            assert!(!startup_gate_is_compatible(&configured, &incompatible));
+        }
+        assert!(!startup_gate_is_compatible(
+            &configured_engaged,
+            &configured
+        ));
+
+        let exhausted = SponsorshipGateFence {
+            epoch: u64::MAX,
+            ..configured
+        };
+        assert!(!startup_gate_is_compatible(
+            &exhausted,
+            &SponsorshipGateFence {
+                kill_switch_engaged: true,
+                ..exhausted.clone()
+            }
+        ));
     }
 
     #[test]
@@ -9966,6 +10112,443 @@ mod tests {
             .drop()
             .await
             .expect("temporary sponsorship database drops");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set or mongos"]
+    async fn real_mongo_startup_rejects_an_unconfigured_grant_receipt_key() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("test Mongo connects");
+        let database_name = format!(
+            "cma_grant_key_{}_{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        );
+        assert!(database_name.len() <= 63);
+        let gate = SponsorshipGateFence {
+            configuration_digest: "e".repeat(64),
+            epoch: 1,
+            kill_switch_engaged: false,
+        };
+        let store = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            rotating_test_keyring(),
+            test_operational_keyring(),
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+        let (grant, receipt) = grant_fixture(SponsoredGrantState::Active, "2027-01-02T03:04:05Z");
+        store
+            .grants
+            .insert_one(
+                grant_doc(
+                    &retiring_test_cipher(),
+                    &test_operational(),
+                    &grant,
+                    &receipt,
+                    &grant.sponsor_subject.0,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let startup_error = match MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            rotated_test_keyring(),
+            test_operational_keyring(),
+            gate,
+        )
+        .await
+        {
+            Ok(_) => panic!("startup must reject an unconfigured grant receipt key"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            startup_error,
+            SponsorshipStoreError::Unavailable(_)
+        ));
+        assert!(startup_error.to_string().contains("unavailable key id"));
+
+        client
+            .database(&database_name)
+            .drop()
+            .await
+            .expect("temporary grant-key database drops");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set or mongos"]
+    async fn real_mongo_retired_credential_completes_rejected_cleanup_exactly_once() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("test Mongo connects");
+        let database_name = format!(
+            "cma_cleanup_{}_{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        );
+        assert!(database_name.len() <= 63);
+        let gate = SponsorshipGateFence {
+            configuration_digest: "f".repeat(64),
+            epoch: 1,
+            kill_switch_engaged: false,
+        };
+        let store = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            test_keyring(),
+            test_operational_keyring(),
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+
+        let policy = policy_fixture();
+        let mut credential = credential_fixture();
+        credential.id = policy.credential_id.clone();
+        credential.owner = policy.owner.clone();
+        credential.authority.provider = policy.provider_policy.provider.clone();
+        credential.authority.provider_policy_key =
+            policy.provider_policy.provider_policy_key.clone();
+        let mut session = client.start_session().await.unwrap();
+        let now = store.database_now(&mut session).await.unwrap();
+        let now_string = database_time_string(now);
+        credential.state = SponsoredCredentialState::Revoked;
+        credential.material_state = SponsoredCredentialMaterialState::Retired;
+        credential.generation = 2;
+        credential.updated_at = now_string.clone();
+        credential.revoked_at = Some(now_string.clone());
+        credential.last_completed_operation = Some(CompletedProviderOperation {
+            kind: ProviderOperationKind::RevokeCredential,
+            provider_request_id: "c".repeat(64),
+            client_request_id_digest: test_operational()
+                .pseudonymize(
+                    layer2_core::SponsorshipOperationalDomain::CredentialOperationRequest,
+                    &["retired-cleanup-fixture"],
+                )
+                .unwrap()
+                .current()
+                .as_str()
+                .to_string(),
+            payload_digest: "d".repeat(64),
+            outcome: CompletedProviderOperationOutcome::Confirmed,
+            completed_at: now_string.clone(),
+        });
+        credential.validate().unwrap();
+
+        let (_, receipt) = grant_fixture(SponsoredGrantState::Active, "2027-01-02T03:04:05Z");
+        let mut intent = activation_fixture(
+            &policy.id,
+            &gate,
+            GrantActivationState::ProviderAmbiguous,
+            &now_string,
+            true,
+        );
+        let holder = test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ActivationRequest,
+                &[&intent.launch_id.0, "cleanup-holder"],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        let (lease, lease_expiry) = activation_lease(holder.clone(), now).unwrap();
+        let cleanup_operation = PendingProviderOperation {
+            kind: ProviderOperationKind::RevokeUncommittedGrant,
+            phase: ProviderOperationPhase::Rejected,
+            provider_request_id: "a".repeat(64),
+            client_request_id_digest: test_operational()
+                .pseudonymize(
+                    layer2_core::SponsorshipOperationalDomain::ActivationRequest,
+                    &[&intent.launch_id.0, "cleanup-request"],
+                )
+                .unwrap()
+                .current()
+                .as_str()
+                .to_string(),
+            payload_digest: "b".repeat(64),
+            requested_at: lease.acquired_at.clone(),
+            attempted_at: Some(lease.acquired_at.clone()),
+        };
+        intent.state = GrantActivationState::CleanupPending;
+        intent.revision = 3;
+        intent.lease = Some(lease);
+        intent.provider_receipt = Some(receipt);
+        intent.cleanup_operation = Some(cleanup_operation.clone());
+        intent.updated_at = now_string.clone();
+        intent.validate().unwrap();
+
+        let usage = SponsorshipPolicyUsage {
+            consumed: SponsoredUsageSummary::default(),
+            reserved: intent.allocation.clone(),
+            active_launches: 1,
+        };
+        store
+            .policies
+            .insert_one(policy_doc(&policy, &usage).unwrap())
+            .await
+            .unwrap();
+        store
+            .credentials
+            .insert_one(
+                credential_doc(
+                    &store.cipher,
+                    &credential,
+                    &test_provider_identity().encoded_candidates(),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .activations
+            .insert_one(activation_doc(&store.cipher, &intent, Some(lease_expiry)).unwrap())
+            .await
+            .unwrap();
+
+        let expected_revision = intent.revision;
+        let mut completed = intent.clone();
+        completed.revision += 1;
+        completed.state = GrantActivationState::Cleaned;
+        completed.capacity_held = false;
+        completed.lease = None;
+        completed.cleanup_operation = None;
+        completed.validate().unwrap();
+        let audit = SponsoredAuditEvent {
+            event_id: Uuid::new_v4().to_string(),
+            action: SponsoredAuditAction::UncommittedGrantRevoked,
+            actor_digest: "1".repeat(64),
+            policy_id: Some(policy.id.clone()),
+            grant_id: None,
+            stable_request_id_digest: None,
+            outcome_code: "provider_authority_revoked".into(),
+            occurred_at: completed.updated_at.clone(),
+        };
+        let command = CompleteGrantActivationCleanup {
+            expected_revision,
+            holder,
+            operation: cleanup_operation,
+            global_credential_retirement: true,
+            intent: completed.clone(),
+            audit,
+        };
+        let mut missing_signal = command.clone();
+        missing_signal.global_credential_retirement = false;
+        assert_eq!(
+            store
+                .complete_grant_activation_cleanup(missing_signal)
+                .await,
+            Err(SponsorshipStoreError::StaleGeneration)
+        );
+
+        assert_eq!(
+            store
+                .complete_grant_activation_cleanup(command.clone())
+                .await
+                .unwrap(),
+            completed
+        );
+        assert_eq!(
+            store
+                .complete_grant_activation_cleanup(command)
+                .await
+                .unwrap(),
+            completed
+        );
+        assert_eq!(
+            store.policy_usage(&policy.id).await.unwrap(),
+            SponsorshipPolicyUsage::default()
+        );
+        assert_eq!(
+            store
+                .audits
+                .count_documents(doc! { "policy_id": &policy.id.0 })
+                .await
+                .unwrap(),
+            1
+        );
+
+        client
+            .database(&database_name)
+            .drop()
+            .await
+            .expect("temporary cleanup database drops");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set or mongos"]
+    async fn real_mongo_usage_reconciliation_preserves_reservation_and_grant_time() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("test Mongo connects");
+        let database_name = format!(
+            "cma_usage_time_{}_{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        );
+        assert!(database_name.len() <= 63);
+        let gate = SponsorshipGateFence {
+            configuration_digest: "6".repeat(64),
+            epoch: 1,
+            kill_switch_engaged: false,
+        };
+        let store = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            test_keyring(),
+            test_operational_keyring(),
+            gate,
+        )
+        .await
+        .unwrap();
+
+        let (grant, receipt) = grant_fixture(SponsoredGrantState::Active, "2027-01-02T03:04:05Z");
+        let mut policy = policy_fixture();
+        policy.id = grant.policy_id.clone();
+        policy.tenant_id = grant.tenant_id.clone();
+        policy.owner = SponsorBillingOwner::Developer {
+            subject: grant.sponsor_subject.clone(),
+            display_name: "Grant Sponsor".into(),
+        };
+        policy.per_launch_quota = grant.allocation.quota;
+        policy.aggregate_quota = grant.allocation.quota;
+        policy.per_launch_budget_micros = grant.allocation.spend_micros;
+        policy.aggregate_budget_micros = grant.allocation.spend_micros;
+        policy.validate().unwrap();
+        let policy_usage = SponsorshipPolicyUsage {
+            consumed: SponsoredUsageSummary::default(),
+            reserved: grant.allocation.clone(),
+            active_launches: 1,
+        };
+        let reservation =
+            usage_reservation_fixture(grant.id.clone(), SponsoredUsageState::Ambiguous);
+        let request_aliases = test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::UsageRequest,
+                &[&grant.id.0, "usage-time-fixture"],
+            )
+            .unwrap();
+        let mut grant_document = grant_doc(
+            &store.cipher,
+            &store.operational,
+            &grant,
+            &receipt,
+            &grant.sponsor_subject.0,
+        )
+        .unwrap();
+        grant_document.unresolved_usage = reservation.reserved.clone();
+
+        store
+            .policies
+            .insert_one(policy_doc(&policy, &policy_usage).unwrap())
+            .await
+            .unwrap();
+        store.grants.insert_one(grant_document).await.unwrap();
+        store
+            .reservations
+            .insert_one(
+                reservation_doc(
+                    &store.operational,
+                    &reservation,
+                    &request_aliases.encoded_candidates(),
+                    &policy.id,
+                    DateTime::parse_rfc3339_str(TEST_NOW).unwrap(),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let stale_audit = SponsoredAuditEvent {
+            event_id: Uuid::new_v4().to_string(),
+            action: SponsoredAuditAction::UsageReconciled,
+            actor_digest: "2".repeat(64),
+            policy_id: None,
+            grant_id: None,
+            stable_request_id_digest: None,
+            outcome_code: "released".into(),
+            occurred_at: "2026-01-02T03:04:04Z".into(),
+        };
+        assert_eq!(
+            store
+                .reconcile_usage(
+                    ReconcileSponsoredUsage {
+                        reservation_id: reservation.id.clone(),
+                        request_fingerprint: reservation.request_fingerprint.clone(),
+                        actual_quota: None,
+                        actual: None,
+                        outcome: SponsoredUsageState::Released,
+                        observed_at: stale_audit.occurred_at.clone(),
+                    },
+                    stale_audit,
+                )
+                .await,
+            Err(SponsorshipStoreError::Conflict)
+        );
+
+        let transition_time = "2026-01-02T03:04:06Z";
+        let audit = SponsoredAuditEvent {
+            event_id: Uuid::new_v4().to_string(),
+            action: SponsoredAuditAction::UsageReconciled,
+            actor_digest: "2".repeat(64),
+            policy_id: None,
+            grant_id: None,
+            stable_request_id_digest: None,
+            outcome_code: "settled".into(),
+            occurred_at: transition_time.into(),
+        };
+        let command = ReconcileSponsoredUsage {
+            reservation_id: reservation.id.clone(),
+            request_fingerprint: reservation.request_fingerprint.clone(),
+            actual_quota: Some(reservation.reserved.quota),
+            actual: Some(reservation.reserved.clone()),
+            outcome: SponsoredUsageState::Settled,
+            observed_at: transition_time.into(),
+        };
+        let settled = store
+            .reconcile_usage(command.clone(), audit.clone())
+            .await
+            .unwrap();
+        assert_eq!(settled.updated_at, transition_time);
+        assert_eq!(
+            store.reconcile_usage(command, audit).await.unwrap(),
+            settled
+        );
+        let stored_grant = store.grant(&grant.id).await.unwrap().unwrap();
+        assert_eq!(stored_grant.updated_at, grant.updated_at);
+        assert_eq!(stored_grant.usage, reservation.reserved);
+        let stored_usage = store.policy_usage(&policy.id).await.unwrap();
+        assert_eq!(stored_usage.consumed, reservation.reserved);
+        assert_eq!(
+            stored_usage.reserved,
+            summary_sub(&grant.allocation, &reservation.reserved).unwrap()
+        );
+        assert_eq!(stored_usage.active_launches, 1);
+        assert_eq!(store.audits.count_documents(doc! {}).await.unwrap(), 1);
+
+        client
+            .database(&database_name)
+            .drop()
+            .await
+            .expect("temporary usage-time database drops");
     }
 
     #[tokio::test]

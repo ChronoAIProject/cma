@@ -107,6 +107,34 @@ fn aliases_match(
         .any(|candidate| stored.contains(candidate.as_str()))
 }
 
+fn credential_retirement_covers_activation(
+    activation: &GrantActivationIntent,
+    policy: &SponsorshipPolicy,
+    credential: &SponsoredCredentialRecord,
+) -> bool {
+    let confirmed_revocation =
+        credential
+            .last_completed_operation
+            .as_ref()
+            .is_some_and(|operation| {
+                operation.kind == ProviderOperationKind::RevokeCredential
+                    && operation.outcome == CompletedProviderOperationOutcome::Confirmed
+            });
+    credential.state == SponsoredCredentialState::Revoked
+        && credential.material_state == SponsoredCredentialMaterialState::Retired
+        && credential.revoked_at.is_some()
+        && confirmed_revocation
+        && policy.id == activation.policy_id
+        && policy.generation >= activation.policy_generation
+        && policy.credential_id == credential.id
+        && credential.generation > activation.credential_generation
+        && credential.owner == policy.owner
+        && credential.authority.provider == policy.provider_policy.provider
+        && credential.authority.provider_policy_key == policy.provider_policy.provider_policy_key
+        && activation.allocation.quota == policy.per_launch_quota
+        && activation.allocation.spend_micros == policy.per_launch_budget_micros
+}
+
 #[derive(Default)]
 struct MemoryStore {
     state: Mutex<MemoryState>,
@@ -1544,6 +1572,30 @@ impl SponsorshipStore for MemoryStore {
         if stored == command.intent {
             return Ok(stored);
         }
+        let stored_operation = stored
+            .cleanup_operation
+            .as_ref()
+            .ok_or(SponsorshipStoreError::StaleGeneration)?;
+        let global_credential_retirement = if command.global_credential_retirement {
+            let policy = state
+                .policies
+                .get(&stored.policy_id.0)
+                .ok_or(SponsorshipStoreError::StaleGeneration)?;
+            let credential = state
+                .credentials
+                .get(&policy.credential_id.0)
+                .map(|(record, _)| record)
+                .ok_or(SponsorshipStoreError::StaleGeneration)?;
+            credential_retirement_covers_activation(&stored, policy, credential)
+        } else {
+            false
+        };
+        let cleanup_completion_is_authorized = matches!(
+            stored_operation.phase,
+            ProviderOperationPhase::Attempting | ProviderOperationPhase::Ambiguous
+        ) || (stored_operation.phase
+            == ProviderOperationPhase::Rejected
+            && global_credential_retirement);
         if stored.revision != command.expected_revision
             || stored.lease.as_ref().map(|lease| lease.holder.as_str())
                 != Some(command.holder.as_str())
@@ -1554,6 +1606,30 @@ impl SponsorshipStore for MemoryStore {
             || command.intent.capacity_held
             || command.intent.lease.is_some()
             || command.intent.cleanup_operation.is_some()
+            || (command.global_credential_retirement && !global_credential_retirement)
+            || !cleanup_completion_is_authorized
+            || stored_operation.kind != command.operation.kind
+            || stored_operation.provider_request_id != command.operation.provider_request_id
+            || stored_operation.client_request_id_digest
+                != command.operation.client_request_id_digest
+            || stored_operation.payload_digest != command.operation.payload_digest
+            || stored_operation.requested_at != command.operation.requested_at
+            || command.intent.updated_at < stored.updated_at
+            || command.audit.occurred_at != command.intent.updated_at
+            || command.expected_revision.checked_add(1) != Some(command.intent.revision)
+            || stored.launch_id != command.intent.launch_id
+            || stored.session_id != command.intent.session_id
+            || stored.policy_id != command.intent.policy_id
+            || stored.policy_generation != command.intent.policy_generation
+            || stored.credential_generation != command.intent.credential_generation
+            || stored.launch_authority_digest != command.intent.launch_authority_digest
+            || stored.acceptance_digest != command.intent.acceptance_digest
+            || stored.gate_fence != command.intent.gate_fence
+            || stored.allocation != command.intent.allocation
+            || stored.request_fingerprint != command.intent.request_fingerprint
+            || stored.billing_request_id != command.intent.billing_request_id
+            || stored.provider_request_id != command.intent.provider_request_id
+            || stored.created_at != command.intent.created_at
         {
             return Err(SponsorshipStoreError::StaleGeneration);
         }
@@ -1783,6 +1859,7 @@ impl SponsorshipStore for MemoryStore {
             || stored.policy_id != grant.policy_id
             || stored.usage != grant.usage
             || stored.allocation != grant.allocation
+            || grant.updated_at < stored.updated_at
         {
             return Err(SponsorshipStoreError::Conflict);
         }
@@ -2006,7 +2083,9 @@ impl SponsorshipStore for MemoryStore {
             SponsoredUsageState::Settled
                 | SponsoredUsageState::Released
                 | SponsoredUsageState::Ambiguous
-        ) {
+        ) || command.observed_at < current.updated_at
+            || audit.occurred_at != command.observed_at
+        {
             return Err(SponsorshipStoreError::Conflict);
         }
         if let Some(actual) = command.actual.as_ref() {
@@ -2033,7 +2112,9 @@ impl SponsorshipStore for MemoryStore {
                 .remove(&current.grant_id.0)
                 .ok_or(SponsorshipStoreError::Conflict)?;
             grant.usage = add_usage(grant.usage.clone(), &actual)?;
-            grant.updated_at = replacement.updated_at.clone();
+            if grant.updated_at < replacement.updated_at {
+                grant.updated_at = replacement.updated_at.clone();
+            }
             let capacity_was_released = grant_capacity_is_released(grant.state);
             let becomes_exhausted = !capacity_was_released
                 && matches!(
@@ -4076,6 +4157,133 @@ mod current_tests {
             .audits
             .iter()
             .any(|event| event.action == SponsoredAuditAction::UsageReconciled));
+    }
+
+    #[tokio::test]
+    async fn usage_and_terminal_grant_timestamps_survive_a_service_clock_rewind() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let quota = SponsoredQuota {
+            requests: 1,
+            input_tokens: 100,
+            output_tokens: 100,
+        };
+
+        harness.clock.set(LATER);
+        let reservation = harness
+            .service
+            .reserve_usage(
+                &harness.contributor,
+                usage_command(&grant, "clock-rewind-usage", quota),
+            )
+            .await
+            .unwrap()
+            .reservation;
+        assert_eq!(reservation.created_at, LATER);
+
+        let mut regressed_model = reservation.clone();
+        regressed_model.updated_at = NOW.into();
+        assert!(matches!(
+            regressed_model.validate(),
+            Err(TriggerValidationError { .. })
+        ));
+
+        harness.clock.set(NOW);
+        let ambiguous = harness
+            .service
+            .reconcile_usage(
+                &harness.meter,
+                ReportSponsoredUsage {
+                    reservation_id: reservation.id.clone(),
+                    request_fingerprint: reservation.request_fingerprint.clone(),
+                    actual_quota: None,
+                    outcome: SponsoredUsageState::Ambiguous,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(ambiguous.updated_at, LATER);
+
+        let stale_audit = SponsoredAuditEvent::privacy_safe(
+            &harness.audit,
+            SponsoredAuditAction::UsageReconciled,
+            &harness.meter.subject,
+            SponsoredAuditTarget::Platform,
+            Some(&reservation.id.0),
+            "released",
+            NOW,
+        );
+        assert_eq!(
+            harness
+                .store
+                .reconcile_usage(
+                    ReconcileSponsoredUsage {
+                        reservation_id: reservation.id.clone(),
+                        request_fingerprint: reservation.request_fingerprint.clone(),
+                        actual_quota: None,
+                        actual: None,
+                        outcome: SponsoredUsageState::Released,
+                        observed_at: NOW.into(),
+                    },
+                    stale_audit,
+                )
+                .await,
+            Err(SponsorshipStoreError::Conflict)
+        );
+
+        harness.clock.set(LATER);
+        harness.store.set_authoritative_now(GRANT_EXPIRY).await;
+        let expired = harness
+            .service
+            .expire_grant(&harness.meter, &grant.id)
+            .await
+            .unwrap();
+        assert_eq!(expired.state, SponsoredGrantState::Expired);
+        assert_eq!(expired.updated_at, LATER);
+
+        harness.clock.set(NOW);
+        let settled_report = ReportSponsoredUsage {
+            reservation_id: reservation.id,
+            request_fingerprint: reservation.request_fingerprint,
+            actual_quota: Some(quota),
+            outcome: SponsoredUsageState::Settled,
+        };
+        let settled = harness
+            .service
+            .reconcile_usage(&harness.meter, settled_report.clone())
+            .await
+            .unwrap();
+        assert_eq!(settled.updated_at, LATER);
+        let (settled_grant, settled_usage) = {
+            let state = harness.store.state.lock().await;
+            (
+                state.grants.get(&grant.id.0).unwrap().clone(),
+                state
+                    .policy_usage
+                    .get(&harness.policy.id.0)
+                    .unwrap()
+                    .clone(),
+            )
+        };
+        assert_eq!(settled_grant.state, SponsoredGrantState::Expired);
+        assert_eq!(settled_grant.updated_at, LATER);
+        assert_eq!(settled_usage.reserved, SponsoredUsageSummary::default());
+        assert_eq!(settled_usage.consumed, settled.actual.clone().unwrap());
+
+        assert_eq!(
+            harness
+                .service
+                .reconcile_usage(&harness.meter, settled_report)
+                .await
+                .unwrap(),
+            settled
+        );
+        let state = harness.store.state.lock().await;
+        assert_eq!(state.grants.get(&grant.id.0), Some(&settled_grant));
+        assert_eq!(
+            state.policy_usage.get(&harness.policy.id.0),
+            Some(&settled_usage)
+        );
     }
 
     #[tokio::test]
@@ -6918,6 +7126,92 @@ mod current_tests {
         assert_eq!(usage.reserved, SponsoredUsageSummary::default());
         assert_eq!(usage.active_launches, 0);
         assert_eq!(harness.provider.revoke_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(harness.provider.reconcile_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn retired_credential_proof_completes_rejected_cleanup_exactly_once() {
+        let harness = Arc::new(default_harness().await);
+        prepare_activation(&harness).await;
+        harness.provider.block_issue.store(true, Ordering::SeqCst);
+        *harness.provider.revoke_mode.lock().await = ProviderMode::Rejected;
+        let worker = {
+            let harness = harness.clone();
+            tokio::spawn(async move {
+                harness
+                    .service
+                    .activate_grant(
+                        &harness.contributor,
+                        ActivateSponsoredGrant {
+                            stable_request_id: "cleanup-rejected-before-retirement".into(),
+                            launch_id: harness.launch_id.clone(),
+                        },
+                    )
+                    .await
+            })
+        };
+        harness.provider.issue_entered.notified().await;
+        harness
+            .store
+            .update_launch_state(
+                &harness.launch_id,
+                SponsoredLaunchState::Active,
+                Some(harness.session_id.clone()),
+            )
+            .await;
+        harness.provider.release_issue.notify_one();
+        assert_eq!(
+            worker.await.unwrap().unwrap_err(),
+            SponsorshipError::ProviderRejected
+        );
+        {
+            let state = harness.store.state.lock().await;
+            let intent = state.activations.get(&harness.launch_id.0).unwrap();
+            assert_eq!(intent.state, GrantActivationState::CleanupPending);
+            assert!(intent.capacity_held);
+            assert_eq!(
+                intent.cleanup_operation.as_ref().unwrap().phase,
+                ProviderOperationPhase::Rejected
+            );
+            let usage = state.policy_usage.get(&harness.policy.id.0).unwrap();
+            assert_eq!(usage.reserved.quota, harness.policy.per_launch_quota);
+            assert_eq!(usage.active_launches, 1);
+        }
+
+        *harness.provider.revoke_mode.lock().await = ProviderMode::Confirmed;
+        harness
+            .service
+            .revoke_credential(
+                &harness.sponsor,
+                &harness.policy.credential_id,
+                "retire-after-rejected-cleanup",
+            )
+            .await
+            .unwrap();
+        let provider_calls_after_retirement = harness.provider.revoke_calls.load(Ordering::SeqCst);
+
+        harness
+            .service
+            .reconcile_activation_cleanup(&harness.meter, &harness.launch_id)
+            .await
+            .unwrap();
+        harness
+            .service
+            .reconcile_activation_cleanup(&harness.meter, &harness.launch_id)
+            .await
+            .unwrap();
+
+        let state = harness.store.state.lock().await;
+        let intent = state.activations.get(&harness.launch_id.0).unwrap();
+        assert_eq!(intent.state, GrantActivationState::Cleaned);
+        assert!(!intent.capacity_held);
+        let usage = state.policy_usage.get(&harness.policy.id.0).unwrap();
+        assert_eq!(usage.reserved, SponsoredUsageSummary::default());
+        assert_eq!(usage.active_launches, 0);
+        assert_eq!(
+            harness.provider.revoke_calls.load(Ordering::SeqCst),
+            provider_calls_after_retirement
+        );
         assert_eq!(harness.provider.reconcile_calls.load(Ordering::SeqCst), 0);
     }
 
