@@ -2858,7 +2858,10 @@ async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_
         "dropping the SSE body must not cancel prompt admission",
     )
     .await;
-    // Prompt admission becomes observable before its finite replay receipt.
+    // Prompt admission becomes observable before the adapter publishes the finite
+    // run-admission replay receipt. A retry in that interval correctly reports
+    // `agui_operation_in_flight`; wait for the replay boundary this test intends
+    // to exercise instead of racing that separate contract.
     operations.wait_until_outcome(run_id).await;
 
     for thread_id in [requested, effective.0.as_str()] {

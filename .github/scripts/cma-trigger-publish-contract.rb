@@ -212,6 +212,16 @@ def contains_in_order?(source, needles)
   end
 end
 
+def shell_readonly_words(source, variable, message)
+  assignment = source.match(
+    /^readonly #{Regexp.escape(variable)}="(?<words>[^"\n]*)"$/,
+  )
+  check(assignment, message)
+  words = assignment[:words].split
+  check(words.length == words.uniq.length, message)
+  words
+end
+
 def normalized_shell(source)
   source.to_s.gsub(/\\\s*\n/, " ").gsub(/\s+/, " ").strip
 end
@@ -1201,8 +1211,9 @@ def verify_contract(workflow, release_doc, readiness_doc, restore_source = nil)
       release_doc,
       [
         "### App-origin route and health-policy adoption",
-        "CMA_GATEWAY_CONFIRM=adopt-v0.10-route",
-        ".github/scripts/cma-trigger-gateway-adoption.sh --adopt",
+        "cma_gateway_release_tag_record=\"$(git --no-replace-objects for-each-ref",
+        'CMA_GATEWAY_CONFIRM="adopt-${cma_gateway_release_tag}-route"',
+        ".github/scripts/cma-trigger-gateway-launch.sh adoption --adopt",
         "apply -f infra/api/configmap.yaml",
         "## 5. First production MongoDB cutover",
       ],
@@ -1307,6 +1318,19 @@ def release_step10_invocation(release_doc)
     "Release traffic-restoration step must retain an executable Bash invocation",
   )
   release_doc[(block_open + 7)...block_close]
+end
+
+def release_manual_restore_invocation(release_doc)
+  marker = "Manual restore has its own explicit confirmation"
+  marker_index = release_doc.index(marker)
+  check(marker_index, "Release documentation must retain the manual restore procedure")
+  block_open = release_doc.index("```sh", marker_index)
+  block_close = block_open && release_doc.index("```", block_open + 5)
+  check(
+    block_open && block_close,
+    "Release manual restore must retain an executable shell invocation",
+  )
+  release_doc[(block_open + 5)...block_close]
 end
 
 def release_step10_script(_release_doc = nil, restore_source = nil)
@@ -1729,14 +1753,27 @@ def verify_gateway_release_contract_legacy_unused(
     ),
     "Gateway rollback must prove routes and source probes before changing health",
   )
+  adoption_release_tag_contracts = [
+    "cma_gateway_resolve_release_tag() {",
+    "git --no-replace-objects for-each-ref",
+    '--points-at "${release_revision}"',
+    "--format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)'",
+    "'refs/tags/v*'",
+    '"${tag_record}" != *$\'\\n\'*',
+    '"${tag_name}" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$',
+    '"${tag_object_type}" == tag',
+    '"${peeled_object_type}" == commit',
+    '"${peeled_revision}" == "${release_revision}"',
+    'local expected_confirmation="${action}-${CMA_GATEWAY_RELEASE_TAG}-${scope}"',
+    '"${CMA_GATEWAY_CONFIRM:-}" == "${expected_confirmation}"',
+    "cma_gateway_require_confirmation adopt route",
+    "cma_gateway_require_confirmation restore route",
+  ]
   check(
-    adoption_source.include?(
-      '[[ "${CMA_GATEWAY_CONFIRM:-}" == adopt-v0.10-route ]]',
-    ) && adoption_source.include?(
-      '[[ "${CMA_GATEWAY_CONFIRM:-}" == restore-v0.10-route ]]',
-    ) && adoption_source.include?(
-      '[[ "${CMA_GATEWAY_ROLLBACK_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]',
-    ),
+    adoption_release_tag_contracts.all? { |contract| adoption_source.include?(contract) } &&
+      adoption_source.include?(
+        '[[ "${CMA_GATEWAY_ROLLBACK_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]',
+      ),
     "Gateway adoption and sealed manual restore must require separate confirmations",
   )
   check(
@@ -1749,6 +1786,23 @@ def verify_gateway_release_contract_legacy_unused(
   )
 
   release_gateway_prose = release_doc.gsub(/\s+/, " ")
+  check(
+    contains_in_order?(
+      adoption_source,
+      [
+        'adopted_projection_sha256="$(awk',
+        '"${adopted_projection_dir}/projection.sha256")"',
+        '"${adopted_projection_sha256}" ==',
+        '"$(cma_gateway_sha256_file "${adopted_projection_dir}/projection.json")"',
+        '"CMA Gateway route and /ready health check are adopted and effective;',
+        'adopted projection ${adopted_projection_dir}; SHA-256 ${adopted_projection_sha256};',
+        'predecessor SHA-256 ${CMA_GATEWAY_PROJECTION_SHA256}"',
+      ],
+    ) && release_gateway_prose.include?(
+      "Carry the adopted digest as `CMA_GATEWAY_SOURCE_PROJECTION_SHA256` and the predecessor digest as `CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256`",
+    ),
+    "Gateway adoption must externally acknowledge adopted projection custody",
+  )
   release_gateway_contracts = [
     "compute.globalAddresses.get",
     "compute.globalForwardingRules.get",
@@ -1762,13 +1816,14 @@ def verify_gateway_release_contract_legacy_unused(
     "compute.networkEndpointGroups.listNetworkEndpoints",
     "compute.sslPolicies.get",
     "CMA_GATEWAY_RELEASE_REVISION='<reviewed-full-SHA>'",
-    "CMA_GATEWAY_CONFIRM=adopt-v0.10-route",
+    "single annotated SemVer tag",
+    'CMA_GATEWAY_CONFIRM="adopt-${cma_gateway_release_tag}-route"',
     "CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer",
     "CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT='<durable-absolute-directory>'",
     "CMA_GATEWAY_ROLLBACK_CUSTODY_CONFIRM=durable-off-host",
-    "CMA_GATEWAY_CONFIRM=restore-v0.10-route",
+    'CMA_GATEWAY_CONFIRM="restore-${cma_gateway_release_tag}-route"',
     "CMA_GATEWAY_ROLLBACK_SHA256='<externally-recorded-rollback-SHA-256>'",
-    ".github/scripts/cma-trigger-gateway-adoption.sh --adopt",
+    ".github/scripts/cma-trigger-gateway-launch.sh adoption --adopt",
     "--restore '<retained-sealed-rollback-directory>'",
     "server-side dry-runs all four desired replacements plus all four sealed rollback replacements",
     "Forward writes use `kubectl replace`, not apply",
@@ -1904,15 +1959,15 @@ def verify_gateway_release_contract_legacy_unused(
       contains_in_order?(
         release_doc,
         [
-          "CMA_GATEWAY_CONFIRM=adopt-v0.10-route",
+          'CMA_GATEWAY_CONFIRM="adopt-${cma_gateway_release_tag}-route"',
           "CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer",
           "CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT=",
-          "CMA_GATEWAY_CONFIRM=restore-v0.10-route",
+          'CMA_GATEWAY_CONFIRM="restore-${cma_gateway_release_tag}-route"',
           "CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer",
           "CMA_GATEWAY_ROLLBACK_SHA256=",
-          "CMA_GATEWAY_CONFIRM=fence-v0.10-traffic",
+          'CMA_GATEWAY_CONFIRM="fence-${cma_gateway_release_tag}-traffic"',
           'CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM="${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM}"',
-          "CMA_GATEWAY_CONFIRM=restore-v0.10-traffic",
+          'CMA_GATEWAY_CONFIRM="restore-${cma_gateway_release_tag}-traffic"',
         ],
       ),
     "Release adoption and restore must require the exclusive spec-writer attestation",
@@ -1934,17 +1989,36 @@ def verify_gateway_release_contract_legacy_unused(
       [
         "set +x",
         ': "${CHRONO_RELEASE_ACCESS_TOKEN:',
-        ': "${CMA_GATEWAY_CONFIRM:',
+        'cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref',
+        'CMA_GATEWAY_CONFIRM="restore-${cma_gateway_release_tag}-traffic"',
+        'CMA_FINAL_DEPLOYMENT_UID="${cma_final_deployment_uid}"',
+        'CMA_FINAL_REPLICA_SET="${cma_final_replica_set}"',
+        'CMA_FINAL_REPLICA_SET_UID="${cma_final_replica_set_uid}"',
         'CMA_FINAL_POD="${cma_final_pod}"',
         'CMA_FINAL_POD_UID="${cma_final_pod_uid}"',
         'CMA_FINAL_POD_IP="${cma_final_pod_ip}"',
-        ".github/scripts/cma-trigger-gateway-restore-traffic.sh",
+        'CMA_FINAL_POD_IMAGE="${cma_final_pod_image}"',
+        'CMA_FINAL_POD_IMAGE_ID="${cma_final_pod_image_id}"',
+        ".github/scripts/cma-trigger-gateway-launch.sh traffic",
         "unset CHRONO_RELEASE_ACCESS_TOKEN",
       ],
     ) && release_gateway_prose.include?(
-      "Invoke the checked-in Bash program from the clean checkout root; do not paste or source its implementation",
+      "Invoke the checked-in program only through `cma-trigger-gateway-launch.sh` from the clean checkout root; do not paste, source, or execute the traffic implementation directly",
     ),
-    "Release documentation must invoke only the reviewed traffic-restoration program",
+    "Release documentation must invoke traffic restoration only through the reviewed launcher",
+  )
+  step10_custody_contracts = [
+    "CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>'",
+    "CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>'",
+    "CMA_GATEWAY_FENCE_LABEL_RESERVATION_CONFIRM=live-denial-drill-v1",
+    "CMA_GATEWAY_FENCE_RECEIPT_DIR='<absolute-off-host-fence-receipt-directory>'",
+    "CMA_GATEWAY_FENCE_RECEIPT_SHA256='<externally-recorded-fence-receipt-SHA-256>'",
+    "CMA_GATEWAY_FENCED_PROJECTION_PARENT='<absolute-off-host-fenced-projection-directory>'",
+    "CMA_GATEWAY_FINAL_PROJECTION_PARENT='<absolute-off-host-final-projection-directory>'",
+  ]
+  check(
+    step10_custody_contracts.all? { |contract| step10_invocation.include?(contract) },
+    "Release traffic restoration must carry durable admission, fence-root, and projection custody evidence",
   )
   step10_script = release_step10_script(release_doc, restore_source)
   fence_body = shell_function_body(
@@ -2032,7 +2106,7 @@ def verify_gateway_release_contract_legacy_unused(
         '"${cma_step10_committed_restore_sha256}"',
       ],
     ) && release_gateway_prose.include?(
-      "verifies the dedicated confirmation, the exact freeze attestation, the clean reviewed commit, and its own executable Git blob",
+      "verifies the tag-derived confirmation, exact freeze attestation, clean reviewed commit, and its own executable Git blob",
     ),
     "Traffic-restoration program must byte-bind its own reviewed executable",
   )
@@ -2040,17 +2114,23 @@ def verify_gateway_release_contract_legacy_unused(
     contains_in_order?(
       step10_script,
       [
+        "cma_step10_resolve_release_tag() {",
+        "git --no-replace-objects for-each-ref",
+        '--points-at "${cma_release_revision}"',
+        '"${cma_tag_object_type}" == tag',
+        '"${cma_peeled_object_type}" == commit',
+        '"${cma_peeled_revision}" == "${cma_release_revision}"',
         "cma_step10_require_checkout() {",
-        'cma_step10_expected_confirmation="${1:-restore-v0.10-traffic}"',
-        'if [ "${CMA_GATEWAY_CONFIRM}" != "${cma_step10_expected_confirmation}" ]',
+        'CMA_GATEWAY_RELEASE_TAG="$(cma_step10_resolve_release_tag',
         "cma_step10_fence_main() {",
-        "cma_step10_require_checkout fence-v0.10-traffic",
+        "cma_step10_require_confirmation fence traffic",
         "cma_step10_main() {",
         ': "${CMA_GATEWAY_CONFIRM:',
         "cma_step10_require_checkout",
+        "cma_step10_require_confirmation restore traffic",
       ],
     ) && release_gateway_prose.include?(
-      "CMA_GATEWAY_CONFIRM=restore-v0.10-traffic",
+      "derive the distinct destructive-intent guard as `restore-<exact-release-tag>-traffic` from the single annotated SemVer tag",
     ),
     "Traffic restoration must require its distinct destructive confirmation",
   )
@@ -2062,7 +2142,8 @@ def verify_gateway_release_contract_legacy_unused(
         "cma_step10_require_production_mutation_enabled || return 1",
         "cma_step10_require_privileged_bash || return 1",
         ': "${CMA_GATEWAY_CONFIRM:',
-        "cma_step10_require_checkout fence-v0.10-traffic || return 1",
+        "cma_step10_require_checkout || return 1",
+        "cma_step10_require_confirmation fence traffic || return 1",
       ],
     ) && contains_in_order?(
       step10_script,
@@ -2094,7 +2175,7 @@ def verify_gateway_release_contract_legacy_unused(
         fence_cas,
       ],
     ) && release_gateway_prose.include?(
-      "The entrypoint is idempotent",
+      "rerun the reviewed `--fence` entrypoint",
     ),
     "Dedicated traffic fencing must remain an idempotent source-to-fence CAS",
   )
@@ -2181,7 +2262,7 @@ def verify_gateway_release_contract_legacy_unused(
       !step10_script.include?(
       '--header "Authorization: Bearer ${CHRONO_RELEASE_ACCESS_TOKEN}"',
     ) && release_gateway_prose.include?(
-      "supplies it to `curl` through a protected file descriptor rather than an argument",
+      "only `curl` receives it through a separate protected descriptor rather than an argument",
     ),
     "Traffic restoration must keep its bearer credential out of traces, argv, and child environments",
   )
@@ -2201,7 +2282,7 @@ def verify_gateway_release_contract_legacy_unused(
         "cma_step10_validate_snapshot_seal",
       ],
     ) && release_gateway_prose.include?(
-      "byte-binds the Gateway state checker and the sourced adoption helper",
+      "byte-binds the Gateway state checker, sourced adoption helper, API/web Deployment manifests, and API ConfigMap",
     ),
     "Release traffic restoration must byte-bind every sourced Gateway helper",
   )
@@ -2215,7 +2296,7 @@ def verify_gateway_release_contract_legacy_unused(
         ': "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:',
         "cma_step10_require_checkout",
         "cma_step10_validate_snapshot_seal",
-        "if ! cma_final_pod_is_exact; then",
+        "if ! cma_final_workload_is_exact; then",
       ],
     ) && release_gateway_prose.include?(
       "Re-establish the full checked-routing-graph freeze",
@@ -2328,9 +2409,22 @@ def verify_gateway_release_contract_legacy_unused(
       ),
     "Release traffic re-fence must prove coherent empty zonal NEGs",
   )
+  workload_identity_contracts = [
+    "cma_manifest_api_image() {",
+    "YAML.safe_load(",
+    "cma_final_workload_is_exact() {",
+    'kind:"ReplicaSet",name:$replica_set,uid:$replica_set_uid',
+    'kind:"Deployment",name:"cma-api",uid:$deployment_uid',
+    '.spec.template.spec.containers[0].image == $image',
+    '.status.containerStatuses[0].imageID == $image_id',
+    'cma_manifest_image="$(cma_manifest_api_image)"',
+    '"${cma_final_pod_image}" != "${cma_manifest_image}"',
+    'cma_final_pod_image_id}" =~ ^(docker-pullable://)?us-central1-docker',
+  ]
   check(
     step10_script.scan("if ! cma_wait_for_reopened_endpoint; then").length == 2 &&
-      step10_script.scan("if ! cma_final_pod_is_exact; then").length == 2 &&
+      step10_script.scan("if ! cma_final_workload_is_exact; then").length == 2 &&
+      workload_identity_contracts.all? { |contract| step10_script.include?(contract) } &&
       contains_in_order?(
         step10_script,
         [
@@ -2352,7 +2446,7 @@ def verify_gateway_release_contract_legacy_unused(
           "https://bot-api.chrono-ai.fun/livez",
           'cma_abort_after_reopen "the app-origin route or Gateway policy drifted during traffic restoration"',
           "if ! cma_wait_for_reopened_endpoint; then",
-          "if ! cma_final_pod_is_exact; then",
+          "if ! cma_final_workload_is_exact; then",
         ],
       ) &&
         step10_script.scan(
@@ -2367,7 +2461,7 @@ def verify_gateway_release_contract_legacy_unused(
         ) && release_gateway_prose.include?(
           "byte-identical to the first successful normalized Service, EndpointSlice, and NEG projection",
         ) && release_gateway_prose.include?(
-          "re-reads the exact Pod UID, IP, readiness, started state, and zero restart count immediately before commit",
+          "re-reads the complete Deployment-to-ReplicaSet-to-Pod chain, full workload specs, immutable imageID, Pod IP, readiness, started state, and zero restart count immediately before commit",
         ) && contains_in_order?(
           step10_script,
           [
@@ -2408,7 +2502,7 @@ def verify_gateway_release_contract_legacy_unused(
         "cma_traffic_open=1",
         'trap \'cma_refence_on_exit "$?"\' EXIT',
         "trap cma_refence_on_signal HUP INT QUIT TERM",
-        "if ! cma_final_pod_is_exact; then",
+        "if ! cma_final_workload_is_exact; then",
       ],
     ) && contains_in_order?(
       step10_script,
@@ -2427,16 +2521,8 @@ def verify_gateway_release_contract_legacy_unused(
   )
 end
 
-def verify_gateway_release_contract(
-  ci_workflow,
-  release_doc,
-  state_source,
-  adoption_source,
-  source_contract_source,
-  restore_source = nil
-)
-  restore_source ||= File.read(GATEWAY_RESTORE_TRAFFIC_PATH)
-  files = {
+def load_gateway_support_sources
+  {
     projection: File.read(File.join(ROOT, ".github/scripts/cma-trigger-gateway-projection.rb")),
     capture: File.read(File.join(ROOT, ".github/scripts/cma-trigger-gateway-projection.sh")),
     admission_bootstrap: File.read(File.join(ROOT, ".github/scripts/cma-trigger-gateway-admission-bootstrap.sh")),
@@ -2446,8 +2532,21 @@ def verify_gateway_release_contract(
     origin: File.read(File.join(ROOT, ".github/scripts/cma-trigger-gateway-origin-evidence.sh")),
     live_policy: File.read(File.join(ROOT, ".github/scripts/cma-trigger-gateway-live-policy.json")),
     cloudflare_policy: File.read(File.join(ROOT, ".github/scripts/cma-trigger-gateway-cloudflare-policy.json")),
-    admission: File.read(File.join(ROOT, "infra/api/cutover-fence-policy.yaml")),
+    admission: File.read(File.join(ROOT, ".github/scripts/cma-trigger-gateway-cutover-fence-policy.yaml")),
   }
+end
+
+def verify_gateway_release_contract(
+  ci_workflow,
+  release_doc,
+  state_source,
+  adoption_source,
+  source_contract_source,
+  restore_source = nil,
+  support_sources = nil
+)
+  restore_source ||= File.read(GATEWAY_RESTORE_TRAFFIC_PATH)
+  files = support_sources || load_gateway_support_sources
   executable_paths = %w[
     .github/scripts/cma-trigger-gateway-state.sh
     .github/scripts/cma-trigger-gateway-adoption.sh
@@ -2489,7 +2588,10 @@ def verify_gateway_release_contract(
   )
 
   reviewed_paths = %w[
-    infra/api/cutover-fence-policy.yaml
+    infra/api/deployment.yaml
+    infra/web/deployment.yaml
+    infra/api/configmap.yaml
+    .github/scripts/cma-trigger-gateway-cutover-fence-policy.yaml
     .github/scripts/cma-trigger-gateway-live-policy.json
     .github/scripts/cma-trigger-gateway-cloudflare-capture.sh
     .github/scripts/cma-trigger-gateway-cloudflare-policy.json
@@ -2499,9 +2601,103 @@ def verify_gateway_release_contract(
     .github/scripts/cma-trigger-gateway-launch.sh
     .github/scripts/cma-trigger-gateway-restore-traffic.sh
   ]
+  reviewed_source_sets = [
+    shell_readonly_words(
+      files[:admission_bootstrap],
+      "CMA_ADMISSION_SOURCE_PATHS",
+      "admission source seal must be one closed checked-in path list",
+    ),
+    shell_readonly_words(
+      adoption_source,
+      "CMA_GATEWAY_SOURCE_PATHS",
+      "adoption source seal must be one closed checked-in path list",
+    ),
+    shell_readonly_words(
+      restore_source,
+      "CMA_GATEWAY_REVIEWED_SOURCE_PATHS",
+      "traffic source seal must be one closed checked-in path list",
+    ),
+  ]
   check(
-    reviewed_paths.all? { |path| adoption_source.include?(path) && restore_source.include?(path) },
-    "adoption and traffic restoration must byte-seal every behavior-bearing release source",
+    reviewed_source_sets.all? do |source_paths|
+      reviewed_paths.all? { |path| source_paths.include?(path) }
+    end,
+    "admission, adoption, and traffic restoration must byte-seal every behavior-bearing release source",
+  )
+
+  release_tag_common_contracts = [
+    "git --no-replace-objects for-each-ref",
+    "--format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)'",
+    "'refs/tags/v*'",
+    "the reviewed release revision must have exactly one annotated SemVer release tag",
+  ]
+  tag_sources = [
+    [
+      files[:admission_bootstrap],
+      [
+        '"${tag_record}" != *$\'\\n\'*', '"${tag_name}" =~ ^v(0|[1-9][0-9]*)',
+        '"${tag_object_type}" == tag', '"${peeled_object_type}" == commit',
+        '"${peeled_revision}" == "${release_revision}"',
+      ],
+    ],
+    [
+      adoption_source,
+      [
+        '"${tag_record}" != *$\'\\n\'*', '"${tag_name}" =~ ^v(0|[1-9][0-9]*)',
+        '"${tag_object_type}" == tag', '"${peeled_object_type}" == commit',
+        '"${peeled_revision}" == "${release_revision}"',
+      ],
+    ],
+    [
+      restore_source,
+      [
+        '"${cma_tag_record}" != *$\'\\n\'*', '"${cma_tag_name}" =~ ^v(0|[1-9][0-9]*)',
+        '"${cma_tag_object_type}" == tag', '"${cma_peeled_object_type}" == commit',
+        '"${cma_peeled_revision}" == "${cma_release_revision}"',
+      ],
+    ],
+  ]
+  check(
+    tag_sources.all? do |source, specific_contracts|
+      release_tag_common_contracts.all? { |contract| source.include?(contract) } &&
+        specific_contracts.all? { |contract| source.include?(contract) }
+    end &&
+      files[:admission_bootstrap].include?(
+        'local expected_confirmation="bootstrap-${CMA_GATEWAY_RELEASE_TAG}-admission"',
+      ) &&
+      adoption_source.include?(
+        'local expected_confirmation="${action}-${CMA_GATEWAY_RELEASE_TAG}-${scope}"',
+      ) &&
+      restore_source.include?(
+        'local cma_expected_confirmation="${cma_action}-${CMA_GATEWAY_RELEASE_TAG}-${cma_scope}"',
+      ),
+    "every mutating Gateway entrypoint must derive confirmation from one annotated exact SemVer release tag",
+  )
+
+  check(
+    release_doc.include?(".github/scripts/cma-trigger-gateway-launch.sh adoption --adopt") &&
+      contains_in_order?(
+        release_doc,
+        [
+          ".github/scripts/cma-trigger-gateway-launch.sh adoption",
+          "--restore '<retained-sealed-rollback-directory>'",
+          ".github/scripts/cma-trigger-gateway-launch.sh traffic --fence",
+          ".github/scripts/cma-trigger-gateway-launch.sh traffic ||",
+        ],
+      ) &&
+      !release_doc.include?(".github/scripts/cma-trigger-gateway-adoption.sh") &&
+      !release_doc.include?(".github/scripts/cma-trigger-gateway-restore-traffic.sh"),
+    "Release runbook must invoke Gateway mutations only through the trusted launcher",
+  )
+  check(
+    release_doc.include?(
+      ".github/scripts/cma-trigger-gateway-launch.sh traffic --prove-fence",
+    ) && release_doc.include?(
+      'CMA_GATEWAY_CONFIRM="prove-${cma_gateway_release_tag}-fence"',
+    ) && release_doc.include?(
+      ': "${CMA_GATEWAY_FENCE_RECEIPT_SHA256:?export the independently recorded fence-receipt SHA-256}"',
+    ),
+    "Release runbook must retain the independently authenticated post-scale fence proof",
   )
 
   cloudflare_contracts = [
@@ -2544,6 +2740,24 @@ def verify_gateway_release_contract(
       !files[:tls_sanitizer].include?("privateKeySha256"),
     "live projection capture must enumerate the complete Gateway graph and backend health",
   )
+  check(
+    contains_in_order?(
+      files[:tls_sanitizer],
+      [
+        "certificate_remainder = certificate_source",
+        "certificate_pattern = /\\A[[:space:]]*",
+        "certificate_blocks << match[1]",
+        'raise ArgumentError unless certificate_remainder.match?(/\A[[:space:]]*\z/)',
+        "certificates = certificate_blocks.map { |block| OpenSSL::X509::Certificate.new(block) }",
+        "certificate_pem = certificates.map(&:to_pem).join",
+        "leaf = certificates.fetch(0)",
+        "raise ArgumentError unless public_key.verify",
+        '"certificatePem" => certificate_pem',
+        "File.open(output_path",
+      ],
+    ) && !files[:tls_sanitizer].include?('"certificatePem" => certificate_source'),
+    "Gateway TLS sanitizer must reject residual PEM and publish only parsed public certificates",
+  )
 
   launcher_contracts = [
     "#!/bin/bash -p", "/usr/bin/env -i", "/bin/bash --noprofile --norc -p",
@@ -2574,6 +2788,29 @@ def verify_gateway_release_contract(
   check(
     lifecycle_contracts.all? { |contract| lifecycle_source.include?(contract) },
     "release tooling must seal adopted, durable fence-root, fenced, pre-reopen, and final projections",
+  )
+  check(
+    contains_in_order?(
+      adoption_source,
+      [
+        "cma_gateway_validate_restored_projection() {",
+        "cma_gateway_validate_projection_receipt 0",
+        "CMA_GATEWAY_PROJECTION_STAGE=rollback-source",
+        'CMA_GATEWAY_PROJECTION_PREDECESSOR_SHA256="${CMA_GATEWAY_PROJECTION_SHA256}"',
+        "--capture \"${rollback_projection_dir}\" source",
+        "cma_gateway_assert_source_seal",
+        "cma_gateway_compare_projection_behavior",
+        '"${source_projection}" "${rollback_projection_dir}/projection.json"',
+      ],
+    ) &&
+      files[:projection].include?("def compare_projection_behavior(source, candidate)") &&
+      files[:projection].include?('compute_behavior_policy(source["fullCapture"])') &&
+      files[:projection].include?('compute_behavior_policy(candidate["fullCapture"])') &&
+      files[:projection].include?(
+        'canonical_json(source_behavior) == canonical_json(candidate_behavior)',
+      ) &&
+      files[:capture].include?('rollback-source:source'),
+    "Gateway rollback success must compare a fresh full closed projection with sealed source behavior",
   )
 
   origin_contracts = [
@@ -2649,6 +2886,450 @@ def verify_gateway_release_contract(
   )
 
   release_prose = release_doc.gsub(/\s+/, " ")
+  tag_record_command = 'cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref'
+  check(
+    release_doc.scan(tag_record_command).length == 5 &&
+      release_doc.scan('--points-at "${CMA_GATEWAY_RELEASE_REVISION}"').length == 5 &&
+      release_doc.scan("%(objecttype)|%(*objecttype)|%(*objectname)").length == 5 &&
+      release_doc.scan('cma_gateway_release_tag="${BASH_REMATCH[1]}"').length == 5 &&
+      !release_doc.include?("git describe --tags"),
+    "Release runbook must derive every confirmation from one annotated exact SemVer tag",
+  )
+
+  manual_restore_body = shell_function_body(
+    adoption_source,
+    "cma_gateway_manual_restore",
+    "manual restore must retain its closed pre-write entrypoint",
+  )
+  projection_receipt_body = shell_function_body(
+    adoption_source,
+    "cma_gateway_validate_projection_receipt",
+    "projection receipt validation must retain its closed lifecycle validator",
+  )
+  manual_restore_invocation = release_manual_restore_invocation(release_doc)
+  check(
+    contains_in_order?(
+      manual_restore_body,
+      [
+        '${CMA_GATEWAY_ADMISSION_RECEIPT:-}" == /*',
+        '${CMA_GATEWAY_ADMISSION_RECEIPT_SHA256:-}" =~ ^[0-9a-f]{64}$',
+        "cma_gateway_verify_admission_receipt",
+        "cma_gateway_prepare_desired",
+        'cma_gateway_restore "${snapshot_dir}"',
+      ],
+    ) && [
+      "CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>'",
+      "CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>'",
+    ].all? { |contract| manual_restore_invocation.include?(contract) } &&
+      release_prose.include?(
+        "stops before any restore write if that custody or enforcement proof is unavailable",
+      ),
+    "Gateway manual restore must authenticate admission custody before every write",
+  )
+  check(
+    contains_in_order?(
+      manual_restore_body,
+      [
+        "cma_gateway_validate_projection_receipt 0",
+        "cma_gateway_prepare_desired",
+        'cma_gateway_restore "${snapshot_dir}"',
+      ],
+    ) && contains_in_order?(
+      projection_receipt_body,
+      [
+        'cmp "${candidate_file}" "${projection_file}"',
+        "jq -se '",
+        ".schemaVersion == 1 and .mode == \"source\"",
+        '.lifecycle == {stage:"source",predecessorSha256:"genesis"}',
+        '"${projection_dir}/capture.json" "${projection_file}"',
+      ],
+    ) && release_prose.include?(
+      "capture-to-projection regeneration before its first restore write",
+    ) && release_prose.include?(
+      'the exact pre-adoption lifecycle root `{stage:"source",predecessorSha256:"genesis"}`',
+    ),
+    "Gateway manual restore must validate source projection custody before every write",
+  )
+
+  workload_contracts = [
+    "def validate_api_workload", "default_pod_template_spec",
+    "expected_service_account_projection", '"command"', '"env"',
+    '"securityContext"', '"readinessProbe"', '"volumes"',
+    'ARGV[0] == "--validate-workload"',
+  ]
+  check(
+    workload_contracts.all? { |contract| files[:projection].include?(contract) } &&
+      contains_in_order?(
+        restore_source,
+        [
+          "cma_step10_validate_workload_contract() {",
+          "--validate-workload infra/api/deployment.yaml",
+          "cma_final_workload_is_exact() {",
+          'cma_deployment_json="$(cma_step10_kubectl get deployment cma-api -o json)"',
+          "cma_step10_validate_workload_contract",
+        ],
+      ) && release_doc.include?(
+        "--validate-workload infra/api/deployment.yaml",
+      ) && release_prose.include?(
+        "Command, args, environment, `envFrom`, service account, security context, probes, resources, affinity, volumes, mounts, container count",
+      ),
+    "Release traffic workload proof must bind every live spec to the reviewed Deployment manifest",
+  )
+
+  prove_fence_body = shell_function_body(
+    restore_source,
+    "cma_step10_prove_fence_main",
+    "post-scale fence proof must retain its closed entrypoint",
+  )
+  scaled_workload_body = shell_function_body(
+    restore_source,
+    "cma_step10_validate_scaled_down_workload",
+    "post-scale fence proof must retain its zero-workload verifier",
+  )
+  check(
+    contains_in_order?(
+      prove_fence_body,
+      [
+        "cma_step10_load_fence_receipt",
+        'cma_predecessor_projection="${CMA_GATEWAY_FENCED_PROJECTION_PARENT:-}/fenced-pre-scale-',
+        "cma_step10_validate_fence_projection_receipt",
+        "cma_step10_validate_scaled_down_workload",
+        "cma_wait_for_fenced_endpoints",
+        "cma_step10_projection_capture",
+      ],
+    ) && [
+      ".spec.replicas == 0", '(.status.replicas // 0) == 0',
+      '.items == []', "--ignore-not-found -o json",
+    ].all? { |contract| scaled_workload_body.include?(contract) } &&
+      files[:capture].include?("get deployment cma-api -o json") &&
+      files[:capture].include?("apiDeploymentScale") &&
+      files[:projection].include?("api_workload_scale_projection") &&
+      files[:projection].include?('lifecycle_stage == "fenced-post-scale" ? 0 : 1') &&
+      release_prose.include?("independently reads every recorded predecessor Pod name"),
+    "Post-scale fence proof must bind predecessor Pod deletion and stable zero replicas before publication",
+  )
+
+  fence_body = shell_function_body(
+    restore_source,
+    "cma_step10_fence_main",
+    "traffic fence must retain its closed entrypoint",
+  )
+  check(
+    contains_in_order?(
+      fence_body,
+      [
+        "cma_step10_write_fence_receipt",
+        "CMA durable fence root committed before Service mutation",
+        "cma_step10_kubectl patch service cma-api --type=json",
+      ],
+    ) && release_prose.include?(
+      "receipt acknowledgement is printed before the Service mutation",
+    ),
+    "Traffic fence must surface durable receipt custody before its Service mutation",
+  )
+
+  receipt_writer_body = shell_function_body(
+    restore_source,
+    "cma_step10_write_fence_receipt",
+    "fence receipt must retain its durable writer",
+  )
+  projection_publisher_body = shell_function_body(
+    files[:capture],
+    "cma_projection_publish_directory",
+    "projection capture must retain its atomic publisher",
+  )
+  check(
+    receipt_writer_body.include?("File.rename(source, destination)") &&
+      !receipt_writer_body.include?("File.open(File.dirname(destination)") &&
+      restore_source.scan("cma_step10_sync_published_fence_bundle").length == 4 &&
+      projection_publisher_body.include?("File.rename(source, destination)") &&
+      !projection_publisher_body.include?("fsync") &&
+      files[:capture].scan("cma_projection_sync_published_directory").length == 5 &&
+      files[:capture].include?("concurrent projection publication could not be durably re-synced"),
+    "Fence receipt and projection publication must prove durability after atomic rename",
+  )
+
+  external_projection_digests = %w[
+    CMA_GATEWAY_SOURCE_PROJECTION_SHA256
+    CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256
+    CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256
+    CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256
+  ]
+  check(
+    external_projection_digests.all? { |name| files[:launcher].include?(name) } &&
+      files[:launcher].include?('"${cma_launcher_variable}=${!cma_launcher_variable}"'),
+    "Gateway launcher must preserve every external projection digest",
+  )
+  step10_invocation = release_step10_invocation(release_doc)
+  check(
+    [
+      "CMA_GATEWAY_SOURCE_PROJECTION_SHA256='<independently-recorded-adopted-projection-SHA-256>'",
+      "CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256='<independently-recorded-source-projection-SHA-256>'",
+    ].all? { |contract| release_doc.include?(contract) } && [
+      ': "${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:',
+      'CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256}"',
+      ': "${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256:',
+      'CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256="${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256}"',
+    ].all? { |contract| step10_invocation.include?(contract) } &&
+      release_prose.include?(
+        "the restore process will not trust a digest recovered from the colocated projection receipt",
+      ) && release_prose.include?(
+        "Every successor validator receives and enforces the exact expected lifecycle stage and predecessor digest again after capture publication",
+      ),
+    "Gateway runbook must carry every external projection digest between processes",
+  )
+
+  fence_projection_validator = shell_function_body(
+    restore_source,
+    "cma_step10_validate_fence_projection_receipt",
+    "fenced projection must retain its exact lifecycle validator",
+  )
+  projection_capture_body = shell_function_body(
+    restore_source,
+    "cma_step10_projection_capture",
+    "projection transition must retain its external predecessor validator",
+  )
+  projection_file_body = shell_function_body(
+    restore_source,
+    "cma_step10_require_projection_file",
+    "adopted projection must retain its external digest validator",
+  )
+  check(
+    contains_in_order?(
+      projection_capture_body,
+      [
+        'local cma_expected_predecessor_digest="$7"',
+        'local cma_expected_predecessor_predecessor_digest="$8"',
+        'cma_predecessor_digest="$(cma_step10_sha256_file "${cma_predecessor_file}")"',
+        'cma_step10_sha256_valid "${cma_expected_predecessor_digest}"',
+        '[ "${cma_predecessor_digest}" = "${cma_expected_predecessor_digest}" ]',
+        'cma_recorded_digest="$(awk',
+        '[ "${cma_recorded_digest}" = "${cma_predecessor_digest}" ]',
+        "cma_step10_validate_fence_projection_receipt",
+        '"${cma_expected_predecessor_stage}"',
+        '"${cma_expected_predecessor_predecessor_digest}"',
+      ],
+    ) && contains_in_order?(
+      projection_file_body,
+      [
+        'local cma_expected_digest="$2"',
+        'local cma_expected_predecessor_digest="$3"',
+        'cma_step10_sha256_valid "${cma_expected_digest}"',
+        'cma_step10_sha256_valid "${cma_expected_predecessor_digest}"',
+        '[ "${cma_live_digest}" = "${cma_expected_digest}" ]',
+        '.lifecycle == {stage:"adopted",predecessorSha256:$predecessor}',
+      ],
+    ) && contains_in_order?(
+      fence_body,
+      [
+        'cma_source_projection_sha256="${CMA_GATEWAY_SOURCE_PROJECTION_SHA256:-}"',
+        'cma_source_projection_predecessor_sha256="${CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256:-}"',
+        "cma_step10_require_projection_file",
+        '"${cma_source_projection_sha256}"',
+        '"${cma_source_projection_predecessor_sha256}"',
+        "cma_step10_write_fence_receipt",
+        "fenced-pre-scale \"${cma_source_projection}\" adopted",
+        '"${cma_source_projection_sha256}"',
+      ],
+    ) && contains_in_order?(
+      prove_fence_body,
+      [
+        'cma_predecessor_projection_sha256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:-}"',
+        'cma_step10_sha256_valid "${cma_predecessor_projection_sha256}"',
+        "fenced-post-scale \"${cma_predecessor_projection}\" fenced-pre-scale",
+        '"${cma_predecessor_projection_sha256}"',
+      ],
+    ) && contains_in_order?(
+      restore_source,
+      [
+        'cma_pre_scale_projection_sha256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:-}"',
+        'cma_post_scale_projection_sha256="${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256:-}"',
+        'cma_step10_sha256_valid "${cma_pre_scale_projection_sha256}"',
+        'cma_step10_sha256_valid "${cma_post_scale_projection_sha256}"',
+        "fenced-pre-reopen \"${cma_post_scale_projection}\" fenced-post-scale",
+        '"${cma_post_scale_projection_sha256}"',
+        "final-reopen \"${cma_fenced_projection_dir}/projection.json\" fenced-pre-reopen",
+        '"${cma_fenced_projection_sha256}"',
+      ],
+    ),
+    "Every Gateway projection transition must bind an externally retained predecessor digest",
+  )
+  check(
+    contains_in_order?(
+      fence_projection_validator,
+      [
+        'local cma_expected_stage="$2"',
+        'local cma_expected_predecessor_digest="$3"',
+        '[ "$(wc -l < "${cma_projection_digest_file}" | tr -d \' \')" = 1 ]',
+        'cma_step10_sha256_valid "${cma_expected_predecessor_digest}"',
+        'case "${cma_expected_stage}" in',
+        'jq -e --arg expected_stage "${cma_expected_stage}"',
+        '--arg expected_predecessor "${cma_expected_predecessor_digest}"',
+        '.lifecycle == {',
+        'stage:$expected_stage,predecessorSha256:$expected_predecessor',
+      ],
+    ),
+    "Fenced projection validation must bind exact externally expected lifecycle ancestry",
+  )
+
+  check(
+    receipt_writer_body.scan("CMA_GATEWAY_FENCE_RECEIPT_SHA256=").length == 1 &&
+      contains_in_order?(
+        receipt_writer_body,
+        [
+          'if [ -d "${cma_bundle_dir}" ]',
+          'cma_step10_sha256_valid "${CMA_GATEWAY_FENCE_RECEIPT_SHA256:-}"',
+          "an existing fence receipt requires its independently recorded SHA-256",
+          "cma_step10_load_fence_receipt",
+          '"${cma_receipt_file}" "${CMA_GATEWAY_FENCE_RECEIPT_SHA256}"',
+          "CMA fence receipt candidate before publication:",
+          '[ "${cma_published_receipt_digest}" = "${cma_receipt_digest}" ]',
+          'CMA_GATEWAY_FENCE_RECEIPT_SHA256="${cma_receipt_digest}"',
+        ],
+      ) && release_prose.include?(
+        "That candidate line is not a success acknowledgement",
+      ) && release_prose.include?(
+        "never replace the externally held digest with `receipt.sha256` from the same local bundle",
+      ),
+    "Fence receipt retry must retain the caller's external digest",
+  )
+
+  projection_workload_body = shell_function_body(
+    restore_source,
+    "cma_step10_projection_matches_final_workload",
+    "sealed projection must retain its exact workload validator",
+  )
+  source_projection_validator = shell_function_body(
+    restore_source,
+    "cma_step10_validate_source_projection",
+    "final source projection must retain its sealed workload validator",
+  )
+  fence_projection_digest_validator = shell_function_body(
+    restore_source,
+    "cma_step10_validate_fence_projection",
+    "fenced projection must retain its digest-bound validator",
+  )
+  restore_main_body = shell_function_body(
+    restore_source,
+    "cma_step10_main",
+    "traffic restoration must retain its closed entrypoint",
+  )
+  projection_binding_error =
+    "Projection validators must return the digest of the exact bytes accepted by semantic and live validation"
+  check(
+    contains_in_order?(
+      fence_projection_digest_validator,
+      [
+        'cma_initial_digest="$(cma_step10_projection_digest',
+        "cma_step10_validate_fence_projection_receipt",
+        'cma_semantic_digest="$(cma_step10_projection_digest',
+        '[ "${cma_semantic_digest}" = "${cma_initial_digest}" ]',
+        "cma_step10_projection_check_live",
+        'cma_final_digest="$(cma_step10_projection_digest',
+        '[ "${cma_final_digest}" = "${cma_initial_digest}" ]',
+        'printf \'%s\\n\' "${cma_initial_digest}"',
+      ],
+    ) && contains_in_order?(
+      source_projection_validator,
+      [
+        'cma_live_digest="$(cma_step10_sha256_file "${cma_projection_file}")"',
+        '[ "${cma_recorded_digest}" = "${cma_live_digest}" ]',
+        'cma_step10_projection_matches_final_workload "${cma_projection_file}"',
+        'cma_semantic_digest="$(cma_step10_projection_digest',
+        '[ "${cma_semantic_digest}" = "${cma_live_digest}" ]',
+        'cma_step10_projection_check_live "${cma_projection_file}"',
+        'cma_final_digest="$(cma_step10_projection_digest',
+        '[ "${cma_final_digest}" = "${cma_live_digest}" ]',
+        'printf \'%s\\n\' "${cma_live_digest}"',
+      ],
+    ) && restore_source.scan(
+      'cma_fenced_projection_sha256="$(cma_step10_validate_fence_projection',
+    ).length == 3 && restore_source.scan(
+      'cma_final_projection_sha256="$(cma_step10_validate_source_projection',
+    ).length == 1 && [prove_fence_body, fence_body, restore_main_body].none? do |body|
+      body.include?("cma_step10_projection_digest")
+    end && release_prose.include?(
+      "Each fenced and final-source validator returns the SHA-256 of the exact projection bytes that passed its lifecycle-ancestry, workload, and live-routing checks; every caller validates and acknowledges that returned digest without reopening the mutable projection path.",
+    ),
+    projection_binding_error,
+  )
+  capture_workload_contracts = [
+    '"${lifecycle_stage}" == fenced-pre-reopen',
+    '"${lifecycle_stage}" == final-reopen',
+    'get replicaset', '"${CMA_FINAL_REPLICA_SET}" -o json',
+    'get pod', '"${CMA_FINAL_POD}" -o json',
+    "apiDeploymentWorkload:$api_deployment_workload[0]",
+    "apiReplicaSetWorkload:$api_replicaset_workload[0]",
+    "apiPodWorkload:$api_pod_workload[0]",
+    'printf \'%s\\n\' null > "${state_dir}/api-replicaset-workload.json"',
+    'printf \'%s\\n\' null > "${state_dir}/api-pod-workload.json"',
+  ]
+  derived_workload_contracts = [
+    'if %w[fenced-pre-reopen final-reopen].include?(lifecycle_stage)',
+    'full_deployment.dig("metadata", "uid") == metadata["uid"]',
+    'replica_metadata["ownerReferences"] == [{',
+    'pod_metadata["ownerReferences"] == [{',
+    'container_statuses.fetch(0)["restartCount"] == 0',
+    '"specSha256" => Digest::SHA256.hexdigest(canonical_json(full_deployment["spec"]))',
+    '"specSha256" => Digest::SHA256.hexdigest(canonical_json(replica_set["spec"]))',
+    '"specSha256" => Digest::SHA256.hexdigest(canonical_json(retained_pod["spec"]))',
+    '"verified" => verified',
+    'assert!(full_deployment.nil? && replica_set.nil? && retained_pod.nil?',
+  ]
+  sealed_workload_contracts = [
+    ".fullCapture.kubernetes.apiDeploymentWorkload",
+    ".fullCapture.kubernetes.apiReplicaSetWorkload",
+    ".fullCapture.kubernetes.apiPodWorkload",
+    ".graph.apiWorkload.verified",
+    '"${cma_final_deployment_uid}"', '"${cma_final_replica_set}"',
+    '"${cma_final_replica_set_uid}"', '"${cma_final_pod}"',
+    '"${cma_final_pod_uid}"', '"${cma_final_pod_ip}"',
+    '"${cma_final_pod_image}"', '"${cma_final_pod_image_id}"',
+    "cma_step10_validate_workload_contract",
+  ]
+  check(
+    capture_workload_contracts.all? { |contract| files[:capture].include?(contract) } &&
+      derived_workload_contracts.all? { |contract| files[:projection].include?(contract) } &&
+      sealed_workload_contracts.all? { |contract| projection_workload_body.include?(contract) } &&
+      fence_projection_validator.include?(
+        'cma_step10_projection_matches_final_workload "${cma_projection_file}"',
+      ) && source_projection_validator.include?(
+        'cma_step10_projection_matches_final_workload "${cma_projection_file}"',
+      ) && contains_in_order?(
+        restore_source,
+        [
+          "fenced-pre-reopen \"${cma_post_scale_projection}\" fenced-post-scale",
+          "cma_step10_validate_fence_projection",
+          "cma_route_and_policies_ready",
+          "if ! cma_final_workload_is_exact ||",
+          "cma_step10_kubectl patch service cma-api --type=json",
+          "final-reopen \"${cma_fenced_projection_dir}/projection.json\" fenced-pre-reopen",
+          'cma_final_projection_sha256="$(cma_step10_validate_source_projection',
+          "if ! cma_final_workload_is_exact ||",
+        ],
+      ) && release_prose.include?(
+        "Both the `fenced-pre-reopen` and `final-reopen` projections capture the full normalized Deployment, retained ReplicaSet, and retained Pod objects",
+      ) && release_prose.include?(
+        "An exact live workload recheck immediately before the Service reopen and another immediately after final projection validation bracket both capture windows",
+      ),
+    "Reopen projections must seal and recheck the exact retained workload chain",
+  )
+
+  admission_publisher_body = shell_function_body(
+    files[:admission_bootstrap],
+    "cma_admission_publish_directory",
+    "admission bootstrap must retain its atomic publisher",
+  )
+  check(
+    admission_publisher_body.include?("File.rename(source, destination)") &&
+      !admission_publisher_body.include?("fsync") &&
+      files[:admission_bootstrap].scan("cma_admission_sync_published_directory").length == 3 &&
+      files[:admission_bootstrap].include?(
+        "existing admission receipt could not be durably re-synchronized",
+      ),
+    "Admission receipt publication must re-prove durability after atomic rename",
+  )
+
   doc_contracts = [
     "trusted `env -i` launcher", "reviewed host toolchain",
     "non-ignored untracked", "assume-unchanged", "skip-worktree",
@@ -2738,12 +3419,98 @@ def run_gateway_release_self_tests(
     ],
     [
       "Cloudflare capture removed from the adoption source seal",
-      "adoption and traffic restoration must byte-seal every behavior-bearing release source",
+      "admission, adoption, and traffic restoration must byte-seal every behavior-bearing release source",
       lambda do |_ci, _release, _state, adoption, _source_contract|
         replace_once!(
           adoption,
           ".github/scripts/cma-trigger-gateway-cloudflare-capture.sh ",
           "",
+        )
+      end,
+    ],
+    [
+      "annotated release-tag type check removed from adoption",
+      "every mutating Gateway entrypoint must derive confirmation from one annotated exact SemVer release tag",
+      lambda do |_ci, _release, _state, adoption, _source_contract|
+        replace_once!(
+          adoption,
+          '"${tag_object_type}" == tag',
+          '"${tag_object_type}" != ""',
+        )
+      end,
+    ],
+    [
+      "reviewed API Deployment removed from traffic source seal",
+      "admission, adoption, and traffic restoration must byte-seal every behavior-bearing release source",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        restore_marker = "\n<!-- gateway-restore-self-test-source -->\n"
+        marker_index = release.index(restore_marker)
+        raise "self-test fixture is missing the restore-source marker" unless marker_index
+
+        replace_once_after!(
+          release,
+          restore_marker,
+          "infra/api/deployment.yaml ",
+          "",
+        )
+      end,
+    ],
+    [
+      "direct Gateway adoption reintroduced in release runbook",
+      "Release runbook must invoke Gateway mutations only through the trusted launcher",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          ".github/scripts/cma-trigger-gateway-launch.sh adoption --adopt",
+          ".github/scripts/cma-trigger-gateway-adoption.sh --adopt",
+        )
+      end,
+    ],
+    [
+      "step-10 durable fence receipt digest omitted",
+      "Release traffic restoration must carry durable admission, fence-root, and projection custody evidence",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          "CMA_GATEWAY_FENCE_RECEIPT_SHA256='<externally-recorded-fence-receipt-SHA-256>'",
+          "CMA_GATEWAY_FENCE_RECEIPT_DIGEST_OMITTED=true",
+        )
+      end,
+    ],
+    [
+      "post-scale fence proof removed from release runbook",
+      "Release runbook must retain the independently authenticated post-scale fence proof",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          ".github/scripts/cma-trigger-gateway-launch.sh traffic --prove-fence",
+          "true # post-scale fence projection not captured",
+        )
+      end,
+    ],
+    [
+      "full rollback projection comparison removed",
+      "Gateway rollback success must compare a fresh full closed projection with sealed source behavior",
+      lambda do |_ci, _release, _state, adoption, _source_contract|
+        comparison = [
+          "  cma_gateway_compare_projection_behavior \\",
+          '    "${source_projection}" "${rollback_projection_dir}/projection.json"',
+        ].join("\n")
+        replace_once!(
+          adoption,
+          comparison,
+          "  true # full rollback behavior not compared",
+        )
+      end,
+    ],
+    [
+      "final immutable imageID binding weakened",
+      "Release traffic reopen must bind the exact EndpointSlice and zonal NEG population",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          ".status.containerStatuses[0].imageID == $image_id",
+          '(.status.containerStatuses[0].imageID | type) == "string"',
         )
       end,
     ],
@@ -3087,7 +3854,7 @@ def run_gateway_release_self_tests(
       lambda do |_ci, _release, _state, adoption, _source_contract|
         replace_once!(
           adoption,
-          '[[ "${CMA_GATEWAY_CONFIRM:-}" == restore-v0.10-route ]]',
+          "cma_gateway_require_confirmation restore route",
           "true",
         )
       end,
@@ -3507,6 +4274,363 @@ def run_gateway_release_self_tests(
         )
       end,
     ],
+    [
+      "runbook tag derivation accepts ambiguous or lightweight tags",
+      "Release runbook must derive every confirmation from one annotated exact SemVer tag",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          'cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref',
+          'cma_gateway_release_tag_record="$(git describe --tags --exact-match',
+        )
+      end,
+    ],
+    [
+      "manual restore admission preflight removed",
+      "Gateway manual restore must authenticate admission custody before every write",
+      lambda do |_ci, _release, _state, adoption, _source_contract|
+        replace_once_after!(
+          adoption,
+          "cma_gateway_manual_restore() {",
+          "cma_gateway_verify_admission_receipt",
+          "true # manual admission preflight removed",
+        )
+      end,
+    ],
+    [
+      "manual restore admission custody removed from runbook",
+      "Gateway manual restore must authenticate admission custody before every write",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        marker = "Manual restore has its own explicit confirmation"
+        replace_once_after!(
+          release,
+          marker,
+          "CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>'",
+          "CMA_GATEWAY_MANUAL_ADMISSION_RECEIPT_OMITTED='<omitted>'",
+        )
+        replace_once_after!(
+          release,
+          marker,
+          "CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>'",
+          "CMA_GATEWAY_MANUAL_ADMISSION_RECEIPT_SHA256_OMITTED='<omitted>'",
+        )
+      end,
+    ],
+    [
+      "manual restore source-projection preflight removed",
+      "Gateway manual restore must validate source projection custody before every write",
+      lambda do |_ci, _release, _state, adoption, _source_contract|
+        replace_once_after!(
+          adoption,
+          "cma_gateway_manual_restore() {",
+          "cma_gateway_validate_projection_receipt 0",
+          "true # source projection preflight removed",
+        )
+      end,
+    ],
+    [
+      "full workload manifest validator removed from reopen",
+      "Release traffic workload proof must bind every live spec to the reviewed Deployment manifest",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "<!-- gateway-restore-self-test-source -->",
+          "--validate-workload infra/api/deployment.yaml",
+          "--workload-validation-removed",
+        )
+      end,
+    ],
+    [
+      "post-scale zero-workload verifier removed",
+      "Post-scale fence proof must bind predecessor Pod deletion and stable zero replicas before publication",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_prove_fence_main() {",
+          "cma_step10_validate_scaled_down_workload",
+          "true # scaled-down workload proof removed",
+        )
+      end,
+    ],
+    [
+      "pre-mutation fence receipt acknowledgement removed",
+      "Traffic fence must surface durable receipt custody before its Service mutation",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          "CMA durable fence root committed before Service mutation",
+          "CMA fence receipt withheld until final success",
+        )
+      end,
+    ],
+    [
+      "post-rename fence receipt durability barrier removed",
+      "Fence receipt and projection publication must prove durability after atomic rename",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "File.rename(source, destination)",
+          "cma_step10_sync_published_fence_bundle",
+          "true # post-rename durability barrier removed",
+        )
+      end,
+    ],
+    [
+      "manual restore source lifecycle root weakened",
+      "Gateway manual restore must validate source projection custody before every write",
+      lambda do |_ci, _release, _state, adoption, _source_contract|
+        replace_once!(
+          adoption,
+          '.lifecycle == {stage:"source",predecessorSha256:"genesis"}',
+          '.lifecycle.stage == "source"',
+        )
+      end,
+    ],
+    [
+      "adopted projection digest acknowledgement removed",
+      "Gateway adoption must externally acknowledge adopted projection custody",
+      lambda do |_ci, _release, _state, adoption, _source_contract|
+        replace_once!(
+          adoption,
+          'predecessor SHA-256 ${CMA_GATEWAY_PROJECTION_SHA256}',
+          "predecessor digest withheld",
+        )
+      end,
+    ],
+    [
+      "source projection external digest removed from fence",
+      "Every Gateway projection transition must bind an externally retained predecessor digest",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "<!-- gateway-restore-self-test-source -->",
+          'cma_source_projection_sha256="${CMA_GATEWAY_SOURCE_PROJECTION_SHA256:-}"',
+          'cma_source_projection_sha256="$(cma_step10_projection_digest "${cma_source_projection}")"',
+        )
+      end,
+    ],
+    [
+      "pre-scale projection external digest removed from prove-fence",
+      "Every Gateway projection transition must bind an externally retained predecessor digest",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_prove_fence_main() {",
+          'cma_predecessor_projection_sha256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:-}"',
+          'cma_predecessor_projection_sha256="$(cma_step10_projection_digest "${cma_predecessor_projection}")"',
+        )
+      end,
+    ],
+    [
+      "pre-scale projection external digest removed from restore",
+      "Every Gateway projection transition must bind an externally retained predecessor digest",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_main() {",
+          'cma_pre_scale_projection_sha256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:-}"',
+          'cma_pre_scale_projection_sha256="$(cma_step10_projection_digest "${cma_post_scale_projection}")"',
+        )
+      end,
+    ],
+    [
+      "post-scale projection external digest removed from restore",
+      "Every Gateway projection transition must bind an externally retained predecessor digest",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_main() {",
+          'cma_post_scale_projection_sha256="${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256:-}"',
+          'cma_post_scale_projection_sha256="$(cma_step10_projection_digest "${cma_post_scale_projection}")"',
+        )
+      end,
+    ],
+    [
+      "fenced lifecycle predecessor comparison removed",
+      "Fenced projection validation must bind exact externally expected lifecycle ancestry",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_validate_fence_projection_receipt() {",
+          'stage:$expected_stage,predecessorSha256:$expected_predecessor',
+          'stage:$expected_stage,predecessorSha256:.lifecycle.predecessorSha256',
+        )
+      end,
+    ],
+    [
+      "existing fence receipt overwrites caller digest",
+      "Fence receipt retry must retain the caller's external digest",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        before = 'cma_step10_sha256_valid "${CMA_GATEWAY_FENCE_RECEIPT_SHA256:-}" || {'
+        replacement = <<~'SHELL'.strip
+          CMA_GATEWAY_FENCE_RECEIPT_SHA256="${cma_published_receipt_digest}"
+              cma_step10_sha256_valid "${CMA_GATEWAY_FENCE_RECEIPT_SHA256:-}" || {
+        SHELL
+        replace_once_after!(
+          release,
+          "cma_step10_write_fence_receipt() {",
+          before,
+          replacement,
+        )
+      end,
+    ],
+    [
+      "sealed pre-reopen workload validator removed",
+      "Reopen projections must seal and recheck the exact retained workload chain",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_validate_fence_projection_receipt() {",
+          'cma_step10_projection_matches_final_workload "${cma_projection_file}"',
+          "true # sealed workload validator removed",
+        )
+      end,
+    ],
+    [
+      "pre-reopen exact live workload check removed",
+      "Reopen projections must seal and recheck the exact retained workload chain",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          'fenced-pre-reopen "${cma_post_scale_projection}" fenced-post-scale',
+          "if ! cma_final_workload_is_exact ||",
+          "if ! true ||",
+        )
+      end,
+    ],
+    [
+      "post-final-projection exact live workload check removed",
+      "Reopen projections must seal and recheck the exact retained workload chain",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          'cma_final_projection_sha256="$(cma_step10_validate_source_projection',
+          "if ! cma_final_workload_is_exact ||",
+          "if ! true ||",
+        )
+      end,
+    ],
+    [
+      "runbook pre-scale projection digest handoff removed",
+      "Gateway runbook must carry every external projection digest between processes",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "10. Restore ordinary traffic only after every final check has passed.",
+          'CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256}"',
+          "CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256='<locally-recovered-digest>'",
+        )
+      end,
+    ],
+    [
+      "runbook post-scale projection digest handoff removed",
+      "Gateway runbook must carry every external projection digest between processes",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          'CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256="${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256}"',
+          "CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256='<locally-recovered-digest>'",
+        )
+      end,
+    ],
+    [
+      "runbook sealed workload projection language removed",
+      "Reopen projections must seal and recheck the exact retained workload chain",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once!(
+          release,
+          "Both the `fenced-pre-reopen` and `final-reopen` projections capture the full normalized Deployment, retained ReplicaSet, and retained Pod objects",
+          "The reopen projections capture workload metadata",
+        )
+      end,
+    ],
+    [
+      "fenced semantic digest binding removed",
+      "Projection validators must return the digest of the exact bytes accepted by semantic and live validation",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_validate_fence_projection() {",
+          '[ "${cma_semantic_digest}" = "${cma_initial_digest}" ]',
+          "true # fenced semantic digest binding removed",
+        )
+      end,
+    ],
+    [
+      "fenced live digest binding removed",
+      "Projection validators must return the digest of the exact bytes accepted by semantic and live validation",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_validate_fence_projection() {",
+          '[ "${cma_final_digest}" = "${cma_initial_digest}" ]',
+          "true # fenced live digest binding removed",
+        )
+      end,
+    ],
+    [
+      "source semantic digest binding removed",
+      "Projection validators must return the digest of the exact bytes accepted by semantic and live validation",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_validate_source_projection() {",
+          '[ "${cma_semantic_digest}" = "${cma_live_digest}" ]',
+          "true # source semantic digest binding removed",
+        )
+      end,
+    ],
+    [
+      "source live digest binding removed",
+      "Projection validators must return the digest of the exact bytes accepted by semantic and live validation",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_validate_source_projection() {",
+          '[ "${cma_final_digest}" = "${cma_live_digest}" ]',
+          "true # source live digest binding removed",
+        )
+      end,
+    ],
+    [
+      "caller-side unbound fenced digest restored",
+      "Projection validators must return the digest of the exact bytes accepted by semantic and live validation",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        replace_once_after!(
+          release,
+          "cma_step10_prove_fence_main() {",
+          'cma_fenced_projection_sha256="$(cma_step10_validate_fence_projection',
+          'cma_fenced_projection_sha256="$(cma_step10_projection_digest',
+        )
+      end,
+    ],
+    [
+      "final source validator return ignored",
+      "Projection validators must return the digest of the exact bytes accepted by semantic and live validation",
+      lambda do |_ci, release, _state, _adoption, _source_contract|
+        before = <<~'SHELL'.strip
+          cma_final_projection_sha256="$(cma_step10_validate_source_projection \
+            "${cma_final_projection_dir}")" || {
+            cma_abort_after_reopen "the final live graph differs from the durable pre-fence backend root" || :
+            exit 1
+          }
+        SHELL
+        replacement = <<~'SHELL'.strip
+          if ! cma_step10_validate_source_projection \
+              "${cma_final_projection_dir}" >/dev/null; then
+            cma_abort_after_reopen "the final live graph differs from the durable pre-fence backend root" || :
+            exit 1
+          fi
+          cma_final_projection_sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        SHELL
+        replace_once_after!(
+          release,
+          "cma_step10_main() {",
+          before,
+          replacement,
+        )
+      end,
+    ],
   ]
 
   tests.each do |name, expected_error, mutation|
@@ -3549,7 +4673,100 @@ def run_gateway_release_self_tests(
     raise ContractError, "self-test #{name.inspect} was not rejected"
   end
 
-  puts "CMA Trigger Gateway release self-tests passed (#{tests.length} mutations)"
+  support_tests = [
+    [
+      "pre-scale projection digest removed from trusted launcher",
+      "Gateway launcher must preserve every external projection digest",
+      lambda do |sources|
+        replace_once!(
+          sources.fetch(:launcher),
+          "CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256",
+          "CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_DIGEST_REMOVED",
+        )
+      end,
+    ],
+    [
+      "post-scale projection digest removed from trusted launcher",
+      "Gateway launcher must preserve every external projection digest",
+      lambda do |sources|
+        replace_once!(
+          sources.fetch(:launcher),
+          "CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256",
+          "CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_DIGEST_REMOVED",
+        )
+      end,
+    ],
+    [
+      "retained Pod object removed from projection capture",
+      "Reopen projections must seal and recheck the exact retained workload chain",
+      lambda do |sources|
+        replace_once!(
+          sources.fetch(:capture),
+          "apiPodWorkload:$api_pod_workload[0]",
+          "apiPodWorkload:null",
+        )
+      end,
+    ],
+    [
+      "reopen lifecycle derived workload proof removed",
+      "Reopen projections must seal and recheck the exact retained workload chain",
+      lambda do |sources|
+        replace_once!(
+          sources.fetch(:projection),
+          'if %w[fenced-pre-reopen final-reopen].include?(lifecycle_stage)',
+          'if lifecycle_stage == "final-reopen"',
+        )
+      end,
+    ],
+    [
+      "TLS residual PEM rejection removed",
+      "Gateway TLS sanitizer must reject residual PEM and publish only parsed public certificates",
+      lambda do |sources|
+        replace_once!(
+          sources.fetch(:tls_sanitizer),
+          'raise ArgumentError unless certificate_remainder.match?(/\A[[:space:]]*\z/)',
+          "raise ArgumentError if false # residual PEM accepted",
+        )
+      end,
+    ],
+    [
+      "TLS certificate reconstruction removed",
+      "Gateway TLS sanitizer must reject residual PEM and publish only parsed public certificates",
+      lambda do |sources|
+        replace_once!(
+          sources.fetch(:tls_sanitizer),
+          "certificate_pem = certificates.map(&:to_pem).join",
+          "certificate_pem = certificate_source",
+        )
+      end,
+    ],
+  ]
+  support_sources = load_gateway_support_sources
+  support_tests.each do |name, expected_error, mutation|
+    candidate_support = support_sources.transform_values(&:dup)
+    mutation.call(candidate_support)
+    begin
+      verify_gateway_release_contract(
+        cloned(ci_workflow),
+        release_doc.dup,
+        state_source.dup,
+        adoption_source.dup,
+        source_contract_source.dup,
+        restore_source.dup,
+        candidate_support,
+      )
+    rescue ContractError => error
+      unless error.message.include?(expected_error)
+        raise ContractError,
+              "self-test #{name.inspect} failed for the wrong reason: #{error.message}"
+      end
+      next
+    end
+    raise ContractError, "self-test #{name.inspect} was not rejected"
+  end
+
+  mutation_count = tests.length + support_tests.length
+  puts "CMA Trigger Gateway release self-tests passed (#{mutation_count} mutations)"
 end
 
 def load_d09_host_inputs
@@ -3715,7 +4932,7 @@ def run_self_tests(workflow, release_doc, readiness_doc, restore_source)
       lambda do |_candidate, release, _readiness|
         replace_once!(
           release,
-          ".github/scripts/cma-trigger-gateway-adoption.sh --adopt",
+          ".github/scripts/cma-trigger-gateway-launch.sh adoption --adopt",
           ".github/scripts/cma-trigger-gateway-state.sh --check-adopted",
         )
       end,
