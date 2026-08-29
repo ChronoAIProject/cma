@@ -15,7 +15,28 @@ token is never returned to or handled by this tool.
 
 The bootstrap state, handoff, custody directory, and plan output are also
 absolute owner-only paths outside the repository. Directories must be `0700`;
-state and handoff files must be regular, singly linked `0600` files.
+state and handoff files must be regular, singly linked `0600` files. Secret
+paths may not traverse symbolic-link ancestors, and the plan output may not
+have an untrusted group/world-writable ancestor. Root- or current-user-owned
+sticky boundaries are the only writable-ancestor exception. The plan output may
+not alias the bootstrap state or its adjacent caller-authority lock. Lexical
+aliases are checked before lock acquisition; real-path and device/inode identity
+are checked again after the lock exists, covering filesystem-specific Unicode
+and case folding. Every stateful remote operator mode shares that lock with the
+bootstrap; `--self-test` and `--validate-config` do not read state. A stale
+same-host lock is reported for reviewed exact-file removal and is never
+reclaimed automatically.
+
+An unresolved bootstrap `caller_exchange` or `resource_creation` marker fences
+environment setup and dispatch. Read-only planning and exact
+ephemeral-handoff cleanup remain available under the shared lock so a bootstrap
+incident cannot strand long-lived secrets inside a crash-left handoff. Recover
+only through the marker-specific bootstrap procedure in
+`docs/CMA_Trigger_Operations.md`; the environment operator cannot clear, modify,
+or bypass either marker for any authority-producing or authority-consuming
+action. A non-null `resource_creation.recovery_rotation` means one exact
+rotation is already in flight or ambiguous and a second automatic rotation is
+forbidden.
 
 ## Plan
 
@@ -79,12 +100,14 @@ unset CMA_TRIGGER_SMOKE_ENV_CONFIRM
 ```
 
 Normal exit, failure, `SIGHUP`, `SIGINT`, and `SIGTERM` all enter the same
-cleanup path. Only `CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_B64` is deleted, and its
-absence is verified. Stable Kind custody and `CMA_TRIGGER_SMOKE_SERVICE_ID` are
-retained. The workflow separately destroys Kind and purges runner-local
-credentials. After destruction proves writer quiescence and before the purge,
-the workflow separately settles and absence-verifies only the current run's
-exact live logical objects in the two dedicated staging buckets.
+cleanup path. Only the exact nonce-bound
+`CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_<UPPERCASE_DISPATCH_NONCE>` secret is
+deleted, and its absence is verified. Stable Kind custody and
+`CMA_TRIGGER_SMOKE_SERVICE_ID` are retained. The workflow separately destroys
+Kind and purges runner-local credentials. After destruction proves writer
+quiescence and before the purge, the workflow separately settles and
+absence-verifies only the current run's exact live logical objects in the two
+dedicated staging buckets.
 
 If the operator was killed before cleanup completed, produce a fresh plan and
 run the bounded cleanup command. It removes no stable resource:

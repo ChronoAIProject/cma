@@ -568,6 +568,12 @@ jobs:
           node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs
           node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
           node .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
+          node .github/tools/cma-trigger-smoke-environment/operator.mjs --self-test
+          node --test .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
+          node .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
           bash -n .github/scripts/cma-trigger-kind-staging.sh
           bash -n .github/scripts/cma-trigger-kind-staging-tests.sh
           shellcheck .github/scripts/cma-trigger-kind-staging.sh
@@ -1057,7 +1063,7 @@ jobs:
             exit 1
           fi
           if ! printf '%s' "$NYXID_BOOTSTRAP_B64" | base64 --decode > "$handoff"; then
-            echo "::error::CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_B64 is not valid base64"
+            echo "::error::the nonce-bound protected NyxID handoff secret is not valid base64"
             exit 1
           fi
           unset NYXID_BOOTSTRAP_B64
