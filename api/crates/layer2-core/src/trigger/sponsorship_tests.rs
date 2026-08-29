@@ -2144,7 +2144,6 @@ impl SponsorshipStore for MemoryStore {
                     SponsorshipStoreError::Malformed("grant generation exhausted".into())
                 })?;
                 grant.state = SponsoredGrantState::Exhausted;
-                grant.updated_at = replacement.updated_at.clone();
                 grant
                     .refresh_capability()
                     .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
@@ -4892,7 +4891,7 @@ mod current_tests {
     }
 
     #[tokio::test]
-    async fn any_mandatory_limit_exhausts_grant_and_releases_unused_capacity() {
+    async fn any_mandatory_limit_exhausts_grant_without_rewinding_record_time() {
         let limits = Limits {
             per_launch_quota: SponsoredQuota {
                 requests: 4,
@@ -4925,6 +4924,10 @@ mod current_tests {
             .await
             .unwrap()
             .reservation;
+        {
+            let mut state = harness.store.state.lock().await;
+            state.grants.get_mut(&grant.id.0).unwrap().updated_at = LATER.into();
+        }
         harness
             .service
             .reconcile_usage(
@@ -4941,6 +4944,7 @@ mod current_tests {
         let state = harness.store.state.lock().await;
         let exhausted = state.grants.get(&grant.id.0).unwrap();
         assert_eq!(exhausted.state, SponsoredGrantState::Exhausted);
+        assert_eq!(exhausted.updated_at, LATER);
         assert_ne!(exhausted.usage, exhausted.allocation);
         let usage = state.policy_usage.get(&harness.policy.id.0).unwrap();
         assert_eq!(usage.reserved, SponsoredUsageSummary::default());
