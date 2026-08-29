@@ -882,6 +882,39 @@ describe('Trigger response validation', () => {
     }
   });
 
+  it('decodes only a bound and timestamped Launch session credential retirement', () => {
+    const raw = fixture('launch.json') as Record<string, unknown>;
+    const retirement = {
+      session_id: 'sesn_provider_smoke',
+      settled_at: '2026-08-28T01:02:45Z',
+    };
+
+    const launch = decodeLaunch({
+      ...raw,
+      state: 'completed',
+      session_credential_retirement: retirement,
+    });
+    expect(launch.session_credential_retirement).toEqual(retirement);
+
+    for (const malformed of [
+      {},
+      { ...retirement, session_id: '' },
+      { ...retirement, session_id: 42 },
+      { ...retirement, settled_at: '' },
+      { ...retirement, settled_at: '2026-08-28' },
+      { ...retirement, settled_at: '2026-02-31T01:02:45Z' },
+      { ...retirement, settled_at: 'not-a-timestamp' },
+      { ...retirement, settled_at: 42 },
+    ]) {
+      expect(() => decodeLaunch({ ...raw, session_credential_retirement: malformed })).toThrow(
+        ProtocolError,
+      );
+    }
+    expect(() => decodeLaunch(withoutPath(raw, ['session_credential_retirement']))).toThrow(
+      ProtocolError,
+    );
+  });
+
   it('admits only the public pull-request provider correlation field', () => {
     const pullRequest = {
       operation: 'open',

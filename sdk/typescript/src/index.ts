@@ -238,6 +238,7 @@ export {
   type LaunchQuotaSnapshot,
   type LaunchReachStatus,
   type LaunchRuntimeAdmission,
+  type LaunchSessionCredentialRetirement,
   type LaunchStartAdmission,
   type LaunchState,
   type LaunchStep,

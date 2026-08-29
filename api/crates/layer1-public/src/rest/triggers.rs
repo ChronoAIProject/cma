@@ -18,13 +18,13 @@ use layer2_core::{
     PublicProjectionPolicy, PublicTriggerId, PullRequestDraft, PullRequestOperation,
     PullRequestRecord, QuotaSnapshot, ReachStatus, RecoverInitialPromptCommand,
     RepositoryAccessPolicy, RequiredCapability, ResourcePolicy, RuntimeAdmissionSnapshot,
-    ScopeClass, SessionId, SessionLink, SetupPolicy, SourceMode, StartAdmissionSnapshot,
-    StartLaunchCommand, TriggerAvailability, TriggerConnection, TriggerConnectionAuthorization,
-    TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPageRequest, TriggerPreview,
-    TriggerPreviewCost, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
-    TriggerRevisionId, TriggerServiceError, TriggerSessionPolicy, TriggerStoreError, TriggerTask,
-    UpstreamRevision, WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceManifest,
-    WorkspaceRecord,
+    ScopeClass, SessionCredentialRetirement, SessionId, SessionLink, SetupPolicy, SourceMode,
+    StartAdmissionSnapshot, StartLaunchCommand, TriggerAvailability, TriggerConnection,
+    TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft, TriggerId,
+    TriggerPageRequest, TriggerPreview, TriggerPreviewCost, TriggerRepositorySelection,
+    TriggerRevision, TriggerRevisionContent, TriggerRevisionId, TriggerServiceError,
+    TriggerSessionPolicy, TriggerStoreError, TriggerTask, UpstreamRevision, WorkflowChangePolicy,
+    WorkspaceCheckpoint, WorkspaceManifest, WorkspaceRecord,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -678,6 +678,8 @@ pub(crate) struct LaunchView {
     workspace: Option<WorkspaceRecordView>,
     #[schema(value_type = Option<trigger_schema::SessionLink>)]
     session: Option<SessionLink>,
+    #[schema(value_type = Option<trigger_schema::SessionCredentialRetirement>)]
+    session_credential_retirement: Option<SessionCredentialRetirement>,
     #[schema(value_type = Option<trigger_schema::ReachStatus>)]
     reach: Option<ReachStatus>,
     #[schema(value_type = Option<trigger_schema::PromptDelivery>)]
@@ -1231,6 +1233,7 @@ impl TryFrom<Launch> for LaunchView {
             branch: value.branch,
             workspace: value.workspace.map(Into::into),
             session: value.session,
+            session_credential_retirement: value.session_credential_retirement,
             reach: value.reach,
             delivery: value.delivery,
             contribution_checkpoint_version: value.contribution_checkpoint_version,

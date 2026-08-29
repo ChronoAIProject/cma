@@ -89,6 +89,28 @@ impl MemoryOperations {
         );
         pause
     }
+
+    async fn wait_until_outcome(&self, key: &str) {
+        for _ in 0..200 {
+            let complete = self
+                .state
+                .lock()
+                .await
+                .iter()
+                .any(|((_, _, held_key), held)| held_key == key && held.outcome.is_some());
+            if complete {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let state = self.state.lock().await;
+        assert!(
+            state
+                .iter()
+                .any(|((_, _, held_key), held)| held_key == key && held.outcome.is_some()),
+            "operation {key:?} did not publish its replay outcome"
+        );
+    }
 }
 
 #[async_trait::async_trait]
@@ -2767,6 +2789,7 @@ async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_
     let TestSurface {
         app,
         sessions,
+        operations,
         kernel,
         store,
         caller,
@@ -2835,6 +2858,8 @@ async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_
         "dropping the SSE body must not cancel prompt admission",
     )
     .await;
+    // Prompt admission becomes observable before its finite replay receipt.
+    operations.wait_until_outcome(run_id).await;
 
     for thread_id in [requested, effective.0.as_str()] {
         let replay = app
