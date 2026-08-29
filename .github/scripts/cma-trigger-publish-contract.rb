@@ -6,6 +6,7 @@ require "open3"
 require "yaml"
 
 ROOT = File.expand_path("../..", __dir__)
+WORKFLOW_DIRECTORY = File.join(ROOT, ".github/workflows")
 CI_WORKFLOW_PATH = File.join(ROOT, ".github/workflows/ci.yml")
 WORKFLOW_PATH = File.join(ROOT, ".github/workflows/publish.yml")
 RUNTIME_SMOKE_PATH = File.join(ROOT, ".github/scripts/cma-trigger-runtime-image-smoke.mjs")
@@ -31,6 +32,15 @@ RELEASE_DOC_PATH = File.join(ROOT, "docs/Release.md")
 READINESS_DOC_PATH = File.join(ROOT, "docs/CMA_Trigger_Release_Readiness.md")
 
 COMPONENTS = %w[api web runtime].freeze
+PACKAGE_WRITER_ACTION_REFS = [
+  "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+  "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
+  "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
+  "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+  "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
+  "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
+  "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
+].freeze
 METADATA_KEYS = %w[
   archive
   archiveReference
@@ -160,6 +170,35 @@ end
 
 def always_condition?(value)
   value.to_s.include?("always()")
+end
+
+def package_write_permission?(permissions)
+  permissions == "write-all" ||
+    (permissions.is_a?(Hash) && permissions["packages"] == "write")
+end
+
+def package_write_grants(publish_workflow)
+  Dir.glob(File.join(WORKFLOW_DIRECTORY, "*.{yml,yaml}")).sort.each_with_object([]) do |path, grants|
+    workflow = if path == WORKFLOW_PATH
+                 publish_workflow
+               else
+                 YAML.safe_load(File.read(path), aliases: true)
+               end
+    next unless workflow.is_a?(Hash)
+
+    basename = File.basename(path)
+    grants << "#{basename}:workflow" if package_write_permission?(workflow["permissions"])
+    workflow_jobs = workflow["jobs"]
+    next unless workflow_jobs.is_a?(Hash)
+
+    workflow_jobs.each do |name, job|
+      next unless job.is_a?(Hash) && package_write_permission?(job["permissions"])
+
+      grants << "#{basename}:#{name}"
+    end
+  end
+rescue Psych::Exception => error
+  raise ContractError, "workflow package-write audit requires valid YAML: #{error.message}"
 end
 
 def contains_in_order?(source, needles)
@@ -852,10 +891,25 @@ def verify_contract(workflow, release_doc, readiness_doc, restore_source = nil)
 
   images = required_hash(jobs["images"], "publish.yml must retain the images job")
   check(
+    package_write_grants(workflow) == ["publish.yml:images"],
+    "only the publish images job may receive package-write authority",
+  )
+  check(
+    images["permissions"] == { "contents" => "read", "packages" => "write" },
+    "images permissions must remain exactly contents-read and packages-write",
+  )
+  check(
     images.dig("strategy", "matrix", "component") == COMPONENTS,
     "images matrix must cover exactly api, web, runtime",
   )
   image_steps = required_steps(images, "images")
+  package_writer_action_refs = image_steps.map do |step|
+    step["uses"] if step.is_a?(Hash) && step["uses"]
+  end.compact
+  check(
+    package_writer_action_refs == PACKAGE_WRITER_ACTION_REFS,
+    "every action with package-write authority must retain its exact reviewed SHA",
+  )
   publish = required_step(image_steps, "Publish")
   publish_with = required_hash(publish["with"], "Publish must retain its build-push inputs")
   check(
@@ -1119,6 +1173,21 @@ def verify_contract(workflow, release_doc, readiness_doc, restore_source = nil)
   end
 
   release_prose = release_doc.gsub(/\s+/, " ")
+  ghcr_writer_contracts = [
+    "one audited ordinary-operation package writer",
+    "Repository permission inheritance is disabled on all three",
+    "`repository_id=1330597394`) at `Write`",
+    "zero direct package members or teams",
+    "GitHub automatically grants package `Admin` to every organization owner",
+    "audited break-glass exceptions",
+    "all by `github-actions[bot]`",
+    "every action executed in that job is pinned to a full commit SHA",
+    "Literal zero-human package administration is not a capability GHCR offers",
+  ]
+  check(
+    ghcr_writer_contracts.all? { |contract| release_prose.include?(contract) },
+    "Release documentation must retain the audited GHCR writer and owner-exception contract",
+  )
   check(
     release_prose.include?("cannot prevent or retract those image tags"),
     "Release documentation must state that D-09 cannot prevent or retract GHCR image tags",
@@ -3541,6 +3610,37 @@ end
 
 def run_self_tests(workflow, release_doc, readiness_doc, restore_source)
   tests = [
+    [
+      "package writer action floated",
+      "every action with package-write authority must retain its exact reviewed SHA",
+      lambda do |candidate, _release, _readiness|
+        steps = candidate.fetch("jobs").fetch("images").fetch("steps")
+        checkout = steps.find do |step|
+          step.is_a?(Hash) && step["uses"] == PACKAGE_WRITER_ACTION_REFS.first
+        end
+        raise "self-test fixture is missing the pinned package-writer checkout" unless checkout
+
+        checkout["uses"] = "actions/checkout@v5"
+      end,
+    ],
+    [
+      "second package writer added",
+      "only the publish images job may receive package-write authority",
+      lambda do |candidate, _release, _readiness|
+        candidate.fetch("jobs").fetch("image-exports").fetch("permissions")["packages"] = "write"
+      end,
+    ],
+    [
+      "GHCR owner exception removed from release documentation",
+      "Release documentation must retain the audited GHCR writer and owner-exception contract",
+      lambda do |_candidate, release, _readiness|
+        replace_once!(
+          release,
+          "Literal\n   zero-human package administration is not a capability GHCR offers",
+          "Literal\n   zero-human package administration is a capability GHCR offers",
+        )
+      end,
+    ],
     [
       "collapsed OCI export matrix",
       "image-exports matrix must cover exactly api, web, runtime",
