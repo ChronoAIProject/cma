@@ -2785,8 +2785,8 @@ def run_gateway_release_self_tests(
       lambda do |_ci, release, _state, _adoption, _source_contract|
         replace_once!(
           release,
-          "   cma_restore_status=0",
-          "   cma_restore_status=0\n   if (",
+          "cma_restore_status=0",
+          "cma_restore_status=0\nif (",
         )
       end,
     ],
