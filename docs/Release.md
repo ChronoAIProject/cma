@@ -116,10 +116,11 @@ gh api -X PATCH "repos/$REPOSITORY/branches/main/protection/required_status_chec
 Use the `checks` form of the branch-protection API for the two Trigger jobs and
 bind each to the same non-null GitHub Actions App ID required on `develop`.
 Legacy context-only entries accept a status from any app with that name and do
-not close this gate. As of 2026-08-29, `main` is missing both `Trigger release
-contract` and `Trigger provider smoke contract`; the release pull request must
-remain draft until a reviewed protection update is re-read from
-`required_status_checks.checks` and proves both exact context/app bindings.
+not close this gate. On 2026-08-29, both `Trigger release contract` and
+`Trigger provider smoke contract` were installed on `main` and independently
+re-read from `required_status_checks.checks` with GitHub Actions App ID `15368`.
+The release pull request must remain draft if either exact context/app binding
+is later absent or drifts.
 
 `Images (runtime)`, `TypeScript SDK`, and `Rust SDK` are required on both
 protected branches. The SDK jobs prove the repository-only packages build and
