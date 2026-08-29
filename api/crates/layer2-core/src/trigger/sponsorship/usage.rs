@@ -2,7 +2,8 @@
 
 use super::super::TriggerValidationError;
 use super::lifecycle::{
-    ReportSponsoredUsage, RequestSponsoredUsage, SponsorshipError, SponsorshipService,
+    monotonic_record_time, ReportSponsoredUsage, RequestSponsoredUsage, SponsorshipError,
+    SponsorshipService,
 };
 use super::model::*;
 use super::ports::SponsorshipStoreError;
@@ -28,9 +29,17 @@ impl SponsorshipService {
             .into());
         }
         let idempotency_fingerprint = usage_idempotency_fingerprint(&caller.subject, &command)?;
+        let request_identity = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::UsageRequest,
+            &[
+                &command.grant_id.0,
+                &caller.subject.0,
+                &command.stable_request_id,
+            ],
+        )?;
         if let Some(existing) = self
             .store
-            .usage_reservation(&command.stable_request_id)
+            .usage_reservation_for_request(&request_identity)
             .await?
         {
             existing.validate()?;
@@ -74,18 +83,18 @@ impl SponsorshipService {
         {
             return Err(SponsorshipError::ScopeDenied);
         }
-        let policy = self
-            .store
-            .policy(&grant.policy_id)
-            .await?
-            .ok_or(SponsorshipError::PolicyUnavailable)?;
+        let policy = self.store.policy(&grant.policy_id).await?.ok_or_else(|| {
+            SponsorshipStoreError::Malformed(
+                "usage grant references a missing sponsorship policy".into(),
+            )
+        })?;
+        require_stored_grant_policy_bindings(&grant, &policy)?;
         let stored_credential = self
             .store
-            .credential(&policy.credential_id)
+            .credential_record(&policy.credential_id)
             .await?
             .ok_or(SponsorshipError::CredentialUnavailable)?;
-        stored_credential.validate()?;
-        let credential = stored_credential.record;
+        let credential = stored_credential;
         if !policy.is_available_at(&now)
             || credential.state != SponsoredCredentialState::Active
             || grant.policy_generation != policy.generation
@@ -123,8 +132,10 @@ impl SponsorshipService {
         {
             return Err(SponsorshipError::PricingUnsupported);
         }
+        let stable_request_id = command.stable_request_id;
         let request = SponsoredUsageRequest {
-            stable_request_id: command.stable_request_id,
+            reservation_id: SponsoredUsageReservationId::new(),
+            request_identity,
             idempotency_fingerprint,
             grant_id: grant.id.clone(),
             requester: caller.subject.clone(),
@@ -142,7 +153,6 @@ impl SponsorshipService {
             requested_at: now.clone(),
         };
         request.validate()?;
-        let stable_request_id = request.stable_request_id.clone();
         let audit = SponsoredAuditEvent::privacy_safe(
             &self.audit,
             SponsoredAuditAction::UsageReserved,
@@ -181,11 +191,11 @@ impl SponsorshipService {
             .authorization
             .require(Capability::ReconcileSponsoredUsage)
             .map_err(|_| SponsorshipError::Forbidden)?;
-        validate_stable_request_id(&report.stable_request_id)?;
+        SponsoredUsageReservationId::parse(report.reservation_id.0.clone())?;
         validate_digest("usage.request_fingerprint", &report.request_fingerprint)?;
         let reservation = self
             .store
-            .usage_reservation(&report.stable_request_id)
+            .usage_reservation(&report.reservation_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
         reservation.validate()?;
@@ -214,6 +224,7 @@ impl SponsorshipService {
         }
         let now = self.clock.now();
         validate_timestamp("now", &now)?;
+        let transition_time = monotonic_record_time(&reservation.updated_at, &now);
         let actual = match report.outcome {
             SponsoredUsageState::Settled => {
                 let actual_quota = report.actual_quota.ok_or_else(|| {
@@ -263,26 +274,26 @@ impl SponsorshipService {
             }
         }
         let command = ReconcileSponsoredUsage {
-            stable_request_id: report.stable_request_id,
+            reservation_id: report.reservation_id,
             request_fingerprint: report.request_fingerprint,
             actual_quota: report.actual_quota,
             actual,
             outcome: report.outcome,
-            observed_at: now.clone(),
+            observed_at: transition_time.clone(),
         };
         let audit = SponsoredAuditEvent::privacy_safe(
             &self.audit,
             SponsoredAuditAction::UsageReconciled,
             &caller.subject,
             SponsoredAuditTarget::Platform,
-            Some(&command.stable_request_id),
+            Some(&command.reservation_id.0),
             match command.outcome {
                 SponsoredUsageState::Settled => "settled",
                 SponsoredUsageState::Released => "released",
                 SponsoredUsageState::Ambiguous => "ambiguous",
                 SponsoredUsageState::Reserved => unreachable!(),
             },
-            now,
+            transition_time,
         );
         Ok(self.store.reconcile_usage(command, audit).await?)
     }

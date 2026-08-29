@@ -2982,6 +2982,7 @@ fn content(owner: SubjectId) -> TriggerRevisionContent {
         commercial_policy: CommercialPolicy {
             billing_mode: BillingMode::ZeroCost,
             policy_reference: layer2_core::CMA_TRIGGER_ZERO_COST_POLICY_V1.into(),
+            sponsorship: None,
         },
         override_policy: OverridePolicy {
             editable_fields: vec![EditableField::TaskInput],

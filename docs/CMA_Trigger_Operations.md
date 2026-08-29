@@ -97,6 +97,132 @@ values fail startup rather than falling back to a broader policy.
 | `CHRONO_TRIGGER_WORKER_MAX_PAGES`               |          `20` | Hard page ceiling per lane and pass, 1 through 100.                                                                                                                                                                                       |
 | `CHRONO_TRIGGER_WORKER_CONCURRENCY`             |           `4` | Hard concurrent candidate ceiling per lane, 1 through 32.                                                                                                                                                                                 |
 
+### Dormant sponsorship boundary (#671)
+
+Native Layer 2 sponsorship models, encrypted Mongo persistence, REST routes,
+and four secret-free TypeScript SDK page reads exist. Sponsorship remains
+post-MVP because the checked-in binary wires `sponsorships: None` and composes
+no provider, billing, pricing, scheduler, worker, or runtime adapter. Keep the
+checked-in deployment state exactly as follows:
+
+```text
+CHRONO_SPONSORSHIP_ENABLED=false
+CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED=true
+all other CHRONO_SPONSORSHIP_* ConfigMap values are empty
+no sponsorship secret file is mounted
+```
+
+An absent tuple and the exact empty ConfigMap declarations both resolve to no
+sponsorship runtime. Once any non-boolean value is supplied, CMA requires every
+field below, even when the complete tuple is staged with sponsorship disabled.
+`enabled=false` requires the kill switch to remain engaged. This build rejects
+every exact `CHRONO_SPONSORSHIP_ENABLED=true` value immediately, before reading
+the kill switch, mounted secrets, or the remaining tuple, with this fixed error:
+
+```text
+CHRONO_SPONSORSHIP_ENABLED=true is not available in this build because sponsorship persistence and provider, billing, and pricing adapters are not composed; keep CHRONO_SPONSORSHIP_ENABLED=false and CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED=true
+```
+
+The refusal applies even to an otherwise complete domain-valid gate. Empty,
+partial, malformed, mismatched, or above-ceiling disabled staging tuples also
+fail process startup; ordinary Trigger configuration is not substituted.
+
+| Configuration group | Required keys once staged |
+| --- | --- |
+| Fence and evidence | `CHRONO_SPONSORSHIP_EPOCH`, `CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST`, `CHRONO_SPONSORSHIP_EXPIRY_EVIDENCE_ID`, `CHRONO_SPONSORSHIP_REVOCATION_EVIDENCE_ID` |
+| Provider policy | `CHRONO_SPONSORSHIP_TRUSTED_PROVIDER_POLICY_KEY`, `CHRONO_SPONSORSHIP_ALLOWED_PROVIDER_POLICY_KEYS` |
+| Domain gate ceilings | `CHRONO_SPONSORSHIP_MAXIMUM_POLICY_BUDGET_MICROS`, `CHRONO_SPONSORSHIP_MAXIMUM_POLICY_REQUESTS`, `CHRONO_SPONSORSHIP_MAXIMUM_CONCURRENT_LAUNCHES` |
+| Expiry and public-abuse ceilings | `CHRONO_SPONSORSHIP_DEFAULT_POLICY_EXPIRY_SECONDS`, `CHRONO_SPONSORSHIP_MAXIMUM_POLICY_EXPIRY_SECONDS`, `CHRONO_SPONSORSHIP_MAXIMUM_ACTIVE_POLICIES_PER_SPONSOR`, `CHRONO_SPONSORSHIP_LAUNCH_RATE_WINDOW_SECONDS`, `CHRONO_SPONSORSHIP_MAXIMUM_LAUNCHES_PER_SPONSOR_PER_WINDOW` |
+| Per-Launch and policy quotas | `CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_REQUESTS`, `CHRONO_SPONSORSHIP_MAXIMUM_REQUESTS_PER_MINUTE`, `CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_INPUT_TOKENS`, `CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_OUTPUT_TOKENS`, `CHRONO_SPONSORSHIP_MAXIMUM_POLICY_INPUT_TOKENS`, `CHRONO_SPONSORSHIP_MAXIMUM_POLICY_OUTPUT_TOKENS`, `CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_BUDGET_MICROS` |
+| Adapter identities and origins | `CHRONO_SPONSORSHIP_PROVIDER_ADAPTER_ID`, `CHRONO_SPONSORSHIP_PROVIDER_BASE_URL`, `CHRONO_SPONSORSHIP_BILLING_ADAPTER_ID`, `CHRONO_SPONSORSHIP_BILLING_BASE_URL`, `CHRONO_SPONSORSHIP_PRICING_ADAPTER_ID`, `CHRONO_SPONSORSHIP_PRICING_BASE_URL` |
+| Reconciliation work | `CHRONO_SPONSORSHIP_WORKER_INTERVAL_SECONDS`, `CHRONO_SPONSORSHIP_WORKER_PAGE_SIZE`, `CHRONO_SPONSORSHIP_WORKER_MAX_PAGES`, `CHRONO_SPONSORSHIP_WORKER_CONCURRENCY` |
+| File-only secrets | `CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE`, `CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE`, `CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE` |
+
+The parser enforces these absolute deployment bounds. A selected policy may be
+narrower. It may never widen them:
+
+| Boundary | Accepted deployment range |
+| --- | ---: |
+| Epoch | 1 through signed 64-bit maximum |
+| Provider-policy allowlist | 1 through 32 distinct canonical tokens; the trusted key must be a member |
+| Default and maximum policy expiry | 60 through 86,400 seconds; default no greater than maximum |
+| Active policies per sponsor | 1 through 32 |
+| Launch-rate window | 60 through 3,600 seconds |
+| Launches per sponsor per window | 1 through 100 |
+| Concurrent Launches per policy | 1 through 32 |
+| Requests per policy / per Launch | 1 through 10,000 / 1 through 1,000; per Launch no greater than policy |
+| Requests per minute | 1 through 600 |
+| Input or output tokens per policy / per Launch | 1 through 10,000,000 / 1 through 1,000,000; per Launch no greater than its policy dimension |
+| Budget per policy / per Launch | 1 through 100,000,000 / 1 through 10,000,000 micros; per Launch no greater than policy |
+| Worker interval/page/max-pages/concurrency | 1-300 seconds / 1-200 rows / 1-100 pages / 1-32 candidates |
+
+Evidence identifiers are 8-255 byte opaque canonical identifiers. Adapter IDs
+are 1-128 byte canonical policy tokens. Adapter addresses are exact HTTPS
+origins with no credential, path, query, or fragment. The encryption,
+operational-HMAC, and audit-HMAC keyrings must resolve from different mounted
+files. Each file must be nonempty and no larger than 65,536 bytes, and the
+three complete file payloads must be pairwise non-identical. Inline
+`CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING`,
+`CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING`, and
+`CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY` values are rejected.
+
+Encryption-key retirement and operational-pseudonym retirement are separate
+procedures. An AEAD predecessor may be removed only after every ciphertext
+candidate has been rewrapped under the current encryption key. An operational
+predecessor must remain configured while any credential, registration,
+operation, acceptance, activation, grant, cleanup, or usage document contains
+an `sp1` identity bearing that key id. CMA inventories both key classes at
+startup, decrypts every retained credential, activation receipt, and grant
+receipt, and refuses to open if any referenced AEAD or operational predecessor
+is absent. Ciphertext rewrap does not authorize operational-key removal.
+Encryption and operational key ids and bytes must never be reused across the
+two key classes.
+
+`CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST` is the lowercase SHA-256 digest of
+the domain's canonical JSON tuple, in this exact order:
+
+```text
+[
+  "cma-sponsorship-gate-v1",
+  enabled,
+  expiry_evidence_id,
+  revocation_evidence_id,
+  sorted_allowed_provider_policy_keys,
+  maximum_policy_budget_micros,
+  maximum_policy_requests,
+  maximum_concurrent_launches
+]
+```
+
+The kill switch is deliberately fenced separately and is not part of this
+digest. Changing `enabled` does change the digest. The configured epoch must
+also match the future durable gate fence; never lower, reuse, or guess it. At
+restart, the configured and durable fences must be exactly equal, except for
+one fail-closed recovery transition: configured open epoch `N` may resume a
+durably engaged fence at exactly epoch `N+1`, with the same configuration
+digest, so its bounded drain can finish. Every other epoch or switch-state
+drift aborts startup.
+
+Sponsorship recovery times are monotonic record fences, not trusted wall-clock
+observations. A backward service-clock step cannot move a usage reservation or
+grant behind its prior `updated_at`. Definitive global credential retirement
+may complete an earlier rejected uncommitted-grant cleanup only when the same
+Mongo transaction revalidates the exact activation, policy, and advanced
+credential lineage. That transaction releases its allocation and concurrency
+hold exactly once and never calls the provider again.
+
+Do not attempt activation from the current manifests. The implementation above
+does not provide usable sponsorship, release or deployment evidence, or the
+aggregate expiry/revocation and restart-recovery evidence required from
+#445/#524/#528 and #675; it does not satisfy #671. The manifests name no reviewed
+sponsorship Secret Manager resources and adding an unprovisioned object to the
+mandatory CSI class would prevent a dormant CMA pod from starting. A future
+activation change must first provide the reviewed evidence and compose the
+sponsorship service with provider, billing, pricing, scheduler, worker, and
+runtime adapters, replace the explicit enabled-state startup refusal, then add
+three separately reviewed read-only secret projections and IAM grants, stage
+the complete disabled/kill-switched tuple, and pass the post-MVP readiness ledger.
+
 Provision the public GitHub observer as a dedicated credential-free NyxID
 service, not as the ordinary credential-backed `api-github` service. Its closed
 configuration has `identity_propagation_mode=none`,

@@ -238,9 +238,16 @@ pub(super) enum BillingMode {
 }
 
 #[derive(serde::Serialize, ToSchema)]
+pub(super) struct SponsoredPolicyBinding {
+    tenant_id: String,
+    policy_id: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
 pub(super) struct CommercialPolicy {
     billing_mode: BillingMode,
     policy_reference: String,
+    sponsorship: Option<SponsoredPolicyBinding>,
 }
 
 #[derive(serde::Serialize, ToSchema)]

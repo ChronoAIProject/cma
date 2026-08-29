@@ -212,6 +212,56 @@ data:
   CHRONO_TRIGGER_WORKER_PAGE_SIZE: "50"
   CHRONO_TRIGGER_WORKER_MAX_PAGES: "20"
   CHRONO_TRIGGER_WORKER_CONCURRENCY: "4"
+  # Issue #671 sponsorship is a separate post-MVP authority. The only dormant
+  # tuple is disabled with the kill switch engaged and every other value empty.
+  # Supplying any one staging value requires the complete tuple at startup;
+  # this build rejects enabled=true even when that tuple is complete because no
+  # sponsorship store or provider/billing/pricing adapter is composed.
+  CHRONO_SPONSORSHIP_ENABLED: "false"
+  CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED: "true"
+  CHRONO_SPONSORSHIP_EPOCH: ""
+  CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST: ""
+  CHRONO_SPONSORSHIP_EXPIRY_EVIDENCE_ID: ""
+  CHRONO_SPONSORSHIP_REVOCATION_EVIDENCE_ID: ""
+  CHRONO_SPONSORSHIP_TRUSTED_PROVIDER_POLICY_KEY: ""
+  CHRONO_SPONSORSHIP_ALLOWED_PROVIDER_POLICY_KEYS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_BUDGET_MICROS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_REQUESTS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_CONCURRENT_LAUNCHES: ""
+  # Policy, sponsor, Launch, rate-window, quota, token, and spend ceilings have
+  # no permissive software defaults. Disabled staging supplies every value
+  # inside the parser's absolute bounds, with per-Launch ceilings no greater
+  # than the corresponding policy ceilings.
+  CHRONO_SPONSORSHIP_DEFAULT_POLICY_EXPIRY_SECONDS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_EXPIRY_SECONDS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_ACTIVE_POLICIES_PER_SPONSOR: ""
+  CHRONO_SPONSORSHIP_LAUNCH_RATE_WINDOW_SECONDS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_LAUNCHES_PER_SPONSOR_PER_WINDOW: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_REQUESTS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_REQUESTS_PER_MINUTE: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_INPUT_TOKENS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_OUTPUT_TOKENS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_INPUT_TOKENS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_OUTPUT_TOKENS: ""
+  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_BUDGET_MICROS: ""
+  # Adapter identities are canonical policy tokens. Adapter addresses are
+  # canonical HTTPS origins, not caller-selected URLs or inline credentials.
+  CHRONO_SPONSORSHIP_PROVIDER_ADAPTER_ID: ""
+  CHRONO_SPONSORSHIP_PROVIDER_BASE_URL: ""
+  CHRONO_SPONSORSHIP_BILLING_ADAPTER_ID: ""
+  CHRONO_SPONSORSHIP_BILLING_BASE_URL: ""
+  CHRONO_SPONSORSHIP_PRICING_ADAPTER_ID: ""
+  CHRONO_SPONSORSHIP_PRICING_BASE_URL: ""
+  CHRONO_SPONSORSHIP_WORKER_INTERVAL_SECONDS: ""
+  CHRONO_SPONSORSHIP_WORKER_PAGE_SIZE: ""
+  CHRONO_SPONSORSHIP_WORKER_MAX_PAGES: ""
+  CHRONO_SPONSORSHIP_WORKER_CONCURRENCY: ""
+  # Paths only, never keyring/HMAC values. No sponsorship projection is mounted
+  # in the dormant Deployment; future composition must add three distinct
+  # read-only files only after their resources and IAM are reviewed.
+  CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE: ""
+  CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE: ""
+  CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE: ""
   # This service's own machine identity on the identity platform, used for all
   # session-owned objects above. The identifier is not secret; its secret half
   # lives in the Secret, and they are delivered separately for that reason.
