@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::super::{LaunchId, TriggerValidationError};
+use super::super::{LaunchId, SponsoredPolicyBinding, TriggerValidationError};
 use super::model::*;
 use super::ports::*;
 use super::validation::*;
@@ -258,6 +258,148 @@ impl SponsorshipService {
 
     pub fn gate(&self) -> &SponsorshipGate {
         &self.gate
+    }
+
+    /// Verify the immutable policy binding a publisher wants to place in a
+    /// Trigger revision. This is an internal publication gate, not a public
+    /// policy read: callers receive no owner, credential, usage, or provider
+    /// metadata from it.
+    pub async fn verify_publisher_policy_binding(
+        &self,
+        publisher: &SubjectId,
+        binding: &SponsoredPolicyBinding,
+    ) -> Result<(), SponsorshipError> {
+        self.require_enabled().await?;
+        let now = self.clock.now();
+        validate_timestamp("now", &now)?;
+        let policy = self
+            .store
+            .policy(&binding.policy_id)
+            .await?
+            .ok_or(SponsorshipError::NotFound)?;
+        if policy.owner.controller() != publisher || policy.tenant_id != binding.tenant_id {
+            return Err(SponsorshipError::Forbidden);
+        }
+        if !policy.is_available_at(&now)
+            || !self
+                .gate
+                .allowed_provider_policy_keys
+                .contains(&policy.provider_policy.provider_policy_key)
+        {
+            return Err(SponsorshipError::PolicyUnavailable);
+        }
+        let credential = self
+            .store
+            .credential(&policy.credential_id)
+            .await?
+            .ok_or(SponsorshipError::CredentialUnavailable)?;
+        credential.validate()?;
+        if credential.record.owner != policy.owner
+            || credential.record.state != SponsoredCredentialState::Active
+            || credential.record.authority.provider != policy.provider_policy.provider
+            || credential.record.authority.provider_policy_key
+                != policy.provider_policy.provider_policy_key
+        {
+            return Err(SponsorshipError::CredentialUnavailable);
+        }
+        Ok(())
+    }
+
+    /// Read secret-free metadata for one owner-controlled credential. This
+    /// remains available while the gate or kill switch blocks new spend so an
+    /// owner can diagnose and complete revocation recovery.
+    pub async fn credential_view(
+        &self,
+        caller: &Caller,
+        credential_id: &SponsoredCredentialId,
+    ) -> Result<SponsoredCredentialView, SponsorshipError> {
+        let stored = self
+            .store
+            .credential(credential_id)
+            .await?
+            .ok_or(SponsorshipError::NotFound)?;
+        stored.validate()?;
+        require_sponsor_caller(caller, &stored.record.owner)?;
+        Ok(SponsoredCredentialView::from(&stored.record))
+    }
+
+    /// Read one owner-controlled policy and its current durable accounting.
+    pub async fn policy_view(
+        &self,
+        caller: &Caller,
+        policy_id: &SponsorshipPolicyId,
+    ) -> Result<SponsorshipPolicyView, SponsorshipError> {
+        let policy = self
+            .store
+            .policy(policy_id)
+            .await?
+            .ok_or(SponsorshipError::NotFound)?;
+        require_sponsor_caller(caller, &policy.owner)?;
+        let usage = self.store.policy_usage(policy_id).await?;
+        Ok(SponsorshipPolicyView::from_policy(&policy, usage))
+    }
+
+    /// Read one grant as either its contributor or sponsoring owner.
+    pub async fn grant_view(
+        &self,
+        caller: &Caller,
+        grant_id: &SponsoredGrantId,
+    ) -> Result<SponsoredGrantView, SponsorshipError> {
+        let grant = self
+            .store
+            .grant(grant_id)
+            .await?
+            .ok_or(SponsorshipError::NotFound)?;
+        let policy = self
+            .store
+            .policy(&grant.policy_id)
+            .await?
+            .ok_or(SponsorshipError::NotFound)?;
+        require_grant_control(caller, &policy.owner, &grant.contributor)?;
+        Ok(SponsoredGrantView::from(&grant))
+    }
+
+    pub async fn grant_for_launch_view(
+        &self,
+        caller: &Caller,
+        launch_id: &LaunchId,
+    ) -> Result<Option<SponsoredGrantView>, SponsorshipError> {
+        let Some(grant) = self.store.grant_for_launch(launch_id).await? else {
+            return Ok(None);
+        };
+        let policy = self
+            .store
+            .policy(&grant.policy_id)
+            .await?
+            .ok_or(SponsorshipError::NotFound)?;
+        require_grant_control(caller, &policy.owner, &grant.contributor)?;
+        Ok(Some(SponsoredGrantView::from(&grant)))
+    }
+
+    /// Read only the authenticated actor's pseudonymized audit stream.
+    pub async fn actor_audit_events(
+        &self,
+        caller: &Caller,
+        limit: usize,
+    ) -> Result<Vec<SponsoredAuditEvent>, SponsorshipError> {
+        if !caller
+            .authorization
+            .allows(Capability::ManageOwnSponsorships)
+            && !caller.authorization.allows(Capability::UseOwnSessions)
+        {
+            return Err(SponsorshipError::Forbidden);
+        }
+        if limit == 0 || limit > MAX_SPONSORED_AUDIT_PAGE {
+            return Err(TriggerValidationError::field(
+                "limit",
+                format!("must be between 1 and {MAX_SPONSORED_AUDIT_PAGE}"),
+            )
+            .into());
+        }
+        self.store
+            .audit_events(&self.audit.actor_digest(&caller.subject), limit)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn engage_kill_switch(
@@ -1143,6 +1285,14 @@ impl SponsorshipService {
         caller: &Caller,
         launch_id: &LaunchId,
     ) -> Result<SponsoredGrantTerms, SponsorshipError> {
+        Ok(self.terms_review(caller, launch_id).await?.terms)
+    }
+
+    pub async fn terms_review(
+        &self,
+        caller: &Caller,
+        launch_id: &LaunchId,
+    ) -> Result<SponsoredTermsReview, SponsorshipError> {
         self.require_enabled().await?;
         require_contributor_capability(caller)?;
         let now = self.clock.now();
@@ -1166,7 +1316,11 @@ impl SponsorshipService {
             return Err(SponsorshipError::PolicyUnavailable);
         }
         let usage = self.store.policy_usage(&policy.id).await?;
-        SponsoredGrantTerms::from_policy(&policy, &usage).map_err(Into::into)
+        let terms = SponsoredGrantTerms::from_policy(&policy, &usage)?;
+        Ok(SponsoredTermsReview {
+            terms,
+            launch_snapshot_digest: launch.launch_snapshot_digest,
+        })
     }
 
     pub async fn accept_terms(
