@@ -1,6 +1,6 @@
 //! Sponsored credential, policy, grant, usage, and audit domain models.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use ring::hmac;
@@ -17,7 +17,7 @@ use super::lifecycle::SponsorshipError;
 use super::ports::ProviderGrantReceipt;
 use super::validation::{
     canonical_digest, lower_hex, validate_digest, validate_display_name, validate_identifier,
-    validate_policy_token, validate_stable_request_id, validate_timestamp,
+    validate_policy_token, validate_timestamp,
 };
 use crate::{SessionId, SubjectId};
 
@@ -25,6 +25,395 @@ pub const SPONSORSHIP_SCHEMA_VERSION: u32 = 1;
 pub const MAX_SPONSORED_MODELS: usize = 32;
 pub const MAX_SPONSORED_RESOURCES: usize = 32;
 pub const MAX_SPONSORED_AUDIT_PAGE: usize = 200;
+pub const MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS: usize = 4;
+
+const SPONSORSHIP_OPERATIONAL_PSEUDONYM_PREFIX: &str = "sp1.";
+const SPONSORSHIP_OPERATIONAL_KEY_BYTES: usize = 32;
+const MAX_SPONSORSHIP_OPERATIONAL_CONTEXT_COMPONENTS: usize = 16;
+const MAX_SPONSORSHIP_OPERATIONAL_CONTEXT_BYTES: usize = 256 * 1024;
+
+fn validate_operational_key_id(key_id: &str) -> Result<(), TriggerValidationError> {
+    if key_id.is_empty()
+        || key_id.len() > 64
+        || !key_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        return Err(TriggerValidationError::field(
+            "sponsorship_operational_key_id",
+            "must contain 1 to 64 safe ASCII bytes",
+        ));
+    }
+    Ok(())
+}
+
+/// A deployment-keyed durable lookup value.
+///
+/// The key id is part of the canonical representation so a bounded current and
+/// predecessor keyring can recognize retries during rotation. It is parsed at
+/// the final separator because valid encryption key ids may themselves contain
+/// `.`. Configuration-relative validation is performed by
+/// [`SponsorshipOperationalPseudonymizer::require_configured`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct SponsorshipOperationalPseudonym(String);
+
+impl SponsorshipOperationalPseudonym {
+    pub fn parse(value: impl Into<String>) -> Result<Self, TriggerValidationError> {
+        let value = value.into();
+        let encoded = value
+            .strip_prefix(SPONSORSHIP_OPERATIONAL_PSEUDONYM_PREFIX)
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "sponsorship_operational_pseudonym",
+                    "must use the canonical sp1 encoding",
+                )
+            })?;
+        let (key_id, digest) = encoded.rsplit_once('.').ok_or_else(|| {
+            TriggerValidationError::field(
+                "sponsorship_operational_pseudonym",
+                "must contain a key id and digest",
+            )
+        })?;
+        validate_operational_key_id(key_id)?;
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_pseudonym",
+                "must contain a 64-character lowercase hexadecimal digest",
+            ));
+        }
+        let canonical = format!("{SPONSORSHIP_OPERATIONAL_PSEUDONYM_PREFIX}{key_id}.{digest}");
+        if canonical != value {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_pseudonym",
+                "must use one canonical spelling",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn key_id(&self) -> &str {
+        self.0
+            .strip_prefix(SPONSORSHIP_OPERATIONAL_PSEUDONYM_PREFIX)
+            .and_then(|value| value.rsplit_once('.'))
+            .map(|(key_id, _)| key_id)
+            .expect("construction validates the canonical pseudonym encoding")
+    }
+}
+
+impl<'de> Deserialize<'de> for SponsorshipOperationalPseudonym {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Display for SponsorshipOperationalPseudonym {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// The current operational pseudonym followed by the bounded predecessor-key
+/// candidates that may identify an existing durable binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsorshipOperationalPseudonymSet {
+    current: SponsorshipOperationalPseudonym,
+    previous: Vec<SponsorshipOperationalPseudonym>,
+}
+
+impl SponsorshipOperationalPseudonymSet {
+    fn new(
+        current: SponsorshipOperationalPseudonym,
+        previous: Vec<SponsorshipOperationalPseudonym>,
+    ) -> Result<Self, TriggerValidationError> {
+        if previous.len() > MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_pseudonyms",
+                "contains too many predecessor-key candidates",
+            ));
+        }
+        let mut unique = BTreeSet::from([current.clone()]);
+        if previous
+            .iter()
+            .any(|candidate| !unique.insert(candidate.clone()))
+        {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_pseudonyms",
+                "must not contain duplicate candidates",
+            ));
+        }
+        Ok(Self { current, previous })
+    }
+
+    pub fn current(&self) -> &SponsorshipOperationalPseudonym {
+        &self.current
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &SponsorshipOperationalPseudonym> {
+        std::iter::once(&self.current).chain(self.previous.iter())
+    }
+
+    pub fn matches(&self, candidate: &SponsorshipOperationalPseudonym) -> bool {
+        self.iter().any(|value| value == candidate)
+    }
+
+    pub fn encoded_candidates(&self) -> Vec<String> {
+        self.iter()
+            .map(|value| value.as_str().to_string())
+            .collect()
+    }
+}
+
+/// Fixed domain separation for every caller-controlled or provider-sensitive
+/// durable identity. Callers cannot invent ad hoc domain strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SponsorshipOperationalDomain {
+    CredentialRegistrationRequest,
+    CredentialRegistrationCommand,
+    CredentialReplacement,
+    CredentialOperationRequest,
+    AcceptanceRequest,
+    ActivationRequest,
+    UsageRequest,
+    GrantOperationRequest,
+    ProviderCredentialAuthority,
+    ProviderGrantAuthority,
+    ProviderRevocationAuthority,
+}
+
+impl SponsorshipOperationalDomain {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CredentialRegistrationRequest => {
+                "cma-sponsored-operational-registration-request-v1"
+            }
+            Self::CredentialRegistrationCommand => {
+                "cma-sponsored-operational-registration-command-v1"
+            }
+            Self::CredentialReplacement => "cma-sponsored-operational-credential-replacement-v1",
+            Self::CredentialOperationRequest => {
+                "cma-sponsored-operational-credential-operation-request-v1"
+            }
+            Self::AcceptanceRequest => "cma-sponsored-operational-acceptance-request-v1",
+            Self::ActivationRequest => "cma-sponsored-operational-activation-request-v1",
+            Self::UsageRequest => "cma-sponsored-operational-usage-request-v1",
+            Self::GrantOperationRequest => "cma-sponsored-operational-grant-operation-request-v1",
+            Self::ProviderCredentialAuthority => {
+                "cma-sponsored-operational-provider-credential-authority-v1"
+            }
+            Self::ProviderGrantAuthority => "cma-sponsored-operational-provider-grant-authority-v1",
+            Self::ProviderRevocationAuthority => {
+                "cma-sponsored-operational-provider-revocation-authority-v1"
+            }
+        }
+    }
+}
+
+/// Bounded operational HMAC keyring built from its own long-lived root-key
+/// class. Encryption keys must never enter this type.
+pub struct SponsorshipOperationalPseudonymizer {
+    current_key_id: String,
+    keys: BTreeMap<String, Zeroizing<Vec<u8>>>,
+}
+
+impl SponsorshipOperationalPseudonymizer {
+    pub fn new(
+        current_key_id: impl Into<String>,
+        current_key: impl Into<Vec<u8>>,
+        previous: impl IntoIterator<Item = (String, Vec<u8>)>,
+    ) -> Result<Self, TriggerValidationError> {
+        let current_key_id = current_key_id.into();
+        let current_key = Zeroizing::new(current_key.into());
+        let previous = previous
+            .into_iter()
+            .map(|(key_id, key)| (key_id, Zeroizing::new(key)))
+            .collect::<Vec<_>>();
+        validate_operational_key_id(&current_key_id)?;
+        if current_key.len() != SPONSORSHIP_OPERATIONAL_KEY_BYTES {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_key",
+                "must contain exactly 32 derived bytes",
+            ));
+        }
+        if previous.len() > MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_keyring",
+                "contains too many predecessor keys",
+            ));
+        }
+        let mut keys = BTreeMap::from([(current_key_id.clone(), current_key)]);
+        for (key_id, key) in previous {
+            validate_operational_key_id(&key_id)?;
+            if key.len() != SPONSORSHIP_OPERATIONAL_KEY_BYTES {
+                return Err(TriggerValidationError::field(
+                    "sponsorship_operational_key",
+                    "must contain exactly 32 derived bytes",
+                ));
+            }
+            if keys.contains_key(&key_id) {
+                return Err(TriggerValidationError::field(
+                    "sponsorship_operational_keyring",
+                    "contains a duplicate key id",
+                ));
+            }
+            if keys
+                .values()
+                .any(|configured| configured.as_slice() == key.as_slice())
+            {
+                return Err(TriggerValidationError::field(
+                    "sponsorship_operational_keyring",
+                    "contains duplicate key material under different ids",
+                ));
+            }
+            keys.insert(key_id, key);
+        }
+        Ok(Self {
+            current_key_id,
+            keys,
+        })
+    }
+
+    pub fn current_key_id(&self) -> &str {
+        &self.current_key_id
+    }
+
+    pub fn configured_key_ids(&self) -> impl Iterator<Item = &str> {
+        self.keys.keys().map(String::as_str)
+    }
+
+    pub fn require_configured(
+        &self,
+        candidate: &SponsorshipOperationalPseudonym,
+    ) -> Result<(), TriggerValidationError> {
+        if !self.keys.contains_key(candidate.key_id()) {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_pseudonym",
+                "references an unconfigured key id",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn parse_configured(
+        &self,
+        value: impl Into<String>,
+    ) -> Result<SponsorshipOperationalPseudonym, TriggerValidationError> {
+        let candidate = SponsorshipOperationalPseudonym::parse(value)?;
+        self.require_configured(&candidate)?;
+        Ok(candidate)
+    }
+
+    pub fn pseudonymize(
+        &self,
+        domain: SponsorshipOperationalDomain,
+        context: &[&str],
+    ) -> Result<SponsorshipOperationalPseudonymSet, TriggerValidationError> {
+        if context.is_empty()
+            || context.len() > MAX_SPONSORSHIP_OPERATIONAL_CONTEXT_COMPONENTS
+            || context.iter().any(|value| value.len() > 64 * 1024)
+        {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_context",
+                "must contain bounded context components",
+            ));
+        }
+        let context_bytes = context
+            .iter()
+            .try_fold(domain.label().len() + 16, |length, value| {
+                length.checked_add(value.len() + 8)
+            });
+        let context_bytes = context_bytes.ok_or_else(|| {
+            TriggerValidationError::field("sponsorship_operational_context", "is too large")
+        })?;
+        if context_bytes > MAX_SPONSORSHIP_OPERATIONAL_CONTEXT_BYTES {
+            return Err(TriggerValidationError::field(
+                "sponsorship_operational_context",
+                "is too large",
+            ));
+        }
+        let mut message = Zeroizing::new(Vec::with_capacity(context_bytes));
+        append_operational_part(&mut message, domain.label().as_bytes());
+        for value in context {
+            append_operational_part(&mut message, value.as_bytes());
+        }
+
+        let pseudonym_for =
+            |key_id: &str,
+             key: &Zeroizing<Vec<u8>>|
+             -> Result<SponsorshipOperationalPseudonym, TriggerValidationError> {
+                let key = hmac::Key::new(hmac::HMAC_SHA256, key.as_slice());
+                let digest = lower_hex(hmac::sign(&key, message.as_slice()).as_ref());
+                SponsorshipOperationalPseudonym::parse(format!(
+                    "{SPONSORSHIP_OPERATIONAL_PSEUDONYM_PREFIX}{key_id}.{digest}"
+                ))
+            };
+        let current = pseudonym_for(
+            &self.current_key_id,
+            self.keys
+                .get(&self.current_key_id)
+                .expect("construction inserts the current operational key"),
+        )?;
+        let previous = self
+            .keys
+            .iter()
+            .filter(|(key_id, _)| *key_id != &self.current_key_id)
+            .map(|(key_id, key)| pseudonym_for(key_id, key))
+            .collect::<Result<Vec<_>, _>>()?;
+        SponsorshipOperationalPseudonymSet::new(current, previous)
+    }
+}
+
+impl fmt::Debug for SponsorshipOperationalPseudonymizer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SponsorshipOperationalPseudonymizer")
+            .field("current_key_id", &self.current_key_id)
+            .field("key_count", &self.keys.len())
+            .finish()
+    }
+}
+
+fn append_operational_part(target: &mut Vec<u8>, value: &[u8]) {
+    target.extend_from_slice(&(value.len() as u64).to_be_bytes());
+    target.extend_from_slice(value);
+}
+
+fn timestamp_not_after(first: &str, second: &str) -> bool {
+    crate::seconds_from_rfc3339(first)
+        .zip(crate::seconds_from_rfc3339(second))
+        .is_some_and(|(first, second)| first <= second)
+}
+
+fn timestamp_before(first: &str, second: &str) -> bool {
+    crate::seconds_from_rfc3339(first)
+        .zip(crate::seconds_from_rfc3339(second))
+        .is_some_and(|(first, second)| first < second)
+}
+
+fn operation_is_within_record(
+    operation: &PendingProviderOperation,
+    created_at: &str,
+    updated_at: &str,
+) -> bool {
+    timestamp_not_after(created_at, &operation.requested_at)
+        && timestamp_not_after(&operation.requested_at, updated_at)
+        && operation
+            .attempted_at
+            .as_ref()
+            .is_none_or(|attempted_at| timestamp_not_after(attempted_at, updated_at))
+}
 
 macro_rules! sponsorship_id {
     ($name:ident) => {
@@ -69,6 +458,7 @@ macro_rules! sponsorship_id {
 sponsorship_id!(SponsoredCredentialId);
 sponsorship_id!(SponsorshipPolicyId);
 sponsorship_id!(SponsoredGrantId);
+sponsorship_id!(SponsoredUsageReservationId);
 
 /// Provider credential bytes accepted from an authenticated owner.
 ///
@@ -78,14 +468,14 @@ pub struct ProviderCredentialSecret(Zeroizing<String>);
 
 impl ProviderCredentialSecret {
     pub fn new(value: impl Into<String>) -> Result<Self, TriggerValidationError> {
-        let value = value.into();
+        let value = Zeroizing::new(value.into());
         if value.is_empty() || value.len() > 64 * 1024 {
             return Err(TriggerValidationError::field(
                 "credential",
                 "must contain between 1 and 65536 bytes",
             ));
         }
-        Ok(Self(Zeroizing::new(value)))
+        Ok(Self(value))
     }
 
     /// Exposed only so the selected encrypted store and provider adapter can
@@ -106,9 +496,9 @@ pub struct SensitiveProviderValue(Zeroizing<String>);
 
 impl SensitiveProviderValue {
     pub fn new(value: impl Into<String>) -> Result<Self, TriggerValidationError> {
-        let value = value.into();
+        let value = Zeroizing::new(value.into());
         validate_identifier("provider_authority", &value, 512)?;
-        Ok(Self(Zeroizing::new(value)))
+        Ok(Self(value))
     }
 
     /// Available only to provider adapters and encrypted store
@@ -157,16 +547,14 @@ pub struct SponsorshipAuditPseudonymizer {
 
 impl SponsorshipAuditPseudonymizer {
     pub fn new(key: impl Into<Vec<u8>>) -> Result<Self, TriggerValidationError> {
-        let key = key.into();
+        let key = Zeroizing::new(key.into());
         if !(32..=1024).contains(&key.len()) {
             return Err(TriggerValidationError::field(
                 "sponsorship_audit_key",
                 "must contain between 32 and 1024 bytes",
             ));
         }
-        Ok(Self {
-            key: Zeroizing::new(key),
-        })
+        Ok(Self { key })
     }
 
     fn pseudonymize(&self, domain: &str, value: &str) -> String {
@@ -350,9 +738,8 @@ impl SponsoredCredentialRecord {
                 .expose_for_provider_or_encryption(),
             512,
         )?;
-        validate_digest(
-            "credential.provider_credential_id_digest",
-            &self.authority.provider_credential_id_digest,
+        SponsorshipOperationalPseudonym::parse(
+            self.authority.provider_credential_id_digest.clone(),
         )?;
         validate_timestamp(
             "credential.ownership_verified_at",
@@ -360,6 +747,12 @@ impl SponsoredCredentialRecord {
         )?;
         validate_timestamp("credential.created_at", &self.created_at)?;
         validate_timestamp("credential.updated_at", &self.updated_at)?;
+        if !timestamp_not_after(&self.created_at, &self.updated_at) {
+            return Err(TriggerValidationError::field(
+                "credential.updated_at",
+                "must not precede creation",
+            ));
+        }
         if self.authority.state_version == 0
             || !self.authority.supports_expiry
             || !self.authority.supports_revocation
@@ -374,6 +767,17 @@ impl SponsoredCredentialRecord {
                 "credential.revoked_at",
                 "must exist exactly for a revoked credential",
             ));
+        }
+        if let Some(revoked_at) = &self.revoked_at {
+            validate_timestamp("credential.revoked_at", revoked_at)?;
+            if !timestamp_not_after(&self.created_at, revoked_at)
+                || !timestamp_not_after(revoked_at, &self.updated_at)
+            {
+                return Err(TriggerValidationError::field(
+                    "credential.revoked_at",
+                    "must fall between creation and the latest update",
+                ));
+            }
         }
         if (self.state == SponsoredCredentialState::Revoked)
             != (self.material_state == SponsoredCredentialMaterialState::Retired)
@@ -395,6 +799,12 @@ impl SponsoredCredentialRecord {
         }
         if let Some(operation) = &self.pending_operation {
             operation.validate()?;
+            if !operation_is_within_record(operation, &self.created_at, &self.updated_at) {
+                return Err(TriggerValidationError::field(
+                    "credential.pending_operation",
+                    "must fall within the credential timestamp lineage",
+                ));
+            }
             let expected = match self.state {
                 SponsoredCredentialState::RotationPending => {
                     ProviderOperationKind::RotateCredential
@@ -418,6 +828,12 @@ impl SponsoredCredentialRecord {
         }
         if let Some(operation) = &self.superseded_operation {
             operation.validate()?;
+            if !operation_is_within_record(operation, &self.created_at, &self.updated_at) {
+                return Err(TriggerValidationError::field(
+                    "credential.superseded_operation",
+                    "must fall within the credential timestamp lineage",
+                ));
+            }
             if self.state != SponsoredCredentialState::RevocationPending
                 || operation.kind != ProviderOperationKind::RotateCredential
             {
@@ -429,6 +845,14 @@ impl SponsoredCredentialRecord {
         }
         if let Some(operation) = &self.last_completed_operation {
             operation.validate()?;
+            if !timestamp_not_after(&self.created_at, &operation.completed_at)
+                || !timestamp_not_after(&operation.completed_at, &self.updated_at)
+            {
+                return Err(TriggerValidationError::field(
+                    "credential.last_completed_operation.completed_at",
+                    "must fall between credential creation and update",
+                ));
+            }
             if !matches!(
                 operation.kind,
                 ProviderOperationKind::RotateCredential | ProviderOperationKind::RevokeCredential
@@ -461,6 +885,18 @@ impl SponsoredCredentialRecord {
             return Err(TriggerValidationError::field(
                 "credential.last_completed_operation",
                 "must prove confirmed provider revocation before material retirement",
+            ));
+        }
+        if self.material_state == SponsoredCredentialMaterialState::Retired
+            && self.revoked_at.as_ref()
+                != self
+                    .last_completed_operation
+                    .as_ref()
+                    .map(|operation| &operation.completed_at)
+        {
+            return Err(TriggerValidationError::field(
+                "credential.revoked_at",
+                "must equal the confirmed provider revocation completion time",
             ));
         }
         Ok(())
@@ -690,10 +1126,16 @@ impl SponsorshipPolicy {
         validate_timestamp("sponsorship_policy.expires_at", &self.expires_at)?;
         validate_timestamp("sponsorship_policy.created_at", &self.created_at)?;
         validate_timestamp("sponsorship_policy.updated_at", &self.updated_at)?;
-        if self.created_at >= self.expires_at {
+        if !timestamp_before(&self.created_at, &self.expires_at) {
             return Err(TriggerValidationError::field(
                 "sponsorship_policy.expires_at",
                 "must be later than creation",
+            ));
+        }
+        if !timestamp_not_after(&self.created_at, &self.updated_at) {
+            return Err(TriggerValidationError::field(
+                "sponsorship_policy.updated_at",
+                "must not precede creation",
             ));
         }
         if (self.state == SponsorshipPolicyState::Revoked) != self.revoked_at.is_some() {
@@ -701,6 +1143,17 @@ impl SponsorshipPolicy {
                 "sponsorship_policy.revoked_at",
                 "must exist exactly for a revoked policy",
             ));
+        }
+        if let Some(revoked_at) = &self.revoked_at {
+            validate_timestamp("sponsorship_policy.revoked_at", revoked_at)?;
+            if !timestamp_not_after(&self.created_at, revoked_at)
+                || !timestamp_not_after(revoked_at, &self.updated_at)
+            {
+                return Err(TriggerValidationError::field(
+                    "sponsorship_policy.revoked_at",
+                    "must fall between creation and the latest update",
+                ));
+            }
         }
         Ok(())
     }
@@ -924,7 +1377,7 @@ pub struct SponsoredGrantAcceptance {
 impl SponsoredGrantAcceptance {
     pub fn calculate_digest(&self) -> Result<String, TriggerValidationError> {
         canonical_digest(&(
-            "cma-sponsored-acceptance-v1",
+            "cma-sponsored-acceptance-v2",
             &self.launch_id,
             &self.contributor,
             &self.revision_id,
@@ -948,10 +1401,7 @@ impl SponsoredGrantAcceptance {
             "acceptance.launch_snapshot_digest",
             &self.launch_snapshot_digest,
         )?;
-        validate_digest(
-            "acceptance.idempotency_key_hash",
-            &self.idempotency_key_hash,
-        )?;
+        SponsorshipOperationalPseudonym::parse(self.idempotency_key_hash.clone())?;
         validate_digest("acceptance.digest", &self.digest)?;
         validate_timestamp("acceptance.accepted_at", &self.accepted_at)?;
         if self.policy_generation == 0 || self.digest != self.calculate_digest()? {
@@ -1332,6 +1782,10 @@ pub struct SponsoredGrant {
     pub launch_id: LaunchId,
     pub session_id: SessionId,
     pub contributor: SubjectId,
+    /// Policy controller fixed when the grant is issued. Persistence may
+    /// denormalize this for sponsor listings, but every read must retain this
+    /// canonical binding to the policy owner.
+    pub sponsor_subject: SubjectId,
     pub terms_digest: String,
     pub acceptance: SponsoredGrantAcceptance,
     pub authority: ProviderGrantAuthority,
@@ -1384,10 +1838,7 @@ impl PendingProviderOperation {
             "provider_operation.provider_request_id",
             &self.provider_request_id,
         )?;
-        validate_digest(
-            "provider_operation.client_request_id_digest",
-            &self.client_request_id_digest,
-        )?;
+        SponsorshipOperationalPseudonym::parse(self.client_request_id_digest.clone())?;
         validate_digest("provider_operation.payload_digest", &self.payload_digest)?;
         validate_timestamp("provider_operation.requested_at", &self.requested_at)?;
         if let Some(attempted_at) = &self.attempted_at {
@@ -1431,10 +1882,7 @@ impl CompletedProviderOperation {
             "completed_provider_operation.provider_request_id",
             &self.provider_request_id,
         )?;
-        validate_digest(
-            "completed_provider_operation.client_request_id_digest",
-            &self.client_request_id_digest,
-        )?;
+        SponsorshipOperationalPseudonym::parse(self.client_request_id_digest.clone())?;
         validate_digest(
             "completed_provider_operation.payload_digest",
             &self.payload_digest,
@@ -1478,11 +1926,12 @@ pub struct GrantActivationLease {
 /// Durable intent inserted before the read-only billing eligibility observation
 /// and before any provider effect.
 ///
-/// `provider_request_id` is derived from immutable Launch/policy identity, not
-/// from a caller's retry key. Every takeover therefore reconciles the same
-/// external operation. `provider_receipt` is internal persistence data and has
-/// no serialization implementation; durable adapters encrypt its two provider
-/// handles before storage.
+/// `provider_request_id` is a keyed operational pseudonym derived from
+/// immutable Launch/policy identity, not from a caller's retry key. Every
+/// takeover therefore reconciles the same frozen external operation.
+/// `provider_receipt` is internal persistence data and has no serialization
+/// implementation; durable adapters encrypt its two provider handles before
+/// storage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantActivationIntent {
     pub launch_id: LaunchId,
@@ -1529,16 +1978,16 @@ impl GrantActivationIntent {
             "grant_activation.request_fingerprint",
             &self.request_fingerprint,
         )?;
-        validate_digest(
-            "grant_activation.billing_request_id",
-            &self.billing_request_id,
-        )?;
-        validate_digest(
-            "grant_activation.provider_request_id",
-            &self.provider_request_id,
-        )?;
+        SponsorshipOperationalPseudonym::parse(self.billing_request_id.clone())?;
+        SponsorshipOperationalPseudonym::parse(self.provider_request_id.clone())?;
         validate_timestamp("grant_activation.created_at", &self.created_at)?;
         validate_timestamp("grant_activation.updated_at", &self.updated_at)?;
+        if !timestamp_not_after(&self.created_at, &self.updated_at) {
+            return Err(TriggerValidationError::field(
+                "grant_activation.updated_at",
+                "must not precede creation",
+            ));
+        }
         self.gate_fence.validate()?;
         if self.policy_generation == 0
             || self.credential_generation == 0
@@ -1553,6 +2002,14 @@ impl GrantActivationIntent {
         }
         if let Some(lease) = &self.lease {
             lease.validate()?;
+            if !timestamp_not_after(&self.created_at, &lease.acquired_at)
+                || !timestamp_not_after(&lease.acquired_at, &self.updated_at)
+            {
+                return Err(TriggerValidationError::field(
+                    "grant_activation.lease",
+                    "must contain the latest update within the activation lineage",
+                ));
+            }
         }
         if self.provider_receipt.is_some()
             && !matches!(
@@ -1624,6 +2081,12 @@ impl GrantActivationIntent {
         }
         if let Some(operation) = &self.cleanup_operation {
             operation.validate()?;
+            if !operation_is_within_record(operation, &self.created_at, &self.updated_at) {
+                return Err(TriggerValidationError::field(
+                    "grant_activation.cleanup_operation",
+                    "must fall within the activation timestamp lineage",
+                ));
+            }
             if operation.kind != ProviderOperationKind::RevokeUncommittedGrant {
                 return Err(TriggerValidationError::field(
                     "grant_activation.cleanup_operation.kind",
@@ -1637,7 +2100,7 @@ impl GrantActivationIntent {
 
 impl GrantActivationLease {
     pub fn validate(&self) -> Result<(), TriggerValidationError> {
-        validate_digest("grant_activation.lease.holder", &self.holder)?;
+        SponsorshipOperationalPseudonym::parse(self.holder.clone())?;
         validate_timestamp("grant_activation.lease.acquired_at", &self.acquired_at)?;
         validate_timestamp("grant_activation.lease.expires_at", &self.expires_at)?;
         if self.acquired_at >= self.expires_at {
@@ -1659,9 +2122,13 @@ pub struct GrantActivationClaim {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimGrantActivation {
     pub candidate: GrantActivationIntent,
-    /// Opaque lease owner. The store creates acquisition and expiry timestamps
-    /// from authoritative persistence time; callers never supply lease time.
-    pub holder: String,
+    /// Complete bounded identities for the caller request acquiring the lease.
+    /// The store persists the current candidate when it creates a new lease.
+    pub holder_candidates: SponsorshipOperationalPseudonymSet,
+    /// Candidate identities for external operations. Existing durable values
+    /// are matched across rotation and never rewritten after dispatch.
+    pub billing_request_candidates: SponsorshipOperationalPseudonymSet,
+    pub provider_request_candidates: SponsorshipOperationalPseudonymSet,
     pub launch_authority: SponsoredLaunchAuthority,
     pub acceptance: SponsoredGrantAcceptance,
 }
@@ -1669,20 +2136,22 @@ pub struct ClaimGrantActivation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimGrantActivationCleanup {
     pub launch_id: LaunchId,
-    pub holder: String,
+    pub holder_candidates: SponsorshipOperationalPseudonymSet,
+    pub operation_client_request_candidates: SponsorshipOperationalPseudonymSet,
     pub operation: PendingProviderOperation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimInvalidatedGrantActivation {
     pub launch_id: LaunchId,
-    pub holder: String,
+    pub holder_candidates: SponsorshipOperationalPseudonymSet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeginProviderGrantIssue {
     pub launch_id: LaunchId,
     pub expected_revision: u64,
+    pub intent: GrantActivationIntent,
     pub holder: String,
     pub launch_authority: SponsoredLaunchAuthority,
     pub acceptance: SponsoredGrantAcceptance,
@@ -1695,6 +2164,7 @@ pub struct BeginProviderGrantIssue {
 pub struct CompleteGrantActivationCleanup {
     pub expected_revision: u64,
     pub holder: String,
+    pub operation: PendingProviderOperation,
     pub intent: GrantActivationIntent,
     pub audit: SponsoredAuditEvent,
 }
@@ -1726,6 +2196,10 @@ pub struct CommitGrantActivation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistSponsoredAcceptance {
     pub acceptance: SponsoredGrantAcceptance,
+    /// Complete bounded current/predecessor aliases for the raw idempotency
+    /// request. Persistence may replace these aliases during replay, but must
+    /// never rewrite the canonical identity embedded in `acceptance`.
+    pub idempotency_candidates: SponsorshipOperationalPseudonymSet,
     pub launch_authority: SponsoredLaunchAuthority,
     pub gate_fence: SponsorshipGateFence,
     pub audit: SponsoredAuditEvent,
@@ -1757,6 +2231,7 @@ impl SponsoredGrant {
             (
                 &self.session_id,
                 &self.contributor,
+                &self.sponsor_subject,
                 &self.terms_digest,
                 &self.acceptance.digest,
                 &self.authority.provider_grant_id_digest,
@@ -1792,25 +2267,36 @@ impl SponsoredGrant {
         }
         SponsoredGrantId::parse(self.id.0.clone())?;
         validate_identifier("sponsored_grant.tenant_id", &self.tenant_id, 255)?;
+        validate_identifier(
+            "sponsored_grant.sponsor_subject",
+            &self.sponsor_subject.0,
+            255,
+        )?;
         validate_digest(
             "sponsored_grant.trigger_revision_digest",
             &self.trigger_revision_digest,
         )?;
         validate_digest("sponsored_grant.terms_digest", &self.terms_digest)?;
-        validate_digest(
-            "sponsored_grant.provider_grant_id_digest",
-            &self.authority.provider_grant_id_digest,
-        )?;
-        validate_digest(
-            "sponsored_grant.revocation_handle_digest",
-            &self.authority.revocation_handle_digest,
-        )?;
+        SponsorshipOperationalPseudonym::parse(self.authority.provider_grant_id_digest.clone())?;
+        SponsorshipOperationalPseudonym::parse(self.authority.revocation_handle_digest.clone())?;
         validate_timestamp("sponsored_grant.expires_at", &self.authority.expires_at)?;
         validate_timestamp("sponsored_grant.issued_at", &self.authority.issued_at)?;
         validate_timestamp("sponsored_grant.created_at", &self.created_at)?;
         validate_timestamp("sponsored_grant.updated_at", &self.updated_at)?;
         self.acceptance.validate()?;
         self.capability.validate()?;
+        if !timestamp_before(&self.authority.issued_at, &self.authority.expires_at)
+            || !timestamp_not_after(&self.acceptance.accepted_at, &self.authority.issued_at)
+            || !timestamp_not_after(&self.acceptance.accepted_at, &self.created_at)
+            || !timestamp_not_after(&self.authority.issued_at, &self.created_at)
+            || !timestamp_before(&self.created_at, &self.authority.expires_at)
+            || !timestamp_not_after(&self.created_at, &self.updated_at)
+        {
+            return Err(TriggerValidationError::field(
+                "sponsored_grant.updated_at",
+                "must issue only after acceptance, then create and update before expiry",
+            ));
+        }
         if self.launch_id != self.acceptance.launch_id
             || self.launch_id != self.capability.launch_id
             || self.session_id != self.capability.session_id
@@ -1848,8 +2334,36 @@ impl SponsoredGrant {
                 "must exist exactly while provider revocation is pending",
             ));
         }
+        let definitively_revoked = matches!(
+            self.state,
+            SponsoredGrantState::Revoked | SponsoredGrantState::Closed
+        );
+        if definitively_revoked != self.revoked_at.is_some() {
+            return Err(TriggerValidationError::field(
+                "sponsored_grant.revoked_at",
+                "must exist exactly for a revoked or closed grant",
+            ));
+        }
+        if let Some(revoked_at) = &self.revoked_at {
+            validate_timestamp("sponsored_grant.revoked_at", revoked_at)?;
+            if !timestamp_not_after(&self.created_at, revoked_at)
+                || !timestamp_not_after(&self.authority.issued_at, revoked_at)
+                || !timestamp_not_after(revoked_at, &self.updated_at)
+            {
+                return Err(TriggerValidationError::field(
+                    "sponsored_grant.revoked_at",
+                    "must follow creation and issuance without exceeding the latest update",
+                ));
+            }
+        }
         if let Some(operation) = &self.pending_revocation {
             operation.validate()?;
+            if !operation_is_within_record(operation, &self.created_at, &self.updated_at) {
+                return Err(TriggerValidationError::field(
+                    "sponsored_grant.pending_revocation",
+                    "must fall within the grant timestamp lineage",
+                ));
+            }
             if !matches!(
                 operation.kind,
                 ProviderOperationKind::RevokeGrant | ProviderOperationKind::CloseGrant
@@ -1910,10 +2424,12 @@ impl From<&SponsoredGrant> for SponsoredGrantView {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SponsoredUsageRequest {
-    pub stable_request_id: String,
-    /// Digest of caller-controlled request identity only. Unlike
+    pub reservation_id: SponsoredUsageReservationId,
+    /// Complete keyed aliases for caller-controlled request identity.
+    pub request_identity: SponsorshipOperationalPseudonymSet,
+    /// Digest of caller-controlled request payload only. Unlike
     /// `request_fingerprint`, this excludes the service clock and price quote
     /// so a stable retry can find the original reservation before repeating
     /// either observation.
@@ -1936,7 +2452,7 @@ pub struct SponsoredUsageRequest {
 
 impl SponsoredUsageRequest {
     pub fn validate(&self) -> Result<(), TriggerValidationError> {
-        validate_stable_request_id(&self.stable_request_id)?;
+        SponsoredUsageReservationId::parse(self.reservation_id.0.clone())?;
         validate_digest(
             "usage.idempotency_fingerprint",
             &self.idempotency_fingerprint,
@@ -1969,9 +2485,8 @@ impl SponsoredUsageRequest {
     pub fn fingerprint(&self) -> Result<String, TriggerValidationError> {
         self.validate()?;
         canonical_digest(&(
-            "cma-sponsored-usage-request-v1",
+            "cma-sponsored-usage-request-v2",
             (
-                &self.stable_request_id,
                 &self.idempotency_fingerprint,
                 &self.grant_id,
                 &self.requester,
@@ -2005,7 +2520,9 @@ pub enum SponsoredUsageState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SponsoredUsageReservation {
-    pub stable_request_id: String,
+    /// Opaque reconciliation handle. Caller request identities and keyed
+    /// aliases are private persistence metadata and never enter this view.
+    pub id: SponsoredUsageReservationId,
     pub idempotency_fingerprint: String,
     pub request_fingerprint: String,
     pub grant_id: SponsoredGrantId,
@@ -2020,7 +2537,7 @@ pub struct SponsoredUsageReservation {
 
 impl SponsoredUsageReservation {
     pub fn validate(&self) -> Result<(), TriggerValidationError> {
-        validate_stable_request_id(&self.stable_request_id)?;
+        SponsoredUsageReservationId::parse(self.id.0.clone())?;
         validate_digest(
             "usage_reservation.idempotency_fingerprint",
             &self.idempotency_fingerprint,
@@ -2071,7 +2588,7 @@ pub struct SponsoredUsageReservationOutcome {
     pub reservation: SponsoredUsageReservation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ReserveSponsoredUsage {
     pub request: SponsoredUsageRequest,
     pub price_quote: SponsoredPriceQuote,
@@ -2090,7 +2607,7 @@ pub struct ReserveSponsoredUsage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconcileSponsoredUsage {
-    pub stable_request_id: String,
+    pub reservation_id: SponsoredUsageReservationId,
     pub request_fingerprint: String,
     pub actual_quota: Option<SponsoredQuota>,
     /// Filled by `SponsorshipService` from the trusted pricing port. Callers
@@ -2197,5 +2714,135 @@ impl SponsorshipPolicyUsage {
         self.consumed.checked_add(&self.reserved).ok_or_else(|| {
             TriggerValidationError::field("sponsorship_policy.usage", "exceeds numeric bounds")
         })
+    }
+}
+
+#[cfg(test)]
+mod operational_pseudonym_tests {
+    use super::*;
+
+    fn pseudonymizer() -> SponsorshipOperationalPseudonymizer {
+        SponsorshipOperationalPseudonymizer::new(
+            "current.2026:08",
+            vec![0x11; 32],
+            vec![("previous.2026:07".to_string(), vec![0x22; 32])],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn pseudonym_encoding_uses_the_final_separator_and_rejects_alternate_spelling() {
+        let generated = pseudonymizer()
+            .pseudonymize(
+                SponsorshipOperationalDomain::UsageRequest,
+                &["grant-a", "requester-a", "predictable"],
+            )
+            .unwrap();
+        assert_eq!(generated.current().key_id(), "current.2026:08");
+        assert_eq!(
+            SponsorshipOperationalPseudonym::parse(generated.current().as_str())
+                .unwrap()
+                .as_str(),
+            generated.current().as_str()
+        );
+
+        let uppercase = generated.current().as_str().to_ascii_uppercase();
+        assert!(SponsorshipOperationalPseudonym::parse(uppercase).is_err());
+        assert!(SponsorshipOperationalPseudonym::parse(format!(
+            "sp1.current.2026:08.{}",
+            "0".repeat(63)
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn configured_key_validation_and_rotation_candidates_are_bounded() {
+        let old = SponsorshipOperationalPseudonymizer::new(
+            "previous.2026:07",
+            vec![0x22; 32],
+            Vec::new(),
+        )
+        .unwrap()
+        .pseudonymize(
+            SponsorshipOperationalDomain::CredentialRegistrationRequest,
+            &["owner-a", "request-a"],
+        )
+        .unwrap()
+        .current()
+        .clone();
+        let rotated = pseudonymizer()
+            .pseudonymize(
+                SponsorshipOperationalDomain::CredentialRegistrationRequest,
+                &["owner-a", "request-a"],
+            )
+            .unwrap();
+        assert!(rotated.matches(&old));
+        assert_eq!(rotated.iter().count(), 2);
+
+        let unknown =
+            SponsorshipOperationalPseudonym::parse(format!("sp1.retired-key.{}", "a".repeat(64)))
+                .unwrap();
+        assert!(pseudonymizer().require_configured(&unknown).is_err());
+    }
+
+    #[test]
+    fn domain_and_length_framing_prevent_context_collisions() {
+        let keys = pseudonymizer();
+        let split = keys
+            .pseudonymize(
+                SponsorshipOperationalDomain::CredentialRegistrationCommand,
+                &["ab", "c"],
+            )
+            .unwrap();
+        let joined = keys
+            .pseudonymize(
+                SponsorshipOperationalDomain::CredentialRegistrationCommand,
+                &["a", "bc"],
+            )
+            .unwrap();
+        let other_domain = keys
+            .pseudonymize(SponsorshipOperationalDomain::UsageRequest, &["ab", "c"])
+            .unwrap();
+        assert_ne!(split.current(), joined.current());
+        assert_ne!(split.current(), other_domain.current());
+    }
+
+    #[test]
+    fn rejected_key_inputs_and_unbounded_contexts_take_guarded_drop_paths() {
+        assert!(SponsorshipOperationalPseudonymizer::new(
+            "invalid/key",
+            vec![0x31; 32],
+            Vec::new(),
+        )
+        .is_err());
+        assert!(SponsorshipOperationalPseudonymizer::new(
+            "current",
+            vec![0x31; 32],
+            vec![
+                ("previous-a".into(), vec![0x41; 32]),
+                ("invalid/late".into(), vec![0x42; 32]),
+            ],
+        )
+        .is_err());
+        assert!(SponsorshipOperationalPseudonymizer::new(
+            "current",
+            vec![0x31; 32],
+            (0..=MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS)
+                .map(|index| (format!("previous-{index}"), vec![index as u8; 32])),
+        )
+        .is_err());
+
+        let keys = pseudonymizer();
+        let too_many = vec![""; MAX_SPONSORSHIP_OPERATIONAL_CONTEXT_COMPONENTS + 1];
+        assert!(keys
+            .pseudonymize(SponsorshipOperationalDomain::UsageRequest, &too_many)
+            .is_err());
+        let too_large = "x".repeat(64 * 1024 + 1);
+        assert!(keys
+            .pseudonymize(
+                SponsorshipOperationalDomain::CredentialReplacement,
+                &[&too_large],
+            )
+            .is_err());
     }
 }
