@@ -837,6 +837,8 @@ jobs:
           set -euo pipefail
           umask 077
 
+          # COMPONENT is supplied by this step's reviewed env binding.
+          # shellcheck disable=SC2153
           component="$COMPONENT"
           case "$component" in
             api|runtime) ;;
