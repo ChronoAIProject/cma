@@ -257,9 +257,10 @@ data:
   CHRONO_SPONSORSHIP_WORKER_MAX_PAGES: ""
   CHRONO_SPONSORSHIP_WORKER_CONCURRENCY: ""
   # Paths only, never keyring/HMAC values. No sponsorship projection is mounted
-  # in the dormant Deployment; future composition must add two distinct
+  # in the dormant Deployment; future composition must add three distinct
   # read-only files only after their resources and IAM are reviewed.
   CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE: ""
+  CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE: ""
   CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE: ""
   # This service's own machine identity on the identity platform, used for all
   # session-owned objects above. The identifier is not secret; its secret half
