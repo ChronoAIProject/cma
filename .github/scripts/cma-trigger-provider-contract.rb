@@ -681,8 +681,6 @@ def verify_workflow(workflow)
     "provider smoke must expose the closed evidence identity, result, and artifact URL",
   )
   expected_provider_env = {
-    "CMA_TRIGGER_KIND_STAGING_ROOT" => "${{ runner.temp }}/cma-trigger-kind-staging",
-    "CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH" => "${{ runner.temp }}/cma-trigger-kind-staging/credentials/nyxid-handoff.json",
     "CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE" => "${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}",
     "CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID" => "${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID }}",
     "CMA_TRIGGER_SMOKE_UPSTREAM_OWNER" => "${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_OWNER }}",
@@ -702,6 +700,20 @@ def verify_workflow(workflow)
   )
 
   provider_steps = provider.fetch("steps")
+  custody_paths = named_step(provider_steps, "Bind ephemeral staging custody paths")
+  check(custody_paths, "provider smoke must bind runner custody before bootstrap")
+  check(
+    custody_paths.fetch("run").include?(
+      'staging_root="$RUNNER_TEMP/cma-trigger-kind-staging"',
+    ) && custody_paths.fetch("run").include?(
+      'handoff_path="$staging_root/credentials/nyxid-handoff.json"',
+    ) && custody_paths.fetch("run").include?(
+      'CMA_TRIGGER_KIND_STAGING_ROOT=%s\\n',
+    ) && custody_paths.fetch("run").include?(
+      'CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH=%s\\n',
+    ),
+    "provider smoke must derive both custody paths from RUNNER_TEMP at step runtime",
+  )
   action_uses = (plan_steps + provider_steps).each_with_object([]) do |step, uses|
     uses << step["uses"] if step.is_a?(Hash) && step["uses"]
   end

@@ -585,8 +585,6 @@ jobs:
       evidence_result: ${{ steps.evidence_audit.outputs.evidence_result }}
       retained_artifact_url: ${{ steps.evidence_upload.outputs.artifact-url }}
     env:
-      CMA_TRIGGER_KIND_STAGING_ROOT: ${{ runner.temp }}/cma-trigger-kind-staging
-      CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH: ${{ runner.temp }}/cma-trigger-kind-staging/credentials/nyxid-handoff.json
       CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE: ${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}
       CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID }}
       CMA_TRIGGER_SMOKE_UPSTREAM_OWNER: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_OWNER }}
@@ -669,9 +667,11 @@ jobs:
                and (.login | ascii_downcase) != ($operator.login | ascii_downcase))' \
             <<< "$reviewers" >/dev/null
 
-          echo "operator_login=$(jq -r '.login' <<< "$operator")" >> "$GITHUB_OUTPUT"
-          echo "operator_account_id=$(jq -r '.account_id' <<< "$operator")" >> "$GITHUB_OUTPUT"
-          echo "reviewers_json=$reviewers" >> "$GITHUB_OUTPUT"
+          {
+            echo "operator_login=$(jq -r '.login' <<< "$operator")"
+            echo "operator_account_id=$(jq -r '.account_id' <<< "$operator")"
+            echo "reviewers_json=$reviewers"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Revalidate approved image artifact identities after approval
         env:
@@ -1003,6 +1003,25 @@ jobs:
           npm ci
           npm run build
 
+      - name: Bind ephemeral staging custody paths
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ ! "$RUNNER_TEMP" =~ ^/[^[:space:]]+$ ]]; then
+            echo "::error::RUNNER_TEMP is not one normalized absolute path"
+            exit 1
+          fi
+          staging_root="$RUNNER_TEMP/cma-trigger-kind-staging"
+          handoff_path="$staging_root/credentials/nyxid-handoff.json"
+          if [ -e "$staging_root" ] || [ -L "$staging_root" ]; then
+            echo "::error::ephemeral staging custody already exists"
+            exit 1
+          fi
+          {
+            printf 'CMA_TRIGGER_KIND_STAGING_ROOT=%s\n' "$staging_root"
+            printf 'CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH=%s\n' "$handoff_path"
+          } >> "$GITHUB_ENV"
+
       - name: Validate the protected ephemeral staging bootstrap
         env:
           CMA_TRIGGER_SMOKE_KUBECONFIG_B64: ${{ secrets.CMA_TRIGGER_SMOKE_KUBECONFIG_B64 }}
@@ -1208,8 +1227,9 @@ jobs:
         run: |
           { set +x; } 2>/dev/null
           set -euo pipefail
-          export CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"
-          export CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"
+          CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"
+          CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"
+          export CMA_TRIGGER_SMOKE_ACCESS_TOKEN CMA_TRIGGER_SMOKE_SERVICE_ID
           node .github/scripts/cma-trigger-provider-smoke.mjs \
             --run "$CONFIG_PATH" "$EVIDENCE_PATH"
 
@@ -1221,8 +1241,9 @@ jobs:
         run: |
           { set +x; } 2>/dev/null
           set -euo pipefail
-          export CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"
-          export CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"
+          CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"
+          CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"
+          export CMA_TRIGGER_SMOKE_ACCESS_TOKEN CMA_TRIGGER_SMOKE_SERVICE_ID
           node .github/scripts/cma-trigger-provider-smoke.mjs \
             --audit-evidence "$EVIDENCE_PATH"
           node .github/scripts/cma-trigger-provider-smoke.mjs \
@@ -1230,9 +1251,11 @@ jobs:
           evidence_id=$(jq -r '.evidence_id' "$EVIDENCE_PATH")
           evidence_result=$(jq -r '.result' "$EVIDENCE_PATH")
           artifact_name=$(jq -r '.provenance.workflow.artifact_name' "$EVIDENCE_PATH")
-          echo "evidence_id=$evidence_id" >> "$GITHUB_OUTPUT"
-          echo "evidence_result=$evidence_result" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          {
+            echo "evidence_id=$evidence_id"
+            echo "evidence_result=$evidence_result"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Destroy staging, settle provider objects, and purge runner custody
         id: staging_cleanup
