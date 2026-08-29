@@ -169,10 +169,20 @@ function contract({ operator, rust, cargo, lock, config }) {
     "approved staging preflight is future-dated",
     "future-dated plan refusal disappeared",
   );
+  assert.match(
+    operator,
+    /"approved plan",\s+MAX_JSON_BYTES/u,
+    "approved plan secure-file custody disappeared",
+  );
   required(
     operator,
-    '"approved plan",\n      MAX_JSON_BYTES',
-    "approved plan secure-file custody disappeared",
+    "withOperatorCallerStateLock(args.options[\"--state\"]",
+    "shared caller-state lock disappeared from operator commands",
+  );
+  required(
+    operator,
+    "state.handoff_binding.sha256",
+    "latest final-mint handoff binding disappeared",
   );
   required(
     operator,

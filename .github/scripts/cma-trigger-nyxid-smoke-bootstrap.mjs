@@ -8,9 +8,19 @@ import {
 } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants as fsConstants, existsSync } from "node:fs";
-import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  unlink,
+} from "node:fs/promises";
 import http from "node:http";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { hostname } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const NYXID_BASE_URL = "https://nyx-api.chrono-ai.fun";
@@ -57,12 +67,22 @@ const CMA_REQUIRED_PERMISSIONS = Object.freeze([
   "cma:session:terminate",
 ]);
 const APPLY_CONFIRMATION = "provision-reviewed-nonproduction-resources";
+const BUCKET_ADOPTION_CONFIRMATION =
+  "adopt-reviewed-empty-nonproduction-provider-buckets";
+const OIDC_RETIREMENT_CONFIRMATION =
+  "retire-reviewed-ambiguous-nonproduction-oidc-app";
+const RESOURCE_CREATION_RECOVERY_CONFIRMATION =
+  "rotate-reviewed-ambiguous-nonproduction-resource-secret";
 const CONFIG_ENVIRONMENT = "cma-trigger-smoke";
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_GITHUB_SECRET_PLAINTEXT_BYTES = 48 * 1024;
 const MIN_STORAGE_TOKEN_LIFETIME_SECONDS = 120;
 const MIN_CALLER_TOKEN_LIFETIME_SECONDS = 7_200;
 const MAX_CALLER_TOKEN_LIFETIME_SECONDS = 28_800;
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+const ISSUER_TTL_WITNESS_MAX_AGE_SECONDS = 15 * 60;
+const CALLER_STATE_LOCK_SUFFIX = ".caller-authority.lock";
+const REFRESH_RETRYABLE_STATUSES = Object.freeze([409, 500, 502, 503, 504]);
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SA_CLIENT_ID = /^sa_[0-9a-f]{24}$/u;
@@ -302,6 +322,23 @@ function boundedString(value, path, maximum = 2048, code = "contract_drift") {
     fail(code, `${path} must be bounded non-control text`);
   }
   return value;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function exactArray(value, expected, path, { ordered = true } = {}) {
@@ -553,11 +590,14 @@ function defaultState(config) {
       owner_service_account_id: null,
     },
     caller: null,
+    caller_exchange: null,
+    resource_creation: null,
+    handoff_binding: null,
   };
 }
 
 function validateState(raw, config) {
-  exactKeys(
+  closedKeys(
     raw,
     [
       "schema_version",
@@ -570,9 +610,28 @@ function validateState(raw, config) {
       "storage_service_account",
       "buckets",
       "caller",
+      "caller_exchange",
+      "resource_creation",
+      "handoff_binding",
     ],
     "state",
+    [
+      "schema_version",
+      "environment",
+      "nyxid_base_url",
+      "source_revision",
+      "api_version",
+      "observer",
+      "oidc_app",
+      "storage_service_account",
+      "buckets",
+      "caller",
+    ],
+    "unsafe_state",
   );
+  raw.caller_exchange ??= null;
+  raw.resource_creation ??= null;
+  raw.handoff_binding ??= null;
   if (
     raw.schema_version !== 1 ||
     raw.environment !== config.environment ||
@@ -650,10 +709,18 @@ function validateState(raw, config) {
     );
   }
   if (raw.caller !== null) {
-    exactKeys(
+    closedKeys(
       raw.caller,
-      ["client_id", "subject_id", "service_id", "refresh_token", "scope"],
+      [
+        "client_id",
+        "subject_id",
+        "service_id",
+        "refresh_token",
+        "scope",
+        "verification_state",
+      ],
       "state.caller",
+      ["client_id", "subject_id", "service_id", "refresh_token", "scope"],
       "unsafe_state",
     );
     uuid(raw.caller.client_id, "state.caller.client_id", "unsafe_state");
@@ -671,10 +738,172 @@ function validateState(raw, config) {
       "state.caller.scope",
       "unsafe_state",
     );
+    if (
+      raw.caller.verification_state !== undefined &&
+      !new Set(["pending", "verified"]).has(raw.caller.verification_state)
+    ) {
+      fail(
+        "unsafe_state",
+        "state.caller.verification_state is not a closed custody state",
+      );
+    }
     if (raw.oidc_app === null || raw.caller.client_id !== raw.oidc_app.id) {
       fail(
         "state_authority_mismatch",
         "caller refresh authority is not the exact OIDC app",
+      );
+    }
+  }
+  if (raw.caller_exchange !== null) {
+    exactKeys(
+      raw.caller_exchange,
+      [
+        "app_id",
+        "exchange_started_at",
+        "issuer_token_issued_at",
+        "issuer_access_token_ttl_seconds",
+        "issuer_token_sha256",
+        "issuer_commit",
+      ],
+      "state.caller_exchange",
+      "unsafe_state",
+    );
+    uuid(
+      raw.caller_exchange.app_id,
+      "state.caller_exchange.app_id",
+      "unsafe_state",
+    );
+    for (const field of ["exchange_started_at", "issuer_token_issued_at"]) {
+      if (
+        !Number.isSafeInteger(raw.caller_exchange[field]) ||
+        raw.caller_exchange[field] <= 0
+      ) {
+        fail("unsafe_state", `state.caller_exchange.${field} is invalid`);
+      }
+    }
+    if (
+      !Number.isSafeInteger(
+        raw.caller_exchange.issuer_access_token_ttl_seconds,
+      ) ||
+      raw.caller_exchange.issuer_access_token_ttl_seconds <
+        MIN_CALLER_TOKEN_LIFETIME_SECONDS ||
+      raw.caller_exchange.issuer_access_token_ttl_seconds >
+        MAX_CALLER_TOKEN_LIFETIME_SECONDS ||
+      raw.caller_exchange.issuer_token_issued_at >
+        raw.caller_exchange.exchange_started_at + 30 ||
+      raw.caller_exchange.exchange_started_at -
+        raw.caller_exchange.issuer_token_issued_at >
+        ISSUER_TTL_WITNESS_MAX_AGE_SECONDS ||
+      !/^[0-9a-f]{64}$/u.test(raw.caller_exchange.issuer_token_sha256) ||
+      raw.caller_exchange.issuer_commit !== NYXID_SOURCE_REVISION.slice(0, 12)
+    ) {
+      fail("unsafe_state", "state caller exchange evidence is invalid");
+    }
+    if (
+      raw.oidc_app === null ||
+      raw.caller_exchange.app_id !== raw.oidc_app.id ||
+      raw.caller !== null ||
+      raw.handoff_binding !== null
+    ) {
+      fail(
+        "state_authority_mismatch",
+        "caller exchange evidence is not isolated to the exact OIDC app",
+      );
+    }
+  }
+  if (raw.resource_creation !== null) {
+    raw.resource_creation.recovery_rotation ??= null;
+    exactKeys(
+      raw.resource_creation,
+      [
+        "kind",
+        "name",
+        "administrator_subject_id",
+        "attempt_started_at",
+        "attempt_nonce",
+        "request_sha256",
+        "recovery_rotation",
+      ],
+      "state.resource_creation",
+      "unsafe_state",
+    );
+    const expectedName = {
+      oidc_app: config.oidc_app.name,
+      storage_service_account: config.storage.service_account_name,
+    }[raw.resource_creation.kind];
+    if (expectedName === undefined || raw.resource_creation.name !== expectedName) {
+      fail(
+        "state_authority_mismatch",
+        "resource creation marker is not bound to an exact configured resource",
+      );
+    }
+    uuid(
+      raw.resource_creation.administrator_subject_id,
+      "state.resource_creation.administrator_subject_id",
+      "unsafe_state",
+    );
+    if (
+      !Number.isSafeInteger(raw.resource_creation.attempt_started_at) ||
+      raw.resource_creation.attempt_started_at <= 0 ||
+      !/^[0-9a-f]{64}$/u.test(raw.resource_creation.attempt_nonce) ||
+      !/^[0-9a-f]{64}$/u.test(raw.resource_creation.request_sha256)
+    ) {
+      fail("unsafe_state", "resource creation marker evidence is invalid");
+    }
+    if (raw.resource_creation.recovery_rotation !== null) {
+      exactKeys(
+        raw.resource_creation.recovery_rotation,
+        ["resource_id", "rotation_started_at", "rotation_nonce"],
+        "state.resource_creation.recovery_rotation",
+        "unsafe_state",
+      );
+      uuid(
+        raw.resource_creation.recovery_rotation.resource_id,
+        "state.resource_creation.recovery_rotation.resource_id",
+        "unsafe_state",
+      );
+      if (
+        !Number.isSafeInteger(
+          raw.resource_creation.recovery_rotation.rotation_started_at,
+        ) ||
+        raw.resource_creation.recovery_rotation.rotation_started_at <= 0 ||
+        !/^[0-9a-f]{64}$/u.test(
+          raw.resource_creation.recovery_rotation.rotation_nonce,
+        )
+      ) {
+        fail("unsafe_state", "resource recovery rotation evidence is invalid");
+      }
+    }
+    if (
+      raw.handoff_binding !== null ||
+      (raw.resource_creation.kind === "oidc_app" && raw.oidc_app !== null) ||
+      (raw.resource_creation.kind === "storage_service_account" &&
+        (raw.storage_service_account !== null ||
+          raw.buckets.owner_service_account_id !== null))
+    ) {
+      fail(
+        "state_authority_mismatch",
+        "resource creation marker is not isolated from completed custody",
+      );
+    }
+  }
+  if (raw.handoff_binding !== null) {
+    exactKeys(
+      raw.handoff_binding,
+      ["sha256"],
+      "state.handoff_binding",
+      "unsafe_state",
+    );
+    if (!/^[0-9a-f]{64}$/u.test(raw.handoff_binding.sha256)) {
+      fail("unsafe_state", "state handoff binding digest is invalid");
+    }
+    if (
+      raw.caller === null ||
+      (raw.caller.verification_state ?? "verified") !== "verified"
+    ) {
+      fail(
+        "unsafe_state",
+        "state handoff binding requires verified caller custody",
       );
     }
   }
@@ -696,7 +925,42 @@ function secureAbsolutePath(path, label) {
 }
 
 async function verifyPrivateDirectory(path) {
+  secureAbsolutePath(path, "secret parent");
   const stat = await lstat(path);
+  let actual;
+  try {
+    actual = await realpath(path);
+  } catch {
+    fail("unsafe_secret_path", "secret parent could not be resolved safely");
+  }
+  if (actual !== path) {
+    fail(
+      "unsafe_secret_path",
+      "secret parent must not traverse any symbolic-link component",
+    );
+  }
+  let ancestor = path;
+  while (true) {
+    const ancestorStat = await lstat(ancestor);
+    if (!ancestorStat.isDirectory() || ancestorStat.isSymbolicLink()) {
+      fail("unsafe_secret_path", "secret path ancestry is not all directories");
+    }
+    if ((ancestorStat.mode & 0o022) !== 0) {
+      const ownerTrusted =
+        typeof process.getuid !== "function" ||
+        ancestorStat.uid === 0 ||
+        ancestorStat.uid === process.getuid();
+      if ((ancestorStat.mode & 0o1000) === 0 || !ownerTrusted) {
+        fail(
+          "unsafe_secret_path",
+          "secret path ancestry contains an untrusted writable directory",
+        );
+      }
+    }
+    const parent = dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     fail("unsafe_secret_path", "secret parent must be a real directory");
   }
@@ -711,6 +975,67 @@ async function verifyPrivateDirectory(path) {
 async function ensurePrivateDirectory(path) {
   await mkdir(path, { recursive: true, mode: 0o700 });
   await verifyPrivateDirectory(path);
+}
+
+async function canonicalAuthorityTarget(path, label) {
+  secureAbsolutePath(path, label);
+  const parent = dirname(path);
+  await verifyPrivateDirectory(parent);
+  return join(await realpath(parent), basename(path));
+}
+
+async function existingAuthorityIdentity(path, label) {
+  try {
+    const stat = await lstat(path);
+    if (stat.isSymbolicLink()) {
+      fail("unsafe_secret_path", `${label} must not be a symbolic link`);
+    }
+    return {
+      dev: stat.dev,
+      ino: stat.ino,
+      resolved: await realpath(path),
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function authorityPathKey(path) {
+  return path.normalize("NFC").toLowerCase();
+}
+
+async function requireDistinctAuthorityPaths(statePath, outputPath) {
+  const stateTarget = await canonicalAuthorityTarget(statePath, "--state");
+  const outputTarget = await canonicalAuthorityTarget(outputPath, "--output");
+  const lockTarget = `${stateTarget}${CALLER_STATE_LOCK_SUFFIX}`;
+  const outputKey = authorityPathKey(outputTarget);
+  if (
+    outputKey === authorityPathKey(stateTarget) ||
+    outputKey === authorityPathKey(lockTarget)
+  ) {
+    fail("usage", "output path must differ from state and lock paths");
+  }
+  const outputIdentity = await existingAuthorityIdentity(
+    outputTarget,
+    "--output",
+  );
+  if (outputIdentity !== null) {
+    for (const [target, label] of [
+      [stateTarget, "--state"],
+      [lockTarget, "caller state lock"],
+    ]) {
+      const identity = await existingAuthorityIdentity(target, label);
+      if (
+        identity !== null &&
+        (identity.resolved === outputIdentity.resolved ||
+          (identity.dev === outputIdentity.dev &&
+            identity.ino === outputIdentity.ino))
+      ) {
+        fail("usage", "output path aliases state or lock authority");
+      }
+    }
+  }
 }
 
 async function verifySecureFile(path) {
@@ -730,7 +1055,7 @@ async function verifySecureFile(path) {
   return stat;
 }
 
-async function readSecureJson(path, { optional = false } = {}) {
+async function readSecureBytes(path, { optional = false } = {}) {
   secureAbsolutePath(path, "secret file path");
   const parent = dirname(path);
   if (!existsSync(parent)) {
@@ -746,40 +1071,364 @@ async function readSecureJson(path, { optional = false } = {}) {
   if (stat.size > MAX_JSON_BYTES) {
     fail("unsafe_secret_file", "secret file exceeds the size limit");
   }
+  let handle;
+  try {
+    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      opened.dev !== stat.dev ||
+      opened.ino !== stat.ino ||
+      opened.nlink !== 1 ||
+      opened.size !== stat.size ||
+      (typeof process.getuid === "function" &&
+        opened.uid !== process.getuid()) ||
+      (opened.mode & 0o777) !== 0o600
+    ) {
+      fail("unsafe_secret_file", "secret file changed before its secure read");
+    }
+    const bytes = Buffer.alloc(opened.size);
+    const { bytesRead } = await handle.read(bytes, 0, opened.size, 0);
+    if (bytesRead !== opened.size) {
+      fail("unsafe_secret_file", "secret file changed during its secure read");
+    }
+    const after = await handle.stat();
+    if (
+      after.dev !== opened.dev ||
+      after.ino !== opened.ino ||
+      after.size !== opened.size ||
+      after.mtimeMs !== opened.mtimeMs ||
+      after.nlink !== 1
+    ) {
+      fail("unsafe_secret_file", "secret file changed during its secure read");
+    }
+    await verifyPrivateDirectory(parent);
+    const final = await lstat(path);
+    if (final.dev !== opened.dev || final.ino !== opened.ino) {
+      fail("unsafe_secret_file", "secret file was replaced during its secure read");
+    }
+    return bytes;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function readSecureJson(path, options = {}) {
+  const bytes = await readSecureBytes(path, options);
+  if (bytes === null) return null;
   let parsed;
   try {
-    parsed = JSON.parse(await readFile(path, "utf8"));
+    parsed = JSON.parse(bytes.toString("utf8"));
   } catch {
     fail("unsafe_secret_file", "secret file is not valid JSON");
   }
   return parsed;
 }
 
-async function atomicWriteSecureJson(path, value) {
+async function atomicWriteSecureBytes(path, bytes) {
   secureAbsolutePath(path, "secret file path");
+  if (!Buffer.isBuffer(bytes) || bytes.length > MAX_JSON_BYTES) {
+    fail("unsafe_secret_file", "secret output exceeds the size limit");
+  }
   const parent = dirname(path);
   await ensurePrivateDirectory(parent);
   if (existsSync(path)) await verifySecureFile(path);
   const temp = `${path}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
-  const handle = await open(
-    temp,
-    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
-    0o600,
-  );
+  let handle;
+  let renamed = false;
   try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    handle = await open(
+      temp,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
+      0o600,
+    );
+    await handle.writeFile(bytes);
     await handle.sync();
-  } finally {
     await handle.close();
-  }
-  await rename(temp, path);
-  const directory = await open(parent, fsConstants.O_RDONLY);
-  try {
-    await directory.sync();
+    handle = undefined;
+    await rename(temp, path);
+    renamed = true;
+    const directory = await open(parent, fsConstants.O_RDONLY);
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+    await verifySecureFile(path);
   } finally {
-    await directory.close();
+    await handle?.close().catch(() => {});
+    if (!renamed) await unlink(temp).catch(() => {});
   }
-  await verifySecureFile(path);
+}
+
+function secureJsonBytes(value) {
+  return Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function requireHandoffUploadBound(handoffBytes) {
+  if (!Buffer.isBuffer(handoffBytes) || handoffBytes.length === 0) {
+    fail("unsafe_handoff", "handoff artifact bytes are invalid");
+  }
+  if (
+    Buffer.byteLength(handoffBytes.toString("base64"), "utf8") >
+    MAX_GITHUB_SECRET_PLAINTEXT_BYTES
+  ) {
+    fail(
+      "handoff_upload_too_large",
+      "base64-encoded handoff exceeds GitHub's 48 KiB secret plaintext limit",
+    );
+  }
+  return handoffBytes;
+}
+
+async function atomicWriteSecureJson(path, value) {
+  await atomicWriteSecureBytes(path, secureJsonBytes(value));
+}
+
+function validateCallerStateLock(raw) {
+  exactKeys(
+    raw,
+    ["schema_version", "pid", "hostname", "nonce"],
+    "caller state lock",
+    "caller_state_lock_invalid",
+  );
+  if (
+    raw.schema_version !== 1 ||
+    !Number.isSafeInteger(raw.pid) ||
+    raw.pid <= 0
+  ) {
+    fail("caller_state_lock_invalid", "caller state lock identity is invalid");
+  }
+  boundedString(
+    raw.hostname,
+    "caller state lock hostname",
+    1024,
+    "caller_state_lock_invalid",
+  );
+  if (!/^[0-9a-f]{64}$/u.test(raw.nonce)) {
+    fail("caller_state_lock_invalid", "caller state lock nonce is invalid");
+  }
+  return raw;
+}
+
+async function readCallerStateLock(path) {
+  const expected = await lstat(path);
+  let handle;
+  try {
+    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const opened = await handle.stat();
+    if (
+      !expected.isFile() ||
+      expected.isSymbolicLink() ||
+      !opened.isFile() ||
+      opened.dev !== expected.dev ||
+      opened.ino !== expected.ino ||
+      opened.nlink < 1 ||
+      opened.nlink > 2 ||
+      opened.size <= 0 ||
+      opened.size > MAX_JSON_BYTES ||
+      (typeof process.getuid === "function" &&
+        opened.uid !== process.getuid()) ||
+      (opened.mode & 0o777) !== 0o600
+    ) {
+      fail("caller_state_lock_invalid", "caller state lock file is invalid");
+    }
+    const bytes = Buffer.alloc(opened.size);
+    const { bytesRead } = await handle.read(bytes, 0, opened.size, 0);
+    const after = await handle.stat();
+    const final = await lstat(path);
+    if (
+      bytesRead !== opened.size ||
+      after.dev !== opened.dev ||
+      after.ino !== opened.ino ||
+      after.size !== opened.size ||
+      after.mtimeMs !== opened.mtimeMs ||
+      final.dev !== opened.dev ||
+      final.ino !== opened.ino
+    ) {
+      fail(
+        "caller_state_lock_invalid",
+        "caller state lock changed during its secure read",
+      );
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      fail("caller_state_lock_invalid", "caller state lock payload is invalid");
+    }
+    return {
+      value: validateCallerStateLock(parsed),
+      identity: { dev: opened.dev, ino: opened.ino },
+    };
+  } catch {
+    throw new BootstrapFailure(
+      "caller_state_lock_invalid",
+      "caller state lock could not be read through a stable file handle",
+    );
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+function processIsActive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
+async function withCallerStateLock(statePath, action) {
+  secureAbsolutePath(statePath, "--state");
+  const parent = dirname(statePath);
+  await ensurePrivateDirectory(parent);
+  const lockPath = `${statePath}${CALLER_STATE_LOCK_SUFFIX}`;
+  secureAbsolutePath(lockPath, "caller state lock");
+  const localHostname = hostname();
+  const candidatePath = `${lockPath}.candidate-${process.pid}-${randomBytes(8).toString("hex")}`;
+  let handle;
+  const lock = {
+    schema_version: 1,
+    pid: process.pid,
+    hostname: localHostname,
+    nonce: randomBytes(32).toString("hex"),
+  };
+  let published = false;
+  let publishedIdentity;
+  try {
+    handle = await open(
+      candidatePath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
+      0o600,
+    );
+    await handle.writeFile(`${JSON.stringify(lock)}\n`, "utf8");
+    await handle.sync();
+    await link(candidatePath, lockPath);
+    published = true;
+    await unlink(candidatePath);
+    const acquired = await readCallerStateLock(lockPath);
+    const held = await handle.stat();
+    if (
+      acquired.value.pid !== lock.pid ||
+      acquired.value.hostname !== lock.hostname ||
+      acquired.value.nonce !== lock.nonce ||
+      acquired.identity.dev !== held.dev ||
+      acquired.identity.ino !== held.ino
+    ) {
+      fail(
+        "caller_state_lock_invalid",
+        "published caller state lock identity drifted before the action",
+      );
+    }
+    publishedIdentity = acquired.identity;
+    const directory = await open(parent, fsConstants.O_RDONLY);
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } catch (error) {
+    let heldIdentity;
+    try {
+      const held = await handle?.stat();
+      if (held !== undefined) {
+        heldIdentity = { dev: held.dev, ino: held.ino };
+      }
+    } catch {
+      heldIdentity = undefined;
+    }
+    await handle?.close().catch(() => {});
+    handle = undefined;
+    await unlink(candidatePath).catch(() => {});
+    if (published && heldIdentity !== undefined) {
+      try {
+        const current = await lstat(lockPath);
+        if (
+          current.dev === heldIdentity.dev &&
+          current.ino === heldIdentity.ino
+        ) {
+          await unlink(lockPath);
+        }
+      } catch {
+        // Retaining an uncertain lock is safer than unlinking another owner.
+      }
+    }
+    if (error?.code !== "EEXIST") throw error;
+    const { value: existing } = await readCallerStateLock(lockPath);
+    if (
+      existing.hostname === localHostname &&
+      !processIsActive(existing.pid)
+    ) {
+      fail(
+        "caller_state_lock_stale",
+        "a dead-owner caller state lock requires reviewed exact-file removal",
+      );
+    }
+    fail(
+      "caller_state_locked",
+      "another caller-authority operation owns the state file",
+    );
+  }
+
+  let result;
+  let primaryError;
+  try {
+    result = await action();
+  } catch (error) {
+    primaryError = error;
+  }
+  let releaseError;
+  try {
+    const held = await handle.stat();
+    const current = await readCallerStateLock(lockPath);
+    if (
+      current.value.pid !== lock.pid ||
+      current.value.hostname !== lock.hostname ||
+      current.value.nonce !== lock.nonce ||
+      current.identity.dev !== publishedIdentity.dev ||
+      current.identity.ino !== publishedIdentity.ino ||
+      held.dev !== publishedIdentity.dev ||
+      held.ino !== publishedIdentity.ino
+    ) {
+      fail(
+        "caller_state_lock_release_failed",
+        "caller state lock ownership changed before release",
+      );
+    }
+    await handle.close();
+    handle = undefined;
+    const final = await lstat(lockPath);
+    if (
+      final.dev !== publishedIdentity.dev ||
+      final.ino !== publishedIdentity.ino
+    ) {
+      fail(
+        "caller_state_lock_release_failed",
+        "caller state lock path changed before exact release",
+      );
+    }
+    await unlink(lockPath);
+    const directory = await open(parent, fsConstants.O_RDONLY);
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } catch (error) {
+    await handle?.close().catch(() => {});
+    releaseError = error;
+  }
+  if (releaseError !== undefined) {
+    if (releaseError instanceof BootstrapFailure) throw releaseError;
+    fail(
+      "caller_state_lock_release_failed",
+      "caller state lock could not be released safely",
+    );
+  }
+  if (primaryError !== undefined) throw primaryError;
+  return result;
 }
 
 async function readJsonFile(path) {
@@ -794,12 +1443,13 @@ async function readJsonFile(path) {
   }
 }
 
-async function readBoundedResponse(response) {
+async function readBoundedBody(response, { allowMissing = false } = {}) {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_JSON_BYTES) {
     fail("remote_response_too_large", "remote JSON exceeds the response limit");
   }
   if (response.body === null) {
+    if (allowMissing) return Buffer.alloc(0);
     fail("remote_contract_error", "remote JSON body is missing");
   }
   const chunks = [];
@@ -814,14 +1464,26 @@ async function readBoundedResponse(response) {
     }
     chunks.push(chunk);
   }
+  return Buffer.concat(chunks);
+}
+
+async function readBoundedResponse(response) {
+  const body = await readBoundedBody(response);
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
     fail("remote_contract_error", "remote response is not JSON");
   }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(body.toString("utf8"));
   } catch {
     fail("remote_contract_error", "remote response is malformed JSON");
+  }
+}
+
+async function readEmptyResponse(response) {
+  const body = await readBoundedBody(response, { allowMissing: true });
+  if (body.length !== 0) {
+    fail("remote_contract_error", "remote empty response carried a body");
   }
 }
 
@@ -830,7 +1492,15 @@ class FetchTransport {
     this.timeoutMs = timeoutMs;
   }
 
-  async request({ method = "GET", url, token, json, form, statuses = [200] }) {
+  async request({
+    method = "GET",
+    url,
+    token,
+    json,
+    form,
+    statuses = [200],
+    responseKind = "json",
+  }) {
     const allowed =
       url === NYXID_SOURCE_REF_URL || url.startsWith(`${NYXID_BASE_URL}/`);
     if (!allowed) fail("endpoint_not_pinned", "request endpoint is not pinned");
@@ -866,7 +1536,13 @@ class FetchTransport {
         `${method} request did not produce a response`,
       );
     }
-    const responseJson = await readBoundedResponse(response);
+    if (!new Set(["json", "empty"]).has(responseKind)) {
+      fail("internal_error", "request response kind is invalid");
+    }
+    const responseJson =
+      responseKind === "json"
+        ? await readBoundedResponse(response)
+        : (await readEmptyResponse(response), null);
     if (!statuses.includes(response.status)) {
       fail(
         "remote_status_error",
@@ -904,6 +1580,7 @@ function validateDiscovery(raw) {
     token_endpoint: nyx("/oauth/token"),
     pushed_authorization_request_endpoint: nyx("/oauth/par"),
     introspection_endpoint: nyx("/oauth/introspect"),
+    revocation_endpoint: nyx("/oauth/revoke"),
     jwks_uri: nyx("/.well-known/jwks.json"),
   };
   for (const [field, expected] of Object.entries(endpointPairs)) {
@@ -1157,7 +1834,11 @@ function validateStorageRole(raw, config) {
   return raw;
 }
 
-function validateApp(raw, config, { secretRequired = false } = {}) {
+function validateApp(
+  raw,
+  config,
+  { secretRequired = false, expectedActive = true } = {},
+) {
   closedKeys(raw, APP_FIELDS, "OIDC app", APP_REQUIRED_FIELDS);
   uuid(raw.id, "OIDC app id");
   if (!Array.isArray(raw.redirect_uris))
@@ -1170,7 +1851,8 @@ function validateApp(raw, config, { secretRequired = false } = {}) {
     raw.revocation_webhook_url !== null ||
     raw.connection_webhook_url !== null ||
     raw.connection_webhook_enabled !== false ||
-    raw.is_active !== true
+    typeof expectedActive !== "boolean" ||
+    raw.is_active !== expectedActive
   ) {
     fail("oidc_app_drift", "OIDC app fields drifted");
   }
@@ -1190,6 +1872,26 @@ function validateApp(raw, config, { secretRequired = false } = {}) {
     boundedString(raw.client_secret, "OIDC client secret", 4096);
   if (!secretRequired && raw.client_secret !== undefined) {
     fail("secret_exposure", "OIDC list unexpectedly returned a client secret");
+  }
+  return raw;
+}
+
+function validateHealth(raw) {
+  closedKeys(
+    raw,
+    ["status", "version", "commit", "encryption"],
+    "NyxID health",
+    ["status", "version", "commit", "encryption"],
+  );
+  if (
+    raw.status !== "ok" ||
+    raw.version !== NYXID_API_VERSION ||
+    raw.commit !== NYXID_SOURCE_REVISION.slice(0, 12) ||
+    raw.encryption === null ||
+    typeof raw.encryption !== "object" ||
+    Array.isArray(raw.encryption)
+  ) {
+    fail("nyxid_deployment_drift", "live NyxID deployment is not the pinned build");
   }
   return raw;
 }
@@ -1262,6 +1964,7 @@ function validateStorageOpenapi(raw) {
   const requirements = {
     "/api/buckets": ["get", "post"],
     "/api/buckets/{bucket}": ["get"],
+    "/api/buckets/{bucket}/ownership": ["put"],
     "/api/buckets/{bucket}/objects": ["get", "post", "patch", "delete"],
     "/api/buckets/{bucket}/objects/download": ["get"],
   };
@@ -1278,15 +1981,35 @@ function validateStorageOpenapi(raw) {
   }
 }
 
-function reconcileCustody(snapshot, state) {
-  if (snapshot.app !== null) {
-    if (state.oidc_app === null) {
+function reconcileCustody(snapshot, state, config) {
+  const creation = state.resource_creation;
+  if (creation !== null) {
+    if (creation.administrator_subject_id !== snapshot.adminSubjectId) {
       fail(
-        "oidc_secret_rotation_required",
-        "the OIDC app exists without matching local secret custody; rotate manually",
+        "state_authority_mismatch",
+        "resource creation marker administrator differs from live authority",
       );
     }
-    if (state.oidc_app.id !== snapshot.app.id) {
+    const expectedRequest =
+      creation.kind === "oidc_app"
+        ? appCreateBody(config)
+        : serviceAccountCreateBody(config, snapshot.storageRole.id);
+    if (creation.request_sha256 !== sha256(canonicalJson(expectedRequest))) {
+      fail(
+        "state_authority_mismatch",
+        "resource creation marker request contract drifted",
+      );
+    }
+  }
+  if (snapshot.app !== null) {
+    if (state.oidc_app === null) {
+      if (creation?.kind !== "oidc_app") {
+        fail(
+          "oidc_secret_rotation_required",
+          "the OIDC app exists without marker-bound local secret custody; quarantine it and obtain provider final-outcome evidence before a separately reviewed recovery",
+        );
+      }
+    } else if (state.oidc_app.id !== snapshot.app.id) {
       fail(
         "state_authority_mismatch",
         "OIDC state ID does not match the live app",
@@ -1297,12 +2020,13 @@ function reconcileCustody(snapshot, state) {
   }
   if (snapshot.serviceAccount !== null) {
     if (state.storage_service_account === null) {
-      fail(
-        "storage_secret_rotation_required",
-        "the storage service account exists without matching local secret custody; rotate manually",
-      );
-    }
-    if (
+      if (creation?.kind !== "storage_service_account") {
+        fail(
+          "storage_secret_rotation_required",
+          "the storage service account exists without marker-bound local secret custody; quarantine it and obtain provider final-outcome evidence before a separately reviewed recovery",
+        );
+      }
+    } else if (
       state.storage_service_account.id !== snapshot.serviceAccount.id ||
       state.storage_service_account.client_id !==
         snapshot.serviceAccount.client_id
@@ -1349,6 +2073,8 @@ function reconcileCustody(snapshot, state) {
 async function inspectResources({ config, state, transport, adminToken }) {
   const source = await transport.request({ url: NYXID_SOURCE_REF_URL });
   validateSourceRef(source.json);
+  const health = await transport.request({ url: nyx("/health") });
+  validateHealth(health.json);
   const discoveryResponse = await transport.request({
     url: nyx("/.well-known/openid-configuration"),
   });
@@ -1475,10 +2201,16 @@ async function inspectResources({ config, state, transport, adminToken }) {
   const appMatches = appsResponse.json.clients.filter(
     (item) => item.client_name === config.oidc_app.name,
   );
-  if (appMatches.length > 1)
+  const validatedAppMatches = appMatches.map((item) =>
+    validateApp(item, config, { expectedActive: item.is_active }),
+  );
+  const activeAppMatches = validatedAppMatches.filter(
+    (item) => item.is_active === true,
+  );
+  if (activeAppMatches.length > 1)
     fail("duplicate_resource", "OIDC app name is duplicated");
   const app =
-    appMatches.length === 1 ? validateApp(appMatches[0], config) : null;
+    activeAppMatches.length === 1 ? activeAppMatches[0] : null;
 
   const accountSearch = encodeURIComponent(config.storage.service_account_name);
   const accountsResponse = await transport.request({
@@ -1541,13 +2273,20 @@ async function inspectResources({ config, state, transport, adminToken }) {
     storageRole,
     storageService,
     githubCatalogService,
+    liveCommit: health.json.commit,
     adminSubjectId: me.json.id,
+    resourceCreation: state.resource_creation,
   };
-  reconcileCustody(snapshot, state);
+  reconcileCustody(snapshot, state, config);
   return snapshot;
 }
 
 function provisioningPlan(snapshot, config) {
+  if (snapshot.resourceCreation !== null) {
+    return [
+      `recover_ambiguous_resource_creation:${snapshot.resourceCreation.kind}:${snapshot.resourceCreation.name}`,
+    ];
+  }
   const actions = [];
   if (snapshot.observer === null) actions.push("create_public_github_observer");
   if (snapshot.app === null) actions.push("create_confidential_oidc_app");
@@ -1572,6 +2311,19 @@ function planEvidence(snapshot, config) {
       subject_id: snapshot.adminSubjectId,
       authority: "active_platform_admin",
     },
+    resource_creation_incident:
+      snapshot.resourceCreation === null
+        ? null
+        : {
+            kind: snapshot.resourceCreation.kind,
+            name: snapshot.resourceCreation.name,
+            administrator_subject_id:
+              snapshot.resourceCreation.administrator_subject_id,
+            attempt_started_at: snapshot.resourceCreation.attempt_started_at,
+            attempt_nonce: snapshot.resourceCreation.attempt_nonce,
+            request_sha256: snapshot.resourceCreation.request_sha256,
+            recovery_rotation: snapshot.resourceCreation.recovery_rotation,
+          },
     public_github_observer:
       snapshot.observer === null
         ? {
@@ -1675,6 +2427,283 @@ function serviceAccountCreateBody(config, roleId) {
     description: "Dedicated non-production CMA Trigger smoke storage identity",
     allowed_scopes: STORAGE_ALLOWED_SCOPES.join(" "),
     role_ids: [roleId],
+  };
+}
+
+function resourceCreationRecoveryCode(kind) {
+  return kind === "oidc_app"
+    ? "oidc_secret_creation_recovery_required"
+    : "storage_secret_creation_recovery_required";
+}
+
+function requireNoPendingResourceCreation(state) {
+  if (state.resource_creation !== null) {
+    fail(
+      resourceCreationRecoveryCode(state.resource_creation.kind),
+      `the durable ${state.resource_creation.kind} create-attempt marker is unresolved; do not send another create request`,
+    );
+  }
+}
+
+async function beginResourceCreation({
+  state,
+  persistState,
+  kind,
+  name,
+  administratorSubjectId,
+  request,
+}) {
+  requireNoPendingResourceCreation(state);
+  const marker = {
+    kind,
+    name,
+    administrator_subject_id: administratorSubjectId,
+    attempt_started_at: Math.floor(Date.now() / 1000),
+    attempt_nonce: randomBytes(32).toString("hex"),
+    request_sha256: sha256(canonicalJson(request)),
+    recovery_rotation: null,
+  };
+  state.resource_creation = marker;
+  try {
+    await persistState(state);
+  } catch {
+    state.resource_creation = null;
+    fail(
+      "resource_creation_fence_persistence_failed",
+      `the ${kind} create request was not sent because its durable attempt fence could not be committed`,
+    );
+  }
+  return marker;
+}
+
+function validateRotatedOidcSecret(raw, resourceId) {
+  exactKeys(
+    raw,
+    ["id", "client_secret"],
+    "rotated OIDC client secret",
+    "contract_drift",
+  );
+  if (raw.id !== resourceId) {
+    fail("state_authority_mismatch", "rotated OIDC client ID drifted");
+  }
+  boundedString(
+    raw.client_secret,
+    "rotated OIDC client secret",
+    4096,
+    "contract_drift",
+  );
+  return raw.client_secret;
+}
+
+function validateRotatedStorageSecret(raw, account) {
+  exactKeys(
+    raw,
+    ["client_id", "client_secret", "secret_prefix", "message"],
+    "rotated storage service-account secret",
+    "contract_drift",
+  );
+  if (
+    raw.client_id !== account.client_id ||
+    raw.message !==
+      "Secret rotated. All existing tokens have been revoked. Save the new secret now."
+  ) {
+    fail(
+      "state_authority_mismatch",
+      "rotated storage service-account identity drifted",
+    );
+  }
+  boundedString(
+    raw.client_secret,
+    "rotated storage client secret",
+    4096,
+    "contract_drift",
+  );
+  boundedString(
+    raw.secret_prefix,
+    "rotated storage secret prefix",
+    256,
+    "contract_drift",
+  );
+  return raw.client_secret;
+}
+
+async function readExactResourceCreationTarget({
+  config,
+  marker,
+  snapshot,
+  transport,
+  adminToken,
+  resourceId,
+}) {
+  const listed =
+    marker.kind === "oidc_app" ? snapshot.app : snapshot.serviceAccount;
+  if (listed === null) {
+    fail(
+      "resource_creation_observation_pending",
+      "the ambiguous create target is not yet observable; retain the marker and do not rotate or recreate it",
+    );
+  }
+  if (listed.id !== resourceId) {
+    fail(
+      "resource_creation_recovery_target_mismatch",
+      "the independently reviewed provider resource ID does not match the exact observed target",
+    );
+  }
+  const path =
+    marker.kind === "oidc_app"
+      ? `/api/v1/developer/oauth-clients/${resourceId}`
+      : `/api/v1/admin/service-accounts/${resourceId}`;
+  const response = await transport.request({
+    url: nyx(path),
+    token: adminToken,
+    statuses: [200, 401, 403, 404],
+  });
+  if (response.status !== 200) {
+    fail(
+      "resource_creation_recovery_target_unavailable",
+      "the exact reviewed provider resource ID could not be read through its owner authority",
+    );
+  }
+  const exact =
+    marker.kind === "oidc_app"
+      ? validateApp(response.json, config, { expectedActive: true })
+      : validateServiceAccountItem(
+          response.json,
+          config,
+          snapshot.storageRole.id,
+          snapshot.adminSubjectId,
+        );
+  if (exact.id !== resourceId) {
+    fail(
+      "resource_creation_recovery_target_mismatch",
+      "exact provider read returned another resource identity",
+    );
+  }
+  return exact;
+}
+
+async function recoverResourceCreation({
+  config,
+  state,
+  snapshot,
+  transport,
+  adminToken,
+  persistState,
+  resourceId,
+  attemptNonce,
+}) {
+  const marker = state.resource_creation;
+  if (marker === null) {
+    fail(
+      "resource_creation_recovery_not_required",
+      "bootstrap state has no ambiguous one-time-secret resource creation",
+    );
+  }
+  if (marker.attempt_nonce !== attemptNonce) {
+    fail(
+      "resource_creation_recovery_confirmation_mismatch",
+      "the reviewed create-attempt nonce does not match authoritative state",
+    );
+  }
+  if (marker.recovery_rotation !== null) {
+    fail(
+      resourceCreationRecoveryCode(marker.kind),
+      "an exact secret-rotation attempt is already fenced; inspect provider evidence and never send a second automatic rotation",
+    );
+  }
+  reconcileCustody(snapshot, state, config);
+  const target = await readExactResourceCreationTarget({
+    config,
+    marker,
+    snapshot,
+    transport,
+    adminToken,
+    resourceId,
+  });
+  marker.recovery_rotation = {
+    resource_id: resourceId,
+    rotation_started_at: Math.floor(Date.now() / 1000),
+    rotation_nonce: randomBytes(32).toString("hex"),
+  };
+  try {
+    await persistState(state);
+  } catch {
+    marker.recovery_rotation = null;
+    fail(
+      "resource_creation_recovery_fence_persistence_failed",
+      "the exact secret rotation was not sent because its durable recovery fence could not be committed",
+    );
+  }
+
+  let secret;
+  try {
+    const response = await transport.request({
+      method: "POST",
+      url: nyx(
+        marker.kind === "oidc_app"
+          ? `/api/v1/developer/oauth-clients/${resourceId}/rotate-secret`
+          : `/api/v1/admin/service-accounts/${resourceId}/rotate-secret`,
+      ),
+      token: adminToken,
+    });
+    secret =
+      marker.kind === "oidc_app"
+        ? validateRotatedOidcSecret(response.json, resourceId)
+        : validateRotatedStorageSecret(response.json, target);
+  } catch {
+    fail(
+      resourceCreationRecoveryCode(marker.kind),
+      "the exact secret-rotation attempt did not return proven custody; retain the recovery fence and never retry automatically",
+    );
+  }
+
+  try {
+    await readExactResourceCreationTarget({
+      config,
+      marker,
+      snapshot,
+      transport,
+      adminToken,
+      resourceId,
+    });
+  } catch {
+    fail(
+      resourceCreationRecoveryCode(marker.kind),
+      "the exact resource did not remain active and owner-bound after rotation; retain the recovery fence and never retry automatically",
+    );
+  }
+
+  if (marker.kind === "oidc_app") {
+    state.oidc_app = { id: resourceId, client_secret: secret };
+  } else {
+    state.storage_service_account = {
+      id: resourceId,
+      client_id: target.client_id,
+      client_secret: secret,
+    };
+    state.buckets.owner_service_account_id = resourceId;
+  }
+  state.resource_creation = null;
+  try {
+    await persistState(state);
+  } catch {
+    if (marker.kind === "oidc_app") {
+      state.oidc_app = null;
+    } else {
+      state.storage_service_account = null;
+      state.buckets.owner_service_account_id = null;
+    }
+    state.resource_creation = marker;
+    fail(
+      resourceCreationRecoveryCode(marker.kind),
+      "rotated one-time secret custody was not durably acknowledged; retain the recovery fence and never retry automatically",
+    );
+  }
+  return {
+    status: "resource_creation_recovered",
+    kind: marker.kind,
+    resource_id: resourceId,
+    custody_persisted: true,
   };
 }
 
@@ -1787,6 +2816,44 @@ function validateBucketCreate(raw, bucket) {
   }
 }
 
+function validateBucketOwnership(raw, bucket, ownerId) {
+  exactKeys(
+    raw,
+    ["data", "error"],
+    `adopt bucket ${bucket}`,
+    "contract_drift",
+  );
+  exactKeys(
+    raw.data,
+    ["name", "owner", "updatedAt"],
+    `adopt bucket ${bucket}.data`,
+    "contract_drift",
+  );
+  if (
+    raw.error !== null ||
+    raw.data.name !== bucket ||
+    raw.data.owner !== ownerId ||
+    typeof raw.data.updatedAt !== "string"
+  ) {
+    fail(
+      "bucket_adoption_contract_drift",
+      `bucket ${bucket} ownership response drifted`,
+    );
+  }
+}
+
+function requireEmptyAdoptedBucket(response, bucket) {
+  if (
+    Object.keys(response.json.data.metadata).length !== 0 ||
+    response.json.data.objects.length !== 0
+  ) {
+    fail(
+      "bucket_adoption_not_empty",
+      `provider-adopted bucket ${bucket} is not empty; quarantine it and require provider-owner recovery`,
+    );
+  }
+}
+
 async function readBucket({ transport, config, token, bucket, ownerId }) {
   const response = await transport.request({
     url: nyx(
@@ -1894,6 +2961,128 @@ async function ensureBucket(args) {
   );
 }
 
+async function adoptProviderBucket(args) {
+  const observed = await readBucket({ ...args, token: args.adminToken });
+  if (observed.status === 200) {
+    const owned = await readBucket(args);
+    if (owned.status !== 200) {
+      fail(
+        "bucket_authority_drift",
+        `bucket ${args.bucket} is not readable by the exact recorded owner`,
+      );
+    }
+    requireEmptyAdoptedBucket(owned, args.bucket);
+    return "existing";
+  }
+  if (observed.status !== 404) {
+    fail(
+      "bucket_authority_drift",
+      `bucket ${args.bucket} could not be proven unowned by the reviewed administrator`,
+    );
+  }
+
+  let response;
+  let transportAmbiguous = false;
+  try {
+    response = await args.transport.request({
+      method: "PUT",
+      url: nyx(
+        `/api/v1/proxy/s/${args.config.storage.service_slug}/api/buckets/${args.bucket}/ownership`,
+      ),
+      token: args.adminToken,
+      json: { owner: args.ownerId },
+      statuses: [200, 400, 401, 403, 404, 409, 500, 502, 503, 504],
+    });
+  } catch (error) {
+    if (
+      !(error instanceof BootstrapFailure) ||
+      error.code !== "remote_transport_error"
+    ) {
+      throw error;
+    }
+    transportAmbiguous = true;
+  }
+
+  let responseError = null;
+  if (response?.status === 200) {
+    validateBucketOwnership(response.json, args.bucket, args.ownerId);
+  } else if (response !== undefined) {
+    responseError = validateErrorEnvelope(
+      response.json,
+      `adopt bucket ${args.bucket} error`,
+    );
+  }
+
+  const owned = await readBucket(args);
+  if (owned.status === 200) {
+    requireEmptyAdoptedBucket(owned, args.bucket);
+    return transportAmbiguous
+      ? "adopted_after_ambiguous_response"
+      : "adopted";
+  }
+  if (response?.status === 404 && responseError === "BUCKET_NOT_FOUND") {
+    fail(
+      "bucket_provider_provisioning_required",
+      `exact provider bucket ${args.bucket} is still absent`,
+    );
+  }
+  if (response?.status === 401 || response?.status === 403) {
+    fail(
+      "bucket_adoption_forbidden",
+      `administrator authority cannot adopt exact bucket ${args.bucket}`,
+    );
+  }
+  fail(
+    "bucket_adoption_recovery_required",
+    `bucket ${args.bucket} ownership could not be reconciled after ${transportAmbiguous ? "an ambiguous transfer" : "the reviewed transfer"}`,
+  );
+}
+
+async function adoptProviderBuckets({
+  config,
+  state,
+  transport,
+  adminToken,
+  persistState,
+}) {
+  requireSettledCallerExchange(state);
+  requireNoPendingResourceCreation(state);
+  await invalidateHandoffBinding({ state, persistState });
+  const snapshot = await inspectResources({
+    config,
+    state,
+    transport,
+    adminToken,
+  });
+  if (
+    snapshot.serviceAccount === null ||
+    state.storage_service_account === null ||
+    state.buckets.owner_service_account_id !== state.storage_service_account.id
+  ) {
+    fail(
+      "storage_not_provisioned",
+      "exact storage service-account custody must exist before provider-bucket adoption",
+    );
+  }
+  const storageToken = await mintStorageAccessToken({ transport, state });
+  const adopted = [];
+  for (const bucket of [
+    config.storage.context_bucket,
+    config.storage.trigger_workspace_bucket,
+  ]) {
+    const result = await adoptProviderBucket({
+      transport,
+      config,
+      token: storageToken,
+      adminToken,
+      bucket,
+      ownerId: state.storage_service_account.id,
+    });
+    adopted.push({ bucket, result });
+  }
+  return { state, adopted };
+}
+
 async function applyProvisioning({
   config,
   state,
@@ -1901,6 +3090,9 @@ async function applyProvisioning({
   adminToken,
   persistState,
 }) {
+  requireSettledCallerExchange(state);
+  requireNoPendingResourceCreation(state);
+  await invalidateHandoffBinding({ state, persistState });
   const snapshot = await inspectResources({
     config,
     state,
@@ -1933,12 +3125,21 @@ async function applyProvisioning({
 
   let app = snapshot.app;
   if (app === null) {
+    const request = appCreateBody(config);
+    const marker = await beginResourceCreation({
+      state,
+      persistState,
+      kind: "oidc_app",
+      name: config.oidc_app.name,
+      administratorSubjectId: snapshot.adminSubjectId,
+      request,
+    });
     try {
       const response = await transport.request({
         method: "POST",
         url: nyx("/api/v1/developer/oauth-clients"),
         token: adminToken,
-        json: appCreateBody(config),
+        json: request,
       });
       app = validateApp(response.json, config, { secretRequired: true });
     } catch {
@@ -1948,18 +3149,37 @@ async function applyProvisioning({
       );
     }
     state.oidc_app = { id: app.id, client_secret: app.client_secret };
-    await persistState(state);
+    state.resource_creation = null;
+    try {
+      await persistState(state);
+    } catch {
+      state.oidc_app = null;
+      state.resource_creation = marker;
+      fail(
+        "oidc_secret_creation_recovery_required",
+        "OIDC app creation returned a one-time secret, but exact custody was not durably acknowledged; retain the create-attempt marker and do not retry automatically",
+      );
+    }
     applied.push("created_confidential_oidc_app");
   }
 
   let account = snapshot.serviceAccount;
   if (account === null) {
+    const request = serviceAccountCreateBody(config, snapshot.storageRole.id);
+    const marker = await beginResourceCreation({
+      state,
+      persistState,
+      kind: "storage_service_account",
+      name: config.storage.service_account_name,
+      administratorSubjectId: snapshot.adminSubjectId,
+      request,
+    });
     try {
       const response = await transport.request({
         method: "POST",
         url: nyx("/api/v1/admin/service-accounts"),
         token: adminToken,
-        json: serviceAccountCreateBody(config, snapshot.storageRole.id),
+        json: request,
       });
       account = validateCreatedServiceAccount(
         response.json,
@@ -1978,7 +3198,18 @@ async function applyProvisioning({
       client_secret: account.client_secret,
     };
     state.buckets.owner_service_account_id = account.id;
-    await persistState(state);
+    state.resource_creation = null;
+    try {
+      await persistState(state);
+    } catch {
+      state.storage_service_account = null;
+      state.buckets.owner_service_account_id = null;
+      state.resource_creation = marker;
+      fail(
+        "storage_secret_creation_recovery_required",
+        "service-account creation returned a one-time secret, but exact custody was not durably acknowledged; retain the create-attempt marker and do not retry automatically",
+      );
+    }
     applied.push("created_storage_service_account");
   }
   if (state.buckets.owner_service_account_id === null) {
@@ -2213,6 +3444,97 @@ function parseJwt(token, path) {
   return { parts, header, claims };
 }
 
+function validateIssuerTtlWitness(raw, at = Math.floor(Date.now() / 1000)) {
+  exactKeys(
+    raw,
+    [
+      "issuer_token_issued_at",
+      "issuer_access_token_ttl_seconds",
+      "issuer_token_sha256",
+      "issuer_commit",
+    ],
+    "issuer TTL witness",
+    "issuer_ttl_witness_invalid",
+  );
+  if (
+    !Number.isSafeInteger(raw.issuer_token_issued_at) ||
+    raw.issuer_token_issued_at <= 0 ||
+    !Number.isSafeInteger(raw.issuer_access_token_ttl_seconds) ||
+    raw.issuer_access_token_ttl_seconds < MIN_CALLER_TOKEN_LIFETIME_SECONDS ||
+    raw.issuer_access_token_ttl_seconds > MAX_CALLER_TOKEN_LIFETIME_SECONDS ||
+    !/^[0-9a-f]{64}$/u.test(raw.issuer_token_sha256) ||
+    raw.issuer_commit !== NYXID_SOURCE_REVISION.slice(0, 12) ||
+    raw.issuer_token_issued_at > at + 30 ||
+    at - raw.issuer_token_issued_at > ISSUER_TTL_WITNESS_MAX_AGE_SECONDS
+  ) {
+    fail(
+      "issuer_ttl_witness_invalid",
+      "a fresh accepted issuer token with a bounded deployment TTL is required before code exchange",
+    );
+  }
+  return raw;
+}
+
+function captureIssuerTtlWitness(
+  token,
+  expectedSubjectId,
+  at = Math.floor(Date.now() / 1000),
+) {
+  boundedString(token, "NyxID administrator token", 32_768, "issuer_ttl_witness_invalid");
+  uuid(
+    expectedSubjectId,
+    "issuer TTL witness administrator subject",
+    "issuer_ttl_witness_invalid",
+  );
+  const parts = token.split(".");
+  let claims;
+  try {
+    if (parts.length !== 3 || parts.some((part) => part.length === 0)) throw new Error();
+    claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    fail("issuer_ttl_witness_invalid", "administrator token is not a compact JWT");
+  }
+  if (
+    claims === null ||
+    typeof claims !== "object" ||
+    Array.isArray(claims) ||
+    claims.sub !== expectedSubjectId ||
+    claims.iss !== NYXID_BASE_URL ||
+    claims.aud !== NYXID_BASE_URL ||
+    claims.token_type !== "access" ||
+    Object.hasOwn(claims, "client_id") ||
+    claims.act !== undefined ||
+    claims.delegated !== undefined ||
+    claims.sa !== undefined ||
+    claims.relay !== undefined ||
+    claims.assistant_forward !== undefined ||
+    claims.relay_api_key_id !== undefined ||
+    claims.relay_api_key_name !== undefined ||
+    claims.relay_allowed_service_ids !== undefined ||
+    claims.relay_allowed_node_ids !== undefined ||
+    claims.relay_allow_all_services !== undefined ||
+    claims.relay_allow_all_nodes !== undefined ||
+    !Number.isSafeInteger(claims.iat) ||
+    !Number.isSafeInteger(claims.exp) ||
+    claims.iat > at + 30 ||
+    claims.exp <= at
+  ) {
+    fail(
+      "issuer_ttl_witness_invalid",
+      "administrator token does not carry current first-party access-token evidence",
+    );
+  }
+  return validateIssuerTtlWitness(
+    {
+      issuer_token_issued_at: claims.iat,
+      issuer_access_token_ttl_seconds: claims.exp - claims.iat,
+      issuer_token_sha256: sha256(token),
+      issuer_commit: NYXID_SOURCE_REVISION.slice(0, 12),
+    },
+    at,
+  );
+}
+
 function validateJwks(raw) {
   exactKeys(raw, ["keys"], "JWKS", "contract_drift");
   if (!Array.isArray(raw.keys) || raw.keys.length === 0)
@@ -2314,13 +3636,13 @@ function validateAccessClaims(claims, appId, serviceId, nowSeconds) {
     !Array.isArray(claims.resources) ||
     claims.resources.length !== 0 ||
     !Array.isArray(claims.allowed_service_ids) ||
-    claims.allowed_service_ids.length === 0 ||
+    claims.allowed_service_ids.length !== 1 ||
     new Set(claims.allowed_service_ids).size !==
       claims.allowed_service_ids.length ||
     claims.allowed_service_ids.some(
       (id) => typeof id !== "string" || !UUID.test(id),
     ) ||
-    !claims.allowed_service_ids.includes(serviceId) ||
+    claims.allowed_service_ids[0] !== serviceId ||
     claims.allow_all_services !== false ||
     !Array.isArray(claims.allowed_node_ids) ||
     claims.allowed_node_ids.length !== 0 ||
@@ -2557,18 +3879,7 @@ async function verifyCallerToken({
   };
 }
 
-async function mintCallerToken({
-  config,
-  state,
-  snapshot,
-  transport,
-  persistState,
-  outputPath,
-  serviceId,
-  noBrowser = false,
-  authorize = null,
-  verifier = verifyCallerToken,
-}) {
+function assertCallerBootstrap(state, snapshot, serviceId) {
   if (
     snapshot.observer === null ||
     snapshot.app === null ||
@@ -2578,7 +3889,7 @@ async function mintCallerToken({
   ) {
     fail(
       "bootstrap_incomplete",
-      "all NyxID smoke resources must exist before caller minting",
+      "all NyxID smoke resources must exist before caller authorization or handoff minting",
     );
   }
   if (state.caller !== null && state.caller.service_id !== serviceId) {
@@ -2587,40 +3898,345 @@ async function mintCallerToken({
       "stored refresh custody is bound to another selected UserService",
     );
   }
-  const storageToken = await mintStorageAccessToken({ transport, state });
-  for (const bucket of [
-    config.storage.context_bucket,
-    config.storage.trigger_workspace_bucket,
-  ]) {
-    await verifyBucket({
-      transport,
-      config,
-      token: storageToken,
-      bucket,
-      ownerId: state.storage_service_account.id,
-    });
+  if (
+    state.caller !== null &&
+    (state.caller.client_id !== state.oidc_app.id ||
+      state.caller.subject_id !== snapshot.adminSubjectId)
+  ) {
+    fail(
+      "caller_authority_drift",
+      "stored refresh custody is not bound to the exact reviewed caller and application",
+    );
   }
+}
 
+async function invalidateHandoffBinding({ state, persistState }) {
+  if (state.handoff_binding === null) return;
+  const retained = state.handoff_binding;
+  state.handoff_binding = null;
+  try {
+    await persistState(state);
+  } catch {
+    state.handoff_binding = retained;
+    fail(
+      "handoff_invalidation_failed",
+      "the prior caller handoff binding could not be invalidated; no authority work was attempted",
+    );
+  }
+}
+
+function retryableRefreshFailure(error) {
+  return (
+    error instanceof BootstrapFailure &&
+    new Set([
+      "caller_refresh_ambiguous",
+      "caller_token_drift",
+      "contract_drift",
+      "remote_contract_error",
+      "remote_response_too_large",
+      "remote_status_error",
+      "remote_transport_error",
+    ]).has(error.code)
+  );
+}
+
+function validateOAuthError(raw, label) {
+  exactKeys(
+    raw,
+    ["error", "error_description"],
+    label,
+    "remote_contract_error",
+  );
+  boundedString(raw.error, `${label}.error`, 128, "remote_contract_error");
+  boundedString(
+    raw.error_description,
+    `${label}.error_description`,
+    2048,
+    "remote_contract_error",
+  );
+  if (!/^[a-z][a-z0-9_]*$/u.test(raw.error)) {
+    fail("remote_contract_error", `${label}.error is not canonical`);
+  }
+  return raw;
+}
+
+function extractRefreshReplacement(raw) {
+  object(raw, "caller refresh response", "remote_contract_error");
+  return boundedString(
+    raw.refresh_token,
+    "caller refresh replacement custody",
+    16_384,
+    "remote_contract_error",
+  );
+}
+
+async function refreshCallerToken({
+  transport,
+  discovery,
+  app,
+  refreshToken,
+  retainReplacement = null,
+}) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await transport.request({
+        method: "POST",
+        url: discovery.token_endpoint,
+        form: {
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: app.id,
+          client_secret: app.client_secret,
+        },
+        statuses: [200, 400, 401, ...REFRESH_RETRYABLE_STATUSES],
+      });
+      if (response.status === 200) {
+        let replacementRetained = false;
+        let replacement;
+        try {
+          replacement = extractRefreshReplacement(response.json);
+          if (retainReplacement !== null) {
+            await retainReplacement(replacement);
+            replacementRetained = true;
+          }
+          return validateTokenResponse(response.json, { requireIdToken: false });
+        } catch (error) {
+          if (replacementRetained) {
+            fail(
+              "caller_refresh_response_recovery_required",
+              "NyxID rotated caller custody but the remaining token response drifted; replacement custody was retained as pending and no predecessor retry was attempted",
+            );
+          }
+          throw error;
+        }
+      }
+      if (REFRESH_RETRYABLE_STATUSES.includes(response.status)) {
+        fail(
+          "caller_refresh_ambiguous",
+          "caller refresh returned a retryable or ambiguous response",
+        );
+      }
+      const oauthError = validateOAuthError(
+        response.json,
+        "caller refresh OAuth error",
+      );
+      if (response.status === 401 && oauthError.error === "invalid_client") {
+        fail(
+          "caller_refresh_inactive",
+          "stored caller refresh custody is no longer accepted",
+        );
+      }
+      fail(
+        "caller_refresh_ambiguous",
+        "caller refresh did not match the pinned inactive-error contract",
+      );
+    } catch (error) {
+      if (!retryableRefreshFailure(error)) throw error;
+      if (attempt === 0) continue;
+      fail(
+        "caller_refresh_recovery_required",
+        "caller refresh remained ambiguous after one bounded automatic retry; retry authorization immediately within NyxID's replacement-chain grace",
+      );
+    }
+  }
+  fail("internal_error", "caller refresh retry loop did not terminate");
+}
+
+async function persistPendingCallerReplacement({
+  state,
+  persistState,
+  retained,
+  refreshToken,
+}) {
+  state.caller = {
+    ...retained,
+    refresh_token: refreshToken,
+    verification_state: "pending",
+  };
+  try {
+    await persistState(state);
+  } catch {
+    state.caller = retained;
+    fail(
+      "caller_custody_persistence_failed",
+      "NyxID issued replacement caller custody but local persistence failed; retry immediately within the bounded replacement-chain grace; no handoff was written",
+    );
+  }
+}
+
+async function revokeAndClearCallerCustody({
+  state,
+  snapshot,
+  transport,
+  persistState,
+  app,
+}) {
+  if (state.caller === null) return;
+  const retained = { ...state.caller };
+  let replacement;
+  let replacementRetained = false;
+  try {
+    await transport.request({
+      method: "POST",
+      url: snapshot.discovery.revocation_endpoint,
+      form: {
+        token: retained.refresh_token,
+        token_type_hint: "refresh_token",
+        client_id: app.id,
+        client_secret: app.client_secret,
+      },
+      responseKind: "empty",
+    });
+    try {
+      replacement = await refreshCallerToken({
+        transport,
+        discovery: snapshot.discovery,
+        app,
+        refreshToken: retained.refresh_token,
+        retainReplacement: async (refreshToken) => {
+          await persistPendingCallerReplacement({
+            state,
+            persistState,
+            retained,
+            refreshToken,
+          });
+          replacementRetained = true;
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof BootstrapFailure &&
+        error.code === "caller_refresh_inactive"
+      ) {
+        replacement = null;
+      } else {
+        throw error;
+      }
+    }
+  } catch (error) {
+    if (
+      error instanceof BootstrapFailure &&
+      new Set([
+        "caller_custody_persistence_failed",
+        "caller_reauthorization_recovery_required",
+        "caller_refresh_response_recovery_required",
+      ]).has(error.code)
+    ) {
+      throw error;
+    }
+    fail(
+      "caller_reauthorization_recovery_required",
+      "caller refresh custody could not be proven revoked; pending state was retained",
+    );
+  }
+  if (replacement !== null) {
+    if (!replacementRetained) {
+      await persistPendingCallerReplacement({
+        state,
+        persistState,
+        retained,
+        refreshToken: replacement.refresh_token,
+      });
+    }
+    fail(
+      "caller_reauthorization_recovery_required",
+      "caller revocation did not take effect; replacement custody was retained as pending and no fresh consent was opened",
+    );
+  }
+  state.caller = null;
+  try {
+    await persistState(state);
+  } catch {
+    state.caller = retained;
+    fail(
+      "caller_reauthorization_recovery_required",
+      "revoked caller custody could not be cleared from local state",
+    );
+  }
+}
+
+async function authorizeCallerCustody({
+  config,
+  state,
+  snapshot,
+  transport,
+  persistState,
+  serviceId,
+  noBrowser = false,
+  authorize = null,
+  verifier = verifyCallerToken,
+  issuerTtlWitness = null,
+  reauthorizationAttempt = false,
+  handoffInvalidated = false,
+}) {
+  requireSettledCallerExchange(state);
+  requireNoPendingResourceCreation(state);
+  if (!handoffInvalidated) {
+    await invalidateHandoffBinding({ state, persistState });
+    handoffInvalidated = true;
+  }
+  assertCallerBootstrap(state, snapshot, serviceId);
   const app = {
     id: state.oidc_app.id,
     client_secret: state.oidc_app.client_secret,
   };
+  const hadCallerCustody = state.caller !== null;
+  let refreshCustodyPersisted = false;
   let tokenResponse;
   let nonce = null;
   if (state.caller !== null) {
-    const refreshed = await transport.request({
-      method: "POST",
-      url: snapshot.discovery.token_endpoint,
-      form: {
-        grant_type: "refresh_token",
-        refresh_token: state.caller.refresh_token,
-        client_id: app.id,
-        client_secret: app.client_secret,
-      },
-    });
-    tokenResponse = validateTokenResponse(refreshed.json, {
-      requireIdToken: false,
-    });
+    try {
+      const retained = { ...state.caller };
+      tokenResponse = await refreshCallerToken({
+        transport,
+        discovery: snapshot.discovery,
+        app,
+        refreshToken: retained.refresh_token,
+        retainReplacement: async (refreshToken) => {
+          await persistPendingCallerReplacement({
+            state,
+            persistState,
+            retained,
+            refreshToken,
+          });
+          refreshCustodyPersisted = true;
+        },
+      });
+    } catch (error) {
+      if (
+        !(error instanceof BootstrapFailure) ||
+        error.code !== "caller_refresh_inactive"
+      ) {
+        throw error;
+      }
+      await revokeAndClearCallerCustody({
+        state,
+        snapshot,
+        transport,
+        persistState,
+        app,
+      });
+      if (reauthorizationAttempt) {
+        fail(
+          "caller_reauthorization_required",
+          "caller authority remained invalid after one automatic reauthorization",
+        );
+      }
+      return authorizeCallerCustody({
+        config,
+        state,
+        snapshot,
+        transport,
+        persistState,
+        serviceId,
+        noBrowser,
+        authorize,
+        verifier,
+        issuerTtlWitness,
+        reauthorizationAttempt: true,
+        handoffInvalidated,
+      });
+    }
   } else {
     const redirect = new URL(config.oidc_app.smoke_redirect_uri);
     const stateValue = base64url(randomBytes(32));
@@ -2663,51 +4279,155 @@ async function mintCallerToken({
       );
     }
     const code = await codePromise;
-    const exchanged = await transport.request({
-      method: "POST",
-      url: snapshot.discovery.token_endpoint,
-      form: {
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: redirect.href,
-        client_id: app.id,
-        client_secret: app.client_secret,
-        code_verifier: pkceVerifier,
-      },
-    });
-    tokenResponse = validateTokenResponse(exchanged.json, {
-      requireIdToken: true,
-    });
+    const exchangeStartedAt = Math.floor(Date.now() / 1000);
+    const witness = validateIssuerTtlWitness(
+      typeof issuerTtlWitness === "function"
+        ? await issuerTtlWitness()
+        : issuerTtlWitness,
+      exchangeStartedAt,
+    );
+    state.caller_exchange = {
+      app_id: app.id,
+      exchange_started_at: exchangeStartedAt,
+      ...witness,
+    };
+    try {
+      await persistState(state);
+    } catch {
+      state.caller_exchange = null;
+      fail(
+        "caller_exchange_fence_persistence_failed",
+        "authorization code was not exchanged because its durable incident fence could not be committed",
+      );
+    }
+    try {
+      const exchanged = await transport.request({
+        method: "POST",
+        url: snapshot.discovery.token_endpoint,
+        form: {
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: redirect.href,
+          client_id: app.id,
+          client_secret: app.client_secret,
+          code_verifier: pkceVerifier,
+        },
+      });
+      tokenResponse = validateTokenResponse(exchanged.json, {
+        requireIdToken: true,
+      });
+    } catch {
+      fail(
+        "caller_authorization_exchange_recovery_required",
+        "authorization-code exchange did not produce safely retained custody; retire the exact staging OIDC app and retain the durable exchange evidence until the provider proves an issuance fence",
+      );
+    }
   }
 
-  const verified = await verifier({
-    transport,
-    discovery: snapshot.discovery,
-    app,
-    tokenResponse,
-    nonce,
-    serviceId,
-  });
-  if (
-    !Array.isArray(verified.allowedServiceIds) ||
-    !verified.allowedServiceIds.includes(serviceId)
-  ) {
-    fail(
-      "caller_service_authority_denied",
-      "verified caller lacks the exact selected GitHub UserService authority",
-    );
+  // NyxID rotates refresh tokens before the caller can verify the returned
+  // access token. Retain the replacement first so a transient JWKS or
+  // introspection failure cannot strand local custody on the revoked token.
+  const expectedCaller = state.caller ?? {
+    client_id: app.id,
+    subject_id: snapshot.adminSubjectId,
+    service_id: serviceId,
+    scope: CALLER_SCOPES.join(" "),
+  };
+  if (!refreshCustodyPersisted) {
+    const exchangeEvidence = state.caller_exchange;
+    state.caller = {
+      ...expectedCaller,
+      refresh_token: tokenResponse.refresh_token,
+      verification_state: "pending",
+    };
+    state.caller_exchange = null;
+    try {
+      await persistState(state);
+    } catch {
+      state.caller = null;
+      state.caller_exchange = exchangeEvidence;
+      if (!hadCallerCustody) {
+        fail(
+          "caller_authorization_exchange_recovery_required",
+          "authorization-code exchange may have issued unretained custody; retire the exact staging OIDC app and retain the durable exchange evidence until the provider proves an issuance fence",
+        );
+      }
+      fail(
+        "caller_custody_persistence_failed",
+        "NyxID issued replacement caller custody but local persistence failed; retry immediately within the bounded replacement-chain grace; no handoff was written",
+      );
+    }
   }
-  if (verified.subjectId !== snapshot.adminSubjectId) {
-    fail(
-      "caller_authority_drift",
-      "smoke caller is not the exact administrator who reviewed provisioning",
-    );
-  }
-  if (state.caller !== null && state.caller.subject_id !== verified.subjectId) {
-    fail(
-      "caller_authority_drift",
-      "refreshed token changed the smoke caller subject",
-    );
+
+  let verified;
+  try {
+    verified = await verifier({
+      transport,
+      discovery: snapshot.discovery,
+      app,
+      tokenResponse,
+      nonce,
+      serviceId,
+    });
+    if (
+      !Array.isArray(verified.allowedServiceIds) ||
+      verified.allowedServiceIds.length !== 1 ||
+      verified.allowedServiceIds[0] !== serviceId
+    ) {
+      fail(
+        "caller_service_authority_denied",
+        "verified caller lacks the exact selected GitHub UserService authority",
+      );
+    }
+    if (verified.subjectId !== snapshot.adminSubjectId) {
+      fail(
+        "caller_authority_drift",
+        "smoke caller is not the exact administrator who reviewed provisioning",
+      );
+    }
+    if (state.caller.subject_id !== verified.subjectId) {
+      fail(
+        "caller_authority_drift",
+        "refreshed token changed the smoke caller subject",
+      );
+    }
+  } catch (error) {
+    if (
+      !(error instanceof BootstrapFailure) ||
+      !new Set([
+        "caller_authority_drift",
+        "caller_service_authority_denied",
+      ]).has(error.code)
+    ) {
+      throw error;
+    }
+    await revokeAndClearCallerCustody({
+      state,
+      snapshot,
+      transport,
+      persistState,
+      app,
+    });
+    if (reauthorizationAttempt) {
+      fail(
+        "caller_reauthorization_required",
+        "caller authority remained invalid after one automatic reauthorization",
+      );
+    }
+    return authorizeCallerCustody({
+      config,
+      state,
+      snapshot,
+      transport,
+      persistState,
+      serviceId,
+      noBrowser,
+      authorize,
+      verifier,
+      issuerTtlWitness,
+      reauthorizationAttempt: true,
+      handoffInvalidated,
+    });
   }
   state.caller = {
     client_id: app.id,
@@ -2715,29 +4435,119 @@ async function mintCallerToken({
     service_id: serviceId,
     refresh_token: tokenResponse.refresh_token,
     scope: CALLER_SCOPES.join(" "),
+    verification_state: "verified",
   };
-  await persistState(state);
+  try {
+    await persistState(state);
+  } catch {
+    fail(
+      "caller_verification_persistence_failed",
+      "verified caller custody remains persisted as pending; rerun authorization to complete recovery; no handoff was written",
+    );
+  }
+
+  return {
+    subjectId: verified.subjectId,
+    expiresAt: verified.expiresAt,
+    accessToken: tokenResponse.access_token,
+  };
+}
+
+async function mintCallerToken(args) {
+  const {
+    config,
+    state,
+    snapshot,
+    transport,
+    persistState,
+    outputPath,
+    serviceId,
+  } = args;
+  requireSettledCallerExchange(state);
+  requireNoPendingResourceCreation(state);
+  await invalidateHandoffBinding({ state, persistState });
+  await atomicWriteSecureJson(outputPath, {
+    schema_version: 1,
+    kind: "cma-trigger-handoff-invalid",
+    status: "mint_in_progress",
+  });
+  assertCallerBootstrap(state, snapshot, serviceId);
+  const storageToken = await mintStorageAccessToken({ transport, state });
+  for (const bucket of [
+    config.storage.context_bucket,
+    config.storage.trigger_workspace_bucket,
+  ]) {
+    await verifyBucket({
+      transport,
+      config,
+      token: storageToken,
+      bucket,
+      ownerId: state.storage_service_account.id,
+    });
+  }
+
+  const authorized = await authorizeCallerCustody({
+    ...args,
+    handoffInvalidated: true,
+  });
 
   const handoff = {
     schema_version: 1,
     nyxid_base_url: config.nyxid_base_url,
-    nyxid_client_id: app.id,
-    nyxid_client_secret: app.client_secret,
+    nyxid_client_id: state.oidc_app.id,
+    nyxid_client_secret: state.oidc_app.client_secret,
     storage_client_id: state.storage_service_account.client_id,
     storage_client_secret: state.storage_service_account.client_secret,
     storage_owner_service_account_id: state.storage_service_account.id,
     context_bucket: config.storage.context_bucket,
     trigger_workspace_bucket: config.storage.trigger_workspace_bucket,
     public_github_service_slug: config.observer.slug,
-    subject_id: verified.subjectId,
-    access_token: tokenResponse.access_token,
-    access_token_expires_at: verified.expiresAt,
+    subject_id: authorized.subjectId,
+    access_token: authorized.accessToken,
+    access_token_expires_at: authorized.expiresAt,
   };
   validateHandoff(handoff);
-  await atomicWriteSecureJson(outputPath, handoff);
+  const handoffBytes = requireHandoffUploadBound(secureJsonBytes(handoff));
+  state.handoff_binding = { sha256: sha256(handoffBytes) };
+  try {
+    await persistState(state);
+  } catch {
+    state.handoff_binding = null;
+    fail(
+      "handoff_binding_persistence_failed",
+      "the fresh handoff binding could not be committed; the invalid output marker remains unusable",
+    );
+  }
+  try {
+    await atomicWriteSecureBytes(outputPath, handoffBytes);
+  } catch {
+    let published = false;
+    try {
+      const observedBytes = await readSecureBytes(outputPath);
+      validateHandoff(JSON.parse(observedBytes.toString("utf8")));
+      published = sha256(observedBytes) === state.handoff_binding.sha256;
+    } catch {
+      published = false;
+    }
+    if (!published) {
+      state.handoff_binding = null;
+      try {
+        await persistState(state);
+      } catch {
+        fail(
+          "handoff_publication_recovery_required",
+          "the exact handoff was not published and its authoritative binding could not be cleared; the invalid output remains operator-rejected",
+        );
+      }
+      fail(
+        "handoff_publication_failed",
+        "the bound handoff was not published exactly; the operator will reject the output",
+      );
+    }
+  }
   return {
-    subjectId: verified.subjectId,
-    expiresAt: verified.expiresAt,
+    subjectId: authorized.subjectId,
+    expiresAt: authorized.expiresAt,
     handoff,
   };
 }
@@ -2803,11 +4613,143 @@ function validateHandoff(raw) {
   return raw;
 }
 
+function requireSettledCallerExchange(state) {
+  if (state.caller_exchange !== null) {
+    fail(
+      "caller_authorization_exchange_recovery_required",
+      "an earlier authorization-code exchange remains ambiguous; retire the exact staging app and preserve its incident marker",
+    );
+  }
+}
+
+async function readRetirementApp({ config, state, transport, adminToken }) {
+  const appId = state.caller_exchange.app_id;
+  const response = await transport.request({
+    url: nyx(`/api/v1/developer/oauth-clients/${appId}`),
+    token: adminToken,
+    statuses: [200, 401, 403, 404],
+  });
+  if (response.status !== 200) {
+    fail(
+      "caller_app_retirement_evidence_required",
+      "the exact ambiguous OIDC app could not be read through its owner authority",
+    );
+  }
+  const app = validateApp(response.json, config, {
+    expectedActive: response.json?.is_active,
+  });
+  if (app.id !== appId || state.oidc_app?.id !== appId) {
+    fail(
+      "state_authority_mismatch",
+      "retirement observation did not resolve the exact incident OIDC app",
+    );
+  }
+  return app;
+}
+
+async function retireAmbiguousCallerApp({
+  config,
+  state,
+  transport,
+  adminToken,
+}) {
+  if (state.caller_exchange === null) {
+    fail(
+      "caller_app_retirement_not_required",
+      "bootstrap state has no ambiguous authorization-code exchange",
+    );
+  }
+  const health = await transport.request({ url: nyx("/health") });
+  validateHealth(health.json);
+  const before = await readRetirementApp({
+    config,
+    state,
+    transport,
+    adminToken,
+  });
+  let deleteResponse;
+  let transportAmbiguous = false;
+  if (before.is_active) {
+    try {
+      deleteResponse = await transport.request({
+        method: "DELETE",
+        url: nyx(`/api/v1/developer/oauth-clients/${before.id}`),
+        token: adminToken,
+        statuses: [200, 401, 403, 404, 409, 500, 502, 503, 504],
+      });
+    } catch (error) {
+      if (
+        !(error instanceof BootstrapFailure) ||
+        error.code !== "remote_transport_error"
+      ) {
+        throw error;
+      }
+      transportAmbiguous = true;
+    }
+    if (deleteResponse?.status === 200) {
+      exactKeys(
+        deleteResponse.json,
+        ["message"],
+        "OIDC app retirement response",
+        "contract_drift",
+      );
+      if (deleteResponse.json.message !== "OAuth client deactivated") {
+        fail("contract_drift", "OIDC app retirement acknowledgement drifted");
+      }
+    } else if (
+      deleteResponse?.status === 401 ||
+      deleteResponse?.status === 403
+    ) {
+      fail(
+        "caller_app_retirement_forbidden",
+        "owner authority could not retire the exact ambiguous OIDC app",
+      );
+    }
+  }
+  let after;
+  try {
+    after = await readRetirementApp({
+      config,
+      state,
+      transport,
+      adminToken,
+    });
+  } catch (error) {
+    if (
+      error instanceof BootstrapFailure &&
+      error.code === "caller_app_retirement_evidence_required"
+    ) {
+      fail(
+        "caller_app_retirement_recovery_required",
+        "retirement outcome lacks an exact inactive-app acknowledgement; retain the incident marker and do not retry automatically",
+      );
+    }
+    throw error;
+  }
+  if (after.is_active) {
+    fail(
+      "caller_app_retirement_recovery_required",
+      `the exact incident app remains active after ${transportAmbiguous ? "an ambiguous retirement response" : "the reviewed retirement attempt"}; retain the marker and do not retry automatically`,
+    );
+  }
+  return {
+    status: before.is_active ? "caller_app_retired" : "caller_app_already_retired",
+    app_id: after.id,
+    app_active: false,
+    incident_marker_retained: true,
+    issuance_fence_proven: false,
+  };
+}
+
 function parseArguments(argv) {
   const modes = new Set([
     "--validate-config",
     "--plan",
     "--apply",
+    "--adopt-provider-buckets",
+    "--recover-resource-creation",
+    "--retire-ambiguous-caller-app",
+    "--authorize-caller",
     "--mint-caller-token",
   ]);
   if (!modes.has(argv[0]) || argv.length < 2) {
@@ -2855,12 +4797,19 @@ function parseArguments(argv) {
     if (result.outputPath === null)
       fail("usage", "--mint-caller-token requires --output");
     secureAbsolutePath(result.outputPath, "--output");
-    if (result.outputPath === result.statePath)
-      fail("usage", "state and handoff paths must differ");
-  } else if (result.outputPath !== null || result.noBrowser) {
+    if (
+      result.outputPath === result.statePath ||
+      result.outputPath === `${result.statePath}${CALLER_STATE_LOCK_SUFFIX}`
+    ) {
+      fail("usage", "handoff path must differ from state and lock paths");
+    }
+  } else if (
+    result.outputPath !== null ||
+    (result.noBrowser && result.mode !== "--authorize-caller")
+  ) {
     fail(
       "usage",
-      "--output/--no-browser are only valid for caller token minting",
+      "--output is only valid for caller token minting; --no-browser is valid for caller authorization or minting",
     );
   }
   return result;
@@ -2883,18 +4832,51 @@ function serviceIdFromEnvironment() {
   );
 }
 
-async function main(argv = process.argv.slice(2)) {
-  const args = parseArguments(argv);
-  const config = validateConfig(await readJsonFile(args.configPath));
-  if (args.mode === "--validate-config") {
-    process.stdout.write(
-      `${JSON.stringify({ status: "valid", schema_version: 1, environment: config.environment })}\n`,
+function resourceRecoveryAttemptNonceFromEnvironment() {
+  const attemptNonce = boundedString(
+    process.env.CMA_TRIGGER_NYXID_SMOKE_RECOVERY_ATTEMPT_NONCE,
+    "CMA_TRIGGER_NYXID_SMOKE_RECOVERY_ATTEMPT_NONCE",
+    64,
+    "resource_creation_recovery_confirmation_mismatch",
+  );
+  if (!/^[0-9a-f]{64}$/u.test(attemptNonce)) {
+    fail(
+      "resource_creation_recovery_confirmation_mismatch",
+      "the reviewed create-attempt nonce is invalid",
     );
-    return;
   }
+  return attemptNonce;
+}
+
+function resourceRecoveryTargetFromEnvironment() {
+  const resourceId = uuid(
+    process.env.CMA_TRIGGER_NYXID_SMOKE_RECOVERY_RESOURCE_ID,
+    "CMA_TRIGGER_NYXID_SMOKE_RECOVERY_RESOURCE_ID",
+    "resource_creation_recovery_target_missing",
+  );
+  const attemptNonce = resourceRecoveryAttemptNonceFromEnvironment();
+  return { resourceId, attemptNonce };
+}
+
+async function runStatefulMode(args, config) {
   const rawState = await readSecureJson(args.statePath, { optional: true });
   const state =
     rawState === null ? defaultState(config) : validateState(rawState, config);
+  if (
+    state.resource_creation !== null &&
+    !new Set([
+      "--plan",
+      "--recover-resource-creation",
+    ]).has(args.mode)
+  ) {
+    requireNoPendingResourceCreation(state);
+  }
+  if (
+    state.caller_exchange !== null &&
+    !new Set(["--plan", "--retire-ambiguous-caller-app"]).has(args.mode)
+  ) {
+    requireSettledCallerExchange(state);
+  }
   const transport = new FetchTransport();
   const adminToken = adminTokenFromEnvironment();
   const persistState = async (next) => {
@@ -2910,6 +4892,37 @@ async function main(argv = process.argv.slice(2)) {
     });
     process.stdout.write(
       `${JSON.stringify({ status: "planned", actions: provisioningPlan(snapshot, config), evidence: planEvidence(snapshot, config), remote_mutations: 0 })}\n`,
+    );
+    return;
+  }
+  if (args.mode === "--recover-resource-creation") {
+    if (
+      process.env.CMA_TRIGGER_NYXID_SMOKE_RESOURCE_RECOVERY_CONFIRM !==
+      RESOURCE_CREATION_RECOVERY_CONFIRMATION
+    ) {
+      fail(
+        "confirmation_required",
+        "reviewed ambiguous resource-creation recovery confirmation is missing",
+      );
+    }
+    const target = resourceRecoveryTargetFromEnvironment();
+    const snapshot = await inspectResources({
+      config,
+      state,
+      transport,
+      adminToken,
+    });
+    const result = await recoverResourceCreation({
+      config,
+      state,
+      snapshot,
+      transport,
+      adminToken,
+      persistState,
+      ...target,
+    });
+    process.stdout.write(
+      `${JSON.stringify({ ...result, state_path: args.statePath })}\n`,
     );
     return;
   }
@@ -2935,12 +4948,85 @@ async function main(argv = process.argv.slice(2)) {
     );
     return;
   }
+  if (args.mode === "--adopt-provider-buckets") {
+    if (
+      process.env.CMA_TRIGGER_NYXID_SMOKE_BUCKET_ADOPTION_CONFIRM !==
+      BUCKET_ADOPTION_CONFIRMATION
+    ) {
+      fail(
+        "confirmation_required",
+        "reviewed empty non-production provider-bucket adoption confirmation is missing",
+      );
+    }
+    const result = await adoptProviderBuckets({
+      config,
+      state,
+      transport,
+      adminToken,
+      persistState,
+    });
+    process.stdout.write(
+      `${JSON.stringify({ status: "provider_buckets_adopted", buckets: result.adopted, state_path: args.statePath })}\n`,
+    );
+    return;
+  }
+  if (args.mode === "--retire-ambiguous-caller-app") {
+    if (
+      process.env.CMA_TRIGGER_NYXID_SMOKE_OIDC_RETIRE_CONFIRM !==
+      OIDC_RETIREMENT_CONFIRMATION
+    ) {
+      fail(
+        "confirmation_required",
+        "reviewed non-production OIDC app retirement confirmation is missing",
+      );
+    }
+    const result = await retireAmbiguousCallerApp({
+      config,
+      state,
+      transport,
+      adminToken,
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
   const snapshot = await inspectResources({
     config,
     state,
     transport,
     adminToken,
   });
+  const issuerTtlWitness = async () => {
+    const health = await transport.request({ url: nyx("/health") });
+    validateHealth(health.json);
+    const me = await transport.request({
+      url: nyx("/api/v1/users/me"),
+      token: adminToken,
+    });
+    validateMe(me.json);
+    if (me.json.id !== snapshot.adminSubjectId) {
+      fail(
+        "issuer_ttl_witness_invalid",
+        "administrator authority changed before authorization-code exchange",
+      );
+    }
+    return captureIssuerTtlWitness(adminToken, snapshot.adminSubjectId);
+  };
+  if (args.mode === "--authorize-caller") {
+    const result = await authorizeCallerCustody({
+      config,
+      state,
+      snapshot,
+      transport,
+      persistState,
+      serviceId: serviceIdFromEnvironment(),
+      noBrowser: args.noBrowser,
+      issuerTtlWitness,
+    });
+    process.stdout.write(
+      `${JSON.stringify({ status: "caller_authority_ready", subject_id: result.subjectId, expires_at: result.expiresAt, state_path: args.statePath })}\n`,
+    );
+    return;
+  }
   const result = await mintCallerToken({
     config,
     state,
@@ -2950,10 +5036,45 @@ async function main(argv = process.argv.slice(2)) {
     outputPath: args.outputPath,
     serviceId: serviceIdFromEnvironment(),
     noBrowser: args.noBrowser,
+    issuerTtlWitness,
   });
   process.stdout.write(
     `${JSON.stringify({ status: "caller_token_ready", subject_id: result.subjectId, expires_at: result.expiresAt, handoff_path: args.outputPath })}\n`,
   );
+}
+
+async function main(argv = process.argv.slice(2)) {
+  const args = parseArguments(argv);
+  const config = validateConfig(await readJsonFile(args.configPath));
+  if (args.mode === "--validate-config") {
+    process.stdout.write(
+      `${JSON.stringify({ status: "valid", schema_version: 1, environment: config.environment })}\n`,
+    );
+    return;
+  }
+  if (args.outputPath !== null) {
+    await requireDistinctAuthorityPaths(args.statePath, args.outputPath);
+  }
+  if (
+    new Set([
+      "--apply",
+      "--adopt-provider-buckets",
+      "--recover-resource-creation",
+      "--retire-ambiguous-caller-app",
+      "--authorize-caller",
+      "--mint-caller-token",
+    ]).has(args.mode)
+  ) {
+    return withCallerStateLock(args.statePath, async () => {
+      // The lock now exists, so identity checks catch filesystem-specific
+      // aliases that cannot be modeled reliably from non-existent path names.
+      if (args.outputPath !== null) {
+        await requireDistinctAuthorityPaths(args.statePath, args.outputPath);
+      }
+      return runStatefulMode(args, config);
+    });
+  }
+  return runStatefulMode(args, config);
 }
 
 const isMain =
@@ -2976,20 +5097,29 @@ if (isMain) {
 
 export {
   APPLY_CONFIRMATION,
+  BUCKET_ADOPTION_CONFIRMATION,
   BootstrapFailure,
   CALLER_SCOPES,
   FetchTransport,
   GITHUB_CATALOG_SERVICE_SLUG,
+  MAX_GITHUB_SECRET_PLAINTEXT_BYTES,
   NYXID_API_VERSION,
   NYXID_BASE_URL,
   NYXID_SOURCE_REF_URL,
   NYXID_SOURCE_REVISION,
+  OIDC_RETIREMENT_CONFIRMATION,
+  RESOURCE_CREATION_RECOVERY_CONFIRMATION,
   SA_ITEM_FIELDS,
   SERVICE_RESPONSE_FIELDS,
   STORAGE_ALLOWED_SCOPES,
   STORAGE_ROLE_PERMISSIONS,
   applyProvisioning,
+  adoptProviderBucket,
+  adoptProviderBuckets,
+  authorizeCallerCustody,
   atomicWriteSecureJson,
+  canonicalAuthorityTarget,
+  captureIssuerTtlWitness,
   defaultState,
   ensureBucket,
   inspectResources,
@@ -2999,12 +5129,19 @@ export {
   planEvidence,
   provisioningPlan,
   readSecureJson,
+  recoverResourceCreation,
+  requireHandoffUploadBound,
+  retireAmbiguousCallerApp,
+  requireDistinctAuthorityPaths,
   secureAbsolutePath,
   tokenSet,
   validateAccessClaims,
   validateConfig,
   validateHandoff,
+  validateHealth,
   validateIntrospection,
   validateObserver,
+  validateIssuerTtlWitness,
   validateState,
+  withCallerStateLock,
 };

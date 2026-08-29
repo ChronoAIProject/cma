@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign as signData } from "node:crypto";
 import {
   chmod,
+  link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -14,6 +16,8 @@ import {
 import os from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+
+import { withCallerStateLock } from "../../scripts/cma-trigger-nyxid-smoke-bootstrap.mjs";
 
 import {
   CLEANUP_CONFIRMATION,
@@ -37,10 +41,12 @@ import {
   identifyDispatchedRun,
   loadHandoff,
   loadState,
+  main as operatorMain,
   planEnvironment,
   putEnvironmentSecret,
   readProvisioningToken,
   requireCurrentApprovedPlan,
+  requireDistinctAuthorityPaths,
   setupEnvironment,
   sha256,
   stageRun,
@@ -92,7 +98,11 @@ function config() {
   });
 }
 
-function state({ caller = true } = {}) {
+function state({ caller = true, currentHandoff = undefined } = {}) {
+  const boundHandoff =
+    currentHandoff === undefined && caller
+      ? handoff("header.payload.signature")
+      : currentHandoff;
   return validateBootstrapState({
     schema_version: 1,
     environment: "cma-trigger-smoke",
@@ -124,9 +134,60 @@ function state({ caller = true } = {}) {
           service_id: RUNTIME_SERVICE_ID,
           refresh_token: "fixture-refresh-token",
           scope: "openid profile email roles proxy offline_access",
+          verification_state: "verified",
         }
       : null,
+    handoff_binding:
+      boundHandoff === null
+        ? null
+        : { sha256: sha256(serializeHandoff(boundHandoff)) },
   });
+}
+
+function stateWithCallerExchange() {
+  const value = state({ caller: false, currentHandoff: null });
+  value.caller_exchange = {
+    app_id: OIDC_APP_ID,
+    exchange_started_at: NOW,
+    issuer_token_issued_at: NOW,
+    issuer_access_token_ttl_seconds: 8_000,
+    issuer_token_sha256: "d".repeat(64),
+    issuer_commit: NYXID_SOURCE_REVISION.slice(0, 12),
+  };
+  return validateBootstrapState(value);
+}
+
+function stateWithResourceCreation(kind, { recoveryRotation = true } = {}) {
+  const value = state({ caller: false, currentHandoff: null });
+  const oidc = kind === "oidc_app";
+  if (oidc) {
+    value.oidc_app = null;
+  } else {
+    value.storage_service_account = null;
+    value.buckets.owner_service_account_id = null;
+  }
+  value.resource_creation = {
+    kind,
+    name: oidc
+      ? "CMA Trigger staging app"
+      : "CMA Trigger staging storage account",
+    administrator_subject_id: SUBJECT_ID,
+    attempt_started_at: NOW,
+    attempt_nonce: "a".repeat(64),
+    request_sha256: "b".repeat(64),
+    recovery_rotation: recoveryRotation
+      ? {
+          resource_id: oidc ? OIDC_APP_ID : STORAGE_ID,
+          rotation_started_at: NOW,
+          rotation_nonce: "c".repeat(64),
+        }
+      : null,
+  };
+  return validateBootstrapState(value);
+}
+
+function serializeHandoff(value) {
+  return Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function base64url(value) {
@@ -628,6 +689,139 @@ test("config, state, handoff, and approved-plan schemas fail closed", async () =
   const currentState = state();
   const validHandoff = handoff("header.payload.signature");
   validateHandoff(validHandoff, currentState, PROVISIONING_SERVICE_ID, NOW);
+  const exactRawBytes = (48 * 1024 * 3) / 4;
+  const serialized = serializeHandoff(validHandoff);
+  const exactArtifact = Buffer.concat([
+    serialized,
+    Buffer.alloc(exactRawBytes - serialized.length, 0x20),
+  ]);
+  assert.equal(
+    Buffer.byteLength(exactArtifact.toString("base64"), "utf8"),
+    48 * 1024,
+  );
+  const exactState = structuredClone(currentState);
+  exactState.handoff_binding = { sha256: sha256(exactArtifact) };
+  validateHandoff(
+    validHandoff,
+    exactState,
+    PROVISIONING_SERVICE_ID,
+    NOW,
+    exactArtifact,
+  );
+  const oversizedArtifact = Buffer.concat([exactArtifact, Buffer.from(" ")]);
+  const oversizedState = structuredClone(currentState);
+  oversizedState.handoff_binding = { sha256: sha256(oversizedArtifact) };
+  await expectFailure(
+    () =>
+      validateHandoff(
+        validHandoff,
+        oversizedState,
+        PROVISIONING_SERVICE_ID,
+        NOW,
+        oversizedArtifact,
+      ),
+    "handoff_upload_too_large",
+  );
+  const legacyState = structuredClone(currentState);
+  delete legacyState.caller.verification_state;
+  assert.equal(
+    validateBootstrapState(legacyState).caller.verification_state,
+    "verified",
+  );
+  const legacyUnboundState = structuredClone(currentState);
+  delete legacyUnboundState.handoff_binding;
+  delete legacyUnboundState.caller_exchange;
+  validateBootstrapState(legacyUnboundState);
+  assert.equal(legacyUnboundState.caller_exchange, null);
+  await expectFailure(
+    () =>
+      validateHandoff(
+        validHandoff,
+        legacyUnboundState,
+        PROVISIONING_SERVICE_ID,
+        NOW,
+      ),
+    "current_handoff_missing",
+  );
+  const pendingState = structuredClone(currentState);
+  pendingState.caller.verification_state = "pending";
+  pendingState.handoff_binding = null;
+  validateBootstrapState(pendingState);
+  await expectFailure(
+    () =>
+      validateHandoff(
+        validHandoff,
+        pendingState,
+        PROVISIONING_SERVICE_ID,
+        NOW,
+      ),
+    "caller_custody_pending",
+  );
+  const invalidState = structuredClone(currentState);
+  invalidState.caller.verification_state = "future";
+  await expectFailure(
+    () => validateBootstrapState(invalidState),
+    "unsafe_state",
+  );
+  const resourceCreationState = stateWithResourceCreation("oidc_app", {
+    recoveryRotation: false,
+  });
+  delete resourceCreationState.resource_creation.recovery_rotation;
+  validateBootstrapState(resourceCreationState);
+  assert.equal(resourceCreationState.resource_creation.recovery_rotation, null);
+  const exchangeState = stateWithCallerExchange();
+  const exchangeTransport = new FixtureTransport();
+  const { plan: exchangePlan } = await planEnvironment({
+    config: cfg,
+    state: exchangeState,
+    transport: exchangeTransport,
+  });
+  validatePlan(exchangePlan);
+  assert.ok(exchangeTransport.calls.length > 0);
+  assert.equal(
+    exchangeTransport.calls.filter((call) => call.method !== "GET").length,
+    0,
+  );
+  const callsAfterPlan = exchangeTransport.calls.length;
+  await expectFailure(
+    () =>
+      setupEnvironment({
+        config: cfg,
+        state: exchangeState,
+        transport: exchangeTransport,
+        custodyDirectory: "/unreachable",
+        approvedPlan: exchangePlan,
+        environment: { CMA_TRIGGER_SMOKE_ENV_CONFIRM: SETUP_CONFIRMATION },
+      }),
+    "caller_authorization_exchange_recovery_required",
+  );
+  await expectFailure(
+    () =>
+      stageRun({
+        config: cfg,
+        state: exchangeState,
+        handoff: validHandoff,
+        handoffBytes: serializeHandoff(validHandoff),
+        transport: exchangeTransport,
+        custodyDirectory: "/unreachable",
+        approvedPlan: exchangePlan,
+        environment: { CMA_TRIGGER_SMOKE_ENV_CONFIRM: RUN_CONFIRMATION },
+      }),
+    "caller_authorization_exchange_recovery_required",
+  );
+  assert.equal(exchangeTransport.calls.length, callsAfterPlan);
+  const mismatchedHandoff = structuredClone(validHandoff);
+  mismatchedHandoff.access_token = "other.payload.signature";
+  await expectFailure(
+    () =>
+      validateHandoff(
+        mismatchedHandoff,
+        currentState,
+        PROVISIONING_SERVICE_ID,
+        NOW,
+      ),
+    "handoff_binding_mismatch",
+  );
   for (const mutate of [
     (value) => (value.extra = true),
     (value) => (value.subject_id = "82b92325-c4e7-4b38-9e6e-47efc3ca2624"),
@@ -674,6 +868,296 @@ test("config, state, handoff, and approved-plan schemas fail closed", async () =
     () => requireCurrentApprovedPlan(future, future),
     "plan_not_yet_valid",
   );
+});
+
+test("operator authority work fails while bootstrap owns the caller state lock", async () => {
+  const directory = await realpath(
+    await mkdtemp(join(os.tmpdir(), "cma-trigger-operator-lock-")),
+  );
+  await chmod(directory, 0o700);
+  const configPath = join(directory, "config.json");
+  const statePath = join(directory, "state.json");
+  const outputPath = join(directory, "plan.json");
+  await writeFile(configPath, `${JSON.stringify(config())}\n`, { mode: 0o600 });
+  await writeFile(statePath, `${JSON.stringify(state())}\n`, { mode: 0o600 });
+
+  await withCallerStateLock(statePath, async () => {
+    await expectFailure(
+      () =>
+        operatorMain([
+          "--plan",
+          configPath,
+          "--state",
+          statePath,
+          "--output",
+          outputPath,
+        ]),
+      "caller_state_locked",
+    );
+  });
+});
+
+test("operator CLI reports bootstrap incidents before reading credentials or artifacts", async () => {
+  const directory = await privateDirectory("cma-trigger-operator-fence-order-");
+  const configPath = join(directory, "config.json");
+  const statePath = join(directory, "state.json");
+  const missingPlan = join(directory, "missing-plan.json");
+  const missingHandoff = join(directory, "missing-handoff.json");
+  const missingCustody = join(directory, "missing-custody");
+  await writeFile(configPath, `${JSON.stringify(config())}\n`, { mode: 0o600 });
+  for (const [incidentState, expectedCode] of [
+    [
+      stateWithCallerExchange(),
+      "caller_authorization_exchange_recovery_required",
+    ],
+    [
+      stateWithResourceCreation("oidc_app"),
+      "oidc_secret_creation_recovery_required",
+    ],
+    [
+      stateWithResourceCreation("storage_service_account"),
+      "storage_secret_creation_recovery_required",
+    ],
+  ]) {
+    await writeFile(statePath, `${JSON.stringify(incidentState)}\n`, {
+      mode: 0o600,
+    });
+    for (const invocation of [
+      [
+        "--setup",
+        configPath,
+        "--state",
+        statePath,
+        "--approved-plan",
+        missingPlan,
+        "--custody",
+        missingCustody,
+      ],
+      [
+        "--stage-run",
+        configPath,
+        "--state",
+        statePath,
+        "--approved-plan",
+        missingPlan,
+        "--custody",
+        missingCustody,
+        "--handoff",
+        missingHandoff,
+      ],
+    ]) {
+      await expectFailure(() => operatorMain(invocation), expectedCode);
+    }
+  }
+});
+
+test("resource creation incidents allow only planning and exact cleanup", async () => {
+  const cfg = config();
+  for (const [kind, expectedCode] of [
+    ["oidc_app", "oidc_secret_creation_recovery_required"],
+    [
+      "storage_service_account",
+      "storage_secret_creation_recovery_required",
+    ],
+  ]) {
+    const incidentState = stateWithResourceCreation(kind);
+    const transport = new FixtureTransport();
+    const timestamp = transport.timestamp();
+    const secretName = ephemeralHandoffSecretName(
+      kind === "oidc_app" ? "3".repeat(32) : "4".repeat(32),
+    );
+    for (const name of [
+      secretName,
+      RUNTIME_SERVICE_SECRET,
+      KIND_CA_MATERIAL_NAME,
+      KUBECONFIG_SECRET,
+    ]) {
+      transport.secrets[name] = {
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+    }
+
+    const { plan } = await planEnvironment({
+      config: cfg,
+      state: incidentState,
+      transport,
+    });
+    validatePlan(plan);
+    assert.equal(
+      transport.calls.filter((call) => call.method !== "GET").length,
+      0,
+    );
+    const callsAfterPlan = transport.calls.length;
+    await expectFailure(
+      () =>
+        setupEnvironment({
+          config: cfg,
+          state: incidentState,
+          transport,
+          custodyDirectory: "/unreachable",
+          approvedPlan: plan,
+          environment: { CMA_TRIGGER_SMOKE_ENV_CONFIRM: SETUP_CONFIRMATION },
+        }),
+      expectedCode,
+    );
+    await expectFailure(
+      () =>
+        stageRun({
+          config: cfg,
+          state: incidentState,
+          handoff: handoff("header.payload.signature"),
+          handoffBytes: serializeHandoff(
+            handoff("header.payload.signature"),
+          ),
+          transport,
+          custodyDirectory: "/unreachable",
+          approvedPlan: plan,
+          environment: { CMA_TRIGGER_SMOKE_ENV_CONFIRM: RUN_CONFIRMATION },
+        }),
+      expectedCode,
+    );
+    assert.equal(transport.calls.length, callsAfterPlan);
+
+    const result = await cleanupEnvironment({
+      config: cfg,
+      state: incidentState,
+      transport,
+      approvedPlan: plan,
+      environment: { CMA_TRIGGER_SMOKE_ENV_CONFIRM: CLEANUP_CONFIRMATION },
+    });
+    assert.equal(result.status, "ephemeral_cleanup_complete");
+    assert.ok(!Object.hasOwn(transport.secrets, secretName));
+    for (const stable of [
+      RUNTIME_SERVICE_SECRET,
+      KIND_CA_MATERIAL_NAME,
+      KUBECONFIG_SECRET,
+    ]) {
+      assert.ok(Object.hasOwn(transport.secrets, stable));
+    }
+    const deletes = transport.calls.filter(
+      (call) => call.method === "DELETE",
+    );
+    assert.equal(deletes.length, 1);
+    assert.ok(deletes[0].path.endsWith(`/${secretName}`));
+  }
+});
+
+test("plan output cannot overwrite or alias caller authority files", async () => {
+  const directory = await privateDirectory("cma-trigger-plan-output-test-");
+  const statePath = join(directory, "state.json");
+  await expectFailure(
+    () => requireDistinctAuthorityPaths(statePath, statePath),
+    "usage",
+  );
+  await expectFailure(
+    () =>
+      requireDistinctAuthorityPaths(
+        statePath,
+        `${statePath}.caller-authority.lock`,
+      ),
+    "usage",
+  );
+  await expectFailure(
+    () =>
+      requireDistinctAuthorityPaths(
+        statePath,
+        join(directory, "STATE.JSON.CALLER-AUTHORITY.LOCK"),
+      ),
+    "usage",
+  );
+
+  const aliasRoot = await privateDirectory("cma-trigger-plan-alias-test-");
+  const alias = join(aliasRoot, "alias");
+  await symlink(directory, alias);
+  await expectFailure(
+    () => requireDistinctAuthorityPaths(statePath, join(alias, "state.json")),
+    "unsafe_secret_path",
+  );
+  await expectFailure(
+    () =>
+      requireDistinctAuthorityPaths(
+        join(directory, "st\u00e1te.json"),
+        join(directory, "sta\u0301te.json"),
+      ),
+    "usage",
+  );
+  const inodeStatePath = join(directory, "inode-state.json");
+  const inodeAlias = join(directory, "inode-plan.json");
+  await writeFile(inodeStatePath, "{}\n", { mode: 0o600 });
+  await link(inodeStatePath, inodeAlias);
+  await expectFailure(
+    () => requireDistinctAuthorityPaths(inodeStatePath, inodeAlias),
+    "usage",
+  );
+
+  const filesystemFoldedOutput = join(
+    directory,
+    "\u017Ftate.json.caller-authority.lock",
+  );
+  let filesystemAliasesLock = false;
+  await withCallerStateLock(statePath, async () => {
+    const lockIdentity = await lstat(
+      `${statePath}.caller-authority.lock`,
+    );
+    let aliasIdentity;
+    try {
+      aliasIdentity = await lstat(filesystemFoldedOutput);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    filesystemAliasesLock =
+      aliasIdentity !== undefined &&
+      aliasIdentity.dev === lockIdentity.dev &&
+      aliasIdentity.ino === lockIdentity.ino;
+    if (filesystemAliasesLock) {
+      await expectFailure(
+        () =>
+          requireDistinctAuthorityPaths(statePath, filesystemFoldedOutput),
+        "usage",
+      );
+    }
+  });
+
+  if (filesystemAliasesLock) {
+    const configPath = join(directory, "config.json");
+    await writeFile(configPath, `${JSON.stringify(config())}\n`, {
+      mode: 0o600,
+    });
+    await writeFile(statePath, `${JSON.stringify(state())}\n`, {
+      mode: 0o600,
+    });
+    const directToken = process.env.CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN;
+    const tokenFile =
+      process.env.CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN_FILE;
+    delete process.env.CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN;
+    delete process.env.CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN_FILE;
+    try {
+      await expectFailure(
+        () =>
+          operatorMain([
+            "--plan",
+            configPath,
+            "--state",
+            statePath,
+            "--output",
+            filesystemFoldedOutput,
+          ]),
+        "usage",
+      );
+    } finally {
+      if (directToken !== undefined) {
+        process.env.CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN = directToken;
+      }
+      if (tokenFile !== undefined) {
+        process.env.CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN_FILE = tokenFile;
+      }
+    }
+    await assert.rejects(
+      lstat(`${statePath}.caller-authority.lock`),
+      { code: "ENOENT" },
+    );
+  }
 });
 
 test("GitHub REST always uses the catalog-ID route and explicit UserService selector", async () => {
@@ -875,10 +1359,21 @@ test("unsafe state and handoff custody modes and symlinks are rejected", async (
     "unsafe_secret_path",
   );
 
+  const writableAncestor = await privateDirectory(
+    "cma-trigger-operator-writable-ancestor-",
+  );
+  const nestedCustody = join(writableAncestor, "custody");
+  await mkdir(nestedCustody, { mode: 0o700 });
+  const nestedState = join(nestedCustody, "state.json");
+  await writeFile(nestedState, `${JSON.stringify(state())}\n`, { mode: 0o600 });
+  await chmod(writableAncestor, 0o777);
+  await expectFailure(() => loadState(nestedState), "unsafe_secret_path");
+  await chmod(writableAncestor, 0o700);
+
   const handoffPath = join(directory, "handoff.json");
   await writeFile(
     handoffPath,
-    `${JSON.stringify(handoff("header.payload.signature"))}\n`,
+    serializeHandoff(handoff("header.payload.signature")),
     {
       mode: 0o600,
     },
@@ -889,6 +1384,30 @@ test("unsafe state and handoff custody modes and symlinks are rejected", async (
     PROVISIONING_SERVICE_ID,
   );
   assert.equal(loaded.handoff.subject_id, SUBJECT_ID);
+
+  const exactBytes = serializeHandoff(handoff("header.payload.signature"));
+  await writeFile(
+    handoffPath,
+    Buffer.concat([exactBytes.subarray(0, exactBytes.length - 1), Buffer.from(" \n")]),
+    { mode: 0o600 },
+  );
+  await expectFailure(
+    () => loadHandoff(handoffPath, state(), PROVISIONING_SERVICE_ID),
+    "handoff_binding_mismatch",
+  );
+
+  const serialized = exactBytes.toString("utf8");
+  const subjectLine = `  "subject_id": "${SUBJECT_ID}",`;
+  assert.equal(serialized.split(subjectLine).length, 2);
+  await writeFile(
+    handoffPath,
+    serialized.replace(subjectLine, `${subjectLine}\n${subjectLine}`),
+    { mode: 0o600 },
+  );
+  await expectFailure(
+    () => loadHandoff(handoffPath, state(), PROVISIONING_SERVICE_ID),
+    "handoff_binding_mismatch",
+  );
 });
 
 test("provisioning bearer accepts one environment or secure-file input only", async () => {
@@ -989,7 +1508,7 @@ test("stage-run binds state, JWT, runtime UserService, exact run, and EXIT clean
   const currentHandoff = handoff(token);
   const custody = await privateDirectory("cma-trigger-stage-run-test-");
   const cfg = config();
-  const currentState = state();
+  const currentState = state({ currentHandoff });
   const transport = new FixtureTransport({ jwk });
   const authority = await generateAuthority(custody);
   const { plan: setupPlan } = await planEnvironment({
@@ -1017,7 +1536,7 @@ test("stage-run binds state, JWT, runtime UserService, exact run, and EXIT clean
     config: cfg,
     state: currentState,
     handoff: currentHandoff,
-    handoffBytes: Buffer.from(`${JSON.stringify(currentHandoff)}\n`),
+    handoffBytes: serializeHandoff(currentHandoff),
     transport,
     custodyDirectory: custody,
     approvedPlan: runPlan,
@@ -1050,7 +1569,7 @@ test("stage-run binds state, JWT, runtime UserService, exact run, and EXIT clean
         config: cfg,
         state: currentState,
         handoff: currentHandoff,
-        handoffBytes: Buffer.from(`${JSON.stringify(currentHandoff)}\n`),
+        handoffBytes: serializeHandoff(currentHandoff),
         transport,
         custodyDirectory: custody,
         approvedPlan: failedRunPlan,
@@ -1082,7 +1601,7 @@ test("stage-run binds state, JWT, runtime UserService, exact run, and EXIT clean
         config: cfg,
         state: currentState,
         handoff: currentHandoff,
-        handoffBytes: Buffer.from(`${JSON.stringify(currentHandoff)}\n`),
+        handoffBytes: serializeHandoff(currentHandoff),
         transport,
         custodyDirectory: custody,
         approvedPlan: movedHeadPlan,
@@ -1183,11 +1702,16 @@ test("ambiguous dispatch adopts one exact run and never resends", async () => {
 
 test("separate cleanup removes only the ephemeral handoff under reviewed preflight", async () => {
   const cfg = config();
-  const currentState = state();
+  const currentState = stateWithCallerExchange();
   const transport = new FixtureTransport();
   const timestamp = transport.timestamp();
   const secretName = ephemeralHandoffSecretName("2".repeat(32));
-  for (const name of [secretName, RUNTIME_SERVICE_SECRET]) {
+  for (const name of [
+    secretName,
+    RUNTIME_SERVICE_SECRET,
+    KIND_CA_MATERIAL_NAME,
+    KUBECONFIG_SECRET,
+  ]) {
     transport.secrets[name] = { created_at: timestamp, updated_at: timestamp };
   }
   const { plan } = await planEnvironment({
@@ -1204,7 +1728,16 @@ test("separate cleanup removes only the ephemeral handoff under reviewed preflig
   });
   assert.equal(result.status, "ephemeral_cleanup_complete");
   assert.ok(!Object.hasOwn(transport.secrets, secretName));
-  assert.ok(Object.hasOwn(transport.secrets, RUNTIME_SERVICE_SECRET));
+  for (const stable of [
+    RUNTIME_SERVICE_SECRET,
+    KIND_CA_MATERIAL_NAME,
+    KUBECONFIG_SECRET,
+  ]) {
+    assert.ok(Object.hasOwn(transport.secrets, stable));
+  }
+  const deletes = transport.calls.filter((call) => call.method === "DELETE");
+  assert.equal(deletes.length, 1);
+  assert.ok(deletes[0].path.endsWith(`/${secretName}`));
 });
 
 test("runtime acceptance rejects the broad staging-administration UserService", async () => {
