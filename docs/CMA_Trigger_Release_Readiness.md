@@ -284,9 +284,13 @@ but does not advance this ledger.
 The generic platform release condition from #484 is already satisfied and its
 rate/request-size limits are consumed here. Issue #671 remains the post-MVP
 sponsored-credential boundary and does not gate the contributor-owned public
-MVP. The fixed ConfigMap's dormant sponsorship declarations are a deterministic
-configuration contract only: they do not count as expiry/revocation evidence,
-adapter implementation, secret provisioning, or sponsorship release evidence.
+MVP. Native Layer 2 models, encrypted Mongo persistence, REST routes, four
+secret-free TypeScript SDK page reads, and the dormant configuration contract
+now exist. The checked-in binary still wires `sponsorships: None` and composes no
+provider, billing, pricing, scheduler, worker, or runtime adapter. This does not
+provide usable sponsorship, release or deployment evidence, the aggregate
+expiry/revocation and restart-recovery evidence required from #445/#524/#528 and
+#675, or secret provisioning; it does not satisfy #671.
 
 ### Pinned runtime network evidence
 
@@ -687,16 +691,17 @@ enabled by an MVP feature flag:
 ### Sponsorship release ledger (#671)
 
 Do not add these rows to the MVP go/no-go total. They become mandatory only for
-a later sponsorship release, and none is satisfied by accepting the dormant
-configuration parser alone:
+a later sponsorship release. None is satisfied by the native models, Mongo
+store, REST routes, four SDK reads, dormant configuration parser, or checked-in
+`sponsorships: None` wiring alone:
 
 | ID | Class | Required evidence | Exit condition |
 | --- | --- | --- | --- |
-| `SP-D-01` | D | Exact dormant, every-enabled-tuple, partial-disabled-tuple, digest/fence, evidence, allowlist, cap-ordering, adapter-origin, worker-bound, file-only secret, redaction, and fixed-manifest tests | Default resolves to no sponsorship runtime; every enabled tuple returns the fixed not-composed refusal, and every partial or invalid disabled staging tuple fails startup without reading or exposing secret fixtures |
+| `SP-D-01` | D | Native-model invariants, encrypted Mongo durability/recovery, private REST contracts, four exact secret-free SDK page reads, and exact dormant, every-enabled-tuple, partial-disabled-tuple, digest/fence, evidence, allowlist, cap-ordering, adapter-origin, worker-bound, file-only secret, redaction, and fixed-manifest tests | Implemented boundaries pass their tests while the checked-in binary resolves to no sponsorship runtime; every enabled tuple returns the fixed not-composed refusal, and every partial or invalid disabled staging tuple fails startup without reading or exposing secret fixtures |
 | `SP-S-01` | S | #445/#524/#528 provider expiry and lineage-wide revocation campaign plus #675 restart recovery | Evidence IDs in the gate resolve to reviewed immutable records for the exact provider adapter and deployment |
-| `SP-S-02` | S | Encrypted-store, provider, read-only billing-eligibility, pricing, and reconciliation adapter campaign | Ambiguous operations converge by stable identity, durable database-time fences prevent stale spend, and no adapter is inferred or substituted |
+| `SP-S-02` | S | Live encrypted-Mongo rotation/recovery plus provider, read-only billing-eligibility, pricing, scheduler, worker, runtime, and reconciliation adapter campaign | Ambiguous operations converge by stable identity, durable database-time fences prevent stale spend, and no adapter is inferred or substituted |
 | `SP-S-03` | S | Quota, token, budget, concurrency, sponsor Launch-rate, expiry, payment failure, provider outage, and emergency-kill campaign at every configured boundary | New spend stops at each boundary; recovery/export remains available; retries neither double-spend nor release capacity twice |
-| `SP-O-01` | S | Two separate read-only Secret Manager projections, least-privilege IAM, rotation/restart drill, and planted-marker capture | Keyring and audit-HMAC material are non-overlapping and absent from Kubernetes Secret data, ConfigMaps, pod environment, logs, traces, browser, prompt, workspace, and sandbox |
+| `SP-O-01` | S | Three separate read-only Secret Manager projections for the encryption keyring, operational keyring, and audit-HMAC key; least-privilege IAM; rotation/restart drill; and planted-marker capture | All three complete file payloads are pairwise distinct; encryption and operational key IDs and decoded bytes are independent; and no key material reaches Kubernetes Secret data, ConfigMaps, pod environment, logs, traces, browser, prompt, workspace, or sandbox |
 | `SP-M-01` | M | Security, billing, abuse, privacy, and operator review of the exact complete tuple and durable gate epoch | Accountable maintainers record an explicit post-MVP sponsorship go/no-go; public Trigger rollout remains an independent decision |
 
 Automatic merge, branch-protection bypass, upstream writes, and hidden consent
