@@ -298,6 +298,19 @@ impl SponsorshipStore for MemoryStore {
             .transpose()
     }
 
+    async fn credential_record(
+        &self,
+        id: &SponsoredCredentialId,
+    ) -> Result<Option<SponsoredCredentialRecord>, SponsorshipStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .credentials
+            .get(&id.0)
+            .map(|(record, _)| record.clone()))
+    }
+
     async fn completed_credential_operation(
         &self,
         id: &SponsoredCredentialId,

@@ -125,6 +125,12 @@ pub(super) struct SponsorshipCipherEnvelope {
     ciphertext: Binary,
 }
 
+impl SponsorshipCipherEnvelope {
+    pub(super) fn key_id(&self) -> &str {
+        &self.key_id
+    }
+}
+
 impl std::fmt::Debug for SponsorshipCipherEnvelope {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
