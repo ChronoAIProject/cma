@@ -1138,6 +1138,15 @@ pub struct LaunchReachStatus {
     pub agent_key_revocation_confirmed: bool,
 }
 
+/// Positive durable evidence that CMA retired credentials bound to a Launch session.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchSessionCredentialRetirement {
+    pub session_id: String,
+    pub settled_at: String,
+}
+
 /// Restricted service-gateway capability lifecycle state.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1265,6 +1274,7 @@ pub struct Launch {
     pub branch: Option<TriggerBranchRecord>,
     pub workspace: Option<JsonObject>,
     pub session: Option<JsonObject>,
+    pub session_credential_retirement: Option<LaunchSessionCredentialRetirement>,
     pub reach: Option<LaunchReachStatus>,
     pub delivery: Option<PromptDelivery>,
     pub contribution_checkpoint_version: Option<u64>,
