@@ -172,6 +172,26 @@ export {
   type UnpricedSpend,
 } from './sessions.js';
 export {
+  listContributorSponsorshipGrantsPage,
+  listSponsorSponsorshipGrantsPage,
+  listSponsorshipCredentialsPage,
+  listSponsorshipPoliciesPage,
+  toSponsoredGrant,
+  toSponsorshipCredential,
+  toSponsorshipPolicy,
+  type InertSponsoredGrantCapability,
+  type SponsoredGrant,
+  type SponsoredGrantState,
+  type SponsoredQuota,
+  type SponsoredUsageSummary,
+  type SponsorshipCredential,
+  type SponsorshipPageRequest,
+  type SponsorshipPolicy,
+  type SponsorshipPolicyState,
+  type SponsorshipPolicyUsage,
+  type SponsoredCredentialState,
+} from './sponsorships.js';
+export {
   beginTriggerConnection,
   cancelLaunch,
   completeLaunch,

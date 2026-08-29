@@ -23,6 +23,7 @@ The complete, executable integration guide lives in this package:
 - [Streaming](docs/streaming.md)
 - [Triggers](docs/triggers.md)
 - [Operations](docs/operations.md)
+- [Sponsorships](docs/sponsorships.md)
 - [Errors](docs/errors.md)
 - [Generated-reference entry points](docs/reference.md)
 
