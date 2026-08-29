@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "environment": "cma-trigger-smoke",
+  "nyxid_base_url": "https://nyx-api.chrono-ai.fun",
+  "provisioning_user_service_id": "ac1adb9a-9056-480d-8a7a-411007164a86",
+  "dispatch": {
+    "ref": "develop",
+    "expected_fork_mode": "reuse",
+    "preservation_confirmation": "PRESERVE",
+    "poll_seconds": 5,
+    "watch_timeout_seconds": 14400
+  },
+  "static_variables": {
+    "CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN": "chronoai-shining",
+    "CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE": "CMA Trigger provider smoke {marker}\n",
+    "CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE": "cma-trigger-smoke/{marker}.txt",
+    "CMA_TRIGGER_SMOKE_FORK_REPOSITORY": "cma-trigger-fixture",
+    "CMA_TRIGGER_SMOKE_MARKER_INPUT": "smoke_marker",
+    "CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE": "cma-trigger-sandboxes",
+    "CMA_TRIGGER_SMOKE_UPSTREAM_DEFAULT_BRANCH": "main",
+    "CMA_TRIGGER_SMOKE_UPSTREAM_OWNER": "ChronoAIProject",
+    "CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY": "cma-trigger-fixture",
+    "CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID": "1349237845"
+  }
+}

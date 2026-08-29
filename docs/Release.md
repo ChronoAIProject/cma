@@ -8,16 +8,16 @@ This document is the procedure. The rules it implements are in [CLAUDE.md](../CL
 
 ## 1. What a release produces
 
-| Artifact | Where | Integrity contract |
-|---|---|---|
-| `ghcr.io/chronoaiproject/cma-api:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
-| `ghcr.io/chronoaiproject/cma-web:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
-| `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
-| the same three at `:<short-sha>` | GHCR, private | intended write-once under the same audited contract |
-| three OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload |
-| closed D-09 runtime-boundary evidence | the same Actions run, readable under repository artifact access | exact release commit and runtime digest; retained for 90 days |
-| annotated tag `vX.Y.Z` | this repository | write-protected after creation by the required active ruleset |
-| GitHub release `vX.Y.Z` | this repository | notes editable |
+| Artifact                                       | Where                                                                        | Integrity contract                                                      |
+| ---------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `ghcr.io/chronoaiproject/cma-api:vX.Y.Z`       | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
+| `ghcr.io/chronoaiproject/cma-web:vX.Y.Z`       | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
+| `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z`   | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
+| the same three at `:<short-sha>`               | GHCR, private                                                                | intended write-once under the same audited contract                     |
+| three OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload                             |
+| closed D-09 runtime-boundary evidence          | the same Actions run, readable under repository artifact access              | exact release commit and runtime digest; retained for 90 days           |
+| annotated tag `vX.Y.Z`                         | this repository                                                              | write-protected after creation by the required active ruleset           |
+| GitHub release `vX.Y.Z`                        | this repository                                                              | notes editable                                                          |
 
 The release page carries three things:
 
@@ -62,12 +62,15 @@ The version lives in the tag and nowhere else. `api/Cargo.toml` and `web/package
    ## Release Notes
 
    ### What's New
+
    - Publish versioned images to GHCR on merge to main
 
    ### What's Fixed
+
    - Nothing this release
 
    ### What's Changed
+
    - develop into main now requires a release label
    ```
 
@@ -77,15 +80,15 @@ The version lives in the tag and nowhere else. `api/Cargo.toml` and `web/package
 
 Each of these fails the gate, with the offending line quoted back and the required shape printed:
 
-| Rule | Rejected example |
-|---|---|
-| The section exists, exactly once | no `## Release Notes` heading, or two of them |
-| All three subsections, in this order | `What's Fixed` placed before `What's New` |
-| Spelled and capitalised exactly | `### What's new` |
-| Plain apostrophe, not a typographic one | `### What’s New` |
-| At least one bullet under each | a subsection left empty |
-| Only bullets underneath | `We added things.` as a paragraph |
-| No version number | `0.1.12` under the heading |
+| Rule                                    | Rejected example                              |
+| --------------------------------------- | --------------------------------------------- |
+| The section exists, exactly once        | no `## Release Notes` heading, or two of them |
+| All three subsections, in this order    | `What's Fixed` placed before `What's New`     |
+| Spelled and capitalised exactly         | `### What's new`                              |
+| Plain apostrophe, not a typographic one | `### What’s New`                              |
+| At least one bullet under each          | a subsection left empty                       |
+| Only bullets underneath                 | `We added things.` as a paragraph             |
+| No version number                       | `0.1.12` under the heading                    |
 
 Bullets may be `-` or `*`, and may nest. The section ends at the next `##` heading, so anything meant for the reviewer goes outside it and is never published.
 
@@ -131,14 +134,40 @@ work for source consumers; requiring them does not publish either SDK.
 These are hard prerequisites for merging a release, not recovery advice to
 apply after publishing starts:
 
-1. **GHCR has one audited package writer.** After the repository rename, audit
-   the package roles, inherited organisation access, Actions repository access
-   and every workflow permission for `cma-api`, `cma-web` and `cma-runtime`.
-   The only identity able to write these three packages during ordinary
-   operation must be this repository's `Publish release` image jobs. Remove
-   human, team, token, other-repository and other-workflow write paths. Record
-   the package-settings or API evidence with the release-control change. The
-   current ACL check returned `403`, so this prerequisite is **not yet proven**.
+1. **GHCR has one audited ordinary-operation package writer.** On 2026-08-29,
+   the authenticated package settings for private packages `cma-api`,
+   `cma-web`, and `cma-runtime` were changed and re-read one package at a time.
+   Repository permission inheritance is disabled on all three. Each package
+   grants Actions access to exactly `ChronoAIProject/cma`
+   (`repository_id=1330597394`) at `Write`, has zero direct package members or
+   teams, and grants no other repository Actions access. The package version
+   pages still contain the same `v0.7.0`, `v0.8.0`, and `v0.9.0` roots after
+   that change. The organization default still enables inheritance for newly
+   created packages; it does not change these three explicit ACLs, and every
+   new release package requires its own audit before use.
+
+   GitHub automatically grants package `Admin` to every organization owner and
+   does not expose a package-level control that can remove it. The audited
+   break-glass exceptions are `aelfops` (`182210179`), `chronoai-kai`
+   (`296105127`), `chronoai-shining` (`250120269`), `ElonSG` (`293525633`),
+   and `loning` (`1593871`). They are administrators, not ordinary release
+   writers. Re-read the owner set and organization MFA enforcement before each
+   release. Owner drift, a non-owner user/team/repository with `Write` or
+   `Admin`, or an owner package operation without an approved incident/change
+   record reopens this gate.
+
+   The package audit history through this ACL change contains 24 CMA package
+   publication events, all by `github-actions[bot]`, with no CMA package or
+   package-version deletion event. Any future CMA publication actor other than
+   `github-actions[bot]`, any deletion, or any unexplained version/tag movement
+   reopens the gate. In source, only the `Publish release` `images` job receives
+   `packages: write`, and every action executed in that job is pinned to a full
+   commit SHA. Removing a pin, adding another package-write job/workflow, or
+   enabling a standing human/token writer invalidates this evidence. Literal
+   zero-human package administration is not a capability GHCR offers under an
+   organization; if that stronger property is required, use a registry and
+   ownership model that can enforce it.
+
 2. **`v*` tags reject update and deletion.** After the repository rename and
    before the first release merge, create a repository ruleset targeting
    `refs/tags/v*`, with enforcement `active`, exactly the `update` and
@@ -369,7 +398,7 @@ Digest equality proves that `web` retained its amd64+arm64 index and that `api` 
 
 **It does not deploy, and it does not touch `infra/`.** The manifests keep naming whatever image they already name. A release makes a version available; someone still has to decide to run it.
 
-**It especially does not move `CHRONO_SANDBOX_IMAGE`.** Under [CLAUDE.md](../CLAUDE.md) §5 that value *is* the runtime version, and every session running a different one is rotated onto it — transcript snapshotted, sandbox replaced, agent resumed. Editing it is a rollout of every live session, which is why publishing a runtime image and adopting it are separate acts. Adopt one by editing `infra/api/configmap.yaml` in its own pull request, deliberately, when a rotation is what you want.
+**It especially does not move `CHRONO_SANDBOX_IMAGE`.** Under [CLAUDE.md](../CLAUDE.md) §5 that value _is_ the runtime version, and every session running a different one is rotated onto it — transcript snapshotted, sandbox replaced, agent resumed. Editing it is a rollout of every live session, which is why publishing a runtime image and adopting it are separate acts. Adopt one by editing `infra/api/configmap.yaml` in its own pull request, deliberately, when a rotation is what you want.
 
 Changing an image reference in `infra/` is a deployment-surface change and belongs in the same pull request as anything else that changes with it (§4).
 
@@ -924,6 +953,7 @@ Run this once for each existing production database:
    ```
 
    The creation gate waits up to two minutes for one pod and fails immediately if it observes more than one. Do not use `kubectl rollout status` for this stage. The Deployment cannot become Available because its sole pod is deliberately never Ready. The command instead waits up to 31 minutes for the exact captured `api` pod to pass its 30-minute startup probe, then rejects replacement or restart. Liveness and readiness remain suppressed until the post-shutdown `/livez` listener binds. A timeout or restart means the boundary was not reached and must be investigated with the Service fence still in place, not treated as capture B.
+
 5. Verify the maintenance boundary before capture B. Recheck the exact API pod captured in step 4 and port-forward directly to it in that dedicated terminal. This bypasses the intentionally fenced Service. Leave the port-forward running while performing the HTTP checks, then stop it manually; its exit, replacement, or restart is a failed verification, not permission to continue.
 
    ```bash
@@ -972,6 +1002,7 @@ Run this once for each existing production database:
    - `session_tombstones` exists with its exact stage contract and valid history. Session/event counts, granted skills, skill custody, context references, write receipts, tombstones, and unrelated collections reconcile with capture A.
 
    The stage has already dropped its derived MongoDB handles and explicitly shut down its client before `/livez` became available. Do not treat a running process, a `503` readiness response without the exact reason, or a partially migrated database as this boundary.
+
 6. **Capture recovery unit B.** While that exact maintenance process remains live and unready, take a second transaction-consistent MongoDB backup or snapshot containing `sessions_v2`, `session_events_v2`, `_cma_session_namespace_cutovers`, `session_writes`, and `session_tombstones`, plus a matching version-retained `CHRONO_CONTEXT_BUCKET` recovery point. Record and prove this pair independently from capture A. Never combine MongoDB from one recovery unit with contexts, skill objects, handover objects, or object versions from the other.
 7. Restart into coordination activation without releasing the drain. Atomically clear the stage and legacy acknowledgement and set only the coordination acknowledgement to `drained`. Delete the maintenance pod completely before starting exactly one normal activation candidate. The Service must still carry the no-match selector from step 2. Run this in a dedicated shell that remains open through step 8 so the candidate cannot be replaced by a later label match.
 
@@ -1016,6 +1047,7 @@ Run this once for each existing production database:
    ```
 
    The bounded creation gate refuses multiple candidates, and the 31-minute wait covers the manifest's 30-minute startup-probe budget for only the captured pod. A timeout, replacement, or restart does not cancel or roll back database work: leave the Service fenced and every old writer stopped while investigating the candidate.
+
 8. Recheck the exact Ready activation pod captured in step 7 and port-forward directly to it. Reject replacement or a startup restart before accepting the candidate.
 
    ```sh
@@ -1048,6 +1080,7 @@ Run this once for each existing production database:
    ```
 
    Perform the representative authenticated reads through that same port-forward; do not probe through the fenced Service. Verify directly that `sessions` views `sessions_v2`, `sessions_v2` views the sole writable `sessions_v3`, and the original `sessions_v2` UUID moved with the rename to `sessions_v3`. Confirm the strict session validator admits only `_cma_write_protocol: 2` with `_cma_coordination_protocol: 3`, every session carries both exact values, receipts carry write protocol 1 with coordination protocol 2, both coordination provenance records are complete and UUID-bound, and preserved history/custody/context/write/tombstone state reconciles with capture B. Stop the port-forward manually after verification. Any failure leaves traffic fenced.
+
 9. Perform the final unflagged restart while ordinary traffic remains disabled. Clear the coordination acknowledgement, delete the flagged pod completely, start one replacement, and verify that its creation follows the ConfigMap change. Run the whole step in a dedicated shell that remains open through step 10; the pod identity captured before the Ready wait is the only candidate that may later receive traffic.
 
    ```bash
@@ -1110,60 +1143,60 @@ Run this once for each existing production database:
 
 10. Restore ordinary traffic only after every final check has passed. In the retained step 9 parent shell, disable xtrace, establish `umask 077`, and require `ulimit -c 0` before retrieving or exporting the short-lived bearer; abort while traffic remains fenced if any protection cannot be established. Re-establish the full checked-routing-graph freeze from the adoption section, set the distinct destructive-intent guard `CMA_GATEWAY_CONFIRM=restore-v0.10-traffic`, and export `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer`; keep that window through the final post-open route/policy proof, success output, and re-fence trap removal. Only after the parent-shell protections are active, export a short-lived release access token as `CHRONO_RELEASE_ACCESS_TOKEN`, the exact reviewed 40-hex commit as `CMA_GATEWAY_RELEASE_REVISION`, the retained adoption snapshot path as `CMA_GATEWAY_ROLLBACK_DIR`, and its independently recorded digest as `CMA_GATEWAY_ROLLBACK_SHA256` in that same shell. Invoke the checked-in Bash program from the clean checkout root; do not paste or source its implementation. At process startup, before parsing the remaining program or reading the inherited bearer, the program independently re-establishes `umask 077`, disables core dumps, and disables inherited xtrace. Before its first cluster action, it verifies the dedicated confirmation, the exact freeze attestation, the clean reviewed commit, and its own executable Git blob. On every pre-validation recheck it also byte-binds the Gateway state checker and the sourced adoption helper to their exact reviewed Git blobs, then revalidates the external snapshot seal before invoking the checker. The checker binds the adopted live objects' UIDs and owned metadata to that snapshot. Every Compute truth read starts `gcloud` under `env -i`, retaining only the operator's `HOME` for the default Cloud SDK active configuration, the current command `PATH`, `LC_ALL=C`, and `CLOUDSDK_CORE_HTTP_TIMEOUT=15`; inherited SDK property, endpoint, credential, custom-CA, Python, and proxy variables cannot redirect those reads. The program removes the credential from the exported environment before spawning any child and supplies it to `curl` through a protected file descriptor rather than an argument. Every Kubernetes and Compute call has both a client request timeout and an outer process deadline, the checker has its own outer deadline, and each EndpointSlice/NEG convergence operation has an explicit five-minute `SECONDS` deadline. Replace the exact fence selector with the source selector by another compare-and-replace JSON Patch, wait for coherent EndpointSlice and zonal NEG convergence, require exactly the verified pod in both projections, and verify authenticated reads through both the direct API hostname and the app-origin API route. The installed traps only re-fence traffic; they never reopen it. The program erases its private credential copy on success, and the calling shell clears its copy after either success or failure.
 
-   The checked adoption and traffic-restoration executables are intentionally
-   hard-disabled by a reviewed source constant in this evidence-tooling revision.
-   Neither ordinary confirmation nor a passing partial checker can bypass it.
-   Change that constant only in the reviewed commit that contains the closed
-   Compute projection, origin/public-chain probes, selected client-IP authority
-   implementation, and their complete evidence fixtures. Restoration also
-   removes inherited TLS trust/backend/key-log overrides, ignores curl
-   configuration and inherited proxies, rejects CR or LF in the bearer before
-   constructing its private header, and fail-closed establishes `umask 077` and
-   disables core dumps at process startup, before the inherited bearer can be
-   handled or function definitions parsed. It also rejects a convergence proof that crosses its wall-clock deadline
-   even when the last bounded provider call returned a matching object.
+The checked adoption and traffic-restoration executables are intentionally
+hard-disabled by a reviewed source constant in this evidence-tooling revision.
+Neither ordinary confirmation nor a passing partial checker can bypass it.
+Change that constant only in the reviewed commit that contains the closed
+Compute projection, origin/public-chain probes, selected client-IP authority
+implementation, and their complete evidence fixtures. Restoration also
+removes inherited TLS trust/backend/key-log overrides, ignores curl
+configuration and inherited proxies, rejects CR or LF in the bearer before
+constructing its private header, and fail-closed establishes `umask 077` and
+disables core dumps at process startup, before the inherited bearer can be
+handled or function definitions parsed. It also rejects a convergence proof that crosses its wall-clock deadline
+even when the last bounded provider call returned a matching object.
 
-   The first coherent two-sweep fence proof pins the `cma-api` Service UID and
-   its exact NEG name and zone set for the whole transaction. Selector reads,
-   every re-fence, both reopen proofs, and the final projection must retain that
-   root; deleting and recreating an exact-looking Service is a failure even when
-   its new `resourceVersion`, selector, annotations, and endpoints converge.
+The first coherent two-sweep fence proof pins the `cma-api` Service UID and
+its exact NEG name and zone set for the whole transaction. Selector reads,
+every re-fence, both reopen proofs, and the final projection must retain that
+root; deleting and recreating an exact-looking Service is a failure even when
+its new `resourceVersion`, selector, annotations, and endpoints converge.
 
-   ```bash
-   # Run this in the retained step 9 shell before retrieving or exporting the bearer.
-   set +x
-   umask 077
-   if ! ulimit -c 0 || [ "$(ulimit -c)" != 0 ]; then
-     echo "core dumps could not be disabled; traffic remains fenced" >&2
-     exit 1
-   fi
+```bash
+# Run this in the retained step 9 shell before retrieving or exporting the bearer.
+set +x
+umask 077
+if ! ulimit -c 0 || [ "$(ulimit -c)" != 0 ]; then
+  echo "core dumps could not be disabled; traffic remains fenced" >&2
+  exit 1
+fi
 
-   # Retrieve and export the short-lived bearer only after the checks above.
-   : "${CHRONO_RELEASE_ACCESS_TOKEN:?export the short-lived release access token while traffic is fenced}"
-   : "${CMA_GATEWAY_CONFIRM:?set CMA_GATEWAY_CONFIRM=restore-v0.10-traffic while traffic is fenced}"
-   : "${CMA_GATEWAY_RELEASE_REVISION:?export the reviewed full release commit while traffic is fenced}"
-   : "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?re-establish the checked-routing-graph freeze while traffic is fenced}"
-   : "${CMA_GATEWAY_ROLLBACK_DIR:?export the retained sealed adoption snapshot path}"
-   : "${CMA_GATEWAY_ROLLBACK_SHA256:?export the independently recorded adoption snapshot digest}"
-   cma_restore_status=0
-   # shellcheck disable=SC2154 # Retained variables are set in this step 9 parent shell.
-   CMA_FINAL_POD="${cma_final_pod}" \
-   CMA_FINAL_POD_UID="${cma_final_pod_uid}" \
-   CMA_FINAL_POD_IP="${cma_final_pod_ip}" \
-     .github/scripts/cma-trigger-gateway-restore-traffic.sh || \
-       cma_restore_status=$?
-   unset CHRONO_RELEASE_ACCESS_TOKEN
-   if [ "${cma_restore_status}" -ne 0 ]; then
-     exit "${cma_restore_status}"
-   fi
-   unset cma_restore_status
-   ```
+# Retrieve and export the short-lived bearer only after the checks above.
+: "${CHRONO_RELEASE_ACCESS_TOKEN:?export the short-lived release access token while traffic is fenced}"
+: "${CMA_GATEWAY_CONFIRM:?set CMA_GATEWAY_CONFIRM=restore-v0.10-traffic while traffic is fenced}"
+: "${CMA_GATEWAY_RELEASE_REVISION:?export the reviewed full release commit while traffic is fenced}"
+: "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?re-establish the checked-routing-graph freeze while traffic is fenced}"
+: "${CMA_GATEWAY_ROLLBACK_DIR:?export the retained sealed adoption snapshot path}"
+: "${CMA_GATEWAY_ROLLBACK_SHA256:?export the independently recorded adoption snapshot digest}"
+cma_restore_status=0
+# shellcheck disable=SC2154 # Retained variables are set in this step 9 parent shell.
+CMA_FINAL_POD="${cma_final_pod}" \
+CMA_FINAL_POD_UID="${cma_final_pod_uid}" \
+CMA_FINAL_POD_IP="${cma_final_pod_ip}" \
+  .github/scripts/cma-trigger-gateway-restore-traffic.sh || \
+    cma_restore_status=$?
+unset CHRONO_RELEASE_ACCESS_TOKEN
+if [ "${cma_restore_status}" -ne 0 ]; then
+  exit "${cma_restore_status}"
+fi
+unset cma_restore_status
+```
 
-   A nonzero response from the reopen patch is never interpreted as proof that traffic stayed fenced. The script reads the live selector: an observed source selector is immediately changed back with an exact source-to-fence patch, while an unreadable or unknown selector is a critical manual-fence condition. Zero routable EndpointSlice entries alone are not accepted as an external fence. Every initial or repeated fence proof parses the exact `cma-api` NEG name and unique zones from the fenced Service, bounded-reads every advertised zonal membership with `compute.networkEndpointGroups.listNetworkEndpoints`, and requires every response to be an empty JSON array. It re-reads and binds the Service UID, `resourceVersion`, selector, port, NEG name and zones plus the complete EndpointSlice name/UID/resourceVersion set around each Compute sweep; any change makes the proof fail rather than mixing observations. Two consecutive all-empty sweeps under the same Service and EndpointSlice records are required. Only then may re-fencing report success or set `cma_traffic_open=0`.
+A nonzero response from the reopen patch is never interpreted as proof that traffic stayed fenced. The script reads the live selector: an observed source selector is immediately changed back with an exact source-to-fence patch, while an unreadable or unknown selector is a critical manual-fence condition. Zero routable EndpointSlice entries alone are not accepted as an external fence. Every initial or repeated fence proof parses the exact `cma-api` NEG name and unique zones from the fenced Service, bounded-reads every advertised zonal membership with `compute.networkEndpointGroups.listNetworkEndpoints`, and requires every response to be an empty JSON array. It re-reads and binds the Service UID, `resourceVersion`, selector, port, NEG name and zones plus the complete EndpointSlice name/UID/resourceVersion set around each Compute sweep; any change makes the proof fail rather than mixing observations. Two consecutive all-empty sweeps under the same Service and EndpointSlice records are required. Only then may re-fencing report success or set `cma_traffic_open=0`.
 
-   Reopening uses the converse proof. The only routable EndpointSlice entry must have the exact one-element address array for the verified pod plus its Pod name, namespace, and UID. Across all advertised zones, the NEG population must contain exactly one endpoint with that same pod IP and port `8080`, under unchanged Service and EndpointSlice records. The first successful call retains one normalized record containing the Service UID/resourceVersion/NEG identity, complete EndpointSlice identity and ready-endpoint projection, and full normalized NEG member object. The proof runs once before public traffic checks and again after the final route/policy check; the second result must be byte-identical to the first successful normalized Service, EndpointSlice, and NEG projection. Any extra address, Pod identity, NEG member, replacement UID, or intervening resource version triggers re-fencing. After that second proof, the program re-reads the exact Pod UID, IP, readiness, started state, and zero restart count immediately before commit; deletion, restart, or readiness drift also re-fences.
+Reopening uses the converse proof. The only routable EndpointSlice entry must have the exact one-element address array for the verified pod plus its Pod name, namespace, and UID. Across all advertised zones, the NEG population must contain exactly one endpoint with that same pod IP and port `8080`, under unchanged Service and EndpointSlice records. The first successful call retains one normalized record containing the Service UID/resourceVersion/NEG identity, complete EndpointSlice identity and ready-endpoint projection, and full normalized NEG member object. The proof runs once before public traffic checks and again after the final route/policy check; the second result must be byte-identical to the first successful normalized Service, EndpointSlice, and NEG projection. Any extra address, Pod identity, NEG member, replacement UID, or intervening resource version triggers re-fencing. After that second proof, the program re-reads the exact Pod UID, IP, readiness, started state, and zero restart count immediately before commit; deletion, restart, or readiness drift also re-fences.
 
-   Before reopening and again after the public checks, the script reasserts the clean reviewed checkout, its own reviewed executable blob, both reviewed helper blobs, the externally authenticated snapshot, all three generation-matched routes and the health policy with snapshot-bound UIDs and owned metadata, both effective 660-second backend services bound to the advertised NEGs, and the effective `/ready` health check; drift leaves or returns traffic fenced. After reopening, a command error, an unexpected routable endpoint, a timeout, a signal, or any public or authenticated verification failure takes the same fail-closed path. The `EXIT` trap passes the already captured status into its handler; the handler masks ordinary termination signals as its first command, closes the reserved credential descriptor, and only then reads that argument or changes any other state, so a repeated signal cannot interrupt re-fencing. The discovery check parses the CMA OpenAPI 3.1 document rather than accepting an arbitrary 2xx response from the legacy SPA fallback. Only the exact pod name, UID, and address recorded in step 9 can pass the EndpointSlice gate. After both authenticated reads and the final route/policy recheck succeed, the success path masks `HUP`, `INT`, `QUIT`, and `TERM`, erases the private bearer value and captured response bodies, and prints explicit success while the `EXIT` re-fence trap remains armed. An output failure therefore re-fences. Only after that acknowledgement succeeds does it mark restoration committed, disarm the `EXIT` trap, and restore the ordinary signal dispositions.
+Before reopening and again after the public checks, the script reasserts the clean reviewed checkout, its own reviewed executable blob, both reviewed helper blobs, the externally authenticated snapshot, all three generation-matched routes and the health policy with snapshot-bound UIDs and owned metadata, both effective 660-second backend services bound to the advertised NEGs, and the effective `/ready` health check; drift leaves or returns traffic fenced. After reopening, a command error, an unexpected routable endpoint, a timeout, a signal, or any public or authenticated verification failure takes the same fail-closed path. The `EXIT` trap passes the already captured status into its handler; the handler masks ordinary termination signals as its first command, closes the reserved credential descriptor, and only then reads that argument or changes any other state, so a repeated signal cannot interrupt re-fencing. The discovery check parses the CMA OpenAPI 3.1 document rather than accepting an arbitrary 2xx response from the legacy SPA fallback. Only the exact pod name, UID, and address recorded in step 9 can pass the EndpointSlice gate. After both authenticated reads and the final route/policy recheck succeed, the success path masks `HUP`, `INT`, `QUIT`, and `TERM`, erases the private bearer value and captured response bodies, and prints explicit success while the `EXIT` re-fence trap remains armed. An output failure therefore re-fences. Only after that acknowledgement succeeds does it mark restoration committed, disarm the `EXIT` trap, and restore the ordinary signal dispositions.
 
 If any stage fails, keep every writer stopped. Before coordination begins, recovery unit A supports a whole-unit restore to the old image and recovery unit B supports a whole-unit restart from the proven v2 source. After coordination begins, never restore an old process against the advanced database and never splice the two recovery units. Make an explicit incident decision to restore one complete MongoDB/object unit or continue forward from its exact supported state.
 
@@ -1257,7 +1290,7 @@ six image references and three digests, and grant one time-bounded writer only
 for that change. Remove the grant and re-audit both fences before any workflow
 is resumed. Never delete or move an existing release tag as part of recovery.
 
-**The release pull request reads `BEHIND` and will not merge.** `develop` is missing the merge commit the *previous* release left on `main`. It carries no content — `git diff develop..main` is empty — but a merge commit is still a commit, and a protected branch requiring up-to-date branches will not take a pull request without it.
+**The release pull request reads `BEHIND` and will not merge.** `develop` is missing the merge commit the _previous_ release left on `main`. It carries no content — `git diff develop..main` is empty — but a merge commit is still a commit, and a protected branch requiring up-to-date branches will not take a pull request without it.
 
 Since `v0.4.0` the publish workflow pushes a release-specific branch and opens that back-merge itself, as its last step, so this should not recur. If repository policy refuses Actions permission to open pull requests, the job fails and leaves the branch in place rather than reporting a false success. Open the branch against `develop` manually, then rerun the failed job; it recognizes the open pull request and completes without creating a duplicate. If the release gate later says `develop contains main` failed, merge that back-merge pull request. Merging `origin/main` into `develop` by hand does the same thing; do not force push, `develop` is protected.
 
@@ -1270,7 +1303,7 @@ serializes on a single concurrency group, and the second computes its version
 after the first has tagged. This serialization does not cover an external
 package writer, which is why the exclusive-writer prerequisite is mandatory.
 
-**Three or more landed inside one build window.** A concurrency group holds one *pending* run, not a queue, so a third merge supersedes the second's pending run and that merge is marked cancelled having published nothing.
+**Three or more landed inside one build window.** A concurrency group holds one _pending_ run, not a queue, so a third merge supersedes the second's pending run and that merge is marked cancelled having published nothing.
 
 The code is not lost: the run that does publish is building a later commit on `main`, which contains it. What is lost is that merge's notes and its declared bump — so a `release:major` can be absorbed into a following `release:patch`, and the version that ships understates what is in it.
 
