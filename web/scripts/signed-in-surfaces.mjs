@@ -17,7 +17,7 @@
 import { open, visit, settle, ready, CLIPPED_BY } from './browser.mjs';
 
 const PORT = 4319;
-const EXPECTED_DEVELOPER_GUIDES = 9;
+const EXPECTED_DEVELOPER_GUIDES = Object.freeze({ typescript: 10, rust: 9 });
 
 /** A profile list long enough that a clipped menu hides some of it. */
 const PROFILES = [
@@ -401,7 +401,9 @@ async function developerSurface(page) {
     const articleBox = article.getBoundingClientRect();
     return {
       missing: false,
-      guides: document.querySelectorAll('.developer__document').length,
+      guides: [...document.querySelectorAll('.developer__document')].map((guide) =>
+        guide.textContent?.trim(),
+      ),
       heading: article.querySelector('h1')?.textContent?.trim(),
       base: preface.querySelector('code')?.textContent?.trim(),
       origin: window.location.origin,
@@ -414,10 +416,13 @@ async function developerSurface(page) {
   if (desktop.missing) {
     return ['developer: the surface is incomplete'];
   }
-  if (desktop.guides !== EXPECTED_DEVELOPER_GUIDES) {
+  if (desktop.guides.length !== EXPECTED_DEVELOPER_GUIDES.typescript) {
     problems.push(
-      `developer: TypeScript draws ${String(desktop.guides)} guides, expected ${String(EXPECTED_DEVELOPER_GUIDES)}`,
+      `developer: TypeScript draws ${String(desktop.guides.length)} guides, expected ${String(EXPECTED_DEVELOPER_GUIDES.typescript)}`,
     );
+  }
+  if (!desktop.guides.includes('Sponsorships')) {
+    problems.push('developer: TypeScript omits its Sponsorships guide');
   }
   if (desktop.heading !== 'CMA TypeScript SDK') {
     problems.push(`developer: the first bundled heading is ${String(desktop.heading)}`);
@@ -443,11 +448,22 @@ async function developerSurface(page) {
     problems.push('developer: the Rust SDK control is absent');
   } else {
     await settle(250);
-    const rustHeading = await page.evaluate(
-      () => document.querySelector('.developer__article h1')?.textContent?.trim() ?? '',
-    );
-    if (rustHeading !== 'CMA Rust SDK') {
-      problems.push(`developer: switching to Rust showed "${rustHeading}"`);
+    const rust = await page.evaluate(() => ({
+      heading: document.querySelector('.developer__article h1')?.textContent?.trim() ?? '',
+      guides: [...document.querySelectorAll('.developer__document')].map((guide) =>
+        guide.textContent?.trim(),
+      ),
+    }));
+    if (rust.heading !== 'CMA Rust SDK') {
+      problems.push(`developer: switching to Rust showed "${rust.heading}"`);
+    }
+    if (rust.guides.length !== EXPECTED_DEVELOPER_GUIDES.rust) {
+      problems.push(
+        `developer: Rust draws ${String(rust.guides.length)} guides, expected ${String(EXPECTED_DEVELOPER_GUIDES.rust)}`,
+      );
+    }
+    if (rust.guides.includes('Sponsorships')) {
+      problems.push('developer: Rust draws the TypeScript-only Sponsorships guide');
     }
   }
 
