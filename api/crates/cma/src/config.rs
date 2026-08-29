@@ -476,9 +476,11 @@ impl SponsorshipRuntimeConfig {
         let audit_hmac_key_file =
             optional_from(&mut lookup, "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE")?;
         let encryption_keyring_inline =
-            optional_from(&mut lookup, "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING")?;
+            optional_from(&mut lookup, "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING")?
+                .map(zeroize::Zeroizing::new);
         let audit_hmac_key_inline =
-            optional_from(&mut lookup, "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY")?;
+            optional_from(&mut lookup, "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY")?
+                .map(zeroize::Zeroizing::new);
 
         let supplied = [
             &epoch,
@@ -514,8 +516,6 @@ impl SponsorshipRuntimeConfig {
             &worker_concurrency,
             &encryption_keyring_file,
             &audit_hmac_key_file,
-            &encryption_keyring_inline,
-            &audit_hmac_key_inline,
         ]
         .into_iter()
         .any(Option::is_some);
@@ -900,25 +900,30 @@ impl SponsorshipRuntimeConfig {
             "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE",
             &audit_hmac_key_file,
         )?;
-        let encryption_keyring = optional_file_secret_from_values(
-            "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
-            "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING",
-            Some(encryption_keyring_file),
-            None,
-        )?
-        .ok_or_else(|| {
-            "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE did not resolve a mounted secret"
-                .to_string()
-        })?;
-        let audit_hmac_key = optional_file_secret_from_values(
-            "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE",
-            "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY",
-            Some(audit_hmac_key_file),
-            None,
-        )?
-        .ok_or_else(|| {
-            "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE did not resolve a mounted secret".to_string()
-        })?;
+        let encryption_keyring = zeroize::Zeroizing::new(
+            optional_file_secret_from_values(
+                "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
+                "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING",
+                Some(encryption_keyring_file),
+                None,
+            )?
+            .ok_or_else(|| {
+                "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE did not resolve a mounted secret"
+                    .to_string()
+            })?,
+        );
+        let audit_hmac_key = zeroize::Zeroizing::new(
+            optional_file_secret_from_values(
+                "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE",
+                "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY",
+                Some(audit_hmac_key_file),
+                None,
+            )?
+            .ok_or_else(|| {
+                "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE did not resolve a mounted secret"
+                    .to_string()
+            })?,
+        );
         for (key, value) in [
             (
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
@@ -932,15 +937,15 @@ impl SponsorshipRuntimeConfig {
                 ));
             }
         }
-        if encryption_keyring == audit_hmac_key {
+        if encryption_keyring.as_str() == audit_hmac_key.as_str() {
             return Err(
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE and CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE must contain independent secret material"
                     .into(),
             );
         }
         let secrets = SponsorshipSecretsConfig {
-            encryption_keyring: zeroize::Zeroizing::new(encryption_keyring),
-            audit_hmac_key: zeroize::Zeroizing::new(audit_hmac_key),
+            encryption_keyring,
+            audit_hmac_key,
         };
 
         Ok(Some(Self {
@@ -1752,14 +1757,20 @@ fn optional_file_secret_from_values(
     path: Option<String>,
     inline: Option<String>,
 ) -> Result<Option<String>, String> {
-    if inline.is_some_and(|value| !value.trim().is_empty()) {
+    let inline = inline.map(zeroize::Zeroizing::new);
+    if inline
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
         return Err(format!(
             "{forbidden_inline_key} is not accepted; mount the dedicated provider key and set {file_key}"
         ));
     }
     if let Some(path) = path.filter(|value| !value.trim().is_empty()) {
-        let value = std::fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?;
+        let value = zeroize::Zeroizing::new(
+            std::fs::read_to_string(&path)
+                .map_err(|error| format!("cannot read {file_key} at {path}: {error}"))?,
+        );
         let value = value.trim();
         if value.is_empty() {
             return Err(format!("{file_key} at {path} contains an empty secret"));
