@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use super::super::LaunchId;
 use super::model::*;
-use crate::SessionId;
+use crate::{Page, PageRequest, SessionId, SubjectId};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SponsorshipStoreError {
@@ -79,6 +79,103 @@ impl StoredSponsoredCredential {
     }
 }
 
+/// One policy and its accounting read from the same durable document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredSponsorshipPolicy {
+    pub policy: SponsorshipPolicy,
+    pub usage: SponsorshipPolicyUsage,
+}
+
+impl StoredSponsorshipPolicy {
+    pub fn validate(&self) -> Result<(), SponsorshipStoreError> {
+        self.policy
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        let exposure = self
+            .usage
+            .exposure()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if !exposure.quota.fits_within(self.policy.aggregate_quota)
+            || exposure.spend_micros > self.policy.aggregate_budget_micros
+            || self.usage.active_launches > self.policy.max_concurrent_launches
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "policy accounting exceeds its durable authority".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// A bounded, opaque continuation used only by internal recovery workers.
+///
+/// Unlike owner-facing pages, recovery rows are mutable and are ordered by the
+/// durable update time at which they became work. The store owns the cursor
+/// encoding so callers cannot couple themselves to collection fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsorshipRecoveryPageRequest {
+    limit: u32,
+    cursor: Option<String>,
+}
+
+impl SponsorshipRecoveryPageRequest {
+    pub fn new(limit: u32, cursor: Option<String>) -> Self {
+        Self {
+            limit: limit.clamp(1, MAX_SPONSORED_AUDIT_PAGE as u32),
+            cursor,
+        }
+    }
+
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
+    pub fn cursor(&self) -> Option<&str> {
+        self.cursor.as_deref()
+    }
+}
+
+impl Default for SponsorshipRecoveryPageRequest {
+    fn default() -> Self {
+        Self::new(50, None)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsorshipRecoveryPage<T> {
+    pub items: Vec<T>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SponsorshipCiphertextRecordKind {
+    Credential,
+    GrantActivation,
+    Grant,
+}
+
+/// One exact old-key record selected for compare-and-swap re-encryption.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsorshipCiphertextRewrapCandidate {
+    pub kind: SponsorshipCiphertextRecordKind,
+    pub record_id: String,
+    pub retiring_key_id: String,
+    /// Digest of the exact raw durable document selected by discovery. Stores
+    /// must treat a mismatch as lost compare-and-swap work, never as authority
+    /// to re-encrypt a newer domain revision under this stale candidate.
+    pub document_fingerprint: String,
+}
+
+/// Versioned durable identity for one credential-registration request and its
+/// complete secret-bearing command. Request aliases locate a prior binding;
+/// command aliases distinguish an exact retry from changed owner, provider,
+/// policy, or credential material without persisting a plaintext oracle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsoredCredentialRegistrationIdentity {
+    pub request: SponsorshipOperationalPseudonymSet,
+    pub command: SponsorshipOperationalPseudonymSet,
+}
+
 /// Atomic durable operations required by sponsorship enforcement.
 ///
 /// Reservation and reconciliation implementations must update the policy,
@@ -90,12 +187,15 @@ impl StoredSponsoredCredential {
 pub trait SponsorshipStore: Send + Sync {
     async fn gate_fence(&self) -> Result<SponsorshipGateFence, SponsorshipStoreError>;
 
-    /// Atomically increments the durable epoch, engages the kill switch, and
-    /// appends the audit. Never-attempted `AwaitingBilling` and
-    /// `AwaitingProvider` intents must become terminal `Denied` intents with
-    /// `AuthorityInvalidated`; any capacity and lease they hold are released
-    /// in the same transaction. Attempting or ambiguous external operations
-    /// retain capacity for read-back and cleanup.
+    /// Atomically increments the durable epoch, engages the kill switch, records
+    /// a durable engagement identity, and appends the caller audit before any
+    /// drain work. Never-attempted `AwaitingBilling` and `AwaitingProvider`
+    /// intents are drained in bounded follow-up transactions: each becomes a
+    /// terminal `Denied` intent with `AuthorityInvalidated`, releases its held
+    /// capacity exactly once, and writes deterministic per-activation evidence
+    /// atomically. An exact engagement retry resumes the drain without advancing
+    /// the epoch. Attempting or ambiguous external operations retain capacity
+    /// for read-back and cleanup.
     async fn engage_kill_switch(
         &self,
         expected_epoch: u64,
@@ -107,17 +207,27 @@ pub trait SponsorshipStore: Send + Sync {
         launch_id: &LaunchId,
     ) -> Result<Option<SponsoredLaunchAuthority>, SponsorshipStoreError>;
 
-    /// Atomically bind the idempotency hash to the credential and enforce one
-    /// record per `(provider, provider_credential_id_digest)` authority. The
+    /// Resolve a durable registration before contacting the provider. An exact
+    /// request/command replay returns the stored record and may only add current
+    /// pseudonym aliases. A located request with no matching command candidate
+    /// is a conflict. Neither outcome may append audit evidence or mutate the
+    /// credential.
+    async fn credential_registration(
+        &self,
+        identity: &SponsoredCredentialRegistrationIdentity,
+    ) -> Result<Option<SponsoredCredentialRecord>, SponsorshipStoreError>;
+
+    /// Atomically bind the versioned request and command aliases to the
+    /// credential and enforce one record per provider authority. The
     /// same request and stable authority/command bindings return the stored
-    /// record even if a repeated provider ownership check supplied newer
-    /// observational metadata (`ownership_verified_at`, `state_version`, or an
-    /// opaque refreshed handle). A changed owner, provider, provider policy
-    /// key, provider credential identity, or capability guarantee is a
-    /// conflict, including when the deterministic record ID is unchanged.
+    /// record without another audit append. A changed command is a conflict,
+    /// including when the deterministic record ID is unchanged. Implementations
+    /// must repeat the request/command binding lookup inside the insertion
+    /// transaction so concurrent registrations cannot bypass early replay.
     async fn insert_credential(
         &self,
-        registration_idempotency_hash: &str,
+        identity: &SponsoredCredentialRegistrationIdentity,
+        provider_identity: &SponsorshipOperationalPseudonymSet,
         record: &SponsoredCredentialRecord,
         secret: &ProviderCredentialSecret,
         audit: SponsoredAuditEvent,
@@ -129,6 +239,14 @@ pub trait SponsorshipStore: Send + Sync {
         &self,
         id: &SponsoredCredentialId,
     ) -> Result<Option<SponsoredCredentialRecord>, SponsorshipStoreError>;
+
+    /// List only credentials controlled by `owner`, newest first by immutable
+    /// `(created_at, id)`. Mutable updates must not move rows between pages.
+    async fn credentials_for_owner(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredCredentialRecord>, SponsorshipStoreError>;
 
     /// Atomically read the record and its matching current secret. Definitive
     /// revocation returns a validated record with `secret=None`.
@@ -145,7 +263,7 @@ pub trait SponsorshipStore: Send + Sync {
         &self,
         id: &SponsoredCredentialId,
         kind: ProviderOperationKind,
-        client_request_id_digest: &str,
+        client_request_identity: &SponsorshipOperationalPseudonymSet,
     ) -> Result<Option<CompletedProviderOperation>, SponsorshipStoreError>;
 
     /// Replace a credential record and optionally its current encrypted secret
@@ -183,6 +301,7 @@ pub trait SponsorshipStore: Send + Sync {
     async fn complete_credential_rotation(
         &self,
         expected_generation: u64,
+        provider_identity: &SponsorshipOperationalPseudonymSet,
         record: &SponsoredCredentialRecord,
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError>;
@@ -217,6 +336,14 @@ pub trait SponsorshipStore: Send + Sync {
         id: &SponsorshipPolicyId,
     ) -> Result<Option<SponsorshipPolicy>, SponsorshipStoreError>;
 
+    /// List owner-controlled policies and their co-located accounting, newest
+    /// first by immutable `(created_at, id)`.
+    async fn policies_for_owner(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<StoredSponsorshipPolicy>, SponsorshipStoreError>;
+
     async fn policy_usage(
         &self,
         id: &SponsorshipPolicyId,
@@ -242,6 +369,15 @@ pub trait SponsorshipStore: Send + Sync {
     async fn acceptance_for_launch(
         &self,
         launch_id: &LaunchId,
+    ) -> Result<Option<SponsoredGrantAcceptance>, SponsorshipStoreError>;
+
+    /// Resolve an acceptance for an idempotent caller replay. If its frozen
+    /// canonical request identity matches a configured candidate, persistence
+    /// replaces the private alias set with the complete bounded candidates.
+    async fn acceptance_for_request(
+        &self,
+        launch_id: &LaunchId,
+        idempotency_candidates: &SponsorshipOperationalPseudonymSet,
     ) -> Result<Option<SponsoredGrantAcceptance>, SponsorshipStoreError>;
 
     /// Insert the Launch-scoped intent before the billing observation or any
@@ -334,6 +470,23 @@ pub trait SponsorshipStore: Send + Sync {
         id: &SponsoredGrantId,
     ) -> Result<Option<SponsoredGrant>, SponsorshipStoreError>;
 
+    /// List grants visible to their contributor, newest first by immutable
+    /// `(created_at, id)`.
+    async fn grants_for_contributor(
+        &self,
+        contributor: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrant>, SponsorshipStoreError>;
+
+    /// List grants controlled by their sponsoring owner, newest first by
+    /// immutable `(created_at, id)`. The owner index must be transactionally
+    /// bound to the grant's policy owner when the grant is created.
+    async fn grants_for_sponsor(
+        &self,
+        sponsor: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrant>, SponsorshipStoreError>;
+
     async fn grant_for_launch(
         &self,
         launch_id: &LaunchId,
@@ -341,7 +494,14 @@ pub trait SponsorshipStore: Send + Sync {
 
     async fn usage_reservation(
         &self,
-        stable_request_id: &str,
+        reservation_id: &SponsoredUsageReservationId,
+    ) -> Result<Option<SponsoredUsageReservation>, SponsorshipStoreError>;
+
+    /// Resolve caller idempotency aliases before dynamic authority checks and
+    /// replace a matching row's aliases with the complete bounded candidates.
+    async fn usage_reservation_for_request(
+        &self,
+        request_identity: &SponsorshipOperationalPseudonymSet,
     ) -> Result<Option<SponsoredUsageReservation>, SponsorshipStoreError>;
 
     /// CAS replacement must also verify that allocation and settled usage
@@ -401,6 +561,49 @@ pub trait SponsorshipStore: Send + Sync {
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredUsageReservation, SponsorshipStoreError>;
 
+    /// Bounded internal discovery surfaces. Each call returns at most one page
+    /// and performs no provider, billing, or lifecycle mutation.
+    async fn credential_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredCredentialId>, SponsorshipStoreError>;
+
+    async fn activation_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<LaunchId>, SponsorshipStoreError>;
+
+    /// Discover provider-revocation work and nonterminal grants due for
+    /// expiry at or before one fixed CMA timestamp. Continuation cursors must
+    /// be bound to `as_of`; changing the clock fence starts a new traversal.
+    async fn grant_recovery_candidates(
+        &self,
+        as_of: &str,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredGrantId>, SponsorshipStoreError>;
+
+    async fn usage_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredUsageReservationId>, SponsorshipStoreError>;
+
+    /// Select records still indexed under one retiring key without decrypting
+    /// unrelated rows. Rewrap must update ciphertext envelopes and their key
+    /// index with one exact-document CAS while preserving every other stored
+    /// field. A candidate whose raw document fingerprint no longer matches
+    /// returns `false`; it must not overwrite or rewrap the newer mutation.
+    async fn ciphertext_rewrap_candidates(
+        &self,
+        kind: SponsorshipCiphertextRecordKind,
+        retiring_key_id: &str,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsorshipCiphertextRewrapCandidate>, SponsorshipStoreError>;
+
+    async fn rewrap_ciphertext(
+        &self,
+        candidate: &SponsorshipCiphertextRewrapCandidate,
+    ) -> Result<bool, SponsorshipStoreError>;
+
     async fn audit_events(
         &self,
         actor_digest: &str,
@@ -440,6 +643,37 @@ pub struct ProviderGrantReceipt {
     pub issued_at: String,
 }
 
+/// Raw provider ownership evidence returned only to the trusted sponsorship
+/// service. The service derives the deployment-keyed durable pseudonym; an
+/// adapter cannot supply an unkeyed digest as persistence authority.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderCredentialEvidence {
+    pub provider: String,
+    pub provider_policy_key: String,
+    pub provider_policy_handle: SensitiveProviderValue,
+    pub provider_credential_id: SensitiveProviderValue,
+    pub state_version: u64,
+    pub ownership_verified_at: String,
+    pub supports_expiry: bool,
+    pub supports_revocation: bool,
+}
+
+impl fmt::Debug for ProviderCredentialEvidence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderCredentialEvidence")
+            .field("provider", &self.provider)
+            .field("provider_policy_key", &self.provider_policy_key)
+            .field("provider_policy_handle", &"<redacted>")
+            .field("provider_credential_id", &"<redacted>")
+            .field("state_version", &self.state_version)
+            .field("ownership_verified_at", &self.ownership_verified_at)
+            .field("supports_expiry", &self.supports_expiry)
+            .field("supports_revocation", &self.supports_revocation)
+            .finish()
+    }
+}
+
 impl fmt::Debug for ProviderGrantReceipt {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -463,7 +697,7 @@ pub trait SponsoredCredentialProvider: Send + Sync {
         provider: &str,
         provider_policy_key: &str,
         credential: &ProviderCredentialSecret,
-    ) -> Result<ProviderCredentialAuthority, SponsoredProviderError>;
+    ) -> Result<ProviderCredentialEvidence, SponsoredProviderError>;
 
     async fn issue_grant(
         &self,
@@ -523,7 +757,7 @@ pub trait SponsoredCredentialProvider: Send + Sync {
         credential: &SponsoredCredentialRecord,
         current_secret: &ProviderCredentialSecret,
         replacement_secret: &ProviderCredentialSecret,
-    ) -> Result<ProviderCredentialAuthority, SponsoredProviderError>;
+    ) -> Result<ProviderCredentialEvidence, SponsoredProviderError>;
 
     async fn reconcile_credential_rotation(
         &self,
@@ -531,7 +765,7 @@ pub trait SponsoredCredentialProvider: Send + Sync {
         credential: &SponsoredCredentialRecord,
         current_secret: &ProviderCredentialSecret,
         replacement_secret: &ProviderCredentialSecret,
-    ) -> Result<ProviderOperationResolution<ProviderCredentialAuthority>, SponsoredProviderError>;
+    ) -> Result<ProviderOperationResolution<ProviderCredentialEvidence>, SponsoredProviderError>;
 
     /// A successful return must globally invalidate the entire durable
     /// `SponsoredCredentialId` lineage: every grant and deterministic in-flight
