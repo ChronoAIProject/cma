@@ -146,7 +146,7 @@ jobs:
             infra/api/secret.yaml infra/api/service.yaml \
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
-            infra/api/gcpbackendpolicy.yaml infra/api/cutover-fence-policy.yaml \
+            infra/api/gcpbackendpolicy.yaml \
             infra/runtime/Dockerfile \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
             infra/web/secret.yaml infra/web/service.yaml \

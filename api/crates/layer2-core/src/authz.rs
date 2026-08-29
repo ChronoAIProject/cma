@@ -84,6 +84,19 @@ pub enum Capability {
     /// nothing across subjects, and stops nothing. It is an exemption from a
     /// policy, not a reach into somebody else's work.
     ExceedSessionLimit,
+    /// Register provider credentials and manage sponsorship policies owned by
+    /// the authenticated subject.
+    ///
+    /// Separate from platform configuration: a developer may sponsor a
+    /// Trigger without gaining authority over deployment-wide settings, and a
+    /// platform administrator does not silently become that developer.
+    ManageOwnSponsorships,
+    /// Reconcile provider-observed sponsored usage.
+    ///
+    /// This is issued only to the trusted metering path. A normal session may
+    /// reserve against its own grant, but it cannot decide that a provider
+    /// request settled, choose its cost, or release an ambiguous reservation.
+    ReconcileSponsoredUsage,
 }
 
 impl Capability {
@@ -93,7 +106,7 @@ impl Capability {
     /// rather than repeating it and drifting. The declared length constrains
     /// the literal, never the enum; `all_names_every_capability` is the guard,
     /// because its match is exhaustive.
-    pub const ALL: [Capability; 12] = [
+    pub const ALL: [Capability; 14] = [
         Self::CreateSession,
         Self::UseOwnSessions,
         Self::TerminateOwnSession,
@@ -106,6 +119,8 @@ impl Capability {
         Self::ConfigurePlatform,
         Self::ControlAnySession,
         Self::ExceedSessionLimit,
+        Self::ManageOwnSponsorships,
+        Self::ReconcileSponsoredUsage,
     ];
 
     /// Whether this capability reaches past the caller's own work.
@@ -122,14 +137,16 @@ impl Capability {
             | Self::UseOwnSessions
             | Self::TerminateOwnSession
             | Self::ManageOwnEnvironmentProfiles
-            | Self::ExceedSessionLimit => false,
+            | Self::ExceedSessionLimit
+            | Self::ManageOwnSponsorships => false,
             Self::ReadAllSessions
             | Self::ReadRuntimeInventory
             | Self::ReadEventLog
             | Self::ReadActivityLog
             | Self::ReadUserDirectory
             | Self::ConfigurePlatform
-            | Self::ControlAnySession => true,
+            | Self::ControlAnySession
+            | Self::ReconcileSponsoredUsage => true,
         }
     }
 }
@@ -306,7 +323,9 @@ mod tests {
                 | Capability::ReadUserDirectory
                 | Capability::ConfigurePlatform
                 | Capability::ControlAnySession
-                | Capability::ExceedSessionLimit => {}
+                | Capability::ExceedSessionLimit
+                | Capability::ManageOwnSponsorships
+                | Capability::ReconcileSponsoredUsage => {}
             }
         }
 
@@ -355,6 +374,7 @@ mod tests {
             Capability::TerminateOwnSession,
             Capability::ManageOwnEnvironmentProfiles,
             Capability::ExceedSessionLimit,
+            Capability::ManageOwnSponsorships,
         ];
         let privileged = [
             Capability::ReadAllSessions,
@@ -364,6 +384,7 @@ mod tests {
             Capability::ReadUserDirectory,
             Capability::ConfigurePlatform,
             Capability::ControlAnySession,
+            Capability::ReconcileSponsoredUsage,
         ];
 
         for c in ordinary {

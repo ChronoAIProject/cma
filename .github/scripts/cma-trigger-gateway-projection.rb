@@ -5,6 +5,7 @@ require "digest"
 require "json"
 require "openssl"
 require "time"
+require "yaml"
 
 API_ROOT = "https://www.googleapis.com/compute/v1"
 PROJECT_ID = "chronoai-501608"
@@ -54,6 +55,311 @@ end
 
 def canonical_json(value)
   JSON.generate(canonical(value))
+end
+
+def cloned(value)
+  Marshal.load(Marshal.dump(value))
+end
+
+def parse_yaml_file(path)
+  stat = File.lstat(path)
+  assert!(stat.file? && !stat.symlink?, "manifest must be a regular non-symlink file")
+  YAML.safe_load(
+    File.binread(path), permitted_classes: [], permitted_symbols: [], aliases: false,
+  )
+rescue Psych::Exception => error
+  raise GatewayProjectionError, "manifest must be safe YAML: #{error.message}"
+end
+
+def default_probe(probe)
+  return probe unless probe
+
+  result = cloned(object!(probe, "container probe"))
+  result["failureThreshold"] = 3 unless result.key?("failureThreshold")
+  result["periodSeconds"] = 10 unless result.key?("periodSeconds")
+  result["successThreshold"] = 1 unless result.key?("successThreshold")
+  result["timeoutSeconds"] = 1 unless result.key?("timeoutSeconds")
+  if result["httpGet"]
+    http_get = object!(result["httpGet"], "HTTP probe handler")
+    http_get["scheme"] = "HTTP" unless http_get.key?("scheme")
+  end
+  result
+end
+
+def default_container(container)
+  result = cloned(object!(container, "workload container"))
+  image = string!(result["image"], "workload container image")
+  unless result.key?("imagePullPolicy")
+    tag = image.include?("@") ? nil : image.split("/").last.split(":", 2)[1]
+    result["imagePullPolicy"] = tag.nil? || tag == "latest" ? "Always" : "IfNotPresent"
+  end
+  result["terminationMessagePath"] = "/dev/termination-log" unless result.key?("terminationMessagePath")
+  result["terminationMessagePolicy"] = "File" unless result.key?("terminationMessagePolicy")
+  %w[startupProbe livenessProbe readinessProbe].each do |probe_name|
+    result[probe_name] = default_probe(result[probe_name]) if result.key?(probe_name)
+  end
+  resources = result["resources"]
+  if resources
+    %w[limits requests].each do |kind|
+      next unless resources[kind].is_a?(Hash) && resources[kind]["cpu"].is_a?(String)
+
+      cpu = resources[kind]["cpu"]
+      match = cpu.match(/\A([0-9]+)000m\z/)
+      resources[kind]["cpu"] = match[1] if match
+    end
+  end
+  result
+end
+
+def default_pod_template_spec(spec)
+  result = cloned(object!(spec, "reviewed Pod template spec"))
+  containers = array!(result["containers"], "reviewed Pod template containers")
+  result["containers"] = containers.map { |container| default_container(container) }
+  if result["initContainers"]
+    result["initContainers"] = array!(result["initContainers"], "reviewed init containers")
+      .map { |container| default_container(container) }
+  end
+  result["dnsPolicy"] = "ClusterFirst" unless result.key?("dnsPolicy")
+  result["restartPolicy"] = "Always" unless result.key?("restartPolicy")
+  result["schedulerName"] = "default-scheduler" unless result.key?("schedulerName")
+  service_account = result["serviceAccountName"] || "default"
+  result["serviceAccountName"] = service_account unless result.key?("serviceAccountName")
+  result["serviceAccount"] = service_account unless result.key?("serviceAccount")
+  result["terminationGracePeriodSeconds"] = 30 unless result.key?("terminationGracePeriodSeconds")
+  result
+end
+
+def expected_service_account_projection(name)
+  {
+    "name" => name,
+    "projected" => {
+      "defaultMode" => 420,
+      "sources" => [
+        { "serviceAccountToken" => { "expirationSeconds" => 3607, "path" => "token" } },
+        { "configMap" => {
+          "items" => [{ "key" => "ca.crt", "path" => "ca.crt" }],
+          "name" => "kube-root-ca.crt",
+        } },
+        { "downwardAPI" => { "items" => [{
+          "fieldRef" => { "apiVersion" => "v1", "fieldPath" => "metadata.namespace" },
+          "path" => "namespace",
+        }] } },
+      ],
+    },
+  }
+end
+
+def expected_service_account_mount(name)
+  {
+    "mountPath" => "/var/run/secrets/kubernetes.io/serviceaccount",
+    "name" => name,
+    "readOnly" => true,
+  }
+end
+
+def validate_api_workload(manifest, deployment, replica_set, pod)
+  manifest = object!(manifest, "reviewed API Deployment manifest")
+  deployment = object!(deployment, "live API Deployment")
+  replica_set = object!(replica_set, "live API ReplicaSet")
+  pod = object!(pod, "live API Pod")
+  assert!(manifest["apiVersion"] == "apps/v1" && manifest["kind"] == "Deployment" &&
+          manifest.dig("metadata", "name") == "cma-api" &&
+          manifest.dig("metadata", "namespace") == "chrono-bot",
+          "reviewed API Deployment identity is not exact")
+  manifest_spec = cloned(object!(manifest["spec"], "reviewed API Deployment spec"))
+  manifest_template = object!(manifest_spec.dig("template"), "reviewed API Pod template")
+  assert!(manifest_spec["replicas"] == 1 && manifest_spec["strategy"] == { "type" => "Recreate" } &&
+          manifest_spec["selector"] == {
+            "matchLabels" => { "app.kubernetes.io/name" => "cma-api" },
+          } && manifest_template.dig("metadata", "labels") == {
+            "app.kubernetes.io/name" => "cma-api", "app.kubernetes.io/part-of" => "cma",
+          }, "reviewed API Deployment rollout and selector contract is not exact")
+  expected_template_spec = default_pod_template_spec(manifest_template["spec"])
+  assert!(expected_template_spec["containers"].length == 1 &&
+          expected_template_spec.dig("containers", 0, "name") == "api",
+          "reviewed API container set is not exact")
+  manifest_spec["template"]["spec"] = expected_template_spec
+  manifest_spec["progressDeadlineSeconds"] = 600 unless manifest_spec.key?("progressDeadlineSeconds")
+  manifest_spec["revisionHistoryLimit"] = 10 unless manifest_spec.key?("revisionHistoryLimit")
+
+  assert!(deployment["apiVersion"] == "apps/v1" && deployment["kind"] == "Deployment" &&
+          deployment.dig("metadata", "name") == "cma-api" &&
+          deployment.dig("metadata", "namespace") == "chrono-bot" &&
+          canonical_json(deployment["spec"]) == canonical_json(manifest_spec),
+          "live Deployment spec differs from the reviewed defaulted manifest")
+
+  template_hash = string!(replica_set.dig("metadata", "labels", "pod-template-hash"),
+                          "ReplicaSet pod-template-hash")
+  assert!(template_hash.match?(/\A[a-z0-9]+\z/), "ReplicaSet pod-template-hash is malformed")
+  expected_replica_set_spec = {
+    "replicas" => 1,
+    "selector" => { "matchLabels" => {
+      "app.kubernetes.io/name" => "cma-api", "pod-template-hash" => template_hash,
+    } },
+    "template" => cloned(manifest_spec["template"]),
+  }
+  expected_replica_set_spec["template"]["metadata"]["labels"]["pod-template-hash"] = template_hash
+  assert!(replica_set["apiVersion"] == "apps/v1" && replica_set["kind"] == "ReplicaSet" &&
+          replica_set.dig("metadata", "namespace") == "chrono-bot" &&
+          canonical_json(replica_set["spec"]) == canonical_json(expected_replica_set_spec),
+          "live ReplicaSet spec differs from the reviewed defaulted manifest")
+
+  expected_pod_spec = cloned(expected_template_spec)
+  token_volumes = array!(pod.dig("spec", "volumes"), "live Pod volumes").select do |volume|
+    volume["name"].is_a?(String) && volume["name"].match?(/\Akube-api-access-[a-z0-9]{5}\z/)
+  end
+  assert!(token_volumes.length == 1, "live Pod service-account projection is not unique")
+  token_name = token_volumes.fetch(0).fetch("name")
+  assert!(token_volumes.fetch(0) == expected_service_account_projection(token_name),
+          "live Pod service-account projection is not exact")
+  expected_pod_spec["volumes"] = array!(expected_pod_spec["volumes"], "reviewed Pod volumes") +
+    [expected_service_account_projection(token_name)]
+  %w[containers initContainers].each do |container_kind|
+    next unless expected_pod_spec[container_kind]
+
+    expected_pod_spec[container_kind].each do |container|
+      mounts = container["volumeMounts"] || []
+      assert!(mounts.none? { |mount| mount["mountPath"] == "/var/run/secrets/kubernetes.io/serviceaccount" },
+              "reviewed manifest preclaims the Kubernetes service-account mount")
+      container["volumeMounts"] = mounts + [expected_service_account_mount(token_name)]
+    end
+  end
+  expected_pod_spec["enableServiceLinks"] = true
+  expected_pod_spec["nodeName"] = string!(pod.dig("spec", "nodeName"), "live Pod nodeName")
+  expected_pod_spec["preemptionPolicy"] = "PreemptLowerPriority"
+  expected_pod_spec["priority"] = 0
+  expected_pod_spec["tolerations"] = array!(expected_pod_spec["tolerations"] || [],
+                                            "reviewed Pod tolerations") + [
+    {
+      "effect" => "NoExecute", "key" => "node.kubernetes.io/not-ready",
+      "operator" => "Exists", "tolerationSeconds" => 300,
+    },
+    {
+      "effect" => "NoExecute", "key" => "node.kubernetes.io/unreachable",
+      "operator" => "Exists", "tolerationSeconds" => 300,
+    },
+  ]
+  assert!(pod["apiVersion"] == "v1" && pod["kind"] == "Pod" &&
+          pod.dig("metadata", "namespace") == "chrono-bot" &&
+          canonical_json(pod["spec"]) == canonical_json(expected_pod_spec),
+          "live Pod spec differs from the reviewed template and exact Kubernetes defaults")
+  true
+end
+
+def build_api_workload_fixture
+  manifest = {
+    "apiVersion" => "apps/v1", "kind" => "Deployment",
+    "metadata" => { "name" => "cma-api", "namespace" => "chrono-bot" },
+    "spec" => {
+      "replicas" => 1, "strategy" => { "type" => "Recreate" },
+      "selector" => { "matchLabels" => { "app.kubernetes.io/name" => "cma-api" } },
+      "template" => {
+        "metadata" => { "labels" => {
+          "app.kubernetes.io/name" => "cma-api", "app.kubernetes.io/part-of" => "cma",
+        } },
+        "spec" => {
+          "serviceAccountName" => "chrono-bot-ksa", "automountServiceAccountToken" => true,
+          "securityContext" => { "runAsNonRoot" => true },
+          "containers" => [{
+            "name" => "api", "image" => "registry.example/cma-api:v1.2.3",
+            "resources" => { "limits" => { "cpu" => "1000m" } },
+            "readinessProbe" => { "httpGet" => { "path" => "/ready", "port" => 8080 } },
+            "volumeMounts" => [{ "name" => "tmp", "mountPath" => "/tmp" }],
+          }],
+          "volumes" => [{ "name" => "tmp", "emptyDir" => {} }],
+        },
+      },
+    },
+  }
+  template_spec = default_pod_template_spec(manifest.dig("spec", "template", "spec"))
+  deployment_spec = cloned(manifest["spec"])
+  deployment_spec["template"]["spec"] = cloned(template_spec)
+  deployment_spec["progressDeadlineSeconds"] = 600
+  deployment_spec["revisionHistoryLimit"] = 10
+  deployment = {
+    "apiVersion" => "apps/v1", "kind" => "Deployment",
+    "metadata" => { "name" => "cma-api", "namespace" => "chrono-bot" },
+    "spec" => deployment_spec,
+  }
+  template_hash = "abc123"
+  replica_template = cloned(deployment_spec["template"])
+  replica_template["metadata"]["labels"]["pod-template-hash"] = template_hash
+  replica_set = {
+    "apiVersion" => "apps/v1", "kind" => "ReplicaSet",
+    "metadata" => {
+      "name" => "cma-api-abc123", "namespace" => "chrono-bot",
+      "labels" => { "pod-template-hash" => template_hash },
+    },
+    "spec" => {
+      "replicas" => 1,
+      "selector" => { "matchLabels" => {
+        "app.kubernetes.io/name" => "cma-api", "pod-template-hash" => template_hash,
+      } },
+      "template" => replica_template,
+    },
+  }
+  token_name = "kube-api-access-abc12"
+  pod_spec = cloned(template_spec)
+  pod_spec["volumes"] << expected_service_account_projection(token_name)
+  pod_spec["containers"].each do |container|
+    container["volumeMounts"] << expected_service_account_mount(token_name)
+  end
+  pod_spec.merge!({
+    "enableServiceLinks" => true, "nodeName" => "node-a",
+    "preemptionPolicy" => "PreemptLowerPriority", "priority" => 0,
+    "tolerations" => [
+      {
+        "effect" => "NoExecute", "key" => "node.kubernetes.io/not-ready",
+        "operator" => "Exists", "tolerationSeconds" => 300,
+      },
+      {
+        "effect" => "NoExecute", "key" => "node.kubernetes.io/unreachable",
+        "operator" => "Exists", "tolerationSeconds" => 300,
+      },
+    ],
+  })
+  pod = {
+    "apiVersion" => "v1", "kind" => "Pod",
+    "metadata" => { "name" => "cma-api-abc123-test", "namespace" => "chrono-bot" },
+    "spec" => pod_spec,
+  }
+  [manifest, deployment, replica_set, pod]
+end
+
+def run_api_workload_self_tests
+  fixture = build_api_workload_fixture
+  validate_api_workload(*cloned(fixture))
+  mutations = {
+    "Deployment command injection" => ->(candidate) { candidate[1].dig("spec", "template", "spec", "containers", 0)["command"] = ["other"] },
+    "Deployment argument injection" => ->(candidate) { candidate[1].dig("spec", "template", "spec", "containers", 0)["args"] = ["--other"] },
+    "Deployment environment injection" => ->(candidate) { candidate[1].dig("spec", "template", "spec", "containers", 0)["env"] = [{ "name" => "OTHER", "value" => "1" }] },
+    "Deployment service account drift" => ->(candidate) { candidate[1].dig("spec", "template", "spec")["serviceAccountName"] = "other" },
+    "Deployment volume injection" => ->(candidate) { candidate[1].dig("spec", "template", "spec", "volumes") << { "name" => "other", "emptyDir" => {} } },
+    "Deployment security-context drift" => ->(candidate) { candidate[1].dig("spec", "template", "spec", "securityContext")["runAsNonRoot"] = false },
+    "Deployment probe drift" => ->(candidate) { candidate[1].dig("spec", "template", "spec", "containers", 0, "readinessProbe", "httpGet")["path"] = "/livez" },
+    "ReplicaSet argument injection" => ->(candidate) { candidate[2].dig("spec", "template", "spec", "containers", 0)["args"] = ["--other"] },
+    "ReplicaSet sidecar injection" => lambda do |candidate|
+      candidate[2].dig("spec", "template", "spec", "containers") << {
+        "name" => "sidecar", "image" => "registry.example/sidecar:v1",
+      }
+    end,
+    "Pod environment injection" => ->(candidate) { candidate[3].dig("spec", "containers", 0)["env"] = [{ "name" => "OTHER", "value" => "1" }] },
+    "Pod service-account token drift" => ->(candidate) { candidate[3].dig("spec", "volumes", 1, "projected", "sources", 0, "serviceAccountToken")["expirationSeconds"] = 7200 },
+    "Pod toleration injection" => ->(candidate) { candidate[3].dig("spec", "tolerations") << { "operator" => "Exists" } },
+    "Pod volume injection" => ->(candidate) { candidate[3].dig("spec", "volumes") << { "name" => "other", "emptyDir" => {} } },
+    "Pod privileged mutation" => ->(candidate) { candidate[3].dig("spec", "containers", 0)["securityContext"] = { "privileged" => true } },
+  }
+  mutations.each do |name, mutation|
+    candidate = cloned(fixture)
+    mutation.call(candidate)
+    begin
+      validate_api_workload(*candidate)
+    rescue GatewayProjectionError, KeyError, TypeError
+      next
+    end
+    reject!("workload self-test accepted #{name}")
+  end
+  mutations.length
 end
 
 def without_keys(value, keys)
@@ -125,6 +431,7 @@ def compute_behavior_policy(state)
   compute = object!(state["compute"], "compute capture")
   backends = array!(compute["backendServices"], "backend services")
   health_by_link = indexed(compute["healthChecks"], "health checks")
+  service_backend_links = {}
   neg_by_link = array!(compute["networkEndpointGroups"], "network endpoint groups").to_h do |entry|
     resource = object!(entry["resource"], "NEG resource")
     [compute_ref(resource["selfLink"]), resource]
@@ -134,6 +441,7 @@ def compute_behavior_policy(state)
     matches = backends.select { |backend| compute_ref(backend["selfLink"]).include?(marker) }
     assert!(matches.length == 1, "#{service_name} behavior policy backend is ambiguous")
     backend = matches.fetch(0)
+    service_backend_links[service_name] = compute_ref(backend["selfLink"])
     group_behaviors = array!(backend["backends"], "#{service_name} backend groups").map do |group|
       canonical(without_keys(group, ["group"]))
     end.sort_by { |entry| canonical_json(entry) }
@@ -179,6 +487,10 @@ def compute_behavior_policy(state)
         candidate["name"] == host_rule["pathMatcher"]
       end
       assert!(matcher, "serving behavior lacks the CMA app matcher")
+      validate_serving_matcher(
+        matcher, "bot.chrono-ai.fun", state["routeMode"],
+        service_backend_links.fetch("cma-api"), service_backend_links.fetch("cma-web"),
+      )
       matcher.delete("pathRules")
       matcher.delete("routeRules")
       matcher["cmaRouteModePaths"] = "$CMA_ROUTE_MODE_APP_API_PATHS"
@@ -751,6 +1063,142 @@ def service_endpoint_projection(endpoint_slices, pods, nodes, service, name)
   ready.sort_by { |entry| [entry["ipAddress"], entry["podUid"]] }
 end
 
+def api_workload_scale_projection(deployment, pods, lifecycle_stage,
+                                  full_deployment, replica_set, retained_pod)
+  deployment = object!(deployment, "cma-api Deployment scale capture")
+  assert!(deployment.keys.sort == %w[apiVersion kind metadata spec status],
+          "cma-api Deployment scale capture key set is not closed")
+  assert!(deployment["apiVersion"] == "apps/v1" && deployment["kind"] == "Deployment",
+          "cma-api Deployment scale capture type is not exact")
+  metadata = object!(deployment["metadata"], "cma-api Deployment scale metadata")
+  assert!(metadata.keys.sort == %w[
+    deletionTimestamp generation name namespace resourceVersion uid
+  ], "cma-api Deployment scale metadata key set is not closed")
+  assert!(metadata["name"] == "cma-api" && metadata["namespace"] == "chrono-bot" &&
+          metadata["deletionTimestamp"].nil? &&
+          metadata["uid"].is_a?(String) && !metadata["uid"].empty? &&
+          metadata["resourceVersion"].is_a?(String) && !metadata["resourceVersion"].empty? &&
+          metadata["generation"].is_a?(Integer) && metadata["generation"].positive?,
+          "cma-api Deployment scale identity is not exact")
+  spec = object!(deployment["spec"], "cma-api Deployment scale spec")
+  status = object!(deployment["status"], "cma-api Deployment scale status")
+  assert!(spec.keys == ["replicas"] && status.keys.sort == %w[
+    availableReplicas observedGeneration readyReplicas replicas unavailableReplicas updatedReplicas
+  ], "cma-api Deployment scale/status shape is not closed")
+  expected_replicas = lifecycle_stage == "fenced-post-scale" ? 0 : 1
+  assert!(spec["replicas"] == expected_replicas &&
+          status["observedGeneration"] == metadata["generation"] &&
+          status.values_at("replicas", "updatedReplicas", "readyReplicas", "availableReplicas") ==
+            [expected_replicas] * 4 && status["unavailableReplicas"] == 0,
+          "cma-api Deployment is not stable at the lifecycle replica count")
+
+  pod_items = list_items(pods, "cma-api Pods")
+  expected_pod_count = expected_replicas
+  assert!(pod_items.length == expected_pod_count,
+          "cma-api Pod set does not match the lifecycle replica count")
+  pod_roots = pod_items.map do |pod|
+    assert!(pod["apiVersion"] == "v1" && pod["kind"] == "Pod" &&
+            pod.dig("metadata", "namespace") == "chrono-bot" &&
+            pod.dig("metadata", "deletionTimestamp").nil?,
+            "cma-api Pod scale identity is not exact")
+    {
+      "name" => string!(pod.dig("metadata", "name"), "cma-api Pod name"),
+      "uid" => string!(pod.dig("metadata", "uid"), "cma-api Pod UID"),
+    }
+  end.sort_by { |pod| [pod["name"], pod["uid"]] }
+  assert!(pod_roots.uniq == pod_roots, "cma-api Pod scale identities are not unique")
+  verified = nil
+  if %w[fenced-pre-reopen final-reopen].include?(lifecycle_stage)
+    full_deployment = object!(full_deployment, "retained cma-api Deployment proof")
+    replica_set = object!(replica_set, "retained cma-api ReplicaSet proof")
+    retained_pod = object!(retained_pod, "retained cma-api Pod proof")
+    assert!(full_deployment["apiVersion"] == "apps/v1" &&
+            full_deployment["kind"] == "Deployment" &&
+            full_deployment.dig("metadata", "name") == "cma-api" &&
+            full_deployment.dig("metadata", "namespace") == "chrono-bot" &&
+            full_deployment.dig("metadata", "uid") == metadata["uid"] &&
+            full_deployment.dig("metadata", "resourceVersion") == metadata["resourceVersion"] &&
+            full_deployment.dig("metadata", "generation") == metadata["generation"] &&
+            full_deployment.dig("metadata", "deletionTimestamp").nil? &&
+            full_deployment.dig("spec", "replicas") == 1,
+            "retained cma-api Deployment does not equal the scale root")
+    replica_metadata = object!(replica_set["metadata"], "retained ReplicaSet metadata")
+    pod_metadata = object!(retained_pod["metadata"], "retained Pod metadata")
+    assert!(replica_set["apiVersion"] == "apps/v1" && replica_set["kind"] == "ReplicaSet" &&
+            replica_metadata["namespace"] == "chrono-bot" &&
+            replica_metadata["deletionTimestamp"].nil? &&
+            replica_metadata["ownerReferences"] == [{
+              "apiVersion" => "apps/v1", "blockOwnerDeletion" => true, "controller" => true,
+              "kind" => "Deployment", "name" => "cma-api", "uid" => metadata["uid"],
+            }] && replica_set.dig("spec", "replicas") == 1 &&
+            replica_set.dig("status", "observedGeneration") == replica_metadata["generation"] &&
+            replica_set.dig("status", "replicas") == 1 &&
+            replica_set.dig("status", "fullyLabeledReplicas") == 1 &&
+            replica_set.dig("status", "readyReplicas") == 1 &&
+            replica_set.dig("status", "availableReplicas") == 1,
+            "retained cma-api ReplicaSet ownership or convergence is not exact")
+    container_specs = array!(retained_pod.dig("spec", "containers"),
+                             "retained cma-api Pod containers")
+    container_statuses = array!(retained_pod.dig("status", "containerStatuses"),
+                                "retained cma-api Pod container statuses")
+    ready_conditions = array!(retained_pod.dig("status", "conditions"),
+                              "retained cma-api Pod conditions").select do |condition|
+      condition["type"] == "Ready" && condition["status"] == "True"
+    end
+    assert!(retained_pod["apiVersion"] == "v1" && retained_pod["kind"] == "Pod" &&
+            pod_metadata["namespace"] == "chrono-bot" && pod_metadata["deletionTimestamp"].nil? &&
+            pod_metadata["ownerReferences"] == [{
+              "apiVersion" => "apps/v1", "blockOwnerDeletion" => true, "controller" => true,
+              "kind" => "ReplicaSet", "name" => replica_metadata["name"],
+              "uid" => replica_metadata["uid"],
+            }] && pod_roots == [{ "name" => pod_metadata["name"], "uid" => pod_metadata["uid"] }] &&
+            retained_pod.dig("status", "phase") == "Running" && ready_conditions.length == 1 &&
+            container_specs.length == 1 && container_specs.fetch(0)["name"] == "api" &&
+            container_statuses.length == 1 && container_statuses.fetch(0)["name"] == "api" &&
+            container_statuses.fetch(0)["image"] == container_specs.fetch(0)["image"] &&
+            container_statuses.fetch(0)["imageID"].is_a?(String) &&
+            !container_statuses.fetch(0)["imageID"].empty? &&
+            container_statuses.fetch(0)["ready"] == true &&
+            container_statuses.fetch(0)["started"] == true &&
+            container_statuses.fetch(0)["restartCount"] == 0 &&
+            container_statuses.fetch(0).dig("state", "running", "startedAt").is_a?(String),
+            "retained cma-api Pod ownership, image, or serving state is not exact")
+    verified = {
+      "deployment" => {
+        "generation" => metadata["generation"], "resourceVersion" => metadata["resourceVersion"],
+        "specSha256" => Digest::SHA256.hexdigest(canonical_json(full_deployment["spec"])),
+        "uid" => metadata["uid"],
+      },
+      "replicaSet" => {
+        "generation" => replica_metadata["generation"], "name" => replica_metadata["name"],
+        "resourceVersion" => replica_metadata["resourceVersion"],
+        "specSha256" => Digest::SHA256.hexdigest(canonical_json(replica_set["spec"])),
+        "uid" => replica_metadata["uid"],
+      },
+      "pod" => {
+        "image" => container_specs.fetch(0)["image"],
+        "imageID" => container_statuses.fetch(0)["imageID"],
+        "ip" => retained_pod.dig("status", "podIP"), "name" => pod_metadata["name"],
+        "resourceVersion" => pod_metadata["resourceVersion"],
+        "specSha256" => Digest::SHA256.hexdigest(canonical_json(retained_pod["spec"])),
+        "uid" => pod_metadata["uid"],
+      },
+    }
+  else
+    assert!(full_deployment.nil? && replica_set.nil? && retained_pod.nil?,
+            "non-reopen lifecycle unexpectedly carries a retained workload proof")
+  end
+  {
+    "deployment" => {
+      "generation" => metadata["generation"], "name" => metadata["name"],
+      "namespace" => metadata["namespace"], "replicas" => expected_replicas,
+      "resourceVersion" => metadata["resourceVersion"], "uid" => metadata["uid"],
+    },
+    "pods" => pod_roots,
+    "verified" => verified,
+  }
+end
+
 def exact_ports(forwarding_rule)
   return forwarding_rule["ports"].map(&:to_s).sort if forwarding_rule["ports"].is_a?(Array)
   return [forwarding_rule["portRange"].split("-").first] if forwarding_rule["portRange"].is_a?(String) &&
@@ -787,7 +1235,7 @@ end
 def path_pattern_matches?(pattern, path)
   if pattern.end_with?("/*")
     base = pattern.delete_suffix("/*")
-    path == base || path.start_with?("#{base}/")
+    path.start_with?("#{base}/")
   else
     path == pattern
   end
@@ -847,7 +1295,7 @@ def validate_serving_matcher(matcher, host, route_mode, api_backend, web_backend
     referenced_backend_links(matcher).each do |link|
       assert!(link == web_backend, "legacy app hostname contains a direct API backend")
     end
-    %w[/ /api /api/x /auth/x /openapi.json /.well-known/agent-card.json /other].each do |path|
+    %w[/ /api /api/ /api/x /auth /auth/ /auth/x /openapi.json /.well-known/agent-card.json /other].each do |path|
       assert!(matcher_backend_for_path(matcher, path) == web_backend,
               "legacy app hostname path #{path} does not resolve to cma-web")
     end
@@ -877,7 +1325,7 @@ def validate_serving_matcher(matcher, host, route_mode, api_backend, web_backend
   end
   {
     "/api" => api_backend, "/api/" => api_backend, "/api/x" => api_backend,
-    "/auth" => api_backend, "/auth/x" => api_backend,
+    "/auth" => api_backend, "/auth/" => api_backend, "/auth/x" => api_backend,
     "/openapi.json" => api_backend,
     "/.well-known/agent-card.json" => api_backend,
     "/" => web_backend, "/other" => web_backend, "/apiary" => web_backend,
@@ -1183,14 +1631,15 @@ def validate_compute(state, gateway, gateway_ip, services, endpoint_projections,
   }
 end
 
-def validate_state(state, service_mode)
+def validate_state(state, service_mode, lifecycle_stage)
   state = object!(state, "captured state")
   assert!(state.keys.sort == %w[compute kubernetes routeMode], "captured state key set is not closed")
   assert!(%w[legacy adopted].include?(state["routeMode"]), "captured routeMode is not exact")
   kubernetes = object!(state["kubernetes"], "Kubernetes capture")
   expected_keys = %w[
-    admissionBinding admissionPolicy backendPolicies certificateSecret endpointSlices gateway
-    healthPolicy nodes pods routes services
+    admissionBinding admissionPolicy apiDeploymentScale apiDeploymentWorkload
+    apiPodWorkload apiReplicaSetWorkload backendPolicies certificateSecret endpointSlices
+    gateway healthPolicy nodes pods routes services
   ]
   assert!(kubernetes.keys.sort == expected_keys, "Kubernetes capture key set is not closed")
   gateway = object!(kubernetes["gateway"], "Gateway")
@@ -1240,6 +1689,11 @@ def validate_state(state, service_mode)
       slices, pods, kubernetes["nodes"], service_objects.fetch(name), name,
     )]
   end
+  api_workload = api_workload_scale_projection(
+    kubernetes["apiDeploymentScale"], kubernetes.fetch("pods").fetch("cma-api"),
+    lifecycle_stage, kubernetes["apiDeploymentWorkload"],
+    kubernetes["apiReplicaSetWorkload"], kubernetes["apiPodWorkload"],
+  )
   compute_projection = validate_compute(
     state, gateway, gateway_ip, service_roots, endpoint_projections,
     certificate_secret, service_mode,
@@ -1250,6 +1704,7 @@ def validate_state(state, service_mode)
     "services" => service_roots,
     "policies" => policy_roots,
     "fenceAdmission" => admission_root,
+    "apiWorkload" => api_workload,
     "compute" => compute_projection,
   }
 end
@@ -1265,7 +1720,8 @@ def validate_capture(capture, expected_behavior = nil, policy_metadata = nil)
   assert!(lifecycle.keys.sort == %w[predecessorSha256 stage],
           "projection lifecycle binding shape is not closed")
   allowed_stages = %w[
-    adopted fenced-post-scale fenced-pre-reopen fenced-pre-scale final-reopen source
+    adopted fenced-post-scale fenced-pre-reopen fenced-pre-scale final-reopen
+    rollback-source source
   ]
   assert!(allowed_stages.include?(lifecycle["stage"]), "projection lifecycle stage is invalid")
   assert!((lifecycle["stage"] == "source" && lifecycle["predecessorSha256"] == "genesis") ||
@@ -1289,8 +1745,8 @@ def validate_capture(capture, expected_behavior = nil, policy_metadata = nil)
           "first live read differs from the approved behavior policy")
   assert!(canonical_json(second_behavior) == canonical_json(expected_behavior),
           "second live read differs from the approved behavior policy")
-  first_projection = validate_state(capture["first"], mode)
-  second_projection = validate_state(capture["second"], mode)
+  first_projection = validate_state(capture["first"], mode, lifecycle["stage"])
+  second_projection = validate_state(capture["second"], mode, lifecycle["stage"])
   admission_receipt = object!(capture["admissionReceipt"], "admission bootstrap receipt binding")
   assert!(admission_receipt.keys.sort == %w[
     binding manifestSha256 policy receiptSha256 releaseRevision sourceSetSha256
@@ -1341,6 +1797,23 @@ def validate_capture(capture, expected_behavior = nil, policy_metadata = nil)
     "graph" => first_projection,
     "fullCapture" => capture["first"],
   }
+end
+
+def compare_projection_behavior(source, candidate)
+  source = object!(source, "sealed source projection")
+  candidate = object!(candidate, "restored projection")
+  [source, candidate].each do |projection|
+    assert!(projection["schemaVersion"] == 1 && projection["mode"] == "source",
+            "behavior comparison requires source-mode closed projections")
+    object!(projection["fullCapture"], "closed projection full capture")
+    object!(projection["behaviorPolicy"], "closed projection behavior policy")
+  end
+  assert!(source["behaviorPolicy"] == candidate["behaviorPolicy"],
+          "restored projection uses a different approved behavior policy")
+  source_behavior = compute_behavior_policy(source["fullCapture"])
+  candidate_behavior = compute_behavior_policy(candidate["fullCapture"])
+  assert!(canonical_json(source_behavior) == canonical_json(candidate_behavior),
+          "restored full projection differs from the sealed source behavior")
 end
 
 def fixture_list(items)
@@ -1709,6 +2182,21 @@ def build_fixture_state
       },
       "admissionPolicy" => admission_policy,
       "admissionBinding" => admission_binding,
+      "apiDeploymentScale" => {
+        "apiVersion" => "apps/v1", "kind" => "Deployment",
+        "metadata" => {
+          "name" => "cma-api", "namespace" => "chrono-bot", "uid" => "api-deployment-uid",
+          "resourceVersion" => "72", "generation" => 4, "deletionTimestamp" => nil,
+        },
+        "spec" => { "replicas" => 1 },
+        "status" => {
+          "observedGeneration" => 4, "replicas" => 1, "updatedReplicas" => 1,
+          "readyReplicas" => 1, "availableReplicas" => 1, "unavailableReplicas" => 0,
+        },
+      },
+      "apiDeploymentWorkload" => nil,
+      "apiReplicaSetWorkload" => nil,
+      "apiPodWorkload" => nil,
       "routes" => fixture_list(%w[cma-api cma-web cma-http-redirect].map { |name| route.call(name) }),
       "healthPolicy" => policy.call("HealthCheckPolicy", "cma-api"),
       "backendPolicies" => fixture_list(CMA_SERVICES.map { |name| policy.call("GCPBackendPolicy", name) }),
@@ -1744,7 +2232,7 @@ def build_fixture_state
           ],
           "pathMatchers" => [
             { "name" => "api", "defaultService" => api_backend },
-            { "name" => "web", "defaultService" => web_backend, "pathRules" => [{ "paths" => ["/api/*", "/auth/*", "/openapi.json", "/.well-known/agent-card.json"], "service" => api_backend }] },
+            { "name" => "web", "defaultService" => web_backend, "pathRules" => [{ "paths" => ["/api", "/api/*", "/auth", "/auth/*", "/openapi.json", "/.well-known/agent-card.json"], "service" => api_backend }] },
           ],
           "defaultService" => web_backend, "fingerprint" => "serving-fingerprint",
         },
@@ -1768,11 +2256,8 @@ def build_fixture_state
   }
 end
 
-def cloned(value)
-  Marshal.load(Marshal.dump(value))
-end
-
 def run_self_tests
+  workload_mutation_count = run_api_workload_self_tests
   state = build_fixture_state
   admission_receipt = {
     "receiptSha256" => "a" * 64,
@@ -1830,7 +2315,19 @@ def run_self_tests
     web_matcher = live.dig("compute", "urlMaps", 1, "pathMatchers").find { |matcher| matcher["name"] == "web" }
     web_matcher.delete("pathRules")
   end
-  validate_capture(legacy, expected_behavior)
+  legacy_projection = validate_capture(
+    legacy, expected_behavior, projection.fetch("behaviorPolicy"),
+  )
+  compare_projection_behavior(projection, legacy_projection)
+
+  behavior_drift = cloned(projection)
+  behavior_drift.dig("fullCapture", "compute", "backendServices", 0)["enableCDN"] = true
+  begin
+    compare_projection_behavior(projection, behavior_drift)
+  rescue GatewayProjectionError
+    behavior_drift = nil
+  end
+  assert!(behavior_drift.nil?, "behavior comparison accepted a backend-service drift")
 
   unrelated = cloned(capture)
   unrelated_route = {
@@ -1869,9 +2366,38 @@ def run_self_tests
   end
   validate_capture(fenced, expected_behavior)
 
+  post_scale = cloned(fenced)
+  post_scale["lifecycle"] = {
+    "stage" => "fenced-post-scale", "predecessorSha256" => "f" * 64,
+  }
+  %w[first second].each do |read|
+    live = post_scale.fetch(read)
+    live.dig("kubernetes", "pods", "cma-api")["items"] = []
+    deployment = live.dig("kubernetes", "apiDeploymentScale")
+    deployment["metadata"]["resourceVersion"] = "73"
+    deployment["metadata"]["generation"] = 5
+    deployment["spec"]["replicas"] = 0
+    deployment["status"] = {
+      "observedGeneration" => 5, "replicas" => 0, "updatedReplicas" => 0,
+      "readyReplicas" => 0, "availableReplicas" => 0, "unavailableReplicas" => 0,
+    }
+  end
+  validate_capture(post_scale, expected_behavior)
+
   mutations = {
     "Gateway UID drift" => ->(candidate) { candidate["second"]["kubernetes"]["gateway"]["metadata"]["uid"] = "replacement" },
     "admission receipt policy drift" => ->(candidate) { candidate["admissionReceipt"]["policy"]["uid"] = "replacement" },
+    "API Deployment UID drift" => ->(candidate) { candidate["second"]["kubernetes"]["apiDeploymentScale"]["metadata"]["uid"] = "replacement" },
+    "stable API Deployment scale drift" => lambda do |candidate|
+      %w[first second].each do |read|
+        deployment = candidate.dig(read, "kubernetes", "apiDeploymentScale")
+        deployment["spec"]["replicas"] = 0
+        deployment["status"]["replicas"] = 0
+        deployment["status"]["updatedReplicas"] = 0
+        deployment["status"]["readyReplicas"] = 0
+        deployment["status"]["availableReplicas"] = 0
+      end
+    end,
     "Gateway spec drift" => ->(candidate) { candidate["first"]["kubernetes"]["gateway"]["spec"]["gatewayClassName"] = "other" },
     "address drift" => ->(candidate) { candidate["first"]["compute"]["address"]["address"] = "203.0.113.11" },
     "forwarding port drift" => ->(candidate) { candidate["first"]["compute"]["forwardingRules"][0]["portRange"] = "81-81" },
@@ -1974,6 +2500,14 @@ def run_self_tests
     "misrouted API path" => lambda do |candidate|
       candidate["first"]["compute"]["urlMaps"][1]["pathMatchers"][1]["pathRules"][0]["service"] =
         candidate["first"]["compute"]["backendServices"][1]["selfLink"]
+    end,
+    "stable slashless API roots omitted" => lambda do |candidate|
+      %w[first second].each do |read|
+        paths = candidate.dig(read, "compute", "urlMaps", 1, "pathMatchers", 1,
+                              "pathRules", 0, "paths")
+        paths.delete("/api")
+        paths.delete("/auth")
+      end
     end,
     "wrong app default" => lambda do |candidate|
       candidate["first"]["compute"]["urlMaps"][1]["pathMatchers"][1]["defaultService"] =
@@ -2133,18 +2667,30 @@ def run_self_tests
     end
     reject!("self-test accepted #{name}")
   end
-  puts "CMA Trigger closed Gateway projection self-tests passed (#{mutations.length} mutations)"
+  puts "CMA Trigger closed Gateway projection self-tests passed (#{mutations.length + workload_mutation_count} mutations)"
 end
 
 unless ARGV == ["--self-test"] || (ARGV.length == 2 && ARGV[0] == "--validate") ||
-       (ARGV.length == 3 && %w[--derive-policy --emit].include?(ARGV[0]))
-  warn "usage: #{File.basename($PROGRAM_NAME)} --self-test | --validate CAPTURE.json | --emit CAPTURE.json PROJECTION.json | --derive-policy CAPTURE.json POLICY.json"
+       (ARGV.length == 3 && %w[--compare-behavior --derive-policy --emit].include?(ARGV[0])) ||
+       (ARGV.length == 5 && ARGV[0] == "--validate-workload")
+  warn "usage: #{File.basename($PROGRAM_NAME)} --self-test | --validate CAPTURE.json | --validate-workload MANIFEST.yaml DEPLOYMENT.json REPLICASET.json POD.json | --compare-behavior SOURCE.json CANDIDATE.json | --emit CAPTURE.json PROJECTION.json | --derive-policy CAPTURE.json POLICY.json"
   exit 2
 end
 
 begin
   if ARGV == ["--self-test"]
     run_self_tests
+  elsif ARGV[0] == "--validate-workload"
+    validate_api_workload(
+      parse_yaml_file(ARGV.fetch(1)), parse_json_file(ARGV.fetch(2)),
+      parse_json_file(ARGV.fetch(3)), parse_json_file(ARGV.fetch(4)),
+    )
+    puts "live CMA API workload exactly matches the reviewed manifest contract"
+  elsif ARGV[0] == "--compare-behavior"
+    compare_projection_behavior(
+      parse_json_file(ARGV.fetch(1)), parse_json_file(ARGV.fetch(2)),
+    )
+    puts "restored full projection matches the sealed source behavior"
   elsif ARGV[0] == "--derive-policy"
     capture = parse_json_file(ARGV.fetch(1))
     assert!(capture.is_a?(Hash) && capture["schemaVersion"] == 1 &&

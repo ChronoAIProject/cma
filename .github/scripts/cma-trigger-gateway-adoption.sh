@@ -20,7 +20,7 @@ readonly CMA_GATEWAY_CHECK_TIMEOUT="90s"
 readonly CMA_GATEWAY_COMMAND_TIMEOUT="25s"
 readonly CMA_GATEWAY_WAIT_SECONDS=900
 readonly CMA_GATEWAY_OBJECTS="cma-api-route cma-web-route cma-http-redirect-route cma-api-health"
-readonly CMA_GATEWAY_SOURCE_PATHS="infra/api/healthcheckpolicy.yaml infra/api/httproute.yaml infra/api/cutover-fence-policy.yaml .github/scripts/cma-trigger-gateway-source-contract.rb .github/scripts/cma-trigger-gateway-admission-bootstrap.sh .github/scripts/cma-trigger-gateway-projection.rb .github/scripts/cma-trigger-gateway-projection.sh .github/scripts/cma-trigger-gateway-tls-sanitize.rb .github/scripts/cma-trigger-gateway-live-policy.json .github/scripts/cma-trigger-gateway-cloudflare-capture.sh .github/scripts/cma-trigger-gateway-cloudflare-policy.json .github/scripts/cma-trigger-gateway-origin-evidence.sh .github/scripts/cma-trigger-gateway-launch.sh .github/scripts/cma-trigger-gateway-state.sh .github/scripts/cma-trigger-gateway-adoption.sh .github/scripts/cma-trigger-gateway-restore-traffic.sh"
+readonly CMA_GATEWAY_SOURCE_PATHS="infra/api/healthcheckpolicy.yaml infra/api/httproute.yaml infra/api/deployment.yaml infra/web/deployment.yaml infra/api/configmap.yaml .github/scripts/cma-trigger-gateway-cutover-fence-policy.yaml .github/scripts/cma-trigger-gateway-source-contract.rb .github/scripts/cma-trigger-gateway-admission-bootstrap.sh .github/scripts/cma-trigger-gateway-projection.rb .github/scripts/cma-trigger-gateway-projection.sh .github/scripts/cma-trigger-gateway-tls-sanitize.rb .github/scripts/cma-trigger-gateway-live-policy.json .github/scripts/cma-trigger-gateway-cloudflare-capture.sh .github/scripts/cma-trigger-gateway-cloudflare-policy.json .github/scripts/cma-trigger-gateway-origin-evidence.sh .github/scripts/cma-trigger-gateway-launch.sh .github/scripts/cma-trigger-gateway-state.sh .github/scripts/cma-trigger-gateway-adoption.sh .github/scripts/cma-trigger-gateway-restore-traffic.sh"
 readonly CMA_GATEWAY_PRODUCTION_MUTATION_ENABLED=0
 
 CMA_GATEWAY_MUTATED=0
@@ -32,6 +32,7 @@ CMA_GATEWAY_ROLLBACK_SEALED=0
 CMA_GATEWAY_DESIRED_DIR=""
 CMA_GATEWAY_DESIRED_SHA256=""
 CMA_GATEWAY_SOURCE_SHA256=""
+CMA_GATEWAY_RELEASE_TAG=""
 
 cma_gateway_die() {
   printf 'cma-trigger Gateway adoption: %s\n' "$*" >&2
@@ -40,6 +41,12 @@ cma_gateway_die() {
 
 cma_gateway_capture_projection() {
   "${CMA_GATEWAY_PROJECTION_CAPTURE}" "$@"
+}
+
+cma_gateway_compare_projection_behavior() {
+  timeout --signal=TERM --kill-after=2s 15s env -i \
+    PATH="${PATH}" LC_ALL=C ruby --disable-gems \
+    "${CMA_GATEWAY_PROJECTION_CONTRACT}" --compare-behavior "$1" "$2" >/dev/null
 }
 
 cma_gateway_verify_admission_receipt() {
@@ -152,6 +159,34 @@ cma_gateway_file_mode() {
   stat -c '%a' "${source_path}"
 }
 
+cma_gateway_resolve_release_tag() {
+  local release_revision="$1"
+  local tag_record tag_name tag_object_type peeled_object_type peeled_revision
+
+  tag_record="$(timeout 10s git --no-replace-objects for-each-ref \
+    --points-at "${release_revision}" \
+    --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' \
+    'refs/tags/v*')" || return 1
+  [[ "${tag_record}" != *$'\n'* ]] || return 1
+  IFS='|' read -r tag_name tag_object_type peeled_object_type peeled_revision \
+    <<<"${tag_record}"
+  [[ "${tag_name}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && \
+    "${tag_object_type}" == tag && "${peeled_object_type}" == commit && \
+    "${peeled_revision}" == "${release_revision}" ]] || return 1
+  printf '%s\n' "${tag_name}"
+}
+
+cma_gateway_require_confirmation() {
+  local action="$1"
+  local scope="$2"
+  local expected_confirmation="${action}-${CMA_GATEWAY_RELEASE_TAG}-${scope}"
+
+  [[ -n "${CMA_GATEWAY_RELEASE_TAG}" && \
+    "${CMA_GATEWAY_CONFIRM:-}" == "${expected_confirmation}" ]] || \
+    cma_gateway_die \
+      "CMA_GATEWAY_CONFIRM must equal ${expected_confirmation}, derived from the reviewed release tag"
+}
+
 cma_gateway_kubectl() {
   timeout --signal=TERM --kill-after=5s "${CMA_GATEWAY_COMMAND_TIMEOUT}" \
     kubectl --request-timeout=15s --context "${CMA_GATEWAY_CONTEXT}" \
@@ -207,6 +242,10 @@ cma_gateway_require_checkout() {
     cma_gateway_die "the checkout HEAD could not be resolved"
   [[ "${head_revision}" == "${CMA_GATEWAY_RELEASE_REVISION}" ]] || \
     cma_gateway_die "the checkout is not the reviewed release revision"
+  CMA_GATEWAY_RELEASE_TAG="$(cma_gateway_resolve_release_tag \
+    "${CMA_GATEWAY_RELEASE_REVISION}")" || \
+    cma_gateway_die \
+      "the reviewed release revision must have exactly one annotated SemVer release tag"
   dirty_paths="$(timeout 10s git --no-replace-objects \
     -c core.fsmonitor=false -c core.hooksPath=/dev/null \
     status --porcelain=v1 --untracked-files=all)" || \
@@ -254,6 +293,7 @@ cma_gateway_require_checkout() {
 }
 
 cma_gateway_validate_projection_receipt() {
+  local require_live="${1:-1}"
   local projection_dir projection_file projection_digest_file
   local entry_count recorded_digest live_digest work_dir candidate_file projection_entry
 
@@ -299,9 +339,35 @@ cma_gateway_validate_projection_receipt() {
     cma_gateway_die "closed projection capture failed its reviewed contract"
   cmp "${candidate_file}" "${projection_file}" >/dev/null || \
     cma_gateway_die "projection receipt was not derived from its sealed capture"
+  jq -se '
+    length == 2 and
+    all(.[];
+      .schemaVersion == 1 and .mode == "source" and
+      .lifecycle == {stage:"source",predecessorSha256:"genesis"})
+  ' "${projection_dir}/capture.json" "${projection_file}" >/dev/null || \
+    cma_gateway_die "projection receipt is not the pre-adoption source/genesis lifecycle root"
   rm -rf "${work_dir}"
-  "${CMA_GATEWAY_PROJECTION_CAPTURE}" --check-live "${projection_file}" >/dev/null || \
-    cma_gateway_die "live Gateway graph no longer equals the reviewed closed projection"
+  if [[ "${require_live}" == 1 ]]; then
+    "${CMA_GATEWAY_PROJECTION_CAPTURE}" --check-live "${projection_file}" >/dev/null || \
+      cma_gateway_die "live Gateway graph no longer equals the reviewed closed projection"
+  elif [[ "${require_live}" != 0 ]]; then
+    cma_gateway_die "projection receipt validation mode is invalid"
+  fi
+}
+
+cma_gateway_validate_restored_projection() {
+  local restore_dir="$1"
+  local rollback_projection_dir="${restore_dir}/rollback-source-projection"
+  local source_projection="${CMA_GATEWAY_PROJECTION_DIR}/projection.json"
+
+  cma_gateway_validate_projection_receipt 0 || return 1
+  CMA_GATEWAY_PROJECTION_STAGE=rollback-source \
+    CMA_GATEWAY_PROJECTION_PREDECESSOR_SHA256="${CMA_GATEWAY_PROJECTION_SHA256}" \
+    cma_gateway_capture_projection \
+      --capture "${rollback_projection_dir}" source >/dev/null || return 1
+  cma_gateway_assert_source_seal || return 1
+  cma_gateway_compare_projection_behavior \
+    "${source_projection}" "${rollback_projection_dir}/projection.json"
 }
 
 cma_gateway_assert_source_seal() {
@@ -831,7 +897,8 @@ cma_gateway_restore() {
   # exact rollback. Only the effective source-state proof decides success.
   if ! cma_gateway_wait_for_state snapshot "${snapshot_dir}" || \
      ! cma_gateway_probe_old_images "${expected_status}" || \
-     ! cma_gateway_check --check-snapshot "${snapshot_dir}" >/dev/null; then
+     ! cma_gateway_check --check-snapshot "${snapshot_dir}" >/dev/null || \
+     ! cma_gateway_validate_restored_projection "${restore_dir}"; then
     rm -rf "${restore_dir}" >/dev/null 2>&1 || :
     return 1
   fi
@@ -907,15 +974,15 @@ cma_gateway_on_signal() {
 
 cma_gateway_adopt() {
   local expected_status object_name adopted_projection_parent adopted_projection_dir
+  local adopted_projection_sha256
 
   unset CURL_CA_BUNDLE CURL_SSL_BACKEND SSL_CERT_DIR SSL_CERT_FILE SSLKEYLOGFILE
-  [[ "${CMA_GATEWAY_CONFIRM:-}" == adopt-v0.10-route ]] || \
-    cma_gateway_die "set CMA_GATEWAY_CONFIRM=adopt-v0.10-route for authorized adoption"
   cma_gateway_require_privileged_bash
   cma_gateway_require_production_mutation_enabled || \
     cma_gateway_die "the production mutation gate could not be proved"
   cma_gateway_require_checkout || \
     cma_gateway_die "the reviewed release checkout could not be proved"
+  cma_gateway_require_confirmation adopt route
   trap 'cma_gateway_on_exit "$?"' EXIT
   trap cma_gateway_on_signal HUP INT QUIT TERM
   cma_gateway_prepare_desired || \
@@ -995,10 +1062,19 @@ cma_gateway_adopt() {
     cma_gateway_die "the reviewed source bundle drifted during adopted projection capture"
   [[ -f "${adopted_projection_dir}/projection.sha256" ]] || \
     cma_gateway_die "the adopted projection digest receipt is absent"
+  adopted_projection_sha256="$(awk \
+    'NF == 2 && $2 == "projection.json" {print $1}' \
+    "${adopted_projection_dir}/projection.sha256")" || \
+    cma_gateway_die "the adopted projection digest receipt could not be read"
+  cma_gateway_sha256_valid "${adopted_projection_sha256}" || \
+    cma_gateway_die "the adopted projection digest receipt is malformed"
+  [[ "${adopted_projection_sha256}" == \
+    "$(cma_gateway_sha256_file "${adopted_projection_dir}/projection.json")" ]] || \
+    cma_gateway_die "the adopted projection differs from its digest receipt"
 
   trap '' HUP INT QUIT TERM
   printf '%s\n' \
-    "CMA Gateway route and /ready health check are adopted and effective; retain sealed rollback custody at ${CMA_GATEWAY_ROLLBACK_DIR} with SHA-256 ${CMA_GATEWAY_ROLLBACK_SHA256}; adopted projection ${adopted_projection_dir}" || \
+    "CMA Gateway route and /ready health check are adopted and effective; retain sealed rollback custody at ${CMA_GATEWAY_ROLLBACK_DIR} with SHA-256 ${CMA_GATEWAY_ROLLBACK_SHA256}; adopted projection ${adopted_projection_dir}; SHA-256 ${adopted_projection_sha256}; predecessor SHA-256 ${CMA_GATEWAY_PROJECTION_SHA256}" || \
     cma_gateway_die "the successful Gateway adoption could not be acknowledged"
   CMA_GATEWAY_MUTATED=0
   trap - EXIT
@@ -1013,8 +1089,6 @@ cma_gateway_manual_restore() {
   local snapshot_dir="$1"
 
   unset CURL_CA_BUNDLE CURL_SSL_BACKEND SSL_CERT_DIR SSL_CERT_FILE SSLKEYLOGFILE
-  [[ "${CMA_GATEWAY_CONFIRM:-}" == restore-v0.10-route ]] || \
-    cma_gateway_die "set CMA_GATEWAY_CONFIRM=restore-v0.10-route for authorized restore"
   [[ "${CMA_GATEWAY_ROLLBACK_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || \
     cma_gateway_die "set CMA_GATEWAY_ROLLBACK_SHA256 to the printed snapshot seal"
   cma_gateway_require_privileged_bash
@@ -1022,6 +1096,15 @@ cma_gateway_manual_restore() {
     cma_gateway_die "the production mutation gate could not be proved"
   cma_gateway_require_checkout || \
     cma_gateway_die "the reviewed release checkout could not be proved"
+  cma_gateway_require_confirmation restore route
+  [[ "${CMA_GATEWAY_ADMISSION_RECEIPT:-}" == /* && \
+    "${CMA_GATEWAY_ADMISSION_RECEIPT_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || \
+    cma_gateway_die \
+      "manual restore requires the durable admission receipt and its externally recorded digest"
+  cma_gateway_verify_admission_receipt || \
+    cma_gateway_die "the durable admission receipt/live enforcement proof failed before restore"
+  cma_gateway_validate_projection_receipt 0 || \
+    cma_gateway_die "the sealed source projection input could not be validated before restore"
   cma_gateway_prepare_desired || \
     cma_gateway_die "the desired Gateway bundle could not be prepared"
   CMA_GATEWAY_ROLLBACK_DIR="${snapshot_dir}"
@@ -1059,12 +1142,12 @@ cma_gateway_self_test() {
 cma_gateway_usage() {
   cat >&2 <<'USAGE'
 usage:
-  CMA_GATEWAY_RELEASE_REVISION=<40-hex> CMA_GATEWAY_CONFIRM=adopt-v0.10-route \
+  CMA_GATEWAY_RELEASE_REVISION=<40-hex> CMA_GATEWAY_CONFIRM=adopt-<release-tag>-route \
     CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer \
     CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT=<durable-absolute-directory> \
     CMA_GATEWAY_ROLLBACK_CUSTODY_CONFIRM=durable-off-host \
     cma-trigger-gateway-launch.sh adoption --adopt
-  CMA_GATEWAY_RELEASE_REVISION=<40-hex> CMA_GATEWAY_CONFIRM=restore-v0.10-route \
+  CMA_GATEWAY_RELEASE_REVISION=<40-hex> CMA_GATEWAY_CONFIRM=restore-<release-tag>-route \
     CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer \
     CMA_GATEWAY_ROLLBACK_SHA256=<64-hex> \
     cma-trigger-gateway-launch.sh adoption --restore ROLLBACK_DIR

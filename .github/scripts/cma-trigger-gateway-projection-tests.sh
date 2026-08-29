@@ -113,7 +113,7 @@ cma_projection_capture_state() {
 }
 
 predecessor_digest=genesis
-for lifecycle_stage in source adopted fenced-pre-scale fenced-post-scale fenced-pre-reopen final-reopen; do
+for lifecycle_stage in source adopted fenced-pre-scale fenced-post-scale fenced-pre-reopen final-reopen rollback-source; do
   lifecycle_dir="${TEST_ROOT}/${lifecycle_stage}"
   lifecycle_mode=source
   [[ "${lifecycle_stage}" == fenced-* ]] && lifecycle_mode=fenced
@@ -129,6 +129,31 @@ for lifecycle_stage in source adopted fenced-pre-scale fenced-post-scale fenced-
   [[ "$(cma_projection_sha256_file "${lifecycle_dir}/projection.json")" == "${first_digest}" ]]
   predecessor_digest="${first_digest}"
 done
+
+eval "$(declare -f cma_projection_sync_published_directory |
+  sed '1s/^cma_projection_sync_published_directory /cma_test_real_projection_sync_published_directory /')"
+original_projection_sync_definition="$(declare -f cma_projection_sync_published_directory)"
+publication_fsync_marker="${TEST_ROOT}/publication-fsync-failed"
+cma_projection_sync_published_directory() {
+  if [[ "$1" == "${TEST_ROOT}/rename-fsync-recovery" && \
+        ! -e "${publication_fsync_marker}" ]]; then
+    : > "${publication_fsync_marker}"
+    return 1
+  fi
+  cma_test_real_projection_sync_published_directory "$@"
+}
+CMA_GATEWAY_PROJECTION_STAGE=fenced-pre-scale
+CMA_GATEWAY_PROJECTION_PREDECESSOR_SHA256="$(jq -er .lifecycle.predecessorSha256 \
+  "${TEST_ROOT}/fenced-pre-scale/projection.json")"
+export CMA_GATEWAY_PROJECTION_STAGE CMA_GATEWAY_PROJECTION_PREDECESSOR_SHA256
+if (cma_projection_capture "${TEST_ROOT}/rename-fsync-recovery" fenced) \
+    >/dev/null 2>&1; then
+  echo "rename-success/parent-fsync failure was accepted as durable publication" >&2
+  exit 1
+fi
+[[ -d "${TEST_ROOT}/rename-fsync-recovery" && -e "${publication_fsync_marker}" ]]
+cma_projection_capture "${TEST_ROOT}/rename-fsync-recovery" fenced >/dev/null
+eval "${original_projection_sync_definition}"
 
 cp -R "${TEST_ROOT}/fenced-pre-scale" "${TEST_ROOT}/tampered-existing"
 CMA_GATEWAY_PROJECTION_STAGE=fenced-pre-scale
@@ -209,4 +234,4 @@ if (cma_projection_capture "${TEST_ROOT}/symlink-capture" fenced) >/dev/null 2>&
   exit 1
 fi
 
-printf '%s\n' "CMA Trigger Gateway projection tests passed (15 cases)"
+printf '%s\n' "CMA Trigger Gateway projection tests passed (16 cases)"
