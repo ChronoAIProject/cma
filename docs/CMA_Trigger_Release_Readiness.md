@@ -284,7 +284,9 @@ but does not advance this ledger.
 The generic platform release condition from #484 is already satisfied and its
 rate/request-size limits are consumed here. Issue #671 remains the post-MVP
 sponsored-credential boundary and does not gate the contributor-owned public
-MVP.
+MVP. The fixed ConfigMap's dormant sponsorship declarations are a deterministic
+configuration contract only: they do not count as expiry/revocation evidence,
+adapter implementation, secret provisioning, or sponsorship release evidence.
 
 ### Pinned runtime network evidence
 
@@ -681,6 +683,21 @@ enabled by an MVP feature flag:
 - custom organization-role authorization after real provider evidence; and
 - expanded fixture automation that can prove lifecycle safety without deleting
   contributor-owned GitHub resources.
+
+### Sponsorship release ledger (#671)
+
+Do not add these rows to the MVP go/no-go total. They become mandatory only for
+a later sponsorship release, and none is satisfied by accepting the dormant
+configuration parser alone:
+
+| ID | Class | Required evidence | Exit condition |
+| --- | --- | --- | --- |
+| `SP-D-01` | D | Exact dormant, every-enabled-tuple, partial-disabled-tuple, digest/fence, evidence, allowlist, cap-ordering, adapter-origin, worker-bound, file-only secret, redaction, and fixed-manifest tests | Default resolves to no sponsorship runtime; every enabled tuple returns the fixed not-composed refusal, and every partial or invalid disabled staging tuple fails startup without reading or exposing secret fixtures |
+| `SP-S-01` | S | #445/#524/#528 provider expiry and lineage-wide revocation campaign plus #675 restart recovery | Evidence IDs in the gate resolve to reviewed immutable records for the exact provider adapter and deployment |
+| `SP-S-02` | S | Encrypted-store, provider, read-only billing-eligibility, pricing, and reconciliation adapter campaign | Ambiguous operations converge by stable identity, durable database-time fences prevent stale spend, and no adapter is inferred or substituted |
+| `SP-S-03` | S | Quota, token, budget, concurrency, sponsor Launch-rate, expiry, payment failure, provider outage, and emergency-kill campaign at every configured boundary | New spend stops at each boundary; recovery/export remains available; retries neither double-spend nor release capacity twice |
+| `SP-O-01` | S | Two separate read-only Secret Manager projections, least-privilege IAM, rotation/restart drill, and planted-marker capture | Keyring and audit-HMAC material are non-overlapping and absent from Kubernetes Secret data, ConfigMaps, pod environment, logs, traces, browser, prompt, workspace, and sandbox |
+| `SP-M-01` | M | Security, billing, abuse, privacy, and operator review of the exact complete tuple and durable gate epoch | Accountable maintainers record an explicit post-MVP sponsorship go/no-go; public Trigger rollout remains an independent decision |
 
 Automatic merge, branch-protection bypass, upstream writes, and hidden consent
 are not backlog promises; they remain explicit non-goals unless a later product

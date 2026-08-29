@@ -74,6 +74,18 @@ Deferred policy tracks are explicit rather than partially enabled:
 - a GitHub App requires the replacement ADR described in section 8; and
 - #705 may strengthen recipient-side prompt deduplication after the MVP.
 
+The fixed API configuration now declares #671's future deployment boundary, but
+does not compose a sponsorship store, provider, billing adapter, pricing
+adapter, scheduler, or route. Its only production default is
+`CHRONO_SPONSORSHIP_ENABLED=false` with
+`CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED=true`; every evidence, policy, limit,
+adapter, worker, fence, and secret-file key is empty. Any partial staging tuple
+fails CMA startup. Every `CHRONO_SPONSORSHIP_ENABLED=true` configuration also
+fails startup with a fixed instruction to keep sponsorship disabled and
+kill-switched, even when the rest of the tuple is complete. This is dormant
+fail-closed configuration, not partial sponsorship enablement and not evidence
+that #445/#524/#528 or #675 is complete.
+
 The current `ChronoAIProject/cma` repository is internal and has
 forking disabled. It is not an MVP fixture. #673 owns a disposable public
 fixture and public-release evidence.
@@ -1211,6 +1223,27 @@ the same proof in D-09.
       Layer 4 filter, bounded identity binding, and revocation wording.
 - [ ] Runbook, alerts, retention/deletion policy, rollback, and staged feature
       flags have named owners and have been drilled.
+
+### Enable post-MVP sponsorship (#671)
+
+- [ ] #445/#524/#528 provides reviewed provider expiry and revocation evidence;
+      #675 proves restart-safe owner recovery. Their evidence identifiers are
+      deployment inputs, not free-form claims invented during rollout.
+- [ ] Encrypted persistence and provider, billing, and pricing adapters are
+      implemented, separately reviewed, and composed. The configuration slice
+      alone cannot issue or spend a grant.
+- [ ] The complete sponsorship gate, per-sponsor/per-Launch ceilings, worker
+      budgets, canonical adapter identities/origins, and matching positive
+      epoch/configuration digest pass the startup contract in the operations
+      runbook.
+- [ ] Separate Secret Manager resources and least-privilege IAM deliver a
+      sponsorship encryption keyring and audit-HMAC key as distinct read-only
+      files. Neither value appears in Kubernetes Secret data, a ConfigMap, pod
+      environment, log, browser, prompt, workspace, or sandbox.
+- [ ] Fault-injected staging proves expiry, revocation, quota, budget,
+      concurrency, abuse-rate, ambiguous billing/provider, durable fencing,
+      secret redaction, and idempotent reconciliation before any public cohort
+      is admitted.
 
 Landed platform work #483, #484, #488, and #489 is consumed rather than
 reimplemented. #705 is a post-MVP strengthening and does not gate this
