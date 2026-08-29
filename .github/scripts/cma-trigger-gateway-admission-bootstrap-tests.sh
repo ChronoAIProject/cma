@@ -56,7 +56,7 @@ cma_admission_test_configure() {
   printf '%s\n' "${initial_state}" > "${case_dir}/state"
   : > "${case_dir}/writes"
   cma_admission_require_production_mutation_enabled() { return 0; }
-  cma_admission_require_checkout() { return 0; }
+  cma_admission_require_checkout() { CMA_GATEWAY_RELEASE_TAG=v1.2.3; }
   cma_admission_source_digest() {
     printf '%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   }
@@ -160,6 +160,7 @@ cma_admission_test_case() {
   local initial_state="$2"
   local expected_status="$3"
   local expected_writes="$4"
+  local confirmation="${5:-bootstrap-v1.2.3-admission}"
   local case_dir="${TEST_ROOT}/${case_name}"
   local actual_status actual_writes
 
@@ -168,7 +169,7 @@ cma_admission_test_case() {
   (
     set -euo pipefail
     export CMA_GATEWAY_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567
-    export CMA_GATEWAY_CONFIRM=bootstrap-v0.10-admission
+    export CMA_GATEWAY_CONFIRM="${confirmation}"
     export CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
     export CMA_GATEWAY_ADMISSION_CUSTODY_CONFIRM=durable-off-host
     export CMA_GATEWAY_ADMISSION_CUSTODY_ROOT="${case_dir}/custody"
@@ -230,6 +231,56 @@ cma_admission_test_production_gate() {
     ' cma-admission-gate "${TEST_ROOT}/admission-gate-open.sh"
 }
 
+cma_admission_test_publication_fsync_recovery() {
+  local case_name=publication-fsync-recovery
+  local case_dir="${TEST_ROOT}/${case_name}"
+  local revision=0123456789abcdef0123456789abcdef01234567
+  local destination_dir first_status
+
+  mkdir -m 700 "${case_dir}" "${case_dir}/custody"
+  destination_dir="${case_dir}/custody/admission-bootstrap-${revision}"
+  set +e
+  (
+    set -euo pipefail
+    export CMA_GATEWAY_RELEASE_REVISION="${revision}"
+    export CMA_GATEWAY_CONFIRM=bootstrap-v1.2.3-admission
+    export CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
+    export CMA_GATEWAY_ADMISSION_CUSTODY_CONFIRM=durable-off-host
+    export CMA_GATEWAY_ADMISSION_CUSTODY_ROOT="${case_dir}/custody"
+    cma_admission_test_configure "${case_name}" "${case_dir}" absent
+    eval "$(declare -f cma_admission_sync_published_directory |
+      sed '1s/^cma_admission_sync_published_directory /cma_admission_test_real_sync /')"
+    cma_admission_sync_published_directory() {
+      if [[ ! -e "${case_dir}/sync-failure.injected" ]]; then
+        : > "${case_dir}/sync-failure.injected"
+        return 1
+      fi
+      cma_admission_test_real_sync "$@"
+    }
+
+    cma_admission_bootstrap
+  ) >"${case_dir}/first.stdout" 2>"${case_dir}/first.stderr"
+  first_status=$?
+  set -e
+  if [[ "${first_status}" -eq 0 || ! -d "${destination_dir}" || \
+        ! -e "${case_dir}/sync-failure.injected" || -s "${case_dir}/first.stdout" ]]; then
+    echo "admission bootstrap accepted rename success followed by fsync failure" >&2
+    return 1
+  fi
+
+  (
+    set -euo pipefail
+    export CMA_GATEWAY_RELEASE_REVISION="${revision}"
+    export CMA_GATEWAY_CONFIRM=bootstrap-v1.2.3-admission
+    export CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
+    export CMA_GATEWAY_ADMISSION_CUSTODY_CONFIRM=durable-off-host
+    export CMA_GATEWAY_ADMISSION_CUSTODY_ROOT="${case_dir}/custody"
+    cma_admission_test_configure "${case_name}" "${case_dir}" both
+    cma_admission_bootstrap >"${case_dir}/retry.stdout"
+    grep -Eq '/receipt\.json\|[0-9a-f]{64}$' "${case_dir}/retry.stdout"
+  )
+}
+
 cma_admission_test_case absent-success absent 0 policy,binding
 cma_admission_test_case policy-partial-retry policy-only 0 binding
 cma_admission_test_case policy-create-ambiguous absent 0 policy,binding
@@ -239,6 +290,8 @@ cma_admission_test_case non-equivalent-policy drift-policy 1 ''
 cma_admission_test_case reserved-pod absent 1 ''
 cma_admission_test_case wrong-denial absent 1 policy,binding
 cma_admission_test_case persisted-admitted absent 1 policy,binding
+cma_admission_test_case confirmation-mismatch absent 1 '' bootstrap-v9.9.9-admission
+cma_admission_test_publication_fsync_recovery
 cma_admission_test_production_gate
 
-printf '%s\n' "CMA Trigger Gateway admission-bootstrap tests passed (10 cases)"
+printf '%s\n' "CMA Trigger Gateway admission-bootstrap tests passed (12 cases)"

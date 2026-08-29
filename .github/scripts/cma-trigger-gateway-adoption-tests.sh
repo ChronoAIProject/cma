@@ -299,6 +299,8 @@ cma_gateway_require_checkout() {
   cma_gateway_sha256_valid "${CMA_GATEWAY_SOURCE_SHA256}" || \
     cma_gateway_die "the test source bundle hash is malformed"
   export CMA_GATEWAY_SOURCE_SHA256
+  # shellcheck disable=SC2034 # Consumed dynamically by the sourced confirmation gate.
+  CMA_GATEWAY_RELEASE_TAG=v1.2.3
 }
 
 cma_gateway_require_production_mutation_enabled() {
@@ -306,7 +308,16 @@ cma_gateway_require_production_mutation_enabled() {
 }
 
 cma_gateway_validate_projection_receipt() {
-  return 0
+  printf '%s\n' projection-preflight >>"${CMA_TEST_CASE_DIR}/projection-validations.log"
+  case "${CMA_TEST_CASE}" in
+    manual_projection_missing) [[ -n "${CMA_GATEWAY_PROJECTION_DIR:-}" ]] ;;
+    manual_projection_tampered)
+      [[ "${CMA_GATEWAY_PROJECTION_SHA256:-}" == \
+        0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ]]
+      ;;
+    manual_projection_adopted | manual_projection_final_reopen) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 cma_gateway_verify_admission_receipt() {
@@ -315,19 +326,29 @@ cma_gateway_verify_admission_receipt() {
 
 cma_test_projection_capture() {
   local output_dir="$2"
-  [[ "${CMA_GATEWAY_PROJECTION_STAGE:-}" == adopted && \
-    "${CMA_GATEWAY_PROJECTION_PREDECESSOR_SHA256:-}" == \
-      "${CMA_GATEWAY_PROJECTION_SHA256:-}" ]] || return 1
+  local projection_digest
+  case "${CMA_GATEWAY_PROJECTION_STAGE:-}" in
+    adopted | rollback-source)
+      [[ "${CMA_GATEWAY_PROJECTION_PREDECESSOR_SHA256:-}" == \
+        "${CMA_GATEWAY_PROJECTION_SHA256:-}" ]] || return 1
+      ;;
+    *) return 1 ;;
+  esac
   mkdir -p "${output_dir}"
   printf '%s\n' '{}' >"${output_dir}/capture.json"
   printf '%s\n' '{}' >"${output_dir}/projection.json"
-  printf '%s  projection.json\n' \
-    0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  projection_digest="$(cma_gateway_sha256_file "${output_dir}/projection.json")" || return 1
+  printf '%s  projection.json\n' "${projection_digest}" \
     >"${output_dir}/projection.sha256"
 }
 
 cma_gateway_capture_projection() {
   cma_test_projection_capture "$@"
+}
+
+cma_gateway_compare_projection_behavior() {
+  printf '%s\n' compare >>"${CMA_TEST_CASE_DIR}/projection-comparisons.log"
+  [[ "${CMA_TEST_CASE}" != rollback_projection_failure ]]
 }
 
 cma_gateway_source_contract() {
@@ -678,6 +699,7 @@ cma_gateway_replace_cas() {
       forward_cma_web_route) failed_object=cma-web-route ;;
       forward_cma_http_redirect_route) failed_object=cma-http-redirect-route ;;
       rollback_one_failure | rollback_reported_failure_all_attempted | \
+        rollback_projection_failure | \
         restore_mktemp_failure | signal_int_rollback | signal_term_rollback | \
         signal_quit_rollback)
         failed_object=cma-http-redirect-route
@@ -1007,7 +1029,7 @@ cma_test_assert_privileged_startup_is_closed() {
     CMA_GATEWAY_STARTUP_SENTINEL=privileged-adoption-startup-sentinel \
     CMA_STARTUP_MARKER="${startup_marker}" \
     CMA_FUNCTION_MARKER="${function_marker}" \
-    CMA_GATEWAY_CONFIRM=adopt-v0.10-route \
+    CMA_GATEWAY_CONFIRM=adopt-v1.2.3-route \
     'BASH_FUNC_umask%%=() { : > "${CMA_FUNCTION_MARKER}"; builtin umask "$@"; }' \
     "${CMA_TEST_ADOPTION_SCRIPT}" --adopt \
       >"${CMA_TEST_CASE_DIR}/startup.stdout" \
@@ -1049,7 +1071,10 @@ cma_test_run_manual_restore_case() {
     rollback_cross_invalid_path | conditional_manual_postwrite_failure)
       printf '%s\n' /startup > "${CMA_TEST_CASE_DIR}/effective-health-path"
       ;;
-    manual_restore_success | manual_restore_quit | manual_success_output_failure)
+    manual_restore_success | manual_restore_quit | manual_success_output_failure | \
+      manual_admission_missing | \
+      manual_projection_missing | manual_projection_tampered | \
+      manual_projection_adopted | manual_projection_final_reopen)
       if [[ "${case_name}" == manual_success_output_failure ]]; then
         cma_test_install_snapshot_output_failure manual
       fi
@@ -1057,11 +1082,19 @@ cma_test_run_manual_restore_case() {
     *) return 1 ;;
   esac
 
-  CMA_GATEWAY_CONFIRM=restore-v0.10-route
+  CMA_GATEWAY_CONFIRM=restore-v1.2.3-route
   CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
   CMA_GATEWAY_ROLLBACK_SHA256="${CMA_TEST_SNAPSHOT_DIGEST}"
   export CMA_GATEWAY_CONFIRM CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM
   export CMA_GATEWAY_ROLLBACK_SHA256
+  if [[ "${case_name}" == manual_admission_missing ]]; then
+    unset CMA_GATEWAY_ADMISSION_RECEIPT CMA_GATEWAY_ADMISSION_RECEIPT_SHA256
+  elif [[ "${case_name}" == manual_projection_missing ]]; then
+    unset CMA_GATEWAY_PROJECTION_DIR
+  elif [[ "${case_name}" == manual_projection_tampered ]]; then
+    CMA_GATEWAY_PROJECTION_SHA256="$(printf '0%.0s' {1..64})"
+    export CMA_GATEWAY_PROJECTION_SHA256
+  fi
   if [[ "${case_name}" == conditional_manual_postwrite_failure ]]; then
     if cma_gateway_manual_restore "${snapshot_dir}"; then
       : >"${CMA_TEST_CASE_DIR}/conditional-call-returned"
@@ -1076,12 +1109,80 @@ cma_test_run_manual_restore_case() {
   cma_test_write_manual_restore_state
 }
 
+cma_test_assert_release_tag_resolution() {
+  local repository="${CMA_TEST_CASE_DIR}/release-tag-repository"
+  local previous_revision reviewed_revision observed_tag
+
+  mkdir "${repository}"
+  git -C "${repository}" init -q
+  git -C "${repository}" config user.name cma-release-test
+  git -C "${repository}" config user.email cma-release-test@example.invalid
+  printf '%s\n' previous >"${repository}/fixture"
+  git -C "${repository}" add fixture
+  git -C "${repository}" commit -q -m previous
+  previous_revision="$(git -C "${repository}" rev-parse HEAD)"
+  printf '%s\n' reviewed >"${repository}/fixture"
+  git -C "${repository}" add fixture
+  git -C "${repository}" commit -q -m reviewed
+  reviewed_revision="$(git -C "${repository}" rev-parse HEAD)"
+
+  if (cd "${repository}" && \
+      cma_gateway_resolve_release_tag "${reviewed_revision}" >/dev/null 2>&1); then
+    cma_test_fail "release-tag resolver accepted a revision with no tag"
+  fi
+
+  git -C "${repository}" tag v1.2.3 "${reviewed_revision}"
+  if (cd "${repository}" && \
+      cma_gateway_resolve_release_tag "${reviewed_revision}" >/dev/null 2>&1); then
+    cma_test_fail "release-tag resolver accepted a lightweight tag"
+  fi
+  git -C "${repository}" tag -d v1.2.3 >/dev/null
+
+  git -C "${repository}" tag -a v01.2.3 -m malformed "${reviewed_revision}"
+  if (cd "${repository}" && \
+      cma_gateway_resolve_release_tag "${reviewed_revision}" >/dev/null 2>&1); then
+    cma_test_fail "release-tag resolver accepted malformed SemVer"
+  fi
+  git -C "${repository}" tag -d v01.2.3 >/dev/null
+
+  git -C "${repository}" tag -a v1.2.3 -m other-commit "${previous_revision}"
+  if (cd "${repository}" && \
+      cma_gateway_resolve_release_tag "${reviewed_revision}" >/dev/null 2>&1); then
+    cma_test_fail "release-tag resolver accepted a tag on another commit"
+  fi
+  git -C "${repository}" tag -d v1.2.3 >/dev/null
+
+  git -C "${repository}" tag -a v1.2.3 -m reviewed "${reviewed_revision}"
+  observed_tag="$(cd "${repository}" && \
+    cma_gateway_resolve_release_tag "${reviewed_revision}")" || \
+    cma_test_fail "release-tag resolver rejected one annotated SemVer tag"
+  [[ "${observed_tag}" == v1.2.3 ]] || \
+    cma_test_fail "release-tag resolver returned an unexpected tag"
+
+  git -C "${repository}" tag -a v1.2.4 -m duplicate "${reviewed_revision}"
+  if (cd "${repository}" && \
+      cma_gateway_resolve_release_tag "${reviewed_revision}" >/dev/null 2>&1); then
+    cma_test_fail "release-tag resolver accepted multiple annotated SemVer tags"
+  fi
+
+  if (
+    cd "${repository}"
+    # shellcheck disable=SC2329 # The resolver invokes this command override indirectly.
+    timeout() {
+      printf '%s\n' "v1.2.3|tag|commit|${previous_revision}"
+    }
+    cma_gateway_resolve_release_tag "${reviewed_revision}" >/dev/null 2>&1
+  ); then
+    cma_test_fail "release-tag resolver accepted a record peeled to another commit"
+  fi
+}
+
 cma_test_run_scenario() {
   local case_name="$1"
   local case_dir="$2"
   local snapshot_dir
   local test_check test_kubectl test_mutation_gate test_probe test_replace test_require
-  local test_source_contract test_projection test_admission
+  local test_source_contract test_projection test_admission test_compare_projection
   local test_capture_projection
   local test_restore_one test_wait
 
@@ -1101,6 +1202,7 @@ cma_test_run_scenario() {
   test_projection="$(declare -f cma_gateway_validate_projection_receipt)"
   test_admission="$(declare -f cma_gateway_verify_admission_receipt)"
   test_capture_projection="$(declare -f cma_gateway_capture_projection)"
+  test_compare_projection="$(declare -f cma_gateway_compare_projection_behavior)"
   test_restore_one="$(declare -f cma_gateway_restore_one)"
   test_wait="$(declare -f cma_gateway_wait_for_state)"
   # shellcheck disable=SC1090
@@ -1130,6 +1232,7 @@ cma_test_run_scenario() {
   eval "${test_projection}"
   eval "${test_admission}"
   eval "${test_capture_projection}"
+  eval "${test_compare_projection}"
   eval "${test_restore_one}"
   eval "${test_wait}"
   umask 077
@@ -1138,10 +1241,18 @@ cma_test_run_scenario() {
   CMA_GATEWAY_ADOPTED_PROJECTION_PARENT="${CMA_TEST_CASE_DIR}/adopted-projections"
   CMA_GATEWAY_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567
   CMA_GATEWAY_PROJECTION_SHA256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  CMA_GATEWAY_PROJECTION_DIR=/test/pre-adoption-projection
+  CMA_GATEWAY_ADMISSION_RECEIPT=/test/admission-receipt/receipt.json
+  CMA_GATEWAY_ADMISSION_RECEIPT_SHA256=abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd
   export CMA_GATEWAY_ADOPTED_PROJECTION_PARENT CMA_GATEWAY_RELEASE_REVISION
   export CMA_GATEWAY_PROJECTION_SHA256
+  export CMA_GATEWAY_PROJECTION_DIR
+  export CMA_GATEWAY_ADMISSION_RECEIPT CMA_GATEWAY_ADMISSION_RECEIPT_SHA256
 
   case "${case_name}" in
+    release_tag_resolution)
+      cma_test_assert_release_tag_resolution
+      ;;
     seal_baseline | tampered_snapshot | extra_snapshot_entry | \
       symlinked_snapshot_file | symlinked_snapshot_directory)
       cma_test_run_direct_seal_case "${case_name}"
@@ -1174,7 +1285,7 @@ cma_test_run_scenario() {
       ;;
     hash_failure_adopt)
       cma_test_install_hash_failure infra/api/httproute.yaml
-      CMA_GATEWAY_CONFIRM=adopt-v0.10-route
+      CMA_GATEWAY_CONFIRM=adopt-v1.2.3-route
       CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
       CMA_GATEWAY_ROLLBACK_CUSTODY_CONFIRM=durable-off-host
       CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT="${CMA_TEST_CASE_DIR}/custody"
@@ -1187,7 +1298,7 @@ cma_test_run_scenario() {
       snapshot_output_failure_acknowledgement)
       cma_test_install_snapshot_output_failure \
         "${case_name#snapshot_output_failure_}"
-      CMA_GATEWAY_CONFIRM=adopt-v0.10-route
+      CMA_GATEWAY_CONFIRM=adopt-v1.2.3-route
       CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
       CMA_GATEWAY_ROLLBACK_CUSTODY_CONFIRM=durable-off-host
       CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT="${CMA_TEST_CASE_DIR}/custody"
@@ -1198,7 +1309,7 @@ cma_test_run_scenario() {
       ;;
     adoption_success_output_failure)
       cma_test_install_snapshot_output_failure adoption
-      CMA_GATEWAY_CONFIRM=adopt-v0.10-route
+      CMA_GATEWAY_CONFIRM=adopt-v1.2.3-route
       CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
       CMA_GATEWAY_ROLLBACK_CUSTODY_CONFIRM=durable-off-host
       CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT="${CMA_TEST_CASE_DIR}/custody"
@@ -1208,12 +1319,12 @@ cma_test_run_scenario() {
       cma_gateway_adopt
       ;;
     production_gate_adopt)
-      CMA_GATEWAY_CONFIRM=adopt-v0.10-route
+      CMA_GATEWAY_CONFIRM=adopt-v1.2.3-route
       export CMA_GATEWAY_CONFIRM
       cma_gateway_adopt
       ;;
     production_gate_restore)
-      CMA_GATEWAY_CONFIRM=restore-v0.10-route
+      CMA_GATEWAY_CONFIRM=restore-v1.2.3-route
       CMA_GATEWAY_ROLLBACK_SHA256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       export CMA_GATEWAY_CONFIRM CMA_GATEWAY_ROLLBACK_SHA256
       cma_gateway_manual_restore "${CMA_TEST_CASE_DIR}/never-read-snapshot"
@@ -1223,20 +1334,22 @@ cma_test_run_scenario() {
       cma_test_make_snapshot "${snapshot_dir}"
       CMA_GATEWAY_ROLLBACK_SHA256="$(printf '0%.0s' {1..64})"
       [[ "${CMA_GATEWAY_ROLLBACK_SHA256}" != "${CMA_TEST_SNAPSHOT_DIGEST}" ]]
-      CMA_GATEWAY_CONFIRM=restore-v0.10-route
+      CMA_GATEWAY_CONFIRM=restore-v1.2.3-route
       CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
       export CMA_GATEWAY_CONFIRM CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM
       export CMA_GATEWAY_ROLLBACK_SHA256
       cma_gateway_manual_restore "${snapshot_dir}"
       ;;
-    manual_restore_success | manual_restore_quit | \
+    manual_restore_success | manual_restore_quit | manual_admission_missing | \
+      manual_projection_missing | manual_projection_tampered | \
+      manual_projection_adopted | manual_projection_final_reopen | \
       rollback_cross_policy_ready_effective_livez | \
       rollback_cross_policy_livez_effective_ready | rollback_cross_invalid_path | \
       conditional_manual_postwrite_failure | manual_success_output_failure)
       cma_test_run_manual_restore_case "${case_name}"
       ;;
     success)
-      CMA_GATEWAY_CONFIRM=adopt-v0.10-route
+      CMA_GATEWAY_CONFIRM=adopt-v1.2.3-route
       CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer
       CMA_GATEWAY_ROLLBACK_CUSTODY_CONFIRM=durable-off-host
       CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT="${CMA_TEST_CASE_DIR}/custody"
@@ -1247,7 +1360,11 @@ cma_test_run_scenario() {
       cma_test_write_success_state
       ;;
     *)
-      CMA_GATEWAY_CONFIRM=adopt-v0.10-route
+      if [[ "${case_name}" == release_confirmation_failure ]]; then
+        CMA_GATEWAY_CONFIRM=adopt-v9.9.9-route
+      else
+        CMA_GATEWAY_CONFIRM=adopt-v1.2.3-route
+      fi
       if [[ "${case_name}" == exclusive_confirmation_failure ]]; then
         CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=""
       else
@@ -1338,7 +1455,8 @@ cma_test_assert_failure_case() {
       cma_test_assert_empty_file \
         "${case_dir}/rollback-attempts.log" "mutated dry-run rollback attempts"
       ;;
-    production_gate_adopt | production_gate_restore | exclusive_confirmation_failure)
+    production_gate_adopt | production_gate_restore | exclusive_confirmation_failure | \
+      release_confirmation_failure)
       cma_test_assert_empty_file \
         "${case_dir}/writes.log" "unattested adoption writes"
       cma_test_assert_empty_file \
@@ -1393,6 +1511,24 @@ cma_test_assert_failure_case() {
       cma_test_assert_empty_file \
         "${case_dir}/writes.log" "wrong-digest restore writes"
       ;;
+    manual_admission_missing)
+      cma_test_assert_empty_file \
+        "${case_dir}/writes.log" "missing-admission restore writes"
+      cma_test_assert_empty_file \
+        "${case_dir}/rollback-attempts.log" "missing-admission restore attempts"
+      [[ ! -e "${case_dir}/projection-validations.log" ]] || \
+        cma_test_fail \
+          "missing-admission restore reached source projection validation"
+      ;;
+    manual_projection_missing | manual_projection_tampered | \
+      manual_projection_adopted | manual_projection_final_reopen)
+      cma_test_assert_empty_file \
+        "${case_dir}/writes.log" "invalid-projection restore writes"
+      cma_test_assert_empty_file \
+        "${case_dir}/rollback-attempts.log" "invalid-projection restore attempts"
+      cma_test_assert_line_count \
+        "${case_dir}/projection-validations.log" 1 "source projection preflight validations"
+      ;;
     rollback_cross_invalid_path | conditional_manual_postwrite_failure)
       [[ ! -e "${case_dir}/conditional-call-returned" ]] || \
         cma_test_fail "conditional manual restore returned past a fatal failure"
@@ -1411,6 +1547,12 @@ cma_test_assert_failure_case() {
       [[ -e "${case_dir}/rollback-failure.injected" ]] || \
         cma_test_fail "reported rollback failure was not injected"
       cma_test_assert_rollback_order "${case_dir}/rollback-attempts.log"
+      ;;
+    rollback_projection_failure)
+      cma_test_assert_rollback_order "${case_dir}/rollback-attempts.log"
+      cma_test_assert_line_count \
+        "${case_dir}/projection-comparisons.log" 1 \
+        "failed full rollback-projection comparisons"
       ;;
     restore_mktemp_failure)
       [[ -e "${case_dir}/mktemp-failure.injected" ]] || \
@@ -1522,6 +1664,12 @@ cma_test_assert_failure_case() {
       cma_test_assert_cluster_matches \
         "${case_dir}/cluster" "${case_dir}/legacy-fixture" \
         "${case_dir}/assert-wrong-digest"
+      ;;
+    manual_admission_missing | manual_projection_missing | manual_projection_tampered | \
+      manual_projection_adopted | manual_projection_final_reopen)
+      cma_test_assert_cluster_matches \
+        "${case_dir}/cluster" "${case_dir}/desired-fixture" \
+        "${case_dir}/assert-invalid-projection-preflight"
       ;;
     *)
       cma_test_assert_cluster_matches \
@@ -1635,7 +1783,7 @@ cma_test_run_internal() {
   printf '%s\n' "${scenario_status}" > "${case_dir}/status"
 
   case "${case_name}" in
-    seal_baseline | tampered_snapshot | extra_snapshot_entry | \
+    release_tag_resolution | seal_baseline | tampered_snapshot | extra_snapshot_entry | \
       symlinked_snapshot_file | symlinked_snapshot_directory | \
       hash_failure_seal | success | \
       signal_disposition_order | late_wait_modes | privileged_startup | \
@@ -1664,6 +1812,7 @@ cma_test_run_suite() {
   local case_name case_dir
   local passed_count=0 failed_count=0
   local test_cases='
+    release_tag_resolution
     seal_baseline
     hash_failure_seal
     signal_disposition_order
@@ -1682,6 +1831,7 @@ cma_test_run_suite() {
     production_gate_adopt
     production_gate_restore
     exclusive_confirmation_failure
+    release_confirmation_failure
     seal_bundle_failure
     probe_mktemp_failure
     preflight_failure
@@ -1696,6 +1846,7 @@ cma_test_run_suite() {
     final_check_failure
     rollback_one_failure
     rollback_reported_failure_all_attempted
+    rollback_projection_failure
     restore_mktemp_failure
     uid_conflict
     resource_version_conflict
@@ -1706,6 +1857,11 @@ cma_test_run_suite() {
     symlinked_snapshot_file
     symlinked_snapshot_directory
     wrong_external_snapshot_digest
+    manual_projection_missing
+    manual_projection_tampered
+    manual_projection_adopted
+    manual_projection_final_reopen
+    manual_admission_missing
     manual_restore_success
     manual_restore_quit
     rollback_cross_policy_ready_effective_livez
