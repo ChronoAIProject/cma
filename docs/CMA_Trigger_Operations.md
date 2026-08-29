@@ -112,13 +112,374 @@ OAuth. Quota exhaustion therefore degrades published preview availability and
 must be sized and alerted as a release dependency. Retired previews do not call
 the observer.
 
+### NyxID smoke bootstrap
+
+The repository bootstrap is only for the reviewed non-production Trigger smoke
+resources. It pins NyxID `0.10.0` and source revision
+`245600cb15110c43aafed77c8a8ee73f655ac060`, rejects production CMA resources,
+and never rotates an existing application or service-account secret. Start from
+`.github/cma-trigger-nyxid-smoke-bootstrap.example.json`, choose unique staging
+bucket names, and keep the state and generated handoff outside the repository in
+an owner-only directory. The directory must have mode `0700`; existing state and
+handoff files must be regular, singly linked, owner-owned files with mode
+`0600`.
+
+Run validation and the read-only remote plan before allowing any mutation. The
+plan emits the pinned source/API identities, exact administrator subject,
+existing or target resource owners and IDs, storage role/service IDs, GitHub
+catalog ID, and bucket targets; it emits no credential:
+
+```bash
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --validate-config .github/cma-trigger-nyxid-smoke-bootstrap.example.json
+
+export CMA_TRIGGER_NYXID_ADMIN_TOKEN='<short-lived NyxID administrator bearer>'
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --plan .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json
+```
+
+After a human reviews that plan and confirms every target is staging-only, the
+same idempotent tool may provision the exact observer, OIDC application, storage
+service account, role binding, and two owner-bound buckets. The confirmation is
+intentionally explicit:
+
+```bash
+export CMA_TRIGGER_NYXID_SMOKE_BOOTSTRAP_CONFIRM=provision-reviewed-nonproduction-resources
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --apply .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json
+
+unset CMA_TRIGGER_NYXID_SMOKE_BOOTSTRAP_CONFIRM
+```
+
+If apply returns `bucket_provider_provisioning_required`, the live NyxID
+administrator observation proved that an exact configured non-production
+bucket is absent but the backing storage provider refused NyxID's create. Stop
+there. The backing provider owner must create only that exact bucket and the
+reviewed storage procedure must assign it to the service-account owner recorded
+in the bootstrap state. The bootstrap does not retry the provider write,
+delete a conflicting bucket, transfer ownership, or broaden itself into a
+storage-administrator path. Re-run the read-only plan after the provider owner
+attaches evidence.
+
+Mint the caller handoff locally immediately before dispatching the protected
+smoke. The first mint opens NyxID for unavoidable interactive login and consent
+as `chronoai-shining`; `--no-browser` prints the authorization URL instead.
+Later mints refresh automatically. Refresh-token rotation is persisted only in
+the authoritative local state file, so do not run this command in a hosted
+runner or copy that state into CI. Set the separately reviewed UserService ID
+before minting; the tool proves the signed access token has restricted service
+authority containing that exact ID. The OIDC app preselects the `api-github`
+catalog entry, but consent remains visible and user-controlled, so removing all
+selected GitHub connections makes minting fail closed. Refresh custody is bound
+to the selected ID in local state; changing the ID requires explicit revocation
+and a new consent rather than silently retargeting an existing refresh token:
+
+```bash
+export CMA_TRIGGER_SMOKE_SERVICE_ID='<exact personal api-github UserService UUID>'
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --mint-caller-token .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json \
+  --output /absolute/private/cma-trigger-smoke/handoff.json
+
+unset CMA_TRIGGER_NYXID_ADMIN_TOKEN
+```
+
+The handoff schema is closed at these 13 fields; unknown or missing fields are
+rejected:
+
+```json
+{
+  "schema_version": 1,
+  "nyxid_base_url": "https://nyx-api.chrono-ai.fun",
+  "nyxid_client_id": "<OIDC application UUID>",
+  "nyxid_client_secret": "<OIDC application secret>",
+  "storage_client_id": "<sa_ client ID>",
+  "storage_client_secret": "<storage service-account secret>",
+  "storage_owner_service_account_id": "<storage service-account UUID>",
+  "context_bucket": "<staging context bucket>",
+  "trigger_workspace_bucket": "<staging workspace bucket>",
+  "public_github_service_slug": "<credential-free observer slug>",
+  "subject_id": "<chronoai-shining NyxID UUID>",
+  "access_token": "<fresh restricted bearer>",
+  "access_token_expires_at": 1780000000
+}
+```
+
+Do not upload the handoff or UserService ID with ad hoc `gh secret set`
+commands. The reviewed environment operator at
+`.github/tools/cma-trigger-smoke-environment/operator.mjs` is the only writer
+for the protected smoke environment. It is pinned to the live CMA repository,
+environment, workflow, `develop` protection, NyxID source/API version, GitHub
+catalog service, `chronoai-shining` account identity, and the closed managed
+variable/secret inventory. Its provisioning bearer comes only from
+`CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN` or an owner-only file named by
+`CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN_FILE`.
+
+First validate the environment config and generate a ten-minute, read-only
+plan. The bootstrap state is the authoritative state produced above; the
+operator neither discovers nor auto-selects a runtime UserService. Use absolute
+owner-only paths, keep the custody directory at mode `0700`, and review the
+entire plan plus its approval fingerprint before applying it:
+
+```bash
+operator=.github/tools/cma-trigger-smoke-environment/operator.mjs
+environment_config=.github/tools/cma-trigger-smoke-environment/config.example.json
+bootstrap_state=/absolute/private/cma-trigger-smoke/state.json
+custody=/absolute/private/cma-trigger-smoke/environment-custody
+setup_plan=/absolute/private/cma-trigger-smoke/environment-setup-plan.json
+
+mkdir -m 0700 -p "$custody"
+export CMA_TRIGGER_SMOKE_PROVISIONING_NYXID_TOKEN_FILE=/absolute/private/nyxid-admin-token
+node "$operator" --validate-config "$environment_config"
+node "$operator" --plan "$environment_config" \
+  --state "$bootstrap_state" --output "$setup_plan"
+```
+
+After explicit review, the same approved plan may configure the closed static
+variables and stable Kind observer tuple. A changed or expired plan is refused;
+generate and review a new plan rather than editing the old file.
+
+```bash
+export CMA_TRIGGER_SMOKE_ENV_CONFIRM=setup-reviewed-cma-trigger-staging
+node "$operator" --setup "$environment_config" \
+  --state "$bootstrap_state" --approved-plan "$setup_plan" \
+  --custody "$custody"
+unset CMA_TRIGGER_SMOKE_ENV_CONFIRM
+```
+
+Mint the 13-field handoff immediately before the run, then generate a fresh
+operator plan because setup and caller minting changed the observed inventory.
+`--stage-run` proves the caller token belongs to the configured subject and
+exact personal UserService, has only `public_repo`, `read:user`, and
+`user:email`, differs from the provisioning route, and has the bounded lifetime
+required by the workflow. It uploads the exact UserService ID separately,
+encrypts the closed handoff for the protected environment, dispatches the exact
+`develop` workflow inputs including the full lowercase reviewed head SHA,
+identifies one fenced run, watches it to completion, and deletes and
+absence-verifies only the ephemeral handoff in `finally`. The workflow's
+unprotected plan job refuses the run unless that required SHA is well formed
+and exactly equals the dispatch event's `github.sha`; this happens before the
+protected provider job can be queued, so a moved `develop` branch cannot
+silently retarget an approved run.
+
+```bash
+run_plan=/absolute/private/cma-trigger-smoke/environment-run-plan.json
+handoff=/absolute/private/cma-trigger-smoke/handoff.json
+node "$operator" --plan "$environment_config" \
+  --state "$bootstrap_state" --output "$run_plan"
+
+export CMA_TRIGGER_SMOKE_ENV_CONFIRM=dispatch-reviewed-cma-trigger-staging
+node "$operator" --stage-run "$environment_config" \
+  --state "$bootstrap_state" --approved-plan "$run_plan" \
+  --custody "$custody" --handoff "$handoff"
+unset CMA_TRIGGER_SMOKE_ENV_CONFIRM
+```
+
+`SIGHUP`, `SIGINT`, and `SIGTERM` close dispatch and handoff cleanup through the
+same fence. A hard process or host loss can leave the encrypted handoff present;
+that is recovery work, never permission to dispatch again. Generate and review
+a fresh plan, then run the bounded cleanup command. It deletes only
+`CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_B64`; the two stable observer secrets and
+the separately validated runtime UserService ID remain unchanged.
+
+```bash
+cleanup_plan=/absolute/private/cma-trigger-smoke/environment-cleanup-plan.json
+node "$operator" --plan "$environment_config" \
+  --state "$bootstrap_state" --output "$cleanup_plan"
+export CMA_TRIGGER_SMOKE_ENV_CONFIRM=cleanup-reviewed-cma-trigger-staging
+node "$operator" --cleanup "$environment_config" \
+  --state "$bootstrap_state" --approved-plan "$cleanup_plan"
+unset CMA_TRIGGER_SMOKE_ENV_CONFIRM
+```
+
+Only after independent environment approval may the credential-bearing job
+decode the handoff. It materializes it under mode-`0700` runner custody with a
+mode-`0600` file, validates the closed schema and exact protected UserService,
+and masks extracted values. The integer `access_token_expires_at` is mandatory;
+both minting and post-approval acceptance require at least 7,200 seconds of
+remaining life and reject a bound over 28,800 seconds. Runner cleanup separately
+destroys Kind, settles the current run's exact live logical provider objects,
+removes the observer kubeconfig, and purges all local staging custody. Failure of
+the operator's remote handoff cleanup, provider-object settlement, or runner
+local cleanup is an incident.
+
+The observer, OIDC app, storage service account, and two buckets are stable,
+reusable staging resources, not per-run resources. This is deliberate: rolling
+them back after a later step fails can destroy one-time-secret custody, invalidate
+refresh rotation, or hide an ambiguous provider write. State is persisted after
+each proven creation. On an ordinary failure, retain state, run `--plan` again,
+and resume `--apply`; never delete or recreate a resource just to make a retry
+look clean. For `*_secret_creation_recovery_required`, stop automatic retries,
+identify the one exact live resource, rotate its secret once through an audited
+administrator action, replace only that resource's custody fields in the
+mode-`0600` state, and rerun the read-only plan before applying.
+
+The dedicated context and Trigger-workspace buckets outlive each Kind run. They
+must not use a blanket provider lifecycle rule. At pinned `chrono-bucket` source
+revision `4087662e2a65e3747b3203ba619eca7342089272`, fenced live objects and
+durable deletion tombstones occupy reserved mutation-authority keys; tombstones
+remain for the bucket lifetime, and an S3 lifecycle rule must never expire or
+rewrite that reserved namespace. The protected smoke instead settles its own
+live logical objects through the authenticated storage API after Kind
+destruction has proved that every writer is gone. Hidden tombstones are retained
+as zero-byte security authority, not misreported as provider deletion debt.
+
+Retirement is a deliberate administrator procedure, not smoke cleanup. First
+disable dispatch and delete the protected handoff secret. Using IDs from the
+state and a fresh read-only plan, prove both exact buckets are owned by the exact
+staging service account and enumerate them completely. Preserve or explicitly
+dispose of every retained smoke object; delete a bucket only after an empty
+inventory. Then revoke the storage account's tokens and remove the exact account,
+revoke/delete the exact OIDC app and its consents, and remove the observer only
+after its owner, slug, and sole anonymous rule still match the state and config.
+Confirm all five remote resources are absent before removing local handoff and
+state custody. A partially completed retirement is resumed in that order from
+fresh observations; no name-only bulk deletion is allowed. None of these
+commands, artifacts, or retirement steps is approved for a production rollout.
+
+### Ephemeral Kind provider smoke
+
+The protected provider workflow tests the current `develop` checkout in a fresh
+single-node Kind cluster on `ubuntu-latest`; it does not call a deployed CMA or
+reuse a production OpenSandbox lane. It builds the API and runtime images from
+the exact workflow commit, loads the runtime image into Kind, creates separate
+ordinary and Trigger OpenSandbox servers and namespaces, initializes a MongoDB
+replica set, and exposes CMA only at the locally trusted fixed origin
+`https://127.0.0.1:8443`. The Trigger fixture is published after that deployment
+is ready, so its public ID, revision digest, source SHA, build SHA, runtime image
+ID, runtime version, and configuration revision all come from the same run.
+
+The workflow itself has read-only GitHub permissions. Every referenced action
+is pinned to one reviewed 40-character commit; tags such as `@v4`, `@v5`, or
+`@v6` are not accepted by the source contract. The credential-bearing job is
+behind the non-bypassable `cma-trigger-smoke` environment, requires an
+independent reviewer who is not the triggering operator, and rechecks the live
+environment rules after approval before reading any protected value. Both
+checks require the one exact `AI Application` team identity (team ID
+`15748251`, node ID `T_kwDODyHfns4A8Eyb`, slug `ai-application`) and exactly one
+branch-policy rule; a merely nonempty reviewer list is not sufficient. Its
+required `expected_head_sha` dispatch input must be a full lowercase commit ID
+equal to the dispatch event's `github.sha`; a branch-name-only dispatch never
+reaches the protected job if `develop` moved away from the reviewed snapshot.
+
+The environment operator provisions these protected variables from the closed
+`static_variables` object in its reviewed config:
+
+- `CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE`: one dedicated DNS-1123 label, normally
+  `cma-trigger-sandboxes`.
+- `CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID`, `_OWNER`, `_REPOSITORY`, and
+  `_DEFAULT_BRANCH`: the exact persistent public fixture repository.
+- `CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN`: `chronoai-shining` for the initial
+  owner-authorized campaign.
+- `CMA_TRIGGER_SMOKE_FORK_REPOSITORY`, `_MARKER_INPUT`,
+  `_EXPECTED_PATH_TEMPLATE`, and `_EXPECTED_CONTENT_TEMPLATE`: the closed
+  preserved-contribution fixture values.
+
+The setup command also generates and retains one closed observer-authority
+directory under local custody. It contains the 30-day CA, matching CA key,
+client-only `cma-trigger-smoke-observer` certificate and key, canonical
+certificate-only kubeconfig for `https://127.0.0.1:6443`, a digest manifest,
+and the acknowledged environment receipt. The operator uploads the kubeconfig
+as `CMA_TRIGGER_SMOKE_KUBECONFIG_B64`, the matching CA key as
+`CMA_TRIGGER_SMOKE_KIND_CA_KEY_B64`, and the lowercase kubeconfig SHA-256 as
+`CMA_TRIGGER_SMOKE_KUBECONFIG_SHA256`. No manual reconstruction or partial
+upload is permitted.
+
+These stable values are reusable only for this bounded non-production evidence
+campaign and never for a real cluster. Keep the complete local authority and
+receipt at mode `0700`/`0600`; every later setup and run revalidates their bytes,
+digests, certificate purposes, fixed subject/endpoint/namespace, environment
+public-key identity, and acknowledged secret timestamps. Losing local custody,
+editing one file, nearing the operator's three-day certificate floor, or seeing
+a stable secret change is a fail-closed rotation/incident condition. Do not
+delete one member or generate replacement bytes by hand; use a separately
+reviewed whole-tuple retirement and replacement procedure before another
+dispatch.
+
+After approval, the workflow executes this fixed phase order:
+
+1. Validate the observer kubeconfig's exact endpoint, digest, closed schema,
+   certificate chain, subject, private-key match, and matching Kind CA key.
+2. Build images, create Kind, install pinned OpenSandbox CRDs and images, create
+   separate provider authorities, initialize MongoDB, and load the exact runtime
+   image ID.
+3. Only after provider preparation succeeds, decode and validate the closed
+   13-field NyxID handoff, bind the exact UserService ID, mask extracted
+   protected values, and retain the bearer only under runner custody.
+4. Deploy CMA, then detach and remove the Kind CA key from the node and shred
+   the host CA key and administrator kubeconfig before publishing the Trigger.
+5. Prove the observer is list-only in the exact Trigger namespace, publish the
+   run-owned fixture, execute the real GitHub/NyxID path, and audit closed
+   evidence.
+6. Under `always()`, destroy Kind and prove no labeled node remains. With every
+   writer then quiesced, use the state-bound storage owner to enumerate both
+   dedicated buckets and select only this evidence record's exact session keys
+   and owner-hashed Launch prefix. Delete generation-zero objects through the
+   legacy logical route and positive-generation objects at generation plus one;
+   validate each closed acknowledgement, re-enumerate, and require zero current
+   run live objects. Preserve and count any unrelated live object, which blocks
+   a passing run. Then remove the observer kubeconfig, purge runner
+   credential/TLS custody, and validate the local cleanup receipt. Redacted
+   evidence is uploaded only after all of this succeeds.
+
+Any phase failure stops forward progress. Cleanup still runs from a validated
+ownership marker. If cluster destruction or observer removal cannot be proven,
+credential purge refuses to proceed and the workflow fails rather than claiming
+terminal local cleanup. GitHub resources created by the smoke remain preserved by
+design for inspection; this workflow never deletes the contributor fork,
+branch, commit, or pull request. The harness first proves the CMA session is
+idle and its runtime is gone, then terminal Kind destruction removes the
+ephemeral MongoDB volume and therefore the local CMA Launch and session records.
+The fixture policy states this local-state split explicitly as
+`github_cleanup=preserve`,
+`cma_state_cleanup=destroy_with_terminal_ephemeral_environment`, and
+`session_cleanup=stop_runtime_before_terminal_ephemeral_teardown`; none is a
+claim that provider objects were deleted.
+
+The staging CMA itself remains in `CHRONO_TRIGGER_CLEANUP_MODE=dry_run`; its
+in-process planner therefore has no object-store deletion port. The
+generation-aware settlement above is owned by the terminal ephemeral-environment
+harness, runs only after Kind destruction proves writer quiescence, and is
+restricted to the current run's exact logical namespaces. It is not the CMA
+retention worker, does not broaden a production deletion target, never touches
+GitHub, and never enumerates a sandbox.
+
+Before teardown, evidence may state
+`retained_until_terminal_ephemeral_teardown`,
+`terminal_ephemeral_teardown_pending`, or
+`idle_awaiting_terminal_ephemeral_teardown`; each describes only local state.
+After Kind destruction, observer removal, and custody purge produce the closed
+local cleanup receipt, the workflow finalizer changes every created local CMA
+Launch/session state to
+`destroyed_with_terminal_ephemeral_environment` and revalidates the evidence.
+Upload is gated on that finalization and on a closed provider-object settlement
+receipt. Publishable evidence records hashes of both stable bucket identities,
+the exact storage-owner binding, current-run object counts and observable bytes,
+legacy and fenced deletion acknowledgements, unrelated live-object counts, and
+the final zero-live-object observation. It also states that fenced tombstones are
+not logically enumerable and remain for the bucket lifetime. A missing or
+ambiguous delete, residual current-run object, unrelated live object, owner
+drift, or schema drift leaves cleanup evidence open and fails the run.
+
+The terminal runner cleanup receipt is closed at `schema_version=2`. Alongside
+the run/attempt, destroyed-cluster, and purged-custody proofs, it contains
+exactly one `provider_object_settlement` value: the redacted receipt for a
+passing smoke, or `null` when the provider path did not pass and no remote
+settlement was attempted. A passing evidence document cannot finalize from the
+`null` form.
+
 The Trigger provider origin, namespace, and key are one authority tuple. They
 must be either all absent or all present; a partial tuple fails startup. When
 `CHRONO_TRIGGER_ENABLED=true`, absence also fails startup. A complete tuple does
 not reuse the ordinary provider, an Aevatar tenant, another product's workload
 namespace, or another product's key. The namespace must be CMA-exclusive because
-Kubernetes RBAC cannot constrain `delete` by object label. The API key contents
-never belong in a ConfigMap, environment variable, or Kubernetes `Secret`.
+Kubernetes RBAC cannot constrain `delete` by object label. A production API key
+never belongs in a ConfigMap, environment variable, or ordinary Kubernetes
+`Secret`. The ephemeral Kind smoke generates unrelated per-run provider keys,
+places them only in its disposable local cluster, and purges their custody after
+cluster destruction.
 
 CMA reads both provider key files only during process startup. Rotating the
 Secret Manager source may update the CSI projection, but CMA does not reread it;
@@ -178,16 +539,18 @@ cluster-wide `BatchSandbox` list, and namespace-local listing of `secrets`,
 `configmaps`, or `pods`.
 
 Store the exact namespace as the protected environment variable
-`CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE`. It must equal the deployed
+`CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE`. It must equal the ephemeral deployment's
 `CHRONO_TRIGGER_SANDBOX_NAMESPACE` and the closed fixture field
 `trigger_sandbox_namespace`; it is a reviewed deployment binding, never a
-dispatch input. Store only the observer kubeconfig's base64 representation in
-the protected environment secret `CMA_TRIGGER_SMOKE_KUBECONFIG_B64`. The
-workflow uses pinned `kubectl` v1.34.1, decodes that secret with `umask 077` to
-`${{ runner.temp }}/cma-trigger-smoke-kubeconfig`, enforces mode `0600`, and,
-under `always()`, removes the file before the evidence audit. Kubeconfig bytes,
-Kubernetes bearer tokens, client keys, and client certificates must not enter
-the fixture configuration, logs, or retained evidence.
+dispatch input. The workflow accepts the observer kubeconfig only with its
+separately protected SHA-256 and matching Kind CA key. It rejects any endpoint
+other than `https://127.0.0.1:6443`, any subject other than the exact observer
+CN, and token or `exec` authentication. The pinned `kubectl` v1.34.1 uses the
+mode-`0600` file at `${{ runner.temp }}/cma-trigger-smoke-kubeconfig` only after
+the fresh cluster consumes the matching CA. Under `always()`, terminal cleanup
+removes the observer after evidence audit and before the staging credential tree
+is purged. Kubeconfig bytes, client keys, and client certificates must not enter
+fixture configuration, logs, or retained evidence.
 
 The smoke takes a complete, unpaginated namespace inventory and rejects any
 continuation token. A pass requires this authoritative sequence:
@@ -860,6 +1223,12 @@ receipt blocks rollout widening.
   separately deleted as an orphan row.
 - Workspace baseline/checkpoint/diff bytes follow the snapshotted
   `trigger-workspace-v1` plan and the fenced cleanup procedure above.
+- The ephemeral staging CMA keeps `CHRONO_TRIGGER_CLEANUP_MODE=dry_run`. After
+  terminal Kind destruction quiesces every writer, the staging harness settles
+  only that run's exact live logical context/workspace objects through the
+  generation-aware storage API and proves their absence. Durable storage
+  tombstones remain for the bucket lifetime and must stay outside every provider
+  lifecycle expiry rule.
 - GitHub forks, branches, commits, and PRs are user/provider-owned and remain
   outside CMA deletion, including privacy deletion and rollback.
 - Sandbox teardown remains exclusively in the existing session reconciliation
@@ -903,8 +1272,10 @@ Before public exposure, attach redacted evidence for:
 
 Evidence must name the build revision, environment, UTC interval, configuration
 revision, numeric fixture repository, expected result, actual result, and
-redaction applied. A production restart is never performed solely to collect a
-drill transcript.
+redaction applied. Ephemeral staging evidence must additionally carry the closed
+provider-object settlement receipt described above. Local Kind destruction is
+the required no-writer precondition, not object-absence proof by itself. A
+production restart is never performed solely to collect a drill transcript.
 
 ### Git Data publication-capacity measurement
 
@@ -970,11 +1341,12 @@ Never restart or deploy production solely for this drill.
 
 1. Record the evidence fields required by
    [CMA_Trigger_Release_Readiness.md](./CMA_Trigger_Release_Readiness.md#2-evidence-record),
-   including final build/runtime digests and configuration revision.
+   including final build/runtime digests, configuration revision, and the
+   generation-aware provider-object settlement fields above.
 2. Limit publisher, repository, and contributor admission to the fixture.
-   Leave cleanup in `dry_run`; verify the capability lane and all four
-   scheduler heartbeats (`effects`, `capabilities`, `workspaces`, and `cleanup`)
-   before injecting a fault.
+   Verify staging has `CHRONO_TRIGGER_CLEANUP_MODE=dry_run`; verify the capability
+   lane and all four scheduler heartbeats (`effects`, `capabilities`,
+   `workspaces`, and `cleanup`) before injecting a fault.
 3. Record numeric upstream, account, existing fork-network, branch, PR, Launch,
    session, and provider-key metadata as redacted IDs and counts. Confirm the
    fixture contains no secret and no privileged workflow.
@@ -1042,7 +1414,9 @@ replace the required staging/provider observation.
 Pass only when every expected alert fired and recovered, no secret/content
 marker escaped, the session remained continuous, every external resource count
 matched, the ambiguous write was reconciled read-only, and the rollback/re-enable
-sequence preserved all user work.
+sequence preserved all user work. The pass proves current-run live logical
+objects absent after writer quiescence while retaining any storage tombstone
+authority required by the pinned provider contract.
 
 Abort and keep rollout closed on any second provider write, automatic replacement
 prompt, live lease break, cross-owner data, credential/content marker, missing
@@ -1053,7 +1427,8 @@ reset the provider resource to make the next run look clean.
 The evidence package includes the redacted command/request shapes, support and
 activity projections, state/event timeline, resource-count diff, saved
 dashboard interval, fired-alert links, rollout revisions, expected versus actual
-table, redaction review, and independent reviewer sign-off. Until that package
+table, provider-object settlement receipt, redaction review, and
+independent reviewer sign-off. Until that package
 is linked to ledger row `O-01`, the drill status is **not run**.
 
 ## 16. Incident escalation and handoff
