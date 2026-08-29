@@ -9,7 +9,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use super::super::{CredentialRoute, LaunchId, TriggerRevisionId, TriggerValidationError};
+use super::super::{
+    BillingMode, CredentialRoute, Launch, LaunchId, LaunchState, TriggerRevisionId,
+    TriggerValidationError, CMA_TRIGGER_SPONSORED_POLICY_V1,
+};
 use super::lifecycle::SponsorshipError;
 use super::ports::ProviderGrantReceipt;
 use super::validation::{
@@ -598,6 +601,55 @@ pub struct SponsorshipPolicy {
     pub revoked_at: Option<String>,
 }
 
+/// Owner-safe policy projection. Credential locators, owner subjects, and
+/// provider authority never cross this boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SponsorshipPolicyView {
+    pub id: SponsorshipPolicyId,
+    pub tenant_id: String,
+    pub sponsor_display_name: String,
+    pub provider: String,
+    pub provider_policy_key: String,
+    pub allowed_models: BTreeSet<String>,
+    pub allowed_resources: BTreeSet<String>,
+    pub per_launch_quota: SponsoredQuota,
+    pub aggregate_quota: SponsoredQuota,
+    pub per_launch_budget_micros: u64,
+    pub aggregate_budget_micros: u64,
+    pub max_requests_per_minute: u32,
+    pub max_concurrent_launches: u32,
+    pub expires_at: String,
+    pub state: SponsorshipPolicyState,
+    pub generation: u64,
+    pub usage: SponsorshipPolicyUsage,
+    pub updated_at: String,
+}
+
+impl SponsorshipPolicyView {
+    pub fn from_policy(policy: &SponsorshipPolicy, usage: SponsorshipPolicyUsage) -> Self {
+        Self {
+            id: policy.id.clone(),
+            tenant_id: policy.tenant_id.clone(),
+            sponsor_display_name: policy.owner.display_name().to_string(),
+            provider: policy.provider_policy.provider.clone(),
+            provider_policy_key: policy.provider_policy.provider_policy_key.clone(),
+            allowed_models: policy.provider_policy.allowed_models.clone(),
+            allowed_resources: policy.provider_policy.allowed_resources.clone(),
+            per_launch_quota: policy.per_launch_quota,
+            aggregate_quota: policy.aggregate_quota,
+            per_launch_budget_micros: policy.per_launch_budget_micros,
+            aggregate_budget_micros: policy.aggregate_budget_micros,
+            max_requests_per_minute: policy.max_requests_per_minute,
+            max_concurrent_launches: policy.max_concurrent_launches,
+            expires_at: policy.expires_at.clone(),
+            state: policy.state,
+            generation: policy.generation,
+            usage,
+            updated_at: policy.updated_at.clone(),
+        }
+    }
+}
+
 impl SponsorshipPolicy {
     pub fn validate(&self) -> Result<(), TriggerValidationError> {
         if self.schema_version != SPONSORSHIP_SCHEMA_VERSION || self.generation == 0 {
@@ -697,6 +749,14 @@ pub struct SponsoredGrantTerms {
     pub digest: String,
 }
 
+/// Contributor review contract binding the visible terms to the exact Launch
+/// configuration and current policy generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SponsoredTermsReview {
+    pub terms: SponsoredGrantTerms,
+    pub launch_snapshot_digest: String,
+}
+
 impl SponsoredGrantTerms {
     pub fn from_policy(
         policy: &SponsorshipPolicy,
@@ -746,6 +806,26 @@ impl SponsoredGrantTerms {
         };
         terms.digest = terms.calculate_digest()?;
         Ok(terms)
+    }
+
+    /// Canonical terms identity without mutable remaining-capacity fields.
+    ///
+    /// `calculate_digest` deliberately excludes aggregate remaining quota,
+    /// budget, and currently available Launch slots. A Launch authority can
+    /// therefore bind the policy terms without turning unrelated concurrent
+    /// usage into a false acceptance change.
+    pub fn digest_from_policy(
+        policy: &SponsorshipPolicy,
+    ) -> Result<String, TriggerValidationError> {
+        Ok(Self::from_policy(
+            policy,
+            &SponsorshipPolicyUsage {
+                consumed: SponsoredUsageSummary::default(),
+                reserved: SponsoredUsageSummary::default(),
+                active_launches: 0,
+            },
+        )?
+        .digest)
     }
 
     pub fn calculate_digest(&self) -> Result<String, TriggerValidationError> {
@@ -928,6 +1008,96 @@ pub struct SponsoredLaunchAuthority {
 }
 
 impl SponsoredLaunchAuthority {
+    /// Derive the only sponsorship authority projection accepted from a
+    /// durable Trigger Launch.
+    pub fn from_launch(
+        launch: &Launch,
+        policy: &SponsorshipPolicy,
+    ) -> Result<Self, TriggerValidationError> {
+        let commercial = &launch.revision.content.commercial_policy;
+        if commercial.billing_mode != BillingMode::Sponsored
+            || commercial.policy_reference != CMA_TRIGGER_SPONSORED_POLICY_V1
+        {
+            return Err(TriggerValidationError::field(
+                "commercial_policy",
+                "does not name the sponsored grant contract",
+            ));
+        }
+        let binding = commercial.sponsorship.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "commercial_policy.sponsorship",
+                "is required for sponsored billing",
+            )
+        })?;
+        if binding.policy_id != policy.id || binding.tenant_id != policy.tenant_id {
+            return Err(TriggerValidationError::field(
+                "commercial_policy.sponsorship",
+                "does not match the durable sponsorship policy authority",
+            ));
+        }
+        let terms_digest = SponsoredGrantTerms::digest_from_policy(policy)?;
+        let launch_snapshot_digest = canonical_digest(&(
+            "cma-sponsored-launch-review-v1",
+            &launch.effective.digest,
+            &binding.tenant_id,
+            &binding.policy_id,
+            policy.generation,
+            &terms_digest,
+        ))?;
+        let state = match launch.state {
+            LaunchState::Draft if launch.started_at.is_none() => SponsoredLaunchState::TermsReview,
+            LaunchState::AuthRequired if launch.started_at.is_none() => {
+                SponsoredLaunchState::TermsReview
+            }
+            LaunchState::Preflight
+            | LaunchState::ForkPending
+            | LaunchState::ForkReady
+            | LaunchState::BranchPending
+            | LaunchState::WorkspacePending
+            | LaunchState::SandboxPending
+            | LaunchState::SessionPending
+            | LaunchState::PromptPending => SponsoredLaunchState::Starting,
+            LaunchState::Ready
+            | LaunchState::Contributing
+            | LaunchState::PrPending
+            | LaunchState::PrOpen => SponsoredLaunchState::Active,
+            LaunchState::AuthRequired | LaunchState::FailedRetryable => {
+                SponsoredLaunchState::Recoverable
+            }
+            LaunchState::Completed | LaunchState::FailedTerminal | LaunchState::Cancelled => {
+                SponsoredLaunchState::Closed
+            }
+            LaunchState::Draft => {
+                return Err(TriggerValidationError::field(
+                    "launch.started_at",
+                    "a started Launch cannot return to draft sponsorship review",
+                ))
+            }
+        };
+        let generation = launch.revision_number.checked_add(1).ok_or_else(|| {
+            TriggerValidationError::field("launch.revision_number", "is exhausted")
+        })?;
+        let mut authority = Self {
+            tenant_id: binding.tenant_id.clone(),
+            launch_id: launch.id.clone(),
+            contributor: launch.owner.clone(),
+            revision_id: launch.revision.id.clone(),
+            revision_digest: launch.revision_digest.clone(),
+            launch_snapshot_digest,
+            policy_id: binding.policy_id.clone(),
+            session_id: launch
+                .session
+                .as_ref()
+                .map(|session| session.session_id.clone()),
+            state,
+            generation,
+            digest: String::new(),
+        };
+        authority.digest = authority.calculate_digest()?;
+        authority.validate()?;
+        Ok(authority)
+    }
+
     pub fn calculate_digest(&self) -> Result<String, TriggerValidationError> {
         canonical_digest(&(
             "cma-sponsored-launch-authority-v1",
@@ -2012,7 +2182,7 @@ impl SponsoredAuditEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SponsorshipPolicyUsage {
     pub consumed: SponsoredUsageSummary,
     /// Aggregate allowance still committed to active or ambiguously revoked
