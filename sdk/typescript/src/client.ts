@@ -17,6 +17,7 @@ import * as events from './events.js';
 import * as operations from './operations.js';
 import * as resources from './resources.js';
 import * as sessions from './sessions.js';
+import * as sponsorships from './sponsorships.js';
 import * as triggers from './triggers.js';
 import type { SessionResourceStatus } from './resources.js';
 import type {
@@ -44,6 +45,12 @@ import type {
 } from './operations.js';
 import type { KernelOffer, Session, SessionPlane } from './types.js';
 import type { Conformance } from './discovery.js';
+import type {
+  SponsoredGrant,
+  SponsorshipCredential,
+  SponsorshipPageRequest,
+  SponsorshipPolicy,
+} from './sponsorships.js';
 
 /**
  * A configured CMA client.
@@ -394,6 +401,38 @@ export class Cma {
     options: OperationOptions = {},
   ): Promise<Uint8Array> {
     return triggers.downloadDiffArtifact(this.#config, launchId, artifactId, options);
+  }
+
+  /** One bounded page of secret-free credentials controlled by this owner. */
+  listSponsorshipCredentialsPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsorshipCredential>> {
+    return sponsorships.listSponsorshipCredentialsPage(this.#config, page, options);
+  }
+
+  /** One bounded page of policies and accounting controlled by this owner. */
+  listSponsorshipPoliciesPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsorshipPolicy>> {
+    return sponsorships.listSponsorshipPoliciesPage(this.#config, page, options);
+  }
+
+  /** One bounded page of grants attributed to this contributor. */
+  listContributorSponsorshipGrantsPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsoredGrant>> {
+    return sponsorships.listContributorSponsorshipGrantsPage(this.#config, page, options);
+  }
+
+  /** One bounded page of grants controlled by this sponsor. */
+  listSponsorSponsorshipGrantsPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsoredGrant>> {
+    return sponsorships.listSponsorSponsorshipGrantsPage(this.#config, page, options);
   }
 
   /** Every environment profile owned by the authenticated subject. */
