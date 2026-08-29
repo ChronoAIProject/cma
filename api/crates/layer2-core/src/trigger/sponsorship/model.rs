@@ -2165,6 +2165,9 @@ pub struct CompleteGrantActivationCleanup {
     pub expected_revision: u64,
     pub holder: String,
     pub operation: PendingProviderOperation,
+    /// The caller observed definitive retirement of the root credential. The
+    /// store must independently re-prove that lineage in the completion CAS.
+    pub global_credential_retirement: bool,
     pub intent: GrantActivationIntent,
     pub audit: SponsoredAuditEvent,
 }
@@ -2550,6 +2553,12 @@ impl SponsoredUsageReservation {
         self.price_quote.validate()?;
         validate_timestamp("usage_reservation.created_at", &self.created_at)?;
         validate_timestamp("usage_reservation.updated_at", &self.updated_at)?;
+        if !timestamp_not_after(&self.created_at, &self.updated_at) {
+            return Err(TriggerValidationError::field(
+                "usage_reservation.updated_at",
+                "must not precede creation",
+            ));
+        }
         if self.reserved != self.price_quote.maximum {
             return Err(TriggerValidationError::field(
                 "usage_reservation.reserved",

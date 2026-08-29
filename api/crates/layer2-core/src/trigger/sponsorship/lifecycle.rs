@@ -11,7 +11,7 @@ use crate::{Caller, Capability, Page, PageRequest, SubjectId};
 
 pub(crate) const MAX_POLICY_STATE_CHANGE_ATTEMPTS: usize = 8;
 
-fn monotonic_record_time(current: &str, observed: &str) -> String {
+pub(super) fn monotonic_record_time(current: &str, observed: &str) -> String {
     match (
         crate::seconds_from_rfc3339(current),
         crate::seconds_from_rfc3339(observed),
@@ -2902,6 +2902,7 @@ impl SponsorshipService {
                         expected_revision,
                         holder,
                         operation,
+                        global_credential_retirement: credential_globally_revoked,
                         intent,
                         audit,
                     })
@@ -3466,7 +3467,7 @@ impl SponsorshipService {
         grant.generation = next_generation(grant.generation, "grant.generation")?;
         grant.state = SponsoredGrantState::Expired;
         grant.pending_revocation = None;
-        grant.updated_at = now.clone();
+        grant.updated_at = monotonic_record_time(&grant.updated_at, &now);
         grant.refresh_capability()?;
         grant.validate()?;
         let audit = SponsoredAuditEvent::privacy_safe(
@@ -3479,7 +3480,7 @@ impl SponsorshipService {
             },
             None,
             "expired",
-            now,
+            grant.updated_at.clone(),
         );
         Ok(self
             .store

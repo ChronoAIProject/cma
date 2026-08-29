@@ -449,7 +449,10 @@ pub trait SponsorshipStore: Send + Sync {
     /// Atomically record confirmed provider cleanup and release the activation
     /// allocation/concurrency hold exactly once. Every definitive denial,
     /// pre-dispatch deferral, invalidation, and cleanup path that relinquishes
-    /// intent ownership must make the same exactly-once release.
+    /// intent ownership must make the same exactly-once release. A previously
+    /// rejected cleanup may complete only when the command explicitly signals
+    /// global credential retirement and this transaction independently proves
+    /// the exact activation/policy/advanced-credential lineage.
     async fn complete_grant_activation_cleanup(
         &self,
         command: CompleteGrantActivationCleanup,
