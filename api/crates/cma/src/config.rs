@@ -22,6 +22,14 @@ const CREATE_RATE_REQUESTS_PER_MINUTE: u32 = 10;
 const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
+const PINNED_CLOUDFLARE_PROXY_CIDRS: &str = concat!(
+    "173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,",
+    "141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,",
+    "197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,",
+    "104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,",
+    "2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,",
+    "2a06:98c0::/29,2c0f:f248::/32",
+);
 const DEFAULT_TRIGGER_CHANGED_FILE_LIMIT: usize = 1_000;
 const DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: usize = 300;
 const MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: usize = 3_600;
@@ -379,10 +387,14 @@ impl RateLimitConfig {
 /// Which TCP peers may supply the load balancer's client-address chain.
 #[derive(Debug, Clone)]
 pub struct TrustedProxyConfig {
-    /// Networks from which a forwarding header is accepted.
+    /// GFE networks from which a forwarding header is accepted.
     pub cidrs: Vec<IpNet>,
-    /// Tokens to skip from the right before selecting the client address.
+    /// GFE-owned tokens to skip from the right before selecting its observed
+    /// upstream address.
     pub forwarded_hops: usize,
+    /// Cloudflare edge networks allowed to authenticate the next-left visitor
+    /// token, subject to exact `CF-Connecting-IP` agreement.
+    pub cloudflare_cidrs: Vec<IpNet>,
 }
 
 impl TrustedProxyConfig {
@@ -400,9 +412,15 @@ impl TrustedProxyConfig {
             1,
             MAX_TRUSTED_PROXY_HOPS,
         )?;
+        let cloudflare_cidrs = parse_ip_networks(
+            "CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS",
+            &var_or("CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS", ""),
+        )?;
+        validate_cloudflare_proxy_networks(&cidrs, &cloudflare_cidrs)?;
         Ok(Self {
             cidrs,
             forwarded_hops,
+            cloudflare_cidrs,
         })
     }
 
@@ -411,6 +429,7 @@ impl TrustedProxyConfig {
         Self {
             cidrs: Vec::new(),
             forwarded_hops: DEFAULT_TRUSTED_PROXY_HOPS,
+            cloudflare_cidrs: Vec::new(),
         }
     }
 }
@@ -1140,6 +1159,58 @@ fn parse_ip_networks(key: &str, raw: &str) -> Result<Vec<IpNet>, String> {
         .collect()
 }
 
+fn validate_cloudflare_proxy_networks(
+    gfe_cidrs: &[IpNet],
+    cloudflare_cidrs: &[IpNet],
+) -> Result<(), String> {
+    if cloudflare_cidrs.is_empty() {
+        return Ok(());
+    }
+
+    let pinned = parse_ip_networks(
+        "built-in Cloudflare proxy CIDRs",
+        PINNED_CLOUDFLARE_PROXY_CIDRS,
+    )?;
+    let exact_set = cloudflare_cidrs.len() == pinned.len()
+        && cloudflare_cidrs
+            .iter()
+            .all(|network| pinned.contains(network))
+        && cloudflare_cidrs
+            .iter()
+            .enumerate()
+            .all(|(index, network)| !cloudflare_cidrs[..index].contains(network));
+    if !exact_set {
+        return Err(format!(
+            "CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS must be empty or exactly the reviewed built-in set of {} networks",
+            pinned.len()
+        ));
+    }
+
+    if gfe_cidrs.iter().any(|gfe| {
+        cloudflare_cidrs
+            .iter()
+            .any(|cloudflare| ip_networks_overlap(gfe, cloudflare))
+    }) {
+        return Err(
+            "CHRONO_SERVER_TRUSTED_PROXY_CIDRS and CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS must not overlap"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn ip_networks_overlap(left: &IpNet, right: &IpNet) -> bool {
+    match (left, right) {
+        (IpNet::V4(left), IpNet::V4(right)) => {
+            left.contains(&right.network()) || right.contains(&left.network())
+        }
+        (IpNet::V6(left), IpNet::V6(right)) => {
+            left.contains(&right.network()) || right.contains(&left.network())
+        }
+        (IpNet::V4(_), IpNet::V6(_)) | (IpNet::V6(_), IpNet::V4(_)) => false,
+    }
+}
+
 /// Read a number of days as a duration.
 fn days(key: &str, default: u64) -> Result<std::time::Duration, String> {
     parse_days(key, &var_or(key, &default.to_string()))
@@ -1472,6 +1543,75 @@ mod tests {
                 "accepted {raw:?}"
             );
         }
+
+        let cloudflare = parse_ip_networks(
+            "CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS",
+            PINNED_CLOUDFLARE_PROXY_CIDRS,
+        )
+        .expect("reviewed Cloudflare networks parse");
+        assert_eq!(cloudflare.len(), 22);
+        assert_eq!(
+            cloudflare
+                .iter()
+                .filter(|network| matches!(network, IpNet::V4(_)))
+                .count(),
+            15
+        );
+        assert_eq!(
+            cloudflare
+                .iter()
+                .filter(|network| matches!(network, IpNet::V6(_)))
+                .count(),
+            7
+        );
+        assert!(cloudflare[0].contains(&"173.245.48.9".parse::<std::net::IpAddr>().unwrap()));
+        assert!(cloudflare[16].contains(&"2606:4700::9".parse::<std::net::IpAddr>().unwrap()));
+        for raw in [",", "173.245.48.0/20,", "not-a-network"] {
+            assert!(
+                parse_ip_networks("CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        let gfe = parse_ip_networks(
+            "CHRONO_SERVER_TRUSTED_PROXY_CIDRS",
+            "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64",
+        )
+        .unwrap();
+        validate_cloudflare_proxy_networks(&gfe, &cloudflare)
+            .expect("the exact reviewed sets do not overlap");
+        validate_cloudflare_proxy_networks(&gfe, &[])
+            .expect("empty Cloudflare trust disables the conditional branch");
+
+        let mut partial = cloudflare.clone();
+        partial.pop();
+        let error = validate_cloudflare_proxy_networks(&gfe, &partial)
+            .expect_err("a partial production pin must not start");
+        assert!(error.contains("exactly the reviewed built-in set"));
+
+        let mut duplicated = cloudflare.clone();
+        duplicated[0] = duplicated[1];
+        let error = validate_cloudflare_proxy_networks(&gfe, &duplicated)
+            .expect_err("a duplicated range hides a missing pin");
+        assert!(error.contains("exactly the reviewed built-in set"));
+
+        let broadened = parse_ip_networks(
+            "CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS",
+            "0.0.0.0/0,2400:cb00::/32",
+        )
+        .unwrap();
+        let error = validate_cloudflare_proxy_networks(&gfe, &broadened)
+            .expect_err("an operator-supplied supernet must not become authority");
+        assert!(error.contains("exactly the reviewed built-in set"));
+
+        let overlapping_gfe = parse_ip_networks(
+            "CHRONO_SERVER_TRUSTED_PROXY_CIDRS",
+            "35.191.0.0/16,173.245.48.0/20",
+        )
+        .unwrap();
+        let error = validate_cloudflare_proxy_networks(&overlapping_gfe, &cloudflare)
+            .expect_err("proxy authority sets must remain disjoint");
+        assert!(error.contains("must not overlap"));
     }
 
     #[test]
