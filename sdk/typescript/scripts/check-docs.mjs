@@ -9,7 +9,7 @@ const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const docsDirectory = join(packageRoot, 'docs');
 const rustDocsDirectory = join(packageRoot, '..', 'rust', 'docs');
 const declarations = join(packageRoot, 'dist', 'index.d.ts');
-const expectedDocuments = [
+const expectedRustDocuments = [
   'README.md',
   'authentication.md',
   'errors.md',
@@ -20,15 +20,16 @@ const expectedDocuments = [
   'streaming.md',
   'triggers.md',
 ];
+const expectedTypeScriptDocuments = [...expectedRustDocuments, 'sponsorships.md'].sort();
 
 await access(declarations).catch(() => {
   throw new Error('dist/index.d.ts is absent; run npm run build before checking documentation');
 });
 
 const documents = (await readdir(docsDirectory)).filter((name) => name.endsWith('.md')).sort();
-if (JSON.stringify(documents) !== JSON.stringify(expectedDocuments)) {
+if (JSON.stringify(documents) !== JSON.stringify(expectedTypeScriptDocuments)) {
   throw new Error(
-    `SDK documentation must contain exactly ${expectedDocuments.join(', ')}; found ${documents.join(', ')}`,
+    `SDK documentation must contain exactly ${expectedTypeScriptDocuments.join(', ')}; found ${documents.join(', ')}`,
   );
 }
 
@@ -57,9 +58,9 @@ for (const document of documents) {
 const rustDocuments = (await readdir(rustDocsDirectory))
   .filter((name) => name.endsWith('.md'))
   .sort();
-if (JSON.stringify(rustDocuments) !== JSON.stringify(expectedDocuments)) {
+if (JSON.stringify(rustDocuments) !== JSON.stringify(expectedRustDocuments)) {
   throw new Error(
-    `Rust documentation must contain exactly ${expectedDocuments.join(', ')}; found ${rustDocuments.join(', ')}`,
+    `Rust documentation must contain exactly ${expectedRustDocuments.join(', ')}; found ${rustDocuments.join(', ')}`,
   );
 }
 const rustNavOrders = new Set();

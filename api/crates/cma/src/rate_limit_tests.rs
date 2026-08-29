@@ -25,7 +25,7 @@ use tower::ServiceExt;
 use crate::{
     config::TrustedProxyConfig,
     rate_limit::{self, RateLimiters},
-    with_cors, REST_LINKS,
+    with_cors, with_sponsorship_privacy, REST_LINKS,
 };
 
 const SUBJECT: &str = "subject-rate-limit";
@@ -86,6 +86,10 @@ fn test_routes() -> Router {
         .route(
             "/api/v1/triggers/public/{public_id}/launches",
             post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/api/v1/sponsorships/privacy-contract",
+            get(|| async { StatusCode::NO_CONTENT }),
         )
         .route(
             "/api/v1/agui/triggers/{public_id}",
@@ -275,6 +279,37 @@ async fn a_create_burst_is_coded_linked_and_recovers_after_retry_after() {
         status(&app, subject_request(Method::POST, "/api/v1/sessions")).await,
         StatusCode::NO_CONTENT
     );
+}
+
+#[tokio::test]
+async fn sponsorship_rate_refusals_are_private_and_do_not_reflect_the_request() {
+    const SECRET_MARKER: &str = "rate-limited-sponsorship-secret";
+    let app = with_sponsorship_privacy(operation_app(RateLimiters::for_test(
+        one(),
+        generous(),
+        generous(),
+    )));
+    let uri = format!("/api/v1/sponsorships/privacy-contract?credential={SECRET_MARKER}");
+
+    assert_eq!(
+        status(&app, subject_request(Method::GET, &uri)).await,
+        StatusCode::NO_CONTENT
+    );
+    let response = app
+        .oneshot(subject_request(Method::GET, &uri))
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("no-store"))
+    );
+    assert_eq!(
+        response.headers().get(header::REFERRER_POLICY),
+        Some(&HeaderValue::from_static("no-referrer"))
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
 }
 
 #[tokio::test]

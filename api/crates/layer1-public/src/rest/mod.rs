@@ -31,6 +31,7 @@ mod openapi;
 mod openapi_shapes;
 mod operate;
 mod problems;
+mod sponsorships;
 mod tickets;
 mod trigger_openapi_shapes;
 pub(crate) mod triggers;
@@ -1038,6 +1039,9 @@ pub struct TriggersState {
     /// Complete immutable review artifacts, when durable Trigger workspace
     /// storage is configured for this deployment.
     pub diff_artifacts: Option<Arc<dyn DiffArtifactObjectStore>>,
+    /// Sponsored-grant lifecycle, when every deployment gate and real adapter
+    /// is composed. `None` keeps the documented surface fail-closed.
+    pub sponsorships: Option<Arc<layer2_core::SponsorshipService>>,
 }
 
 /// What the session routes are served from.
@@ -1110,7 +1114,9 @@ pub fn complete_router(state: SessionsState, admin: Arc<admin::AdminState>) -> R
         .merge(environments::documented_router(environments))
         .merge(admin::documented_router(admin));
     if let Some(triggers) = triggers {
-        documented = documented.merge(triggers::documented_router(triggers));
+        documented = documented
+            .merge(triggers::documented_router(triggers.clone()))
+            .merge(sponsorships::documented_router(triggers));
     }
     openapi::finish(documented)
 }

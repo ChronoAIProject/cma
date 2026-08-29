@@ -2140,6 +2140,157 @@ fn trigger_sandbox_profile_is_closed_to_the_supported_mvp_policy() {
     }
 }
 
+#[test]
+fn sponsored_commercial_policy_has_an_explicit_typed_binding() {
+    let mut candidate = content(SubjectId("publisher".into()));
+    candidate.commercial_policy = CommercialPolicy {
+        billing_mode: BillingMode::Sponsored,
+        policy_reference: CMA_TRIGGER_SPONSORED_POLICY_V1.into(),
+        sponsorship: Some(SponsoredPolicyBinding {
+            tenant_id: "tenant-1".into(),
+            policy_id: SponsorshipPolicyId::new(),
+        }),
+    };
+    candidate
+        .validate()
+        .expect("a complete sponsored policy binding is structurally valid");
+
+    let mut missing = candidate.clone();
+    missing.commercial_policy.sponsorship = None;
+    assert_eq!(
+        missing.validate().unwrap_err().field.as_deref(),
+        Some("commercial_policy.sponsorship")
+    );
+
+    let mut wrong_contract = candidate.clone();
+    wrong_contract.commercial_policy.policy_reference = SponsorshipPolicyId::new().0;
+    assert_eq!(
+        wrong_contract.validate().unwrap_err().field.as_deref(),
+        Some("commercial_policy.policy_reference")
+    );
+
+    let mut sponsored_github = candidate;
+    sponsored_github.repository_access.credential_route = CredentialRoute::SponsoredGrant;
+    assert_eq!(
+        sponsored_github.validate().unwrap_err().field.as_deref(),
+        Some("repository_access.credential_route")
+    );
+}
+
+#[test]
+fn sponsored_launch_authority_is_derived_from_durable_launch_and_policy_state() {
+    let publisher = SubjectId("sponsoring-publisher".into());
+    let contributor = SubjectId("sponsored-contributor".into());
+    let policy_id = SponsorshipPolicyId::new();
+    let mut published = revision(publisher.clone());
+    published.content.commercial_policy = CommercialPolicy {
+        billing_mode: BillingMode::Sponsored,
+        policy_reference: CMA_TRIGGER_SPONSORED_POLICY_V1.into(),
+        sponsorship: Some(SponsoredPolicyBinding {
+            tenant_id: "tenant-sponsored".into(),
+            policy_id: policy_id.clone(),
+        }),
+    };
+    published.digest = published.content.digest().unwrap();
+    let mut launch = Launch::new(contributor.clone(), published, NOW, "sponsored-launch").unwrap();
+    let policy = SponsorshipPolicy {
+        schema_version: SPONSORSHIP_SCHEMA_VERSION,
+        id: policy_id,
+        tenant_id: "tenant-sponsored".into(),
+        owner: SponsorBillingOwner::Developer {
+            subject: publisher,
+            display_name: "Sponsoring publisher".into(),
+        },
+        credential_id: SponsoredCredentialId::new(),
+        provider_policy: SponsoredProviderPolicy {
+            provider: "provider-a".into(),
+            provider_policy_key: "provider-a:bounded-v1".into(),
+            allowed_models: BTreeSet::from(["model-a".into()]),
+            allowed_resources: BTreeSet::from(["responses".into()]),
+        },
+        per_launch_quota: SponsoredQuota {
+            requests: 2,
+            input_tokens: 1_000,
+            output_tokens: 1_000,
+        },
+        aggregate_quota: SponsoredQuota {
+            requests: 4,
+            input_tokens: 2_000,
+            output_tokens: 2_000,
+        },
+        per_launch_budget_micros: 1_000,
+        aggregate_budget_micros: 2_000,
+        max_requests_per_minute: 2,
+        max_concurrent_launches: 2,
+        expires_at: "2026-08-30T12:00:00Z".into(),
+        state: SponsorshipPolicyState::Active,
+        generation: 1,
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        revoked_at: None,
+    };
+    policy.validate().unwrap();
+
+    let draft = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(draft.state, SponsoredLaunchState::TermsReview);
+    assert_eq!(draft.generation, 1);
+    assert_eq!(draft.contributor, contributor);
+    assert_eq!(draft.session_id, None);
+
+    launch.started_at = Some(LATER.into());
+    launch.state = LaunchState::PromptPending;
+    launch.revision_number = 7;
+    launch.session = Some(SessionLink {
+        session_id: SessionId("session-sponsored".into()),
+        environment_profile_id: "profile-sponsored".into(),
+        runtime_generation: 3,
+        created_at: LATER.into(),
+    });
+    let starting = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(starting.state, SponsoredLaunchState::Starting);
+    assert_eq!(starting.generation, 8);
+    assert_eq!(
+        starting.session_id,
+        Some(SessionId("session-sponsored".into()))
+    );
+
+    launch.state = LaunchState::AuthRequired;
+    let recoverable = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(recoverable.state, SponsoredLaunchState::Recoverable);
+    launch.state = LaunchState::Completed;
+    let closed = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(closed.state, SponsoredLaunchState::Closed);
+
+    let mut next_policy = policy.clone();
+    next_policy.generation = 2;
+    next_policy.updated_at = LATER.into();
+    let next = SponsoredLaunchAuthority::from_launch(&launch, &next_policy).unwrap();
+    assert_ne!(next.launch_snapshot_digest, closed.launch_snapshot_digest);
+
+    next_policy.tenant_id = "another-tenant".into();
+    assert_eq!(
+        SponsoredLaunchAuthority::from_launch(&launch, &next_policy)
+            .unwrap_err()
+            .field
+            .as_deref(),
+        Some("commercial_policy.sponsorship")
+    );
+}
+
+#[test]
+fn non_sponsored_billing_rejects_a_sponsorship_binding() {
+    let mut candidate = content(SubjectId("publisher".into()));
+    candidate.commercial_policy.sponsorship = Some(SponsoredPolicyBinding {
+        tenant_id: "tenant-1".into(),
+        policy_id: SponsorshipPolicyId::new(),
+    });
+
+    assert_eq!(
+        candidate.validate().unwrap_err().field.as_deref(),
+        Some("commercial_policy.sponsorship")
+    );
+}
+
 fn reconciled_pull_request(mut record: PullRequestRecord) -> PullRequestRecord {
     record.provider_id = Some(70);
     record.provider_node_id = Some("PR_node_7".into());
@@ -5513,6 +5664,7 @@ fn content(owner: SubjectId) -> TriggerRevisionContent {
         commercial_policy: CommercialPolicy {
             billing_mode: BillingMode::ZeroCost,
             policy_reference: "public-zero-cost-v1".into(),
+            sponsorship: None,
         },
         override_policy: OverridePolicy {
             editable_fields: vec![EditableField::TaskInput],
@@ -5682,6 +5834,71 @@ impl TriggerLaunchAdmission for TestAdmission {
     }
 }
 
+struct TestSponsorshipVerifier;
+
+#[async_trait]
+impl TriggerSponsorshipVerifier for TestSponsorshipVerifier {
+    async fn verify_policy_binding(
+        &self,
+        publisher: &SubjectId,
+        binding: &SponsoredPolicyBinding,
+    ) -> Result<(), TriggerAdmissionError> {
+        if publisher.0 == "publisher" && binding.tenant_id == "tenant-1" {
+            Ok(())
+        } else {
+            Err(TriggerAdmissionError::PricingUnavailable(
+                "test policy unavailable".into(),
+            ))
+        }
+    }
+}
+
+fn sponsored_content(owner: SubjectId) -> TriggerRevisionContent {
+    let mut configured = content(owner);
+    configured.commercial_policy = CommercialPolicy {
+        billing_mode: BillingMode::Sponsored,
+        policy_reference: CMA_TRIGGER_SPONSORED_POLICY_V1.into(),
+        sponsorship: Some(SponsoredPolicyBinding {
+            tenant_id: "tenant-1".into(),
+            policy_id: SponsorshipPolicyId::new(),
+        }),
+    };
+    configured
+}
+
+#[tokio::test]
+async fn sponsored_drafts_require_a_composed_owner_policy_verifier() {
+    let publisher = SubjectId("publisher".into());
+    let (unconfigured, _) = service();
+    let error = unconfigured
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            sponsored_content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .expect_err("a dormant deployment cannot accept sponsored policy authority");
+    assert!(matches!(
+        error,
+        TriggerServiceError::Admission(TriggerAdmissionError::PricingUnavailable(_))
+    ));
+
+    let store = Arc::new(MemoryTriggerStore::default());
+    let configured = TriggerService::new(store.clone(), store, Arc::new(TestAuthority))
+        .with_launch_admission(Arc::new(TestAdmission))
+        .with_sponsorship_verifier(Arc::new(TestSponsorshipVerifier));
+    configured
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            sponsored_content(publisher),
+            NOW,
+        )
+        .await
+        .expect("the configured verifier admits the publisher's exact policy binding");
+}
+
 #[tokio::test]
 async fn public_preview_projects_the_deployment_contributor_estimate() {
     let publisher = SubjectId("publisher".into());
@@ -5690,6 +5907,7 @@ async fn public_preview_projects_the_deployment_contributor_estimate() {
     configured.commercial_policy = CommercialPolicy {
         billing_mode: BillingMode::Contributor,
         policy_reference: CMA_TRIGGER_CONTRIBUTOR_POLICY_V1.into(),
+        sponsorship: None,
     };
     let draft = service
         .create_draft(publisher.clone(), "service-1".into(), configured, NOW)

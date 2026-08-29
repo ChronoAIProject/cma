@@ -128,7 +128,7 @@ impl LaunchTransactionCommitter for mongodb::ClientSession {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LaunchDoc {
+pub(super) struct LaunchDoc {
     #[serde(rename = "_id")]
     id: String,
     owner: String,
@@ -139,6 +139,10 @@ struct LaunchDoc {
     updated_at: String,
     revision_number: i64,
     fencing_counter: i64,
+    /// Independent Mongo write fence used by sponsorship admission
+    /// transactions. It is not part of canonical Launch worker authority.
+    #[serde(default)]
+    sponsorship_read_revision: i64,
     #[serde(default)]
     lease_expires_at: Option<String>,
     /// `None` identifies a legacy document whose embedded stream has not yet
@@ -1420,15 +1424,21 @@ impl LaunchStore for MongoTriggerStore {
             .start_transaction()
             .await
             .map_err(|error| unavailable("begin expired Launch transaction", error))?;
+        let mut expired_fields = mongodb::bson::serialize_to_document(&launch_doc(expired, false)?)
+            .map_err(|error| {
+                TriggerStoreError::Malformed(format!("encode expired Launch: {error}"))
+            })?;
+        expired_fields.remove("_id");
+        expired_fields.remove("sponsorship_read_revision");
         let settled = self
             .launches
-            .find_one_and_replace(
+            .find_one_and_update(
                 doc! {
                     "_id": &expired.id.0,
                     "revision_number": signed(expected_revision, "expired Launch expected revision")?,
                     "current": true,
                 },
-                launch_doc(expired, false)?,
+                doc! { "$set": expired_fields },
             )
             .session(&mut session)
             .await
@@ -2200,6 +2210,7 @@ fn launch_doc(launch: &Launch, current: bool) -> Result<LaunchDoc, TriggerStoreE
         updated_at: launch.updated_at.clone(),
         revision_number: signed(launch.revision_number, "Launch revision")?,
         fencing_counter: signed(launch.fencing_counter, "Launch fencing counter")?,
+        sponsorship_read_revision: 0,
         lease_expires_at: launch.lease.as_ref().map(|lease| lease.expires_at.clone()),
         event_high_water: Some(signed(
             launch.event_high_water(),
@@ -2224,10 +2235,16 @@ fn exact_launch_update(launch: &Launch) -> Result<(Document, Launch), TriggerSto
 fn preserve_current_selector(mut fields: Document) -> Document {
     fields.remove("_id");
     fields.remove("current");
+    fields.remove("sponsorship_read_revision");
     doc! { "$set": fields }
 }
 
-fn read_launch(mut doc: LaunchDoc) -> Result<Launch, TriggerStoreError> {
+pub(super) fn read_launch(mut doc: LaunchDoc) -> Result<Launch, TriggerStoreError> {
+    if doc.sponsorship_read_revision < 0 {
+        return Err(TriggerStoreError::Malformed(
+            "Launch sponsorship read revision is negative".into(),
+        ));
+    }
     let embedded_high_water = doc.launch.event_high_water();
     let event_high_water = doc
         .event_high_water

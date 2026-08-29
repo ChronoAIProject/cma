@@ -419,9 +419,15 @@ export interface TriggerContributionPolicy {
 
 export type TriggerBillingMode = 'contributor' | 'zero_cost' | 'sponsored';
 
+export interface TriggerSponsoredPolicyBinding {
+  readonly tenant_id: string;
+  readonly policy_id: string;
+}
+
 export interface TriggerCommercialPolicy {
   readonly billing_mode: TriggerBillingMode;
   readonly policy_reference: string;
+  readonly sponsorship?: TriggerSponsoredPolicyBinding;
 }
 
 export type TriggerEditableField = 'task_input' | 'work_label' | 'resource_size' | 'timeout';
@@ -2031,6 +2037,11 @@ function decodeCommercialPolicy(raw: unknown, label: string): TriggerCommercialP
   const policy = safeObject(raw, label);
   requireEnum(policy, 'billing_mode', BILLING_MODES, label);
   requireText(policy, 'policy_reference', label);
+  if (policy.sponsorship !== undefined) {
+    const sponsorship = safeObject(policy.sponsorship, `${label} sponsorship`);
+    requireText(sponsorship, 'tenant_id', `${label} sponsorship`);
+    requireText(sponsorship, 'policy_id', `${label} sponsorship`);
+  }
   return policy as unknown as TriggerCommercialPolicy;
 }
 

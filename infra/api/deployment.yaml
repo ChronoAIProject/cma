@@ -137,6 +137,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # Sponsorship is dormant: there is deliberately no encryption-keyring
+            # or audit-HMAC mount until separately reviewed Secret Manager
+            # resources, IAM, and real store/adapter composition exist.
             # Read-only so a compromised process cannot rewrite the credential
             # it authenticates with.
             - name: opensandbox-api-key
@@ -145,6 +148,9 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        # Do not add sponsorship files to this existing provider authority. Its
+        # future keyring and audit-HMAC projections must be separate read-only
+        # volumes so neither secret class can alias this provider credential.
         # The OpenSandbox API key arrives as a file rather than an environment
         # variable, keeping it out of the pod spec and the process environment.
         # It is delivered by the cluster's secret provider straight from the
