@@ -516,11 +516,10 @@ impl SponsorshipService {
         require_sponsor_caller(caller, &command.owner)?;
         let stored_credential = self
             .store
-            .credential(&command.credential_id)
+            .credential_record(&command.credential_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
-        stored_credential.validate()?;
-        let credential = stored_credential.record;
+        let credential = stored_credential;
         if command.owner != credential.owner {
             return Err(SponsorshipError::Forbidden);
         }
