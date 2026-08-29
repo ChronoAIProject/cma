@@ -968,6 +968,9 @@ async fn serve_normal_control_plane() {
             diff_artifacts: trigger_workspace_store
                 .clone()
                 .map(|store| store as Arc<dyn layer2_core::DiffArtifactObjectStore>),
+            // Real provider, billing, and pricing adapters are not composed.
+            // Keep the documented sponsorship surface fail-closed.
+            sponsorships: None,
         }),
     };
     let rest = rest_api_router(

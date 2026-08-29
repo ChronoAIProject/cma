@@ -3990,6 +3990,121 @@ mod current_tests {
     }
 
     #[tokio::test]
+    async fn owner_safe_reads_and_publication_checks_remain_secret_free_and_recoverable() {
+        let harness = default_harness().await;
+        let binding = SponsoredPolicyBinding {
+            tenant_id: harness.policy.tenant_id.clone(),
+            policy_id: harness.policy.id.clone(),
+        };
+        harness
+            .service
+            .verify_publisher_policy_binding(&harness.sponsor.subject, &binding)
+            .await
+            .expect("the sponsoring publisher controls the exact active policy");
+        assert_eq!(
+            harness
+                .service
+                .verify_publisher_policy_binding(&SubjectId("foreign-publisher".into()), &binding)
+                .await
+                .unwrap_err(),
+            SponsorshipError::Forbidden
+        );
+
+        let credential = harness
+            .service
+            .credential_view(&harness.sponsor, &harness.policy.credential_id)
+            .await
+            .unwrap();
+        assert_eq!(credential.id, harness.policy.credential_id);
+        let policy = harness
+            .service
+            .policy_view(&harness.sponsor, &harness.policy.id)
+            .await
+            .unwrap();
+        assert_eq!(policy.id, harness.policy.id);
+        assert_eq!(policy.usage, SponsorshipPolicyUsage::default());
+        assert_eq!(
+            harness
+                .service
+                .credential_view(&harness.contributor, &harness.policy.credential_id)
+                .await
+                .unwrap_err(),
+            SponsorshipError::Forbidden
+        );
+        let review = harness
+            .service
+            .terms_review(&harness.contributor, &harness.launch_id)
+            .await
+            .unwrap();
+        assert_eq!(review.terms, harness.terms);
+        assert_eq!(
+            review.launch_snapshot_digest,
+            digest(b"fixture-launch-snapshot")
+        );
+
+        prepare_activation(&harness).await;
+        let grant = activate(&harness, "grant-owner-safe-view").await;
+        let contributor_view = harness
+            .service
+            .grant_view(&harness.contributor, &grant.id)
+            .await
+            .unwrap();
+        let sponsor_view = harness
+            .service
+            .grant_for_launch_view(&harness.sponsor, &harness.launch_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(contributor_view, sponsor_view);
+        assert_eq!(contributor_view.id, grant.id);
+
+        let audit = harness
+            .service
+            .actor_audit_events(&harness.sponsor, MAX_SPONSORED_AUDIT_PAGE)
+            .await
+            .unwrap();
+        assert!(!audit.is_empty());
+        assert_eq!(
+            harness
+                .service
+                .actor_audit_events(&harness.admin, 1)
+                .await
+                .unwrap_err(),
+            SponsorshipError::Forbidden
+        );
+
+        let fence = harness
+            .service
+            .engage_kill_switch(&harness.admin)
+            .await
+            .unwrap();
+        assert!(fence.kill_switch_engaged);
+        assert_eq!(
+            harness
+                .service
+                .verify_publisher_policy_binding(&harness.sponsor.subject, &binding)
+                .await
+                .unwrap_err(),
+            SponsorshipError::KillSwitch
+        );
+        harness
+            .service
+            .credential_view(&harness.sponsor, &harness.policy.credential_id)
+            .await
+            .expect("credential recovery metadata remains readable after the kill switch");
+        harness
+            .service
+            .policy_view(&harness.sponsor, &harness.policy.id)
+            .await
+            .expect("policy recovery metadata remains readable after the kill switch");
+        harness
+            .service
+            .grant_view(&harness.contributor, &grant.id)
+            .await
+            .expect("Launch recovery metadata remains readable after the kill switch");
+    }
+
+    #[tokio::test]
     async fn registration_is_unique_idempotent_and_audit_identifiers_are_keyed() {
         let harness = default_harness().await;
         harness.clock.set(LATER);
