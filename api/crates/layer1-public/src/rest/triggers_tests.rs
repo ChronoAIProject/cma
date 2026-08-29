@@ -22,9 +22,9 @@ use layer2_core::{
     PublishedRevision, PublisherAuthority, PublisherRepositoryRole, PullRequestDefaults,
     QuotaSnapshot, ReachStatus, RepositoryAccessPolicy, RepositoryIdentity,
     RepositoryOperationClass, RepositoryVisibility, RequiredCapability, ResourcePolicy,
-    RuntimeAdmissionSnapshot, ScopeClass, SessionCredentialAuthority, SessionId, SessionLink,
-    SessionSize, SetupPolicy, SourceMode, StartAdmissionSnapshot, StoreError, SubjectId,
-    TriggerAdmissionError, TriggerAuthorityVerifier, TriggerConnection,
+    RuntimeAdmissionSnapshot, ScopeClass, SessionCredentialAuthority, SessionCredentialRetirement,
+    SessionId, SessionLink, SessionSize, SetupPolicy, SourceMode, StartAdmissionSnapshot,
+    StoreError, SubjectId, TriggerAdmissionError, TriggerAuthorityVerifier, TriggerConnection,
     TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft, TriggerId,
     TriggerLaunchAdmission, TriggerPage, TriggerPageRequest, TriggerRepositorySelection,
     TriggerRevision, TriggerRevisionContent, TriggerRevisionId, TriggerService,
@@ -2323,6 +2323,7 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         "ForkRecord",
         "BranchRecord",
         "SessionLink",
+        "SessionCredentialRetirement",
         "ReachStatus",
         "PromptDelivery",
         "PromptDeliveryState",
@@ -2558,6 +2559,10 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         ("fork", "ForkRecord"),
         ("branch", "BranchRecord"),
         ("session", "SessionLink"),
+        (
+            "session_credential_retirement",
+            "SessionCredentialRetirement",
+        ),
         ("reach", "ReachStatus"),
         ("delivery", "PromptDelivery"),
     ] {
@@ -2658,6 +2663,30 @@ fn launch_projection_excludes_credential_and_worker_internals() {
     ] {
         assert!(!wire.contains(forbidden), "leaked {forbidden}");
     }
+}
+
+#[test]
+fn launch_projection_exposes_only_positive_session_credential_retirement_evidence() {
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    fixture.launch.state = LaunchState::Completed;
+    fixture.launch.terminal_at = Some("2026-08-28T01:02:44Z".into());
+    fixture.launch.reach.as_mut().unwrap().state = CapabilityRevocationState::Revoked;
+    let session_id = fixture.launch.session.as_ref().unwrap().session_id.clone();
+    fixture.launch.session_credential_retirement = Some(SessionCredentialRetirement {
+        session_id: session_id.clone(),
+        settled_at: "2026-08-28T01:02:45Z".into(),
+    });
+
+    let projection =
+        serde_json::to_value(LaunchView::try_from(fixture.launch.clone()).unwrap()).unwrap();
+    assert_eq!(
+        projection["session_credential_retirement"],
+        json!({
+            "session_id": session_id.0,
+            "settled_at": "2026-08-28T01:02:45Z",
+        })
+    );
 }
 
 #[tokio::test]

@@ -353,6 +353,7 @@
   "branch": null,
   "workspace": null,
   "session": null,
+  "session_credential_retirement": null,
   "reach": null,
   "delivery": null,
   "contribution_checkpoint_version": null,

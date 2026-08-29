@@ -457,6 +457,20 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(repository.source_sha, "a".repeat(40));
     let launch: Launch = serde_json::from_str(LAUNCH).expect("Launch fixture is typed");
     assert_eq!(launch.steps.len(), 15);
+    let mut retired_launch = fixture(LAUNCH);
+    retired_launch["session_credential_retirement"] = serde_json::json!({
+        "session_id": "sesn_provider_smoke",
+        "settled_at": "2026-08-28T01:02:45Z"
+    });
+    let retired_launch: Launch =
+        serde_json::from_value(retired_launch).expect("credential retirement is public evidence");
+    assert_eq!(
+        retired_launch
+            .session_credential_retirement
+            .as_ref()
+            .map(|retirement| retirement.session_id.as_str()),
+        Some("sesn_provider_smoke")
+    );
     assert_eq!(
         launch
             .runtime_admission
