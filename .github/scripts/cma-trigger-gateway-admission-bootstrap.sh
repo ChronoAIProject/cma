@@ -14,10 +14,11 @@ readonly CMA_GATEWAY_PRODUCTION_MUTATION_ENABLED=0
 readonly CMA_ADMISSION_CONTEXT="gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke"
 readonly CMA_ADMISSION_NAMESPACE="chrono-bot"
 readonly CMA_ADMISSION_NAME="cma-cutover-fence-label-reservation"
-readonly CMA_ADMISSION_MANIFEST="infra/api/cutover-fence-policy.yaml"
+readonly CMA_ADMISSION_MANIFEST=".github/scripts/cma-trigger-gateway-cutover-fence-policy.yaml"
 readonly CMA_ADMISSION_FIELD_MANAGER="cma-trigger-gateway-admission-bootstrap"
 readonly CMA_ADMISSION_RESERVED_SELECTOR="release.chrono-ai.fun/cutover-fence=mongodb-715"
-readonly CMA_ADMISSION_SOURCE_PATHS="infra/api/cutover-fence-policy.yaml .github/scripts/cma-trigger-gateway-admission-bootstrap.sh .github/scripts/cma-trigger-gateway-launch.sh .github/scripts/cma-trigger-gateway-projection.rb .github/scripts/cma-trigger-gateway-projection.sh .github/scripts/cma-trigger-gateway-tls-sanitize.rb .github/scripts/cma-trigger-gateway-live-policy.json .github/scripts/cma-trigger-gateway-cloudflare-capture.sh .github/scripts/cma-trigger-gateway-cloudflare-policy.json .github/scripts/cma-trigger-gateway-origin-evidence.sh .github/scripts/cma-trigger-gateway-state.sh .github/scripts/cma-trigger-gateway-adoption.sh .github/scripts/cma-trigger-gateway-restore-traffic.sh"
+readonly CMA_ADMISSION_SOURCE_PATHS="infra/api/deployment.yaml infra/web/deployment.yaml infra/api/configmap.yaml .github/scripts/cma-trigger-gateway-cutover-fence-policy.yaml .github/scripts/cma-trigger-gateway-admission-bootstrap.sh .github/scripts/cma-trigger-gateway-launch.sh .github/scripts/cma-trigger-gateway-projection.rb .github/scripts/cma-trigger-gateway-projection.sh .github/scripts/cma-trigger-gateway-tls-sanitize.rb .github/scripts/cma-trigger-gateway-live-policy.json .github/scripts/cma-trigger-gateway-cloudflare-capture.sh .github/scripts/cma-trigger-gateway-cloudflare-policy.json .github/scripts/cma-trigger-gateway-origin-evidence.sh .github/scripts/cma-trigger-gateway-state.sh .github/scripts/cma-trigger-gateway-adoption.sh .github/scripts/cma-trigger-gateway-restore-traffic.sh"
+CMA_GATEWAY_RELEASE_TAG=""
 
 cma_admission_die() {
   printf 'cma-trigger Gateway admission bootstrap: %s\n' "$*" >&2
@@ -82,6 +83,32 @@ cma_admission_source_digest() {
   done | cma_admission_sha256_stream
 }
 
+cma_admission_resolve_release_tag() {
+  local release_revision="$1"
+  local tag_record tag_name tag_object_type peeled_object_type peeled_revision
+
+  tag_record="$(timeout 10s git --no-replace-objects for-each-ref \
+    --points-at "${release_revision}" \
+    --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' \
+    'refs/tags/v*')" || return 1
+  [[ "${tag_record}" != *$'\n'* ]] || return 1
+  IFS='|' read -r tag_name tag_object_type peeled_object_type peeled_revision \
+    <<<"${tag_record}"
+  [[ "${tag_name}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && \
+    "${tag_object_type}" == tag && "${peeled_object_type}" == commit && \
+    "${peeled_revision}" == "${release_revision}" ]] || return 1
+  printf '%s\n' "${tag_name}"
+}
+
+cma_admission_require_confirmation() {
+  local expected_confirmation="bootstrap-${CMA_GATEWAY_RELEASE_TAG}-admission"
+
+  [[ -n "${CMA_GATEWAY_RELEASE_TAG}" && \
+    "${CMA_GATEWAY_CONFIRM:-}" == "${expected_confirmation}" ]] || \
+    cma_admission_die \
+      "CMA_GATEWAY_CONFIRM must equal ${expected_confirmation}, derived from the reviewed release tag"
+}
+
 cma_admission_require_checkout() {
   local revision="${CMA_GATEWAY_RELEASE_REVISION:-}"
   local source_path
@@ -90,6 +117,9 @@ cma_admission_require_checkout() {
     cma_admission_die "CMA_GATEWAY_RELEASE_REVISION must be the reviewed full commit"
   [[ "$(git rev-parse HEAD)" == "${revision}" ]] || \
     cma_admission_die "checkout HEAD differs from the reviewed release revision"
+  CMA_GATEWAY_RELEASE_TAG="$(cma_admission_resolve_release_tag "${revision}")" || \
+    cma_admission_die \
+      "the reviewed release revision must have exactly one annotated SemVer release tag"
   for source_path in ${CMA_ADMISSION_SOURCE_PATHS}; do
     git diff --quiet -- "${source_path}" || \
       cma_admission_die "reviewed admission source is modified: ${source_path}"
@@ -345,8 +375,27 @@ cma_admission_publish_directory() {
     source, destination = ARGV
     raise "destination exists" if File.exist?(destination) || File.symlink?(destination)
     File.rename(source, destination)
-    File.open(File.dirname(destination), File::RDONLY) { |directory| directory.fsync }
   ' "$1" "$2"
+}
+
+cma_admission_sync_published_directory() {
+  local published_dir="$1"
+  local parent_dir="$2"
+
+  timeout --signal=TERM --kill-after=2s 10s env -i PATH="${PATH}" LC_ALL=C \
+    ruby --disable-gems -e '
+      published, parent = ARGV
+      raise "published path is not an exact directory" unless
+        File.directory?(published) && !File.symlink?(published)
+      Dir.children(published).sort.each do |entry|
+        path = File.join(published, entry)
+        stat = File.lstat(path)
+        raise "published entry is not a regular file" unless stat.file? && !stat.symlink?
+        File.open(path, File::RDONLY) { |file| file.fsync }
+      end
+      File.open(published, File::RDONLY) { |directory| directory.fsync }
+      File.open(parent, File::RDONLY) { |directory| directory.fsync }
+    ' "${published_dir}" "${parent_dir}"
 }
 
 cma_admission_validate_bundle() {
@@ -478,6 +527,8 @@ cma_admission_write_bundle() {
   chmod 400 "${work_dir}"/* || return 1
   cma_admission_fsync "${work_dir}"/* "${work_dir}" "${work_dir%/*}" || return 1
   cma_admission_publish_directory "${work_dir}" "${destination_dir}" || return 1
+  cma_admission_sync_published_directory \
+    "${destination_dir}" "${destination_dir%/*}" || return 1
   printf '%s|%s\n' "${destination_dir}/receipt.json" "${receipt_sha}"
 }
 
@@ -485,19 +536,21 @@ cma_admission_bootstrap() {
   local custody_root destination_dir work_dir acknowledgement
 
   cma_admission_require_production_mutation_enabled || return 1
-  [[ "${CMA_GATEWAY_CONFIRM:-}" == bootstrap-v0.10-admission ]] || \
-    cma_admission_die "set CMA_GATEWAY_CONFIRM=bootstrap-v0.10-admission"
   [[ "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:-}" == sole-spec-writer ]] || \
     cma_admission_die "the exclusive admission-writer attestation is absent"
   [[ "${CMA_GATEWAY_ADMISSION_CUSTODY_CONFIRM:-}" == durable-off-host ]] || \
     cma_admission_die "durable admission evidence custody is not acknowledged"
   cma_admission_require_checkout
+  cma_admission_require_confirmation
   custody_root="${CMA_GATEWAY_ADMISSION_CUSTODY_ROOT:-}"
   [[ "${custody_root}" == /* && "${custody_root}" != / && -d "${custody_root}" && \
     ! -L "${custody_root}" && -O "${custody_root}" ]] || \
     cma_admission_die "admission custody root must be an exact owned absolute directory"
   destination_dir="${custody_root%/}/admission-bootstrap-${CMA_GATEWAY_RELEASE_REVISION}"
   if [[ -d "${destination_dir}" && ! -L "${destination_dir}" ]]; then
+    cma_admission_sync_published_directory \
+      "${destination_dir}" "${custody_root}" || \
+      cma_admission_die "existing admission receipt could not be durably re-synchronized"
     CMA_GATEWAY_ADMISSION_RECEIPT="${destination_dir}/receipt.json"
     CMA_GATEWAY_ADMISSION_RECEIPT_SHA256="$(awk 'NF == 2 && $2 == "receipt.json" {print $1}' \
       "${destination_dir}/receipt.sha256")"

@@ -21,7 +21,8 @@ unset cma_step10_startup_name
 
 readonly CMA_GATEWAY_PRODUCTION_MUTATION_ENABLED=0
 cma_pinned_api_root_identity=""
-readonly CMA_GATEWAY_REVIEWED_SOURCE_PATHS="infra/api/cutover-fence-policy.yaml .github/scripts/cma-trigger-gateway-admission-bootstrap.sh .github/scripts/cma-trigger-gateway-live-policy.json .github/scripts/cma-trigger-gateway-cloudflare-capture.sh .github/scripts/cma-trigger-gateway-cloudflare-policy.json .github/scripts/cma-trigger-gateway-projection.rb .github/scripts/cma-trigger-gateway-projection.sh .github/scripts/cma-trigger-gateway-tls-sanitize.rb .github/scripts/cma-trigger-gateway-origin-evidence.sh .github/scripts/cma-trigger-gateway-launch.sh .github/scripts/cma-trigger-gateway-state.sh .github/scripts/cma-trigger-gateway-adoption.sh .github/scripts/cma-trigger-gateway-restore-traffic.sh"
+CMA_GATEWAY_RELEASE_TAG=""
+readonly CMA_GATEWAY_REVIEWED_SOURCE_PATHS="infra/api/deployment.yaml infra/web/deployment.yaml infra/api/configmap.yaml .github/scripts/cma-trigger-gateway-cutover-fence-policy.yaml .github/scripts/cma-trigger-gateway-admission-bootstrap.sh .github/scripts/cma-trigger-gateway-live-policy.json .github/scripts/cma-trigger-gateway-cloudflare-capture.sh .github/scripts/cma-trigger-gateway-cloudflare-policy.json .github/scripts/cma-trigger-gateway-projection.rb .github/scripts/cma-trigger-gateway-projection.sh .github/scripts/cma-trigger-gateway-tls-sanitize.rb .github/scripts/cma-trigger-gateway-origin-evidence.sh .github/scripts/cma-trigger-gateway-launch.sh .github/scripts/cma-trigger-gateway-state.sh .github/scripts/cma-trigger-gateway-adoption.sh .github/scripts/cma-trigger-gateway-restore-traffic.sh"
 
 cma_step10_require_trusted_launcher() {
   if [ "${CMA_GATEWAY_TRUSTED_LAUNCH:-}" != env-i-v1 ] || \
@@ -64,12 +65,39 @@ cma_step10_sha256_file() {
 cma_step10_sha256_valid() {
   [[ "$1" =~ ^[0-9a-f]{64}$ ]]
 }
-cma_step10_require_checkout() {
-  cma_step10_expected_confirmation="${1:-restore-v0.10-traffic}"
-  if [ "${CMA_GATEWAY_CONFIRM}" != "${cma_step10_expected_confirmation}" ]; then
-    echo "CMA_GATEWAY_CONFIRM must explicitly authorize ${cma_step10_expected_confirmation}" >&2
+cma_step10_resolve_release_tag() {
+  local cma_release_revision="$1"
+  local cma_tag_record cma_tag_name cma_tag_object_type
+  local cma_peeled_object_type cma_peeled_revision
+
+  cma_tag_record="$(timeout --signal=TERM --kill-after=2s 10s \
+    git --no-replace-objects for-each-ref \
+      --points-at "${cma_release_revision}" \
+      --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' \
+      'refs/tags/v*')" || return 1
+  [[ "${cma_tag_record}" != *$'\n'* ]] || return 1
+  IFS='|' read -r cma_tag_name cma_tag_object_type \
+    cma_peeled_object_type cma_peeled_revision <<<"${cma_tag_record}"
+  [[ "${cma_tag_name}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && \
+    "${cma_tag_object_type}" == tag && "${cma_peeled_object_type}" == commit && \
+    "${cma_peeled_revision}" == "${cma_release_revision}" ]] || return 1
+  printf '%s\n' "${cma_tag_name}"
+}
+cma_step10_require_confirmation() {
+  local cma_action="$1"
+  local cma_scope="$2"
+  local cma_expected_confirmation="${cma_action}-${CMA_GATEWAY_RELEASE_TAG}-${cma_scope}"
+
+  if [ -z "${CMA_GATEWAY_RELEASE_TAG}" ] || \
+     [ "${CMA_GATEWAY_CONFIRM}" != "${cma_expected_confirmation}" ]; then
+    echo "CMA_GATEWAY_CONFIRM must equal ${cma_expected_confirmation}, derived from the reviewed release tag" >&2
     return 1
   fi
+}
+cma_step10_forbidden_index_entries() {
+  awk 'substr($0, 1, 1) ~ /[a-zS]/ { print }'
+}
+cma_step10_require_checkout() {
   if [ "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM}" != sole-spec-writer ]; then
     echo "CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM must attest the checked-routing-graph freeze" >&2
     return 1
@@ -93,6 +121,11 @@ cma_step10_require_checkout() {
     echo "the traffic-restoration checkout is not the reviewed release commit" >&2
     return 1
   fi
+  if ! CMA_GATEWAY_RELEASE_TAG="$(cma_step10_resolve_release_tag \
+    "${CMA_GATEWAY_RELEASE_REVISION}")"; then
+    echo "the reviewed release revision must have exactly one annotated SemVer release tag" >&2
+    return 1
+  fi
   if ! cma_step10_worktree="$(timeout --signal=TERM --kill-after=2s 10s \
     git --no-replace-objects rev-parse --show-toplevel)"; then
     echo "the release checkout root could not be resolved" >&2
@@ -114,7 +147,8 @@ cma_step10_require_checkout() {
     return 1
   fi
   if ! cma_step10_index_flags="$(timeout --signal=TERM --kill-after=2s 10s \
-    git --no-replace-objects ls-files -v | sed -n '/^[hS] /p')"; then
+    git --no-replace-objects ls-files -v | \
+      cma_step10_forbidden_index_entries)"; then
     echo "the release checkout index flags could not be read" >&2
     return 1
   fi
@@ -292,6 +326,8 @@ cma_step10_projection_capture() {
   local cma_projection_stage="$4"
   local cma_predecessor_file="$5"
   local cma_expected_predecessor_stage="$6"
+  local cma_expected_predecessor_digest="$7"
+  local cma_expected_predecessor_predecessor_digest="$8"
   local cma_projection_dir cma_predecessor_digest cma_recorded_digest
 
   if [ "${cma_projection_parent}" != "${cma_projection_parent%/}" ] || \
@@ -312,13 +348,35 @@ cma_step10_projection_capture() {
   }
   cma_predecessor_digest="$(cma_step10_sha256_file "${cma_predecessor_file}")" || return 1
   cma_predecessor_digest="${cma_predecessor_digest%% *}"
-  cma_step10_sha256_valid "${cma_predecessor_digest}" || return 1
+  if ! {
+    cma_step10_sha256_valid "${cma_expected_predecessor_digest}" &&
+      [ "${cma_predecessor_digest}" = "${cma_expected_predecessor_digest}" ]
+  }; then
+    echo "projection predecessor differs from its independently retained digest" >&2
+    return 1
+  fi
   cma_recorded_digest="$(awk 'NF == 2 && $2 == "projection.json" {print $1}' \
     "${cma_predecessor_file%/*}/projection.sha256")" || return 1
   [ "${cma_recorded_digest}" = "${cma_predecessor_digest}" ] || {
     echo "projection predecessor differs from its durable digest receipt" >&2
     return 1
   }
+  case "${cma_expected_predecessor_stage}" in
+    adopted)
+      cma_step10_require_projection_file "${cma_predecessor_file}" \
+        "${cma_expected_predecessor_digest}" \
+        "${cma_expected_predecessor_predecessor_digest}" && \
+        cma_step10_source_projection_matches_active_receipt \
+          "${cma_predecessor_file}" || return 1
+      ;;
+    fenced-pre-scale | fenced-post-scale | fenced-pre-reopen)
+      cma_step10_validate_fence_projection_receipt \
+        "${cma_predecessor_file%/projection.json}" \
+        "${cma_expected_predecessor_stage}" \
+        "${cma_expected_predecessor_predecessor_digest}" || return 1
+      ;;
+    *) return 1 ;;
+  esac
   cma_projection_dir="${cma_projection_parent}/${cma_projection_label}-${CMA_GATEWAY_RELEASE_REVISION}"
   CMA_GATEWAY_PROJECTION_STAGE="${cma_projection_stage}" \
     CMA_GATEWAY_PROJECTION_PREDECESSOR_SHA256="${cma_predecessor_digest}" \
@@ -338,6 +396,8 @@ cma_step10_projection_emit() {
 }
 cma_step10_require_projection_file() {
   local cma_projection_file="$1"
+  local cma_expected_digest="$2"
+  local cma_expected_predecessor_digest="$3"
   local cma_projection_dir="${cma_projection_file%/*}"
   local cma_projection_digest_file="${cma_projection_dir}/projection.sha256"
   local cma_recorded_digest cma_live_digest cma_entry_count
@@ -359,13 +419,15 @@ cma_step10_require_projection_file() {
   [ "$(wc -l < "${cma_projection_digest_file}" | tr -d ' ')" = 1 ] || return 1
   cma_live_digest="$(cma_step10_sha256_file "${cma_projection_file}")" || return 1
   cma_live_digest="${cma_live_digest%% *}"
-  cma_step10_sha256_valid "${cma_recorded_digest}" && \
-    [ "${cma_recorded_digest}" = "${cma_live_digest}" ] || return 1
-  jq -se '
+  cma_step10_sha256_valid "${cma_expected_digest}" && \
+    cma_step10_sha256_valid "${cma_expected_predecessor_digest}" && \
+    cma_step10_sha256_valid "${cma_recorded_digest}" && \
+    [ "${cma_recorded_digest}" = "${cma_live_digest}" ] && \
+    [ "${cma_live_digest}" = "${cma_expected_digest}" ] || return 1
+  jq -se --arg predecessor "${cma_expected_predecessor_digest}" '
     length == 2 and
     .[0].schemaVersion == 1 and .[0].mode == "source" and
-    .[0].lifecycle.stage == "adopted" and
-    (.[0].lifecycle.predecessorSha256 | test("^[0-9a-f]{64}$")) and
+    .[0].lifecycle == {stage:"adopted",predecessorSha256:$predecessor} and
     .[1].schemaVersion == 1 and .[1].mode == "source" and
     .[1].lifecycle == .[0].lifecycle
   ' "${cma_projection_dir}/capture.json" "${cma_projection_file}" >/dev/null || return 1
@@ -377,6 +439,23 @@ cma_step10_require_projection_file() {
       "${cma_projection_work_dir}/projection.json"
     cmp "${cma_projection_work_dir}/projection.json" "${cma_projection_file}" >/dev/null
   )
+}
+cma_step10_projection_digest() {
+  local cma_projection_file="$1"
+  local cma_projection_digest_file="${cma_projection_file%/*}/projection.sha256"
+  local cma_recorded_digest cma_live_digest
+
+  [ -f "${cma_projection_file}" ] && [ ! -L "${cma_projection_file}" ] && \
+    [ -f "${cma_projection_digest_file}" ] && \
+    [ ! -L "${cma_projection_digest_file}" ] || return 1
+  cma_recorded_digest="$(awk 'NF == 2 && $2 == "projection.json" {print $1}' \
+    "${cma_projection_digest_file}")" || return 1
+  [ "$(wc -l < "${cma_projection_digest_file}" | tr -d ' ')" = 1 ] || return 1
+  cma_live_digest="$(cma_step10_sha256_file "${cma_projection_file}")" || return 1
+  cma_live_digest="${cma_live_digest%% *}"
+  cma_step10_sha256_valid "${cma_recorded_digest}" && \
+    [ "${cma_recorded_digest}" = "${cma_live_digest}" ] || return 1
+  printf '%s\n' "${cma_live_digest}"
 }
 cma_step10_source_projection_matches_active_receipt() {
   local cma_projection_file="$1"
@@ -396,34 +475,67 @@ cma_step10_source_projection_matches_active_receipt() {
       .sourceProjection.lifecycle == $source[0].lifecycle and
       .sourceProjection.captureSha256 == $source[0].captureSha256 and
       .sourceProjection.behaviorPolicy == $source[0].behaviorPolicy and
-      .sourceProjection.admissionReceipt == $source[0].admissionReceipt
+      .sourceProjection.admissionReceipt == $source[0].admissionReceipt and
+      .workload != null and $source[0].graph.apiWorkload != null and
+      .workload == $source[0].graph.apiWorkload
     ' "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" >/dev/null
 }
 
-cma_step10_validate_fence_projection() {
+cma_step10_validate_fence_projection_receipt() {
   local cma_projection_dir="$1"
+  local cma_expected_stage="$2"
+  local cma_expected_predecessor_digest="$3"
   local cma_projection_digest_file="${cma_projection_dir}/projection.sha256"
   local cma_projection_file="${cma_projection_dir}/projection.json"
-  local cma_recorded_digest cma_live_digest
+  local cma_recorded_digest cma_live_digest cma_projection_entry cma_projection_work_dir
+  local cma_projection_stage
 
-  [ -f "${cma_projection_file}" ] && [ ! -L "${cma_projection_file}" ] && \
-    [ -f "${cma_projection_digest_file}" ] && [ ! -L "${cma_projection_digest_file}" ] || return 1
+  [ -d "${cma_projection_dir}" ] && [ ! -L "${cma_projection_dir}" ] && \
+    [ -O "${cma_projection_dir}" ] && \
+    [ "$(find "${cma_projection_dir}" -mindepth 1 -maxdepth 1 -print | \
+      wc -l | tr -d ' ')" = 3 ] || return 1
+  for cma_projection_entry in capture.json projection.json projection.sha256; do
+    [ -f "${cma_projection_dir}/${cma_projection_entry}" ] && \
+      [ ! -L "${cma_projection_dir}/${cma_projection_entry}" ] && \
+      [ -O "${cma_projection_dir}/${cma_projection_entry}" ] || return 1
+  done
   cma_recorded_digest="$(awk 'NF == 2 && $2 == "projection.json" {print $1}' \
     "${cma_projection_digest_file}")" || return 1
+  [ "$(wc -l < "${cma_projection_digest_file}" | tr -d ' ')" = 1 ] || return 1
   cma_live_digest="$(cma_step10_sha256_file "${cma_projection_file}")" || return 1
   cma_live_digest="${cma_live_digest%% *}"
   cma_step10_sha256_valid "${cma_recorded_digest}" && \
     [ "${cma_recorded_digest}" = "${cma_live_digest}" ] || return 1
+  (
+    set -e
+    cma_projection_work_dir="$(mktemp -d)"
+    trap 'rm -rf "${cma_projection_work_dir}"' EXIT HUP INT QUIT TERM
+    cma_step10_projection_emit "${cma_projection_dir}/capture.json" \
+      "${cma_projection_work_dir}/projection.json"
+    cmp "${cma_projection_work_dir}/projection.json" "${cma_projection_file}" >/dev/null
+  ) || return 1
   [ -n "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT:-}" ] && \
     [ -f "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" ] && \
     [ ! -L "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" ] || return 1
-  jq -e --slurpfile receipt "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" '
+  cma_step10_sha256_valid "${cma_expected_predecessor_digest}" || return 1
+  case "${cma_expected_stage}" in
+    fenced-pre-scale | fenced-post-scale | fenced-pre-reopen) ;;
+    *) return 1 ;;
+  esac
+  jq -e --arg expected_stage "${cma_expected_stage}" \
+    --arg expected_predecessor "${cma_expected_predecessor_digest}" \
+    --slurpfile receipt "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" '
     ($receipt | length) == 1 and
     ($receipt[0].service) as $root |
+    ($receipt[0].workload) as $workload |
+    (.lifecycle.stage) as $stage |
     (.fullCapture.kubernetes.services.items |
       map(select(.metadata.namespace == "chrono-bot" and .metadata.name == "cma-api"))) as $services |
     ($services | length) == 1 and
     .schemaVersion == 1 and .mode == "fenced" and
+    .lifecycle == {
+      stage:$expected_stage,predecessorSha256:$expected_predecessor
+    } and $stage == $expected_stage and
     .graph.services["cma-api"].uid == $root.uid and
     .graph.services["cma-api"].name == $root.name and
     .graph.services["cma-api"].zones == $root.zones and
@@ -433,15 +545,109 @@ cma_step10_validate_fence_projection() {
     .behaviorPolicy == $receipt[0].sourceProjection.behaviorPolicy and
     .admissionReceipt == $receipt[0].sourceProjection.admissionReceipt and
     .graph.fenceAdmission == $receipt[0].admission and
+    .graph.apiWorkload.deployment.uid == $workload.deployment.uid and
+    (if $stage == "fenced-pre-scale" then
+       .lifecycle.predecessorSha256 == $receipt[0].sourceProjection.sha256 and
+       .graph.apiWorkload == $workload
+     elif $stage == "fenced-post-scale" then
+       .graph.apiWorkload.deployment.replicas == 0 and
+       .graph.apiWorkload.pods == [] and .graph.apiWorkload.verified == null
+     else
+       .graph.apiWorkload.deployment.replicas == 1 and
+       (.graph.apiWorkload.pods | length) == 1 and
+       .graph.apiWorkload.pods[0].uid != $workload.pods[0].uid and
+       .graph.apiWorkload.verified != null
+     end) and
     .graph.services["cma-api"].effectiveMembers == [] and
     .graph.services["cma-api"].effectiveHealth == [] and
     .graph.services["cma-api"].uid == $services[0].metadata.uid
   ' "${cma_projection_file}" >/dev/null || return 1
-  cma_step10_projection_check_live "${cma_projection_file}"
+  cma_projection_stage="$(jq -er .lifecycle.stage "${cma_projection_file}")" || return 1
+  if [ "${cma_projection_stage}" = fenced-pre-reopen ]; then
+    cma_step10_projection_matches_final_workload "${cma_projection_file}"
+  fi
+}
+cma_step10_validate_fence_projection() {
+  local cma_projection_dir="$1"
+  local cma_expected_stage="$2"
+  local cma_expected_predecessor_digest="$3"
+  local cma_initial_digest cma_semantic_digest cma_final_digest
+
+  cma_initial_digest="$(cma_step10_projection_digest \
+    "${cma_projection_dir}/projection.json")" || return 1
+  cma_step10_validate_fence_projection_receipt \
+    "${cma_projection_dir}" "${cma_expected_stage}" \
+    "${cma_expected_predecessor_digest}" || return 1
+  cma_semantic_digest="$(cma_step10_projection_digest \
+    "${cma_projection_dir}/projection.json")" || return 1
+  [ "${cma_semantic_digest}" = "${cma_initial_digest}" ] || return 1
+  cma_step10_projection_check_live \
+    "${cma_projection_dir}/projection.json" || return 1
+  cma_final_digest="$(cma_step10_projection_digest \
+    "${cma_projection_dir}/projection.json")" || return 1
+  [ "${cma_final_digest}" = "${cma_initial_digest}" ] || return 1
+  printf '%s\n' "${cma_initial_digest}"
+}
+cma_step10_validate_scaled_down_workload() {
+  local cma_deployment_json cma_pods_json cma_old_pods cma_old_pod_name
+  local cma_old_pod_uid cma_old_pod_json
+
+  [ -n "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT:-}" ] && \
+    [ -f "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" ] && \
+    [ ! -L "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" ] || return 1
+  cma_deployment_json="$(cma_step10_kubectl get deployment cma-api -o json)" || return 1
+  printf '%s' "${cma_deployment_json}" | jq -e \
+    --slurpfile receipt "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" '
+      ($receipt | length) == 1 and
+      .apiVersion == "apps/v1" and .kind == "Deployment" and
+      .metadata.name == "cma-api" and .metadata.namespace == "chrono-bot" and
+      .metadata.uid == $receipt[0].workload.deployment.uid and
+      .metadata.deletionTimestamp == null and
+      (.metadata.generation | type) == "number" and .metadata.generation > 0 and
+      .spec.replicas == 0 and .status.observedGeneration == .metadata.generation and
+      (.status.replicas // 0) == 0 and (.status.updatedReplicas // 0) == 0 and
+      (.status.readyReplicas // 0) == 0 and (.status.availableReplicas // 0) == 0 and
+      (.status.unavailableReplicas // 0) == 0
+    ' >/dev/null || return 1
+  cma_pods_json="$(cma_step10_kubectl get pod \
+    -l app.kubernetes.io/name=cma-api -o json)" || return 1
+  printf '%s' "${cma_pods_json}" | jq -e '
+    .apiVersion == "v1" and .kind == "List" and .items == []
+  ' >/dev/null || return 1
+  cma_old_pods="$(jq -er '.workload.pods[] | [.name,.uid] | @tsv' \
+    "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}")" || return 1
+  [ -n "${cma_old_pods}" ] || return 1
+  while IFS=$'\t' read -r cma_old_pod_name cma_old_pod_uid; do
+    [ -n "${cma_old_pod_name}" ] && [ -n "${cma_old_pod_uid}" ] || return 1
+    cma_old_pod_json="$(cma_step10_kubectl get pod "${cma_old_pod_name}" \
+      --ignore-not-found -o json)" || return 1
+    [ -z "${cma_old_pod_json}" ] || return 1
+  done <<<"${cma_old_pods}"
 }
 cma_step10_fsync_paths() {
   timeout --signal=TERM --kill-after=2s 10s env -i PATH="${PATH}" LC_ALL=C \
     ruby --disable-gems -e 'ARGV.each { |path| File.open(path, File::RDONLY) { |file| file.fsync } }' "$@"
+}
+cma_step10_sync_published_fence_bundle() {
+  local cma_bundle_dir="$1"
+  local cma_parent_dir="$2"
+
+  timeout --signal=TERM --kill-after=2s 10s env -i PATH="${PATH}" LC_ALL=C \
+    ruby --disable-gems -e '
+      bundle, parent = ARGV
+      raise "bundle is not an exact directory" unless
+        File.directory?(bundle) && !File.symlink?(bundle)
+      raise "bundle entry set is not exact" unless Dir.children(bundle).sort ==
+        ["receipt.json", "receipt.sha256"]
+      Dir.children(bundle).sort.each do |entry|
+        path = File.join(bundle, entry)
+        stat = File.lstat(path)
+        raise "bundle entry is not a regular file" unless stat.file? && !stat.symlink?
+        File.open(path, File::RDONLY) { |file| file.fsync }
+      end
+      File.open(bundle, File::RDONLY) { |directory| directory.fsync }
+      File.open(parent, File::RDONLY) { |directory| directory.fsync }
+    ' "${cma_bundle_dir}" "${cma_parent_dir}"
 }
 
 cma_step10_write_fence_receipt() {
@@ -449,9 +655,12 @@ cma_step10_write_fence_receipt() {
   local cma_root_record="$2"
   local cma_receipt_dir="${CMA_GATEWAY_FENCE_RECEIPT_DIR:-}"
   local cma_bundle_dir cma_work_dir cma_receipt_file cma_receipt_digest
+  local cma_published_receipt_digest cma_published_live_digest
   local cma_projection_digest
 
-  cma_step10_require_projection_file "${cma_source_projection}" || {
+  cma_step10_require_projection_file "${cma_source_projection}" \
+    "${CMA_GATEWAY_SOURCE_PROJECTION_SHA256:-}" \
+    "${CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256:-}" || {
     echo "the pre-patch source projection is not the exact adopted durable bundle" >&2
     return 1
   }
@@ -468,10 +677,13 @@ cma_step10_write_fence_receipt() {
   fi
   cma_bundle_dir="${cma_receipt_dir%/}/fence-root-${CMA_GATEWAY_RELEASE_REVISION}"
   if [ -d "${cma_bundle_dir}" ] && [ ! -L "${cma_bundle_dir}" ]; then
+    cma_step10_sync_published_fence_bundle \
+      "${cma_bundle_dir}" "${cma_receipt_dir}" || return 1
     cma_receipt_file="${cma_bundle_dir}/receipt.json"
-    CMA_GATEWAY_FENCE_RECEIPT_SHA256="$(awk \
-      'NF == 2 && $2 == "receipt.json" {print $1}' \
-      "${cma_bundle_dir}/receipt.sha256")" || return 1
+    cma_step10_sha256_valid "${CMA_GATEWAY_FENCE_RECEIPT_SHA256:-}" || {
+      echo "an existing fence receipt requires its independently recorded SHA-256" >&2
+      return 1
+    }
     cma_step10_load_fence_receipt && \
       cma_step10_source_matches_receipt \
         "${cma_source_projection}" "${cma_root_record}" "${cma_receipt_file}" || return 1
@@ -502,12 +714,16 @@ cma_step10_write_fence_receipt() {
           backendSelfLink:$api.backendSelfLink,
           backendFingerprint:$api.backendFingerprint,
           backendGroups:$api.backendGroups},
-        admission:$sealed[0].graph.fenceAdmission
+        admission:$sealed[0].graph.fenceAdmission,
+        workload:$sealed[0].graph.apiWorkload
       } |
       if .sourceProjection.lifecycle.stage == "adopted" and
          (.sourceProjection.lifecycle.predecessorSha256 | test("^[0-9a-f]{64}$")) and
          .service.uid == $service_root.uid and .service.name == $service_root.name and
-         .service.zones == $service_root.zones and (.service.backendGroups | length) > 0
+         .service.zones == $service_root.zones and (.service.backendGroups | length) > 0 and
+         .workload.deployment.name == "cma-api" and
+         .workload.deployment.namespace == "chrono-bot" and
+         .workload.deployment.replicas == 1 and (.workload.pods | length) == 1
       then . else error("source projection does not equal pre-patch Service/NEG/backend root") end
     ' > "${cma_receipt_file}" || {
       rm -rf "${cma_work_dir}"
@@ -517,6 +733,8 @@ cma_step10_write_fence_receipt() {
   cma_receipt_digest="$(cma_step10_sha256_file "${cma_receipt_file}")" || return 1
   cma_receipt_digest="${cma_receipt_digest%% *}"
   cma_step10_sha256_valid "${cma_receipt_digest}" || return 1
+  printf '%s\n' \
+    "CMA fence receipt candidate before publication: ${cma_bundle_dir}/receipt.json; SHA-256 ${cma_receipt_digest}" >&2 || return 1
   printf '%s  receipt.json\n' "${cma_receipt_digest}" \
     > "${cma_work_dir}/receipt.sha256" || return 1
   chmod 400 "${cma_work_dir}/receipt.sha256" || return 1
@@ -526,17 +744,27 @@ cma_step10_write_fence_receipt() {
       source, destination = ARGV
       raise "destination exists" if File.exist?(destination) || File.symlink?(destination)
       File.rename(source, destination)
-      File.open(File.dirname(destination), File::RDONLY) { |directory| directory.fsync }
     ' "${cma_work_dir}" "${cma_bundle_dir}"; then
     rm -rf "${cma_work_dir}"
     [ -d "${cma_bundle_dir}" ] && [ ! -L "${cma_bundle_dir}" ] || return 1
-    CMA_GATEWAY_FENCE_RECEIPT_SHA256="$(awk \
+    cma_step10_sync_published_fence_bundle \
+      "${cma_bundle_dir}" "${cma_receipt_dir}" || return 1
+    cma_published_receipt_digest="$(awk \
       'NF == 2 && $2 == "receipt.json" {print $1}' \
       "${cma_bundle_dir}/receipt.sha256")" || return 1
+    cma_published_live_digest="$(cma_step10_sha256_file \
+      "${cma_bundle_dir}/receipt.json")" || return 1
+    cma_published_live_digest="${cma_published_live_digest%% *}"
+    cma_step10_sha256_valid "${cma_published_receipt_digest}" && \
+      [ "${cma_published_receipt_digest}" = "${cma_receipt_digest}" ] && \
+      [ "${cma_published_live_digest}" = "${cma_receipt_digest}" ] || return 1
+    CMA_GATEWAY_FENCE_RECEIPT_SHA256="${cma_receipt_digest}"
     cma_step10_load_fence_receipt && \
       cma_step10_source_matches_receipt "${cma_source_projection}" \
         "${cma_root_record}" "${cma_bundle_dir}/receipt.json" || return 1
-    cma_receipt_digest="${CMA_GATEWAY_FENCE_RECEIPT_SHA256}"
+  else
+    cma_step10_sync_published_fence_bundle \
+      "${cma_bundle_dir}" "${cma_receipt_dir}" || return 1
   fi
   printf '%s|%s\n' "${cma_bundle_dir}/receipt.json" "${cma_receipt_digest}"
 }
@@ -563,6 +791,8 @@ cma_step10_source_matches_receipt() {
       .sourceProjection.behaviorPolicy == $source[0].behaviorPolicy and
       .sourceProjection.admissionReceipt == $source[0].admissionReceipt and
       .admission == $source[0].graph.fenceAdmission and
+      .workload != null and $source[0].graph.apiWorkload != null and
+      .workload == $source[0].graph.apiWorkload and
       .service.uid == $root.uid and .service.name == $root.name and
       .service.zones == $root.zones and
       .service.uid == $source[0].graph.services["cma-api"].uid and
@@ -616,7 +846,25 @@ cma_step10_load_fence_receipt() {
     (.service.backendSelfLink | length) > 0 and
     (.service.backendGroups | type) == "array" and (.service.backendGroups | length) > 0 and
     .service.backendGroups == (.service.backendGroups | unique | sort) and
-    (.admission.policy.uid | type) == "string" and (.admission.binding.uid | type) == "string"
+    (.admission.policy.uid | type) == "string" and (.admission.binding.uid | type) == "string" and
+    (.workload | keys | sort) == ["deployment","pods","verified"] and
+    (.workload.deployment | keys | sort) == [
+      "generation","name","namespace","replicas","resourceVersion","uid"
+    ] and
+    .workload.deployment.name == "cma-api" and
+    .workload.deployment.namespace == "chrono-bot" and
+    .workload.deployment.replicas == 1 and
+    (.workload.deployment.generation | type) == "number" and
+    .workload.deployment.generation > 0 and
+    (.workload.deployment.resourceVersion | type) == "string" and
+    (.workload.deployment.resourceVersion | length) > 0 and
+    (.workload.deployment.uid | type) == "string" and
+    (.workload.deployment.uid | length) > 0 and
+    (.workload.pods | type) == "array" and (.workload.pods | length) == 1 and
+    (.workload.pods[0] | keys | sort) == ["name","uid"] and
+    (.workload.pods[0].name | type) == "string" and (.workload.pods[0].name | length) > 0 and
+    (.workload.pods[0].uid | type) == "string" and (.workload.pods[0].uid | length) > 0 and
+    .workload.verified == null
   ' "${cma_receipt_file}" >/dev/null || return 1
   cma_pinned_api_root_identity="$(jq -cer '{uid:.service.uid,name:.service.name,zones:.service.zones}' \
     "${cma_receipt_file}")" || return 1
@@ -627,24 +875,46 @@ cma_step10_validate_source_projection() {
   local cma_projection_dir="$1"
   local cma_projection_digest_file="${cma_projection_dir}/projection.sha256"
   local cma_projection_file="${cma_projection_dir}/projection.json"
-  local cma_recorded_digest cma_live_digest
+  local cma_recorded_digest cma_live_digest cma_projection_entry
+  local cma_projection_work_dir cma_expected_predecessor
+  local cma_semantic_digest cma_final_digest
 
-  [ -f "${cma_projection_file}" ] && [ ! -L "${cma_projection_file}" ] && \
-    [ -f "${cma_projection_digest_file}" ] && [ ! -L "${cma_projection_digest_file}" ] && \
+  [ -d "${cma_projection_dir}" ] && [ ! -L "${cma_projection_dir}" ] && \
+    [ -O "${cma_projection_dir}" ] && \
+    [ "$(find "${cma_projection_dir}" -mindepth 1 -maxdepth 1 -print | \
+      wc -l | tr -d ' ')" = 3 ] && \
     [ -n "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT:-}" ] && \
     [ -f "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" ] && \
     [ ! -L "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" ] || return 1
+  for cma_projection_entry in capture.json projection.json projection.sha256; do
+    [ -f "${cma_projection_dir}/${cma_projection_entry}" ] && \
+      [ ! -L "${cma_projection_dir}/${cma_projection_entry}" ] && \
+      [ -O "${cma_projection_dir}/${cma_projection_entry}" ] || return 1
+  done
   cma_recorded_digest="$(awk 'NF == 2 && $2 == "projection.json" {print $1}' \
     "${cma_projection_digest_file}")" || return 1
+  [ "$(wc -l < "${cma_projection_digest_file}" | tr -d ' ')" = 1 ] || return 1
   cma_live_digest="$(cma_step10_sha256_file "${cma_projection_file}")" || return 1
   cma_live_digest="${cma_live_digest%% *}"
   cma_step10_sha256_valid "${cma_recorded_digest}" && \
     [ "${cma_recorded_digest}" = "${cma_live_digest}" ] || return 1
-  jq -e --slurpfile receipt "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" '
+  (
+    set -e
+    cma_projection_work_dir="$(mktemp -d)"
+    trap 'rm -rf "${cma_projection_work_dir}"' EXIT HUP INT QUIT TERM
+    cma_step10_projection_emit "${cma_projection_dir}/capture.json" \
+      "${cma_projection_work_dir}/projection.json"
+    cmp "${cma_projection_work_dir}/projection.json" "${cma_projection_file}" >/dev/null
+  ) || return 1
+  cma_expected_predecessor="${cma_fenced_projection_sha256:-}"
+  cma_step10_sha256_valid "${cma_expected_predecessor}" || return 1
+  jq -e --arg predecessor "${cma_expected_predecessor}" \
+    --slurpfile receipt "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}" '
     ($receipt | length) == 1 and ($receipt[0].service) as $root |
     (.fullCapture.kubernetes.services.items |
       map(select(.metadata.namespace == "chrono-bot" and .metadata.name == "cma-api"))) as $services |
     ($services | length) == 1 and .schemaVersion == 1 and .mode == "source" and
+    .lifecycle == {stage:"final-reopen",predecessorSha256:$predecessor} and
     .graph.services["cma-api"].uid == $root.uid and
     .graph.services["cma-api"].name == $root.name and
     .graph.services["cma-api"].zones == $root.zones and
@@ -654,9 +924,22 @@ cma_step10_validate_source_projection() {
     .graph.services["cma-api"].uid == $services[0].metadata.uid and
     .behaviorPolicy == $receipt[0].sourceProjection.behaviorPolicy and
     .admissionReceipt == $receipt[0].sourceProjection.admissionReceipt and
-    .graph.fenceAdmission == $receipt[0].admission
+    .graph.fenceAdmission == $receipt[0].admission and
+    .graph.apiWorkload.deployment.uid == $receipt[0].workload.deployment.uid and
+    .graph.apiWorkload.deployment.replicas == 1 and
+    (.graph.apiWorkload.pods | length) == 1 and
+    .graph.apiWorkload.pods[0].uid != $receipt[0].workload.pods[0].uid and
+    .graph.apiWorkload.verified != null
   ' "${cma_projection_file}" >/dev/null || return 1
-  cma_step10_projection_check_live "${cma_projection_file}"
+  cma_step10_projection_matches_final_workload "${cma_projection_file}" || return 1
+  cma_semantic_digest="$(cma_step10_projection_digest \
+    "${cma_projection_file}")" || return 1
+  [ "${cma_semantic_digest}" = "${cma_live_digest}" ] || return 1
+  cma_step10_projection_check_live "${cma_projection_file}" || return 1
+  cma_final_digest="$(cma_step10_projection_digest \
+    "${cma_projection_file}")" || return 1
+  [ "${cma_final_digest}" = "${cma_live_digest}" ] || return 1
+  printf '%s\n' "${cma_live_digest}"
 }
 
 cma_step10_validate_admission_reservation() {
@@ -750,21 +1033,192 @@ cma_read_selector_state() {
   cma_api_root_matches_pinned "${cma_selector_record}" || return 1
   printf '%s\n' "${cma_selector_state}"
 }
-cma_final_pod_is_exact() {
-  local cma_pod_json
+cma_manifest_api_image() {
+  timeout --signal=TERM --kill-after=2s 10s \
+    ruby --disable-gems -ryaml -e '
+      document = YAML.safe_load(
+        File.binread(ARGV.fetch(0)), permitted_classes: [],
+        permitted_symbols: [], aliases: false
+      )
+      containers = document.dig("spec", "template", "spec", "containers")
+      unless document["apiVersion"] == "apps/v1" && document["kind"] == "Deployment" &&
+             document.dig("metadata", "name") == "cma-api" &&
+             document.dig("metadata", "namespace") == "chrono-bot" &&
+             containers.is_a?(Array) && containers.length == 1 &&
+             containers[0]["name"] == "api" && containers[0]["image"].is_a?(String) &&
+             !containers[0]["image"].empty?
+        exit 1
+      end
+      print containers[0]["image"]
+    ' infra/api/deployment.yaml
+}
+cma_step10_validate_workload_contract() {
+  timeout --signal=TERM --kill-after=2s 15s env -i PATH="${PATH}" LC_ALL=C \
+    ruby --disable-gems .github/scripts/cma-trigger-gateway-projection.rb \
+      --validate-workload infra/api/deployment.yaml "$1" "$2" "$3" >/dev/null
+}
+cma_step10_projection_matches_final_workload() {
+  local cma_projection_file="$1"
+  local cma_workload_contract_dir
 
-  cma_pod_json="$(cma_step10_kubectl get pod "${cma_final_pod}" -o json)" || \
-    return 1
-  printf '%s' "${cma_pod_json}" | \
-    jq -e --arg uid "${cma_final_pod_uid}" --arg ip "${cma_final_pod_ip}" '
-      .metadata.uid == $uid and .metadata.deletionTimestamp == null and
-      .status.podIP == $ip and
-      (.status.containerStatuses // [] |
-        map(select(.name == "api" and .started == true and .restartCount == 0)) |
-        length) == 1 and
+  jq -e \
+    --arg deployment_uid "${cma_final_deployment_uid}" \
+    --arg replica_set "${cma_final_replica_set}" \
+    --arg replica_set_uid "${cma_final_replica_set_uid}" \
+    --arg pod "${cma_final_pod}" \
+    --arg pod_uid "${cma_final_pod_uid}" \
+    --arg pod_ip "${cma_final_pod_ip}" \
+    --arg image "${cma_final_pod_image}" \
+    --arg image_id "${cma_final_pod_image_id}" '
+      (.fullCapture.kubernetes.apiDeploymentWorkload) as $deployment |
+      (.fullCapture.kubernetes.apiReplicaSetWorkload) as $replica_set_live |
+      (.fullCapture.kubernetes.apiPodWorkload) as $pod_live |
+      (.graph.apiWorkload.verified) as $verified |
+      $deployment.metadata.uid == $deployment_uid and
+      $replica_set_live.metadata.name == $replica_set and
+      $replica_set_live.metadata.uid == $replica_set_uid and
+      $replica_set_live.metadata.ownerReferences == [{
+        apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,
+        kind:"Deployment",name:"cma-api",uid:$deployment_uid
+      }] and
+      $pod_live.metadata.name == $pod and $pod_live.metadata.uid == $pod_uid and
+      $pod_live.metadata.ownerReferences == [{
+        apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,
+        kind:"ReplicaSet",name:$replica_set,uid:$replica_set_uid
+      }] and
+      $pod_live.status.podIP == $pod_ip and
+      $verified.deployment.uid == $deployment_uid and
+      $verified.replicaSet.name == $replica_set and
+      $verified.replicaSet.uid == $replica_set_uid and
+      $verified.pod.name == $pod and $verified.pod.uid == $pod_uid and
+      $verified.pod.ip == $pod_ip and $verified.pod.image == $image and
+      $verified.pod.imageID == $image_id
+    ' "${cma_projection_file}" >/dev/null || return 1
+  (
+    set -e
+    cma_workload_contract_dir="$(mktemp -d)"
+    trap 'rm -rf "${cma_workload_contract_dir}"' EXIT HUP INT QUIT TERM
+    chmod 700 "${cma_workload_contract_dir}"
+    jq -e .fullCapture.kubernetes.apiDeploymentWorkload \
+      "${cma_projection_file}" > "${cma_workload_contract_dir}/deployment.json"
+    jq -e .fullCapture.kubernetes.apiReplicaSetWorkload \
+      "${cma_projection_file}" > "${cma_workload_contract_dir}/replicaset.json"
+    jq -e .fullCapture.kubernetes.apiPodWorkload \
+      "${cma_projection_file}" > "${cma_workload_contract_dir}/pod.json"
+    chmod 600 "${cma_workload_contract_dir}"/*.json
+    cma_step10_validate_workload_contract \
+      "${cma_workload_contract_dir}/deployment.json" \
+      "${cma_workload_contract_dir}/replicaset.json" \
+      "${cma_workload_contract_dir}/pod.json"
+  )
+}
+cma_final_workload_is_exact() {
+  local cma_pod_json cma_replica_set_json cma_deployment_json
+  local cma_workload_contract_dir
+
+  cma_pod_json="$(cma_step10_kubectl get pod "${cma_final_pod}" -o json)" || return 1
+  printf '%s' "${cma_pod_json}" | jq -e \
+    --arg pod "${cma_final_pod}" \
+    --arg pod_uid "${cma_final_pod_uid}" \
+    --arg pod_ip "${cma_final_pod_ip}" \
+    --arg replica_set "${cma_final_replica_set}" \
+    --arg replica_set_uid "${cma_final_replica_set_uid}" \
+    --arg image "${cma_final_pod_image}" \
+    --arg image_id "${cma_final_pod_image_id}" '
+      .apiVersion == "v1" and .kind == "Pod" and
+      .metadata.name == $pod and .metadata.namespace == "chrono-bot" and
+      .metadata.uid == $pod_uid and
+      .metadata.deletionTimestamp == null and
+      .metadata.ownerReferences == [{
+        apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,
+        kind:"ReplicaSet",name:$replica_set,uid:$replica_set_uid
+      }] and
+      .status.phase == "Running" and .status.podIP == $pod_ip and
+      (.spec.containers | length) == 1 and
+      .spec.containers[0].name == "api" and .spec.containers[0].image == $image and
+      (.status.containerStatuses | length) == 1 and
+      .status.containerStatuses[0].name == "api" and
+      .status.containerStatuses[0].image == $image and
+      .status.containerStatuses[0].imageID == $image_id and
+      .status.containerStatuses[0].ready == true and
+      .status.containerStatuses[0].started == true and
+      .status.containerStatuses[0].restartCount == 0 and
+      (.status.containerStatuses[0].state.running.startedAt | type) == "string" and
       (.status.conditions // [] |
         map(select(.type == "Ready" and .status == "True")) | length) == 1
-    ' >/dev/null
+    ' >/dev/null || return 1
+
+  cma_replica_set_json="$(cma_step10_kubectl get replicaset \
+    "${cma_final_replica_set}" -o json)" || return 1
+  printf '%s' "${cma_replica_set_json}" | jq -e \
+    --arg replica_set "${cma_final_replica_set}" \
+    --arg replica_set_uid "${cma_final_replica_set_uid}" \
+    --arg deployment_uid "${cma_final_deployment_uid}" \
+    --arg image "${cma_final_pod_image}" '
+      .apiVersion == "apps/v1" and .kind == "ReplicaSet" and
+      .metadata.name == $replica_set and .metadata.namespace == "chrono-bot" and
+      .metadata.uid == $replica_set_uid and
+      .metadata.deletionTimestamp == null and
+      .metadata.ownerReferences == [{
+        apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,
+        kind:"Deployment",name:"cma-api",uid:$deployment_uid
+      }] and
+      (.metadata.labels["pod-template-hash"] | type) == "string" and
+      .metadata.labels["app.kubernetes.io/name"] == "cma-api" and
+      .metadata.labels["app.kubernetes.io/part-of"] == "cma" and
+      (.spec.selector.matchExpressions // []) == [] and
+      .spec.selector.matchLabels["app.kubernetes.io/name"] == "cma-api" and
+      .spec.selector.matchLabels["pod-template-hash"] ==
+        .metadata.labels["pod-template-hash"] and
+      .spec.template.metadata.labels["app.kubernetes.io/name"] == "cma-api" and
+      .spec.template.metadata.labels["app.kubernetes.io/part-of"] == "cma" and
+      .spec.template.metadata.labels["pod-template-hash"] ==
+        .metadata.labels["pod-template-hash"] and
+      (.spec.template.spec.containers | length) == 1 and
+      .spec.template.spec.containers[0].name == "api" and
+      .spec.template.spec.containers[0].image == $image and
+      .spec.replicas == 1 and .status.observedGeneration == .metadata.generation and
+      .status.replicas == 1 and .status.fullyLabeledReplicas == 1 and
+      .status.readyReplicas == 1 and .status.availableReplicas == 1
+    ' >/dev/null || return 1
+
+  cma_deployment_json="$(cma_step10_kubectl get deployment cma-api -o json)" || return 1
+  printf '%s' "${cma_deployment_json}" | jq -e \
+    --arg deployment_uid "${cma_final_deployment_uid}" \
+    --arg image "${cma_final_pod_image}" '
+      .apiVersion == "apps/v1" and .kind == "Deployment" and
+      .metadata.name == "cma-api" and .metadata.namespace == "chrono-bot" and
+      .metadata.uid == $deployment_uid and .metadata.deletionTimestamp == null and
+      .spec.replicas == 1 and .spec.strategy == {type:"Recreate"} and
+      .spec.selector == {matchLabels:{"app.kubernetes.io/name":"cma-api"}} and
+      .spec.template.metadata.labels == {
+        "app.kubernetes.io/name":"cma-api","app.kubernetes.io/part-of":"cma"
+      } and
+      (.spec.template.spec.containers | length) == 1 and
+      .spec.template.spec.containers[0].name == "api" and
+      .spec.template.spec.containers[0].image == $image and
+      .status.observedGeneration == .metadata.generation and
+      .status.replicas == 1 and .status.updatedReplicas == 1 and
+      .status.readyReplicas == 1 and .status.availableReplicas == 1 and
+      (.status.unavailableReplicas // 0) == 0 and
+      (.status.collisionCount // 0) == 0
+    ' >/dev/null || return 1
+  (
+    set -e
+    cma_workload_contract_dir="$(mktemp -d)"
+    trap 'rm -rf "${cma_workload_contract_dir}"' EXIT HUP INT QUIT TERM
+    chmod 700 "${cma_workload_contract_dir}"
+    printf '%s\n' "${cma_deployment_json}" > \
+      "${cma_workload_contract_dir}/deployment.json"
+    printf '%s\n' "${cma_replica_set_json}" > \
+      "${cma_workload_contract_dir}/replicaset.json"
+    printf '%s\n' "${cma_pod_json}" > "${cma_workload_contract_dir}/pod.json"
+    chmod 600 "${cma_workload_contract_dir}"/*.json
+    cma_step10_validate_workload_contract \
+      "${cma_workload_contract_dir}/deployment.json" \
+      "${cma_workload_contract_dir}/replicaset.json" \
+      "${cma_workload_contract_dir}/pod.json"
+  )
 }
 cma_final_pod_topology() {
   local cma_pod_json cma_node_name cma_node_json
@@ -1473,6 +1927,8 @@ cma_refence_on_signal() {
 }
 cma_step10_prove_fence_main() {
   local cma_fenced_projection_dir cma_predecessor_projection
+  local cma_predecessor_projection_sha256 cma_fenced_projection_sha256
+  local cma_source_projection_sha256
   if [ "$#" -ne 0 ]; then
     echo "usage: ${0##*/} --prove-fence" >&2
     return 2
@@ -1483,7 +1939,8 @@ cma_step10_prove_fence_main() {
   : "${CMA_GATEWAY_CONFIRM:?set the dedicated read-only fence-proof confirmation}"
   : "${CMA_GATEWAY_RELEASE_REVISION:?export the reviewed full release commit}"
   : "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?establish the checked-routing-graph freeze}"
-  cma_step10_require_checkout prove-v0.10-fence || return 1
+  cma_step10_require_checkout || return 1
+  cma_step10_require_confirmation prove fence || return 1
   cma_step10_load_fence_receipt || {
     echo "the durable pre-patch fence receipt could not be loaded" >&2
     return 1
@@ -1492,25 +1949,53 @@ cma_step10_prove_fence_main() {
     echo "the permanent cutover-fence label reservation drifted" >&2
     return 1
   }
+  cma_source_projection_sha256="$(jq -er .sourceProjection.sha256 \
+    "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}")" || return 1
+  cma_step10_sha256_valid "${cma_source_projection_sha256}" || return 1
+  cma_predecessor_projection="${CMA_GATEWAY_FENCED_PROJECTION_PARENT:-}/fenced-pre-scale-${CMA_GATEWAY_RELEASE_REVISION}/projection.json"
+  cma_predecessor_projection_sha256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:-}"
+  cma_step10_sha256_valid "${cma_predecessor_projection_sha256}" || {
+    echo "the pre-scale fence projection requires its independently recorded SHA-256" >&2
+    return 1
+  }
+  if [ "$(jq -er .lifecycle.stage "${cma_predecessor_projection}" 2>/dev/null || :)" != \
+     fenced-pre-scale ] || \
+     ! cma_step10_validate_fence_projection_receipt \
+       "${cma_predecessor_projection%/projection.json}" \
+       fenced-pre-scale "${cma_source_projection_sha256}"; then
+    echo "the durable pre-scale fence projection is unavailable or differs from the pre-patch root" >&2
+    return 1
+  fi
+  if ! cma_step10_validate_scaled_down_workload; then
+    echo "cma-api is not stably scaled to zero or a predecessor API Pod still exists" >&2
+    return 1
+  fi
   if ! cma_wait_for_fenced_endpoints; then
     echo "the exact EndpointSlice and zonal NEG traffic fence is not proved" >&2
     return 1
   fi
-  cma_predecessor_projection="${CMA_GATEWAY_FENCED_PROJECTION_PARENT:-}/fenced-pre-scale-${CMA_GATEWAY_RELEASE_REVISION}/projection.json"
   cma_fenced_projection_dir="$(cma_step10_projection_capture \
     "${CMA_GATEWAY_FENCED_PROJECTION_PARENT:-}" fenced-post-scale fenced \
-    fenced-post-scale "${cma_predecessor_projection}" fenced-pre-scale)" || {
+    fenced-post-scale "${cma_predecessor_projection}" fenced-pre-scale \
+    "${cma_predecessor_projection_sha256}" \
+    "${cma_source_projection_sha256}")" || {
     echo "the stable fenced closed projection could not be captured" >&2
     return 1
   }
-  cma_step10_validate_fence_projection "${cma_fenced_projection_dir}" || {
+  cma_fenced_projection_sha256="$(cma_step10_validate_fence_projection \
+    "${cma_fenced_projection_dir}" fenced-post-scale \
+    "${cma_predecessor_projection_sha256}")" || {
     echo "the fenced closed projection does not equal the durable source root" >&2
     return 1
   }
-  printf '%s\n' "CMA traffic fence is exact and externally drained" || return 1
+  cma_step10_sha256_valid "${cma_fenced_projection_sha256}" || return 1
+  printf '%s\n' \
+    "CMA traffic fence is exact and externally drained; projection ${cma_fenced_projection_dir}; projection SHA-256 ${cma_fenced_projection_sha256}" || return 1
 }
 cma_step10_fence_main() {
   local cma_source_projection cma_fence_receipt_ack cma_fenced_projection_dir
+  local cma_source_projection_sha256 cma_source_projection_predecessor_sha256
+  local cma_fenced_projection_sha256
   if [ "$#" -ne 0 ]; then
     echo "usage: ${0##*/} --fence" >&2
     return 2
@@ -1522,7 +2007,8 @@ cma_step10_fence_main() {
   : "${CMA_GATEWAY_CONFIRM:?set the dedicated traffic-fence confirmation}"
   : "${CMA_GATEWAY_RELEASE_REVISION:?export the reviewed full release commit}"
   : "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?establish the checked-routing-graph freeze}"
-  cma_step10_require_checkout fence-v0.10-traffic || return 1
+  cma_step10_require_checkout || return 1
+  cma_step10_require_confirmation fence traffic || return 1
   cma_step10_validate_admission_reservation || {
     echo "the permanent cutover-fence label reservation is not effective" >&2
     return 1
@@ -1547,7 +2033,11 @@ cma_step10_fence_main() {
       cma_fence_initial_record="$(cma_parse_source_api_neg \
         "${cma_fence_initial_service}")" || return 1
       cma_source_projection="${CMA_GATEWAY_SOURCE_PROJECTION:-}"
-      cma_step10_require_projection_file "${cma_source_projection}" || {
+      cma_source_projection_sha256="${CMA_GATEWAY_SOURCE_PROJECTION_SHA256:-}"
+      cma_source_projection_predecessor_sha256="${CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256:-}"
+      cma_step10_require_projection_file "${cma_source_projection}" \
+        "${cma_source_projection_sha256}" \
+        "${cma_source_projection_predecessor_sha256}" || {
         echo "CMA_GATEWAY_SOURCE_PROJECTION must name the stable adopted source projection" >&2
         return 1
       }
@@ -1574,7 +2064,14 @@ cma_step10_fence_main() {
         echo "the durable pre-patch root does not identify its source projection" >&2
         return 1
       }
-      cma_step10_require_projection_file "${cma_source_projection}" || {
+      cma_source_projection_sha256="$(jq -er .sourceProjection.sha256 \
+        "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}")" || return 1
+      cma_source_projection_predecessor_sha256="$(jq -er \
+        .sourceProjection.lifecycle.predecessorSha256 \
+        "${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}")" || return 1
+      cma_step10_require_projection_file "${cma_source_projection}" \
+        "${cma_source_projection_sha256}" \
+        "${cma_source_projection_predecessor_sha256}" || {
         echo "the durable pre-patch source projection is unavailable" >&2
         return 1
       }
@@ -1591,6 +2088,8 @@ cma_step10_fence_main() {
       return 1
       ;;
   esac
+  printf '%s\n' \
+    "CMA durable fence root committed before Service mutation; receipt ${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}; SHA-256 ${CMA_GATEWAY_FENCE_RECEIPT_SHA256}" || return 1
   if ! cma_pin_or_check_api_root "${cma_fence_initial_record}"; then
     echo "cma-api is not the exact pinned Service/NEG root before fencing" >&2
     return 1
@@ -1622,22 +2121,29 @@ cma_step10_fence_main() {
   fi
   cma_fenced_projection_dir="$(cma_step10_projection_capture \
     "${CMA_GATEWAY_FENCED_PROJECTION_PARENT:-}" fenced-pre-scale fenced \
-    fenced-pre-scale "${cma_source_projection}" adopted)" || {
+    fenced-pre-scale "${cma_source_projection}" adopted \
+    "${cma_source_projection_sha256}" \
+    "${cma_source_projection_predecessor_sha256}")" || {
     echo "the stable fenced closed projection could not be captured" >&2
     return 1
   }
-  cma_step10_validate_fence_projection "${cma_fenced_projection_dir}" || {
+  cma_fenced_projection_sha256="$(cma_step10_validate_fence_projection \
+    "${cma_fenced_projection_dir}" fenced-pre-scale \
+    "${cma_source_projection_sha256}")" || {
     echo "the fenced projection did not prove every durable backend group empty" >&2
     return 1
   }
+  cma_step10_sha256_valid "${cma_fenced_projection_sha256}" || return 1
   if [ "${cma_fence_patch_status}" -ne 0 ]; then
     echo "the fence patch reported failure, but the exact applied fence and external drain were independently proved" >&2
   fi
-  printf '%s\n' "CMA traffic is fenced and externally drained; receipt ${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}; SHA-256 ${CMA_GATEWAY_FENCE_RECEIPT_SHA256}; projection ${cma_fenced_projection_dir}" || return 1
+  printf '%s\n' "CMA traffic is fenced and externally drained; receipt ${CMA_GATEWAY_ACTIVE_FENCE_RECEIPT}; SHA-256 ${CMA_GATEWAY_FENCE_RECEIPT_SHA256}; projection ${cma_fenced_projection_dir}; projection SHA-256 ${cma_fenced_projection_sha256}" || return 1
 }
 cma_step10_main() {
   local cma_fenced_projection_dir cma_final_projection_dir cma_final_topology
-  local cma_post_scale_projection
+  local cma_pre_scale_projection_sha256
+  local cma_post_scale_projection cma_post_scale_projection_sha256
+  local cma_fenced_projection_sha256 cma_final_projection_sha256
   if [ "$#" -ne 0 ]; then
     echo "usage: ${0##*/}" >&2
     return 2
@@ -1648,6 +2154,11 @@ cma_step10_main() {
   : "${CMA_FINAL_POD:?step 9 did not record the verified final pod}"
   : "${CMA_FINAL_POD_UID:?step 9 did not record the verified final pod UID}"
   : "${CMA_FINAL_POD_IP:?step 9 did not record the verified final pod IP}"
+  : "${CMA_FINAL_DEPLOYMENT_UID:?step 9 did not record the verified Deployment UID}"
+  : "${CMA_FINAL_REPLICA_SET:?step 9 did not record the verified ReplicaSet}"
+  : "${CMA_FINAL_REPLICA_SET_UID:?step 9 did not record the verified ReplicaSet UID}"
+  : "${CMA_FINAL_POD_IMAGE:?step 9 did not record the manifest-bound Pod image}"
+  : "${CMA_FINAL_POD_IMAGE_ID:?step 9 did not record the verified immutable imageID}"
   if ! ulimit -c 0; then
     echo "core dumps must be disabled before reading the release bearer" >&2
     return 1
@@ -1685,9 +2196,27 @@ cma_step10_main() {
   cma_final_pod="${CMA_FINAL_POD}"
   cma_final_pod_uid="${CMA_FINAL_POD_UID}"
   cma_final_pod_ip="${CMA_FINAL_POD_IP}"
+  cma_final_deployment_uid="${CMA_FINAL_DEPLOYMENT_UID}"
+  cma_final_replica_set="${CMA_FINAL_REPLICA_SET}"
+  cma_final_replica_set_uid="${CMA_FINAL_REPLICA_SET_UID}"
+  cma_final_pod_image="${CMA_FINAL_POD_IMAGE}"
+  cma_final_pod_image_id="${CMA_FINAL_POD_IMAGE_ID}"
   cma_pinned_api_root_identity=""
   cma_reopen_committed_projection=""
   cma_step10_require_checkout || return 1
+  cma_step10_require_confirmation restore traffic || return 1
+  cma_manifest_image="$(cma_manifest_api_image)" || {
+    echo "the reviewed API Deployment manifest image could not be resolved" >&2
+    return 1
+  }
+  if [ "${cma_final_pod_image}" != "${cma_manifest_image}" ]; then
+    echo "the retained Pod image differs from the reviewed API Deployment manifest" >&2
+    return 1
+  fi
+  if ! [[ "${cma_final_pod_image_id}" =~ ^(docker-pullable://)?us-central1-docker\.pkg\.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:[0-9a-f]{64}$ ]]; then
+    echo "the retained Pod imageID is not an immutable CMA API registry digest" >&2
+    return 1
+  fi
   cma_step10_load_fence_receipt || {
     echo "traffic restoration requires the durable pre-patch fence receipt" >&2
     return 1
@@ -1701,8 +2230,8 @@ trap '' HUP INT QUIT TERM
 cma_traffic_open=1
 trap 'cma_refence_on_exit "$?"' EXIT
 trap cma_refence_on_signal HUP INT QUIT TERM
-if ! cma_final_pod_is_exact; then
-  echo "the final pod identity or readiness proof failed; re-fencing before exit" >&2
+if ! cma_final_workload_is_exact; then
+  echo "the final Deployment/ReplicaSet/Pod ownership, image, or readiness proof failed; re-fencing before exit" >&2
   exit 1
 fi
 cma_final_topology="$(cma_final_pod_topology)" || {
@@ -1724,19 +2253,39 @@ if ! cma_wait_for_fenced_endpoints; then
   exit 1
 fi
 cma_post_scale_projection="${CMA_GATEWAY_FENCED_PROJECTION_PARENT:-}/fenced-post-scale-${CMA_GATEWAY_RELEASE_REVISION}/projection.json"
+cma_pre_scale_projection_sha256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:-}"
+cma_post_scale_projection_sha256="${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256:-}"
+cma_step10_sha256_valid "${cma_pre_scale_projection_sha256}" || {
+  echo "the post-scale projection ancestry requires the independently recorded pre-scale SHA-256" >&2
+  exit 1
+}
+cma_step10_sha256_valid "${cma_post_scale_projection_sha256}" || {
+  echo "the post-scale fence projection requires its independently recorded SHA-256" >&2
+  exit 1
+}
 cma_fenced_projection_dir="$(cma_step10_projection_capture \
   "${CMA_GATEWAY_FENCED_PROJECTION_PARENT:-}" fenced-pre-reopen fenced \
-  fenced-pre-reopen "${cma_post_scale_projection}" fenced-post-scale)" || {
+  fenced-pre-reopen "${cma_post_scale_projection}" fenced-post-scale \
+  "${cma_post_scale_projection_sha256}" \
+  "${cma_pre_scale_projection_sha256}")" || {
   echo "the immediate pre-reopen fenced closed projection could not be captured" >&2
   exit 1
 }
-if ! cma_step10_validate_fence_projection "${cma_fenced_projection_dir}"; then
+cma_fenced_projection_sha256="$(cma_step10_validate_fence_projection \
+  "${cma_fenced_projection_dir}" fenced-pre-reopen \
+  "${cma_post_scale_projection_sha256}")" || {
   echo "the immediate pre-reopen projection does not prove the durable backend root empty" >&2
   exit 1
-fi
+}
+cma_step10_sha256_valid "${cma_fenced_projection_sha256}" || exit 1
 cma_traffic_open=0
 if ! cma_route_and_policies_ready; then
   echo "the exact app-origin route and attached Gateway policies are not ready; traffic remains fenced" >&2
+  exit 1
+fi
+if ! cma_final_workload_is_exact || \
+   [ "$(cma_final_pod_topology)" != "${cma_final_topology}" ]; then
+  echo "the retained workload drifted after the pre-reopen projection; traffic remains fenced" >&2
   exit 1
 fi
 cma_traffic_open=1
@@ -1838,8 +2387,8 @@ if ! cma_wait_for_reopened_endpoint; then
   cma_abort_after_reopen "the exact EndpointSlice/NEG population drifted during traffic restoration" || :
   exit 1
 fi
-if ! cma_final_pod_is_exact; then
-  cma_abort_after_reopen "the final pod identity, readiness, or restart proof drifted during traffic restoration" || :
+if ! cma_final_workload_is_exact; then
+  cma_abort_after_reopen "the final workload ownership, image, readiness, or restart proof drifted during traffic restoration" || :
   exit 1
 fi
 if [ "$(cma_final_pod_topology)" != "${cma_final_topology}" ]; then
@@ -1848,19 +2397,31 @@ if [ "$(cma_final_pod_topology)" != "${cma_final_topology}" ]; then
 fi
 cma_final_projection_dir="$(cma_step10_projection_capture \
   "${CMA_GATEWAY_FINAL_PROJECTION_PARENT:-}" final-reopen source \
-  final-reopen "${cma_fenced_projection_dir}/projection.json" fenced-pre-reopen)" || {
+  final-reopen "${cma_fenced_projection_dir}/projection.json" fenced-pre-reopen \
+  "${cma_fenced_projection_sha256}" \
+  "${cma_post_scale_projection_sha256}")" || {
   cma_abort_after_reopen "the stable final closed projection could not be captured" || :
   exit 1
 }
-if ! cma_step10_validate_source_projection "${cma_final_projection_dir}"; then
+cma_final_projection_sha256="$(cma_step10_validate_source_projection \
+  "${cma_final_projection_dir}")" || {
   cma_abort_after_reopen "the final live graph differs from the durable pre-fence backend root" || :
+  exit 1
+}
+cma_step10_sha256_valid "${cma_final_projection_sha256}" || {
+  cma_abort_after_reopen "the final projection validator returned an invalid digest" || :
+  exit 1
+}
+if ! cma_final_workload_is_exact || \
+   [ "$(cma_final_pod_topology)" != "${cma_final_topology}" ]; then
+  cma_abort_after_reopen "the retained workload drifted after the final projection" || :
   exit 1
 fi
 trap '' HUP INT QUIT TERM
 unset cma_release_access_token cma_direct_livez cma_direct_ready cma_app_openapi
 unset cma_direct_sessions cma_app_sessions
 unset cma_reopen_committed_projection cma_reopen_projection
-if ! printf '%s\n' "CMA traffic restoration is complete and verified; final projection ${cma_final_projection_dir}"; then
+if ! printf '%s\n' "CMA traffic restoration is complete and verified; final projection ${cma_final_projection_dir}; SHA-256 ${cma_final_projection_sha256}"; then
   echo "the successful traffic restoration could not be acknowledged; re-fencing" >&2
   exit 1
 fi
