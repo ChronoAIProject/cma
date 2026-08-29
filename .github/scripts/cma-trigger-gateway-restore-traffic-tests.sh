@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mock overrides are invoked indirectly, and each case intentionally isolates its log in a subshell.
-# shellcheck disable=SC2030,SC2031,SC2329
+# shellcheck disable=SC2030,SC2031,SC2317,SC2329
 
 set -euo pipefail
 

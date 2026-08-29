@@ -348,11 +348,13 @@ cma_step10_projection_capture() {
   }
   cma_predecessor_digest="$(cma_step10_sha256_file "${cma_predecessor_file}")" || return 1
   cma_predecessor_digest="${cma_predecessor_digest%% *}"
-  cma_step10_sha256_valid "${cma_expected_predecessor_digest}" && \
-    [ "${cma_predecessor_digest}" = "${cma_expected_predecessor_digest}" ] || {
+  if ! {
+    cma_step10_sha256_valid "${cma_expected_predecessor_digest}" &&
+      [ "${cma_predecessor_digest}" = "${cma_expected_predecessor_digest}" ]
+  }; then
     echo "projection predecessor differs from its independently retained digest" >&2
     return 1
-  }
+  fi
   cma_recorded_digest="$(awk 'NF == 2 && $2 == "projection.json" {print $1}' \
     "${cma_predecessor_file%/*}/projection.sha256")" || return 1
   [ "${cma_recorded_digest}" = "${cma_predecessor_digest}" ] || {
