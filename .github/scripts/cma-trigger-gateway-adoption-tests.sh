@@ -1167,7 +1167,7 @@ cma_test_assert_release_tag_resolution() {
 
   if (
     cd "${repository}"
-    # shellcheck disable=SC2329 # The resolver invokes this command override indirectly.
+    # shellcheck disable=SC2317,SC2329 # The resolver invokes this command override indirectly.
     timeout() {
       printf '%s\n' "v1.2.3|tag|commit|${previous_revision}"
     }
