@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::body::{to_bytes, Body};
+use axum::extract::DefaultBodyLimit;
 use axum::http::{header, Method, Request, StatusCode};
 use futures_util::StreamExt;
 use layer2_core::{
@@ -3198,6 +3199,195 @@ async fn unconfigured_sponsorship_route_fails_closed_without_reflecting_credenti
     assert!(!body.to_string().contains(CREDENTIAL_MARKER));
 }
 
+#[tokio::test]
+async fn sponsorship_body_and_query_rejections_are_fixed_private_and_non_reflective() {
+    const SECRET_MARKER: &str = "sponsorship-secret-do-not-reflect";
+    let fixture = Fixture::new();
+    let app: axum::Router = crate::rest::sponsorships::documented_router(fixture.state()).into();
+    let app = app.layer(DefaultBodyLimit::max(512));
+
+    for (body, status, code) in [
+        (
+            format!(r#"{{"credential":"{SECRET_MARKER}","#),
+            StatusCode::BAD_REQUEST,
+            "malformed_json",
+        ),
+        (
+            json!({
+                "stable_request_id": "33333333-3333-4333-8333-333333333333",
+                "owner": { "kind": "developer", "display_name": "Sponsor" },
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "credential": SECRET_MARKER,
+                SECRET_MARKER: true,
+            })
+            .to_string(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_request",
+        ),
+    ] {
+        let mut request = Request::post("/api/v1/sponsorships/credentials")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+        request
+            .extensions_mut()
+            .insert(Authorization::from_capabilities([
+                Capability::ManageOwnSponsorships,
+            ]));
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], code);
+        assert!(!body.to_string().contains(SECRET_MARKER));
+    }
+
+    let mut request = Request::get(format!(
+        "/api/v1/sponsorships/credentials?limit={SECRET_MARKER}"
+    ))
+    .body(Body::empty())
+    .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+    request
+        .extensions_mut()
+        .insert(Authorization::from_capabilities([
+            Capability::ManageOwnSponsorships,
+        ]));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "invalid_query");
+    assert_eq!(
+        body["detail"],
+        "The query string does not match this operation's request schema."
+    );
+    assert!(!body.to_string().contains(SECRET_MARKER));
+
+    let oversized = json!({
+        "stable_request_id": "33333333-3333-4333-8333-333333333333",
+        "owner": { "kind": "developer", "display_name": "Sponsor" },
+        "provider": "provider",
+        "provider_policy_key": "provider-policy-v1",
+        "credential": SECRET_MARKER.repeat(64),
+    })
+    .to_string();
+    let mut request = Request::post("/api/v1/sponsorships/credentials")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(oversized))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+    request
+        .extensions_mut()
+        .insert(Authorization::from_capabilities([
+            Capability::ManageOwnSponsorships,
+        ]));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "request_too_large");
+    assert!(!body.to_string().contains(SECRET_MARKER));
+}
+
+#[tokio::test]
+async fn public_sponsorship_creation_refuses_unproven_organization_ownership() {
+    const ORGANIZATION_MARKER: &str = "private-organization-identity-do-not-reflect";
+    const DISPLAY_MARKER: &str = "private-organization-display-do-not-reflect";
+    const CREDENTIAL_MARKER: &str = "private-organization-secret-do-not-reflect";
+    let fixture = Fixture::new();
+    let app: axum::Router = crate::rest::sponsorships::documented_router(fixture.state()).into();
+
+    let requests = [
+        (
+            "/api/v1/sponsorships/credentials",
+            json!({
+                "stable_request_id": "33333333-3333-4333-8333-333333333333",
+                "owner": {
+                    "kind": "organization",
+                    "organization_id": ORGANIZATION_MARKER,
+                    "display_name": DISPLAY_MARKER
+                },
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "credential": CREDENTIAL_MARKER
+            }),
+        ),
+        (
+            "/api/v1/sponsorships/policies",
+            json!({
+                "tenant_id": "tenant-a",
+                "owner": {
+                    "kind": "organization",
+                    "organization_id": ORGANIZATION_MARKER,
+                    "display_name": DISPLAY_MARKER
+                },
+                "credential_id": "11111111-1111-4111-8111-111111111111",
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "allowed_models": ["model-a"],
+                "allowed_resources": ["responses"],
+                "per_launch_quota": {
+                    "requests": 1,
+                    "input_tokens": 100,
+                    "output_tokens": 100
+                },
+                "aggregate_quota": {
+                    "requests": 10,
+                    "input_tokens": 1000,
+                    "output_tokens": 1000
+                },
+                "per_launch_budget_micros": 1000,
+                "aggregate_budget_micros": 10000,
+                "max_requests_per_minute": 10,
+                "max_concurrent_launches": 2,
+                "expires_at": "2026-08-30T00:00:00Z"
+            }),
+        ),
+    ];
+
+    for (uri, body) in requests {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+        request
+            .extensions_mut()
+            .insert(Authorization::from_capabilities([
+                Capability::ManageOwnSponsorships,
+            ]));
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "sponsorship_resource_not_found");
+        let wire = body.to_string();
+        for marker in [ORGANIZATION_MARKER, DISPLAY_MARKER, CREDENTIAL_MARKER] {
+            assert!(!wire.contains(marker));
+        }
+    }
+}
+
 #[test]
 fn sponsorship_openapi_is_complete_secret_aware_and_has_no_activation_command() {
     let documented = crate::rest::sponsorships::documented_router(Fixture::new().state());
@@ -3212,6 +3402,7 @@ fn sponsorship_openapi_is_complete_secret_aware_and_has_no_activation_command() 
         "/api/v1/sponsorships/credentials/{credential_id}",
         "/api/v1/sponsorships/credentials/{credential_id}/revoke",
         "/api/v1/sponsorships/credentials/{credential_id}/rotate",
+        "/api/v1/sponsorships/grants",
         "/api/v1/sponsorships/grants/{grant_id}/close",
         "/api/v1/sponsorships/grants/{grant_id}/revoke",
         "/api/v1/sponsorships/kill-switch",
@@ -3227,6 +3418,28 @@ fn sponsorship_openapi_is_complete_secret_aware_and_has_no_activation_command() 
         expected
     );
     assert!(paths.keys().all(|path| !path.contains("activate")));
+    for (path, schema) in [
+        ("/api/v1/sponsorships/credentials", "CredentialView"),
+        ("/api/v1/sponsorships/policies", "PolicyView"),
+        ("/api/v1/sponsorships/grants", "GrantView"),
+    ] {
+        let response_schema = &document["paths"][path]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"];
+        assert_eq!(response_schema["type"], "array");
+        assert_eq!(
+            response_schema["items"]["$ref"],
+            format!("#/components/schemas/{schema}")
+        );
+    }
+    assert!(document["components"]["schemas"]["GrantView"]["properties"]
+        .get("contributor")
+        .is_some());
+    assert!(document["paths"]["/api/v1/sponsorships/credentials"]
+        .get("post")
+        .is_some());
+    assert!(document["paths"]["/api/v1/sponsorships/policies"]
+        .get("post")
+        .is_some());
 
     assert_eq!(
         document["components"]["schemas"]["RegisterCredentialRequest"]["properties"]["credential"]

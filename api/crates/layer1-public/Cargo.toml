@@ -33,6 +33,7 @@ utoipa-axum = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what an attach ticket is drawn
 # from. Already a workspace dependency.
 uuid = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 # Applies the projection's patches with an independent RFC 6902 implementation,
