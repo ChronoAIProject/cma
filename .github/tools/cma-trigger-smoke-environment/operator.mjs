@@ -32,6 +32,11 @@ import {
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  BootstrapFailure,
+  withCallerStateLock,
+} from "../../scripts/cma-trigger-nyxid-smoke-bootstrap.mjs";
+
 process.umask(0o077);
 
 const TOOL_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -62,6 +67,7 @@ const MAX_TOKEN_BYTES = 64 * 1024;
 const PREFLIGHT_LIFETIME_SECONDS = 10 * 60;
 const MIN_HANDOFF_LIFETIME_SECONDS = 7_200;
 const MAX_HANDOFF_LIFETIME_SECONDS = 28_800;
+const ISSUER_TTL_WITNESS_MAX_AGE_SECONDS = 15 * 60;
 const HTTP_TIMEOUT_MS = 30_000;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -527,6 +533,28 @@ async function verifyPrivateDirectory(path, label = "custody directory") {
   secureAbsolutePath(path, label);
   const info = await lstat(path);
   await requireCanonicalRealPath(path, label);
+  let ancestor = path;
+  while (true) {
+    const ancestorInfo = await lstat(ancestor);
+    if (!ancestorInfo.isDirectory() || ancestorInfo.isSymbolicLink()) {
+      fail("unsafe_secret_path", `${label} ancestry is not all directories`);
+    }
+    if ((ancestorInfo.mode & 0o022) !== 0) {
+      const ownerTrusted =
+        typeof process.getuid !== "function" ||
+        ancestorInfo.uid === 0 ||
+        ancestorInfo.uid === process.getuid();
+      if ((ancestorInfo.mode & 0o1000) === 0 || !ownerTrusted) {
+        fail(
+          "unsafe_secret_path",
+          `${label} ancestry contains an untrusted writable directory`,
+        );
+      }
+    }
+    const parent = dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
   if (!info.isDirectory() || info.isSymbolicLink()) {
     fail("unsafe_secret_path", `${label} must be a real directory`);
   }
@@ -535,6 +563,63 @@ async function verifyPrivateDirectory(path, label = "custody directory") {
   }
   if ((info.mode & 0o777) !== 0o700) {
     fail("unsafe_secret_path", `${label} must have mode 0700`);
+  }
+}
+
+async function canonicalAuthorityTarget(path, label) {
+  secureAbsolutePath(path, label);
+  const parent = dirname(path);
+  await verifyPrivateDirectory(parent, `${label} parent`);
+  return join(await realpath(parent), basename(path));
+}
+
+async function existingAuthorityIdentity(path, label) {
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink()) {
+      fail("unsafe_secret_path", `${label} must not be a symbolic link`);
+    }
+    return { dev: info.dev, ino: info.ino, resolved: await realpath(path) };
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function authorityPathKey(path) {
+  return path.normalize("NFC").toLowerCase();
+}
+
+async function requireDistinctAuthorityPaths(statePath, outputPath) {
+  const stateTarget = await canonicalAuthorityTarget(statePath, "--state");
+  const outputTarget = await canonicalAuthorityTarget(outputPath, "--output");
+  const lockTarget = `${stateTarget}.caller-authority.lock`;
+  const outputKey = authorityPathKey(outputTarget);
+  if (
+    outputKey === authorityPathKey(stateTarget) ||
+    outputKey === authorityPathKey(lockTarget)
+  ) {
+    fail("usage", "plan output must differ from state and lock paths");
+  }
+  const outputIdentity = await existingAuthorityIdentity(
+    outputTarget,
+    "--output",
+  );
+  if (outputIdentity !== null) {
+    for (const [target, label] of [
+      [stateTarget, "--state"],
+      [lockTarget, "caller state lock"],
+    ]) {
+      const identity = await existingAuthorityIdentity(target, label);
+      if (
+        identity !== null &&
+        (identity.resolved === outputIdentity.resolved ||
+          (identity.dev === outputIdentity.dev &&
+            identity.ino === outputIdentity.ino))
+      ) {
+        fail("usage", "plan output aliases state or lock authority");
+      }
+    }
   }
 }
 
@@ -622,15 +707,27 @@ async function atomicWrite(path, data, mode = 0o600) {
     parent,
     `.${basename(path)}.${process.pid}.${Date.now()}.tmp`,
   );
-  const handle = await open(temporary, "wx", mode);
+  let handle;
+  let renamed = false;
   try {
+    handle = await open(temporary, "wx", mode);
     await handle.writeFile(data);
     await handle.sync();
-  } finally {
     await handle.close();
+    handle = undefined;
+    await rename(temporary, path);
+    renamed = true;
+    await chmod(path, mode);
+    const directory = await open(parent, fsConstants.O_RDONLY);
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } finally {
+    await handle?.close().catch(() => {});
+    if (!renamed) await rm(temporary, { force: true }).catch(() => {});
   }
-  await rename(temporary, path);
-  await chmod(path, mode);
 }
 
 async function readProvisioningToken(environment = process.env) {
@@ -668,8 +765,23 @@ async function readProvisioningToken(environment = process.env) {
 }
 
 function validateBootstrapState(raw) {
-  exactKeys(
+  closedKeys(
     raw,
+    [
+      "schema_version",
+      "environment",
+      "nyxid_base_url",
+      "source_revision",
+      "api_version",
+      "observer",
+      "oidc_app",
+      "storage_service_account",
+      "buckets",
+      "caller",
+      "caller_exchange",
+      "resource_creation",
+      "handoff_binding",
+    ],
     [
       "schema_version",
       "environment",
@@ -685,6 +797,9 @@ function validateBootstrapState(raw) {
     "bootstrap state",
     "unsafe_state",
   );
+  raw.caller_exchange ??= null;
+  raw.resource_creation ??= null;
+  raw.handoff_binding ??= null;
   if (
     raw.schema_version !== 1 ||
     raw.environment !== ENVIRONMENT ||
@@ -763,8 +878,16 @@ function validateBootstrapState(raw) {
     );
   }
   if (raw.caller !== null) {
-    exactKeys(
+    closedKeys(
       raw.caller,
+      [
+        "client_id",
+        "subject_id",
+        "service_id",
+        "refresh_token",
+        "scope",
+        "verification_state",
+      ],
       ["client_id", "subject_id", "service_id", "refresh_token", "scope"],
       "state.caller",
       "unsafe_state",
@@ -784,10 +907,170 @@ function validateBootstrapState(raw) {
       "state.caller.scope",
       "unsafe_state",
     );
+    const verificationState = raw.caller.verification_state ?? "verified";
+    if (!new Set(["pending", "verified"]).has(verificationState)) {
+      fail(
+        "unsafe_state",
+        "state.caller.verification_state is not a closed custody state",
+      );
+    }
+    raw.caller.verification_state = verificationState;
     if (raw.oidc_app === null || raw.caller.client_id !== raw.oidc_app.id) {
       fail(
         "state_authority_mismatch",
         "caller is not bound to the exact OIDC app",
+      );
+    }
+  }
+  if (raw.caller_exchange !== null) {
+    exactKeys(
+      raw.caller_exchange,
+      [
+        "app_id",
+        "exchange_started_at",
+        "issuer_token_issued_at",
+        "issuer_access_token_ttl_seconds",
+        "issuer_token_sha256",
+        "issuer_commit",
+      ],
+      "state.caller_exchange",
+      "unsafe_state",
+    );
+    canonicalUuid(
+      raw.caller_exchange.app_id,
+      "state.caller_exchange.app_id",
+      "unsafe_state",
+    );
+    for (const field of ["exchange_started_at", "issuer_token_issued_at"]) {
+      if (
+        !Number.isSafeInteger(raw.caller_exchange[field]) ||
+        raw.caller_exchange[field] <= 0
+      ) {
+        fail("unsafe_state", `state.caller_exchange.${field} is invalid`);
+      }
+    }
+    if (
+      !Number.isSafeInteger(
+        raw.caller_exchange.issuer_access_token_ttl_seconds,
+      ) ||
+      raw.caller_exchange.issuer_access_token_ttl_seconds <
+        MIN_HANDOFF_LIFETIME_SECONDS ||
+      raw.caller_exchange.issuer_access_token_ttl_seconds >
+        MAX_HANDOFF_LIFETIME_SECONDS ||
+      raw.caller_exchange.issuer_token_issued_at >
+        raw.caller_exchange.exchange_started_at + 30 ||
+      raw.caller_exchange.exchange_started_at -
+        raw.caller_exchange.issuer_token_issued_at >
+        ISSUER_TTL_WITNESS_MAX_AGE_SECONDS ||
+      !SHA256.test(raw.caller_exchange.issuer_token_sha256) ||
+      raw.caller_exchange.issuer_commit !== NYXID_SOURCE_REVISION.slice(0, 12)
+    ) {
+      fail("unsafe_state", "state caller exchange evidence is invalid");
+    }
+    if (
+      raw.oidc_app === null ||
+      raw.caller_exchange.app_id !== raw.oidc_app.id ||
+      raw.caller !== null ||
+      raw.handoff_binding !== null
+    ) {
+      fail(
+        "state_authority_mismatch",
+        "caller exchange evidence is not isolated to the exact OIDC app",
+      );
+    }
+  }
+  if (raw.resource_creation !== null) {
+    raw.resource_creation.recovery_rotation ??= null;
+    exactKeys(
+      raw.resource_creation,
+      [
+        "kind",
+        "name",
+        "administrator_subject_id",
+        "attempt_started_at",
+        "attempt_nonce",
+        "request_sha256",
+        "recovery_rotation",
+      ],
+      "state.resource_creation",
+      "unsafe_state",
+    );
+    if (
+      !new Set(["oidc_app", "storage_service_account"]).has(
+        raw.resource_creation.kind,
+      ) ||
+      typeof raw.resource_creation.name !== "string" ||
+      raw.resource_creation.name.length === 0 ||
+      raw.resource_creation.name.length > 200 ||
+      /[\u0000-\u001f\u007f]/u.test(raw.resource_creation.name)
+    ) {
+      fail("unsafe_state", "state resource creation identity is invalid");
+    }
+    canonicalUuid(
+      raw.resource_creation.administrator_subject_id,
+      "state.resource_creation.administrator_subject_id",
+      "unsafe_state",
+    );
+    if (
+      !Number.isSafeInteger(raw.resource_creation.attempt_started_at) ||
+      raw.resource_creation.attempt_started_at <= 0 ||
+      !SHA256.test(raw.resource_creation.attempt_nonce) ||
+      !SHA256.test(raw.resource_creation.request_sha256)
+    ) {
+      fail("unsafe_state", "state resource creation evidence is invalid");
+    }
+    if (raw.resource_creation.recovery_rotation !== null) {
+      exactKeys(
+        raw.resource_creation.recovery_rotation,
+        ["resource_id", "rotation_started_at", "rotation_nonce"],
+        "state.resource_creation.recovery_rotation",
+        "unsafe_state",
+      );
+      canonicalUuid(
+        raw.resource_creation.recovery_rotation.resource_id,
+        "state.resource_creation.recovery_rotation.resource_id",
+        "unsafe_state",
+      );
+      if (
+        !Number.isSafeInteger(
+          raw.resource_creation.recovery_rotation.rotation_started_at,
+        ) ||
+        raw.resource_creation.recovery_rotation.rotation_started_at <= 0 ||
+        !SHA256.test(raw.resource_creation.recovery_rotation.rotation_nonce)
+      ) {
+        fail("unsafe_state", "state resource recovery evidence is invalid");
+      }
+    }
+    if (
+      raw.handoff_binding !== null ||
+      (raw.resource_creation.kind === "oidc_app" && raw.oidc_app !== null) ||
+      (raw.resource_creation.kind === "storage_service_account" &&
+        (raw.storage_service_account !== null ||
+          raw.buckets.owner_service_account_id !== null))
+    ) {
+      fail(
+        "state_authority_mismatch",
+        "resource creation marker is not isolated from completed custody",
+      );
+    }
+  }
+  if (raw.handoff_binding !== null) {
+    exactKeys(
+      raw.handoff_binding,
+      ["sha256"],
+      "state.handoff_binding",
+      "unsafe_state",
+    );
+    if (!SHA256.test(raw.handoff_binding.sha256)) {
+      fail("unsafe_state", "state handoff binding digest is invalid");
+    }
+    if (
+      raw.caller === null ||
+      raw.caller.verification_state !== "verified"
+    ) {
+      fail(
+        "unsafe_state",
+        "state handoff binding requires verified caller custody",
       );
     }
   }
@@ -801,7 +1084,36 @@ function validateBootstrapState(raw) {
   return raw;
 }
 
-function validateHandoff(raw, state, provisioningServiceId, at = nowSeconds()) {
+function requireSettledCallerExchange(state) {
+  if (state.caller_exchange !== null) {
+    fail(
+      "caller_authorization_exchange_recovery_required",
+      "operator actions are fenced while an authorization-code exchange remains ambiguous",
+    );
+  }
+}
+
+function requireSettledBootstrapAuthority(state) {
+  requireSettledCallerExchange(state);
+  if (state.resource_creation !== null) {
+    const code =
+      state.resource_creation.kind === "oidc_app"
+        ? "oidc_secret_creation_recovery_required"
+        : "storage_secret_creation_recovery_required";
+    fail(
+      code,
+      "operator authority is fenced while a one-time-secret resource creation remains ambiguous",
+    );
+  }
+}
+
+function validateHandoff(
+  raw,
+  state,
+  provisioningServiceId,
+  at = nowSeconds(),
+  artifactBytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, "utf8"),
+) {
   exactKeys(
     raw,
     [
@@ -826,6 +1138,12 @@ function validateHandoff(raw, state, provisioningServiceId, at = nowSeconds()) {
     fail(
       "runtime_authority_missing",
       "bootstrap state has no selected caller authority",
+    );
+  }
+  if (state.caller.verification_state !== "verified") {
+    fail(
+      "caller_custody_pending",
+      "bootstrap caller custody has not completed verification",
     );
   }
   if (
@@ -918,6 +1236,35 @@ function validateHandoff(raw, state, provisioningServiceId, at = nowSeconds()) {
         `${label} is not bound to bootstrap state`,
       );
     }
+  }
+  if (state.handoff_binding === null) {
+    fail(
+      "current_handoff_missing",
+      "bootstrap state does not authorize a current final-mint handoff",
+    );
+  }
+  if (
+    !Buffer.isBuffer(artifactBytes) ||
+    artifactBytes.length === 0 ||
+    artifactBytes.length > MAX_SECRET_BYTES
+  ) {
+    fail("unsafe_handoff", "handoff artifact bytes are invalid");
+  }
+  if (
+    Buffer.byteLength(artifactBytes.toString("base64"), "utf8") >
+    MAX_GITHUB_SECRET_PLAINTEXT_BYTES
+  ) {
+    fail(
+      "handoff_upload_too_large",
+      "base64-encoded handoff exceeds GitHub's 48 KiB secret plaintext limit",
+    );
+  }
+  const digest = sha256(artifactBytes);
+  if (!secretEqual(digest, state.handoff_binding.sha256)) {
+    fail(
+      "handoff_binding_mismatch",
+      "handoff is not the exact artifact authorized by the latest final mint",
+    );
   }
   if (state.caller.service_id === provisioningServiceId) {
     fail(
@@ -2754,6 +3101,7 @@ async function setupEnvironment({
   build = buildSealer,
   seal = sealValue,
 }) {
+  requireSettledBootstrapAuthority(state);
   requireConfirmation(SETUP_CONFIRMATION, environment);
   await verifyPrivateDirectory(custodyDirectory, "smoke custody directory");
   const { plan: current, snapshot: initial } = await planEnvironment({
@@ -3207,6 +3555,7 @@ async function stageRun({
   seal = sealValue,
   watch = watchWorkflowRun,
 }) {
+  requireSettledBootstrapAuthority(state);
   requireConfirmation(RUN_CONFIRMATION, environment);
   if (state.caller === null) {
     fail(
@@ -3214,7 +3563,13 @@ async function stageRun({
       "mint the bounded caller before stage-run",
     );
   }
-  validateHandoff(handoff, state, config.provisioning_user_service_id);
+  validateHandoff(
+    handoff,
+    state,
+    config.provisioning_user_service_id,
+    nowSeconds(),
+    handoffBytes,
+  );
   const { plan: current, snapshot: initial } = await planEnvironment({
     config,
     state,
@@ -3474,9 +3829,26 @@ async function loadHandoff(path, state, provisioningServiceId) {
     fail("unsafe_handoff", "NyxID handoff is not valid JSON");
   }
   return {
-    handoff: validateHandoff(parsed, state, provisioningServiceId),
+    handoff: validateHandoff(
+      parsed,
+      state,
+      provisioningServiceId,
+      nowSeconds(),
+      bytes,
+    ),
     bytes,
   };
+}
+
+async function withOperatorCallerStateLock(statePath, action) {
+  try {
+    return await withCallerStateLock(statePath, action);
+  } catch (error) {
+    if (error instanceof BootstrapFailure) {
+      fail(error.code, error.message);
+    }
+    throw error;
+  }
 }
 
 function selfTest() {
@@ -3550,72 +3922,91 @@ async function main(argv = process.argv.slice(2)) {
     );
     return;
   }
-  const state = await loadState(args.options["--state"]);
-  const token = await readProvisioningToken();
-  const transport = new Transport({
-    token,
-    provisioningUserServiceId: config.provisioning_user_service_id,
-  });
   if (args.mode === "--plan") {
-    secureAbsolutePath(args.options["--output"], "plan output");
-    const { plan } = await planEnvironment({ config, state, transport });
-    await atomicWrite(
+    await requireDistinctAuthorityPaths(
+      args.options["--state"],
       args.options["--output"],
-      `${JSON.stringify(plan, null, 2)}\n`,
     );
-    process.stdout.write(
-      `${JSON.stringify({
-        status: "plan_ready",
-        output: args.options["--output"],
-        approval_fingerprint: plan.approval_fingerprint,
-        expires_at: plan.expires_at,
-        conflicts: plan.observed.conflicts.length,
-      })}\n`,
-    );
-    return;
   }
-  const approvedPlan = validatePlan(
-    await readSecureJson(
-      args.options["--approved-plan"],
-      "approved plan",
-      MAX_JSON_BYTES,
-    ),
-  );
-  let result;
-  if (args.mode === "--setup") {
-    result = await setupEnvironment({
-      config,
-      state,
-      transport,
-      custodyDirectory: args.options["--custody"],
-      approvedPlan,
+  return withOperatorCallerStateLock(args.options["--state"], async () => {
+    // Repeat the check after lock publication. On case-insensitive filesystems,
+    // some Unicode aliases are authoritative only once the lock exists.
+    if (args.mode === "--plan") {
+      await requireDistinctAuthorityPaths(
+        args.options["--state"],
+        args.options["--output"],
+      );
+    }
+    const state = await loadState(args.options["--state"]);
+    if (new Set(["--setup", "--stage-run"]).has(args.mode)) {
+      requireSettledBootstrapAuthority(state);
+    }
+    const token = await readProvisioningToken();
+    const transport = new Transport({
+      token,
+      provisioningUserServiceId: config.provisioning_user_service_id,
     });
-  } else if (args.mode === "--stage-run") {
-    const loaded = await loadHandoff(
-      args.options["--handoff"],
-      state,
-      config.provisioning_user_service_id,
+    if (args.mode === "--plan") {
+      secureAbsolutePath(args.options["--output"], "plan output");
+      const { plan } = await planEnvironment({ config, state, transport });
+      await atomicWrite(
+        args.options["--output"],
+        `${JSON.stringify(plan, null, 2)}\n`,
+      );
+      process.stdout.write(
+        `${JSON.stringify({
+          status: "plan_ready",
+          output: args.options["--output"],
+          approval_fingerprint: plan.approval_fingerprint,
+          expires_at: plan.expires_at,
+          conflicts: plan.observed.conflicts.length,
+        })}\n`,
+      );
+      return;
+    }
+    const approvedPlan = validatePlan(
+      await readSecureJson(
+        args.options["--approved-plan"],
+        "approved plan",
+        MAX_JSON_BYTES,
+      ),
     );
-    result = await stageRun({
-      config,
-      state,
-      handoff: loaded.handoff,
-      handoffBytes: loaded.bytes,
-      transport,
-      custodyDirectory: args.options["--custody"],
-      approvedPlan,
-    });
-  } else if (args.mode === "--cleanup") {
-    result = await cleanupEnvironment({
-      config,
-      state,
-      transport,
-      approvedPlan,
-    });
-  } else {
-    fail("usage", "unsupported command");
-  }
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+    let result;
+    if (args.mode === "--setup") {
+      result = await setupEnvironment({
+        config,
+        state,
+        transport,
+        custodyDirectory: args.options["--custody"],
+        approvedPlan,
+      });
+    } else if (args.mode === "--stage-run") {
+      const loaded = await loadHandoff(
+        args.options["--handoff"],
+        state,
+        config.provisioning_user_service_id,
+      );
+      result = await stageRun({
+        config,
+        state,
+        handoff: loaded.handoff,
+        handoffBytes: loaded.bytes,
+        transport,
+        custodyDirectory: args.options["--custody"],
+        approvedPlan,
+      });
+    } else if (args.mode === "--cleanup") {
+      result = await cleanupEnvironment({
+        config,
+        state,
+        transport,
+        approvedPlan,
+      });
+    } else {
+      fail("usage", "unsupported command");
+    }
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  });
 }
 
 const isMain =
@@ -3675,10 +4066,12 @@ export {
   inspectAuthority,
   loadHandoff,
   loadState,
+  main,
   parseArguments,
   planEnvironment,
   putEnvironmentSecret,
   readProvisioningToken,
+  requireDistinctAuthorityPaths,
   requireCurrentApprovedPlan,
   sealValue,
   selfTest,
@@ -3698,4 +4091,5 @@ export {
   validateUserServiceList,
   validateVariables,
   verifyAuthorityDirectory,
+  withOperatorCallerStateLock,
 };

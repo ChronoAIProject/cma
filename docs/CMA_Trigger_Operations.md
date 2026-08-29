@@ -117,12 +117,16 @@ the observer.
 The repository bootstrap is only for the reviewed non-production Trigger smoke
 resources. It pins NyxID `0.10.0` and source revision
 `245600cb15110c43aafed77c8a8ee73f655ac060`, rejects production CMA resources,
-and never rotates an existing application or service-account secret. Start from
+and performs no application or service-account secret rotation during ordinary
+planning or apply. The only rotation path is the explicit, fenced recovery for
+one exact ambiguous create described below. Start from
 `.github/cma-trigger-nyxid-smoke-bootstrap.example.json`, choose unique staging
 bucket names, and keep the state and generated handoff outside the repository in
 an owner-only directory. The directory must have mode `0700`; existing state and
 handoff files must be regular, singly linked, owner-owned files with mode
-`0600`.
+`0600`. Every path ancestor must resolve without a symbolic-link component and
+must not be group- or world-writable, except for a root- or current-user-owned
+sticky boundary such as the system temporary directory.
 
 Run validation and the read-only remote plan before allowing any mutation. The
 plan emits the pinned source/API identities, exact administrator subject,
@@ -153,28 +157,202 @@ node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
 unset CMA_TRIGGER_NYXID_SMOKE_BOOTSTRAP_CONFIRM
 ```
 
+Creating an OIDC application or storage service account returns its secret only
+once. Immediately before either create POST, the bootstrap durably records a
+closed `resource_creation` marker containing the resource kind, exact configured
+name, administrator subject, start time, random attempt nonce, and canonical
+request digest. A lost response, invalid response, or failure to persist returned
+custody retains that marker. Ordinary apply, caller authorization, minting,
+environment setup, and dispatch then fail with the resource-specific
+`*_secret_creation_recovery_required` code and never resend the create.
+
+First run `--plan` with the retained state. The marker-aware plan is read-only and
+shows the full incident marker plus the one exact owner/name/config-matching live
+resource when it is observable. Independently review the marker's
+`attempt_nonce` and that provider resource's exact UUID. Then, and only then, run
+the bounded recovery command with those two reviewed values:
+
+```bash
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --plan .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json
+
+export CMA_TRIGGER_NYXID_SMOKE_RESOURCE_RECOVERY_CONFIRM=rotate-reviewed-ambiguous-nonproduction-resource-secret
+export CMA_TRIGGER_NYXID_SMOKE_RECOVERY_RESOURCE_ID='<reviewed exact provider UUID>'
+export CMA_TRIGGER_NYXID_SMOKE_RECOVERY_ATTEMPT_NONCE='<reviewed 64-hex create-attempt nonce>'
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --recover-resource-creation .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json
+
+unset CMA_TRIGGER_NYXID_SMOKE_RESOURCE_RECOVERY_CONFIRM
+unset CMA_TRIGGER_NYXID_SMOKE_RECOVERY_RESOURCE_ID
+unset CMA_TRIGGER_NYXID_SMOKE_RECOVERY_ATTEMPT_NONCE
+```
+
+Recovery rechecks the pinned contracts and exact administrator, recomputes the
+create-request digest, requires exactly one matching listed resource, and reads
+the independently supplied exact ID directly. Before its single rotation POST,
+it durably records that ID, a rotation timestamp, and a fresh rotation nonce.
+After the response it reads the exact ID again and requires the resource to
+remain active, owner-bound, and configuration-matching. Only then may the new
+secret be atomically adopted into state and the incident marker cleared. An
+ambiguous rotation, failed post-rotation proof, or custody-persistence failure
+retains a non-null `recovery_rotation`; that state categorically forbids a
+second automatic rotation.
+
+If the resource is absent, not yet observable, duplicated, mismatched, or not
+readable through the exact owner authority, retain the marker and stop. Repeated
+absence reads and elapsed local time cannot prove that an earlier timed-out
+create will never commit. Neither condition permits editing or clearing the
+marker, recreating the resource, or rotating some other ID. Resolution then
+requires provider evidence that proves the exact request's final outcome or a
+provider idempotency/final-outcome primitive.
+
 If apply returns `bucket_provider_provisioning_required`, the live NyxID
 administrator observation proved that an exact configured non-production
 bucket is absent but the backing storage provider refused NyxID's create. Stop
-there. The backing provider owner must create only that exact bucket and the
-reviewed storage procedure must assign it to the service-account owner recorded
-in the bootstrap state. The bootstrap does not retry the provider write,
-delete a conflicting bucket, transfer ownership, or broaden itself into a
-storage-administrator path. Re-run the read-only plan after the provider owner
-attaches evidence.
+there. The backing provider owner must create only the two exact configured
+bucket names in the pinned account and region and attach evidence that both are
+new and empty. The provider owner must not create an ownership marker, reuse an
+existing production bucket, or broaden the runtime role. The bootstrap does not
+retry the denied provider create, delete a conflicting bucket, or transfer a
+bucket that already carries another owner marker.
+
+After independent review of that provider evidence, the NyxID administrator can
+adopt only those exact unowned buckets into the recorded storage service-account
+identity. This explicit mode never calls provider bucket creation. It requires
+the pinned storage OpenAPI ownership operation, refuses a visible foreign owner,
+writes the exact owner UUID through the administrator route, then proves each
+bucket is readable by the service account and contains no visible metadata or
+objects:
+
+```bash
+export CMA_TRIGGER_NYXID_SMOKE_BUCKET_ADOPTION_CONFIRM=adopt-reviewed-empty-nonproduction-provider-buckets
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --adopt-provider-buckets .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json
+
+unset CMA_TRIGGER_NYXID_SMOKE_BUCKET_ADOPTION_CONFIRM
+```
+
+`bucket_adoption_not_empty` means the now-owned target must be quarantined and
+returned to the provider owner for exact recovery; do not use or clean it from
+CMA. An ambiguous ownership response is reconciled through a service-account
+read and is never blindly replayed. Re-run the read-only plan and ordinary
+`--apply` after both adoption receipts pass.
+
+Caller consent and storage provisioning are independent authority boundaries.
+When the exact provider bucket path is awaiting its owner, establish only the
+reviewed caller's refresh custody with `--authorize-caller`. This mode performs
+the same PKCE, signed-token, exact-subject, exact-application, and exact-selected
+UserService checks as final minting. Its contract inspection still reads the
+storage service's public OpenAPI shape, but the mode neither mints storage
+authority nor reads either bucket, writes a handoff, or claims the smoke is
+dispatchable. It also clears any prior final-mint handoff binding, so an older
+access-token file cannot remain dispatchable after authorization-only work:
+
+```bash
+export CMA_TRIGGER_SMOKE_SERVICE_ID='<exact personal api-github UserService UUID>'
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --authorize-caller .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json
+```
+
+The final `--mint-caller-token` remains mandatory. It invalidates the configured
+output first, proves both buckets are readable by the exact storage service
+account, rotates the retained refresh token, re-verifies caller authority, and
+publishes one closed handoff. Authoritative state records the SHA-256 digest of
+the exact serialized handoff bytes only after every preflight succeeds. The
+operator hashes the bytes it loaded, requires the digest match, and uploads
+those same bytes, so alternate whitespace, duplicate JSON keys,
+authorization-only work, a failed storage check, a crash during publication, or
+a legacy state file with no binding cannot reuse an older handoff. A confirmed
+`--apply` also clears the binding before remote provisioning; run final mint
+again even when apply reports no resource change.
+NyxID rotates a refresh token before downstream signature and introspection
+checks can finish. The tool therefore persists the replacement as `pending`
+custody before those checks and promotes it to `verified` only after they pass.
+A failed verification publishes no usable handoff; rerunning the same command refreshes
+the retained replacement and retries transient verification without another
+consent. A proven wrong subject or selected UserService is not treated as
+transient: the tool requests revocation, then uses the refresh endpoint as the
+pinned positive denial probe. Only the exact closed inactive response clears
+local custody. A `200` means the probe rotated still-active custody; its
+replacement is persisted as `pending` and fresh consent is refused. Ambiguous
+refresh or probe delivery retries the predecessor once through NyxID's
+replacement-chain grace; `caller_refresh_recovery_required` or
+`caller_reauthorization_recovery_required` after that bounded retry requires an
+immediate reviewed rerun and still publishes no usable handoff.
+
+An authorization-code response can be lost after NyxID issued a refresh token
+but before local custody exists. The code must not be replayed: pinned NyxID
+treats replay as a broad client/user refresh-revocation event. Immediately
+before the exchange, the bootstrap rechecks the pinned live `/health` build and
+the exact administrator, then admits only a fresh first-party administrator JWT
+whose subject and audience match that observation. Its `iat` and deployment TTL
+are point-in-time evidence only while NyxID configuration changes are frozen;
+they are not a source-pinned global ceiling. Before sending the exchange POST,
+the bootstrap durably writes a closed `caller_exchange` incident marker. A
+successful response is moved atomically from that marker into pending refresh
+custody. Any lost or unretainable response leaves the marker in place and every
+provisioning, authorization, mint, environment setup, and dispatch action fails
+closed. Read-only environment planning and exact ephemeral-handoff cleanup stay
+available under the shared lock solely to prevent an exchange incident from
+stranding credential material.
+
+On `caller_authorization_exchange_recovery_required`, stop. Retire only the
+exact dedicated non-production app recorded by the marker:
+
+```bash
+export CMA_TRIGGER_NYXID_SMOKE_OIDC_RETIRE_CONFIRM=retire-reviewed-ambiguous-nonproduction-oidc-app
+node .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs \
+  --retire-ambiguous-caller-app .github/cma-trigger-nyxid-smoke-bootstrap.example.json \
+  --state /absolute/private/cma-trigger-smoke/state.json
+
+unset CMA_TRIGGER_NYXID_SMOKE_OIDC_RETIRE_CONFIRM
+```
+
+This operation reconciles an ambiguous DELETE through an exact owner-authority
+read and requires an inactive-app acknowledgement, but deliberately retains the
+incident marker and reports `issuance_fence_proven: false`. App retirement
+blocks later refreshes but is not an issuance fence: the pinned token endpoint
+can finish an already admitted exchange after retirement and mint an access JWT
+or new refresh custody. Do not clear the marker, clear local app custody,
+reprovision the same name, open another consent, or claim revocation complete
+until NyxID supplies an online inactive-client issuance/use fence or provider
+logs prove the exact request completed with a bounded final outcome. Elapsed
+local time, including the witnessed JWT TTL, is insufficient by itself.
+
+`--apply`, `--adopt-provider-buckets`, `--authorize-caller`,
+`--mint-caller-token`, and every stateful remote environment-operator mode
+serialize state reads and authority use through the same adjacent owner-only
+caller-authority lock. A concurrent owner fails closed. A complete same-host
+lock whose PID is proven dead returns `caller_state_lock_stale`; it is never
+removed automatically. Lock publication is atomic only after its payload is
+synced. Inspect the exact adjacent file and host process, retain the evidence,
+and remove only that one lock under an approved recovery. A malformed lock is
+never guessed dead. The handoff output path may equal neither state nor this
+adjacent lock path. Lexical aliases are rejected before lock acquisition, and
+the same real-path and device/inode identity check runs again after the lock
+exists to cover filesystem-specific Unicode and case folding. These fences
+prevent a slower verification from promoting older custody and prevent stage
+dispatch from racing a pending rotation.
 
 Mint the caller handoff locally immediately before dispatching the protected
-smoke. The first mint opens NyxID for unavoidable interactive login and consent
-as `chronoai-shining`; `--no-browser` prints the authorization URL instead.
-Later mints refresh automatically. Refresh-token rotation is persisted only in
-the authoritative local state file, so do not run this command in a hosted
-runner or copy that state into CI. Set the separately reviewed UserService ID
-before minting; the tool proves the signed access token has restricted service
-authority containing that exact ID. The OIDC app preselects the `api-github`
-catalog entry, but consent remains visible and user-controlled, so removing all
-selected GitHub connections makes minting fail closed. Refresh custody is bound
-to the selected ID in local state; changing the ID requires explicit revocation
-and a new consent rather than silently retargeting an existing refresh token:
+smoke. The first caller authorization, whether performed by `--authorize-caller`
+or final minting, opens NyxID for unavoidable interactive login and consent as
+`chronoai-shining`; `--no-browser` prints the authorization URL instead. Later
+authorizations and mints refresh automatically. Refresh-token rotation is
+persisted only in the authoritative local state file, so do not run this
+command in a hosted runner or copy that state into CI. Set the separately
+reviewed UserService ID before minting; the tool proves the signed access token
+has restricted service authority equal to the exact singleton selected ID, with
+no second service admitted. The OIDC app
+preselects the `api-github` catalog entry, but consent remains visible and
+user-controlled, so removing all selected GitHub connections makes minting fail
+closed. Refresh custody is bound to the selected ID in local state; changing
+the ID requires explicit revocation and a new consent rather than silently
+retargeting an existing refresh token:
 
 ```bash
 export CMA_TRIGGER_SMOKE_SERVICE_ID='<exact personal api-github UserService UUID>'
@@ -264,6 +442,14 @@ and exactly equals the dispatch event's `github.sha`; this happens before the
 protected provider job can be queued, so a moved `develop` branch cannot
 silently retarget an approved run.
 
+The environment operator accepts legacy caller state without an explicit
+verification marker as pre-migration `verified`, but legacy state has no current
+handoff binding and therefore cannot dispatch until a new final mint. It refuses
+`pending` custody or a missing/mismatched digest before validating or uploading
+any handoff. A previously minted, still-fresh handoff cannot bypass a later
+authorization, apply, failed bucket check, caller rotation, or publication
+failure.
+
 ```bash
 run_plan=/absolute/private/cma-trigger-smoke/environment-run-plan.json
 handoff=/absolute/private/cma-trigger-smoke/handoff.json
@@ -281,8 +467,12 @@ unset CMA_TRIGGER_SMOKE_ENV_CONFIRM
 same fence. A hard process or host loss can leave the encrypted handoff present;
 that is recovery work, never permission to dispatch again. Generate and review
 a fresh plan, then run the bounded cleanup command. It deletes only
-`CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_B64`; the two stable observer secrets and
-the separately validated runtime UserService ID remain unchanged.
+the single exact
+`CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_<UPPERCASE_DISPATCH_NONCE>` secret; the two
+stable observer secrets and the separately validated runtime UserService ID
+remain unchanged. Planning and this bounded cleanup remain available when a
+`caller_exchange` or `resource_creation` incident marker is present; setup and
+dispatch do not. Cleanup cannot clear or modify either bootstrap incident.
 
 ```bash
 cleanup_plan=/absolute/private/cma-trigger-smoke/environment-cleanup-plan.json
@@ -312,9 +502,18 @@ refresh rotation, or hide an ambiguous provider write. State is persisted after
 each proven creation. On an ordinary failure, retain state, run `--plan` again,
 and resume `--apply`; never delete or recreate a resource just to make a retry
 look clean. For `*_secret_creation_recovery_required`, stop automatic retries,
-identify the one exact live resource, rotate its secret once through an audited
-administrator action, replace only that resource's custody fields in the
-mode-`0600` state, and rerun the read-only plan before applying.
+retain the state verbatim, and use only the exact-ID
+`--recover-resource-creation` procedure above. Never rotate through an ad hoc
+administrator action or edit secret custody directly into the state file.
+
+`oidc_secret_rotation_required` or `storage_secret_rotation_required` without a
+`resource_creation` marker is a distinct, unproven-custody incident. The exact
+resource existed before this bootstrap could durably bind its create attempt,
+so the marker-bound recovery command is intentionally unavailable. Quarantine
+the resource and escalate for provider final-outcome and ownership evidence plus
+a separately approved retirement or recovery design. Do not rotate it ad hoc,
+invent a marker, edit custody into state, or delete and recreate it merely to
+resume this smoke.
 
 The dedicated context and Trigger-workspace buckets outlive each Kind run. They
 must not use a blanket provider lifecycle rule. At pinned `chrono-bucket` source

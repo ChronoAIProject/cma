@@ -68,6 +68,12 @@ jobs:
           node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs
           node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
           node .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
+          node .github/tools/cma-trigger-smoke-environment/operator.mjs --self-test
+          node --test .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
+          node .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
       - name: Ephemeral Kind staging custody stays closed
         run: |
           set -euo pipefail
