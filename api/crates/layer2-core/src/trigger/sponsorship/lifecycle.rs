@@ -7,7 +7,21 @@ use super::super::{LaunchId, SponsoredPolicyBinding, TriggerValidationError};
 use super::model::*;
 use super::ports::*;
 use super::validation::*;
-use crate::{Caller, Capability, SubjectId};
+use crate::{Caller, Capability, Page, PageRequest, SubjectId};
+
+pub(crate) const MAX_POLICY_STATE_CHANGE_ATTEMPTS: usize = 8;
+
+fn monotonic_record_time(current: &str, observed: &str) -> String {
+    match (
+        crate::seconds_from_rfc3339(current),
+        crate::seconds_from_rfc3339(observed),
+    ) {
+        (Some(current_seconds), Some(observed_seconds)) if current_seconds > observed_seconds => {
+            current.to_string()
+        }
+        _ => observed.to_string(),
+    }
+}
 
 /// Deployment-owned proof that provider expiry and revocation were
 /// demonstrated, plus absolute ceilings no publisher may exceed.
@@ -198,7 +212,7 @@ pub struct ActivateSponsoredGrant {
     pub launch_id: LaunchId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RequestSponsoredUsage {
     pub stable_request_id: String,
     pub grant_id: SponsoredGrantId,
@@ -209,9 +223,24 @@ pub struct RequestSponsoredUsage {
     pub capability: InertGrantCapability,
 }
 
+impl std::fmt::Debug for RequestSponsoredUsage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RequestSponsoredUsage")
+            .field("stable_request_id", &"<redacted>")
+            .field("grant_id", &self.grant_id)
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("resource", &self.resource)
+            .field("maximum_quota", &self.maximum_quota)
+            .field("capability", &self.capability)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportSponsoredUsage {
-    pub stable_request_id: String,
+    pub reservation_id: SponsoredUsageReservationId,
     pub request_fingerprint: String,
     pub actual_quota: Option<SponsoredQuota>,
     pub outcome: SponsoredUsageState,
@@ -225,6 +254,7 @@ pub struct SponsorshipService {
     pub(super) pricing: Arc<dyn SponsoredPricingProvider>,
     pub(super) clock: Arc<dyn SponsorshipClock>,
     pub(super) audit: Arc<SponsorshipAuditPseudonymizer>,
+    pub(super) operational: Arc<SponsorshipOperationalPseudonymizer>,
 }
 
 struct ActivationTransition {
@@ -236,6 +266,7 @@ struct ActivationTransition {
 }
 
 impl SponsorshipService {
+    #[allow(clippy::too_many_arguments)] // Keep every independent trust-boundary dependency visible.
     pub fn new(
         gate: SponsorshipGate,
         store: Arc<dyn SponsorshipStore>,
@@ -244,6 +275,7 @@ impl SponsorshipService {
         pricing: Arc<dyn SponsoredPricingProvider>,
         clock: Arc<dyn SponsorshipClock>,
         audit: Arc<SponsorshipAuditPseudonymizer>,
+        operational: Arc<SponsorshipOperationalPseudonymizer>,
     ) -> Self {
         Self {
             gate,
@@ -253,11 +285,269 @@ impl SponsorshipService {
             pricing,
             clock,
             audit,
+            operational,
         }
     }
 
     pub fn gate(&self) -> &SponsorshipGate {
         &self.gate
+    }
+
+    fn credential_authority(
+        &self,
+        evidence: ProviderCredentialEvidence,
+    ) -> Result<
+        (
+            ProviderCredentialAuthority,
+            SponsorshipOperationalPseudonymSet,
+        ),
+        SponsorshipError,
+    > {
+        let identity = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ProviderCredentialAuthority,
+            &[
+                &evidence.provider,
+                evidence
+                    .provider_credential_id
+                    .expose_for_provider_or_encryption(),
+            ],
+        )?;
+        Ok((
+            ProviderCredentialAuthority {
+                provider: evidence.provider,
+                provider_policy_key: evidence.provider_policy_key,
+                provider_policy_handle: evidence.provider_policy_handle,
+                provider_credential_id_digest: identity.current().as_str().to_string(),
+                state_version: evidence.state_version,
+                ownership_verified_at: evidence.ownership_verified_at,
+                supports_expiry: evidence.supports_expiry,
+                supports_revocation: evidence.supports_revocation,
+            },
+            identity,
+        ))
+    }
+
+    fn grant_authority(
+        &self,
+        grant_id: &SponsoredGrantId,
+        receipt: &ProviderGrantReceipt,
+    ) -> Result<ProviderGrantAuthority, SponsorshipError> {
+        let provider_grant_id = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ProviderGrantAuthority,
+            &[
+                &grant_id.0,
+                receipt
+                    .provider_grant_id
+                    .expose_for_provider_or_encryption(),
+            ],
+        )?;
+        let revocation_handle = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ProviderRevocationAuthority,
+            &[
+                &grant_id.0,
+                receipt
+                    .revocation_handle
+                    .expose_for_provider_or_encryption(),
+            ],
+        )?;
+        Ok(ProviderGrantAuthority {
+            provider_grant_id_digest: provider_grant_id.current().as_str().to_string(),
+            provider_state_version: receipt.provider_state_version,
+            expires_at: receipt.expires_at.clone(),
+            revocation_handle_digest: revocation_handle.current().as_str().to_string(),
+            issued_at: receipt.issued_at.clone(),
+        })
+    }
+
+    fn credential_operation_identity(
+        &self,
+        credential_id: &SponsoredCredentialId,
+        kind: ProviderOperationKind,
+        caller: &SubjectId,
+        stable_request_id: &str,
+    ) -> Result<SponsorshipOperationalPseudonymSet, SponsorshipError> {
+        let operation = match kind {
+            ProviderOperationKind::RotateCredential => "rotate",
+            ProviderOperationKind::RevokeCredential => "revoke",
+            _ => {
+                return Err(TriggerValidationError::field(
+                    "provider_operation.kind",
+                    "is not a credential operation",
+                )
+                .into())
+            }
+        };
+        Ok(self.operational.pseudonymize(
+            SponsorshipOperationalDomain::CredentialOperationRequest,
+            &[&credential_id.0, operation, &caller.0, stable_request_id],
+        )?)
+    }
+
+    fn credential_replacement_payloads(
+        &self,
+        credential_id: &SponsoredCredentialId,
+        replacement: &ProviderCredentialSecret,
+    ) -> Result<Vec<String>, SponsorshipError> {
+        self.operational
+            .pseudonymize(
+                SponsorshipOperationalDomain::CredentialReplacement,
+                &[&credential_id.0, replacement.expose()],
+            )?
+            .iter()
+            .map(|candidate| {
+                canonical_digest(&(
+                    "cma-sponsored-credential-replacement-payload-v2",
+                    candidate.as_str(),
+                ))
+                .map_err(SponsorshipError::from)
+            })
+            .collect()
+    }
+
+    fn grant_operation_identity(
+        &self,
+        grant_id: &SponsoredGrantId,
+        kind: ProviderOperationKind,
+        caller: &SubjectId,
+        stable_request_id: &str,
+    ) -> Result<SponsorshipOperationalPseudonymSet, SponsorshipError> {
+        let operation = match kind {
+            ProviderOperationKind::RevokeGrant => "revoke",
+            ProviderOperationKind::CloseGrant => "close",
+            _ => {
+                return Err(TriggerValidationError::field(
+                    "provider_operation.kind",
+                    "is not a grant operation",
+                )
+                .into())
+            }
+        };
+        Ok(self.operational.pseudonymize(
+            SponsorshipOperationalDomain::GrantOperationRequest,
+            &[&grant_id.0, operation, &caller.0, stable_request_id],
+        )?)
+    }
+
+    fn activation_holder_identity(
+        &self,
+        launch_id: &LaunchId,
+        caller: &SubjectId,
+        stable_request_id: &str,
+    ) -> Result<SponsorshipOperationalPseudonymSet, SponsorshipError> {
+        Ok(self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ActivationRequest,
+            &[
+                &launch_id.0,
+                &caller.0,
+                stable_request_id,
+                "activation-lease",
+            ],
+        )?)
+    }
+
+    fn activation_operation_identity(
+        &self,
+        operation: &str,
+        launch: &SponsoredLaunchAuthority,
+        acceptance: &SponsoredGrantAcceptance,
+        policy_generation: u64,
+        credential_generation: u64,
+    ) -> Result<SponsorshipOperationalPseudonymSet, SponsorshipError> {
+        let policy_generation = policy_generation.to_string();
+        let credential_generation = credential_generation.to_string();
+        Ok(self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ActivationRequest,
+            &[
+                &launch.launch_id.0,
+                &launch.contributor.0,
+                operation,
+                &launch.digest,
+                &acceptance.digest,
+                &policy_generation,
+                &credential_generation,
+            ],
+        )?)
+    }
+
+    fn activation_recovery_holder_identity(
+        &self,
+        intent: &GrantActivationIntent,
+        actor: &SubjectId,
+        operation: &str,
+    ) -> Result<SponsorshipOperationalPseudonymSet, SponsorshipError> {
+        Ok(self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ActivationRequest,
+            &[
+                &intent.launch_id.0,
+                &actor.0,
+                operation,
+                &intent.provider_request_id,
+            ],
+        )?)
+    }
+
+    fn activation_cleanup_operation(
+        &self,
+        intent: &GrantActivationIntent,
+        now: &str,
+    ) -> Result<(PendingProviderOperation, SponsorshipOperationalPseudonymSet), SponsorshipError>
+    {
+        let receipt = intent.provider_receipt.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "grant_activation.provider_receipt",
+                "is required before provider cleanup",
+            )
+        })?;
+        let raw_provider_grant_id = receipt
+            .provider_grant_id
+            .expose_for_provider_or_encryption();
+        let raw_revocation_handle = receipt
+            .revocation_handle
+            .expose_for_provider_or_encryption();
+        let provider_grant_id = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ProviderGrantAuthority,
+            &[&intent.launch_id.0, raw_provider_grant_id],
+        )?;
+        let revocation_handle = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ProviderRevocationAuthority,
+            &[&intent.launch_id.0, raw_revocation_handle],
+        )?;
+        let client_request_candidates = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::ActivationRequest,
+            &[
+                &intent.launch_id.0,
+                "cleanup-operation",
+                &intent.provider_request_id,
+                raw_provider_grant_id,
+                raw_revocation_handle,
+            ],
+        )?;
+        let payload_digest = canonical_digest(&(
+            "cma-sponsored-uncommitted-grant-cleanup-payload-v2",
+            &intent.provider_request_id,
+            client_request_candidates.current().as_str(),
+            provider_grant_id.current().as_str(),
+            revocation_handle.current().as_str(),
+            receipt.provider_state_version,
+            &receipt.expires_at,
+        ))?;
+        let provider_request_id = canonical_digest(&(
+            "cma-sponsored-uncommitted-grant-cleanup-operation-v2",
+            client_request_candidates.current().as_str(),
+            &payload_digest,
+        ))?;
+        Ok((
+            PendingProviderOperation {
+                kind: ProviderOperationKind::RevokeUncommittedGrant,
+                phase: ProviderOperationPhase::Prepared,
+                client_request_id_digest: client_request_candidates.current().as_str().to_string(),
+                provider_request_id,
+                payload_digest,
+                requested_at: now.to_string(),
+                attempted_at: None,
+            },
+            client_request_candidates,
+        ))
     }
 
     /// Verify the immutable policy binding a publisher wants to place in a
@@ -277,6 +567,9 @@ impl SponsorshipService {
             .policy(&binding.policy_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
+        policy
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         if policy.owner.controller() != publisher || policy.tenant_id != binding.tenant_id {
             return Err(SponsorshipError::Forbidden);
         }
@@ -290,14 +583,16 @@ impl SponsorshipService {
         }
         let credential = self
             .store
-            .credential(&policy.credential_id)
+            .credential_record(&policy.credential_id)
             .await?
             .ok_or(SponsorshipError::CredentialUnavailable)?;
-        credential.validate()?;
-        if credential.record.owner != policy.owner
-            || credential.record.state != SponsoredCredentialState::Active
-            || credential.record.authority.provider != policy.provider_policy.provider
-            || credential.record.authority.provider_policy_key
+        credential
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if credential.owner != policy.owner
+            || credential.state != SponsoredCredentialState::Active
+            || credential.authority.provider != policy.provider_policy.provider
+            || credential.authority.provider_policy_key
                 != policy.provider_policy.provider_policy_key
         {
             return Err(SponsorshipError::CredentialUnavailable);
@@ -315,12 +610,48 @@ impl SponsorshipService {
     ) -> Result<SponsoredCredentialView, SponsorshipError> {
         let stored = self
             .store
-            .credential(credential_id)
+            .credential_record(credential_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
-        stored.validate()?;
-        require_sponsor_caller(caller, &stored.record.owner)?;
-        Ok(SponsoredCredentialView::from(&stored.record))
+        stored
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        require_sponsor_caller(caller, &stored.owner)?;
+        Ok(SponsoredCredentialView::from(&stored))
+    }
+
+    /// List secret-free credential metadata controlled by the authenticated
+    /// sponsor. This read remains available while spend admission is disabled.
+    pub async fn credential_views(
+        &self,
+        caller: &Caller,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredCredentialView>, SponsorshipError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnSponsorships)
+            .map_err(|_| SponsorshipError::Forbidden)?;
+        let stored = self
+            .store
+            .credentials_for_owner(&caller.subject, page)
+            .await?;
+        let mut items = Vec::with_capacity(stored.items.len());
+        for credential in stored.items {
+            credential
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+            if credential.owner.controller() != &caller.subject {
+                return Err(SponsorshipStoreError::Malformed(
+                    "owner credential listing crossed its authenticated subject boundary".into(),
+                )
+                .into());
+            }
+            items.push(SponsoredCredentialView::from(&credential));
+        }
+        Ok(Page {
+            items,
+            next: stored.next,
+        })
     }
 
     /// Read one owner-controlled policy and its current durable accounting.
@@ -334,9 +665,45 @@ impl SponsorshipService {
             .policy(policy_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
-        require_sponsor_caller(caller, &policy.owner)?;
         let usage = self.store.policy_usage(policy_id).await?;
-        Ok(SponsorshipPolicyView::from_policy(&policy, usage))
+        let stored = StoredSponsorshipPolicy { policy, usage };
+        stored.validate()?;
+        require_sponsor_caller(caller, &stored.policy.owner)?;
+        Ok(SponsorshipPolicyView::from_policy(
+            &stored.policy,
+            stored.usage,
+        ))
+    }
+
+    /// List owner-safe policies and their atomically co-located accounting.
+    pub async fn policy_views(
+        &self,
+        caller: &Caller,
+        page: &PageRequest,
+    ) -> Result<Page<SponsorshipPolicyView>, SponsorshipError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnSponsorships)
+            .map_err(|_| SponsorshipError::Forbidden)?;
+        let stored = self.store.policies_for_owner(&caller.subject, page).await?;
+        let mut items = Vec::with_capacity(stored.items.len());
+        for policy in stored.items {
+            policy.validate()?;
+            if policy.policy.owner.controller() != &caller.subject {
+                return Err(SponsorshipStoreError::Malformed(
+                    "owner policy listing crossed its authenticated subject boundary".into(),
+                )
+                .into());
+            }
+            items.push(SponsorshipPolicyView::from_policy(
+                &policy.policy,
+                policy.usage,
+            ));
+        }
+        Ok(Page {
+            items,
+            next: stored.next,
+        })
     }
 
     /// Read one grant as either its contributor or sponsoring owner.
@@ -350,11 +717,12 @@ impl SponsorshipService {
             .grant(grant_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
-        let policy = self
-            .store
-            .policy(&grant.policy_id)
-            .await?
-            .ok_or(SponsorshipError::NotFound)?;
+        let policy = self.store.policy(&grant.policy_id).await?.ok_or_else(|| {
+            SponsorshipStoreError::Malformed(
+                "stored grant references a missing sponsorship policy".into(),
+            )
+        })?;
+        require_stored_grant_policy_bindings(&grant, &policy)?;
         require_grant_control(caller, &policy.owner, &grant.contributor)?;
         Ok(SponsoredGrantView::from(&grant))
     }
@@ -367,13 +735,87 @@ impl SponsorshipService {
         let Some(grant) = self.store.grant_for_launch(launch_id).await? else {
             return Ok(None);
         };
-        let policy = self
-            .store
-            .policy(&grant.policy_id)
-            .await?
-            .ok_or(SponsorshipError::NotFound)?;
+        if &grant.launch_id != launch_id {
+            return Err(SponsorshipStoreError::Malformed(
+                "grant-by-Launch lookup returned a different Launch authority".into(),
+            )
+            .into());
+        }
+        let policy = self.store.policy(&grant.policy_id).await?.ok_or_else(|| {
+            SponsorshipStoreError::Malformed(
+                "Launch grant lookup references a missing sponsorship policy".into(),
+            )
+        })?;
+        require_stored_grant_policy_bindings(&grant, &policy)?;
         require_grant_control(caller, &policy.owner, &grant.contributor)?;
         Ok(Some(SponsoredGrantView::from(&grant)))
+    }
+
+    /// List grants in which the authenticated subject is the contributor.
+    pub async fn contributor_grant_views(
+        &self,
+        caller: &Caller,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrantView>, SponsorshipError> {
+        require_contributor_capability(caller)?;
+        let stored = self
+            .store
+            .grants_for_contributor(&caller.subject, page)
+            .await?;
+        let mut items = Vec::with_capacity(stored.items.len());
+        for grant in stored.items {
+            if grant.contributor != caller.subject {
+                return Err(SponsorshipStoreError::Malformed(
+                    "contributor grant listing crossed its authenticated subject boundary".into(),
+                )
+                .into());
+            }
+            let policy = self.store.policy(&grant.policy_id).await?.ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "contributor grant listing references a missing policy".into(),
+                )
+            })?;
+            require_stored_grant_policy_bindings(&grant, &policy)?;
+            items.push(SponsoredGrantView::from(&grant));
+        }
+        Ok(Page {
+            items,
+            next: stored.next,
+        })
+    }
+
+    /// List grants controlled through policies owned by the authenticated
+    /// sponsor. Every denormalized owner hit is checked against its policy.
+    pub async fn sponsor_grant_views(
+        &self,
+        caller: &Caller,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrantView>, SponsorshipError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnSponsorships)
+            .map_err(|_| SponsorshipError::Forbidden)?;
+        let stored = self.store.grants_for_sponsor(&caller.subject, page).await?;
+        let mut items = Vec::with_capacity(stored.items.len());
+        for grant in stored.items {
+            let policy = self.store.policy(&grant.policy_id).await?.ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "sponsor grant listing references a missing policy".into(),
+                )
+            })?;
+            require_stored_grant_policy_bindings(&grant, &policy)?;
+            if policy.owner.controller() != &caller.subject {
+                return Err(SponsorshipStoreError::Malformed(
+                    "sponsor grant owner index does not match its policy authority".into(),
+                )
+                .into());
+            }
+            items.push(SponsoredGrantView::from(&grant));
+        }
+        Ok(Page {
+            items,
+            next: stored.next,
+        })
     }
 
     /// Read only the authenticated actor's pseudonymized audit stream.
@@ -441,8 +883,6 @@ impl SponsorshipService {
         command.owner.validate()?;
         validate_policy_token("provider", &command.provider)?;
         validate_policy_token("provider_policy_key", &command.provider_policy_key)?;
-        let now = self.clock.now();
-        validate_timestamp("now", &now)?;
         if !self
             .gate
             .allowed_provider_policy_keys
@@ -450,7 +890,49 @@ impl SponsorshipService {
         {
             return Err(SponsorshipError::ProviderPolicyDenied);
         }
-        let authority = self
+        let owner_binding = canonical_digest(&(
+            "cma-sponsored-registration-owner-binding-v1",
+            &command.owner,
+        ))?;
+        let registration_identity = SponsoredCredentialRegistrationIdentity {
+            request: self.operational.pseudonymize(
+                SponsorshipOperationalDomain::CredentialRegistrationRequest,
+                &[&caller.subject.0, &command.stable_request_id],
+            )?,
+            command: self.operational.pseudonymize(
+                SponsorshipOperationalDomain::CredentialRegistrationCommand,
+                &[
+                    &caller.subject.0,
+                    &command.stable_request_id,
+                    &owner_binding,
+                    &command.provider,
+                    &command.provider_policy_key,
+                    command.credential.expose(),
+                ],
+            )?,
+        };
+        if let Some(stored) = self
+            .store
+            .credential_registration(&registration_identity)
+            .await?
+        {
+            stored
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+            if stored.owner != command.owner
+                || stored.authority.provider != command.provider
+                || stored.authority.provider_policy_key != command.provider_policy_key
+            {
+                return Err(SponsorshipStoreError::Malformed(
+                    "credential registration binding does not match its stored command".into(),
+                )
+                .into());
+            }
+            return Ok(SponsoredCredentialView::from(&stored));
+        }
+        let now = self.clock.now();
+        validate_timestamp("now", &now)?;
+        let evidence = self
             .provider
             .validate_ownership(
                 &command.owner,
@@ -460,13 +942,14 @@ impl SponsorshipService {
             )
             .await
             .map_err(map_provider_error)?;
-        if authority.provider != command.provider
-            || authority.provider_policy_key != command.provider_policy_key
-            || !authority.supports_expiry
-            || !authority.supports_revocation
+        if evidence.provider != command.provider
+            || evidence.provider_policy_key != command.provider_policy_key
+            || !evidence.supports_expiry
+            || !evidence.supports_revocation
         {
             return Err(SponsorshipError::ProviderRejected);
         }
+        let (authority, provider_identity) = self.credential_authority(evidence)?;
         let record = SponsoredCredentialRecord {
             schema_version: SPONSORSHIP_SCHEMA_VERSION,
             id: deterministic_credential_id(&authority)?,
@@ -495,10 +978,8 @@ impl SponsorshipService {
         let stored = self
             .store
             .insert_credential(
-                &sensitive_digest(
-                    "cma-sponsored-registration-idempotency-v1",
-                    &command.stable_request_id,
-                ),
+                &registration_identity,
+                &provider_identity,
                 &record,
                 &command.credential,
                 audit,
@@ -520,6 +1001,9 @@ impl SponsorshipService {
             .await?
             .ok_or(SponsorshipError::NotFound)?;
         let credential = stored_credential;
+        credential
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         if command.owner != credential.owner {
             return Err(SponsorshipError::Forbidden);
         }
@@ -600,24 +1084,29 @@ impl SponsorshipService {
             .ok_or(SponsorshipError::NotFound)?;
         stored_credential.validate()?;
         require_sponsor_caller(caller, &stored_credential.record.owner)?;
-        let replacement_digest = sensitive_digest(
-            "cma-sponsored-credential-replacement-v1",
-            command.replacement.expose(),
-        );
-        let client_request_id_digest = sensitive_digest(
-            "cma-sponsored-credential-command-idempotency-v1",
+        let replacement_payloads =
+            self.credential_replacement_payloads(&command.credential_id, &command.replacement)?;
+        let replacement_digest = replacement_payloads
+            .first()
+            .cloned()
+            .expect("operational pseudonym sets always contain a current candidate");
+        let client_request_identity = self.credential_operation_identity(
+            &command.credential_id,
+            ProviderOperationKind::RotateCredential,
+            &caller.subject,
             &command.stable_request_id,
-        );
+        )?;
+        let client_request_id_digest = client_request_identity.current().as_str().to_string();
         if let Some(completed) = self
             .store
             .completed_credential_operation(
                 &command.credential_id,
                 ProviderOperationKind::RotateCredential,
-                &client_request_id_digest,
+                &client_request_identity,
             )
             .await?
         {
-            if completed.payload_digest != replacement_digest {
+            if !replacement_payloads.contains(&completed.payload_digest) {
                 return Err(SponsorshipStoreError::Conflict.into());
             }
             return match completed.outcome {
@@ -636,7 +1125,7 @@ impl SponsorshipService {
             .is_some_and(|completed| {
                 completed.kind == ProviderOperationKind::RotateCredential
                     && completed.outcome == CompletedProviderOperationOutcome::Confirmed
-                    && completed.payload_digest == replacement_digest
+                    && replacement_payloads.contains(&completed.payload_digest)
             })
         {
             return Ok(SponsoredCredentialView::from(&stored_credential.record));
@@ -647,14 +1136,17 @@ impl SponsorshipService {
         let (mut credential, current_secret) = stored_credential.into_required_secret()?;
         if let Some(pending) = credential.pending_operation.as_ref().filter(|operation| {
             operation.kind == ProviderOperationKind::RotateCredential
-                && operation.client_request_id_digest == client_request_id_digest
+                && client_request_identity
+                    .iter()
+                    .any(|candidate| candidate.as_str() == operation.client_request_id_digest)
         }) {
-            if pending.payload_digest != replacement_digest {
+            if !replacement_payloads.contains(&pending.payload_digest) {
                 return Err(SponsorshipStoreError::Conflict.into());
             }
         }
         if credential.state == SponsoredCredentialState::Active {
             let expected = credential.generation;
+            let transition_time = monotonic_record_time(&credential.updated_at, &now);
             let provider_request_id = credential_operation_id(
                 ProviderOperationKind::RotateCredential,
                 &credential.id,
@@ -671,10 +1163,10 @@ impl SponsorshipService {
                 provider_request_id,
                 client_request_id_digest: client_request_id_digest.clone(),
                 payload_digest: replacement_digest.clone(),
-                requested_at: now.clone(),
+                requested_at: transition_time.clone(),
                 attempted_at: None,
             });
-            credential.updated_at = now.clone();
+            credential.updated_at = transition_time.clone();
             credential.validate()?;
             let audit = SponsoredAuditEvent::privacy_safe(
                 &self.audit,
@@ -683,7 +1175,7 @@ impl SponsorshipService {
                 SponsoredAuditTarget::Platform,
                 Some(&command.stable_request_id),
                 "rotation_pending",
-                now.clone(),
+                transition_time,
             );
             credential = self
                 .store
@@ -695,8 +1187,10 @@ impl SponsorshipService {
                 .pending_operation
                 .as_ref()
                 .is_none_or(|operation| {
-                    operation.client_request_id_digest != client_request_id_digest
-                        || operation.payload_digest != replacement_digest
+                    !client_request_identity
+                        .iter()
+                        .any(|candidate| candidate.as_str() == operation.client_request_id_digest)
+                        || !replacement_payloads.contains(&operation.payload_digest)
                 })
         {
             return Err(SponsorshipError::CredentialUnavailable);
@@ -713,14 +1207,15 @@ impl SponsorshipService {
             })?;
         let resolution = if operation.phase == ProviderOperationPhase::Prepared {
             let expected = credential.generation;
+            let transition_time = monotonic_record_time(&credential.updated_at, &now);
             credential.generation =
                 next_generation(credential.generation, "credential.generation")?;
             let pending = credential.pending_operation.as_mut().ok_or_else(|| {
                 SponsorshipStoreError::Malformed("rotation operation identity is missing".into())
             })?;
             pending.phase = ProviderOperationPhase::Attempting;
-            pending.attempted_at = Some(now.clone());
-            credential.updated_at = now.clone();
+            pending.attempted_at = Some(transition_time.clone());
+            credential.updated_at = transition_time.clone();
             credential.validate()?;
             let audit = SponsoredAuditEvent::privacy_safe(
                 &self.audit,
@@ -729,7 +1224,7 @@ impl SponsorshipService {
                 SponsoredAuditTarget::Platform,
                 Some(&operation.provider_request_id),
                 "rotation_attempting",
-                now.clone(),
+                transition_time,
             );
             credential = self
                 .store
@@ -790,8 +1285,8 @@ impl SponsorshipService {
             return Err(SponsorshipError::ProviderRejected);
         };
 
-        let authority = match resolution {
-            ProviderOperationResolution::Confirmed(authority) => authority,
+        let evidence = match resolution {
+            ProviderOperationResolution::Confirmed(evidence) => evidence,
             ProviderOperationResolution::Pending => {
                 self.persist_credential_operation_phase(
                     credential,
@@ -806,6 +1301,7 @@ impl SponsorshipService {
             }
             ProviderOperationResolution::Rejected => {
                 let expected = credential.generation;
+                let completion_time = monotonic_record_time(&credential.updated_at, &now);
                 credential.generation =
                     next_generation(credential.generation, "credential.generation")?;
                 credential.state = SponsoredCredentialState::Active;
@@ -816,9 +1312,9 @@ impl SponsorshipService {
                     client_request_id_digest: operation.client_request_id_digest.clone(),
                     payload_digest: operation.payload_digest.clone(),
                     outcome: CompletedProviderOperationOutcome::Rejected,
-                    completed_at: now.clone(),
+                    completed_at: completion_time.clone(),
                 });
-                credential.updated_at = now.clone();
+                credential.updated_at = completion_time.clone();
                 credential.validate()?;
                 let audit = SponsoredAuditEvent::privacy_safe(
                     &self.audit,
@@ -827,7 +1323,7 @@ impl SponsorshipService {
                     SponsoredAuditTarget::Platform,
                     Some(&operation.provider_request_id),
                     "rotation_rejected",
-                    now,
+                    completion_time,
                 );
                 match self
                     .store
@@ -854,11 +1350,11 @@ impl SponsorshipService {
                 }
             }
         };
-        if authority.provider != credential.authority.provider
-            || authority.provider_policy_key != credential.authority.provider_policy_key
-            || authority.state_version <= credential.authority.state_version
-            || !authority.supports_expiry
-            || !authority.supports_revocation
+        if evidence.provider != credential.authority.provider
+            || evidence.provider_policy_key != credential.authority.provider_policy_key
+            || evidence.state_version <= credential.authority.state_version
+            || !evidence.supports_expiry
+            || !evidence.supports_revocation
         {
             self.persist_credential_operation_phase(
                 credential,
@@ -871,7 +1367,9 @@ impl SponsorshipService {
             .await?;
             return Err(SponsorshipError::ProviderAmbiguous);
         }
+        let (authority, provider_identity) = self.credential_authority(evidence)?;
         let expected = credential.generation;
+        let completion_time = monotonic_record_time(&credential.updated_at, &now);
         credential.generation = next_generation(credential.generation, "credential.generation")?;
         credential.authority = authority;
         credential.state = SponsoredCredentialState::Active;
@@ -882,9 +1380,9 @@ impl SponsorshipService {
             client_request_id_digest: operation.client_request_id_digest.clone(),
             payload_digest: operation.payload_digest.clone(),
             outcome: CompletedProviderOperationOutcome::Confirmed,
-            completed_at: now.clone(),
+            completed_at: completion_time.clone(),
         });
-        credential.updated_at = now.clone();
+        credential.updated_at = completion_time.clone();
         credential.validate()?;
         let audit = SponsoredAuditEvent::privacy_safe(
             &self.audit,
@@ -893,11 +1391,11 @@ impl SponsorshipService {
             SponsoredAuditTarget::Platform,
             Some(&operation.provider_request_id),
             "rotated",
-            now.clone(),
+            completion_time,
         );
         let completion = self
             .store
-            .complete_credential_rotation(expected, &credential, audit)
+            .complete_credential_rotation(expected, &provider_identity, &credential, audit)
             .await;
         match completion {
             Ok(stored) => Ok(SponsoredCredentialView::from(&stored)),
@@ -972,10 +1470,13 @@ impl SponsorshipService {
         stable_request_id: &str,
     ) -> Result<SponsoredCredentialView, SponsorshipError> {
         validate_stable_request_id(stable_request_id)?;
-        let client_request_id_digest = sensitive_digest(
-            "cma-sponsored-credential-command-idempotency-v1",
+        let client_request_identity = self.credential_operation_identity(
+            credential_id,
+            ProviderOperationKind::RevokeCredential,
+            &caller.subject,
             stable_request_id,
-        );
+        )?;
+        let client_request_id_digest = client_request_identity.current().as_str().to_string();
         let now = self.clock.now();
         validate_timestamp("now", &now)?;
         let stored_credential = self
@@ -994,6 +1495,7 @@ impl SponsorshipService {
             SponsoredCredentialState::Active | SponsoredCredentialState::RotationPending
         ) {
             let expected = credential.generation;
+            let transition_time = monotonic_record_time(&credential.updated_at, &now);
             let superseded_rotation = (credential.state
                 == SponsoredCredentialState::RotationPending)
                 .then(|| credential.pending_operation.clone())
@@ -1019,11 +1521,11 @@ impl SponsorshipService {
                 phase: ProviderOperationPhase::Prepared,
                 client_request_id_digest: client_request_id_digest.clone(),
                 payload_digest,
-                requested_at: now.clone(),
+                requested_at: transition_time.clone(),
                 attempted_at: None,
             });
             credential.superseded_operation = superseded_rotation;
-            credential.updated_at = now.clone();
+            credential.updated_at = transition_time.clone();
             credential.validate()?;
             let audit = SponsoredAuditEvent::privacy_safe(
                 &self.audit,
@@ -1032,7 +1534,7 @@ impl SponsorshipService {
                 SponsoredAuditTarget::Platform,
                 Some(stable_request_id),
                 "revocation_pending",
-                now.clone(),
+                transition_time,
             );
             credential = self
                 .store
@@ -1061,16 +1563,19 @@ impl SponsorshipService {
             .ok_or_else(|| {
                 SponsorshipStoreError::Malformed("revocation operation identity is missing".into())
             })?;
+        // Revocation is monotonic: an authorized owner retry may reconcile the
+        // staged operation, but it cannot replace its original identities.
         let resolution = if operation.phase == ProviderOperationPhase::Prepared {
             let expected = credential.generation;
+            let transition_time = monotonic_record_time(&credential.updated_at, &now);
             credential.generation =
                 next_generation(credential.generation, "credential.generation")?;
             let pending = credential.pending_operation.as_mut().ok_or_else(|| {
                 SponsorshipStoreError::Malformed("revocation operation identity is missing".into())
             })?;
             pending.phase = ProviderOperationPhase::Attempting;
-            pending.attempted_at = Some(now.clone());
-            credential.updated_at = now.clone();
+            pending.attempted_at = Some(transition_time.clone());
+            credential.updated_at = transition_time.clone();
             credential.validate()?;
             let audit = SponsoredAuditEvent::privacy_safe(
                 &self.audit,
@@ -1079,7 +1584,7 @@ impl SponsorshipService {
                 SponsoredAuditTarget::Platform,
                 Some(&operation.provider_request_id),
                 "revocation_attempting",
-                now.clone(),
+                transition_time,
             );
             credential = self
                 .store
@@ -1171,6 +1676,7 @@ impl SponsorshipService {
             }
         }
         let expected = credential.generation;
+        let completion_time = monotonic_record_time(&credential.updated_at, &now);
         credential.generation = next_generation(credential.generation, "credential.generation")?;
         credential.state = SponsoredCredentialState::Revoked;
         credential.material_state = SponsoredCredentialMaterialState::Retired;
@@ -1182,10 +1688,10 @@ impl SponsorshipService {
             client_request_id_digest: operation.client_request_id_digest.clone(),
             payload_digest: operation.payload_digest.clone(),
             outcome: CompletedProviderOperationOutcome::Confirmed,
-            completed_at: now.clone(),
+            completed_at: completion_time.clone(),
         });
-        credential.revoked_at = Some(now.clone());
-        credential.updated_at = now.clone();
+        credential.revoked_at = Some(completion_time.clone());
+        credential.updated_at = completion_time.clone();
         credential.validate()?;
         let audit = SponsoredAuditEvent::privacy_safe(
             &self.audit,
@@ -1194,7 +1700,7 @@ impl SponsorshipService {
             SponsoredAuditTarget::Platform,
             Some(&operation.provider_request_id),
             "revoked",
-            now,
+            completion_time,
         );
         let stored = self
             .store
@@ -1227,12 +1733,15 @@ impl SponsorshipService {
         policy_id: &SponsorshipPolicyId,
         state: SponsorshipPolicyState,
     ) -> Result<SponsorshipPolicy, SponsorshipError> {
-        loop {
+        for attempt in 0..MAX_POLICY_STATE_CHANGE_ATTEMPTS {
             let mut policy = self
                 .store
                 .policy(policy_id)
                 .await?
                 .ok_or(SponsorshipError::NotFound)?;
+            policy
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
             require_sponsor_caller(caller, &policy.owner)?;
             if policy.state == SponsorshipPolicyState::Revoked || policy.state == state {
                 return Ok(policy);
@@ -1240,12 +1749,14 @@ impl SponsorshipService {
             let now = self.clock.now();
             validate_timestamp("now", &now)?;
             let expected = policy.generation;
+            let transition_time = monotonic_record_time(&policy.updated_at, &now);
             policy.generation = policy.generation.checked_add(1).ok_or_else(|| {
                 TriggerValidationError::field("sponsorship_policy.generation", "is exhausted")
             })?;
             policy.state = state;
-            policy.updated_at = now.clone();
-            policy.revoked_at = (state == SponsorshipPolicyState::Revoked).then(|| now.clone());
+            policy.updated_at = transition_time.clone();
+            policy.revoked_at =
+                (state == SponsorshipPolicyState::Revoked).then(|| transition_time.clone());
             policy.validate()?;
             let action = match state {
                 SponsorshipPolicyState::Suspended => SponsoredAuditAction::PolicySuspended,
@@ -1269,14 +1780,19 @@ impl SponsorshipService {
                 } else {
                     "suspended"
                 },
-                now,
+                transition_time,
             );
             match self.store.replace_policy(expected, &policy, audit).await {
                 Ok(stored) => return Ok(stored),
-                Err(SponsorshipStoreError::StaleGeneration) => continue,
+                Err(SponsorshipStoreError::StaleGeneration)
+                    if attempt + 1 < MAX_POLICY_STATE_CHANGE_ATTEMPTS =>
+                {
+                    continue;
+                }
                 Err(error) => return Err(error.into()),
             }
         }
+        unreachable!("policy state CAS attempt range is nonempty")
     }
 
     pub async fn terms(
@@ -1329,15 +1845,26 @@ impl SponsorshipService {
     ) -> Result<SponsoredGrantAcceptance, SponsorshipError> {
         validate_stable_request_id(&command.idempotency_key)?;
         require_contributor_capability(caller)?;
-        let idempotency_key_hash = sensitive_digest(
-            "cma-sponsored-acceptance-idempotency-v1",
-            &command.idempotency_key,
-        );
-        if let Some(stored) = self.store.acceptance_for_launch(&command.launch_id).await? {
+        let idempotency_candidates = self.operational.pseudonymize(
+            SponsorshipOperationalDomain::AcceptanceRequest,
+            &[
+                &command.launch_id.0,
+                &caller.subject.0,
+                &command.idempotency_key,
+            ],
+        )?;
+        if let Some(stored) = self
+            .store
+            .acceptance_for_request(&command.launch_id, &idempotency_candidates)
+            .await?
+        {
             if stored.contributor != caller.subject {
                 return Err(SponsorshipError::Forbidden);
             }
-            if stored.idempotency_key_hash == idempotency_key_hash {
+            if idempotency_candidates
+                .iter()
+                .any(|candidate| candidate.as_str() == stored.idempotency_key_hash)
+            {
                 if stored.policy_id == command.policy_id
                     && stored.terms_digest == command.terms_digest
                     && stored.launch_snapshot_digest == command.launch_snapshot_digest
@@ -1347,6 +1874,7 @@ impl SponsorshipService {
                 }
                 return Err(SponsorshipStoreError::Conflict.into());
             }
+            return Err(SponsorshipStoreError::Conflict.into());
         }
         let gate_fence = self.require_enabled().await?;
         let now = self.clock.now();
@@ -1387,7 +1915,7 @@ impl SponsorshipService {
             terms_digest: terms.digest,
             launch_snapshot_digest: command.launch_snapshot_digest,
             accepted_at: now.clone(),
-            idempotency_key_hash,
+            idempotency_key_hash: idempotency_candidates.current().as_str().to_string(),
             digest: String::new(),
         };
         acceptance.digest = acceptance.calculate_digest()?;
@@ -1405,6 +1933,7 @@ impl SponsorshipService {
             .store
             .insert_acceptance(PersistSponsoredAcceptance {
                 acceptance,
+                idempotency_candidates,
                 launch_authority: launch.clone(),
                 gate_fence,
                 audit,
@@ -1433,6 +1962,16 @@ impl SponsorshipService {
             return Err(SponsorshipError::Forbidden);
         }
         if let Some(existing) = self.store.grant_for_launch(&command.launch_id).await? {
+            let policy = self
+                .store
+                .policy(&existing.policy_id)
+                .await?
+                .ok_or_else(|| {
+                    SponsorshipStoreError::Malformed(
+                        "existing Launch grant references a missing sponsorship policy".into(),
+                    )
+                })?;
+            require_stored_grant_policy_bindings(&existing, &policy)?;
             require_grant_bindings(&existing, &launch)?;
             return Ok(existing);
         }
@@ -1441,6 +1980,9 @@ impl SponsorshipService {
             .policy(&launch.policy_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
+        policy
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         if !policy.is_available_at(&now) || policy.tenant_id != launch.tenant_id {
             return Err(SponsorshipError::PolicyUnavailable);
         }
@@ -1469,18 +2011,19 @@ impl SponsorshipService {
             quota: policy.per_launch_quota,
             spend_micros: policy.per_launch_budget_micros,
         };
-        let holder = sensitive_digest(
-            "cma-sponsored-activation-holder-v1",
+        let holder_candidates = self.activation_holder_identity(
+            &command.launch_id,
+            &caller.subject,
             &command.stable_request_id,
-        );
-        let billing_request_id = activation_operation_id(
+        )?;
+        let billing_request_candidates = self.activation_operation_identity(
             "billing",
             &launch,
             &acceptance,
             policy.generation,
             credential.generation,
         )?;
-        let provider_request_id = activation_operation_id(
+        let provider_request_candidates = self.activation_operation_identity(
             "provider",
             &launch,
             &acceptance,
@@ -1509,8 +2052,8 @@ impl SponsorshipService {
                     gate_fence: gate_fence.clone(),
                     allocation: allocation.clone(),
                     request_fingerprint,
-                    billing_request_id,
-                    provider_request_id: provider_request_id.clone(),
+                    billing_request_id: billing_request_candidates.current().as_str().to_string(),
+                    provider_request_id: provider_request_candidates.current().as_str().to_string(),
                     state: GrantActivationState::AwaitingBilling,
                     denial: None,
                     capacity_held: false,
@@ -1521,21 +2064,24 @@ impl SponsorshipService {
                     created_at: now.clone(),
                     updated_at: now.clone(),
                 },
-                holder: holder.clone(),
+                holder_candidates: holder_candidates.clone(),
+                billing_request_candidates,
+                provider_request_candidates,
                 launch_authority: launch.clone(),
                 acceptance: acceptance.clone(),
             })
             .await?;
         if !claim.acquired {
             if claim.intent.state == GrantActivationState::Committed {
-                return self
+                let grant = self
                     .store
                     .grant_for_launch(&command.launch_id)
                     .await?
                     .ok_or_else(|| {
                         SponsorshipStoreError::Malformed("committed activation has no grant".into())
-                            .into()
-                    });
+                    })?;
+                require_stored_grant_policy_bindings(&grant, &policy)?;
+                return Ok(grant);
             }
             if let Some(denial) = claim.intent.denial {
                 return Err(match denial {
@@ -1547,6 +2093,16 @@ impl SponsorshipService {
             return Err(SponsorshipError::ActivationInProgress);
         }
         let mut intent = claim.intent;
+        let holder = intent
+            .lease
+            .as_ref()
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "acquired activation claim has no durable lease".into(),
+                )
+            })?
+            .holder
+            .clone();
         intent.validate()?;
 
         let mut provider_dispatch_fenced = false;
@@ -1786,6 +2342,7 @@ impl SponsorshipService {
                 return Err(SponsorshipError::ProviderRejected);
             }
         };
+        let provider_request_id = intent.provider_request_id.clone();
         let id = deterministic_grant_id(&provider_request_id)?;
         let mut grant = SponsoredGrant {
             schema_version: SPONSORSHIP_SCHEMA_VERSION,
@@ -1799,25 +2356,10 @@ impl SponsorshipService {
             launch_id: command.launch_id.clone(),
             session_id: session_id.clone(),
             contributor: caller.subject.clone(),
+            sponsor_subject: policy.owner.controller().clone(),
             terms_digest: acceptance.terms_digest.clone(),
             acceptance: acceptance.clone(),
-            authority: ProviderGrantAuthority {
-                provider_grant_id_digest: sensitive_digest(
-                    "cma-provider-grant-id-v1",
-                    receipt
-                        .provider_grant_id
-                        .expose_for_provider_or_encryption(),
-                ),
-                provider_state_version: receipt.provider_state_version,
-                expires_at: receipt.expires_at.clone(),
-                revocation_handle_digest: sensitive_digest(
-                    "cma-provider-revocation-handle-v1",
-                    receipt
-                        .revocation_handle
-                        .expose_for_provider_or_encryption(),
-                ),
-                issued_at: receipt.issued_at.clone(),
-            },
+            authority: self.grant_authority(&id, &receipt)?,
             capability: InertGrantCapability {
                 grant_id: id,
                 grant_generation: 1,
@@ -1858,6 +2400,7 @@ impl SponsorshipService {
         intent.denial = None;
         intent.updated_at = grant.updated_at.clone();
         intent.validate()?;
+        let commit_candidate = grant.clone();
         let result = self
             .store
             .commit_grant_activation(CommitGrantActivation {
@@ -1873,11 +2416,16 @@ impl SponsorshipService {
             })
             .await;
         match result {
-            Ok(grant) => Ok(grant),
+            Ok(grant) => {
+                require_stored_grant_policy_bindings(&grant, &policy)?;
+                Ok(grant)
+            }
             Err(commit_error) => {
                 if let Some(grant) = self.store.grant_for_launch(&command.launch_id).await? {
-                    require_grant_bindings(&grant, &launch)?;
-                    return Ok(grant);
+                    if grant == commit_candidate {
+                        require_stored_grant_policy_bindings(&grant, &policy)?;
+                        return Ok(grant);
+                    }
                 }
                 if matches!(
                     &commit_error,
@@ -1896,8 +2444,13 @@ impl SponsorshipService {
                             )
                         })?;
                     if durable.state == GrantActivationState::ProviderConfirmed {
-                        self.cleanup_uncommitted_activation(&caller.subject, durable, holder, &now)
-                            .await?;
+                        self.cleanup_uncommitted_activation(
+                            &caller.subject,
+                            durable,
+                            holder_candidates,
+                            &now,
+                        )
+                        .await?;
                     }
                 }
                 Err(commit_error.into())
@@ -1938,10 +2491,6 @@ impl SponsorshipService {
         }
         let now = self.clock.now();
         validate_timestamp("now", &now)?;
-        let holder = sensitive_digest(
-            "cma-sponsored-activation-cleanup-holder-v1",
-            &intent.provider_request_id,
-        );
         if matches!(
             intent.state,
             GrantActivationState::BillingAttempting
@@ -1950,8 +2499,13 @@ impl SponsorshipService {
         ) || (intent.state == GrantActivationState::ProviderAmbiguous
             && intent.provider_receipt.is_none())
         {
+            let holder_candidates = self.activation_recovery_holder_identity(
+                &intent,
+                &caller.subject,
+                "invalidation-lease",
+            )?;
             return self
-                .recover_invalidated_activation(&caller.subject, intent, holder, &now)
+                .recover_invalidated_activation(&caller.subject, intent, holder_candidates, &now)
                 .await;
         }
         if matches!(
@@ -1961,8 +2515,13 @@ impl SponsorshipService {
                 | GrantActivationState::CleanupPending
         ) && intent.provider_receipt.is_some()
         {
+            let holder_candidates = self.activation_recovery_holder_identity(
+                &intent,
+                &caller.subject,
+                "cleanup-lease",
+            )?;
             return self
-                .cleanup_uncommitted_activation(&caller.subject, intent, holder, &now)
+                .cleanup_uncommitted_activation(&caller.subject, intent, holder_candidates, &now)
                 .await;
         }
         Err(SponsorshipError::ActivationInProgress)
@@ -1972,20 +2531,30 @@ impl SponsorshipService {
         &self,
         actor: &SubjectId,
         intent: GrantActivationIntent,
-        holder: String,
+        holder_candidates: SponsorshipOperationalPseudonymSet,
         now: &str,
     ) -> Result<(), SponsorshipError> {
         let claim = self
             .store
             .claim_invalidated_grant_activation(ClaimInvalidatedGrantActivation {
                 launch_id: intent.launch_id.clone(),
-                holder: holder.clone(),
+                holder_candidates: holder_candidates.clone(),
             })
             .await?;
         if !claim.acquired {
             return Err(SponsorshipError::ActivationInProgress);
         }
         let mut intent = claim.intent;
+        let holder = intent
+            .lease
+            .as_ref()
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "acquired invalidation claim has no durable lease".into(),
+                )
+            })?
+            .holder
+            .clone();
         let policy = self.store.policy(&intent.policy_id).await?.ok_or_else(|| {
             SponsorshipStoreError::Malformed(
                 "invalidated activation has no sponsorship policy".into(),
@@ -2096,7 +2665,7 @@ impl SponsorshipService {
                         now,
                     )
                     .await?;
-                self.cleanup_uncommitted_activation(actor, intent, holder, now)
+                self.cleanup_uncommitted_activation(actor, intent, holder_candidates, now)
                     .await
             }
             ProviderOperationResolution::Pending => {
@@ -2135,8 +2704,9 @@ impl SponsorshipService {
         intent.denial = Some(GrantActivationDenial::AuthorityInvalidated);
         intent.capacity_held = false;
         intent.lease = None;
-        intent.updated_at = now.to_string();
+        intent.updated_at = monotonic_record_time(&intent.updated_at, now);
         intent.validate()?;
+        let completion_time = intent.updated_at.clone();
         let audit = SponsoredAuditEvent::privacy_safe(
             &self.audit,
             SponsoredAuditAction::GrantDenied,
@@ -2144,7 +2714,7 @@ impl SponsorshipService {
             SponsoredAuditTarget::Policy(intent.policy_id.clone()),
             Some(&intent.provider_request_id),
             "authority_invalidated",
-            now,
+            completion_time,
         );
         self.store
             .complete_invalidated_grant_activation(CompleteInvalidatedGrantActivation {
@@ -2161,15 +2731,17 @@ impl SponsorshipService {
         &self,
         actor: &SubjectId,
         intent: GrantActivationIntent,
-        holder: String,
+        holder_candidates: SponsorshipOperationalPseudonymSet,
         now: &str,
     ) -> Result<(), SponsorshipError> {
-        let candidate = activation_cleanup_operation(&intent, now)?;
+        let (candidate, operation_client_request_candidates) =
+            self.activation_cleanup_operation(&intent, now)?;
         let claim = self
             .store
             .claim_grant_activation_cleanup(ClaimGrantActivationCleanup {
                 launch_id: intent.launch_id.clone(),
-                holder: holder.clone(),
+                holder_candidates,
+                operation_client_request_candidates,
                 operation: candidate,
             })
             .await?;
@@ -2181,6 +2753,16 @@ impl SponsorshipService {
             };
         }
         let mut intent = claim.intent;
+        let holder = intent
+            .lease
+            .as_ref()
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "acquired cleanup claim has no durable lease".into(),
+                )
+            })?
+            .holder
+            .clone();
         let receipt = intent.provider_receipt.clone().ok_or_else(|| {
             SponsorshipStoreError::Malformed(
                 "activation cleanup has no encrypted provider receipt".into(),
@@ -2206,6 +2788,18 @@ impl SponsorshipService {
         let operation = intent.cleanup_operation.clone().ok_or_else(|| {
             SponsorshipStoreError::Malformed("activation cleanup identity is missing".into())
         })?;
+        if credential_globally_revoked && operation.phase == ProviderOperationPhase::Prepared {
+            intent = self
+                .persist_activation_cleanup_phase(
+                    intent,
+                    &holder,
+                    ProviderOperationPhase::Attempting,
+                    Some(now.to_string()),
+                    false,
+                    now,
+                )
+                .await?;
+        }
         let resolution = if credential_globally_revoked {
             ProviderOperationResolution::Confirmed(())
         } else if operation.phase == ProviderOperationPhase::Prepared {
@@ -2291,8 +2885,9 @@ impl SponsorshipService {
                 intent.capacity_held = false;
                 intent.lease = None;
                 intent.cleanup_operation = None;
-                intent.updated_at = now.to_string();
+                intent.updated_at = monotonic_record_time(&intent.updated_at, now);
                 intent.validate()?;
+                let completion_time = intent.updated_at.clone();
                 let audit = SponsoredAuditEvent::privacy_safe(
                     &self.audit,
                     SponsoredAuditAction::UncommittedGrantRevoked,
@@ -2300,12 +2895,13 @@ impl SponsorshipService {
                     SponsoredAuditTarget::Policy(intent.policy_id.clone()),
                     Some(&operation.provider_request_id),
                     "provider_authority_revoked",
-                    now,
+                    completion_time,
                 );
                 self.store
                     .complete_grant_activation_cleanup(CompleteGrantActivationCleanup {
                         expected_revision,
                         holder,
+                        operation,
                         intent,
                         audit,
                     })
@@ -2354,11 +2950,15 @@ impl SponsorshipService {
             SponsorshipStoreError::Malformed("activation cleanup identity is missing".into())
         })?;
         operation.phase = phase;
-        operation.attempted_at = attempted_at;
+        if phase == ProviderOperationPhase::Prepared {
+            operation.attempted_at = None;
+        } else if operation.attempted_at.is_none() {
+            operation.attempted_at = attempted_at;
+        }
         if release_lease {
             intent.lease = None;
         }
-        intent.updated_at = now.to_string();
+        intent.updated_at = monotonic_record_time(&intent.updated_at, now);
         intent.validate()?;
         Ok(self
             .store
@@ -2431,6 +3031,7 @@ impl SponsorshipService {
             .begin_provider_grant_issue(BeginProviderGrantIssue {
                 launch_id: intent.launch_id.clone(),
                 expected_revision: intent.revision,
+                intent,
                 holder: holder.to_string(),
                 launch_authority: launch.clone(),
                 acceptance: acceptance.clone(),
@@ -2469,7 +3070,7 @@ impl SponsorshipService {
         if transition.release_lease {
             intent.lease = None;
         }
-        intent.updated_at = now.to_string();
+        intent.updated_at = monotonic_record_time(&intent.updated_at, now);
         intent.validate()?;
         Ok(self
             .store
@@ -2544,12 +3145,15 @@ impl SponsorshipService {
             .grant(grant_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
-        let policy = self
-            .store
-            .policy(&grant.policy_id)
-            .await?
-            .ok_or(SponsorshipError::NotFound)?;
+        let policy = self.store.policy(&grant.policy_id).await?.ok_or_else(|| {
+            SponsorshipStoreError::Malformed(
+                "grant revocation references a missing sponsorship policy".into(),
+            )
+        })?;
+        require_stored_grant_policy_bindings(&grant, &policy)?;
         require_grant_control(caller, &policy.owner, &grant.contributor)?;
+        let client_request_identity =
+            self.grant_operation_identity(grant_id, kind, &caller.subject, stable_request_id)?;
         let final_state = match kind {
             ProviderOperationKind::RevokeGrant => SponsoredGrantState::Revoked,
             ProviderOperationKind::CloseGrant => SponsoredGrantState::Closed,
@@ -2577,6 +3181,7 @@ impl SponsorshipService {
         }
         if grant.state != SponsoredGrantState::RevocationPending {
             let expected = grant.generation;
+            let transition_time = monotonic_record_time(&grant.updated_at, &now);
             let payload_digest = canonical_digest(&(
                 "cma-sponsored-grant-revocation-payload-v1",
                 &grant.authority.provider_grant_id_digest,
@@ -2594,15 +3199,12 @@ impl SponsorshipService {
                     expected,
                     &payload_digest,
                 )?,
-                client_request_id_digest: sensitive_digest(
-                    "cma-sponsored-grant-command-idempotency-v1",
-                    stable_request_id,
-                ),
+                client_request_id_digest: client_request_identity.current().as_str().to_string(),
                 payload_digest,
-                requested_at: now.clone(),
+                requested_at: transition_time.clone(),
                 attempted_at: None,
             });
-            grant.updated_at = now.clone();
+            grant.updated_at = transition_time.clone();
             grant.refresh_capability()?;
             grant.validate()?;
             let pending_audit = SponsoredAuditEvent::privacy_safe(
@@ -2615,7 +3217,7 @@ impl SponsorshipService {
                 },
                 Some(stable_request_id),
                 "revocation_pending",
-                now.clone(),
+                transition_time,
             );
             grant = self
                 .store
@@ -2625,7 +3227,11 @@ impl SponsorshipService {
         let operation = grant.pending_revocation.clone().ok_or_else(|| {
             SponsorshipStoreError::Malformed("grant revocation identity is missing".into())
         })?;
-        if operation.kind != kind {
+        if operation.kind != kind
+            || !client_request_identity
+                .iter()
+                .any(|candidate| candidate.as_str() == operation.client_request_id_digest)
+        {
             return Err(SponsorshipError::ProviderOperationInProgress);
         }
         let stored_credential = self
@@ -2653,7 +3259,7 @@ impl SponsorshipService {
                         "provider grant authority is missing from encrypted persistence".into(),
                     )
                 })?;
-            require_receipt_matches_grant(&receipt, &grant)?;
+            require_receipt_matches_grant(&self.operational, &receipt, &grant)?;
             Some(receipt)
         };
         let resolution = if credential_globally_revoked {
@@ -2670,13 +3276,14 @@ impl SponsorshipService {
                 )
             })?;
             let expected = grant.generation;
+            let transition_time = monotonic_record_time(&grant.updated_at, &now);
             grant.generation = next_generation(grant.generation, "grant.generation")?;
             let pending = grant.pending_revocation.as_mut().ok_or_else(|| {
                 SponsorshipStoreError::Malformed("grant revocation identity is missing".into())
             })?;
             pending.phase = ProviderOperationPhase::Attempting;
-            pending.attempted_at = Some(now.clone());
-            grant.updated_at = now.clone();
+            pending.attempted_at = Some(transition_time.clone());
+            grant.updated_at = transition_time.clone();
             grant.refresh_capability()?;
             grant.validate()?;
             let audit = SponsoredAuditEvent::privacy_safe(
@@ -2689,7 +3296,7 @@ impl SponsorshipService {
                 },
                 Some(&operation.provider_request_id),
                 "revocation_attempting",
-                now.clone(),
+                transition_time,
             );
             grant = self.store.replace_grant(expected, &grant, audit).await?;
             match self
@@ -2781,11 +3388,12 @@ impl SponsorshipService {
             }
         }
         let expected = grant.generation;
+        let completion_time = monotonic_record_time(&grant.updated_at, &now);
         grant.state = final_state;
         grant.generation = next_generation(grant.generation, "grant.generation")?;
         grant.pending_revocation = None;
-        grant.revoked_at = Some(now.clone());
-        grant.updated_at = now.clone();
+        grant.revoked_at = Some(completion_time.clone());
+        grant.updated_at = completion_time.clone();
         grant.refresh_capability()?;
         grant.validate()?;
         let action = if final_state == SponsoredGrantState::Closed {
@@ -2807,7 +3415,7 @@ impl SponsorshipService {
             } else {
                 "revoked"
             },
-            now,
+            completion_time,
         );
         let reason = if final_state == SponsoredGrantState::Closed {
             GrantCapacityRelease::Closed
@@ -2839,6 +3447,12 @@ impl SponsorshipService {
             .grant(grant_id)
             .await?
             .ok_or(SponsorshipError::NotFound)?;
+        let policy = self.store.policy(&grant.policy_id).await?.ok_or_else(|| {
+            SponsorshipStoreError::Malformed(
+                "grant expiry references a missing sponsorship policy".into(),
+            )
+        })?;
+        require_stored_grant_policy_bindings(&grant, &policy)?;
         if matches!(
             grant.state,
             SponsoredGrantState::Expired
@@ -2883,16 +3497,21 @@ impl SponsorshipService {
         now: &str,
     ) -> Result<SponsoredCredentialRecord, SponsorshipError> {
         let expected = credential.generation;
+        let transition_time = monotonic_record_time(&credential.updated_at, now);
         credential.generation = next_generation(credential.generation, "credential.generation")?;
         let request_id = {
             let operation = credential.pending_operation.as_mut().ok_or_else(|| {
                 SponsorshipStoreError::Malformed("provider operation identity is missing".into())
             })?;
             operation.phase = phase;
-            operation.attempted_at = attempted_at;
+            if phase == ProviderOperationPhase::Prepared {
+                operation.attempted_at = None;
+            } else if operation.attempted_at.is_none() {
+                operation.attempted_at = attempted_at;
+            }
             operation.provider_request_id.clone()
         };
-        credential.updated_at = now.to_string();
+        credential.updated_at = transition_time;
         credential.validate()?;
         let action = if credential.state == SponsoredCredentialState::RotationPending {
             SponsoredAuditAction::CredentialRotated
@@ -2924,16 +3543,21 @@ impl SponsorshipService {
         now: &str,
     ) -> Result<SponsoredGrant, SponsorshipError> {
         let expected = grant.generation;
+        let transition_time = monotonic_record_time(&grant.updated_at, now);
         grant.generation = next_generation(grant.generation, "grant.generation")?;
         let request_id = {
             let operation = grant.pending_revocation.as_mut().ok_or_else(|| {
                 SponsorshipStoreError::Malformed("grant revocation identity is missing".into())
             })?;
             operation.phase = phase;
-            operation.attempted_at = attempted_at;
+            if phase == ProviderOperationPhase::Prepared {
+                operation.attempted_at = None;
+            } else if operation.attempted_at.is_none() {
+                operation.attempted_at = attempted_at;
+            }
             operation.provider_request_id.clone()
         };
-        grant.updated_at = now.to_string();
+        grant.updated_at = transition_time;
         grant.refresh_capability()?;
         grant.validate()?;
         let audit = SponsoredAuditEvent::privacy_safe(

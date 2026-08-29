@@ -9,9 +9,12 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify};
 
 use super::*;
-use crate::{Authorization, Caller, Capability, SessionId, SubjectId};
+use crate::{
+    Authorization, Caller, Capability, Page, PageCursor, PageRequest, SessionId, SubjectId,
+};
 
 const NOW: &str = "2026-08-29T00:00:00Z";
+const EARLIER: &str = "2026-08-28T23:59:59Z";
 const LATER: &str = "2026-08-29T00:02:00Z";
 const GRANT_EXPIRY: &str = "2026-08-29T01:00:00Z";
 const POLICY_EXPIRY: &str = "2026-08-30T00:00:00Z";
@@ -25,20 +28,24 @@ const SECRET: &str = "fixture-provider-credential";
 struct MemoryState {
     authoritative_now: String,
     gate_fence: SponsorshipGateFence,
+    kill_switch_engagement_id: Option<String>,
     launches: BTreeMap<String, SponsoredLaunchAuthority>,
     credentials: BTreeMap<String, (SponsoredCredentialRecord, Option<String>)>,
-    credential_registrations: BTreeMap<String, String>,
+    credential_provider_aliases: BTreeMap<String, BTreeSet<String>>,
+    credential_registrations: Vec<MemoryCredentialRegistration>,
     credential_operations:
         BTreeMap<(String, ProviderOperationKind, String), CompletedProviderOperation>,
     pending_credential_secrets: BTreeMap<String, String>,
     policies: BTreeMap<String, SponsorshipPolicy>,
     policy_usage: BTreeMap<String, SponsorshipPolicyUsage>,
     acceptances: BTreeMap<String, SponsoredGrantAcceptance>,
+    acceptance_aliases: BTreeMap<String, BTreeSet<String>>,
     grants: BTreeMap<String, SponsoredGrant>,
     grants_by_launch: BTreeMap<String, String>,
     grant_receipts: BTreeMap<String, ProviderGrantReceipt>,
     activations: BTreeMap<String, GrantActivationIntent>,
     reservations: BTreeMap<String, SponsoredUsageReservation>,
+    reservation_aliases: BTreeMap<String, BTreeSet<String>>,
     reservation_policy: BTreeMap<String, String>,
     reservation_times: BTreeMap<String, Vec<u64>>,
     audits: Vec<SponsoredAuditEvent>,
@@ -53,19 +60,23 @@ impl Default for MemoryState {
                 epoch: 1,
                 kill_switch_engaged: true,
             },
+            kill_switch_engagement_id: None,
             launches: BTreeMap::new(),
             credentials: BTreeMap::new(),
-            credential_registrations: BTreeMap::new(),
+            credential_provider_aliases: BTreeMap::new(),
+            credential_registrations: Vec::new(),
             credential_operations: BTreeMap::new(),
             pending_credential_secrets: BTreeMap::new(),
             policies: BTreeMap::new(),
             policy_usage: BTreeMap::new(),
             acceptances: BTreeMap::new(),
+            acceptance_aliases: BTreeMap::new(),
             grants: BTreeMap::new(),
             grants_by_launch: BTreeMap::new(),
             grant_receipts: BTreeMap::new(),
             activations: BTreeMap::new(),
             reservations: BTreeMap::new(),
+            reservation_aliases: BTreeMap::new(),
             reservation_policy: BTreeMap::new(),
             reservation_times: BTreeMap::new(),
             audits: Vec::new(),
@@ -73,10 +84,35 @@ impl Default for MemoryState {
     }
 }
 
+#[derive(Debug, Clone)]
+struct MemoryCredentialRegistration {
+    request_aliases: BTreeSet<String>,
+    command_aliases: BTreeSet<String>,
+    credential_id: String,
+}
+
+fn pseudonym_aliases(candidates: &SponsorshipOperationalPseudonymSet) -> BTreeSet<String> {
+    candidates
+        .iter()
+        .map(|candidate| candidate.as_str().to_string())
+        .collect()
+}
+
+fn aliases_match(
+    stored: &BTreeSet<String>,
+    candidates: &SponsorshipOperationalPseudonymSet,
+) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| stored.contains(candidate.as_str()))
+}
+
 #[derive(Default)]
 struct MemoryStore {
     state: Mutex<MemoryState>,
     provider_receipt_reads: AtomicUsize,
+    policy_replace_stale_failures: AtomicUsize,
+    policy_replace_attempts: AtomicUsize,
 }
 
 impl MemoryStore {
@@ -86,11 +122,13 @@ impl MemoryStore {
     }
 
     async fn configure_gate(&self, gate: &SponsorshipGate) {
-        self.state.lock().await.gate_fence = SponsorshipGateFence {
+        let mut state = self.state.lock().await;
+        state.gate_fence = SponsorshipGateFence {
             configuration_digest: gate.configuration_digest().unwrap(),
             epoch: 1,
             kill_switch_engaged: gate.kill_switch_engaged,
         };
+        state.kill_switch_engagement_id = None;
     }
 
     async fn put_launch(&self, launch: SponsoredLaunchAuthority) {
@@ -138,6 +176,87 @@ struct MemorySnapshot {
     credentials: Vec<SponsoredCredentialRecord>,
 }
 
+fn newest_memory_page<T>(
+    mut items: Vec<T>,
+    page: &PageRequest,
+    key: impl Fn(&T) -> (&str, &str),
+) -> Page<T> {
+    items.sort_by(|left, right| key(right).cmp(&key(left)));
+    if let Some(cursor) = page.cursor() {
+        items.retain(|item| key(item) < (cursor.created_at.as_str(), cursor.id.as_str()));
+    }
+    let limit = page.limit() as usize;
+    let has_more = items.len() > limit;
+    items.truncate(limit);
+    let next = has_more.then(|| {
+        let (created_at, id) = key(items.last().expect("a full page has a final row"));
+        PageCursor::new(created_at, id)
+    });
+    Page { items, next }
+}
+
+fn recovery_memory_page<T>(
+    mut items: Vec<T>,
+    page: &SponsorshipRecoveryPageRequest,
+    domain: &str,
+    key: impl Fn(&T) -> (&str, &str),
+) -> Result<SponsorshipRecoveryPage<T>, SponsorshipStoreError> {
+    #[derive(serde::Deserialize, serde::Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct Cursor {
+        version: u8,
+        domain: String,
+        ordered_at: String,
+        id: String,
+    }
+
+    items.sort_by(|left, right| key(left).cmp(&key(right)));
+    if let Some(cursor) = page.cursor() {
+        if cursor.is_empty() || cursor.len() > 2_048 {
+            return Err(SponsorshipStoreError::Malformed(
+                "recovery cursor is not usable".into(),
+            ));
+        }
+        let cursor = serde_json::from_str::<Cursor>(cursor).map_err(|_| {
+            SponsorshipStoreError::Malformed("recovery cursor is not usable".into())
+        })?;
+        if cursor.version != 1
+            || cursor.domain != domain
+            || crate::seconds_from_rfc3339(&cursor.ordered_at).is_none()
+            || cursor.id.is_empty()
+            || cursor.id.len() > 512
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "recovery cursor is not usable".into(),
+            ));
+        }
+        items.retain(|item| key(item) > (cursor.ordered_at.as_str(), cursor.id.as_str()));
+    }
+    let limit = page.limit() as usize;
+    let has_more = items.len() > limit;
+    items.truncate(limit);
+    let next = has_more
+        .then(|| {
+            let (ordered_at, id) = key(items.last().expect("a full recovery page has a final row"));
+            serde_json::to_string(&Cursor {
+                version: 1,
+                domain: domain.to_string(),
+                ordered_at: ordered_at.to_string(),
+                id: id.to_string(),
+            })
+            .map_err(|_| {
+                SponsorshipStoreError::Malformed("recovery cursor cannot be encoded".into())
+            })
+        })
+        .transpose()?;
+    if next.as_ref().is_some_and(|cursor| cursor.len() > 2_048) {
+        return Err(SponsorshipStoreError::Malformed(
+            "recovery cursor exceeds its size bound".into(),
+        ));
+    }
+    Ok(SponsorshipRecoveryPage { items, next })
+}
+
 #[async_trait]
 impl SponsorshipStore for MemoryStore {
     async fn gate_fence(&self) -> Result<SponsorshipGateFence, SponsorshipStoreError> {
@@ -150,11 +269,16 @@ impl SponsorshipStore for MemoryStore {
         audit: SponsoredAuditEvent,
     ) -> Result<SponsorshipGateFence, SponsorshipStoreError> {
         let mut state = self.state.lock().await;
+        if state.gate_fence.kill_switch_engaged {
+            return Ok(state.gate_fence.clone());
+        }
         if state.gate_fence.epoch != expected_epoch {
             return Err(SponsorshipStoreError::GateChanged);
         }
         state.gate_fence.epoch += 1;
         state.gate_fence.kill_switch_engaged = true;
+        state.kill_switch_engagement_id = Some(audit.event_id.clone());
+        state.audits.push(audit);
         let authoritative_now = state.authoritative_now.clone();
         let terminalizable = state
             .activations
@@ -185,7 +309,6 @@ impl SponsorshipStore for MemoryStore {
                 .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
             state.activations.insert(launch_id, intent);
         }
-        state.audits.push(audit);
         Ok(state.gate_fence.clone())
     }
 
@@ -196,9 +319,54 @@ impl SponsorshipStore for MemoryStore {
         Ok(self.state.lock().await.launches.get(&launch_id.0).cloned())
     }
 
+    async fn credential_registration(
+        &self,
+        identity: &SponsoredCredentialRegistrationIdentity,
+    ) -> Result<Option<SponsoredCredentialRecord>, SponsorshipStoreError> {
+        let mut state = self.state.lock().await;
+        let matches = state
+            .credential_registrations
+            .iter()
+            .enumerate()
+            .filter_map(|(index, binding)| {
+                aliases_match(&binding.request_aliases, &identity.request).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let Some(&index) = matches.first() else {
+            return Ok(None);
+        };
+        if matches.len() != 1 {
+            return Err(SponsorshipStoreError::Malformed(
+                "credential registration candidates resolve multiple durable bindings".into(),
+            ));
+        }
+        if !aliases_match(
+            &state.credential_registrations[index].command_aliases,
+            &identity.command,
+        ) {
+            return Err(SponsorshipStoreError::Conflict);
+        }
+        state.credential_registrations[index].request_aliases =
+            pseudonym_aliases(&identity.request);
+        state.credential_registrations[index].command_aliases =
+            pseudonym_aliases(&identity.command);
+        let credential_id = state.credential_registrations[index].credential_id.clone();
+        state
+            .credentials
+            .get(&credential_id)
+            .map(|(record, _)| record.clone())
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "credential registration points to no record".into(),
+                )
+            })
+            .map(Some)
+    }
+
     async fn insert_credential(
         &self,
-        registration_idempotency_hash: &str,
+        identity: &SponsoredCredentialRegistrationIdentity,
+        provider_identity: &SponsorshipOperationalPseudonymSet,
         record: &SponsoredCredentialRecord,
         secret: &ProviderCredentialSecret,
         audit: SponsoredAuditEvent,
@@ -210,22 +378,34 @@ impl SponsorshipStore for MemoryStore {
             return Err(SponsorshipStoreError::Conflict);
         }
         let mut state = self.state.lock().await;
-        if registration_idempotency_hash.len() != 64
-            || !registration_idempotency_hash
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        let registration_matches = state
+            .credential_registrations
+            .iter()
+            .enumerate()
+            .filter_map(|(index, binding)| {
+                aliases_match(&binding.request_aliases, &identity.request).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if registration_matches.len() > 1 {
             return Err(SponsorshipStoreError::Malformed(
-                "registration idempotency hash is malformed".into(),
+                "credential registration candidates resolve multiple durable bindings".into(),
             ));
         }
-        if let Some(id) = state
-            .credential_registrations
-            .get(registration_idempotency_hash)
-        {
+        if let Some(&index) = registration_matches.first() {
+            if !aliases_match(
+                &state.credential_registrations[index].command_aliases,
+                &identity.command,
+            ) {
+                return Err(SponsorshipStoreError::Conflict);
+            }
+            state.credential_registrations[index].request_aliases =
+                pseudonym_aliases(&identity.request);
+            state.credential_registrations[index].command_aliases =
+                pseudonym_aliases(&identity.command);
+            let id = state.credential_registrations[index].credential_id.clone();
             let stored = state
                 .credentials
-                .get(id)
+                .get(&id)
                 .map(|(stored, _)| stored)
                 .ok_or_else(|| {
                     SponsorshipStoreError::Malformed(
@@ -237,33 +417,75 @@ impl SponsorshipStore for MemoryStore {
             }
             return Err(SponsorshipStoreError::Conflict);
         }
-        if let Some((id, (stored, _))) = state.credentials.iter().find(|(_, (stored, _))| {
-            stored.authority.provider == record.authority.provider
-                && stored.authority.provider_credential_id_digest
-                    == record.authority.provider_credential_id_digest
-        }) {
-            if !credential_registration_bindings_match(stored, record) {
+        let provider_matches = state
+            .credential_provider_aliases
+            .iter()
+            .filter_map(|(id, aliases)| {
+                let provider_matches = state.credentials.get(id).is_some_and(|(stored, _)| {
+                    stored.authority.provider == record.authority.provider
+                });
+                (provider_matches && aliases_match(aliases, provider_identity))
+                    .then_some(id.clone())
+            })
+            .collect::<Vec<_>>();
+        if provider_matches.len() > 1 {
+            return Err(SponsorshipStoreError::Malformed(
+                "provider credential candidates resolve multiple durable lineages".into(),
+            ));
+        }
+        if let Some(id) = provider_matches.first() {
+            let (stored, stored_secret) = state
+                .credentials
+                .get(id)
+                .expect("provider alias map only contains credential ids");
+            if !credential_registration_bindings_match(stored, record)
+                || stored_secret.as_deref() != Some(secret.expose())
+            {
                 return Err(SponsorshipStoreError::Conflict);
             }
             let id = id.clone();
             let stored = stored.clone();
             state
+                .credential_provider_aliases
+                .insert(id.clone(), pseudonym_aliases(provider_identity));
+            state
                 .credential_registrations
-                .insert(registration_idempotency_hash.to_string(), id);
+                .push(MemoryCredentialRegistration {
+                    request_aliases: pseudonym_aliases(&identity.request),
+                    command_aliases: pseudonym_aliases(&identity.command),
+                    credential_id: id,
+                });
             return Ok(stored);
         }
         match state.credentials.get(&record.id.0) {
             Some((stored, Some(stored_secret)))
                 if stored == record && stored_secret == secret.expose() =>
             {
-                Ok(stored.clone())
+                let stored = stored.clone();
+                state
+                    .credential_provider_aliases
+                    .insert(record.id.0.clone(), pseudonym_aliases(provider_identity));
+                state
+                    .credential_registrations
+                    .push(MemoryCredentialRegistration {
+                        request_aliases: pseudonym_aliases(&identity.request),
+                        command_aliases: pseudonym_aliases(&identity.command),
+                        credential_id: record.id.0.clone(),
+                    });
+                Ok(stored)
             }
             Some(_) => Err(SponsorshipStoreError::Conflict),
             None => {
-                state.credential_registrations.insert(
-                    registration_idempotency_hash.to_string(),
-                    record.id.0.clone(),
-                );
+                state
+                    .credential_provider_aliases
+                    .insert(record.id.0.clone(), pseudonym_aliases(provider_identity));
+                state
+                    .credential_registrations
+                    .push(MemoryCredentialRegistration {
+                        request_aliases: pseudonym_aliases(&identity.request),
+                        command_aliases: pseudonym_aliases(&identity.command),
+                        credential_id: record.id.0.clone(),
+                    });
                 state.credentials.insert(
                     record.id.0.clone(),
                     (record.clone(), Some(secret.expose().to_string())),
@@ -311,19 +533,50 @@ impl SponsorshipStore for MemoryStore {
             .map(|(record, _)| record.clone()))
     }
 
+    async fn credentials_for_owner(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredCredentialRecord>, SponsorshipStoreError> {
+        let state = self.state.lock().await;
+        Ok(newest_memory_page(
+            state
+                .credentials
+                .values()
+                .map(|(record, _)| record)
+                .filter(|record| record.owner.controller() == owner)
+                .cloned()
+                .collect(),
+            page,
+            |record| (&record.created_at, &record.id.0),
+        ))
+    }
+
     async fn completed_credential_operation(
         &self,
         id: &SponsoredCredentialId,
         kind: ProviderOperationKind,
-        client_request_id_digest: &str,
+        client_request_identity: &SponsorshipOperationalPseudonymSet,
     ) -> Result<Option<CompletedProviderOperation>, SponsorshipStoreError> {
-        Ok(self
-            .state
-            .lock()
-            .await
+        let state = self.state.lock().await;
+        let matches = state
             .credential_operations
-            .get(&(id.0.clone(), kind, client_request_id_digest.to_string()))
-            .cloned())
+            .iter()
+            .filter_map(|((credential_id, operation_kind, request_id), operation)| {
+                (credential_id == &id.0
+                    && operation_kind == &kind
+                    && client_request_identity
+                        .iter()
+                        .any(|candidate| candidate.as_str() == request_id))
+                .then_some(operation.clone())
+            })
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(SponsorshipStoreError::Malformed(
+                "credential operation candidates resolve multiple durable operations".into(),
+            ));
+        }
+        Ok(matches.into_iter().next())
     }
 
     async fn replace_credential(
@@ -431,6 +684,7 @@ impl SponsorshipStore for MemoryStore {
     async fn complete_credential_rotation(
         &self,
         expected_generation: u64,
+        provider_identity: &SponsorshipOperationalPseudonymSet,
         record: &SponsoredCredentialRecord,
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError> {
@@ -469,12 +723,17 @@ impl SponsorshipStore for MemoryStore {
         {
             return Err(SponsorshipStoreError::Conflict);
         }
-        if state.credentials.iter().any(|(id, (stored, _))| {
-            id != &record.id.0
-                && stored.authority.provider == record.authority.provider
-                && stored.authority.provider_credential_id_digest
-                    == record.authority.provider_credential_id_digest
-        }) {
+        if state
+            .credential_provider_aliases
+            .iter()
+            .any(|(id, aliases)| {
+                id != &record.id.0
+                    && state.credentials.get(id).is_some_and(|(stored, _)| {
+                        stored.authority.provider == record.authority.provider
+                    })
+                    && aliases_match(aliases, provider_identity)
+            })
+        {
             return Err(SponsorshipStoreError::Conflict);
         }
         let replacement = state
@@ -484,6 +743,9 @@ impl SponsorshipStore for MemoryStore {
         state
             .credentials
             .insert(record.id.0.clone(), (record.clone(), Some(replacement)));
+        state
+            .credential_provider_aliases
+            .insert(record.id.0.clone(), pseudonym_aliases(provider_identity));
         state
             .credential_operations
             .insert(operation_key, completion);
@@ -636,6 +898,30 @@ impl SponsorshipStore for MemoryStore {
         Ok(self.state.lock().await.policies.get(&id.0).cloned())
     }
 
+    async fn policies_for_owner(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<StoredSponsorshipPolicy>, SponsorshipStoreError> {
+        let state = self.state.lock().await;
+        let policies = state
+            .policies
+            .values()
+            .filter(|policy| policy.owner.controller() == owner)
+            .map(|policy| StoredSponsorshipPolicy {
+                policy: policy.clone(),
+                usage: state
+                    .policy_usage
+                    .get(&policy.id.0)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Ok(newest_memory_page(policies, page, |stored| {
+            (&stored.policy.created_at, &stored.policy.id.0)
+        }))
+    }
+
     async fn policy_usage(
         &self,
         id: &SponsorshipPolicyId,
@@ -660,6 +946,16 @@ impl SponsorshipStore for MemoryStore {
         policy: &SponsorshipPolicy,
         audit: SponsoredAuditEvent,
     ) -> Result<SponsorshipPolicy, SponsorshipStoreError> {
+        self.policy_replace_attempts.fetch_add(1, Ordering::SeqCst);
+        if self
+            .policy_replace_stale_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(SponsorshipStoreError::StaleGeneration);
+        }
         let mut state = self.state.lock().await;
         let stored = state
             .policies
@@ -688,16 +984,29 @@ impl SponsorshipStore for MemoryStore {
             .acceptance
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
-        if let Some(stored) = state.acceptances.get(&command.acceptance.launch_id.0) {
+        if command.acceptance.idempotency_key_hash
+            != command.idempotency_candidates.current().as_str()
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "new acceptance canonical idempotency identity is not current".into(),
+            ));
+        }
+        let launch_id = command.acceptance.launch_id.0.clone();
+        if let Some(stored) = state.acceptances.get(&launch_id).cloned() {
             if stored.contributor != command.acceptance.contributor {
                 return Err(SponsorshipStoreError::LaunchAuthorityChanged);
             }
-            if stored.idempotency_key_hash == command.acceptance.idempotency_key_hash {
-                if acceptance_stable_fields_match(stored, &command.acceptance) {
-                    return Ok(stored.clone());
+            if acceptance_identity_matches(&stored, &command.idempotency_candidates) {
+                if acceptance_payload_fields_match(&stored, &command.acceptance) {
+                    state.acceptance_aliases.insert(
+                        launch_id,
+                        pseudonym_aliases(&command.idempotency_candidates),
+                    );
+                    return Ok(stored);
                 }
                 return Err(SponsorshipStoreError::Conflict);
             }
+            return Err(SponsorshipStoreError::Conflict);
         }
         require_gate(&state, &command.gate_fence)?;
         let current_launch = state
@@ -720,6 +1029,10 @@ impl SponsorshipStore for MemoryStore {
             command.acceptance.launch_id.0.clone(),
             command.acceptance.clone(),
         );
+        state.acceptance_aliases.insert(
+            command.acceptance.launch_id.0.clone(),
+            pseudonym_aliases(&command.idempotency_candidates),
+        );
         state.audits.push(command.audit);
         Ok(command.acceptance)
     }
@@ -735,6 +1048,24 @@ impl SponsorshipStore for MemoryStore {
             .acceptances
             .get(&launch_id.0)
             .cloned())
+    }
+
+    async fn acceptance_for_request(
+        &self,
+        launch_id: &LaunchId,
+        idempotency_candidates: &SponsorshipOperationalPseudonymSet,
+    ) -> Result<Option<SponsoredGrantAcceptance>, SponsorshipStoreError> {
+        let mut state = self.state.lock().await;
+        let Some(acceptance) = state.acceptances.get(&launch_id.0).cloned() else {
+            return Ok(None);
+        };
+        if acceptance_identity_matches(&acceptance, idempotency_candidates) {
+            state.acceptance_aliases.insert(
+                launch_id.0.clone(),
+                pseudonym_aliases(idempotency_candidates),
+            );
+        }
+        Ok(Some(acceptance))
     }
 
     async fn claim_grant_activation(
@@ -753,6 +1084,15 @@ impl SponsorshipStore for MemoryStore {
             .candidate
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if command.candidate.billing_request_id
+            != command.billing_request_candidates.current().as_str()
+            || command.candidate.provider_request_id
+                != command.provider_request_candidates.current().as_str()
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "new activation external operation identities are not current".into(),
+            ));
+        }
         require_activation_dependencies(
             &state,
             &command.candidate,
@@ -763,8 +1103,14 @@ impl SponsorshipStore for MemoryStore {
         let candidate = command.candidate;
         if let Some(existing) = state.activations.get(&candidate.launch_id.0).cloned() {
             if existing.request_fingerprint != candidate.request_fingerprint
-                || existing.billing_request_id != candidate.billing_request_id
-                || existing.provider_request_id != candidate.provider_request_id
+                || !command
+                    .billing_request_candidates
+                    .iter()
+                    .any(|identity| identity.as_str() == existing.billing_request_id)
+                || !command
+                    .provider_request_candidates
+                    .iter()
+                    .any(|identity| identity.as_str() == existing.provider_request_id)
             {
                 return Err(SponsorshipStoreError::Conflict);
             }
@@ -794,7 +1140,7 @@ impl SponsorshipStore for MemoryStore {
                 claimed.capacity_held = true;
             }
             claimed.lease = Some(test_activation_lease(
-                command.holder.clone(),
+                command.holder_candidates.current().as_str().to_string(),
                 &authoritative_now,
             )?);
             claimed.revision += 1;
@@ -814,7 +1160,10 @@ impl SponsorshipStore for MemoryStore {
         require_current_terms(&state, &candidate, &command.acceptance)?;
         reserve_activation_allocation(&mut state, &candidate)?;
         candidate.capacity_held = true;
-        candidate.lease = Some(test_activation_lease(command.holder, &authoritative_now)?);
+        candidate.lease = Some(test_activation_lease(
+            command.holder_candidates.current().as_str().to_string(),
+            &authoritative_now,
+        )?);
         candidate.updated_at = authoritative_now;
         candidate
             .validate()
@@ -852,6 +1201,11 @@ impl SponsorshipStore for MemoryStore {
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         if command.operation.kind != ProviderOperationKind::RevokeUncommittedGrant
             || command.operation.phase != ProviderOperationPhase::Prepared
+            || command.operation.client_request_id_digest
+                != command
+                    .operation_client_request_candidates
+                    .current()
+                    .as_str()
         {
             return Err(SponsorshipStoreError::Conflict);
         }
@@ -880,8 +1234,12 @@ impl SponsorshipStore for MemoryStore {
         match intent.state {
             GrantActivationState::ProviderConfirmed | GrantActivationState::ProviderAmbiguous => {
                 if held
-                    && intent.lease.as_ref().map(|lease| lease.holder.as_str())
-                        != Some(command.holder.as_str())
+                    && !intent.lease.as_ref().is_some_and(|lease| {
+                        command
+                            .holder_candidates
+                            .iter()
+                            .any(|candidate| candidate.as_str() == lease.holder)
+                    })
                 {
                     return Ok(GrantActivationClaim {
                         acquired: false,
@@ -896,8 +1254,10 @@ impl SponsorshipStore for MemoryStore {
                     .cleanup_operation
                     .as_ref()
                     .ok_or(SponsorshipStoreError::Conflict)?;
-                if existing.provider_request_id != command.operation.provider_request_id
-                    || existing.payload_digest != command.operation.payload_digest
+                if !command
+                    .operation_client_request_candidates
+                    .iter()
+                    .any(|candidate| candidate.as_str() == existing.client_request_id_digest)
                 {
                     return Err(SponsorshipStoreError::Conflict);
                 }
@@ -911,7 +1271,10 @@ impl SponsorshipStore for MemoryStore {
             _ => return Err(SponsorshipStoreError::Conflict),
         }
         intent.revision += 1;
-        intent.lease = Some(test_activation_lease(command.holder, &authoritative_now)?);
+        intent.lease = Some(test_activation_lease(
+            command.holder_candidates.current().as_str().to_string(),
+            &authoritative_now,
+        )?);
         intent.updated_at = authoritative_now;
         intent
             .validate()
@@ -961,7 +1324,10 @@ impl SponsorshipStore for MemoryStore {
             });
         }
         intent.revision += 1;
-        intent.lease = Some(test_activation_lease(command.holder, &authoritative_now)?);
+        intent.lease = Some(test_activation_lease(
+            command.holder_candidates.current().as_str().to_string(),
+            &authoritative_now,
+        )?);
         intent.updated_at = authoritative_now;
         intent
             .validate()
@@ -1260,6 +1626,47 @@ impl SponsorshipStore for MemoryStore {
         Ok(self.state.lock().await.grants.get(&id.0).cloned())
     }
 
+    async fn grants_for_contributor(
+        &self,
+        contributor: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrant>, SponsorshipStoreError> {
+        let state = self.state.lock().await;
+        Ok(newest_memory_page(
+            state
+                .grants
+                .values()
+                .filter(|grant| &grant.contributor == contributor)
+                .cloned()
+                .collect(),
+            page,
+            |grant| (&grant.created_at, &grant.id.0),
+        ))
+    }
+
+    async fn grants_for_sponsor(
+        &self,
+        sponsor: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrant>, SponsorshipStoreError> {
+        let state = self.state.lock().await;
+        Ok(newest_memory_page(
+            state
+                .grants
+                .values()
+                .filter(|grant| {
+                    state
+                        .policies
+                        .get(&grant.policy_id.0)
+                        .is_some_and(|policy| policy.owner.controller() == sponsor)
+                })
+                .cloned()
+                .collect(),
+            page,
+            |grant| (&grant.created_at, &grant.id.0),
+        ))
+    }
+
     async fn grant_for_launch(
         &self,
         launch_id: &LaunchId,
@@ -1274,15 +1681,49 @@ impl SponsorshipStore for MemoryStore {
 
     async fn usage_reservation(
         &self,
-        stable_request_id: &str,
+        reservation_id: &SponsoredUsageReservationId,
     ) -> Result<Option<SponsoredUsageReservation>, SponsorshipStoreError> {
         Ok(self
             .state
             .lock()
             .await
             .reservations
-            .get(stable_request_id)
+            .get(&reservation_id.0)
             .cloned())
+    }
+
+    async fn usage_reservation_for_request(
+        &self,
+        request_identity: &SponsorshipOperationalPseudonymSet,
+    ) -> Result<Option<SponsoredUsageReservation>, SponsorshipStoreError> {
+        let mut state = self.state.lock().await;
+        let candidates = pseudonym_aliases(request_identity);
+        let matches = state
+            .reservation_aliases
+            .iter()
+            .filter_map(|(reservation_id, aliases)| {
+                (!aliases.is_disjoint(&candidates)).then_some(reservation_id.clone())
+            })
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(SponsorshipStoreError::Malformed(
+                "usage request candidates resolve multiple reservations".into(),
+            ));
+        }
+        let Some(reservation_id) = matches.into_iter().next() else {
+            return Ok(None);
+        };
+        let reservation = state
+            .reservations
+            .get(&reservation_id)
+            .cloned()
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "usage request alias references a missing reservation".into(),
+                )
+            })?;
+        state.reservation_aliases.insert(reservation_id, candidates);
+        Ok(Some(reservation))
     }
 
     async fn replace_grant(
@@ -1373,13 +1814,38 @@ impl SponsorshipStore for MemoryStore {
             .request
             .fingerprint()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
-        if let Some(existing) = state.reservations.get(&command.request.stable_request_id) {
+        let request_aliases = pseudonym_aliases(&command.request.request_identity);
+        let matches = state
+            .reservation_aliases
+            .iter()
+            .filter_map(|(reservation_id, aliases)| {
+                (!aliases.is_disjoint(&request_aliases)).then_some(reservation_id.clone())
+            })
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(SponsorshipStoreError::Malformed(
+                "usage request candidates resolve multiple reservations".into(),
+            ));
+        }
+        if let Some(reservation_id) = matches.into_iter().next() {
+            let existing = state
+                .reservations
+                .get(&reservation_id)
+                .cloned()
+                .ok_or_else(|| {
+                    SponsorshipStoreError::Malformed(
+                        "usage request alias references a missing reservation".into(),
+                    )
+                })?;
             if existing.idempotency_fingerprint != command.request.idempotency_fingerprint {
                 return Err(SponsorshipStoreError::Conflict);
             }
+            state
+                .reservation_aliases
+                .insert(reservation_id, request_aliases);
             return Ok(SponsoredUsageReservationOutcome {
                 disposition: ReservationDisposition::Existing,
-                reservation: existing.clone(),
+                reservation: existing,
             });
         }
         require_gate(&state, &command.gate_fence)?;
@@ -1482,7 +1948,7 @@ impl SponsorshipStore for MemoryStore {
         recent.push(now);
 
         let reservation = SponsoredUsageReservation {
-            stable_request_id: command.request.stable_request_id.clone(),
+            id: command.request.reservation_id,
             idempotency_fingerprint: command.request.idempotency_fingerprint,
             request_fingerprint: fingerprint,
             grant_id: grant.id,
@@ -1498,10 +1964,13 @@ impl SponsorshipStore for MemoryStore {
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         state
             .reservation_policy
-            .insert(reservation.stable_request_id.clone(), policy.id.0.clone());
+            .insert(reservation.id.0.clone(), policy.id.0.clone());
+        state
+            .reservation_aliases
+            .insert(reservation.id.0.clone(), request_aliases);
         state
             .reservations
-            .insert(reservation.stable_request_id.clone(), reservation.clone());
+            .insert(reservation.id.0.clone(), reservation.clone());
         state.audits.push(audit);
         Ok(SponsoredUsageReservationOutcome {
             disposition: ReservationDisposition::Created,
@@ -1517,7 +1986,7 @@ impl SponsorshipStore for MemoryStore {
         let mut state = self.state.lock().await;
         let current = state
             .reservations
-            .get(&command.stable_request_id)
+            .get(&command.reservation_id.0)
             .cloned()
             .ok_or(SponsorshipStoreError::Conflict)?;
         if current.request_fingerprint != command.request_fingerprint {
@@ -1598,11 +2067,7 @@ impl SponsorshipStore for MemoryStore {
                 grant
                     .refresh_capability()
                     .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
-                release_terminal_grant_capacity(
-                    &mut state,
-                    &grant,
-                    Some(&current.stable_request_id),
-                )?;
+                release_terminal_grant_capacity(&mut state, &grant, Some(&current.id.0))?;
             }
             grant
                 .validate()
@@ -1629,7 +2094,7 @@ impl SponsorshipStore for MemoryStore {
         }
         state
             .reservations
-            .insert(command.stable_request_id, replacement.clone());
+            .insert(command.reservation_id.0, replacement.clone());
         state.audits.push(audit);
         Ok(replacement)
     }
@@ -1651,18 +2116,144 @@ impl SponsorshipStore for MemoryStore {
             .cloned()
             .collect())
     }
+
+    async fn credential_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredCredentialId>, SponsorshipStoreError> {
+        let state = self.state.lock().await;
+        let rows = state
+            .credentials
+            .values()
+            .map(|(record, _)| record)
+            .filter(|record| {
+                matches!(
+                    record.state,
+                    SponsoredCredentialState::RotationPending
+                        | SponsoredCredentialState::RevocationPending
+                )
+            })
+            .map(|record| (record.updated_at.clone(), record.id.clone()))
+            .collect::<Vec<_>>();
+        recovery_memory_page(rows, page, "credential_recovery", |row| (&row.0, &row.1 .0)).map(
+            |page| SponsorshipRecoveryPage {
+                items: page.items.into_iter().map(|(_, id)| id).collect(),
+                next: page.next,
+            },
+        )
+    }
+
+    async fn activation_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<LaunchId>, SponsorshipStoreError> {
+        let state = self.state.lock().await;
+        let rows = state
+            .activations
+            .values()
+            .filter(|intent| {
+                matches!(
+                    intent.state,
+                    GrantActivationState::BillingAttempting
+                        | GrantActivationState::BillingAmbiguous
+                        | GrantActivationState::ProviderAttempting
+                        | GrantActivationState::ProviderAmbiguous
+                        | GrantActivationState::ProviderConfirmed
+                        | GrantActivationState::CleanupPending
+                )
+            })
+            .map(|intent| (intent.updated_at.clone(), intent.launch_id.clone()))
+            .collect::<Vec<_>>();
+        recovery_memory_page(rows, page, "activation_recovery", |row| (&row.0, &row.1 .0)).map(
+            |page| SponsorshipRecoveryPage {
+                items: page.items.into_iter().map(|(_, id)| id).collect(),
+                next: page.next,
+            },
+        )
+    }
+
+    async fn grant_recovery_candidates(
+        &self,
+        as_of: &str,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredGrantId>, SponsorshipStoreError> {
+        if crate::seconds_from_rfc3339(as_of).is_none() {
+            return Err(SponsorshipStoreError::Malformed(
+                "grant recovery clock fence is not a CMA timestamp".into(),
+            ));
+        }
+        let state = self.state.lock().await;
+        let rows = state
+            .grants
+            .values()
+            .filter_map(|grant| match grant.state {
+                SponsoredGrantState::RevocationPending if grant.updated_at.as_str() <= as_of => {
+                    Some((grant.updated_at.clone(), grant.id.clone()))
+                }
+                SponsoredGrantState::Active | SponsoredGrantState::Suspended
+                    if grant.authority.expires_at.as_str() <= as_of =>
+                {
+                    Some((grant.authority.expires_at.clone(), grant.id.clone()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let domain = format!("grant_recovery:{as_of}");
+        recovery_memory_page(rows, page, &domain, |row| (&row.0, &row.1 .0)).map(|page| {
+            SponsorshipRecoveryPage {
+                items: page.items.into_iter().map(|(_, id)| id).collect(),
+                next: page.next,
+            }
+        })
+    }
+
+    async fn usage_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredUsageReservationId>, SponsorshipStoreError> {
+        let state = self.state.lock().await;
+        let rows = state
+            .reservations
+            .values()
+            .filter(|reservation| reservation.state == SponsoredUsageState::Ambiguous)
+            .map(|reservation| (reservation.updated_at.clone(), reservation.id.clone()))
+            .collect::<Vec<_>>();
+        recovery_memory_page(rows, page, "usage_recovery", |row| (&row.0, &row.1 .0)).map(|page| {
+            SponsorshipRecoveryPage {
+                items: page.items.into_iter().map(|(_, id)| id).collect(),
+                next: page.next,
+            }
+        })
+    }
+
+    async fn ciphertext_rewrap_candidates(
+        &self,
+        _kind: SponsorshipCiphertextRecordKind,
+        _retiring_key_id: &str,
+        _page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsorshipCiphertextRewrapCandidate>, SponsorshipStoreError>
+    {
+        Ok(SponsorshipRecoveryPage {
+            items: Vec::new(),
+            next: None,
+        })
+    }
+
+    async fn rewrap_ciphertext(
+        &self,
+        _candidate: &SponsorshipCiphertextRewrapCandidate,
+    ) -> Result<bool, SponsorshipStoreError> {
+        Ok(false)
+    }
 }
 
 fn credential_registration_bindings_match(
     stored: &SponsoredCredentialRecord,
     candidate: &SponsoredCredentialRecord,
 ) -> bool {
-    stored.id == candidate.id
-        && stored.owner == candidate.owner
+    stored.owner == candidate.owner
         && stored.authority.provider == candidate.authority.provider
         && stored.authority.provider_policy_key == candidate.authority.provider_policy_key
-        && stored.authority.provider_credential_id_digest
-            == candidate.authority.provider_credential_id_digest
         && stored.authority.supports_expiry == candidate.authority.supports_expiry
         && stored.authority.supports_revocation == candidate.authority.supports_revocation
 }
@@ -1710,7 +2301,7 @@ fn credential_operation_key(
     )
 }
 
-fn acceptance_stable_fields_match(
+fn acceptance_payload_fields_match(
     stored: &SponsoredGrantAcceptance,
     candidate: &SponsoredGrantAcceptance,
 ) -> bool {
@@ -1722,7 +2313,15 @@ fn acceptance_stable_fields_match(
         && stored.policy_generation == candidate.policy_generation
         && stored.terms_digest == candidate.terms_digest
         && stored.launch_snapshot_digest == candidate.launch_snapshot_digest
-        && stored.idempotency_key_hash == candidate.idempotency_key_hash
+}
+
+fn acceptance_identity_matches(
+    stored: &SponsoredGrantAcceptance,
+    candidates: &SponsorshipOperationalPseudonymSet,
+) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| candidate.as_str() == stored.idempotency_key_hash)
 }
 
 fn require_gate(
@@ -1910,12 +2509,12 @@ fn grant_capacity_is_released(state: SponsoredGrantState) -> bool {
 fn unresolved_usage_for_grant(
     state: &MemoryState,
     grant_id: &SponsoredGrantId,
-    excluded_request_id: Option<&str>,
+    excluded_reservation_id: Option<&str>,
 ) -> Result<SponsoredUsageSummary, SponsorshipStoreError> {
     let mut held = SponsoredUsageSummary::default();
     for reservation in state.reservations.values().filter(|reservation| {
         reservation.grant_id == *grant_id
-            && excluded_request_id != Some(reservation.stable_request_id.as_str())
+            && excluded_reservation_id != Some(reservation.id.0.as_str())
             && matches!(
                 reservation.state,
                 SponsoredUsageState::Reserved | SponsoredUsageState::Ambiguous
@@ -1929,9 +2528,9 @@ fn unresolved_usage_for_grant(
 fn release_terminal_grant_capacity(
     state: &mut MemoryState,
     grant: &SponsoredGrant,
-    excluded_request_id: Option<&str>,
+    excluded_reservation_id: Option<&str>,
 ) -> Result<(), SponsorshipStoreError> {
-    let unresolved = unresolved_usage_for_grant(state, &grant.id, excluded_request_id)?;
+    let unresolved = unresolved_usage_for_grant(state, &grant.id, excluded_reservation_id)?;
     let unused = grant
         .allocation
         .checked_sub(&grant.usage)
@@ -1976,20 +2575,37 @@ fn require_receipt_matches_grant(
     receipt: &ProviderGrantReceipt,
     grant: &SponsoredGrant,
 ) -> Result<(), SponsorshipError> {
-    let grant_digest = sensitive_test_digest(
-        "cma-provider-grant-id-v1",
-        receipt
-            .provider_grant_id
-            .expose_for_provider_or_encryption(),
-    );
-    let revocation_digest = sensitive_test_digest(
-        "cma-provider-revocation-handle-v1",
-        receipt
-            .revocation_handle
-            .expose_for_provider_or_encryption(),
-    );
-    if grant.authority.provider_grant_id_digest != grant_digest
-        || grant.authority.revocation_handle_digest != revocation_digest
+    let operational =
+        SponsorshipOperationalPseudonymizer::new("fixture-current", vec![0x5a; 32], Vec::new())
+            .unwrap();
+    let grant_candidates = operational
+        .pseudonymize(
+            SponsorshipOperationalDomain::ProviderGrantAuthority,
+            &[
+                &grant.id.0,
+                receipt
+                    .provider_grant_id
+                    .expose_for_provider_or_encryption(),
+            ],
+        )
+        .unwrap();
+    let revocation_candidates = operational
+        .pseudonymize(
+            SponsorshipOperationalDomain::ProviderRevocationAuthority,
+            &[
+                &grant.id.0,
+                receipt
+                    .revocation_handle
+                    .expose_for_provider_or_encryption(),
+            ],
+        )
+        .unwrap();
+    if !grant_candidates
+        .iter()
+        .any(|candidate| candidate.as_str() == grant.authority.provider_grant_id_digest)
+        || !revocation_candidates
+            .iter()
+            .any(|candidate| candidate.as_str() == grant.authority.revocation_handle_digest)
         || grant.authority.provider_state_version != receipt.provider_state_version
         || grant.authority.expires_at != receipt.expires_at
         || grant.authority.issued_at != receipt.issued_at
@@ -2028,19 +2644,21 @@ enum ProviderMode {
 }
 
 struct FakeProvider {
+    ownership_mode: Mutex<ProviderMode>,
     issue_mode: Mutex<ProviderMode>,
     rotate_mode: Mutex<ProviderMode>,
     revoke_mode: Mutex<ProviderMode>,
+    ownership_calls: AtomicUsize,
     issue_calls: AtomicUsize,
     rotate_calls: AtomicUsize,
     revoke_calls: AtomicUsize,
     reconcile_calls: AtomicUsize,
     receipts: Mutex<BTreeMap<String, ProviderGrantReceipt>>,
-    rotations: Mutex<BTreeMap<String, ProviderCredentialAuthority>>,
+    rotations: Mutex<BTreeMap<String, ProviderCredentialEvidence>>,
     revocations: Mutex<BTreeSet<String>>,
     operation_lineages: Mutex<BTreeMap<String, String>>,
     revoked_lineages: Mutex<BTreeSet<String>>,
-    rotation_authority_digest: Mutex<Option<String>>,
+    rotation_provider_credential_id: Mutex<Option<String>>,
     receipt_issued_at: Mutex<String>,
     invalid_receipt: AtomicBool,
     malformed_ownership_evidence: AtomicBool,
@@ -2058,9 +2676,11 @@ struct FakeProvider {
 impl Default for FakeProvider {
     fn default() -> Self {
         Self {
+            ownership_mode: Mutex::new(ProviderMode::Confirmed),
             issue_mode: Mutex::new(ProviderMode::Confirmed),
             rotate_mode: Mutex::new(ProviderMode::Confirmed),
             revoke_mode: Mutex::new(ProviderMode::Confirmed),
+            ownership_calls: AtomicUsize::new(0),
             issue_calls: AtomicUsize::new(0),
             rotate_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
@@ -2070,7 +2690,7 @@ impl Default for FakeProvider {
             revocations: Mutex::new(BTreeSet::new()),
             operation_lineages: Mutex::new(BTreeMap::new()),
             revoked_lineages: Mutex::new(BTreeSet::new()),
-            rotation_authority_digest: Mutex::new(None),
+            rotation_provider_credential_id: Mutex::new(None),
             receipt_issued_at: Mutex::new(NOW.into()),
             invalid_receipt: AtomicBool::new(false),
             malformed_ownership_evidence: AtomicBool::new(false),
@@ -2095,20 +2715,32 @@ impl SponsoredCredentialProvider for FakeProvider {
         provider: &str,
         provider_policy_key: &str,
         credential: &ProviderCredentialSecret,
-    ) -> Result<ProviderCredentialAuthority, SponsoredProviderError> {
+    ) -> Result<ProviderCredentialEvidence, SponsoredProviderError> {
+        self.ownership_calls.fetch_add(1, Ordering::SeqCst);
         if self.malformed_ownership_evidence.load(Ordering::SeqCst) {
             return Err(SponsoredProviderError::MalformedEvidence);
         }
-        let provider_credential_id_digest = match credential.expose() {
-            SECRET | "replacement-credential" => digest(b"external-credential-id"),
-            "other-provider-credential" => digest(b"other-external-credential-id"),
+        match *self.ownership_mode.lock().await {
+            ProviderMode::Confirmed => {}
+            ProviderMode::Unavailable => return Err(SponsoredProviderError::Unavailable),
+            ProviderMode::Ambiguous | ProviderMode::LostResponse => {
+                return Err(SponsoredProviderError::Ambiguous)
+            }
+            ProviderMode::MalformedEvidence => {
+                return Err(SponsoredProviderError::MalformedEvidence)
+            }
+            ProviderMode::Rejected => return Err(SponsoredProviderError::Rejected),
+        }
+        let provider_credential_id = match credential.expose() {
+            SECRET | "replacement-credential" => "external-credential-id",
+            "other-provider-credential" => "other-external-credential-id",
             _ => return Err(SponsoredProviderError::Rejected),
         };
-        Ok(ProviderCredentialAuthority {
+        Ok(ProviderCredentialEvidence {
             provider: provider.to_string(),
             provider_policy_key: provider_policy_key.to_string(),
             provider_policy_handle: SensitiveProviderValue::new("internal-policy-handle").unwrap(),
-            provider_credential_id_digest,
+            provider_credential_id: SensitiveProviderValue::new(provider_credential_id).unwrap(),
             state_version: 1,
             ownership_verified_at: NOW.into(),
             supports_expiry: true,
@@ -2278,7 +2910,7 @@ impl SponsoredCredentialProvider for FakeProvider {
         credential: &SponsoredCredentialRecord,
         current_secret: &ProviderCredentialSecret,
         replacement_secret: &ProviderCredentialSecret,
-    ) -> Result<ProviderCredentialAuthority, SponsoredProviderError> {
+    ) -> Result<ProviderCredentialEvidence, SponsoredProviderError> {
         assert!(matches!(
             current_secret.expose(),
             SECRET | "replacement-credential" | "replacement-credential-2"
@@ -2307,31 +2939,33 @@ impl SponsoredCredentialProvider for FakeProvider {
             ProviderMode::Unavailable => Err(SponsoredProviderError::Unavailable),
             ProviderMode::Rejected => Err(SponsoredProviderError::Rejected),
             ProviderMode::Confirmed | ProviderMode::LostResponse => {
-                let provider_credential_id_digest = self
-                    .rotation_authority_digest
+                let provider_credential_id = self
+                    .rotation_provider_credential_id
                     .lock()
                     .await
                     .clone()
                     .unwrap_or_else(|| {
-                        digest(
-                            format!("replacement-external-id:{}", replacement_secret.expose())
-                                .as_bytes(),
-                        )
+                        format!("replacement-external-id:{}", replacement_secret.expose())
                     });
-                let authority = ProviderCredentialAuthority {
+                let evidence = ProviderCredentialEvidence {
+                    provider: credential.authority.provider.clone(),
+                    provider_policy_key: credential.authority.provider_policy_key.clone(),
+                    provider_policy_handle: credential.authority.provider_policy_handle.clone(),
+                    provider_credential_id: SensitiveProviderValue::new(provider_credential_id)
+                        .unwrap(),
                     state_version: credential.authority.state_version + 1,
-                    provider_credential_id_digest,
                     ownership_verified_at: LATER.into(),
-                    ..credential.authority.clone()
+                    supports_expiry: credential.authority.supports_expiry,
+                    supports_revocation: credential.authority.supports_revocation,
                 };
                 self.rotations
                     .lock()
                     .await
-                    .insert(stable_request_id.to_string(), authority.clone());
+                    .insert(stable_request_id.to_string(), evidence.clone());
                 if mode == ProviderMode::LostResponse {
                     Err(SponsoredProviderError::Ambiguous)
                 } else {
-                    Ok(authority)
+                    Ok(evidence)
                 }
             }
         }
@@ -2343,7 +2977,7 @@ impl SponsoredCredentialProvider for FakeProvider {
         credential: &SponsoredCredentialRecord,
         _current_secret: &ProviderCredentialSecret,
         _replacement_secret: &ProviderCredentialSecret,
-    ) -> Result<ProviderOperationResolution<ProviderCredentialAuthority>, SponsoredProviderError>
+    ) -> Result<ProviderOperationResolution<ProviderCredentialEvidence>, SponsoredProviderError>
     {
         self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
         if *self.rotate_mode.lock().await == ProviderMode::MalformedEvidence {
@@ -2357,8 +2991,8 @@ impl SponsoredCredentialProvider for FakeProvider {
         {
             return Ok(ProviderOperationResolution::Rejected);
         }
-        if let Some(authority) = self.rotations.lock().await.get(stable_request_id).cloned() {
-            return Ok(ProviderOperationResolution::Confirmed(authority));
+        if let Some(evidence) = self.rotations.lock().await.get(stable_request_id).cloned() {
+            return Ok(ProviderOperationResolution::Confirmed(evidence));
         }
         Ok(match *self.rotate_mode.lock().await {
             ProviderMode::Rejected => ProviderOperationResolution::Rejected,
@@ -2745,6 +3379,32 @@ fn enabled_gate() -> SponsorshipGate {
 mod current_tests {
     use super::*;
 
+    #[test]
+    fn memory_recovery_cursors_are_collection_bound() {
+        let rows = vec![
+            (NOW.to_string(), "candidate-a".to_string()),
+            (LATER.to_string(), "candidate-b".to_string()),
+        ];
+        let first = recovery_memory_page(
+            rows.clone(),
+            &SponsorshipRecoveryPageRequest::new(1, None),
+            "credential_recovery",
+            |row| (&row.0, &row.1),
+        )
+        .unwrap();
+        assert_eq!(first.items, vec![rows[0].clone()]);
+        let cursor = first.next.expect("the second row continues the page");
+        assert!(matches!(
+            recovery_memory_page(
+                rows,
+                &SponsorshipRecoveryPageRequest::new(1, Some(cursor)),
+                "usage_recovery",
+                |row| (&row.0, &row.1),
+            ),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+    }
+
     #[derive(Clone, Copy)]
     struct Limits {
         per_launch_quota: SponsoredQuota,
@@ -2784,6 +3444,7 @@ mod current_tests {
         pricing: Arc<FakePricing>,
         clock: Arc<FakeClock>,
         audit: Arc<SponsorshipAuditPseudonymizer>,
+        operational: Arc<SponsorshipOperationalPseudonymizer>,
         sponsor: Caller,
         contributor: Caller,
         meter: Caller,
@@ -2853,6 +3514,10 @@ mod current_tests {
         let audit = Arc::new(
             SponsorshipAuditPseudonymizer::new(vec![0xa5; 32]).expect("valid fixture audit key"),
         );
+        let operational = Arc::new(
+            SponsorshipOperationalPseudonymizer::new("fixture-current", vec![0x5a; 32], Vec::new())
+                .expect("valid fixture operational key"),
+        );
         let service = Arc::new(SponsorshipService::new(
             gate,
             store.clone(),
@@ -2861,6 +3526,7 @@ mod current_tests {
             pricing.clone(),
             clock.clone(),
             audit.clone(),
+            operational.clone(),
         ));
         let sponsor = sponsor_caller();
         let contributor = contributor_caller();
@@ -2915,6 +3581,7 @@ mod current_tests {
             pricing,
             clock,
             audit,
+            operational,
             sponsor,
             contributor,
             meter,
@@ -2931,6 +3598,13 @@ mod current_tests {
     }
 
     fn restarted_service(harness: &Harness) -> SponsorshipService {
+        service_with_operational(harness, harness.operational.clone())
+    }
+
+    fn service_with_operational(
+        harness: &Harness,
+        operational: Arc<SponsorshipOperationalPseudonymizer>,
+    ) -> SponsorshipService {
         SponsorshipService::new(
             harness.service.gate().clone(),
             harness.store.clone(),
@@ -2939,6 +3613,7 @@ mod current_tests {
             harness.pricing.clone(),
             harness.clock.clone(),
             harness.audit.clone(),
+            operational,
         )
     }
 
@@ -3368,7 +4043,7 @@ mod current_tests {
             .reconcile_usage(
                 &harness.contributor,
                 ReportSponsoredUsage {
-                    stable_request_id: first.stable_request_id.clone(),
+                    reservation_id: first.id.clone(),
                     request_fingerprint: first.request_fingerprint.clone(),
                     actual_quota: Some(quota),
                     outcome: SponsoredUsageState::Settled,
@@ -3382,7 +4057,7 @@ mod current_tests {
             .reconcile_usage(
                 &harness.meter,
                 ReportSponsoredUsage {
-                    stable_request_id: first.stable_request_id,
+                    reservation_id: first.id,
                     request_fingerprint: first.request_fingerprint,
                     actual_quota: Some(quota),
                     outcome: SponsoredUsageState::Settled,
@@ -3460,6 +4135,219 @@ mod current_tests {
     }
 
     #[tokio::test]
+    async fn usage_rotation_replaces_five_aliases_without_changing_the_opaque_handle() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let command = usage_command(
+            &grant,
+            "usage-five-key-replay",
+            SponsoredQuota {
+                requests: 1,
+                input_tokens: 10,
+                output_tokens: 10,
+            },
+        );
+        let created = harness
+            .service
+            .reserve_usage(&harness.contributor, command.clone())
+            .await
+            .unwrap();
+
+        let five_key_operational = Arc::new(
+            SponsorshipOperationalPseudonymizer::new(
+                "fixture-current-4",
+                vec![0x64; 32],
+                vec![
+                    ("fixture-current-3".into(), vec![0x63; 32]),
+                    ("fixture-current-2".into(), vec![0x62; 32]),
+                    ("fixture-current-1".into(), vec![0x61; 32]),
+                    ("fixture-current".into(), vec![0x5a; 32]),
+                ],
+            )
+            .unwrap(),
+        );
+        let five_key_candidates = five_key_operational
+            .pseudonymize(
+                SponsorshipOperationalDomain::UsageRequest,
+                &[
+                    &grant.id.0,
+                    &harness.contributor.subject.0,
+                    "usage-five-key-replay",
+                ],
+            )
+            .unwrap();
+        let replayed = service_with_operational(&harness, five_key_operational)
+            .reserve_usage(&harness.contributor, command.clone())
+            .await
+            .unwrap();
+        assert_eq!(replayed.disposition, ReservationDisposition::Existing);
+        assert_eq!(replayed.reservation, created.reservation);
+        {
+            let state = harness.store.state.lock().await;
+            assert_eq!(
+                state
+                    .reservation_aliases
+                    .get(&created.reservation.id.0)
+                    .unwrap(),
+                &pseudonym_aliases(&five_key_candidates)
+            );
+            assert_eq!(
+                state
+                    .reservation_aliases
+                    .get(&created.reservation.id.0)
+                    .unwrap()
+                    .len(),
+                5
+            );
+        }
+
+        let without_original = Arc::new(
+            SponsorshipOperationalPseudonymizer::new(
+                "fixture-current-5",
+                vec![0x65; 32],
+                vec![
+                    ("fixture-current-4".into(), vec![0x64; 32]),
+                    ("fixture-current-3".into(), vec![0x63; 32]),
+                    ("fixture-current-2".into(), vec![0x62; 32]),
+                    ("fixture-current-1".into(), vec![0x61; 32]),
+                ],
+            )
+            .unwrap(),
+        );
+        let migrated_candidates = without_original
+            .pseudonymize(
+                SponsorshipOperationalDomain::UsageRequest,
+                &[
+                    &grant.id.0,
+                    &harness.contributor.subject.0,
+                    "usage-five-key-replay",
+                ],
+            )
+            .unwrap();
+        let migrated = service_with_operational(&harness, without_original)
+            .reserve_usage(&harness.contributor, command)
+            .await
+            .unwrap();
+        assert_eq!(migrated.reservation, created.reservation);
+        let state = harness.store.state.lock().await;
+        let stored_aliases = state
+            .reservation_aliases
+            .get(&created.reservation.id.0)
+            .unwrap();
+        assert_eq!(stored_aliases, &pseudonym_aliases(&migrated_candidates));
+        assert!(!stored_aliases
+            .iter()
+            .any(|alias| alias.starts_with("sp1.fixture-current.")));
+        assert_eq!(harness.pricing.quote_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn predictable_usage_ids_are_scoped_and_split_bindings_fail_closed() {
+        const PREDICTABLE_REQUEST_ID: &str = "12345678";
+        let harness = default_harness().await;
+        let first_grant = activate_for_usage(&harness).await;
+        let (second_launch, second_session) =
+            prepare_additional_activation(&harness, "usage-id-scope").await;
+        let second_grant = harness
+            .service
+            .activate_grant(
+                &harness.contributor,
+                ActivateSponsoredGrant {
+                    stable_request_id: "usage-id-scope-grant".into(),
+                    launch_id: second_launch.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        harness
+            .store
+            .update_launch_state(
+                &second_launch,
+                SponsoredLaunchState::Active,
+                Some(second_session),
+            )
+            .await;
+        let quota = SponsoredQuota {
+            requests: 1,
+            input_tokens: 10,
+            output_tokens: 10,
+        };
+        let first_command = usage_command(&first_grant, PREDICTABLE_REQUEST_ID, quota);
+        let first = harness
+            .service
+            .reserve_usage(&harness.contributor, first_command.clone())
+            .await
+            .unwrap()
+            .reservation;
+        let second = harness
+            .service
+            .reserve_usage(
+                &harness.contributor,
+                usage_command(&second_grant, PREDICTABLE_REQUEST_ID, quota),
+            )
+            .await
+            .unwrap()
+            .reservation;
+        assert_ne!(first.id, second.id);
+        assert_ne!(first.id.0, PREDICTABLE_REQUEST_ID);
+        assert_ne!(second.id.0, PREDICTABLE_REQUEST_ID);
+
+        let other_caller = caller(
+            SubjectId("other-usage-contributor".into()),
+            [Capability::UseOwnSessions],
+        );
+        assert_eq!(
+            harness
+                .service
+                .reserve_usage(
+                    &other_caller,
+                    usage_command(&first_grant, PREDICTABLE_REQUEST_ID, quota),
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::GrantUnavailable
+        );
+        assert!(matches!(
+            harness
+                .service
+                .reconcile_usage(
+                    &harness.meter,
+                    ReportSponsoredUsage {
+                        reservation_id: SponsoredUsageReservationId(PREDICTABLE_REQUEST_ID.into()),
+                        request_fingerprint: first.request_fingerprint.clone(),
+                        actual_quota: None,
+                        outcome: SponsoredUsageState::Released,
+                    },
+                )
+                .await,
+            Err(SponsorshipError::Validation(_))
+        ));
+
+        let first_aliases = {
+            let state = harness.store.state.lock().await;
+            let first_aliases = state.reservation_aliases.get(&first.id.0).unwrap().clone();
+            let second_aliases = state.reservation_aliases.get(&second.id.0).unwrap();
+            assert!(first_aliases.is_disjoint(second_aliases));
+            first_aliases
+        };
+        {
+            let mut state = harness.store.state.lock().await;
+            state
+                .reservation_aliases
+                .get_mut(&second.id.0)
+                .unwrap()
+                .insert(first_aliases.into_iter().next().unwrap());
+        }
+        assert!(matches!(
+            harness
+                .service
+                .reserve_usage(&harness.contributor, first_command)
+                .await,
+            Err(SponsorshipError::Store(SponsorshipStoreError::Malformed(_)))
+        ));
+    }
+
+    #[tokio::test]
     async fn terminal_usage_replays_bypass_clock_and_pricing_but_conflicts_fail() {
         let harness = default_harness().await;
         let grant = activate_for_usage(&harness).await;
@@ -3487,7 +4375,7 @@ mod current_tests {
             .unwrap()
             .reservation;
         let settled_report = ReportSponsoredUsage {
-            stable_request_id: settled_candidate.stable_request_id.clone(),
+            reservation_id: settled_candidate.id.clone(),
             request_fingerprint: settled_candidate.request_fingerprint.clone(),
             actual_quota: Some(quota),
             outcome: SponsoredUsageState::Settled,
@@ -3498,7 +4386,7 @@ mod current_tests {
             .await
             .unwrap();
         let released_report = ReportSponsoredUsage {
-            stable_request_id: released_candidate.stable_request_id,
+            reservation_id: released_candidate.id,
             request_fingerprint: released_candidate.request_fingerprint,
             actual_quota: None,
             outcome: SponsoredUsageState::Released,
@@ -3595,7 +4483,7 @@ mod current_tests {
             .reconcile_usage(
                 &harness.meter,
                 ReportSponsoredUsage {
-                    stable_request_id: reservation.stable_request_id,
+                    reservation_id: reservation.id,
                     request_fingerprint: reservation.request_fingerprint,
                     actual_quota: Some(quota),
                     outcome: SponsoredUsageState::Settled,
@@ -3613,7 +4501,7 @@ mod current_tests {
                 .store
                 .reconcile_usage(
                     ReconcileSponsoredUsage {
-                        stable_request_id: settled.stable_request_id.clone(),
+                        reservation_id: settled.id.clone(),
                         request_fingerprint: settled.request_fingerprint.clone(),
                         actual_quota: Some(SponsoredQuota {
                             requests: 1,
@@ -3630,10 +4518,7 @@ mod current_tests {
             Err(SponsorshipStoreError::Conflict)
         );
         let state = harness.store.state.lock().await;
-        assert_eq!(
-            state.reservations.get(&settled.stable_request_id),
-            Some(&settled)
-        );
+        assert_eq!(state.reservations.get(&settled.id.0), Some(&settled));
         assert_eq!(state.audits.len(), audit_count);
     }
 
@@ -3669,7 +4554,7 @@ mod current_tests {
             .reconcile_usage(
                 &harness.meter,
                 ReportSponsoredUsage {
-                    stable_request_id: second.stable_request_id.clone(),
+                    reservation_id: second.id.clone(),
                     request_fingerprint: second.request_fingerprint.clone(),
                     actual_quota: None,
                     outcome: SponsoredUsageState::Ambiguous,
@@ -3699,7 +4584,7 @@ mod current_tests {
             .reconcile_usage(
                 &harness.meter,
                 ReportSponsoredUsage {
-                    stable_request_id: first.stable_request_id,
+                    reservation_id: first.id,
                     request_fingerprint: first.request_fingerprint,
                     actual_quota: None,
                     outcome: SponsoredUsageState::Released,
@@ -3718,7 +4603,7 @@ mod current_tests {
             .reconcile_usage(
                 &harness.meter,
                 ReportSponsoredUsage {
-                    stable_request_id: second.stable_request_id,
+                    reservation_id: second.id,
                     request_fingerprint: second.request_fingerprint,
                     actual_quota: Some(quota),
                     outcome: SponsoredUsageState::Settled,
@@ -3776,7 +4661,7 @@ mod current_tests {
                 .reconcile_usage(
                     &harness.meter,
                     ReportSponsoredUsage {
-                        stable_request_id: reservation.stable_request_id.clone(),
+                        reservation_id: reservation.id.clone(),
                         request_fingerprint: reservation.request_fingerprint,
                         actual_quota: Some(reported_quota),
                         outcome: SponsoredUsageState::Settled,
@@ -3789,7 +4674,7 @@ mod current_tests {
         assert_eq!(
             harness
                 .store
-                .usage_reservation(&reservation.stable_request_id)
+                .usage_reservation(&reservation.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -3837,7 +4722,7 @@ mod current_tests {
             .reconcile_usage(
                 &harness.meter,
                 ReportSponsoredUsage {
-                    stable_request_id: reservation.stable_request_id,
+                    reservation_id: reservation.id,
                     request_fingerprint: reservation.request_fingerprint,
                     actual_quota: Some(actual_quota),
                     outcome: SponsoredUsageState::Settled,
@@ -4095,6 +4980,14 @@ mod current_tests {
         assert_eq!(
             harness
                 .service
+                .engage_kill_switch(&harness.admin)
+                .await
+                .expect("a bodyless kill-switch retry is idempotent"),
+            fence
+        );
+        assert_eq!(
+            harness
+                .service
                 .verify_publisher_policy_binding(&harness.sponsor.subject, &binding)
                 .await
                 .unwrap_err(),
@@ -4115,6 +5008,191 @@ mod current_tests {
             .grant_view(&harness.contributor, &grant.id)
             .await
             .expect("Launch recovery metadata remains readable after the kill switch");
+    }
+
+    #[tokio::test]
+    async fn metadata_reads_reject_malformed_store_records_before_projection() {
+        fn assert_malformed<T: std::fmt::Debug>(result: Result<T, SponsorshipError>) {
+            assert!(
+                matches!(
+                    result,
+                    Err(SponsorshipError::Store(SponsorshipStoreError::Malformed(_)))
+                ),
+                "malformed durable metadata must fail closed: {result:?}"
+            );
+        }
+
+        let harness = default_harness().await;
+        prepare_activation(&harness).await;
+        let grant = activate(&harness, "malformed-metadata-projection").await;
+        let binding = SponsoredPolicyBinding {
+            tenant_id: harness.policy.tenant_id.clone(),
+            policy_id: harness.policy.id.clone(),
+        };
+
+        let original_credential = {
+            let mut state = harness.store.state.lock().await;
+            let (credential, _) = state
+                .credentials
+                .get_mut(&harness.policy.credential_id.0)
+                .unwrap();
+            let original = credential.clone();
+            credential.generation = 0;
+            original
+        };
+        assert_malformed(
+            harness
+                .service
+                .verify_publisher_policy_binding(&harness.sponsor.subject, &binding)
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .credential_view(&harness.sponsor, &harness.policy.credential_id)
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .credential_views(&harness.sponsor, &PageRequest::default())
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .create_policy(
+                    &harness.sponsor,
+                    CreateSponsorshipPolicy {
+                        tenant_id: "malformed-credential-policy".into(),
+                        owner: owner(),
+                        credential_id: harness.policy.credential_id.clone(),
+                        provider_policy: SponsoredProviderPolicy {
+                            provider: PROVIDER.into(),
+                            provider_policy_key: POLICY_KEY.into(),
+                            allowed_models: BTreeSet::from([MODEL.into()]),
+                            allowed_resources: BTreeSet::from([RESOURCE.into()]),
+                        },
+                        per_launch_quota: Limits::default().per_launch_quota,
+                        aggregate_quota: Limits::default().aggregate_quota,
+                        per_launch_budget_micros: Limits::default().per_launch_budget_micros,
+                        aggregate_budget_micros: Limits::default().aggregate_budget_micros,
+                        max_requests_per_minute: Limits::default().max_requests_per_minute,
+                        max_concurrent_launches: Limits::default().max_concurrent_launches,
+                        expires_at: POLICY_EXPIRY.into(),
+                    },
+                )
+                .await,
+        );
+        {
+            let mut state = harness.store.state.lock().await;
+            state
+                .credentials
+                .get_mut(&harness.policy.credential_id.0)
+                .unwrap()
+                .0 = original_credential;
+        }
+
+        let original_policy = {
+            let mut state = harness.store.state.lock().await;
+            let policy = state.policies.get_mut(&harness.policy.id.0).unwrap();
+            let original = policy.clone();
+            policy.generation = 0;
+            original
+        };
+        assert_malformed(
+            harness
+                .service
+                .policy_view(&harness.sponsor, &harness.policy.id)
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .policy_views(&harness.sponsor, &PageRequest::default())
+                .await,
+        );
+        {
+            harness
+                .store
+                .state
+                .lock()
+                .await
+                .policies
+                .insert(harness.policy.id.0.clone(), original_policy);
+        }
+
+        let original_sponsor_subject = {
+            let mut state = harness.store.state.lock().await;
+            let grant = state.grants.get_mut(&grant.id.0).unwrap();
+            let original = grant.sponsor_subject.clone();
+            grant.sponsor_subject = SubjectId("different-sponsor-subject".into());
+            grant.refresh_capability().unwrap();
+            grant
+                .validate()
+                .expect("the corrupted grant remains valid in isolation");
+            original
+        };
+        assert_malformed(
+            harness
+                .service
+                .grant_view(&harness.contributor, &grant.id)
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .grant_for_launch_view(&harness.sponsor, &grant.launch_id)
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .contributor_grant_views(&harness.contributor, &PageRequest::default())
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .sponsor_grant_views(&harness.sponsor, &PageRequest::default())
+                .await,
+        );
+        {
+            let mut state = harness.store.state.lock().await;
+            let grant = state.grants.get_mut(&grant.id.0).unwrap();
+            grant.sponsor_subject = original_sponsor_subject;
+            grant.refresh_capability().unwrap();
+            grant.validate().unwrap();
+        }
+
+        {
+            let mut state = harness.store.state.lock().await;
+            state.grants.get_mut(&grant.id.0).unwrap().generation = 0;
+        }
+        assert_malformed(
+            harness
+                .service
+                .grant_view(&harness.contributor, &grant.id)
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .grant_for_launch_view(&harness.sponsor, &grant.launch_id)
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .contributor_grant_views(&harness.contributor, &PageRequest::default())
+                .await,
+        );
+        assert_malformed(
+            harness
+                .service
+                .sponsor_grant_views(&harness.sponsor, &PageRequest::default())
+                .await,
+        );
     }
 
     #[tokio::test]
@@ -4185,6 +5263,112 @@ mod current_tests {
                     .is_none_or(|digest| digest.len() == 64)
         }));
         assert!(format!("{:?}", harness.audit).contains("redacted"));
+    }
+
+    #[tokio::test]
+    async fn registration_replay_and_conflicts_precede_provider_access_during_outage() {
+        let harness = default_harness().await;
+        let baseline = {
+            let state = harness.store.state.lock().await;
+            (
+                state.credentials.len(),
+                state.credential_registrations.len(),
+                state.audits.len(),
+                harness.provider.ownership_calls.load(Ordering::SeqCst),
+            )
+        };
+        assert_eq!(baseline.3, 1);
+        *harness.provider.ownership_mode.lock().await = ProviderMode::Unavailable;
+
+        let replay = harness
+            .service
+            .register_credential(
+                &harness.sponsor,
+                RegisterSponsoredCredential {
+                    stable_request_id: "register-credential-a".into(),
+                    owner: owner(),
+                    provider: PROVIDER.into(),
+                    provider_policy_key: POLICY_KEY.into(),
+                    credential: ProviderCredentialSecret::new(SECRET).unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.id, harness.policy.credential_id);
+        assert_eq!(
+            harness.provider.ownership_calls.load(Ordering::SeqCst),
+            baseline.3,
+            "exact replay must not reach ownership validation"
+        );
+
+        let changed_commands = [
+            (
+                SponsorBillingOwner::Developer {
+                    subject: subject(),
+                    display_name: "Changed Sponsor Name".into(),
+                },
+                PROVIDER,
+                POLICY_KEY,
+                SECRET,
+            ),
+            (owner(), "provider-b", POLICY_KEY, SECRET),
+            (owner(), PROVIDER, ALTERNATE_POLICY_KEY, SECRET),
+            (
+                owner(),
+                PROVIDER,
+                POLICY_KEY,
+                "predictable-replacement-secret",
+            ),
+        ];
+        for (changed_owner, provider, policy_key, secret) in changed_commands {
+            let error = harness
+                .service
+                .register_credential(
+                    &harness.sponsor,
+                    RegisterSponsoredCredential {
+                        stable_request_id: "register-credential-a".into(),
+                        owner: changed_owner,
+                        provider: provider.into(),
+                        provider_policy_key: policy_key.into(),
+                        credential: ProviderCredentialSecret::new(secret).unwrap(),
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error,
+                SponsorshipError::Store(SponsorshipStoreError::Conflict)
+            );
+            assert_eq!(
+                harness.provider.ownership_calls.load(Ordering::SeqCst),
+                baseline.3,
+                "changed bound command must conflict before provider access"
+            );
+        }
+
+        let miss = harness
+            .service
+            .register_credential(
+                &harness.sponsor,
+                RegisterSponsoredCredential {
+                    stable_request_id: "unbound-registration-during-outage".into(),
+                    owner: owner(),
+                    provider: PROVIDER.into(),
+                    provider_policy_key: POLICY_KEY.into(),
+                    credential: ProviderCredentialSecret::new(SECRET).unwrap(),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(miss, SponsorshipError::ProviderUnavailable);
+        assert_eq!(
+            harness.provider.ownership_calls.load(Ordering::SeqCst),
+            baseline.3 + 1
+        );
+        let state = harness.store.state.lock().await;
+        assert_eq!(state.credentials.len(), baseline.0);
+        assert_eq!(state.credential_registrations.len(), baseline.1);
+        assert_eq!(state.audits.len(), baseline.2);
     }
 
     #[tokio::test]
@@ -4361,14 +5545,27 @@ mod current_tests {
         let harness = default_harness().await;
         let original_request_id = "revocation-recovery-r1";
         let recovery_request_id = "revocation-recovery-r2";
-        let original_request_digest = sensitive_test_digest(
-            "cma-sponsored-credential-command-idempotency-v1",
-            original_request_id,
-        );
-        let recovery_request_digest = sensitive_test_digest(
-            "cma-sponsored-credential-command-idempotency-v1",
-            recovery_request_id,
-        );
+        let operation_identity = |request_id: &str| {
+            harness
+                .operational
+                .pseudonymize(
+                    SponsorshipOperationalDomain::CredentialOperationRequest,
+                    &[
+                        &harness.policy.credential_id.0,
+                        "revoke",
+                        &harness.sponsor.subject.0,
+                        request_id,
+                    ],
+                )
+                .unwrap()
+                .current()
+                .as_str()
+                .to_string()
+        };
+        let original_request_digest = operation_identity(original_request_id);
+        let recovery_request_digest = operation_identity(recovery_request_id);
+        assert!(original_request_digest.starts_with("sp1.fixture-current."));
+        assert_ne!(original_request_digest, recovery_request_digest);
         *harness.provider.revoke_mode.lock().await = ProviderMode::LostResponse;
         assert_eq!(
             harness
@@ -4509,19 +5706,60 @@ mod current_tests {
     async fn rejected_credential_revocation_keeps_material_for_owner_recovery() {
         let harness = default_harness().await;
         *harness.provider.revoke_mode.lock().await = ProviderMode::Rejected;
-        for request_id in [
-            "rejected-credential-revocation",
-            "rejected-revocation-replay",
-        ] {
-            assert_eq!(
-                harness
-                    .service
-                    .revoke_credential(&harness.sponsor, &harness.policy.credential_id, request_id,)
-                    .await
-                    .unwrap_err(),
-                SponsorshipError::ProviderRejected
-            );
-        }
+        let original_request_id = "rejected-credential-revocation";
+        let recovery_request_id = "rejected-revocation-recovery";
+        assert_eq!(
+            harness
+                .service
+                .revoke_credential(
+                    &harness.sponsor,
+                    &harness.policy.credential_id,
+                    original_request_id,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderRejected
+        );
+        let after_rejection = harness
+            .store
+            .credential(&harness.policy.credential_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after_rejection
+                .record
+                .pending_operation
+                .as_ref()
+                .unwrap()
+                .client_request_id_digest,
+            harness
+                .operational
+                .pseudonymize(
+                    SponsorshipOperationalDomain::CredentialOperationRequest,
+                    &[
+                        &harness.policy.credential_id.0,
+                        "revoke",
+                        &harness.sponsor.subject.0,
+                        original_request_id,
+                    ],
+                )
+                .unwrap()
+                .current()
+                .as_str()
+        );
+        assert_eq!(
+            harness
+                .service
+                .revoke_credential(
+                    &harness.sponsor,
+                    &harness.policy.credential_id,
+                    recovery_request_id,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderRejected
+        );
         let stored = harness
             .store
             .credential(&harness.policy.credential_id)
@@ -4533,6 +5771,7 @@ mod current_tests {
             stored.record.material_state,
             SponsoredCredentialMaterialState::Retained
         );
+        assert_eq!(stored.record, after_rejection.record);
         assert_eq!(
             stored.record.pending_operation.as_ref().unwrap().phase,
             ProviderOperationPhase::Rejected
@@ -4997,8 +6236,11 @@ mod current_tests {
             )
             .await
             .unwrap();
-        *harness.provider.rotation_authority_digest.lock().await =
-            Some(digest(b"other-external-credential-id"));
+        *harness
+            .provider
+            .rotation_provider_credential_id
+            .lock()
+            .await = Some("other-external-credential-id".into());
 
         assert_eq!(
             harness
@@ -5366,6 +6608,104 @@ mod current_tests {
     }
 
     #[tokio::test]
+    async fn activation_rotation_matches_candidates_but_preserves_dispatched_operation_ids() {
+        let harness = default_harness().await;
+        prepare_activation(&harness).await;
+        *harness.billing.mode.lock().await = BillingMode::LostResponse;
+        assert_eq!(
+            harness
+                .service
+                .activate_grant(
+                    &harness.contributor,
+                    ActivateSponsoredGrant {
+                        stable_request_id: "activation-before-key-rotation".into(),
+                        launch_id: harness.launch_id.clone(),
+                    },
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::BillingAmbiguous
+        );
+        let before = harness
+            .store
+            .grant_activation(&harness.launch_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.state, GrantActivationState::BillingAmbiguous);
+        assert!(before.lease.is_none());
+
+        let rotated_operational = Arc::new(
+            SponsorshipOperationalPseudonymizer::new(
+                "fixture-rotated",
+                vec![0x6a; 32],
+                vec![("fixture-current".into(), vec![0x5a; 32])],
+            )
+            .unwrap(),
+        );
+        let launch = harness
+            .store
+            .launch_authority(&harness.launch_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let acceptance = harness
+            .store
+            .acceptance_for_launch(&harness.launch_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let policy_generation = before.policy_generation.to_string();
+        let credential_generation = before.credential_generation.to_string();
+        let rotated_provider_candidates = rotated_operational
+            .pseudonymize(
+                SponsorshipOperationalDomain::ActivationRequest,
+                &[
+                    &launch.launch_id.0,
+                    &launch.contributor.0,
+                    "provider",
+                    &launch.digest,
+                    &acceptance.digest,
+                    &policy_generation,
+                    &credential_generation,
+                ],
+            )
+            .unwrap();
+        assert_ne!(
+            rotated_provider_candidates.current().as_str(),
+            before.provider_request_id
+        );
+        assert!(rotated_provider_candidates
+            .iter()
+            .any(|candidate| candidate.as_str() == before.provider_request_id));
+
+        *harness.provider.issue_mode.lock().await = ProviderMode::Ambiguous;
+        let rotated_service = service_with_operational(&harness, rotated_operational);
+        assert_eq!(
+            rotated_service
+                .activate_grant(
+                    &harness.contributor,
+                    ActivateSponsoredGrant {
+                        stable_request_id: "activation-after-key-rotation".into(),
+                        launch_id: harness.launch_id.clone(),
+                    },
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderAmbiguous
+        );
+        let after = harness
+            .store
+            .grant_activation(&harness.launch_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.billing_request_id, before.billing_request_id);
+        assert_eq!(after.provider_request_id, before.provider_request_id);
+        assert_eq!(harness.provider.issue_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn activation_claim_rejects_a_caller_supplied_lease() {
         let harness = default_harness().await;
         prepare_activation(&harness).await;
@@ -5390,7 +6730,15 @@ mod current_tests {
             .await
             .unwrap()
             .unwrap();
-        candidate.lease = Some(test_activation_lease(digest(b"forged-holder"), NOW).unwrap());
+        let forged_holder = harness
+            .operational
+            .pseudonymize(
+                SponsorshipOperationalDomain::ActivationRequest,
+                &[&harness.launch_id.0, "forged-holder"],
+            )
+            .unwrap();
+        candidate.lease =
+            Some(test_activation_lease(forged_holder.current().as_str().to_string(), NOW).unwrap());
         let launch = harness
             .store
             .launch_authority(&harness.launch_id)
@@ -5408,7 +6756,9 @@ mod current_tests {
                 .store
                 .claim_grant_activation(ClaimGrantActivation {
                     candidate,
-                    holder: digest(b"caller-selected-holder"),
+                    holder_candidates: forged_holder.clone(),
+                    billing_request_candidates: forged_holder.clone(),
+                    provider_request_candidates: forged_holder,
                     launch_authority: launch,
                     acceptance,
                 })
@@ -5918,6 +7268,17 @@ mod current_tests {
             .unwrap()
             .unwrap();
         let gate_fence = harness.store.gate_fence().await.unwrap();
+        let replay_candidates = harness
+            .operational
+            .pseudonymize(
+                SponsorshipOperationalDomain::AcceptanceRequest,
+                &[
+                    &harness.launch_id.0,
+                    &harness.contributor.subject.0,
+                    "acceptance-stable-replay",
+                ],
+            )
+            .unwrap();
 
         let mut concurrent_loser = accepted.clone();
         concurrent_loser.accepted_at = LATER.into();
@@ -5927,6 +7288,7 @@ mod current_tests {
             .store
             .insert_acceptance(PersistSponsoredAcceptance {
                 acceptance: concurrent_loser.clone(),
+                idempotency_candidates: replay_candidates.clone(),
                 launch_authority: launch.clone(),
                 gate_fence: gate_fence.clone(),
                 audit: SponsoredAuditEvent::privacy_safe(
@@ -5942,6 +7304,42 @@ mod current_tests {
             .await
             .unwrap();
         assert_eq!(raced, accepted, "the first durable acceptance wins");
+
+        let mut replacement = accepted.clone();
+        let replacement_candidates = harness
+            .operational
+            .pseudonymize(
+                SponsorshipOperationalDomain::AcceptanceRequest,
+                &[
+                    &harness.launch_id.0,
+                    &harness.contributor.subject.0,
+                    "different-acceptance-key",
+                ],
+            )
+            .unwrap();
+        replacement.idempotency_key_hash = replacement_candidates.current().as_str().to_string();
+        replacement.accepted_at = LATER.into();
+        replacement.digest = replacement.calculate_digest().unwrap();
+        let replacement_error = harness
+            .store
+            .insert_acceptance(PersistSponsoredAcceptance {
+                acceptance: replacement,
+                idempotency_candidates: replacement_candidates,
+                launch_authority: launch.clone(),
+                gate_fence: gate_fence.clone(),
+                audit: SponsoredAuditEvent::privacy_safe(
+                    &harness.audit,
+                    SponsoredAuditAction::TermsAccepted,
+                    &harness.contributor.subject,
+                    SponsoredAuditTarget::Policy(harness.policy.id.clone()),
+                    None,
+                    "replacement_loser",
+                    LATER,
+                ),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(replacement_error, SponsorshipStoreError::Conflict);
 
         {
             let mut state = harness.store.state.lock().await;
@@ -5977,6 +7375,7 @@ mod current_tests {
             .store
             .insert_acceptance(PersistSponsoredAcceptance {
                 acceptance: concurrent_loser,
+                idempotency_candidates: replay_candidates,
                 launch_authority: launch,
                 gate_fence,
                 audit: SponsoredAuditEvent::privacy_safe(
@@ -6063,6 +7462,109 @@ mod current_tests {
     }
 
     #[tokio::test]
+    async fn acceptance_rotation_replaces_five_aliases_without_rewriting_canonical_authority() {
+        let harness = default_harness().await;
+        let accepted = accept(&harness, "acceptance-five-key-replay").await;
+        let original_canonical = accepted.idempotency_key_hash.clone();
+        let original_digest = accepted.digest.clone();
+
+        let five_key_operational = Arc::new(
+            SponsorshipOperationalPseudonymizer::new(
+                "fixture-current-4",
+                vec![0x64; 32],
+                vec![
+                    ("fixture-current-3".into(), vec![0x63; 32]),
+                    ("fixture-current-2".into(), vec![0x62; 32]),
+                    ("fixture-current-1".into(), vec![0x61; 32]),
+                    ("fixture-current".into(), vec![0x5a; 32]),
+                ],
+            )
+            .unwrap(),
+        );
+        let five_key_candidates = five_key_operational
+            .pseudonymize(
+                SponsorshipOperationalDomain::AcceptanceRequest,
+                &[
+                    &harness.launch_id.0,
+                    &harness.contributor.subject.0,
+                    "acceptance-five-key-replay",
+                ],
+            )
+            .unwrap();
+        assert_eq!(five_key_candidates.iter().count(), 5);
+        let rotated_service = service_with_operational(&harness, five_key_operational);
+        let replay = rotated_service
+            .accept_terms(
+                &harness.contributor,
+                AcceptSponsoredTerms {
+                    launch_id: harness.launch_id.clone(),
+                    policy_id: harness.policy.id.clone(),
+                    terms_digest: harness.terms.digest.clone(),
+                    launch_snapshot_digest: digest(b"fixture-launch-snapshot"),
+                    idempotency_key: "acceptance-five-key-replay".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.idempotency_key_hash, original_canonical);
+        assert_eq!(replay.digest, original_digest);
+        {
+            let state = harness.store.state.lock().await;
+            assert_eq!(
+                state.acceptance_aliases.get(&harness.launch_id.0).unwrap(),
+                &pseudonym_aliases(&five_key_candidates)
+            );
+            assert_eq!(
+                state
+                    .acceptance_aliases
+                    .get(&harness.launch_id.0)
+                    .unwrap()
+                    .len(),
+                5
+            );
+        }
+
+        let without_canonical = Arc::new(
+            SponsorshipOperationalPseudonymizer::new(
+                "fixture-current-5",
+                vec![0x65; 32],
+                vec![
+                    ("fixture-current-4".into(), vec![0x64; 32]),
+                    ("fixture-current-3".into(), vec![0x63; 32]),
+                    ("fixture-current-2".into(), vec![0x62; 32]),
+                    ("fixture-current-1".into(), vec![0x61; 32]),
+                ],
+            )
+            .unwrap(),
+        );
+        let refused = service_with_operational(&harness, without_canonical)
+            .accept_terms(
+                &harness.contributor,
+                AcceptSponsoredTerms {
+                    launch_id: harness.launch_id.clone(),
+                    policy_id: harness.policy.id.clone(),
+                    terms_digest: harness.terms.digest.clone(),
+                    launch_snapshot_digest: digest(b"fixture-launch-snapshot"),
+                    idempotency_key: "acceptance-five-key-replay".into(),
+                },
+            )
+            .await;
+        assert!(matches!(
+            refused,
+            Err(SponsorshipError::Store(SponsorshipStoreError::Conflict))
+        ));
+        let state = harness.store.state.lock().await;
+        assert_eq!(
+            state
+                .acceptance_aliases
+                .get(&harness.launch_id.0)
+                .unwrap()
+                .len(),
+            5
+        );
+    }
+
+    #[tokio::test]
     async fn revoked_policy_is_terminal_across_suspend_revoke_races() {
         let sequential = default_harness().await;
         let suspended = sequential
@@ -6127,6 +7629,50 @@ mod current_tests {
         let mut stray_timestamp = revoked;
         stray_timestamp.state = SponsorshipPolicyState::Suspended;
         assert!(stray_timestamp.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn policy_state_change_stops_after_bounded_stale_generation_contention() {
+        let harness = default_harness().await;
+        harness
+            .store
+            .policy_replace_stale_failures
+            .store(MAX_POLICY_STATE_CHANGE_ATTEMPTS + 1, Ordering::SeqCst);
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            harness
+                .service
+                .suspend_policy(&harness.sponsor, &harness.policy.id),
+        )
+        .await
+        .expect("bounded policy CAS must terminate")
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            SponsorshipError::Store(SponsorshipStoreError::StaleGeneration)
+        );
+        assert_eq!(
+            harness.store.policy_replace_attempts.load(Ordering::SeqCst),
+            MAX_POLICY_STATE_CHANGE_ATTEMPTS
+        );
+        assert_eq!(
+            harness
+                .store
+                .policy_replace_stale_failures
+                .load(Ordering::SeqCst),
+            1
+        );
+        let state = harness.store.state.lock().await;
+        assert_eq!(
+            state.policies.get(&harness.policy.id.0).unwrap().state,
+            SponsorshipPolicyState::Active
+        );
+        assert!(state
+            .audits
+            .iter()
+            .all(|event| event.action != SponsoredAuditAction::PolicySuspended));
     }
 
     #[tokio::test]
@@ -6430,6 +7976,28 @@ mod current_tests {
         assert_eq!(grant.authority.issued_at, LATER);
         assert_eq!(grant.created_at, LATER);
         assert_eq!(grant.updated_at, LATER);
+    }
+
+    #[tokio::test]
+    async fn a_provider_receipt_cannot_backdate_issuance_before_acceptance() {
+        let harness = default_harness().await;
+        prepare_activation(&harness).await;
+        *harness.provider.receipt_issued_at.lock().await = EARLIER.into();
+
+        assert!(matches!(
+            harness
+                .service
+                .activate_grant(
+                    &harness.contributor,
+                    ActivateSponsoredGrant {
+                        stable_request_id: "pre-acceptance-provider-issuance".into(),
+                        launch_id: harness.launch_id.clone(),
+                    },
+                )
+                .await,
+            Err(SponsorshipError::Validation(_))
+        ));
+        assert!(harness.store.snapshot().await.grants.is_empty());
     }
 
     #[tokio::test]

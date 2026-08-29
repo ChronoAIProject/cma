@@ -16,7 +16,10 @@ pub mod mongo;
 pub mod operation;
 pub mod settings;
 pub mod skill_packs;
+// Implemented for recovery verification, but deliberately uncomposed until #671 is enabled.
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod sponsorship;
+#[cfg_attr(not(test), allow(dead_code))]
 mod sponsorship_encryption;
 pub mod tickets;
 pub mod token;
@@ -38,13 +41,11 @@ pub use mongo::MongoSessionStore;
 pub use operation::MongoOperationStore;
 pub use settings::MongoPlatformSettingsStore;
 pub use skill_packs::ChronoStorageSkillPackStore;
-pub use sponsorship::MongoSponsorshipStore;
 pub use tickets::MongoTerminalTicketStore;
 pub use trigger::MongoTriggerStore;
 pub use trigger_workspace::ChronoStorageTriggerWorkspaceStore;
 
 pub(crate) use encryption::AuthEncryptionKey;
-pub(crate) use sponsorship_encryption::{SponsorshipEncryptionKey, SponsorshipKeyring};
 
 /// Everything this deployment keeps in MongoDB.
 ///
