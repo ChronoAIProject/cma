@@ -10,14 +10,19 @@ use std::{
 };
 
 use axum::{
-    body::{to_bytes, Body, BodyDataStream},
+    body::{to_bytes, Body, BodyDataStream, Bytes},
     extract::DefaultBodyLimit,
     http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
+    routing::{get, post},
     Extension, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::StreamExt;
-use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, AuthenticatedSubject};
+use layer1_public::{
+    auth::{AuthenticatedCaller, DelegatedCredential},
+    tickets::TerminalTickets,
+    AuthenticatedSubject,
+};
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
@@ -39,7 +44,10 @@ use layer3_adapter::{
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tower::ServiceExt;
 
-use super::{rest_api_router, with_cors, with_request_context, REQUEST_BODY_LIMIT_BYTES};
+use super::{
+    rest_api_router, with_cors, with_request_context, with_sponsorship_privacy,
+    REQUEST_BODY_LIMIT_BYTES,
+};
 use crate::activity::{self, ActivityRecorder};
 
 const OVERSIZED_BODY_LEN: usize = REQUEST_BODY_LIMIT_BYTES + 1;
@@ -1494,6 +1502,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     } else {
         app
     };
+    let app = with_sponsorship_privacy(app);
     TestSurface {
         app,
         sessions,
@@ -1610,6 +1619,17 @@ async fn assert_request_too_large(response: Response<Body>) {
     assert_eq!(
         body["detail"],
         "The request body exceeds what this service accepts."
+    );
+}
+
+fn assert_sponsorship_privacy(headers: &HeaderMap) {
+    assert_eq!(
+        headers.get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("no-store"))
+    );
+    assert_eq!(
+        headers.get(header::REFERRER_POLICY),
+        Some(&HeaderValue::from_static("no-referrer"))
     );
 }
 
@@ -5664,6 +5684,174 @@ async fn rest_routing_failures_are_scoped_problem_documents() {
         )),
         "the REST fallback must remain scoped to /api/v1"
     );
+}
+
+#[tokio::test]
+async fn sponsorship_privacy_wraps_auth_and_rest_fallback_responses() {
+    const SECRET_MARKER: &str = "private-sponsorship-marker";
+    let auth_app = with_sponsorship_privacy(Router::new().route(
+        "/api/v1/sponsorships/private",
+        get(|_: AuthenticatedCaller| async { StatusCode::NO_CONTENT }),
+    ));
+    let response = auth_app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/sponsorships/private?credential={SECRET_MARKER}"
+            ))
+            .body(Body::empty())
+            .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_sponsorship_privacy(response.headers());
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
+
+    let app = test_surface(true).app;
+    for uri in [
+        format!("/api/v1/sponsorships/{SECRET_MARKER}"),
+        format!("/api/v1/launches/launch-1/sponsorship/{SECRET_MARKER}"),
+        format!("/api/v1/launches//sponsorship/{SECRET_MARKER}"),
+        format!("/api/v1/launches/launch-1//sponsorship/{SECRET_MARKER}"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(&uri)
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_sponsorship_privacy(response.headers());
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
+    }
+}
+
+#[tokio::test]
+async fn sponsorship_privacy_wraps_method_and_body_limit_refusals() {
+    const SECRET_MARKER: &str = "oversized-sponsorship-secret";
+    let method_app = with_sponsorship_privacy(
+        Router::new()
+            .route(
+                "/api/v1/sponsorships/credentials",
+                get(|| async { StatusCode::NO_CONTENT }),
+            )
+            .method_not_allowed_fallback(|| async {
+                layer1_public::rest::HttpProblem::MethodNotAllowed
+            }),
+    );
+    let response = method_app
+        .oneshot(
+            Request::put("/api/v1/sponsorships/credentials")
+                .body(Body::from(SECRET_MARKER))
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_sponsorship_privacy(response.headers());
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
+
+    let body_app = with_sponsorship_privacy(
+        Router::new()
+            .route(
+                "/api/v1/sponsorships/credentials",
+                post(|_: Bytes| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(DefaultBodyLimit::max(8)),
+    );
+    let response = body_app
+        .oneshot(
+            Request::post("/api/v1/sponsorships/credentials")
+                .body(Body::from(SECRET_MARKER))
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_sponsorship_privacy(response.headers());
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
+}
+
+#[tokio::test]
+async fn sponsorship_privacy_wraps_cors_preflight_and_refusal() {
+    let app = with_sponsorship_privacy(with_request_context(with_cors(
+        Router::new().route(
+            "/api/v1/sponsorships/credentials",
+            get(|| async { StatusCode::NO_CONTENT }),
+        ),
+        vec![HeaderValue::from_static(LISTED_ORIGIN)],
+    )));
+
+    let allowed = app
+        .clone()
+        .oneshot(preflight_request(
+            "/api/v1/sponsorships/credentials",
+            LISTED_ORIGIN,
+            Method::GET,
+            Some("authorization"),
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(allowed.status(), StatusCode::OK);
+    assert_sponsorship_privacy(allowed.headers());
+    assert!(allowed.headers().contains_key("x-request-id"));
+    assert_eq!(
+        allowed.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&HeaderValue::from_static(LISTED_ORIGIN))
+    );
+
+    let refused = app
+        .oneshot(preflight_request(
+            "/api/v1/sponsorships/credentials",
+            UNLISTED_ORIGIN,
+            Method::GET,
+            Some("authorization"),
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(refused.status(), StatusCode::OK);
+    assert_sponsorship_privacy(refused.headers());
+    assert!(refused.headers().contains_key("x-request-id"));
+    assert!(refused
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .is_none());
+}
+
+#[tokio::test]
+async fn sponsorship_privacy_does_not_override_unrelated_launch_caching() {
+    let app = with_sponsorship_privacy(Router::new().route(
+        "/api/v1/launches/{launch_id}/status",
+        get(|| async {
+            let mut response = Response::new(Body::empty());
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=60"),
+            );
+            response
+        }),
+    ));
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/launches/launch-1/status")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("public, max-age=60"))
+    );
+    assert!(response.headers().get(header::REFERRER_POLICY).is_none());
 }
 
 #[tokio::test]

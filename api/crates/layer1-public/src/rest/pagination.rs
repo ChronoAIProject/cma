@@ -8,7 +8,7 @@ use axum::http::{header, HeaderMap, HeaderValue};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use layer2_core::{
     seconds_from_rfc3339, PageCursor, PageRequest, SessionListQuery, SessionStatus,
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    TriggerValidationError, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 use serde::{de, Deserialize, Deserializer, Serialize};
 
@@ -134,6 +134,91 @@ enum CursorCollection {
     Sessions,
     AdminSessions,
     EnvironmentProfiles,
+    SponsorshipCredentials,
+    SponsorshipPolicies,
+    SponsorshipContributorGrants,
+    SponsorshipSponsorGrants,
+}
+
+/// Route identity for sponsorship continuations. Binding it into the cursor
+/// prevents a valid owner cursor from being replayed against another listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SponsorshipPageCollection {
+    Credentials,
+    Policies,
+    ContributorGrants,
+    SponsorGrants,
+}
+
+impl SponsorshipPageCollection {
+    fn cursor_collection(self) -> CursorCollection {
+        match self {
+            Self::Credentials => CursorCollection::SponsorshipCredentials,
+            Self::Policies => CursorCollection::SponsorshipPolicies,
+            Self::ContributorGrants => CursorCollection::SponsorshipContributorGrants,
+            Self::SponsorGrants => CursorCollection::SponsorshipSponsorGrants,
+        }
+    }
+
+    fn role(self) -> Option<&'static str> {
+        match self {
+            Self::ContributorGrants => Some("contributor"),
+            Self::SponsorGrants => Some("sponsor"),
+            Self::Credentials | Self::Policies => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SponsorshipPageParams {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+impl SponsorshipPageParams {
+    pub(crate) fn new(limit: Option<u32>, cursor: Option<String>) -> Self {
+        Self { limit, cursor }
+    }
+
+    pub(crate) fn store_request(
+        &self,
+        collection: SponsorshipPageCollection,
+    ) -> Result<PageRequest, TriggerValidationError> {
+        let cursor = self
+            .cursor
+            .as_deref()
+            .map(|cursor| decode_cursor_value(cursor, collection.cursor_collection()))
+            .transpose()
+            .map_err(|_| TriggerValidationError::field("cursor", "is not a valid continuation"))?;
+        Ok(PageRequest::new(bounded_limit(self.limit), cursor))
+    }
+
+    pub(crate) fn next_headers(
+        &self,
+        path: &str,
+        collection: SponsorshipPageCollection,
+        next: Option<&PageCursor>,
+    ) -> HeaderMap {
+        let Some(next) = next else {
+            return HeaderMap::new();
+        };
+        let mut query = vec![
+            ("limit", bounded_limit(self.limit).to_string()),
+            (
+                "cursor",
+                encode_cursor(collection.cursor_collection(), next),
+            ),
+        ];
+        if let Some(role) = collection.role() {
+            query.insert(0, ("role", role.to_string()));
+        }
+        let query = serde_urlencoded::to_string(query)
+            .expect("the fixed sponsorship page query serializes");
+        link_headers(path, &query)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -187,19 +272,30 @@ where
     let Some(encoded) = Option::<String>::deserialize(deserializer)? else {
         return Ok(None);
     };
-    let bytes = URL_SAFE_NO_PAD
-        .decode(encoded)
-        .map_err(|_| de::Error::custom("cursor is not a valid continuation"))?;
-    let cursor: WireCursor = serde_json::from_slice(&bytes)
-        .map_err(|_| de::Error::custom("cursor is not a valid continuation"))?;
+    decode_cursor_value(&encoded, expected)
+        .map(Some)
+        .map_err(|_| de::Error::custom("cursor is not a valid continuation"))
+}
+
+fn decode_cursor_value(encoded: &str, expected: CursorCollection) -> Result<PageCursor, ()> {
+    const MAX_CURSOR_BYTES: usize = 2_048;
+    if encoded.is_empty() || encoded.len() > MAX_CURSOR_BYTES {
+        return Err(());
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| ())?;
+    if bytes.len() > MAX_CURSOR_BYTES {
+        return Err(());
+    }
+    let cursor: WireCursor = serde_json::from_slice(&bytes).map_err(|_| ())?;
     if cursor.version != 1
         || cursor.collection != expected
         || seconds_from_rfc3339(&cursor.created_at).is_none()
         || cursor.id.is_empty()
+        || cursor.id.len() > 512
     {
-        return Err(de::Error::custom("cursor is not a valid continuation"));
+        return Err(());
     }
-    Ok(Some(PageCursor::new(cursor.created_at, cursor.id)))
+    Ok(PageCursor::new(cursor.created_at, cursor.id))
 }
 
 fn link_headers(path: &str, query: &str) -> HeaderMap {
@@ -319,5 +415,46 @@ mod tests {
         assert!(
             serde_urlencoded::from_str::<SessionPageParams>(&format!("cursor={encoded}")).is_err()
         );
+    }
+
+    #[test]
+    fn sponsorship_cursors_are_bound_to_route_and_grant_role() {
+        let position = PageCursor::new("2026-08-24T10:11:12Z", "grant-1");
+        let contributor = SponsorshipPageParams::new(
+            Some(10),
+            Some(encode_cursor(
+                CursorCollection::SponsorshipContributorGrants,
+                &position,
+            )),
+        );
+        assert_eq!(
+            contributor
+                .store_request(SponsorshipPageCollection::ContributorGrants)
+                .unwrap()
+                .cursor(),
+            Some(&position)
+        );
+        assert!(contributor
+            .store_request(SponsorshipPageCollection::SponsorGrants)
+            .is_err());
+        assert!(contributor
+            .store_request(SponsorshipPageCollection::Credentials)
+            .is_err());
+    }
+
+    #[test]
+    fn sponsorship_next_links_preserve_the_grant_role() {
+        let params = SponsorshipPageParams::new(Some(7), None);
+        let next = PageCursor::new("2026-08-24T10:11:12Z", "grant-1");
+        let headers = params.next_headers(
+            "/api/v1/sponsorships/grants",
+            SponsorshipPageCollection::SponsorGrants,
+            Some(&next),
+        );
+        let link = headers[header::LINK].to_str().unwrap();
+        assert!(link.starts_with("</api/v1/sponsorships/grants?"));
+        assert!(link.contains("role=sponsor"));
+        assert!(link.contains("limit=7"));
+        assert!(link.ends_with(">; rel=\"next\""));
     }
 }

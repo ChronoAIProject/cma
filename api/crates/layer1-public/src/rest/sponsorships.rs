@@ -3,8 +3,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::body::Bytes;
+use axum::extract::{FromRequest, Path, Query, Request, State};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use layer2_core::{
@@ -13,16 +14,21 @@ use layer2_core::{
     RequestSponsoredUsage, ReservationDisposition, RotateSponsoredCredential, SponsorBillingOwner,
     SponsoredAuditEvent, SponsoredCredentialId, SponsoredCredentialView, SponsoredGrantAcceptance,
     SponsoredGrantId, SponsoredGrantTerms, SponsoredGrantView, SponsoredProviderPolicy,
-    SponsoredQuota, SponsoredTermsReview, SponsoredUsageReservation,
+    SponsoredQuota, SponsoredTermsReview, SponsoredUsageReservation, SponsoredUsageReservationId,
     SponsoredUsageReservationOutcome, SponsoredUsageState, SponsorshipError, SponsorshipGateFence,
     SponsorshipPolicyId, SponsorshipPolicyUsage, SponsorshipPolicyView, SponsorshipService,
     SubjectId,
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
+use zeroize::Zeroizing;
 
-use super::{problem_document, problem_response, BodyProblem, QueryProblem, TriggersState};
+use super::pagination::{SponsorshipPageCollection, SponsorshipPageParams};
+use super::{
+    json_problem_response, problem_document, problem_response, HttpProblem, JsonProblemKind,
+    TriggersState,
+};
 use crate::auth::AuthenticatedCaller;
 
 const DEFAULT_AUDIT_LIMIT: usize = 100;
@@ -30,17 +36,18 @@ const RATE_RETRY_AFTER_SECONDS: u64 = 60;
 
 pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
     OpenApiRouter::new()
-        .routes(routes!(register_credential))
+        .routes(routes!(register_credential, list_credentials))
         .routes(routes!(read_credential))
         .routes(routes!(rotate_credential))
         .routes(routes!(revoke_credential))
-        .routes(routes!(create_policy))
+        .routes(routes!(create_policy, list_policies))
         .routes(routes!(read_policy))
         .routes(routes!(suspend_policy))
         .routes(routes!(revoke_policy))
         .routes(routes!(review_terms))
         .routes(routes!(accept_terms))
         .routes(routes!(read_launch_grant))
+        .routes(routes!(list_grants))
         .routes(routes!(revoke_grant))
         .routes(routes!(close_grant))
         .routes(routes!(reserve_usage))
@@ -67,21 +74,53 @@ enum BillingOwnerRequest {
 }
 
 impl BillingOwnerRequest {
-    fn resolve(self, caller: &SubjectId) -> SponsorBillingOwner {
+    fn resolve(self, caller: &SubjectId) -> Result<SponsorBillingOwner, SponsorshipError> {
         match self {
-            Self::Developer { display_name } => SponsorBillingOwner::Developer {
+            Self::Developer { display_name } => Ok(SponsorBillingOwner::Developer {
                 subject: caller.clone(),
                 display_name,
-            },
+            }),
+            // Public authentication currently proves only the developer
+            // subject. Until an organization-authority port is composed, a
+            // submitted organization identifier is never ownership evidence.
             Self::Organization {
                 organization_id,
                 display_name,
-            } => SponsorBillingOwner::Organization {
-                organization_id,
-                administrator: caller.clone(),
-                display_name,
-            },
+            } => {
+                drop((organization_id, display_name));
+                Err(SponsorshipError::Forbidden)
+            }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum GrantCollectionRole {
+    Contributor,
+    Sponsor,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantPageParams {
+    role: GrantCollectionRole,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+impl GrantPageParams {
+    fn collection(&self) -> SponsorshipPageCollection {
+        match self.role {
+            GrantCollectionRole::Contributor => SponsorshipPageCollection::ContributorGrants,
+            GrantCollectionRole::Sponsor => SponsorshipPageCollection::SponsorGrants,
+        }
+    }
+
+    fn page(&self) -> SponsorshipPageParams {
+        SponsorshipPageParams::new(self.limit, self.cursor.clone())
     }
 }
 
@@ -92,16 +131,83 @@ struct RegisterCredentialRequest {
     owner: BillingOwnerRequest,
     provider: String,
     provider_policy_key: String,
+    #[serde(deserialize_with = "zeroizing_string")]
     #[schema(value_type = String, format = Password)]
-    credential: String,
+    credential: Zeroizing<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct RotateCredentialRequest {
     stable_request_id: String,
+    #[serde(deserialize_with = "zeroizing_string")]
     #[schema(value_type = String, format = Password)]
-    replacement: String,
+    replacement: Zeroizing<String>,
+}
+
+fn zeroizing_string<'de, D>(deserializer: D) -> Result<Zeroizing<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Zeroizing::new)
+}
+
+fn provider_credential_secret(
+    mut value: Zeroizing<String>,
+) -> Result<ProviderCredentialSecret, SponsorshipError> {
+    ProviderCredentialSecret::new(std::mem::take(&mut *value)).map_err(Into::into)
+}
+
+struct SponsorshipJson<T>(T);
+
+impl<T, S> FromRequest<S> for SponsorshipJson<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = SponsorshipBodyProblem;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        if !is_json_content_type(request.headers()) {
+            return Err(SponsorshipBodyProblem::MissingContentType);
+        }
+
+        let bytes = Bytes::from_request(request, state).await.map_err(|error| {
+            if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                SponsorshipBodyProblem::TooLarge
+            } else {
+                SponsorshipBodyProblem::Unreadable
+            }
+        })?;
+        // Axum's immutable transport allocation cannot be wiped. Copy it into
+        // application-owned zeroizing storage, then release the transport
+        // allocation immediately. Parsed credential strings use the same
+        // zeroizing custody; this does not claim upstream transport buffers
+        // are erased.
+        let zeroizing_bytes = Zeroizing::new(bytes.to_vec());
+        drop(bytes);
+        let value = serde_json::from_slice(zeroizing_bytes.as_slice()).map_err(|error| {
+            use serde_json::error::Category;
+
+            match error.classify() {
+                Category::Data => SponsorshipBodyProblem::Data,
+                Category::Syntax | Category::Eof => SponsorshipBodyProblem::Syntax,
+                Category::Io => SponsorshipBodyProblem::Unreadable,
+            }
+        })?;
+        Ok(Self(value))
+    }
+}
+
+fn is_json_content_type(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<mime::Mime>().ok())
+        .is_some_and(|mime| {
+            mime.type_() == "application"
+                && (mime.subtype() == "json" || mime.suffix().is_some_and(|name| name == "json"))
+        })
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -215,7 +321,7 @@ impl From<UsageOutcomeRequest> for SponsoredUsageState {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct ReconcileUsageRequest {
-    stable_request_id: String,
+    reservation_id: String,
     request_fingerprint: String,
     actual_quota: Option<QuotaRequest>,
     outcome: UsageOutcomeRequest,
@@ -469,6 +575,7 @@ struct GrantView {
     policy_id: String,
     launch_id: String,
     session_id: String,
+    contributor: String,
     state: String,
     allocation: UsageSummaryView,
     usage: UsageSummaryView,
@@ -485,6 +592,7 @@ impl From<SponsoredGrantView> for GrantView {
             policy_id: value.policy_id.0,
             launch_id: value.launch_id.0,
             session_id: value.session_id.0,
+            contributor: value.contributor.0,
             state: enum_code(value.state),
             allocation: value.allocation.into(),
             usage: value.usage.into(),
@@ -498,7 +606,7 @@ impl From<SponsoredGrantView> for GrantView {
 
 #[derive(Serialize, ToSchema)]
 struct ReservationView {
-    stable_request_id: String,
+    id: String,
     request_fingerprint: String,
     grant_id: String,
     provider: String,
@@ -514,7 +622,7 @@ struct ReservationView {
 impl From<SponsoredUsageReservation> for ReservationView {
     fn from(value: SponsoredUsageReservation) -> Self {
         Self {
-            stable_request_id: value.stable_request_id,
+            id: value.id.0,
             request_fingerprint: value.request_fingerprint,
             grant_id: value.grant_id.0,
             provider: value.price_quote.provider,
@@ -627,6 +735,10 @@ fn parse_grant_id(value: String) -> Result<SponsoredGrantId, SponsorshipError> {
     SponsoredGrantId::parse(value).map_err(Into::into)
 }
 
+fn parse_reservation_id(value: String) -> Result<SponsoredUsageReservationId, SponsorshipError> {
+    SponsoredUsageReservationId::parse(value).map_err(Into::into)
+}
+
 fn parse_launch_id(value: String) -> Result<LaunchId, SponsorshipError> {
     LaunchId::parse(value).map_err(Into::into)
 }
@@ -645,17 +757,17 @@ fn parse_launch_id(value: String) -> Result<LaunchId, SponsorshipError> {
 async fn register_credential(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<RegisterCredentialRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<RegisterCredentialRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
-    let credential =
-        ProviderCredentialSecret::new(body.credential).map_err(SponsorshipError::from)?;
+    let SponsorshipJson(body) = body?;
+    let credential = provider_credential_secret(body.credential)?;
+    let owner = body.owner.resolve(&caller.subject)?;
     let registered = service(&state)?
         .register_credential(
             &caller,
             RegisterSponsoredCredential {
                 stable_request_id: body.stable_request_id,
-                owner: body.owner.resolve(&caller.subject),
+                owner,
                 provider: body.provider,
                 provider_policy_key: body.provider_policy_key,
                 credential,
@@ -665,6 +777,41 @@ async fn register_credential(
     Ok(private_json(
         StatusCode::CREATED,
         CredentialView::from(registered),
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/sponsorships/credentials",
+    tag = "sponsorships",
+    params(("limit" = Option<u32>, Query), ("cursor" = Option<String>, Query)),
+    responses(
+        (status = 200, description = "Newest-first secret-free owner credential page", body = [CredentialView]),
+        (status = 422, description = "Continuation is invalid for this collection", body = super::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Sponsorship persistence is unavailable", body = super::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+async fn list_credentials(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    params: Result<Query<SponsorshipPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, SponsorshipRequestFailure> {
+    let Query(params) = params.map_err(SponsorshipQueryProblem::from)?;
+    let request = params
+        .store_request(SponsorshipPageCollection::Credentials)
+        .map_err(SponsorshipError::from)?;
+    let page = service(&state)?.credential_views(&caller, &request).await?;
+    let headers = params.next_headers(
+        "/api/v1/sponsorships/credentials",
+        SponsorshipPageCollection::Credentials,
+        page.next.as_ref(),
+    );
+    Ok(private_page_json(
+        page.items
+            .into_iter()
+            .map(CredentialView::from)
+            .collect::<Vec<_>>(),
+        headers,
     ))
 }
 
@@ -712,11 +859,10 @@ async fn rotate_credential(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(credential_id): Path<String>,
-    body: Result<Json<RotateCredentialRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<RotateCredentialRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
-    let replacement =
-        ProviderCredentialSecret::new(body.replacement).map_err(SponsorshipError::from)?;
+    let SponsorshipJson(body) = body?;
+    let replacement = provider_credential_secret(body.replacement)?;
     let credential = service(&state)?
         .rotate_credential(
             &caller,
@@ -751,9 +897,9 @@ async fn revoke_credential(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(credential_id): Path<String>,
-    body: Result<Json<StableRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<StableRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
+    let SponsorshipJson(body) = body?;
     let credential = service(&state)?
         .revoke_credential(
             &caller,
@@ -783,9 +929,9 @@ async fn revoke_credential(
 async fn create_policy(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<CreatePolicyRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<CreatePolicyRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
+    let SponsorshipJson(body) = body?;
     let CreatePolicyRequest {
         tenant_id,
         owner,
@@ -802,13 +948,14 @@ async fn create_policy(
         max_concurrent_launches,
         expires_at,
     } = body;
+    let owner = owner.resolve(&caller.subject)?;
     let sponsorships = service(&state)?;
     let policy = sponsorships
         .create_policy(
             &caller,
             CreateSponsorshipPolicy {
                 tenant_id,
-                owner: owner.resolve(&caller.subject),
+                owner,
                 credential_id: parse_credential_id(credential_id)?,
                 provider_policy: SponsoredProviderPolicy {
                     provider,
@@ -831,6 +978,41 @@ async fn create_policy(
         .await?;
     let policy = sponsorships.policy_view(&caller, &policy.id).await?;
     Ok(private_json(StatusCode::CREATED, PolicyView::from(policy)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/sponsorships/policies",
+    tag = "sponsorships",
+    params(("limit" = Option<u32>, Query), ("cursor" = Option<String>, Query)),
+    responses(
+        (status = 200, description = "Newest-first owner policy page with durable accounting", body = [PolicyView]),
+        (status = 422, description = "Continuation is invalid for this collection", body = super::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Sponsorship persistence is unavailable", body = super::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+async fn list_policies(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    params: Result<Query<SponsorshipPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, SponsorshipRequestFailure> {
+    let Query(params) = params.map_err(SponsorshipQueryProblem::from)?;
+    let request = params
+        .store_request(SponsorshipPageCollection::Policies)
+        .map_err(SponsorshipError::from)?;
+    let page = service(&state)?.policy_views(&caller, &request).await?;
+    let headers = params.next_headers(
+        "/api/v1/sponsorships/policies",
+        SponsorshipPageCollection::Policies,
+        page.next.as_ref(),
+    );
+    Ok(private_page_json(
+        page.items
+            .into_iter()
+            .map(PolicyView::from)
+            .collect::<Vec<_>>(),
+        headers,
+    ))
 }
 
 #[utoipa::path(
@@ -944,9 +1126,9 @@ async fn accept_terms(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(launch_id): Path<String>,
-    body: Result<Json<AcceptTermsRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<AcceptTermsRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
+    let SponsorshipJson(body) = body?;
     let acceptance = service(&state)?
         .accept_terms(
             &caller,
@@ -989,6 +1171,55 @@ async fn read_launch_grant(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/sponsorships/grants",
+    tag = "sponsorships",
+    params(
+        ("role" = GrantCollectionRole, Query),
+        ("limit" = Option<u32>, Query),
+        ("cursor" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, description = "Newest-first contributor or sponsor grant page", body = [GrantView]),
+        (status = 422, description = "Role or continuation is invalid for this collection", body = super::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Sponsorship persistence is unavailable", body = super::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+async fn list_grants(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    params: Result<Query<GrantPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, SponsorshipRequestFailure> {
+    let Query(params) = params.map_err(SponsorshipQueryProblem::from)?;
+    let collection = params.collection();
+    let page_params = params.page();
+    let request = page_params
+        .store_request(collection)
+        .map_err(SponsorshipError::from)?;
+    let sponsorships = service(&state)?;
+    let page = match params.role {
+        GrantCollectionRole::Contributor => {
+            sponsorships
+                .contributor_grant_views(&caller, &request)
+                .await?
+        }
+        GrantCollectionRole::Sponsor => sponsorships.sponsor_grant_views(&caller, &request).await?,
+    };
+    let headers = page_params.next_headers(
+        "/api/v1/sponsorships/grants",
+        collection,
+        page.next.as_ref(),
+    );
+    Ok(private_page_json(
+        page.items
+            .into_iter()
+            .map(GrantView::from)
+            .collect::<Vec<_>>(),
+        headers,
+    ))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/sponsorships/grants/{grant_id}/revoke",
     tag = "sponsorships",
@@ -1005,9 +1236,9 @@ async fn revoke_grant(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(grant_id): Path<String>,
-    body: Result<Json<StableRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<StableRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
+    let SponsorshipJson(body) = body?;
     let sponsorships = service(&state)?;
     let grant_id = parse_grant_id(grant_id)?;
     sponsorships
@@ -1034,9 +1265,9 @@ async fn close_grant(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(grant_id): Path<String>,
-    body: Result<Json<StableRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<StableRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
+    let SponsorshipJson(body) = body?;
     let sponsorships = service(&state)?;
     let grant_id = parse_grant_id(grant_id)?;
     sponsorships
@@ -1064,9 +1295,9 @@ async fn close_grant(
 async fn reserve_usage(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<ReserveUsageRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<ReserveUsageRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
+    let SponsorshipJson(body) = body?;
     let outcome = service(&state)?
         .reserve_usage(
             &caller,
@@ -1104,14 +1335,14 @@ async fn reserve_usage(
 async fn reconcile_usage(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<ReconcileUsageRequest>, axum::extract::rejection::JsonRejection>,
+    body: Result<SponsorshipJson<ReconcileUsageRequest>, SponsorshipBodyProblem>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Json(body) = body.map_err(BodyProblem::from)?;
+    let SponsorshipJson(body) = body?;
     let reservation = service(&state)?
         .reconcile_usage(
             &caller,
             ReportSponsoredUsage {
-                stable_request_id: body.stable_request_id,
+                reservation_id: parse_reservation_id(body.reservation_id)?,
                 request_fingerprint: body.request_fingerprint,
                 actual_quota: body.actual_quota.map(Into::into),
                 outcome: body.outcome.into(),
@@ -1140,7 +1371,7 @@ async fn read_actor_audit(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     params: Result<Query<AuditParams>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Response, SponsorshipRequestFailure> {
-    let Query(params) = params.map_err(QueryProblem)?;
+    let Query(params) = params.map_err(SponsorshipQueryProblem::from)?;
     let events = service(&state)?
         .actor_audit_events(&caller, params.limit)
         .await?
@@ -1169,20 +1400,67 @@ async fn engage_kill_switch(
     Ok(private_json(StatusCode::OK, GateFenceView::from(fence)))
 }
 
+enum SponsorshipBodyProblem {
+    Data,
+    Syntax,
+    MissingContentType,
+    Unreadable,
+    TooLarge,
+}
+
+impl IntoResponse for SponsorshipBodyProblem {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Data => {
+                json_problem_response(StatusCode::UNPROCESSABLE_ENTITY, JsonProblemKind::Data)
+            }
+            Self::Syntax => json_problem_response(StatusCode::BAD_REQUEST, JsonProblemKind::Syntax),
+            Self::MissingContentType => json_problem_response(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                JsonProblemKind::MissingContentType,
+            ),
+            Self::Unreadable => {
+                json_problem_response(StatusCode::BAD_REQUEST, JsonProblemKind::Unreadable)
+            }
+            Self::TooLarge => HttpProblem::RequestTooLarge.into_response(),
+        }
+    }
+}
+
+struct SponsorshipQueryProblem(StatusCode);
+
+impl From<axum::extract::rejection::QueryRejection> for SponsorshipQueryProblem {
+    fn from(error: axum::extract::rejection::QueryRejection) -> Self {
+        Self(error.status())
+    }
+}
+
+impl IntoResponse for SponsorshipQueryProblem {
+    fn into_response(self) -> Response {
+        let body = problem_document(
+            self.0,
+            "invalid-query",
+            "The query string does not match this operation's request schema.",
+            "invalid_query",
+        );
+        problem_response(self.0, body)
+    }
+}
+
 enum SponsorshipRequestFailure {
-    Body(BodyProblem),
-    Query(QueryProblem),
+    Body(SponsorshipBodyProblem),
+    Query(SponsorshipQueryProblem),
     Domain(SponsorshipProblem),
 }
 
-impl From<BodyProblem> for SponsorshipRequestFailure {
-    fn from(value: BodyProblem) -> Self {
+impl From<SponsorshipBodyProblem> for SponsorshipRequestFailure {
+    fn from(value: SponsorshipBodyProblem) -> Self {
         Self::Body(value)
     }
 }
 
-impl From<QueryProblem> for SponsorshipRequestFailure {
-    fn from(value: QueryProblem) -> Self {
+impl From<SponsorshipQueryProblem> for SponsorshipRequestFailure {
+    fn from(value: SponsorshipQueryProblem) -> Self {
         Self::Query(value)
     }
 }
@@ -1399,6 +1677,12 @@ impl IntoResponse for SponsorshipProblem {
 
 fn private_json(status: StatusCode, value: impl Serialize) -> Response {
     let mut response = (status, Json(value)).into_response();
+    add_private_headers(&mut response);
+    response
+}
+
+fn private_page_json(value: impl Serialize, headers: HeaderMap) -> Response {
+    let mut response = (headers, Json(value)).into_response();
     add_private_headers(&mut response);
     response
 }
