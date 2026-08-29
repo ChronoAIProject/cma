@@ -64,6 +64,7 @@ const LAUNCH_STATES = [
   'failed_terminal',
   'cancelled',
 ] as const;
+const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const BLOCKED_REASONS = [
   'feature_paused',
   'owner_credential_unavailable',
@@ -669,6 +670,12 @@ export interface LaunchReachStatus {
   readonly agent_key_revocation_confirmed: boolean;
 }
 
+/** Positive durable evidence that CMA retired credentials bound to this Launch session. */
+export interface LaunchSessionCredentialRetirement {
+  readonly session_id: string;
+  readonly settled_at: string;
+}
+
 export interface LaunchOverrides {
   readonly task_inputs: Readonly<Record<string, JsonValue>>;
   readonly work_label?: string;
@@ -953,6 +960,7 @@ export interface Launch {
   readonly branch: BranchRecord | null;
   readonly workspace: JsonObject | null;
   readonly session: JsonObject | null;
+  readonly session_credential_retirement: LaunchSessionCredentialRetirement | null;
   readonly reach: LaunchReachStatus | null;
   readonly delivery: PromptDelivery | null;
   readonly contribution_checkpoint_version: number | null;
@@ -1869,6 +1877,9 @@ export function decodeLaunch(raw: unknown): Launch {
   }
   if (body.delivery !== undefined && body.delivery !== null) decodePromptDelivery(body.delivery);
   if (body.connection !== undefined && body.connection !== null) decodeConnection(body.connection);
+  if (body.session_credential_retirement !== null) {
+    decodeLaunchSessionCredentialRetirement(body.session_credential_retirement);
+  }
   if (body.reach !== undefined && body.reach !== null) decodeLaunchReach(body.reach);
   if (body.diff !== undefined && body.diff !== null) decodeDiffArtifact(body.diff);
   if (body.contribution !== undefined && body.contribution !== null) {
@@ -2085,6 +2096,13 @@ function decodeLaunchReach(raw: unknown): LaunchReachStatus {
     requireEnumValue(reach.last_refusal, CAPABILITY_REFUSALS, 'Launch reach last_refusal');
   }
   return reach as unknown as LaunchReachStatus;
+}
+
+function decodeLaunchSessionCredentialRetirement(raw: unknown): LaunchSessionCredentialRetirement {
+  const retirement = safeObject(raw, 'Launch session credential retirement');
+  requireText(retirement, 'session_id', 'Launch session credential retirement');
+  requireTimestamp(retirement, 'settled_at', 'Launch session credential retirement');
+  return retirement as unknown as LaunchSessionCredentialRetirement;
 }
 
 function decodeDiffArtifact(raw: unknown): DiffArtifact {
@@ -2401,6 +2419,19 @@ function requireText(body: Record<string, unknown>, field: string, name: string)
   const value = body[field];
   if (typeof value !== 'string' || value.trim() === '')
     throw new ProtocolError(`${name} carried no ${field}`);
+  return value;
+}
+
+function requireTimestamp(body: Record<string, unknown>, field: string, name: string): string {
+  const value = requireText(body, field, name);
+  const parsed = Date.parse(value);
+  const canonical = Number.isNaN(parsed) ? '' : new Date(parsed).toISOString();
+  if (
+    !UTC_TIMESTAMP.test(value) ||
+    (value !== canonical && value !== canonical.replace('.000Z', 'Z'))
+  ) {
+    throw new ProtocolError(`${name} carried an invalid ${field}`);
+  }
   return value;
 }
 
