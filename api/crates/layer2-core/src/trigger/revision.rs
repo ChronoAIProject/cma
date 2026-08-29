@@ -6,7 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::ConnectionSnapshot;
+use super::{ConnectionSnapshot, SponsorshipPolicyId};
 use crate::{
     format_usd, AgentConfiguration, CredentialMode, KernelId, PermissionMode, SessionMode,
     SessionSize, SubjectId, CURRENCY,
@@ -24,6 +24,7 @@ pub const MAX_CAPABILITIES: usize = 32;
 pub const CMA_TRIGGER_SANDBOX_PROFILE_V1: &str = "cma-trigger-v1";
 pub const CMA_TRIGGER_ZERO_COST_POLICY_V1: &str = "public-zero-cost-v1";
 pub const CMA_TRIGGER_CONTRIBUTOR_POLICY_V1: &str = "platform-rate-card-v1";
+pub const CMA_TRIGGER_SPONSORED_POLICY_V1: &str = "sponsored-grant-v1";
 
 /// A deployment-owned Trigger execution policy understood by this binary.
 ///
@@ -425,11 +426,26 @@ pub enum BillingMode {
     Sponsored,
 }
 
+/// Immutable tenant and policy authority selected by a sponsoring publisher.
+///
+/// This is separate from `policy_reference`: the latter names the closed CMA
+/// billing contract, while this binding names one owner-controlled policy.
+/// Keeping both typed prevents a policy UUID from being reinterpreted as a
+/// deployment configuration identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SponsoredPolicyBinding {
+    pub tenant_id: String,
+    pub policy_id: SponsorshipPolicyId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommercialPolicy {
     pub billing_mode: BillingMode,
     pub policy_reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sponsorship: Option<SponsoredPolicyBinding>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -560,18 +576,55 @@ impl TriggerRevisionContent {
                 "must not contain the reserved CMA marker prefix",
             ));
         }
-        if self.commercial_policy.billing_mode == BillingMode::Sponsored
-            || self.repository_access.credential_route == CredentialRoute::SponsoredGrant
-        {
+        if self.repository_access.credential_route == CredentialRoute::SponsoredGrant {
             return Err(TriggerValidationError::field(
-                "commercial_policy",
-                "sponsored credentials are disabled in the public MVP",
+                "repository_access.credential_route",
+                "GitHub authority must remain the contributor's selected connection",
             ));
         }
         let expected_pricing_policy = match self.commercial_policy.billing_mode {
-            BillingMode::ZeroCost => CMA_TRIGGER_ZERO_COST_POLICY_V1,
-            BillingMode::Contributor => CMA_TRIGGER_CONTRIBUTOR_POLICY_V1,
-            BillingMode::Sponsored => unreachable!("sponsorship is refused above"),
+            BillingMode::ZeroCost => {
+                if self.commercial_policy.sponsorship.is_some() {
+                    return Err(TriggerValidationError::field(
+                        "commercial_policy.sponsorship",
+                        "must be absent for zero-cost billing",
+                    ));
+                }
+                CMA_TRIGGER_ZERO_COST_POLICY_V1
+            }
+            BillingMode::Contributor => {
+                if self.commercial_policy.sponsorship.is_some() {
+                    return Err(TriggerValidationError::field(
+                        "commercial_policy.sponsorship",
+                        "must be absent for contributor billing",
+                    ));
+                }
+                CMA_TRIGGER_CONTRIBUTOR_POLICY_V1
+            }
+            BillingMode::Sponsored => {
+                let binding = self.commercial_policy.sponsorship.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "commercial_policy.sponsorship",
+                        "is required for sponsored billing",
+                    )
+                })?;
+                if binding.tenant_id.trim().is_empty()
+                    || binding.tenant_id.len() > 255
+                    || binding.tenant_id.chars().any(char::is_control)
+                {
+                    return Err(TriggerValidationError::field(
+                        "commercial_policy.sponsorship.tenant_id",
+                        "must contain 1-255 printable bytes",
+                    ));
+                }
+                SponsorshipPolicyId::parse(binding.policy_id.0.clone()).map_err(|_| {
+                    TriggerValidationError::field(
+                        "commercial_policy.sponsorship.policy_id",
+                        "must be a canonical sponsorship policy UUID",
+                    )
+                })?;
+                CMA_TRIGGER_SPONSORED_POLICY_V1
+            }
         };
         if self.commercial_policy.policy_reference != expected_pricing_policy {
             return Err(TriggerValidationError::field(

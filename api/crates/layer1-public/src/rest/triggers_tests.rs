@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -3153,6 +3153,101 @@ async fn rollout_denials_are_typed_without_exposing_policy_configuration() {
     }
 }
 
+#[tokio::test]
+async fn unconfigured_sponsorship_route_fails_closed_without_reflecting_credentials() {
+    const CREDENTIAL_MARKER: &str = "sponsorship-secret-do-not-reflect";
+    let fixture = Fixture::new();
+    let app: axum::Router = crate::rest::sponsorships::documented_router(fixture.state()).into();
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/sponsorships/credentials")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "stable_request_id": "33333333-3333-4333-8333-333333333333",
+                "owner": {
+                    "kind": "developer",
+                    "display_name": "Sponsor"
+                },
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "credential": CREDENTIAL_MARKER
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+    request
+        .extensions_mut()
+        .insert(Authorization::from_capabilities([
+            Capability::ManageOwnSponsorships,
+        ]));
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "sponsorship_unavailable");
+    assert!(!body.to_string().contains(CREDENTIAL_MARKER));
+}
+
+#[test]
+fn sponsorship_openapi_is_complete_secret_aware_and_has_no_activation_command() {
+    let documented = crate::rest::sponsorships::documented_router(Fixture::new().state());
+    let document = serde_json::to_value(documented.get_openapi()).unwrap();
+    let paths = document["paths"].as_object().unwrap();
+    let expected = BTreeSet::from([
+        "/api/v1/launches/{launch_id}/sponsorship/acceptance",
+        "/api/v1/launches/{launch_id}/sponsorship/grant",
+        "/api/v1/launches/{launch_id}/sponsorship/terms",
+        "/api/v1/sponsorships/audit",
+        "/api/v1/sponsorships/credentials",
+        "/api/v1/sponsorships/credentials/{credential_id}",
+        "/api/v1/sponsorships/credentials/{credential_id}/revoke",
+        "/api/v1/sponsorships/credentials/{credential_id}/rotate",
+        "/api/v1/sponsorships/grants/{grant_id}/close",
+        "/api/v1/sponsorships/grants/{grant_id}/revoke",
+        "/api/v1/sponsorships/kill-switch",
+        "/api/v1/sponsorships/policies",
+        "/api/v1/sponsorships/policies/{policy_id}",
+        "/api/v1/sponsorships/policies/{policy_id}/revoke",
+        "/api/v1/sponsorships/policies/{policy_id}/suspend",
+        "/api/v1/sponsorships/usage/reconciliations",
+        "/api/v1/sponsorships/usage/reservations",
+    ]);
+    assert_eq!(
+        paths.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        expected
+    );
+    assert!(paths.keys().all(|path| !path.contains("activate")));
+
+    assert_eq!(
+        document["components"]["schemas"]["RegisterCredentialRequest"]["properties"]["credential"]
+            ["format"],
+        "password"
+    );
+    assert_eq!(
+        document["components"]["schemas"]["RotateCredentialRequest"]["properties"]["replacement"]
+            ["format"],
+        "password"
+    );
+    let reservation_responses =
+        &document["paths"]["/api/v1/sponsorships/usage/reservations"]["post"]["responses"];
+    for status in ["200", "201", "429", "503"] {
+        assert!(
+            reservation_responses.get(status).is_some(),
+            "usage reservation is missing its {status} contract"
+        );
+    }
+}
+
 fn trigger_content_request_value(content: &TriggerRevisionContent) -> Value {
     let mut request = serde_json::to_value(content).unwrap();
     let upstream = request["upstream"].clone();
@@ -3640,6 +3735,7 @@ impl Fixture {
             }),
             operations: self.operations.clone(),
             diff_artifacts: Some(self.artifacts.clone()),
+            sponsorships: None,
         }
     }
 
@@ -4475,6 +4571,7 @@ fn content(owner: SubjectId) -> TriggerRevisionContent {
         commercial_policy: CommercialPolicy {
             billing_mode: BillingMode::ZeroCost,
             policy_reference: "public-zero-cost-v1".into(),
+            sponsorship: None,
         },
         override_policy: OverridePolicy {
             editable_fields: vec![EditableField::TaskInput],

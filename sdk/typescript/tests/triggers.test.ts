@@ -583,6 +583,44 @@ describe('Trigger response validation', () => {
     expect(pullRequest.operation).toBe('open');
   });
 
+  it('decodes an optional typed sponsorship binding and rejects malformed present bindings', () => {
+    const raw = structuredClone(LAUNCH);
+    const content = raw.revision_content as Record<string, unknown>;
+    const sponsoredPolicy = {
+      billing_mode: 'sponsored',
+      policy_reference: 'sponsored-grant-v1',
+      sponsorship: {
+        tenant_id: 'tenant-sponsored',
+        policy_id: '11111111-1111-4111-8111-111111111111',
+      },
+    };
+    const sponsored = decodeLaunch({
+      ...raw,
+      revision_content: { ...content, commercial_policy: sponsoredPolicy },
+    });
+    expect(sponsored.revision_content.commercial_policy.sponsorship).toEqual(
+      sponsoredPolicy.sponsorship,
+    );
+
+    for (const sponsorship of [
+      null,
+      {},
+      { tenant_id: 'tenant-sponsored' },
+      { policy_id: '11111111-1111-4111-8111-111111111111' },
+      { tenant_id: 7, policy_id: '11111111-1111-4111-8111-111111111111' },
+    ]) {
+      expect(() =>
+        decodeLaunch({
+          ...raw,
+          revision_content: {
+            ...content,
+            commercial_policy: { ...sponsoredPolicy, sponsorship },
+          },
+        }),
+      ).toThrow(ProtocolError);
+    }
+  });
+
   it('requires paired authoritative line statistics on every diff file', async () => {
     const raw = fixture('diff_review.json') as Record<string, unknown>;
     const artifact = raw.artifact as Record<string, unknown>;
