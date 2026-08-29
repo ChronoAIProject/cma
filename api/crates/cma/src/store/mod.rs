@@ -16,6 +16,11 @@ pub mod mongo;
 pub mod operation;
 pub mod settings;
 pub mod skill_packs;
+// Implemented for recovery verification, but deliberately uncomposed until #671 is enabled.
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod sponsorship;
+#[cfg_attr(not(test), allow(dead_code))]
+mod sponsorship_encryption;
 pub mod tickets;
 pub mod token;
 pub mod trigger;

@@ -37,8 +37,7 @@ pub(super) fn usage_idempotency_fingerprint(
 ) -> Result<String, TriggerValidationError> {
     command.capability.validate()?;
     canonical_digest(&(
-        "cma-sponsored-usage-idempotency-v1",
-        &command.stable_request_id,
+        "cma-sponsored-usage-idempotency-v2",
         &command.grant_id,
         requester,
         &command.provider,
@@ -94,6 +93,28 @@ pub(super) fn require_grant_bindings(
     Ok(())
 }
 
+pub(super) fn require_stored_grant_policy_bindings(
+    grant: &SponsoredGrant,
+    policy: &SponsorshipPolicy,
+) -> Result<(), SponsorshipStoreError> {
+    grant
+        .validate()
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    policy
+        .validate()
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    if grant.policy_id != policy.id
+        || grant.tenant_id != policy.tenant_id
+        || grant.sponsor_subject != *policy.owner.controller()
+        || grant.policy_generation > policy.generation
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "stored grant authority does not match its referenced sponsorship policy".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_provider_grant_receipt(
     receipt: &ProviderGrantReceipt,
     policy: &SponsorshipPolicy,
@@ -137,23 +158,34 @@ pub(super) fn validate_provider_grant_receipt(
 }
 
 pub(super) fn require_receipt_matches_grant(
+    operational: &SponsorshipOperationalPseudonymizer,
     receipt: &ProviderGrantReceipt,
     grant: &SponsoredGrant,
 ) -> Result<(), SponsorshipError> {
-    let grant_id_digest = sensitive_digest(
-        "cma-provider-grant-id-v1",
-        receipt
-            .provider_grant_id
-            .expose_for_provider_or_encryption(),
-    );
-    let revocation_digest = sensitive_digest(
-        "cma-provider-revocation-handle-v1",
-        receipt
-            .revocation_handle
-            .expose_for_provider_or_encryption(),
-    );
-    if grant.authority.provider_grant_id_digest != grant_id_digest
-        || grant.authority.revocation_handle_digest != revocation_digest
+    let grant_id_candidates = operational.pseudonymize(
+        SponsorshipOperationalDomain::ProviderGrantAuthority,
+        &[
+            &grant.id.0,
+            receipt
+                .provider_grant_id
+                .expose_for_provider_or_encryption(),
+        ],
+    )?;
+    let revocation_candidates = operational.pseudonymize(
+        SponsorshipOperationalDomain::ProviderRevocationAuthority,
+        &[
+            &grant.id.0,
+            receipt
+                .revocation_handle
+                .expose_for_provider_or_encryption(),
+        ],
+    )?;
+    if !grant_id_candidates
+        .iter()
+        .any(|candidate| candidate.as_str() == grant.authority.provider_grant_id_digest)
+        || !revocation_candidates
+            .iter()
+            .any(|candidate| candidate.as_str() == grant.authority.revocation_handle_digest)
         || grant.authority.provider_state_version != receipt.provider_state_version
         || grant.authority.expires_at != receipt.expires_at
         || grant.authority.issued_at != receipt.issued_at
@@ -164,23 +196,6 @@ pub(super) fn require_receipt_matches_grant(
         .into());
     }
     Ok(())
-}
-
-pub(super) fn activation_operation_id(
-    operation: &str,
-    launch: &SponsoredLaunchAuthority,
-    acceptance: &SponsoredGrantAcceptance,
-    policy_generation: u64,
-    credential_generation: u64,
-) -> Result<String, TriggerValidationError> {
-    canonical_digest(&(
-        "cma-sponsored-activation-operation-v1",
-        operation,
-        &launch.digest,
-        &acceptance.digest,
-        policy_generation,
-        credential_generation,
-    ))
 }
 
 pub(super) fn activation_fingerprint(
@@ -201,50 +216,6 @@ pub(super) fn activation_fingerprint(
         policy_generation,
         credential_generation,
     ))
-}
-
-pub(super) fn activation_cleanup_operation(
-    intent: &GrantActivationIntent,
-    now: &str,
-) -> Result<PendingProviderOperation, TriggerValidationError> {
-    let receipt = intent.provider_receipt.as_ref().ok_or_else(|| {
-        TriggerValidationError::field(
-            "grant_activation.provider_receipt",
-            "is required before provider cleanup",
-        )
-    })?;
-    let payload_digest = canonical_digest(&(
-        "cma-sponsored-uncommitted-grant-cleanup-payload-v1",
-        &intent.provider_request_id,
-        sensitive_digest(
-            "cma-provider-grant-id-v1",
-            receipt
-                .provider_grant_id
-                .expose_for_provider_or_encryption(),
-        ),
-        sensitive_digest(
-            "cma-provider-revocation-handle-v1",
-            receipt
-                .revocation_handle
-                .expose_for_provider_or_encryption(),
-        ),
-        receipt.provider_state_version,
-        &receipt.expires_at,
-    ))?;
-    let provider_request_id = canonical_digest(&(
-        "cma-sponsored-uncommitted-grant-cleanup-operation-v1",
-        &intent.provider_request_id,
-        &payload_digest,
-    ))?;
-    Ok(PendingProviderOperation {
-        kind: ProviderOperationKind::RevokeUncommittedGrant,
-        phase: ProviderOperationPhase::Prepared,
-        client_request_id_digest: provider_request_id.clone(),
-        provider_request_id,
-        payload_digest,
-        requested_at: now.to_string(),
-        attempted_at: None,
-    })
 }
 
 pub(super) fn credential_operation_id(
@@ -290,7 +261,7 @@ pub(super) fn provider_operation_kind_name(kind: ProviderOperationKind) -> &'sta
 pub(super) fn deterministic_grant_id(
     provider_request_id: &str,
 ) -> Result<SponsoredGrantId, TriggerValidationError> {
-    validate_digest("provider_request_id", provider_request_id)?;
+    SponsorshipOperationalPseudonym::parse(provider_request_id.to_string())?;
     let digest = Sha256::digest(
         [
             b"cma-sponsored-grant-id-v1:".as_slice(),
@@ -310,10 +281,7 @@ pub(super) fn deterministic_credential_id(
     authority: &ProviderCredentialAuthority,
 ) -> Result<SponsoredCredentialId, TriggerValidationError> {
     validate_policy_token("credential.provider", &authority.provider)?;
-    validate_digest(
-        "credential.provider_credential_id_digest",
-        &authority.provider_credential_id_digest,
-    )?;
+    SponsorshipOperationalPseudonym::parse(authority.provider_credential_id_digest.clone())?;
     let identity = canonical_digest(&(
         "cma-sponsored-credential-identity-v1",
         &authority.provider,
@@ -434,15 +402,6 @@ pub(super) fn validate_timestamp(field: &str, value: &str) -> Result<(), Trigger
         ));
     }
     Ok(())
-}
-
-pub(super) fn sensitive_digest(domain: &str, value: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(domain.as_bytes());
-    hasher.update([0]);
-    hasher.update((value.len() as u64).to_be_bytes());
-    hasher.update(value.as_bytes());
-    lower_hex(hasher.finalize())
 }
 
 pub(super) fn canonical_digest<T: Serialize + ?Sized>(

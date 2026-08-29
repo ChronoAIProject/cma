@@ -173,6 +173,53 @@ async fn rest_links(request: Request, next: Next) -> Response {
     response
 }
 
+/// Keep sponsorship responses private even when an outer production guard
+/// refuses the request before a sponsorship handler can run.
+fn with_sponsorship_privacy(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(sponsorship_privacy))
+}
+
+async fn sponsorship_privacy(request: Request, next: Next) -> Response {
+    let private = is_sponsorship_path(request.uri().path());
+    let mut response = next.run(request).await;
+    if private {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response.headers_mut().insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        );
+    }
+    response
+}
+
+fn is_sponsorship_path(path: &str) -> bool {
+    sponsorship_span_path(path).is_some()
+}
+
+fn sponsorship_span_path(path: &str) -> Option<&'static str> {
+    if path == "/api/v1/sponsorships" {
+        return Some("/api/v1/sponsorships");
+    }
+    if path.starts_with("/api/v1/sponsorships/") {
+        return Some("/api/v1/sponsorships/{redacted}");
+    }
+    let rest = path.strip_prefix("/api/v1/launches/")?;
+    let (_, launch_resource) = rest.split_once('/')?;
+    if launch_resource == "sponsorship" {
+        return Some("/api/v1/launches/{launch_id}/sponsorship");
+    }
+    launch_resource
+        .split('/')
+        .any(|segment| segment == "sponsorship")
+        .then_some("/api/v1/launches/{launch_id}/sponsorship/{redacted}")
+}
+
+fn request_span_path(path: &str) -> &str {
+    sponsorship_span_path(path).unwrap_or(path)
+}
+
 /// Apply the browser boundary shared by every public interface.
 ///
 /// Origins remain an explicit deployment grant. A wildcard is incompatible
@@ -337,7 +384,7 @@ fn request_span(request: &Request) -> tracing::Span {
         "http.request",
         request_id = %request_id,
         method = %request.method(),
-        path = %request.uri().path(),
+        path = %request_span_path(request.uri().path()),
     )
 }
 
@@ -968,6 +1015,9 @@ async fn serve_normal_control_plane() {
             diff_artifacts: trigger_workspace_store
                 .clone()
                 .map(|store| store as Arc<dyn layer2_core::DiffArtifactObjectStore>),
+            // Real provider, billing, and pricing adapters are not composed.
+            // Keep the documented sponsorship surface fail-closed.
+            sponsorships: None,
         }),
     };
     let rest = rest_api_router(
@@ -984,7 +1034,7 @@ async fn serve_normal_control_plane() {
     let rate_limits =
         rate_limit::RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
 
-    let app = with_request_context(with_cors(
+    let app = with_sponsorship_privacy(with_request_context(with_cors(
         Router::new()
             .merge(health::router(store))
             .merge(rest)
@@ -1027,7 +1077,7 @@ async fn serve_normal_control_plane() {
             // chosen ceiling. The activity recorder uses the same constant.
             .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES)),
         config.cors_origins.clone(),
-    ));
+    )));
 
     let listener = match tokio::net::TcpListener::bind(&config.bind).await {
         Ok(l) => l,
@@ -1247,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn request_span_records_correlation_without_query_credentials() {
+    fn request_span_redacts_sponsorship_paths_and_query_credentials() {
         use tracing::{field::Visit, span::Attributes, Subscriber};
         use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer};
 
@@ -1282,7 +1332,7 @@ mod tests {
         let fields = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::registry().with(Capture(Arc::clone(&fields)));
         tracing::subscriber::with_default(subscriber, || {
-            let request = Request::get(
+            let ordinary_request = Request::get(
                 "/api/v1/sessions/sesn_trace_canary/terminal\
                  ?ticket=pty-ticket-secret-488&code=oauth-code-secret-488\
                  &state=oauth-state-secret-488",
@@ -1290,7 +1340,40 @@ mod tests {
             .header("x-request-id", "48800000-0000-4000-8000-000000000006")
             .body(axum::body::Body::empty())
             .expect("request builds");
-            let _span = request_span(&request);
+            let _ordinary_span = request_span(&ordinary_request);
+            let sponsorship_request = Request::get(
+                "/api/v1/sponsorships/credentials/credential-path-marker-488/\
+                 malformed-suffix-marker-488?cursor=sponsorship-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("sponsorship request builds");
+            let _sponsorship_span = request_span(&sponsorship_request);
+            let launch_request = Request::get(
+                "/api/v1/launches/launch-path-marker-488/sponsorship/\
+                 malformed-launch-suffix-marker-488?cursor=launch-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("Launch sponsorship request builds");
+            let _launch_span = request_span(&launch_request);
+            let empty_launch_request = Request::get(
+                "/api/v1/launches//sponsorship/malformed-empty-launch-marker-488\
+                 ?cursor=empty-launch-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("empty Launch sponsorship request builds");
+            let _empty_launch_span = request_span(&empty_launch_request);
+            let repeated_separator_request = Request::get(
+                "/api/v1/launches/repeated-launch-marker-488//sponsorship/\
+                 malformed-repeated-marker-488?cursor=repeated-launch-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("repeated-separator sponsorship request builds");
+            let _repeated_separator_span = request_span(&repeated_separator_request);
+            let ordinary_launch_request =
+                Request::get("/api/v1/launches/ordinary-launch-control-489/status")
+                    .body(axum::body::Body::empty())
+                    .expect("ordinary Launch request builds");
+            let _ordinary_launch_span = request_span(&ordinary_launch_request);
         });
         let fields = fields.lock().expect("capture lock is usable");
         assert!(
@@ -1304,10 +1387,41 @@ mod tests {
             }),
             "request span must carry the request path: {fields:?}"
         );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path" && value.contains("/api/v1/sponsorships/{redacted}")
+            }),
+            "sponsorship spans must use a fixed redacted path: {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path"
+                    && value.contains("/api/v1/launches/{launch_id}/sponsorship/{redacted}")
+            }),
+            "Launch sponsorship spans must redact the Launch and suffix: {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path"
+                    && value.contains("/api/v1/launches/ordinary-launch-control-489/status")
+            }),
+            "ordinary Launch spans must preserve their request path: {fields:?}"
+        );
         for secret in [
             "pty-ticket-secret-488",
             "oauth-code-secret-488",
             "oauth-state-secret-488",
+            "credential-path-marker-488",
+            "malformed-suffix-marker-488",
+            "sponsorship-query-marker-488",
+            "launch-path-marker-488",
+            "malformed-launch-suffix-marker-488",
+            "launch-query-marker-488",
+            "malformed-empty-launch-marker-488",
+            "empty-launch-query-marker-488",
+            "repeated-launch-marker-488",
+            "malformed-repeated-marker-488",
+            "repeated-launch-query-marker-488",
         ] {
             assert!(
                 fields.iter().all(|(_, value)| !value.contains(secret)),
