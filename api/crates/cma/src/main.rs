@@ -520,6 +520,7 @@ async fn serve_normal_control_plane() {
         rate_input_per_minute = config.rate_limits.input_per_minute.get(),
         trusted_proxy_networks = config.trusted_proxies.cidrs.len(),
         trusted_proxy_hops = config.trusted_proxies.forwarded_hops,
+        cloudflare_proxy_networks = config.trusted_proxies.cloudflare_cidrs.len(),
         "configuration loaded"
     );
 

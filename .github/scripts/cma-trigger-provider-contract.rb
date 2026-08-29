@@ -29,8 +29,11 @@ TRIGGER_AUTHORITY_KEYS = [
 ].freeze
 
 PATHS = {
+  ci_workflow: ".github/workflows/ci.yml",
   workflow: ".github/workflows/cma-trigger-provider-smoke.yml",
   smoke: ".github/scripts/cma-trigger-provider-smoke.mjs",
+  settlement: ".github/scripts/cma-trigger-provider-object-settlement.mjs",
+  settlement_tests: ".github/scripts/cma-trigger-provider-object-settlement-tests.mjs",
   example: ".github/cma-trigger-provider-smoke.example.json",
   configmap: "infra/api/configmap.yaml",
   deployment: "infra/api/deployment.yaml",
@@ -43,6 +46,29 @@ PATHS = {
   hosted: "api/crates/layer3-adapter/src/hosted/mod.rs",
   reclaimer: "api/crates/layer3-adapter/src/sandbox_reclaimer.rs",
 }.freeze
+
+PINNED_PROVIDER_ACTIONS = {
+  "actions/checkout" => "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+  "actions/download-artifact" => "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+  "actions/setup-node" => "249970729cb0ef3589644e2896645e5dc5ba9c38",
+  "azure/setup-kubectl" => "776406bce94f63e41d621b960d78ee25c8b76ede",
+  "actions/upload-artifact" => "ea165f8d65b6e75b540449e92b4886f43607fa02",
+}.freeze
+
+PINNED_CI_IMAGE_ACTION_REFS = [
+  "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+  "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
+  "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+  "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
+  "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
+  "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+  "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
+  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+].freeze
+
+CI_IMAGE_PROVENANCE_CONDITION =
+  "${{ success() && github.repository_id == '1330597394' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && (matrix.component == 'api' || matrix.component == 'runtime') }}"
 
 class ContractError < StandardError; end
 
@@ -65,11 +91,18 @@ def contains_in_order?(source, needles)
   end
 end
 
+def closed_key_sets(source)
+  source.scan(/keys\)?\s*==\s*\[(.*?)\]/m).map do |match|
+    match.first.scan(/"([^"]+)"/).flatten
+  end
+end
+
 def source_matches(source, pattern, message)
   check(source.match?(pattern), message)
 end
 
 def load_inputs
+  ci_workflow_source = File.read(File.join(ROOT, PATHS.fetch(:ci_workflow)))
   workflow_source = File.read(File.join(ROOT, PATHS.fetch(:workflow)))
   example_source = File.read(File.join(ROOT, PATHS.fetch(:example)))
   manifests = {}
@@ -78,10 +111,21 @@ def load_inputs
     manifests[name] = YAML.safe_load_stream(source, aliases: true).compact
   end
   sources = {}
-  [:smoke, :trigger, :config, :kernels, :codex, :hosted, :reclaimer].each do |name|
+  [
+    :smoke,
+    :settlement,
+    :settlement_tests,
+    :trigger,
+    :config,
+    :kernels,
+    :codex,
+    :hosted,
+    :reclaimer,
+  ].each do |name|
     sources[name] = File.read(File.join(ROOT, PATHS.fetch(name)))
   end
   {
+    ci_workflow: YAML.safe_load(ci_workflow_source, aliases: true),
     workflow: YAML.safe_load(workflow_source, aliases: true),
     example: JSON.parse(example_source),
     manifests: manifests,
@@ -119,6 +163,7 @@ def verify_example(example)
     "public_id",
     "revision_digest",
     "runtime_image_digest",
+    "runtime_image_ids",
     "schema_version",
     "source_sha",
     "task",
@@ -134,6 +179,159 @@ def verify_example(example)
     dns1123_label?(example["trigger_sandbox_namespace"]),
     "provider example must bind one exact Trigger sandbox namespace",
   )
+  check(
+    example["schema_version"] == 3 &&
+      example["runtime_image_ids"].is_a?(Array) &&
+      example["runtime_image_ids"].include?(example["runtime_image_digest"]),
+    "provider example must bind the closed runtime image identity set",
+  )
+  check(
+    example["fixture_policy"] == {
+      "repository_owner" => "ChronoAIProject",
+      "lifecycle" => "persistent_public_fixture",
+      "secrets" => "forbidden",
+      "github_cleanup" => "preserve",
+      "cma_state_cleanup" => "destroy_with_terminal_ephemeral_environment",
+      "session_cleanup" => "stop_runtime_before_terminal_ephemeral_teardown",
+    },
+    "provider example must state the exact terminal ephemeral lifecycle",
+  )
+end
+
+def verify_ci_image_provenance(ci_workflow)
+  jobs = ci_workflow.fetch("jobs")
+  images = jobs.fetch("images")
+  check(
+    images["name"] == "Images" &&
+      images["runs-on"] == "ubuntu-24.04" && images["timeout-minutes"] == 60,
+    "CI image provenance must retain the reviewed job name, Ubuntu runner, and transfer timeout",
+  )
+  check(
+    images.dig("strategy", "matrix", "component") == %w[api web runtime],
+    "CI image matrix must retain api, web, and runtime",
+  )
+  image_steps = images.fetch("steps")
+  action_refs = image_steps.each_with_object([]) do |step, refs|
+    refs << step["uses"] if step.is_a?(Hash) && step["uses"]
+  end
+  check(
+    action_refs == PINNED_CI_IMAGE_ACTION_REFS &&
+      action_refs.all? { |ref| ref.match?(%r{\A[^/@]+/[^/@]+@[0-9a-f]{40}\z}) },
+    "every CI image-provenance action must retain its exact reviewed SHA",
+  )
+
+  build = named_step(image_steps, "Build image for all target platforms")
+  load = named_step(image_steps, "Load native image for scanning")
+  runtime_pass = named_step(image_steps, "Require passing Trigger runtime evidence")
+  scan = named_step(image_steps, "Vulnerability scan")
+  export = named_step(image_steps, "Export scanned image provenance")
+  upload = named_step(image_steps, "Upload scanned image provenance")
+  check(build && load && runtime_pass && scan && export && upload, "CI image provenance chain is incomplete")
+  [build, load].each do |step|
+    check(
+      step.dig("with", "build-args").to_s.include?("CHRONO_BUILD_SHA=${{ github.sha }}"),
+      "CI image builds must bind the exact source SHA",
+    )
+  end
+  check(
+    scan["uses"] == "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" &&
+      scan.dig("with", "image-ref") == "cma-${{ matrix.component }}:ci" &&
+      scan.dig("with", "exit-code") == "1",
+    "CI image provenance must follow the reviewed failing Trivy gate",
+  )
+  check(
+    image_steps.index(load) < image_steps.index(runtime_pass) &&
+      image_steps.index(runtime_pass) < image_steps.index(scan) &&
+      image_steps.index(scan) < image_steps.index(export) &&
+      image_steps.index(export) < image_steps.index(upload),
+    "CI must load, runtime-gate, scan, export, then upload image provenance",
+  )
+
+  check(
+    export["if"] == CI_IMAGE_PROVENANCE_CONDITION &&
+      upload["if"] == CI_IMAGE_PROVENANCE_CONDITION,
+    "CI image provenance must be restricted to successful develop pushes for api and runtime",
+  )
+  check(
+    export.fetch("env") == {
+      "COMPONENT" => "${{ matrix.component }}",
+      "EXPECTED_REPOSITORY_ID" => "1330597394",
+      "IMAGE_EXPORT_ROOT" => "${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}",
+    },
+    "CI image export must bind its reviewed repository and exact-SHA path",
+  )
+  export_run = export.fetch("run")
+  [
+    'component="$COMPONENT"',
+    'case "$component" in',
+    "api|runtime)",
+    '[ "$GITHUB_EVENT_NAME" != push ]',
+    '[ "$GITHUB_REF" != refs/heads/develop ]',
+    '[ "$GITHUB_REPOSITORY_ID" != "$EXPECTED_REPOSITORY_ID" ]',
+    '[[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]',
+    'reference="cma-${component}:ci"',
+    'archive_name="cma-trigger-${component}.tar"',
+    'metadata_name="cma-trigger-${component}.json"',
+    "docker image inspect --format '{{.Id}}' \"$reference\"",
+    'docker image save --output "$archive_path" "$reference"',
+    'archive_sha256=$(sha256sum "$archive_path"',
+    "archive_size=$(stat --format='%s' \"$archive_path\")",
+    '--arg source_sha "$GITHUB_SHA"',
+    'kind: "cma-trigger-ci-image"',
+    'source_sha: $source_sha',
+    '.source_sha == $source_sha',
+    '.image_id == $image_id',
+    '.archive_sha256 == $archive_sha256',
+    '.archive_size == $archive_size',
+    'chmod 0400 "$archive_path"',
+    'chmod 0400 "$metadata_path"',
+  ].each do |contract|
+    check(export_run.include?(contract), "CI image export is missing #{contract}")
+  end
+  metadata_schema = export_run.match(/and \(keys == \[(.*?)\]\)/m)
+  metadata_keys = metadata_schema ? metadata_schema[1].scan(/"([^"]+)"/).flatten : []
+  check(
+    metadata_keys == %w[
+      archive_name archive_sha256 archive_size component image_id image_reference
+      kind repository_id run_attempt run_id schema_version source_sha
+    ],
+    "CI image metadata must retain its exact closed schema",
+  )
+
+  upload_with = upload.fetch("with")
+  check(
+    upload["uses"] ==
+      "actions/upload-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/upload-artifact")}" &&
+      upload_with["name"] ==
+        "cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}" &&
+      upload_with["if-no-files-found"] == "error" &&
+      upload_with["retention-days"] == 1 &&
+      upload_with["compression-level"] == 0 &&
+      upload_with["overwrite"] == true,
+    "CI image transfer artifact must be exact, fail closed, and expire after one day",
+  )
+  expected_paths = %w[tar json].map do |extension|
+    "${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}/cma-trigger-${{ matrix.component }}.#{extension}"
+  end
+  actual_paths = upload_with.fetch("path").lines.map(&:strip).reject(&:empty?)
+  check(actual_paths == expected_paths, "CI image artifact must contain exactly its archive and metadata")
+
+  smoke_contract = jobs.fetch("trigger-provider-smoke-contract")
+  harness = named_step(
+    smoke_contract.fetch("steps"),
+    "Harness and fixture configuration are closed and valid",
+  )
+  check(harness, "CI must retain the Trigger provider harness gate")
+  [
+    "node --check .github/scripts/cma-trigger-provider-object-settlement.mjs",
+    "node --check .github/scripts/cma-trigger-provider-object-settlement-tests.mjs",
+    "node .github/scripts/cma-trigger-provider-object-settlement-tests.mjs",
+  ].each do |contract|
+    check(
+      harness.fetch("run").include?(contract),
+      "CI provider-object settlement gate is missing #{contract}",
+    )
+  end
 end
 
 def verify_workflow(workflow)
@@ -143,11 +341,49 @@ def verify_workflow(workflow)
     "provider smoke must remain workflow_dispatch-only",
   )
   check(
+    workflow.fetch("run-name") ==
+      "CMA Trigger provider smoke ${{ inputs.dispatch_nonce }}",
+    "provider smoke run name must retain its exact operator nonce",
+  )
+  check(
+    triggers.fetch("workflow_dispatch") == {
+      "inputs" => {
+        "dispatch_nonce" => {
+          "description" => "One operator-generated 128-bit correlation nonce",
+          "required" => true,
+          "type" => "string",
+        },
+        "expected_fork_mode" => {
+          "description" => "Require the contributor fork to be absent or already reusable before the run",
+          "required" => true,
+          "type" => "choice",
+          "options" => ["new", "reuse"],
+        },
+        "expected_head_sha" => {
+          "description" => "Exact reviewed lowercase develop commit SHA that this run must execute",
+          "required" => true,
+          "type" => "string",
+        },
+        "handoff_secret_name" => {
+          "description" => "Nonce-bound one-run protected handoff secret name",
+          "required" => true,
+          "type" => "string",
+        },
+        "preservation_confirmation" => {
+          "description" => "Type PRESERVE to retain the fork, branch, commit, and pull request after the run",
+          "required" => true,
+          "type" => "string",
+        },
+      },
+    },
+    "provider smoke must retain its exact closed dispatch input schema",
+  )
+  check(
     workflow.fetch("permissions") == {
       "actions" => "read",
       "contents" => "read",
     },
-    "provider smoke must retain only the read permissions needed to inspect its environment and checkout source",
+    "provider smoke must retain only environment-inspection and checkout permissions",
   )
   check(
     workflow.dig("concurrency", "cancel-in-progress") == false,
@@ -157,35 +393,267 @@ def verify_workflow(workflow)
   jobs = workflow.fetch("jobs")
   plan = jobs.fetch("plan")
   plan_steps = plan.fetch("steps")
+  check(
+    plan.fetch("runs-on") == "ubuntu-latest" && plan.fetch("timeout-minutes") == 30,
+    "provider image planning must retain the reviewed hosted runner and transfer timeout",
+  )
+  check(
+    plan.fetch("outputs") == {
+      "approved_manifest_artifact_digest" => "${{ steps.approved_manifest_upload.outputs.artifact-digest }}",
+      "approved_manifest_artifact_id" => "${{ steps.approved_manifest_upload.outputs.artifact-id }}",
+      "approved_manifest_sha256" => "${{ steps.approved_manifest.outputs.manifest_sha256 }}",
+      "api_artifact_digest" => "${{ steps.ci_images.outputs.api_artifact_digest }}",
+      "api_artifact_id" => "${{ steps.ci_images.outputs.api_artifact_id }}",
+      "ci_run_attempt" => "${{ steps.ci_images.outputs.ci_run_attempt }}",
+      "ci_run_id" => "${{ steps.ci_images.outputs.ci_run_id }}",
+      "runtime_artifact_digest" => "${{ steps.ci_images.outputs.runtime_artifact_digest }}",
+      "runtime_artifact_id" => "${{ steps.ci_images.outputs.runtime_artifact_id }}",
+    },
+    "provider plan must expose only exact approved run and artifact identities",
+  )
   consent = named_step(
     plan_steps,
     "Require the deployed develop workflow and preservation consent",
   )
   check(consent, "provider smoke must require explicit preservation consent")
+  check(
+    consent.fetch("env") == {
+      "DISPATCH_NONCE" => "${{ inputs.dispatch_nonce }}",
+      "DISPATCH_REF" => "${{ github.ref }}",
+      "EXPECTED_HEAD_SHA" => "${{ inputs.expected_head_sha }}",
+      "HANDOFF_SECRET_NAME" => "${{ inputs.handoff_secret_name }}",
+      "PRESERVATION_CONFIRMATION" => "${{ inputs.preservation_confirmation }}",
+      "WORKFLOW_SHA" => "${{ github.sha }}",
+    },
+    "provider smoke plan must bind the dispatch ref, reviewed head, consent, and event SHA",
+  )
   consent_run = consent.fetch("run")
+  check(consent_run.include?('"refs/heads/develop"'), "provider smoke must run only from develop")
   check(
-    consent_run.include?('"refs/heads/develop"'),
-    "provider smoke must run only from develop",
+    contains_in_order?(
+      consent_run,
+      [
+        '[[ ! "$DISPATCH_NONCE" =~ ^[0-9a-f]{32}$ ]]',
+        'expected_handoff_secret_name="CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_${DISPATCH_NONCE^^}"',
+        '[ "$HANDOFF_SECRET_NAME" != "$expected_handoff_secret_name" ]',
+        '[[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
+        '[ "$WORKFLOW_SHA" != "$EXPECTED_HEAD_SHA" ]',
+      ],
+    ),
+    "provider smoke must reject malformed or moved reviewed develop snapshots",
   )
-  check(
-    consent_run.include?('"PRESERVE"'),
-    "provider smoke must retain exact preservation confirmation",
-  )
+  check(consent_run.include?('"PRESERVE"'), "provider smoke must retain exact preservation consent")
 
   environment = named_step(plan_steps, "Require the live protected smoke environment")
   check(environment, "provider smoke must verify its live GitHub environment")
-  environment_run = environment.fetch("run")
   [
     "environments/cma-trigger-smoke",
     ".can_admins_bypass == false",
+    ".protection_rules | length == 2",
+    '[.protection_rules[] | select(.type == "branch_policy")] | length == 1',
+    '[.protection_rules[] | select(.type == "required_reviewers")] | length == 1',
     '.type == "required_reviewers"',
     ".prevent_self_review == true",
+    '.reviewers | length == 1',
+    '.reviewers[0].type == "Team"',
+    ".reviewers[0].reviewer.id == 15748251",
+    '.reviewers[0].reviewer.node_id == "T_kwDODyHfns4A8Eyb"',
+    '.reviewers[0].reviewer.slug == "ai-application"',
     ".deployment_branch_policy.protected_branches == true",
     ".deployment_branch_policy.custom_branch_policies == false",
   ].each do |contract|
     check(
-      environment_run.include?(contract),
+      environment.fetch("run").include?(contract),
       "provider environment verification is missing #{contract}",
+    )
+  end
+
+  resolve_images = named_step(plan_steps, "Resolve exact successful CI image artifacts")
+  check(resolve_images && resolve_images["id"] == "ci_images", "provider plan must resolve exact CI images")
+  check(
+    resolve_images.fetch("env") == {
+      "EXPECTED_REPOSITORY_ID" => "1330597394",
+      "GH_TOKEN" => "${{ github.token }}",
+      "SOURCE_SHA" => "${{ github.sha }}",
+    },
+    "CI image resolution must bind only GitHub read authority and the exact source SHA",
+  )
+  resolve_run = resolve_images.fetch("run")
+  [
+    "actions/workflows/ci.yml/runs?branch=develop&event=push&status=completed",
+    '.name == "CI"',
+    '.path == ".github/workflows/ci.yml"',
+    '.event == "push"',
+    '.status == "completed"',
+    '.conclusion == "success"',
+    '.head_branch == "develop"',
+    '.head_sha == $source_sha',
+    '.repository.id == $repository_id',
+    '.head_repository.id == $repository_id',
+    '[ "$run_count" -ne 1 ]',
+    'actions/runs/$ci_run_id/jobs?filter=latest',
+    '.name == "Images (api)"',
+    '.name == "Images (runtime)"',
+    'actions/runs/$ci_run_id/artifacts?per_page=100',
+    'artifact_name="cma-trigger-ci-image-${component}-${SOURCE_SHA}"',
+    '[ "$artifact_count" -ne 1 ]',
+    '.expired == false',
+    '.digest | test("^sha256:[0-9a-f]{64}$")',
+    '.workflow_run.id == $run_id',
+    '.workflow_run.head_sha == $source_sha',
+    'echo "${component}_artifact_id=$artifact_id"',
+    'echo "${component}_artifact_digest=$artifact_digest"',
+    'echo "ci_run_id=$ci_run_id"',
+    'echo "ci_run_attempt=$ci_run_attempt"',
+  ].each do |contract|
+    check(resolve_run.include?(contract), "exact CI image resolution is missing #{contract}")
+  end
+
+  plan_api_download = named_step(plan_steps, "Download exact API image artifact for approval")
+  plan_runtime_download = named_step(plan_steps, "Download exact runtime image artifact for approval")
+  pinned_download =
+    "actions/download-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/download-artifact")}"
+  check(
+    plan_api_download && plan_api_download["uses"] == pinned_download &&
+      plan_api_download.fetch("with") == {
+        "artifact-ids" => "${{ steps.ci_images.outputs.api_artifact_id }}",
+        "path" => "${{ runner.temp }}/cma-trigger-image-provenance-plan/api",
+        "github-token" => "${{ github.token }}",
+        "repository" => "${{ github.repository }}",
+        "run-id" => "${{ steps.ci_images.outputs.ci_run_id }}",
+      },
+    "provider plan must download the API artifact by exact ID and run",
+  )
+  check(
+    plan_runtime_download && plan_runtime_download["uses"] == pinned_download &&
+      plan_runtime_download.fetch("with") == {
+        "artifact-ids" => "${{ steps.ci_images.outputs.runtime_artifact_id }}",
+        "path" => "${{ runner.temp }}/cma-trigger-image-provenance-plan/runtime",
+        "github-token" => "${{ github.token }}",
+        "repository" => "${{ github.repository }}",
+        "run-id" => "${{ steps.ci_images.outputs.ci_run_id }}",
+      },
+    "provider plan must download the runtime artifact by exact ID and run",
+  )
+
+  build_manifest = named_step(plan_steps, "Build closed approved image provenance manifest")
+  check(
+    build_manifest && build_manifest["id"] == "approved_manifest",
+    "provider plan must build one closed approved image manifest",
+  )
+  build_manifest_run = build_manifest.fetch("run")
+  source_image_metadata_keys = %w[
+    archive_name archive_sha256 archive_size component image_id image_reference
+    kind repository_id run_attempt run_id schema_version source_sha
+  ]
+  approved_image_keys = %w[
+    archive_name archive_sha256 archive_size artifact_digest artifact_id
+    artifact_name image_id image_reference metadata_name metadata_sha256
+  ]
+  approved_manifest_keys = %w[ci_run images kind repository_id schema_version source_sha]
+  approved_ci_run_keys = %w[
+    attempt conclusion event head_branch head_sha id workflow_path
+  ]
+  approved_image_map_keys = %w[api runtime]
+  [
+    'find "$artifact_dir" -mindepth 1 -maxdepth 1',
+    '"archive_name", "archive_sha256", "archive_size", "component"',
+    '"run_attempt", "run_id", "schema_version", "source_sha"',
+    'archive_sha256=$(sha256sum "$archive_path"',
+    "archive_size=$(stat --format='%s' \"$archive_path\")",
+    '[ "$archive_sha256" != "$expected_archive_sha256" ]',
+    'docker image load --input "$archive_path"',
+    "docker image inspect --format '{{.Id}}' \"$image_reference\"",
+    'metadata_sha256=$(sha256sum "$metadata_path"',
+    'artifact_digest: $artifact_digest',
+    'kind: "cma-trigger-approved-ci-images"',
+    'workflow_path: ".github/workflows/ci.yml"',
+    'images: {api: $api[0], runtime: $runtime[0]}',
+    'keys == ["ci_run", "images", "kind", "repository_id", "schema_version", "source_sha"]',
+    '(.images | keys) == ["api", "runtime"]',
+    '.ci_run.event == "push"',
+    '.ci_run.head_branch == "develop"',
+    '.ci_run.head_sha == $source_sha',
+    '.ci_run.conclusion == "success"',
+    '.images.api.artifact_id != .images.runtime.artifact_id',
+    'chmod 0400 "$manifest_path"',
+    'manifest_sha256=$(sha256sum "$manifest_path"',
+    'echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"',
+  ].each do |contract|
+    check(build_manifest_run.include?(contract), "approved image manifest construction is missing #{contract}")
+  end
+  check(
+    closed_key_sets(build_manifest_run) == [
+      source_image_metadata_keys,
+      approved_image_keys,
+      approved_manifest_keys,
+      approved_ci_run_keys,
+      approved_image_map_keys,
+    ],
+    "approved image manifest construction must enforce every exact closed schema",
+  )
+
+  manifest_upload = named_step(plan_steps, "Persist approved image provenance manifest")
+  check(
+    manifest_upload && manifest_upload["id"] == "approved_manifest_upload" &&
+      manifest_upload["uses"] ==
+        "actions/upload-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/upload-artifact")}" &&
+      manifest_upload.fetch("with") == {
+        "name" => "cma-trigger-approved-ci-images-${{ github.run_id }}",
+        "path" => "${{ runner.temp }}/cma-trigger-approved-image-provenance/approved-image-provenance.json",
+        "if-no-files-found" => "error",
+        "retention-days" => 1,
+        "compression-level" => 0,
+        "overwrite" => true,
+      },
+    "approved image manifest must be persisted as one exact short-lived artifact",
+  )
+  manifest_summary = named_step(plan_steps, "Summarize approved image provenance")
+  check(manifest_summary, "approved image provenance must be visible before protected approval")
+  [
+    "Approved CI image provenance",
+    ".images.api.artifact_id",
+    ".images.api.artifact_digest",
+    ".images.api.archive_sha256",
+    ".images.api.archive_size",
+    ".images.api.image_id",
+    ".images.runtime.artifact_id",
+    ".images.runtime.artifact_digest",
+    ".images.runtime.archive_sha256",
+    ".images.runtime.archive_size",
+    ".images.runtime.image_id",
+    "APPROVED_MANIFEST_ARTIFACT_ID",
+    "APPROVED_MANIFEST_ARTIFACT_DIGEST",
+    "APPROVED_MANIFEST_SHA256",
+    '>> "$GITHUB_STEP_SUMMARY"',
+  ].each do |contract|
+    check(manifest_summary.fetch("run").include?(contract), "image approval summary is missing #{contract}")
+  end
+  check(
+    plan_steps.index(environment) < plan_steps.index(resolve_images) &&
+      plan_steps.index(resolve_images) < plan_steps.index(plan_api_download) &&
+      plan_steps.index(plan_api_download) < plan_steps.index(plan_runtime_download) &&
+      plan_steps.index(plan_runtime_download) < plan_steps.index(build_manifest) &&
+      plan_steps.index(build_manifest) < plan_steps.index(manifest_upload) &&
+      plan_steps.index(manifest_upload) < plan_steps.index(manifest_summary),
+    "provider plan must resolve, inspect, persist, then summarize image provenance",
+  )
+
+  plan_contract = named_step(plan_steps, "Validate the checked-in harness contract")
+  check(plan_contract, "provider smoke plan must validate every staging component")
+  [
+    "cma-trigger-provider-smoke.mjs --self-test",
+    "cma-trigger-provider-object-settlement.mjs",
+    "cma-trigger-provider-object-settlement-tests.mjs",
+    "cma-trigger-kind-staging-fixture.mjs",
+    "cma-trigger-nyxid-smoke-bootstrap-tests.mjs",
+    "bash -n .github/scripts/cma-trigger-kind-staging.sh",
+    "shellcheck .github/scripts/cma-trigger-kind-staging.sh",
+    ".github/scripts/cma-trigger-kind-staging-tests.sh",
+  ].each do |contract|
+    check(
+      plan_contract.fetch("run").include?(contract),
+      "provider smoke plan validation is missing #{contract}",
     )
   end
 
@@ -200,24 +668,20 @@ def verify_workflow(workflow)
     "provider smoke must not fan out external writers",
   )
   check(
+    provider.fetch("runs-on") == "ubuntu-latest" &&
+      provider.fetch("timeout-minutes") == 120,
+    "ephemeral Kind staging must retain the reviewed hosted runner and timeout",
+  )
+  check(
     provider.fetch("outputs") == {
       "evidence_id" => "${{ steps.evidence_audit.outputs.evidence_id }}",
       "evidence_result" => "${{ steps.evidence_audit.outputs.evidence_result }}",
       "retained_artifact_url" => "${{ steps.evidence_upload.outputs.artifact-url }}",
     },
-    "provider smoke must expose the closed evidence identity, result, and retained artifact URL",
+    "provider smoke must expose the closed evidence identity, result, and artifact URL",
   )
-  provider_env = provider.fetch("env")
   expected_provider_env = {
-    "CMA_TRIGGER_SMOKE_BASE_URL" => "${{ vars.CMA_TRIGGER_SMOKE_BASE_URL }}",
-    "CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA" => "${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA }}",
-    "CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST" => "${{ vars.CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST }}",
-    "CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION" => "${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION }}",
-    "CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION" => "${{ vars.CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION }}",
     "CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE" => "${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}",
-    "CMA_TRIGGER_SMOKE_PUBLIC_ID" => "${{ vars.CMA_TRIGGER_SMOKE_PUBLIC_ID }}",
-    "CMA_TRIGGER_SMOKE_REVISION_DIGEST" => "${{ vars.CMA_TRIGGER_SMOKE_REVISION_DIGEST }}",
-    "CMA_TRIGGER_SMOKE_SOURCE_SHA" => "${{ vars.CMA_TRIGGER_SMOKE_SOURCE_SHA }}",
     "CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID" => "${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID }}",
     "CMA_TRIGGER_SMOKE_UPSTREAM_OWNER" => "${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_OWNER }}",
     "CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY" => "${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY }}",
@@ -231,192 +695,436 @@ def verify_workflow(workflow)
     "CMA_TRIGGER_SMOKE_RUN_MARKER" => "gha-${{ github.run_id }}-${{ github.run_attempt }}",
   }
   check(
-    provider_env == expected_provider_env,
-    "provider smoke must bind exactly the reviewed protected variables and run identity",
+    provider.fetch("env") == expected_provider_env,
+    "provider smoke must bind only reviewed ephemeral paths, fixture variables, and run identity",
   )
 
   provider_steps = provider.fetch("steps")
-  provider_recheck = named_step(
-    provider_steps,
-    "Revalidate the protected smoke environment after approval",
+  custody_paths = named_step(provider_steps, "Bind ephemeral staging custody paths")
+  check(custody_paths, "provider smoke must bind runner custody before bootstrap")
+  check(
+    custody_paths.fetch("run").include?(
+      'staging_root="$RUNNER_TEMP/cma-trigger-kind-staging"',
+    ) && custody_paths.fetch("run").include?(
+      'handoff_path="$staging_root/credentials/nyxid-handoff.json"',
+    ) && custody_paths.fetch("run").include?(
+      'CMA_TRIGGER_KIND_STAGING_ROOT=%s\\n',
+    ) && custody_paths.fetch("run").include?(
+      'CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH=%s\\n',
+    ),
+    "provider smoke must derive both custody paths from RUNNER_TEMP at step runtime",
   )
-  check(provider_recheck, "provider writer must revalidate its environment after approval")
-  provider_recheck_run = provider_recheck.fetch("run")
+  action_uses = (plan_steps + provider_steps).each_with_object([]) do |step, uses|
+    uses << step["uses"] if step.is_a?(Hash) && step["uses"]
+  end
+  expected_action_uses = [
+    "actions/download-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/download-artifact")}",
+    "actions/download-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/download-artifact")}",
+    "actions/download-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/download-artifact")}",
+    "actions/download-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/download-artifact")}",
+    "actions/download-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/download-artifact")}",
+    "actions/checkout@#{PINNED_PROVIDER_ACTIONS.fetch("actions/checkout")}",
+    "actions/setup-node@#{PINNED_PROVIDER_ACTIONS.fetch("actions/setup-node")}",
+    "actions/checkout@#{PINNED_PROVIDER_ACTIONS.fetch("actions/checkout")}",
+    "actions/setup-node@#{PINNED_PROVIDER_ACTIONS.fetch("actions/setup-node")}",
+    "azure/setup-kubectl@#{PINNED_PROVIDER_ACTIONS.fetch("azure/setup-kubectl")}",
+    "actions/upload-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/upload-artifact")}",
+    "actions/upload-artifact@#{PINNED_PROVIDER_ACTIONS.fetch("actions/upload-artifact")}",
+  ]
+  check(
+    action_uses.sort == expected_action_uses.sort &&
+      action_uses.all? { |uses| uses.match?(%r{\A[^/@]+/[^/@]+@[0-9a-f]{40}\z}) },
+    "every provider-workflow action must be one reviewed full-commit pin",
+  )
+  recheck = named_step(provider_steps, "Revalidate the protected smoke environment after approval")
+  check(recheck, "provider writer must revalidate its environment after approval")
   [
     "environments/cma-trigger-smoke",
     ".can_admins_bypass == false",
+    ".protection_rules | length == 2",
+    '[.protection_rules[] | select(.type == "branch_policy")] | length == 1',
+    '[.protection_rules[] | select(.type == "required_reviewers")] | length == 1',
     '.type == "required_reviewers"',
     ".prevent_self_review == true",
+    '.reviewers | length == 1',
+    '.reviewers[0].type == "Team"',
+    ".reviewers[0].reviewer.id == 15748251",
+    '.reviewers[0].reviewer.node_id == "T_kwDODyHfns4A8Eyb"',
+    '.reviewers[0].reviewer.slug == "ai-application"',
     ".deployment_branch_policy.protected_branches == true",
     ".deployment_branch_policy.custom_branch_policies == false",
   ].each do |contract|
     check(
-      provider_recheck_run.include?(contract),
+      recheck.fetch("run").include?(contract),
       "post-approval environment verification is missing #{contract}",
     )
   end
 
   approval = named_step(provider_steps, "Capture independent approval provenance")
-  check(approval, "provider smoke must capture the actual environment approval")
-  check(approval["id"] == "approval", "provider approval capture must retain its stable step id")
-  approval_run = approval.fetch("run")
+  check(approval && approval["id"] == "approval", "provider approval capture is absent")
   [
     'actions/runs/$GITHUB_RUN_ID/approvals',
     'users/$GITHUB_TRIGGERING_ACTOR',
     '.name == "cma-trigger-smoke"',
     "approval_observed_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
     'approval_observed_at: $approval_observed_at',
-    'unique_by(.account_id)',
-    '.account_id != $operator.account_id',
-    'reviewers_json=$reviewers',
+    "unique_by(.account_id)",
+    ".account_id != $operator.account_id",
+    "reviewers_json=$reviewers",
   ].each do |contract|
-    check(approval_run.include?(contract), "provider approval provenance is missing #{contract}")
+    check(approval.fetch("run").include?(contract), "approval provenance is missing #{contract}")
   end
   check(
-    !approval_run.include?(".submitted_at"),
-    "provider approval provenance must not invent a timestamp absent from GitHub review history",
+    !approval.fetch("run").include?(".submitted_at"),
+    "approval provenance must not invent an absent timestamp",
+  )
+
+  artifact_recheck = named_step(
+    provider_steps,
+    "Revalidate approved image artifact identities after approval",
+  )
+  check(artifact_recheck, "protected provider job must revalidate every approved artifact identity")
+  check(
+    artifact_recheck.fetch("env") == {
+      "API_ARTIFACT_DIGEST" => "${{ needs.plan.outputs.api_artifact_digest }}",
+      "API_ARTIFACT_ID" => "${{ needs.plan.outputs.api_artifact_id }}",
+      "APPROVED_MANIFEST_ARTIFACT_DIGEST" => "${{ needs.plan.outputs.approved_manifest_artifact_digest }}",
+      "APPROVED_MANIFEST_ARTIFACT_ID" => "${{ needs.plan.outputs.approved_manifest_artifact_id }}",
+      "APPROVED_MANIFEST_SHA256" => "${{ needs.plan.outputs.approved_manifest_sha256 }}",
+      "CI_RUN_ATTEMPT" => "${{ needs.plan.outputs.ci_run_attempt }}",
+      "CI_RUN_ID" => "${{ needs.plan.outputs.ci_run_id }}",
+      "EXPECTED_REPOSITORY_ID" => "1330597394",
+      "GH_TOKEN" => "${{ github.token }}",
+      "RUNTIME_ARTIFACT_DIGEST" => "${{ needs.plan.outputs.runtime_artifact_digest }}",
+      "RUNTIME_ARTIFACT_ID" => "${{ needs.plan.outputs.runtime_artifact_id }}",
+      "SOURCE_SHA" => "${{ github.sha }}",
+    },
+    "post-approval image revalidation must consume only approved plan identities",
+  )
+  artifact_recheck_run = artifact_recheck.fetch("run")
+  [
+    'actions/runs/$CI_RUN_ID',
+    '.run_attempt == $run_attempt',
+    '.path == ".github/workflows/ci.yml"',
+    '.event == "push"',
+    '.status == "completed"',
+    '.conclusion == "success"',
+    '.head_branch == "develop"',
+    '.head_sha == $source_sha',
+    'actions/artifacts/$artifact_id',
+    '.id == $artifact_id',
+    '.digest == $artifact_digest',
+    '.expired == false',
+    '.workflow_run.id == $run_id',
+    '.workflow_run.head_sha == $source_sha',
+    '[[ ! "$APPROVED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]',
+    '"cma-trigger-approved-ci-images-${GITHUB_RUN_ID}"',
+    '"cma-trigger-ci-image-api-${SOURCE_SHA}"',
+    '"cma-trigger-ci-image-runtime-${SOURCE_SHA}"',
+    '"$APPROVED_MANIFEST_ARTIFACT_ID"',
+    '"$API_ARTIFACT_ID"',
+    '"$RUNTIME_ARTIFACT_ID"',
+  ].each do |contract|
+    check(artifact_recheck_run.include?(contract), "post-approval artifact revalidation is missing #{contract}")
+  end
+
+  manifest_download = named_step(
+    provider_steps,
+    "Download exact approved image provenance manifest",
+  )
+  protected_api_download = named_step(provider_steps, "Download exact approved API image artifact")
+  protected_runtime_download = named_step(
+    provider_steps,
+    "Download exact approved runtime image artifact",
+  )
+  check(
+    manifest_download && manifest_download["uses"] == pinned_download &&
+      manifest_download.fetch("with") == {
+        "artifact-ids" => "${{ needs.plan.outputs.approved_manifest_artifact_id }}",
+        "path" => "${{ runner.temp }}/cma-trigger-ci-images/manifest",
+        "github-token" => "${{ github.token }}",
+        "repository" => "${{ github.repository }}",
+        "run-id" => "${{ github.run_id }}",
+      },
+    "protected job must download the exact approved manifest artifact by ID",
+  )
+  check(
+    protected_api_download && protected_api_download["uses"] == pinned_download &&
+      protected_api_download.fetch("with") == {
+        "artifact-ids" => "${{ needs.plan.outputs.api_artifact_id }}",
+        "path" => "${{ runner.temp }}/cma-trigger-ci-images/api",
+        "github-token" => "${{ github.token }}",
+        "repository" => "${{ github.repository }}",
+        "run-id" => "${{ needs.plan.outputs.ci_run_id }}",
+      },
+    "protected job must download the exact approved API artifact by ID",
+  )
+  check(
+    protected_runtime_download && protected_runtime_download["uses"] == pinned_download &&
+      protected_runtime_download.fetch("with") == {
+        "artifact-ids" => "${{ needs.plan.outputs.runtime_artifact_id }}",
+        "path" => "${{ runner.temp }}/cma-trigger-ci-images/runtime",
+        "github-token" => "${{ github.token }}",
+        "repository" => "${{ github.repository }}",
+        "run-id" => "${{ needs.plan.outputs.ci_run_id }}",
+      },
+    "protected job must download the exact approved runtime artifact by ID",
+  )
+
+  image_verification = named_step(
+    provider_steps,
+    "Verify approved image bytes and expose staging contract",
+  )
+  check(image_verification, "protected job must verify approved image bytes before credentials")
+  check(
+    image_verification.fetch("env") == {
+      "API_ARTIFACT_DIGEST" => "${{ needs.plan.outputs.api_artifact_digest }}",
+      "API_ARTIFACT_ID" => "${{ needs.plan.outputs.api_artifact_id }}",
+      "APPROVED_MANIFEST_SHA256" => "${{ needs.plan.outputs.approved_manifest_sha256 }}",
+      "CI_RUN_ATTEMPT" => "${{ needs.plan.outputs.ci_run_attempt }}",
+      "CI_RUN_ID" => "${{ needs.plan.outputs.ci_run_id }}",
+      "EXPECTED_REPOSITORY_ID" => "1330597394",
+      "RUNTIME_ARTIFACT_DIGEST" => "${{ needs.plan.outputs.runtime_artifact_digest }}",
+      "RUNTIME_ARTIFACT_ID" => "${{ needs.plan.outputs.runtime_artifact_id }}",
+      "SOURCE_SHA" => "${{ github.sha }}",
+    },
+    "protected image verification must bind only the approved manifest identities",
+  )
+  image_verification_run = image_verification.fetch("run")
+  [
+    'approved_manifest="$image_root/approved-image-provenance.json"',
+    'find "$manifest_download_dir" -mindepth 1 -maxdepth 1',
+    'sha256sum "$downloaded_manifest"',
+    '!= "$APPROVED_MANIFEST_SHA256"',
+    'keys == ["ci_run", "images", "kind", "repository_id", "schema_version", "source_sha"]',
+    '"archive_name", "archive_sha256", "archive_size"',
+    '"artifact_digest", "artifact_id", "artifact_name", "image_id"',
+    '.artifact_id == $artifact_id',
+    '.artifact_digest == $digest',
+    '.ci_run.id == $ci_run_id',
+    '.ci_run.attempt == $ci_run_attempt',
+    '.ci_run.event == "push"',
+    '.ci_run.head_branch == "develop"',
+    '.ci_run.head_sha == $source_sha',
+    '.ci_run.conclusion == "success"',
+    'sha256sum "$metadata_path"',
+    'sha256sum "$archive_path"',
+    "stat --format='%s' \"$archive_path\"",
+    '[ "$actual_archive_sha256" != "$approved_archive_sha256" ]',
+    '[ "$actual_archive_size" != "$approved_archive_size" ]',
+    'docker image load --input "$archive_path"',
+    "docker image inspect --format '{{.Id}}' \"$image_reference\"",
+    'install -m 0400 "$downloaded_manifest" "$approved_manifest"',
+    'CMA_TRIGGER_KIND_STAGING_IMAGE_PROVENANCE_PATH=$approved_manifest',
+    'CMA_TRIGGER_KIND_STAGING_API_IMAGE_ARCHIVE=$image_root/api/cma-trigger-api.tar',
+    'CMA_TRIGGER_KIND_STAGING_RUNTIME_IMAGE_ARCHIVE=$image_root/runtime/cma-trigger-runtime.tar',
+    "CMA_TRIGGER_KIND_STAGING_API_IMAGE_ID=$(jq -r '.images.api.image_id' \"$approved_manifest\")",
+    "CMA_TRIGGER_KIND_STAGING_RUNTIME_IMAGE_ID=$(jq -r '.images.runtime.image_id' \"$approved_manifest\")",
+    '>> "$GITHUB_ENV"',
+  ].each do |contract|
+    check(image_verification_run.include?(contract), "protected image verification is missing #{contract}")
+  end
+  check(
+    closed_key_sets(image_verification_run) == [
+      approved_image_keys,
+      approved_manifest_keys,
+      approved_ci_run_keys,
+      approved_image_map_keys,
+      source_image_metadata_keys,
+    ],
+    "protected image verification must enforce every exact closed schema",
   )
 
   kubectl_steps = provider_steps.select do |step|
-    step.is_a?(Hash) && step["uses"] == "azure/setup-kubectl@v4"
+    step.is_a?(Hash) &&
+      step["uses"] == "azure/setup-kubectl@#{PINNED_PROVIDER_ACTIONS.fetch("azure/setup-kubectl")}"
   end
   check(
-    kubectl_steps.length == 1 && kubectl_steps.first.fetch("with") == { "version" => "v1.34.1" },
-    "provider smoke must install exactly the reviewed Kubernetes inventory client",
+    kubectl_steps.length == 1 &&
+      kubectl_steps.first.fetch("with") == { "version" => "v1.34.1" },
+    "provider smoke must install exactly the reviewed kubectl client",
   )
 
-  kubeconfig = named_step(provider_steps, "Materialize the scoped Kubernetes inventory credential")
-  check(kubeconfig, "provider smoke must materialize its scoped inventory credential")
+  bootstrap = named_step(provider_steps, "Validate the protected ephemeral staging bootstrap")
+  check(bootstrap, "provider smoke must validate its protected Kind bootstrap")
   check(
-    kubeconfig.fetch("env") == {
-      "KUBECONFIG_B64" => "${{ secrets.CMA_TRIGGER_SMOKE_KUBECONFIG_B64 }}",
-      "KUBECONFIG_PATH" => "${{ runner.temp }}/cma-trigger-smoke-kubeconfig",
+    bootstrap.fetch("env") == {
+      "CMA_TRIGGER_SMOKE_KUBECONFIG_B64" => "${{ secrets.CMA_TRIGGER_SMOKE_KUBECONFIG_B64 }}",
+      "CMA_TRIGGER_SMOKE_KUBECONFIG_SHA256" => "${{ vars.CMA_TRIGGER_SMOKE_KUBECONFIG_SHA256 }}",
+      "CMA_TRIGGER_SMOKE_KIND_CA_KEY_B64" => "${{ secrets.CMA_TRIGGER_SMOKE_KIND_CA_KEY_B64 }}",
     },
-    "provider inventory credential must come only from the protected base64 kubeconfig secret",
+    "Kind bootstrap must receive exactly the observer bytes, digest, and matching CA key",
   )
-  [
-    "umask 077",
-    'printf \'%s\' "$KUBECONFIG_B64" | base64 --decode > "$KUBECONFIG_PATH"',
-    'chmod 0600 "$KUBECONFIG_PATH"',
-    'test -s "$KUBECONFIG_PATH"',
-  ].each do |contract|
-    check(kubeconfig.fetch("run").include?(contract), "kubeconfig materialization is missing #{contract}")
-  end
-
-  inventory_authority = named_step(
-    provider_steps,
-    "Verify exact read-only BatchSandbox inventory authority",
-  )
-  check(inventory_authority, "provider smoke must verify its exact inventory authority")
   check(
-    inventory_authority.fetch("env") == {
+    bootstrap.fetch("run") == ".github/scripts/cma-trigger-kind-staging.sh validate",
+    "Kind bootstrap must run only the reviewed validator",
+  )
+  secret_step_indexes = provider_steps.each_index.select do |index|
+    step = provider_steps[index]
+    step.is_a?(Hash) && step["env"].is_a?(Hash) &&
+      step["env"].values.any? { |value| value.to_s.match?(/\$\{\{ secrets(?:\.|\[)/) }
+  end
+  check(!secret_step_indexes.empty?, "provider smoke must retain reviewed protected credentials")
+  check(
+    provider_steps.index(approval) < provider_steps.index(artifact_recheck) &&
+      provider_steps.index(artifact_recheck) < provider_steps.index(manifest_download) &&
+      provider_steps.index(manifest_download) < provider_steps.index(protected_api_download) &&
+      provider_steps.index(protected_api_download) < provider_steps.index(protected_runtime_download) &&
+      provider_steps.index(protected_runtime_download) < provider_steps.index(image_verification) &&
+      provider_steps.index(image_verification) < secret_step_indexes.min &&
+      provider_steps.index(image_verification) < provider_steps.index(bootstrap),
+    "approved artifact download and byte verification must precede every protected credential",
+  )
+
+  handoff = named_step(provider_steps, "Materialize and accept the closed NyxID handoff")
+  check(handoff, "provider smoke must materialize its closed NyxID handoff")
+  check(
+    handoff.fetch("env") == {
+      "DISPATCH_NONCE" => "${{ inputs.dispatch_nonce }}",
+      "HANDOFF_SECRET_NAME" => "${{ inputs.handoff_secret_name }}",
+      "NYXID_BOOTSTRAP_B64" => "${{ secrets[inputs.handoff_secret_name] }}",
+      "PROTECTED_SERVICE_ID" => "${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}",
+    },
+    "handoff acceptance must receive only its blob and exact UserService ID",
+  )
+  check(
+    contains_in_order?(
+      handoff.fetch("run"),
+      [
+        "{ set +x; } 2>/dev/null",
+        'handoff="$CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH"',
+        'expected_handoff_secret_name="CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_${DISPATCH_NONCE^^}"',
+        '[ "$HANDOFF_SECRET_NAME" != "$expected_handoff_secret_name" ]',
+        '"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/nyxid-handoff.json"',
+        'printf \'%s\' "$NYXID_BOOTSTRAP_B64" | base64 --decode > "$handoff"',
+        "unset NYXID_BOOTSTRAP_B64",
+        'chmod 0600 "$handoff"',
+        'CMA_TRIGGER_SMOKE_SERVICE_ID="$PROTECTED_SERVICE_ID"',
+        "cma-trigger-kind-staging.sh accept-handoff",
+        "::add-mask::%s",
+        "unset PROTECTED_SERVICE_ID",
+      ],
+    ),
+    "handoff materialization, acceptance, masking, and release are not closed in order",
+  )
+
+  prepare = named_step(provider_steps, "Build and provision the ephemeral Kind provider lanes")
+  deploy = named_step(provider_steps, "Deploy the reviewed CMA build into ephemeral staging")
+  seal = named_step(provider_steps, "Seal all ephemeral staging bootstrap authority")
+  check(prepare && deploy && seal, "provider smoke must prepare, deploy, and seal Kind staging")
+  check(
+    prepare.fetch("run") == ".github/scripts/cma-trigger-kind-staging.sh prepare" &&
+      deploy.fetch("run") == ".github/scripts/cma-trigger-kind-staging.sh deploy" &&
+      seal.fetch("run") == ".github/scripts/cma-trigger-kind-staging.sh seal",
+    "ephemeral staging phases must invoke only their reviewed commands",
+  )
+
+  inventory = named_step(provider_steps, "Verify exact read-only BatchSandbox inventory authority")
+  check(inventory, "provider smoke must verify its exact inventory authority")
+  check(
+    inventory.fetch("env") == {
       "KUBECONFIG_PATH" => "${{ runner.temp }}/cma-trigger-smoke-kubeconfig",
       "SANDBOX_NAMESPACE" => "${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}",
     },
-    "inventory preflight must bind only the temporary kubeconfig and protected namespace",
+    "inventory preflight must bind only the protected observer path and namespace",
   )
-  inventory_authority_run = inventory_authority.fetch("run")
-  namespace_guard = [
-    'if [[ ! "$SANDBOX_NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then',
-    'echo "::error::CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE must be one nonempty DNS-1123 label"',
-    "exit 1",
-    "fi",
-  ]
-  check(
-    contains_in_order?(inventory_authority_run, namespace_guard),
-    "inventory authority preflight must reject an empty or non-DNS-1123 namespace before kubectl",
-  )
-  check(
-    inventory_authority_run.index(namespace_guard.first) <
-      inventory_authority_run.index("resource='batchsandboxes.sandbox.opensandbox.io'"),
-    "inventory namespace validation must precede every kubectl authority probe",
-  )
+  inventory_run = inventory.fetch("run")
+  namespace_guard = 'if [[ ! "$SANDBOX_NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then'
+  check(inventory_run.include?(namespace_guard), "inventory namespace guard is absent")
   [
     "resource='batchsandboxes.sandbox.opensandbox.io'",
     'list "$resource" --namespace "$SANDBOX_NAMESPACE"',
     "for verb in get watch create update patch delete deletecollection",
     'list "$resource" --all-namespaces',
     "for resource in secrets configmaps pods",
+    "get configmap/cma-trigger-runtime-provenance",
+    "for verb in list watch create update patch delete",
+    '"$verb" configmaps --namespace cma-trigger-system',
   ].each do |contract|
+    check(inventory_run.include?(contract), "inventory authority is missing #{contract}")
+  end
+
+  fixture = named_step(provider_steps, "Publish the ephemeral Trigger fixture and export provenance")
+  check(fixture, "provider smoke must publish an ephemeral Trigger fixture")
+  check(
+    contains_in_order?(
+      fixture.fetch("run"),
+      [
+        "cma-trigger-kind-staging.sh bootstrap-fixture",
+        "cma-trigger-kind-staging.sh export-env",
+      ],
+    ),
+    "fixture publication must precede non-secret provenance export",
+  )
+  ordered_phases = [bootstrap, prepare, handoff, deploy, seal, inventory, fixture]
+  ordered_phases.each_cons(2) do |before, after|
     check(
-      inventory_authority_run.include?(contract),
-      "inventory authority preflight is missing #{contract}",
+      provider_steps.index(before) < provider_steps.index(after),
+      "ephemeral staging phase order drifted",
     )
   end
 
   materialize = named_step(provider_steps, "Materialize the non-secret pinned fixture contract")
   check(materialize, "provider smoke must materialize a reviewed fixture contract")
-  materialize_run = materialize.fetch("run")
   check(
     contains_in_order?(
-      materialize_run,
+      materialize.fetch("run"),
       [
         '--arg build_sha "$CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA"',
         '--arg runtime_image_digest "$CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST"',
+        '--argjson runtime_image_ids "$CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_IDS_JSON"',
         '--arg runtime_version "$CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION"',
         '--arg configuration_revision "$CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION"',
         '--arg trigger_sandbox_namespace "$CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE"',
-        "schema_version: 2",
-        "expected_build_sha: $build_sha",
-        "runtime_image_digest: $runtime_image_digest",
-        "expected_runtime_version: $runtime_version",
-        "configuration_revision: $configuration_revision",
-        "trigger_sandbox_namespace: $trigger_sandbox_namespace",
+        "schema_version: 3",
+        'cma_state_cleanup: "destroy_with_terminal_ephemeral_environment"',
+        'session_cleanup: "stop_runtime_before_terminal_ephemeral_teardown"',
       ],
     ),
-    "provider fixture must bind the exact build, runtime, configuration, and sandbox namespace",
+    "provider fixture must bind exported build, runtime, configuration, and namespace provenance",
   )
 
   run_smoke = named_step(provider_steps, "Run one exact provider path")
-  check(run_smoke, "provider smoke must retain its one exact writer path")
-  run_env = run_smoke.fetch("env")
-  expected_run_env = {
-    "CONFIG_PATH" => "${{ runner.temp }}/cma-trigger-smoke-config.json",
-    "EVIDENCE_PATH" => "${{ runner.temp }}/cma-trigger-smoke-evidence.json",
-    "CMA_TRIGGER_SMOKE_ACCESS_TOKEN" => "${{ secrets.CMA_TRIGGER_SMOKE_ACCESS_TOKEN }}",
-    "CMA_TRIGGER_SMOKE_SERVICE_ID" => "${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}",
-    "CMA_TRIGGER_SMOKE_KUBECONFIG" => "${{ runner.temp }}/cma-trigger-smoke-kubeconfig",
-    "CMA_TRIGGER_SMOKE_OPERATOR_LOGIN" => "${{ steps.approval.outputs.operator_login }}",
-    "CMA_TRIGGER_SMOKE_OPERATOR_ACCOUNT_ID" => "${{ steps.approval.outputs.operator_account_id }}",
-    "CMA_TRIGGER_SMOKE_REVIEWERS_JSON" => "${{ steps.approval.outputs.reviewers_json }}",
-  }
+  check(run_smoke, "provider smoke must retain one exact writer path")
   check(
-    run_env == expected_run_env,
-    "provider writer must bind exactly the reviewed credentials, evidence paths, and actors",
+    run_smoke.fetch("env") == {
+      "CONFIG_PATH" => "${{ runner.temp }}/cma-trigger-smoke-config.json",
+      "EVIDENCE_PATH" => "${{ runner.temp }}/cma-trigger-smoke-evidence.json",
+      "CMA_TRIGGER_SMOKE_KUBECONFIG" => "${{ runner.temp }}/cma-trigger-smoke-kubeconfig",
+      "CMA_TRIGGER_SMOKE_OPERATOR_LOGIN" => "${{ steps.approval.outputs.operator_login }}",
+      "CMA_TRIGGER_SMOKE_OPERATOR_ACCOUNT_ID" => "${{ steps.approval.outputs.operator_account_id }}",
+      "CMA_TRIGGER_SMOKE_REVIEWERS_JSON" => "${{ steps.approval.outputs.reviewers_json }}",
+    },
+    "provider writer must bind only reviewed local paths and actors",
+  )
+  check(
+    contains_in_order?(
+      run_smoke.fetch("run"),
+      [
+        "{ set +x; } 2>/dev/null",
+        'CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"',
+        'CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"',
+        '--run "$CONFIG_PATH" "$EVIDENCE_PATH"',
+      ],
+    ),
+    "provider writer must read accepted caller custody only inside its process",
   )
 
   audit = named_step(provider_steps, "Audit and validate closed provider evidence")
-  check(audit, "provider smoke must always audit its closed evidence")
-  remove_kubeconfig = named_step(provider_steps, "Remove the Kubernetes inventory credential")
-  check(remove_kubeconfig, "provider smoke must remove its inventory credential")
-  check(
-    remove_kubeconfig["if"].to_s.include?("always()") &&
-      remove_kubeconfig.fetch("env") == {
-        "KUBECONFIG_PATH" => "${{ runner.temp }}/cma-trigger-smoke-kubeconfig",
-      } &&
-      remove_kubeconfig.fetch("run").include?('rm -- "$KUBECONFIG_PATH"'),
-    "provider smoke must always remove exactly the temporary kubeconfig before evidence handling",
-  )
-  check(
-    provider_steps.index(remove_kubeconfig) < provider_steps.index(audit),
-    "provider smoke must remove the kubeconfig before auditing or uploading evidence",
-  )
-
-  check(audit["id"] == "evidence_audit", "provider evidence audit must retain its stable step id")
+  check(audit && audit["id"] == "evidence_audit", "provider evidence audit is absent")
   check(audit["if"].to_s.include?("always()"), "provider evidence audit must run after failure")
   check(
     audit.fetch("env") == {
       "EVIDENCE_PATH" => "${{ runner.temp }}/cma-trigger-smoke-evidence.json",
-      "CMA_TRIGGER_SMOKE_ACCESS_TOKEN" => "${{ secrets.CMA_TRIGGER_SMOKE_ACCESS_TOKEN }}",
-      "CMA_TRIGGER_SMOKE_SERVICE_ID" => "${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}",
     },
-    "provider evidence audit must receive no Kubernetes credential or unreviewed input",
+    "provider evidence audit must receive only the evidence path",
   )
-  audit_run = audit.fetch("run")
   check(
     contains_in_order?(
-      audit_run,
+      audit.fetch("run"),
       [
+        'CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"',
+        'CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"',
         '--audit-evidence "$EVIDENCE_PATH"',
         '--validate-evidence "$EVIDENCE_PATH"',
         "evidence_id=$(jq -r '.evidence_id'",
@@ -424,25 +1132,105 @@ def verify_workflow(workflow)
         "artifact_name=$(jq -r '.provenance.workflow.artifact_name'",
       ],
     ),
-    "provider evidence must pass redaction and publishable-schema validation before outputs",
+    "provider evidence must be audited before its outputs are exposed",
+  )
+
+  cleanup = named_step(
+    provider_steps,
+    "Destroy staging, settle provider objects, and purge runner custody",
+  )
+  check(cleanup && cleanup["id"] == "staging_cleanup", "terminal staging cleanup is absent")
+  check(cleanup["if"].to_s.include?("always()"), "staging cleanup must run after every outcome")
+  check(
+    cleanup.fetch("env") == {
+      "EVIDENCE_AUDIT_OUTCOME" => "${{ steps.evidence_audit.outcome }}",
+      "EVIDENCE_PATH" => "${{ runner.temp }}/cma-trigger-smoke-evidence.json",
+      "SETTLEMENT_RECEIPT_PATH" => "${{ runner.temp }}/cma-trigger-provider-object-settlement.json",
+    },
+    "terminal staging cleanup must receive only the audit outcome and fixed redacted paths",
+  )
+  check(
+    contains_in_order?(
+      cleanup.fetch("run"),
+      [
+        'if [ -f "$CMA_TRIGGER_KIND_STAGING_ROOT/ownership.json" ]',
+        "cma-trigger-kind-staging.sh destroy",
+        '[ -f "$CMA_TRIGGER_KIND_STAGING_ROOT/phase-destroyed" ]',
+        'evidence_result=$(jq -er \'.result\' "$EVIDENCE_PATH")',
+        '[ "${evidence_result:-}" = "pass" ]',
+        "cma-trigger-provider-object-settlement.mjs settle",
+        '--handoff "$CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH"',
+        '--evidence "$EVIDENCE_PATH"',
+        '--output "$SETTLEMENT_RECEIPT_PATH"',
+        "cma-trigger-kind-staging.sh remove-observer",
+        "cma-trigger-kind-staging.sh purge",
+        "cma-trigger-kind-staging.sh verify-cleanup",
+        'exit "$status"',
+      ],
+    ),
+    "staging cleanup must prove destruction, settle passing provider objects, then remove observer custody and purge",
+  )
+
+  finalize = named_step(provider_steps, "Finalize evidence against terminal ephemeral cleanup")
+  check(finalize && finalize["id"] == "evidence_finalize", "terminal evidence finalizer is absent")
+  check(
+    finalize["if"].to_s.include?("always()") &&
+      finalize["if"].to_s.include?("steps.evidence_audit.outcome == 'success'") &&
+      finalize["if"].to_s.include?("steps.staging_cleanup.outcome == 'success'"),
+    "evidence finalization must require its audit and terminal cleanup receipt",
+  )
+  check(
+    finalize.fetch("env") == {
+      "EVIDENCE_PATH" => "${{ runner.temp }}/cma-trigger-smoke-evidence.json",
+      "CLEANUP_RECEIPT_PATH" => "${{ runner.temp }}/cma-trigger-kind-staging-cleanup.json",
+    },
+    "evidence finalizer must receive only its evidence and cleanup receipt paths",
+  )
+  check(
+    contains_in_order?(
+      finalize.fetch("run"),
+      [
+        '--finalize-ephemeral-cleanup "$EVIDENCE_PATH" "$CLEANUP_RECEIPT_PATH"',
+        '--validate-evidence "$EVIDENCE_PATH"',
+      ],
+    ),
+    "terminal evidence must be finalized from the cleanup receipt and revalidated",
   )
 
   upload = named_step(provider_steps, "Upload redacted provider evidence")
-  check(upload, "provider smoke must retain its evidence upload")
-  check(upload["id"] == "evidence_upload", "provider evidence upload must expose artifact outputs")
+  check(upload && upload["id"] == "evidence_upload", "provider evidence upload is absent")
   check(
-    upload["if"].to_s.include?("steps.evidence_audit.outcome == 'success'"),
-    "provider evidence upload must fail closed on audit or schema rejection",
+    upload["if"].to_s.include?("always()") &&
+      upload["if"].to_s.include?("steps.evidence_audit.outcome == 'success'") &&
+      upload["if"].to_s.include?("steps.staging_cleanup.outcome == 'success'") &&
+      upload["if"].to_s.include?("steps.evidence_finalize.outcome == 'success'") &&
+      upload.fetch("with").fetch("if-no-files-found") == "error",
+    "provider evidence upload must require successful audit, cleanup, and finalization",
   )
-  check(upload["uses"] == "actions/upload-artifact@v4", "provider evidence must use artifact v4")
   check(
-    upload.fetch("with") == {
-      "name" => "${{ steps.evidence_audit.outputs.artifact_name }}",
-      "path" => "${{ runner.temp }}/cma-trigger-smoke-evidence.json",
-      "if-no-files-found" => "error",
-      "retention-days" => 30,
-    },
-    "provider evidence upload must retain only its validated exact file for 30 days",
+    provider_steps.index(audit) < provider_steps.index(cleanup) &&
+      provider_steps.index(cleanup) < provider_steps.index(finalize) &&
+      provider_steps.index(finalize) < provider_steps.index(upload),
+    "evidence must be audited, cleaned, finalized, then uploaded in order",
+  )
+
+  protected_bindings = provider_steps.flat_map do |step|
+    next [] unless step.is_a?(Hash) && step["env"].is_a?(Hash)
+
+    step["env"].values.grep(/\A\$\{\{ secrets(?:\.|\[)/)
+  end.sort
+  check(
+    protected_bindings == [
+      "${{ secrets.CMA_TRIGGER_SMOKE_KIND_CA_KEY_B64 }}",
+      "${{ secrets.CMA_TRIGGER_SMOKE_KUBECONFIG_B64 }}",
+      "${{ secrets[inputs.handoff_secret_name] }}",
+      "${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}",
+    ].sort,
+    "provider secrets escaped the two reviewed materialization steps",
+  )
+  check(
+    !JSON.generate(workflow).include?("secrets.CMA_TRIGGER_SMOKE_ACCESS_TOKEN"),
+    "provider smoke must not retain a separately uploaded caller-token secret",
   )
 end
 
@@ -462,7 +1250,7 @@ def verify_sources(sources)
     "provider smoke must own the exact Trigger kernel constant",
   )
   [
-    "schema_version: 3",
+    "schema_version: 6",
     "expected_kernel: TRIGGER_KERNEL_ID",
     "observed_kernel: null",
     "deployment.expected_kernel !== TRIGGER_KERNEL_ID",
@@ -470,16 +1258,79 @@ def verify_sources(sources)
     "sessionCleanupStages.length !== 1",
     'stage.name === "session_cleanup"',
     "raw.stages[raw.stages.length - 1] !== sessionCleanupStages[0]",
-    'raw.cleanup.session !== "idle_and_preserved"',
+    "CMA_STATE_CLEANUP_POLICY",
+    "SESSION_CLEANUP_POLICY",
+    "SESSION_IDLE_AWAITING_TEARDOWN",
+    "EPHEMERAL_STATE_DESTROYED",
+    "finalizeEphemeralCleanupEvidence",
+    'mode === "--finalize-ephemeral-cleanup"',
     'const BATCH_SANDBOX_RESOURCE = "batchsandboxes.sandbox.opensandbox.io"',
     '"trigger_sandbox_namespace"',
     '"CMA_TRIGGER_SMOKE_KUBECONFIG"',
     '"kubernetes_credentials"',
     '"runtime_reservation_sha256"',
+    '"runtime_image_ids"',
+    '"runtime_attestation"',
+    'currentStage = "runtime_image_attestation"',
+    "waitForRuntimeAttestation",
+    'const RUNTIME_ATTESTATION_CONFIGMAP = "cma-trigger-runtime-provenance"',
+    'const STORAGE_CONTRACT_REPOSITORY = "ChronoAIProject/chrono-bucket"',
+    '"provider_object_settlement"',
+    "validateProviderObjectSettlement",
+    "context.unrelated_live_objects_observed !== 0",
+    "workspace.unrelated_live_objects_observed !== 0",
+    "value.session_id_sha256 !== sha256(evidence.resources.session_id)",
+    "value.current_run_live_objects_after !== 0",
+    "receipt.schema_version !== 2",
     '"--chunk-size=0"',
   ].each do |contract|
     check(smoke.include?(contract), "provider smoke source is missing #{contract}")
   end
+
+  settlement = sources.fetch(:settlement)
+  [
+    'const STORAGE_CONTRACT_REPOSITORY = "ChronoAIProject/chrono-bucket"',
+    '"4087662e2a65e3747b3203ba619eca7342089272"',
+    "raw.schema_version !== 6",
+    '"storage_owner_service_account_id"',
+    "ownerServiceAccountId: handoff.storage_owner_service_account_id",
+    "subjectHash: sha256(handoff.subject_id)",
+    'url.searchParams.set("mutationGeneration", String(object.generation + 1))',
+    "validateDeleteAcknowledgement",
+    "exactObjectSnapshot(contextClassified.unrelated)",
+    'fsConstants.O_CREAT |',
+    'fsConstants.O_EXCL |',
+    "await unlink(outputPath)",
+  ].each do |contract|
+    check(
+      settlement.include?(contract),
+      "provider-object settlement source is missing #{contract}",
+    )
+  end
+  settlement_tests = sources.fetch(:settlement_tests)
+  [
+    "same Launch under another valid subject hash",
+    "bucket owner drift aborts before the first delete",
+    "fenced generation drift",
+    "an ambiguous delete transport failure never produces a receipt",
+    "a residual current-run live object after reread fails settlement",
+    "unrelated inventory drift during settlement is detected",
+  ].each do |contract|
+    check(
+      settlement_tests.include?(contract),
+      "provider-object settlement tests are missing #{contract}",
+    )
+  end
+  check(
+    settlement.scan("sessionId: evidence.resources.session_id").length == 4 &&
+      settlement.scan("launchId: evidence.resources.launch_id").length == 4 &&
+      settlement.scan("subjectHash: sha256(handoff.subject_id)").length == 2,
+    "provider-object settlement must bind both initial and final inventories to the exact session, Launch, and subject",
+  )
+  check(
+    !smoke.include?("stop_runtime_preserve_session"),
+    "provider smoke must not claim ephemeral session preservation",
+  )
   source_matches(
     smoke,
     /assertEqual\(\s*launch\.runtime_admission\.kernel,\s*TRIGGER_KERNEL_ID,\s*"trigger_kernel_mismatch"/m,
@@ -509,6 +1360,11 @@ def verify_sources(sources)
     smoke,
     /currentStage = "sandbox_inventory_live_session".*?phase: "live_session".*?sandbox_inventory\.observations\.live_session\s*=\s*inventory\.observation/m,
     "provider smoke must retain authoritative inventory for the live session",
+  )
+  source_matches(
+    smoke,
+    /currentStage = "runtime_image_attestation".*?evidence\.document\.runtime_attestation\s*=\s*await waitForRuntimeAttestation\(.*?sandboxId: liveSandbox\.labels\.sandbox_id/m,
+    "provider smoke must bind the exact live sandbox to runtime image attestation",
   )
   source_matches(
     smoke,
@@ -1003,6 +1859,7 @@ end
 
 def verify_contract(inputs)
   verify_example(inputs.fetch(:example))
+  verify_ci_image_provenance(inputs.fetch(:ci_workflow))
   verify_workflow(inputs.fetch(:workflow))
   verify_sources(inputs.fetch(:sources))
   verify_provider_manifests(inputs)
@@ -1179,6 +2036,207 @@ def self_test(base)
 
   mutations = []
 
+  pr_image_export = deep_copy(base)
+  named_step(
+    pr_image_export.dig(:ci_workflow, "jobs", "images", "steps"),
+    "Export scanned image provenance",
+  )["if"] = "${{ success() && (matrix.component == 'api' || matrix.component == 'runtime') }}"
+  mutations << ["CI image provenance exported for pull requests", pr_image_export]
+
+  missing_ci_source_binding = deep_copy(base)
+  ci_export = named_step(
+    missing_ci_source_binding.dig(:ci_workflow, "jobs", "images", "steps"),
+    "Export scanned image provenance",
+  )
+  replaced = ci_export.fetch("run").sub!(
+    ".source_sha == $source_sha",
+    ".source_sha != null",
+  )
+  check(replaced, "CI source-binding mutation did not change the fixture")
+  mutations << ["CI image metadata missing exact source SHA binding", missing_ci_source_binding]
+
+  export_before_scan = deep_copy(base)
+  ci_steps = export_before_scan.dig(:ci_workflow, "jobs", "images", "steps")
+  scan_step = named_step(ci_steps, "Vulnerability scan")
+  export_step = named_step(ci_steps, "Export scanned image provenance")
+  ci_steps.delete(scan_step)
+  ci_steps.insert(ci_steps.index(export_step) + 1, scan_step)
+  mutations << ["CI image exported before vulnerability scan", export_before_scan]
+
+  floated_ci_provenance_action = deep_copy(base)
+  named_step(
+    floated_ci_provenance_action.dig(:ci_workflow, "jobs", "images", "steps"),
+    "Upload scanned image provenance",
+  )["uses"] = "actions/upload-artifact@v4"
+  mutations << ["floated CI image provenance action", floated_ci_provenance_action]
+
+  weakened_ci_run_resolution = deep_copy(base)
+  ci_resolution = named_step(
+    weakened_ci_run_resolution.dig(:workflow, "jobs", "plan", "steps"),
+    "Resolve exact successful CI image artifacts",
+  )
+  replaced = ci_resolution.fetch("run").gsub!(
+    '.conclusion == "success"',
+    ".conclusion != null",
+  )
+  check(replaced, "successful-CI-run mutation did not change the fixture")
+  mutations << ["CI run resolution accepts unsuccessful runs", weakened_ci_run_resolution]
+
+  name_selected_artifact = deep_copy(base)
+  api_download = named_step(
+    name_selected_artifact.dig(:workflow, "jobs", "provider", "steps"),
+    "Download exact approved API image artifact",
+  )
+  api_download.fetch("with").delete("artifact-ids")
+  api_download.fetch("with")["name"] = "cma-trigger-ci-image-api-${{ github.sha }}"
+  mutations << ["protected image artifact selected by name", name_selected_artifact]
+
+  missing_artifact_digest = deep_copy(base)
+  missing_artifact_digest.dig(:workflow, "jobs", "plan", "outputs")
+    .delete("api_artifact_digest")
+  mutations << ["approved image provenance omits artifact digest", missing_artifact_digest]
+
+  missing_archive_hash_check = deep_copy(base)
+  image_verification = named_step(
+    missing_archive_hash_check.dig(:workflow, "jobs", "provider", "steps"),
+    "Verify approved image bytes and expose staging contract",
+  )
+  replaced = image_verification.fetch("run").sub!(
+    'actual_archive_sha256=$(sha256sum "$archive_path" | awk \'{print $1}\')',
+    'actual_archive_sha256="$approved_archive_sha256"',
+  )
+  check(replaced, "archive-hash mutation did not change the fixture")
+  mutations << ["protected image archive hash verification removed", missing_archive_hash_check]
+
+  open_approved_manifest = deep_copy(base)
+  image_verification = named_step(
+    open_approved_manifest.dig(:workflow, "jobs", "provider", "steps"),
+    "Verify approved image bytes and expose staging contract",
+  )
+  replaced = image_verification.fetch("run").sub!(
+    'keys == ["ci_run", "images", "kind", "repository_id", "schema_version", "source_sha"]',
+    'has("ci_run") and has("images")',
+  )
+  check(replaced, "closed-manifest mutation did not change the fixture")
+  mutations << ["approved image manifest schema opened", open_approved_manifest]
+
+  missing_manifest_field = deep_copy(base)
+  image_verification = named_step(
+    missing_manifest_field.dig(:workflow, "jobs", "provider", "steps"),
+    "Verify approved image bytes and expose staging contract",
+  )
+  replaced = image_verification.fetch("run").sub!(
+    '"image_reference", "metadata_name", "metadata_sha256"',
+    '"image_reference", "metadata_name"',
+  )
+  check(replaced, "manifest-field mutation did not change the fixture")
+  mutations << ["approved image manifest schema field removed", missing_manifest_field]
+
+  image_verification_after_secret = deep_copy(base)
+  provider_steps = image_verification_after_secret.dig(:workflow, "jobs", "provider", "steps")
+  verification_step = named_step(provider_steps, "Verify approved image bytes and expose staging contract")
+  bootstrap_step = named_step(provider_steps, "Validate the protected ephemeral staging bootstrap")
+  provider_steps.delete(verification_step)
+  provider_steps.insert(provider_steps.index(bootstrap_step) + 1, verification_step)
+  mutations << ["image verification moved after protected credentials", image_verification_after_secret]
+
+  missing_staging_image_id = deep_copy(base)
+  image_verification = named_step(
+    missing_staging_image_id.dig(:workflow, "jobs", "provider", "steps"),
+    "Verify approved image bytes and expose staging contract",
+  )
+  removed = image_verification.fetch("run").sub!(
+    /^\s*echo "CMA_TRIGGER_KIND_STAGING_RUNTIME_IMAGE_ID=.*\n/,
+    "",
+  )
+  check(removed, "staging image-ID contract mutation did not change the fixture")
+  mutations << ["staging runtime image ID contract removed", missing_staging_image_id]
+
+  floated_download_action = deep_copy(base)
+  named_step(
+    floated_download_action.dig(:workflow, "jobs", "provider", "steps"),
+    "Download exact approved image provenance manifest",
+  )["uses"] = "actions/download-artifact@v4"
+  mutations << ["floated approved artifact download action", floated_download_action]
+
+  missing_dispatch_nonce = deep_copy(base)
+  missing_dispatch_nonce.dig(:workflow, true, "workflow_dispatch", "inputs")
+    .delete("dispatch_nonce")
+  mutations << ["missing dispatch nonce", missing_dispatch_nonce]
+
+  static_handoff_secret = deep_copy(base)
+  named_step(
+    static_handoff_secret.dig(:workflow, "jobs", "provider", "steps"),
+    "Materialize and accept the closed NyxID handoff",
+  ).fetch("env")["NYXID_BOOTSTRAP_B64"] =
+    "${{ secrets.CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_B64 }}"
+  mutations << ["static shared handoff secret", static_handoff_secret]
+
+  missing_expected_head = deep_copy(base)
+  missing_expected_head.dig(:workflow, true, "workflow_dispatch", "inputs")
+    .delete("expected_head_sha")
+  mutations << ["missing reviewed dispatch head", missing_expected_head]
+
+  missing_head_equality = deep_copy(base)
+  head_guard = named_step(
+    missing_head_equality.dig(:workflow, "jobs", "plan", "steps"),
+    "Require the deployed develop workflow and preservation consent",
+  )
+  replaced = head_guard.fetch("run").sub!(
+    'if [ "$WORKFLOW_SHA" != "$EXPECTED_HEAD_SHA" ]; then',
+    'if [ "$WORKFLOW_SHA" != "$WORKFLOW_SHA" ]; then',
+  )
+  check(replaced, "reviewed-head equality mutation did not change the fixture")
+  mutations << ["missing reviewed dispatch head equality", missing_head_equality]
+
+  wrong_plan_reviewer = deep_copy(base)
+  plan_environment = named_step(
+    wrong_plan_reviewer.dig(:workflow, "jobs", "plan", "steps"),
+    "Require the live protected smoke environment",
+  )
+  replaced = plan_environment.fetch("run").sub!(
+    ".reviewers[0].reviewer.id == 15748251",
+    ".reviewers[0].reviewer.id == 1",
+  )
+  check(replaced, "plan reviewer-identity mutation did not change the fixture")
+  mutations << ["wrong pre-approval reviewer identity", wrong_plan_reviewer]
+
+  weakened_plan_rule_set = deep_copy(base)
+  plan_environment = named_step(
+    weakened_plan_rule_set.dig(:workflow, "jobs", "plan", "steps"),
+    "Require the live protected smoke environment",
+  )
+  replaced = plan_environment.fetch("run").sub!(
+    ".protection_rules | length == 2",
+    ".protection_rules | length >= 2",
+  )
+  check(replaced, "plan protection-rule mutation did not change the fixture")
+  mutations << ["open pre-approval protection rule set", weakened_plan_rule_set]
+
+  wrong_post_approval_reviewer = deep_copy(base)
+  provider_environment = named_step(
+    wrong_post_approval_reviewer.dig(:workflow, "jobs", "provider", "steps"),
+    "Revalidate the protected smoke environment after approval",
+  )
+  replaced = provider_environment.fetch("run").sub!(
+    '.reviewers[0].reviewer.slug == "ai-application"',
+    '.reviewers[0].reviewer.slug == "some-other-team"',
+  )
+  check(replaced, "post-approval reviewer-identity mutation did not change the fixture")
+  mutations << ["wrong post-approval reviewer identity", wrong_post_approval_reviewer]
+
+  weakened_post_approval_branch_rule = deep_copy(base)
+  provider_environment = named_step(
+    weakened_post_approval_branch_rule.dig(:workflow, "jobs", "provider", "steps"),
+    "Revalidate the protected smoke environment after approval",
+  )
+  replaced = provider_environment.fetch("run").sub!(
+    '[.protection_rules[] | select(.type == "branch_policy")] | length == 1',
+    '[.protection_rules[] | select(.type == "branch_policy")] | length > 0',
+  )
+  check(replaced, "post-approval branch-rule mutation did not change the fixture")
+  mutations << ["open post-approval branch rule set", weakened_post_approval_branch_rule]
+
   missing_example_namespace = deep_copy(base)
   missing_example_namespace.fetch(:example).delete("trigger_sandbox_namespace")
   mutations << ["missing example sandbox namespace", missing_example_namespace]
@@ -1186,6 +2244,18 @@ def self_test(base)
   extended_example_schema = deep_copy(base)
   extended_example_schema.fetch(:example)["kubeconfig"] = "forbidden"
   mutations << ["extended example schema", extended_example_schema]
+
+  floated_plan_action = deep_copy(base)
+  floated_checkout = floated_plan_action.dig(:workflow, "jobs", "plan", "steps")
+    .find { |step| step.is_a?(Hash) && step["uses"]&.start_with?("actions/checkout@") }
+  floated_checkout["uses"] = "actions/checkout@v5"
+  mutations << ["floated plan action", floated_plan_action]
+
+  floated_provider_action = deep_copy(base)
+  floated_upload = floated_provider_action.dig(:workflow, "jobs", "provider", "steps")
+    .find { |step| step.is_a?(Hash) && step["uses"]&.start_with?("actions/upload-artifact@") }
+  floated_upload["uses"] = "actions/upload-artifact@v4"
+  mutations << ["floated credential-job action", floated_provider_action]
 
   missing_protected_namespace = deep_copy(base)
   missing_protected_namespace.dig(:workflow, "jobs", "provider", "env")
@@ -1222,9 +2292,34 @@ def self_test(base)
   wrong_kubeconfig_secret = deep_copy(base)
   named_step(
     wrong_kubeconfig_secret.dig(:workflow, "jobs", "provider", "steps"),
-    "Materialize the scoped Kubernetes inventory credential",
-  ).fetch("env")["KUBECONFIG_B64"] = "${{ secrets.OTHER_KUBECONFIG }}"
+    "Validate the protected ephemeral staging bootstrap",
+  ).fetch("env")["CMA_TRIGGER_SMOKE_KUBECONFIG_B64"] = "${{ secrets.OTHER_KUBECONFIG }}"
   mutations << ["wrong kubeconfig secret binding", wrong_kubeconfig_secret]
+
+  missing_kubeconfig_digest = deep_copy(base)
+  named_step(
+    missing_kubeconfig_digest.dig(:workflow, "jobs", "provider", "steps"),
+    "Validate the protected ephemeral staging bootstrap",
+  ).fetch("env").delete("CMA_TRIGGER_SMOKE_KUBECONFIG_SHA256")
+  mutations << ["missing kubeconfig digest binding", missing_kubeconfig_digest]
+
+  wrong_handoff_secret = deep_copy(base)
+  named_step(
+    wrong_handoff_secret.dig(:workflow, "jobs", "provider", "steps"),
+    "Materialize and accept the closed NyxID handoff",
+  ).fetch("env")["NYXID_BOOTSTRAP_B64"] = "${{ secrets.OTHER_HANDOFF }}"
+  mutations << ["wrong NyxID handoff secret binding", wrong_handoff_secret]
+
+  skipped_handoff_acceptance = deep_copy(base)
+  handoff_step = named_step(
+    skipped_handoff_acceptance.dig(:workflow, "jobs", "provider", "steps"),
+    "Materialize and accept the closed NyxID handoff",
+  )
+  handoff_step["run"] = handoff_step.fetch("run").sub(
+    "cma-trigger-kind-staging.sh accept-handoff",
+    "cma-trigger-kind-staging.sh prepare",
+  )
+  mutations << ["skipped NyxID handoff acceptance", skipped_handoff_acceptance]
 
   missing_run_kubeconfig = deep_copy(base)
   named_step(
@@ -1240,12 +2335,133 @@ def self_test(base)
   ).fetch("env")["RAW_KUBECONFIG"] = "${{ secrets.CMA_TRIGGER_SMOKE_KUBECONFIG_B64 }}"
   mutations << ["extended smoke environment", extended_run_env]
 
-  skipped_kubeconfig_removal = deep_copy(base)
+  skipped_terminal_cleanup = deep_copy(base)
   named_step(
-    skipped_kubeconfig_removal.dig(:workflow, "jobs", "provider", "steps"),
-    "Remove the Kubernetes inventory credential",
+    skipped_terminal_cleanup.dig(:workflow, "jobs", "provider", "steps"),
+    "Destroy staging, settle provider objects, and purge runner custody",
   )["if"] = "success()"
-  mutations << ["non-always kubeconfig removal", skipped_kubeconfig_removal]
+  mutations << ["non-always terminal staging cleanup", skipped_terminal_cleanup]
+
+  purge_without_destroy = deep_copy(base)
+  cleanup_step = named_step(
+    purge_without_destroy.dig(:workflow, "jobs", "provider", "steps"),
+    "Destroy staging, settle provider objects, and purge runner custody",
+  )
+  cleanup_step["run"] = cleanup_step.fetch("run").sub(
+    "cma-trigger-kind-staging.sh destroy",
+    "cma-trigger-kind-staging.sh verify-cleanup",
+  )
+  mutations << ["staging purge without destruction", purge_without_destroy]
+
+  missing_provider_object_settlement = deep_copy(base)
+  cleanup_step = named_step(
+    missing_provider_object_settlement.dig(:workflow, "jobs", "provider", "steps"),
+    "Destroy staging, settle provider objects, and purge runner custody",
+  )
+  replaced = cleanup_step.fetch("run").sub!(
+    "cma-trigger-provider-object-settlement.mjs settle",
+    "provider-object-settlement-disabled",
+  )
+  check(replaced, "settlement-omission mutation did not change the fixture")
+  mutations << ["provider-object settlement omitted", missing_provider_object_settlement]
+
+  settlement_before_destroy = deep_copy(base)
+  cleanup_step = named_step(
+    settlement_before_destroy.dig(:workflow, "jobs", "provider", "steps"),
+    "Destroy staging, settle provider objects, and purge runner custody",
+  )
+  run = cleanup_step.fetch("run")
+  replaced = run.sub!(
+    "cma-trigger-provider-object-settlement.mjs settle",
+    "provider-object-settlement-disabled",
+  )
+  check(replaced, "pre-destroy settlement mutation did not disable the original call")
+  replaced = run.sub!(
+    ".github/scripts/cma-trigger-kind-staging.sh destroy || status=1",
+    ".github/scripts/cma-trigger-provider-object-settlement.mjs settle\n            .github/scripts/cma-trigger-kind-staging.sh destroy || status=1",
+  )
+  check(replaced, "pre-destroy settlement mutation did not change the fixture")
+  mutations << ["provider-object settlement before destruction", settlement_before_destroy]
+
+  purge_before_settlement = deep_copy(base)
+  cleanup_step = named_step(
+    purge_before_settlement.dig(:workflow, "jobs", "provider", "steps"),
+    "Destroy staging, settle provider objects, and purge runner custody",
+  )
+  run = cleanup_step.fetch("run")
+  replaced = run.sub!(
+    ".github/scripts/cma-trigger-kind-staging.sh purge || status=1",
+    "true # purge deferred mutation",
+  )
+  check(replaced, "pre-settlement purge mutation did not disable the original call")
+  replaced = run.sub!(
+    "node .github/scripts/cma-trigger-provider-object-settlement.mjs settle",
+    ".github/scripts/cma-trigger-kind-staging.sh purge || status=1\n                node .github/scripts/cma-trigger-provider-object-settlement.mjs settle",
+  )
+  check(replaced, "pre-settlement purge mutation did not change the fixture")
+  mutations << ["runner purge before provider-object settlement", purge_before_settlement]
+
+  wrong_settlement_generation = deep_copy(base)
+  replaced = wrong_settlement_generation.dig(:sources, :settlement).sub!(
+    'url.searchParams.set("mutationGeneration", String(object.generation + 1))',
+    'url.searchParams.set("mutationGeneration", String(object.generation))',
+  )
+  check(replaced, "settlement-generation mutation did not change the fixture")
+  mutations << ["provider-object settlement reuses the live generation", wrong_settlement_generation]
+
+  wrong_settlement_owner = deep_copy(base)
+  replaced = wrong_settlement_owner.dig(:sources, :settlement).sub!(
+    "ownerServiceAccountId: handoff.storage_owner_service_account_id",
+    "ownerServiceAccountId: handoff.subject_id",
+  )
+  check(replaced, "settlement-owner mutation did not change the fixture")
+  mutations << ["provider-object settlement drops bucket-owner binding", wrong_settlement_owner]
+
+  wrong_settlement_session = deep_copy(base)
+  replaced = wrong_settlement_session.dig(:sources, :settlement).sub!(
+    "sessionId: evidence.resources.session_id",
+    "sessionId: evidence.resources.launch_id",
+  )
+  check(replaced, "settlement-session mutation did not change the fixture")
+  mutations << ["provider-object settlement drops session binding", wrong_settlement_session]
+
+  wrong_settlement_launch = deep_copy(base)
+  replaced = wrong_settlement_launch.dig(:sources, :settlement).sub!(
+    "launchId: evidence.resources.launch_id",
+    "launchId: evidence.resources.session_id",
+  )
+  check(replaced, "settlement-Launch mutation did not change the fixture")
+  mutations << ["provider-object settlement drops Launch binding", wrong_settlement_launch]
+
+  settlement_allows_unrelated_objects = deep_copy(base)
+  replaced = settlement_allows_unrelated_objects.dig(:sources, :smoke).sub!(
+    "context.unrelated_live_objects_observed !== 0",
+    "false",
+  )
+  check(replaced, "unrelated-object mutation did not change the fixture")
+  mutations << ["provider-object settlement admits unrelated live objects", settlement_allows_unrelated_objects]
+
+  settlement_allows_residual_objects = deep_copy(base)
+  replaced = settlement_allows_residual_objects.dig(:sources, :smoke).sub!(
+    "value.current_run_live_objects_after !== 0",
+    "false",
+  )
+  check(replaced, "residual-object mutation did not change the fixture")
+  mutations << ["provider-object settlement admits residual live objects", settlement_allows_residual_objects]
+
+  missing_evidence_finalization = deep_copy(base)
+  provider_steps = missing_evidence_finalization.dig(:workflow, "jobs", "provider", "steps")
+  provider_steps.reject! do |step|
+    step.is_a?(Hash) && step["name"] == "Finalize evidence against terminal ephemeral cleanup"
+  end
+  mutations << ["missing terminal evidence finalization", missing_evidence_finalization]
+
+  upload_before_finalization = deep_copy(base)
+  named_step(
+    upload_before_finalization.dig(:workflow, "jobs", "provider", "steps"),
+    "Upload redacted provider evidence",
+  )["if"] = "${{ always() && steps.evidence_audit.outcome == 'success' && steps.staging_cleanup.outcome == 'success' }}"
+  mutations << ["upload without terminal evidence finalization", upload_before_finalization]
 
   widened_inventory_resource = deep_copy(base)
   replaced = widened_inventory_resource.dig(:sources, :smoke).sub!(
