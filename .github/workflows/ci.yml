@@ -62,6 +62,21 @@ jobs:
           node .github/scripts/cma-trigger-provider-smoke.mjs --self-test
           node .github/scripts/cma-trigger-provider-smoke.mjs \
             --validate-config .github/cma-trigger-provider-smoke.example.json
+          node --check .github/scripts/cma-trigger-provider-object-settlement.mjs
+          node --check .github/scripts/cma-trigger-provider-object-settlement-tests.mjs
+          node .github/scripts/cma-trigger-provider-object-settlement-tests.mjs
+          node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs
+          node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
+          node .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
+      - name: Ephemeral Kind staging custody stays closed
+        run: |
+          set -euo pipefail
+          node --check .github/scripts/cma-trigger-kind-staging-fixture.mjs
+          bash -n .github/scripts/cma-trigger-kind-staging.sh
+          bash -n .github/scripts/cma-trigger-kind-staging-tests.sh
+          shellcheck .github/scripts/cma-trigger-kind-staging.sh
+          shellcheck .github/scripts/cma-trigger-kind-staging-tests.sh
+          .github/scripts/cma-trigger-kind-staging-tests.sh
       - name: Provider workflow is valid YAML
         run: |
           ruby .github/scripts/cma-trigger-provider-contract.rb
@@ -426,9 +441,9 @@ jobs:
   images:
     name: Images
     runs-on: ubuntu-24.04
-    # A build that hangs should fail rather than occupy a runner for six hours.
-    # Well above a cold cacheless build, so this catches a stall, not slowness.
-    timeout-minutes: 45
+    # A build or short-lived image transfer that hangs must fail rather than
+    # occupy a runner for six hours. This matches the release image budget.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -437,10 +452,10 @@ jobs:
         # The new check is not required until it is added to the ruleset.
         component: [api, web, runtime]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # arm64 builds run under emulation on the amd64 runner.
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       # Proves the Dockerfile builds for every architecture the cluster may
       # schedule onto. Discarded via cacheonly rather than loaded: the docker
       # exporter behind `load: true` cannot export a multi-platform manifest
@@ -461,7 +476,7 @@ jobs:
       # job on merge, not the PR path: the guarantee is worth having on images
       # that ship, not on every push.
       - name: Build image for all target platforms
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: infra/${{ matrix.component }}/Dockerfile
@@ -478,7 +493,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
       # Reuses the layers just cached above, so this is near-free.
       - name: Load native image for scanning
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: infra/${{ matrix.component }}/Dockerfile
@@ -516,7 +531,7 @@ jobs:
               redaction: "Only closed outcomes, status classes, artifact hashes, synthetic identities, and counts are retained; provider bodies and credential values are discarded."
             }' > "$D09_FALLBACK_PATH"
           cp "$D09_FALLBACK_PATH" "$D09_EVIDENCE_PATH"
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         if: matrix.component == 'runtime'
         with:
           node-version: 26
@@ -788,7 +803,7 @@ jobs:
           fi
       - name: Retain Trigger runtime boundary evidence
         if: ${{ always() && matrix.component == 'runtime' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cma-trigger-d09-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cma-trigger-d09.json
@@ -800,10 +815,145 @@ jobs:
           D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09.json
         run: jq -e '.result == "pass"' "$D09_EVIDENCE_PATH" >/dev/null
       - name: Vulnerability scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cma-${{ matrix.component }}:ci
           format: table
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+
+      # A protected provider smoke must consume the exact images that passed
+      # this job, not rebuild them from mutable package indexes after approval.
+      # Keep the transfer short-lived and bind every byte to the successful
+      # develop push that produced it.
+      - name: Export scanned image provenance
+        if: ${{ success() && github.repository_id == '1330597394' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && (matrix.component == 'api' || matrix.component == 'runtime') }}
+        env:
+          COMPONENT: ${{ matrix.component }}
+          EXPECTED_REPOSITORY_ID: "1330597394"
+          IMAGE_EXPORT_ROOT: ${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          # COMPONENT is supplied by this step's reviewed env binding.
+          # shellcheck disable=SC2153
+          component="$COMPONENT"
+          case "$component" in
+            api|runtime) ;;
+            *)
+              echo "::error::only the api and runtime images may enter provider provenance"
+              exit 1
+              ;;
+          esac
+          if [ "$GITHUB_EVENT_NAME" != push ] || [ "$GITHUB_REF" != refs/heads/develop ]; then
+            echo "::error::CI image provenance is restricted to develop push runs"
+            exit 1
+          fi
+          if [ "$GITHUB_REPOSITORY_ID" != "$EXPECTED_REPOSITORY_ID" ]; then
+            echo "::error::CI image provenance ran in an unreviewed repository"
+            exit 1
+          fi
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::CI image provenance has malformed GitHub run identity"
+            exit 1
+          fi
+
+          reference="cma-${component}:ci"
+          archive_name="cma-trigger-${component}.tar"
+          metadata_name="cma-trigger-${component}.json"
+          if [ -e "$IMAGE_EXPORT_ROOT" ]; then
+            echo "::error::CI image provenance output already exists"
+            exit 1
+          fi
+          install -d -m 0700 "$IMAGE_EXPORT_ROOT"
+          archive_path="$IMAGE_EXPORT_ROOT/$archive_name"
+          metadata_path="$IMAGE_EXPORT_ROOT/$metadata_name"
+
+          image_id=$(docker image inspect --format '{{.Id}}' "$reference")
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::scanned image has a malformed immutable image ID"
+            exit 1
+          fi
+          docker image save --output "$archive_path" "$reference"
+          chmod 0400 "$archive_path"
+          archive_sha256=$(sha256sum "$archive_path" | awk '{print $1}')
+          archive_size=$(stat --format='%s' "$archive_path")
+          if [[ ! "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
+            || [[ ! "$archive_size" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::exported image archive has malformed immutable metadata"
+            exit 1
+          fi
+
+          jq -n \
+            --arg archive_name "$archive_name" \
+            --arg archive_sha256 "$archive_sha256" \
+            --argjson archive_size "$archive_size" \
+            --arg component "$component" \
+            --arg image_id "$image_id" \
+            --arg image_reference "$reference" \
+            --argjson repository_id "$GITHUB_REPOSITORY_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --arg source_sha "$GITHUB_SHA" \
+            '{
+              schema_version: 1,
+              kind: "cma-trigger-ci-image",
+              repository_id: $repository_id,
+              source_sha: $source_sha,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              component: $component,
+              image_reference: $image_reference,
+              image_id: $image_id,
+              archive_name: $archive_name,
+              archive_sha256: $archive_sha256,
+              archive_size: $archive_size
+            }' > "$metadata_path"
+          jq -e \
+            --arg archive_name "$archive_name" \
+            --arg archive_sha256 "$archive_sha256" \
+            --argjson archive_size "$archive_size" \
+            --arg component "$component" \
+            --arg image_id "$image_id" \
+            --arg image_reference "$reference" \
+            --argjson repository_id "$GITHUB_REPOSITORY_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --arg source_sha "$GITHUB_SHA" \
+            'type == "object"
+             and (keys == [
+               "archive_name", "archive_sha256", "archive_size", "component",
+               "image_id", "image_reference", "kind", "repository_id",
+               "run_attempt", "run_id", "schema_version", "source_sha"
+             ])
+             and .schema_version == 1
+             and .kind == "cma-trigger-ci-image"
+             and .repository_id == $repository_id
+             and .source_sha == $source_sha
+             and .run_id == $run_id
+             and .run_attempt == $run_attempt
+             and .component == $component
+             and .image_reference == $image_reference
+             and .image_id == $image_id
+             and .archive_name == $archive_name
+             and .archive_sha256 == $archive_sha256
+             and .archive_size == $archive_size' \
+            "$metadata_path" >/dev/null
+          chmod 0400 "$metadata_path"
+
+      - name: Upload scanned image provenance
+        if: ${{ success() && github.repository_id == '1330597394' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && (matrix.component == 'api' || matrix.component == 'runtime') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}/cma-trigger-${{ matrix.component }}.tar
+            ${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}/cma-trigger-${{ matrix.component }}.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true

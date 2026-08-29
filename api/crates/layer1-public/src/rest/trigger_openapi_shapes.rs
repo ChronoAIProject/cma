@@ -486,6 +486,12 @@ pub(super) struct SessionLink {
 }
 
 #[derive(serde::Serialize, ToSchema)]
+pub(super) struct SessionCredentialRetirement {
+    session_id: String,
+    settled_at: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum CapabilityRevocationState {
     Active,
