@@ -1,7 +1,9 @@
 //! Sponsorship authority, accounting, encrypted provider material, and audit in MongoDB.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::{future::BoxFuture, FutureExt as _, TryStreamExt as _};
 use layer2_core::{
     BeginProviderGrantIssue, ClaimGrantActivation, ClaimGrantActivationCleanup,
@@ -9,33 +11,41 @@ use layer2_core::{
     CompleteInvalidatedGrantActivation, CompletedProviderOperation,
     CompletedProviderOperationOutcome, GrantActivationClaim, GrantActivationDenial,
     GrantActivationIntent, GrantActivationLease, GrantActivationState, GrantCapacityRelease,
-    InertGrantCapability, LaunchId, PendingProviderOperation, PersistSponsoredAcceptance,
-    ProviderCredentialAuthority, ProviderCredentialSecret, ProviderGrantAuthority,
-    ProviderGrantReceipt, ProviderOperationKind, ProviderOperationPhase, ReconcileSponsoredUsage,
-    ReservationDisposition, ReserveSponsoredUsage, SensitiveProviderValue, SessionId,
-    SponsorBillingOwner, SponsoredAuditEvent, SponsoredCredentialId,
-    SponsoredCredentialMaterialState, SponsoredCredentialRecord, SponsoredCredentialState,
+    InertGrantCapability, Launch, LaunchId, Page, PageCursor, PageRequest,
+    PendingProviderOperation, PersistSponsoredAcceptance, ProviderCredentialAuthority,
+    ProviderCredentialSecret, ProviderGrantAuthority, ProviderGrantReceipt, ProviderOperationKind,
+    ProviderOperationPhase, ReconcileSponsoredUsage, ReservationDisposition, ReserveSponsoredUsage,
+    SensitiveProviderValue, SessionId, SponsorBillingOwner, SponsoredAuditAction,
+    SponsoredAuditEvent, SponsoredCredentialId, SponsoredCredentialMaterialState,
+    SponsoredCredentialRecord, SponsoredCredentialRegistrationIdentity, SponsoredCredentialState,
     SponsoredGrant, SponsoredGrantAcceptance, SponsoredGrantId, SponsoredGrantState,
     SponsoredGrantTerms, SponsoredLaunchAuthority, SponsoredLaunchState, SponsoredUsageReservation,
-    SponsoredUsageReservationOutcome, SponsoredUsageState, SponsoredUsageSummary,
-    SponsorshipGateFence, SponsorshipPolicy, SponsorshipPolicyId, SponsorshipPolicyUsage,
-    SponsorshipStore, SponsorshipStoreError, StoredSponsoredCredential, SubjectId,
-    TriggerRevisionId, MAX_SPONSORED_AUDIT_PAGE,
+    SponsoredUsageReservationId, SponsoredUsageReservationOutcome, SponsoredUsageState,
+    SponsoredUsageSummary, SponsorshipCiphertextRecordKind, SponsorshipCiphertextRewrapCandidate,
+    SponsorshipGateFence, SponsorshipOperationalPseudonymSet, SponsorshipOperationalPseudonymizer,
+    SponsorshipPolicy, SponsorshipPolicyId, SponsorshipPolicyUsage, SponsorshipRecoveryPage,
+    SponsorshipRecoveryPageRequest, SponsorshipStore, SponsorshipStoreError,
+    StoredSponsoredCredential, StoredSponsorshipPolicy, SubjectId, TriggerRevisionId,
+    TriggerStoreError, MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS, MAX_SPONSORED_AUDIT_PAGE,
 };
 use mongodb::bson::{doc, Bson, DateTime, Document};
 use mongodb::error::{Error, ErrorKind, WriteFailure};
-use mongodb::options::{IndexOptions, ReadConcern, WriteConcern};
+use mongodb::options::{Hint, IndexOptions, ReadConcern, ReturnDocument, WriteConcern};
 use mongodb::{Client, ClientSession, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use super::durability::majority_collection;
 use super::sponsorship_encryption::{
-    SponsorshipCipher, SponsorshipCipherEnvelope, SponsorshipKeyring,
+    validate_independent_keyrings, validate_key_id, SponsorshipCipher, SponsorshipCipherEnvelope,
+    SponsorshipKeyring, SponsorshipOperationalKeyring,
 };
+use super::trigger::{read_launch, LaunchDoc};
 
 const DOCUMENT_SCHEMA_VERSION: i32 = 1;
+const CREDENTIAL_REGISTRATION_DOCUMENT_SCHEMA_VERSION: i32 = 2;
 const GATE_ID: &str = "sponsorship-gate-v1";
 const GATE: &str = "sponsorship_gate";
 const CREDENTIALS: &str = "sponsorship_credentials";
@@ -52,6 +62,8 @@ const TRIGGER_LAUNCHES: &str = "trigger_launches";
 const DUPLICATE_KEY: i32 = 11_000;
 const ACTIVATION_LEASE_MILLIS: i64 = 30_000;
 const RATE_WINDOW_MILLIS: i64 = 60_000;
+const MAX_KILL_SWITCH_INVALIDATIONS: i64 = 1_000;
+const MAX_SPONSORSHIP_RECOVERY_CURSOR_BYTES: usize = 2_048;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GateDoc {
@@ -61,6 +73,12 @@ struct GateDoc {
     configuration_digest: String,
     epoch: i64,
     kill_switch_engaged: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kill_switch_engagement_id: Option<String>,
+    #[serde(default)]
+    kill_switch_drain_complete: bool,
+    #[serde(default)]
+    authority_read_revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +114,8 @@ struct CredentialDoc {
     provider_policy_key: String,
     provider_policy_handle: SponsorshipCipherEnvelope,
     provider_credential_id_digest: String,
+    #[serde(default)]
+    provider_credential_id_aliases: Vec<String>,
     provider_state_version: i64,
     ownership_verified_at: String,
     supports_expiry: bool,
@@ -118,6 +138,8 @@ struct CredentialDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pending_secret: Option<SponsorshipCipherEnvelope>,
     encryption_key_id: String,
+    #[serde(default)]
+    authority_read_revision: i64,
 }
 
 impl std::fmt::Debug for CredentialDoc {
@@ -144,8 +166,10 @@ impl std::fmt::Debug for CredentialDoc {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CredentialRegistrationDoc {
     #[serde(rename = "_id")]
-    registration_idempotency_hash: String,
+    id: String,
     document_schema_version: i32,
+    request_aliases: Vec<String>,
+    command_aliases: Vec<String>,
     credential_id: String,
     created_at: String,
 }
@@ -181,9 +205,12 @@ struct PolicyDoc {
     credential_id: String,
     state: String,
     expires_at: String,
+    created_at: String,
     updated_at: String,
     policy: SponsorshipPolicy,
     usage: PolicyUsageDoc,
+    #[serde(default)]
+    authority_read_revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,10 +226,13 @@ struct AcceptanceDoc {
     #[serde(rename = "_id")]
     launch_id: String,
     document_schema_version: i32,
+    idempotency_aliases: Vec<String>,
     contributor: String,
     policy_id: String,
     accepted_at: String,
     acceptance: SponsoredGrantAcceptance,
+    #[serde(default)]
+    authority_read_revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,7 +242,7 @@ struct GateFenceDoc {
     kill_switch_engaged: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ProviderReceiptDoc {
     provider_grant_id: SponsorshipCipherEnvelope,
     provider_state_version: i64,
@@ -304,6 +334,7 @@ struct GrantDoc {
     launch_id: String,
     session_id: String,
     contributor: String,
+    sponsor_subject: String,
     terms_digest: String,
     acceptance: SponsoredGrantAcceptance,
     authority: ProviderGrantAuthority,
@@ -311,6 +342,7 @@ struct GrantDoc {
     state: String,
     allocation: layer2_core::SponsoredUsageSummary,
     usage: layer2_core::SponsoredUsageSummary,
+    unresolved_usage: layer2_core::SponsoredUsageSummary,
     generation: i64,
     created_at: String,
     updated_at: String,
@@ -339,11 +371,12 @@ impl std::fmt::Debug for GrantDoc {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ReservationDoc {
     #[serde(rename = "_id")]
-    stable_request_id: String,
+    reservation_id: String,
     document_schema_version: i32,
+    request_aliases: Vec<String>,
     grant_id: String,
     policy_id: String,
     state: String,
@@ -351,6 +384,20 @@ struct ReservationDoc {
     updated_at: String,
     rate_observed_at: DateTime,
     reservation: SponsoredUsageReservation,
+}
+
+impl std::fmt::Debug for ReservationDoc {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReservationDoc")
+            .field("reservation_id", &self.reservation_id)
+            .field("grant_id", &self.grant_id)
+            .field("policy_id", &self.policy_id)
+            .field("state", &self.state)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,6 +418,7 @@ struct AuditDoc {
 pub struct MongoSponsorshipStore {
     client: Client,
     cipher: Arc<SponsorshipCipher>,
+    operational: Arc<SponsorshipOperationalPseudonymizer>,
     gate: Collection<GateDoc>,
     credentials: Collection<CredentialDoc>,
     credential_registrations: Collection<CredentialRegistrationDoc>,
@@ -382,7 +430,7 @@ pub struct MongoSponsorshipStore {
     grants: Collection<GrantDoc>,
     reservations: Collection<ReservationDoc>,
     audits: Collection<AuditDoc>,
-    trigger_launches: Collection<Document>,
+    trigger_launches: Collection<LaunchDoc>,
 }
 
 impl MongoSponsorshipStore {
@@ -392,14 +440,20 @@ impl MongoSponsorshipStore {
         database_name: &str,
         deployment: &str,
         keyring: SponsorshipKeyring,
+        operational_keyring: SponsorshipOperationalKeyring,
         initial_gate: SponsorshipGateFence,
     ) -> Result<Self, SponsorshipStoreError> {
         validate_gate(&initial_gate)?;
+        validate_independent_keyrings(&keyring, &operational_keyring)
+            .map_err(SponsorshipStoreError::Malformed)?;
+        let operational = Arc::new(operational_keyring.pseudonymizer(deployment)?);
+        let cipher = Arc::new(SponsorshipCipher::new(deployment, keyring)?);
         let database = client.database(database_name);
         validate_transaction_topology(&database).await?;
         let store = Self {
             client: client.clone(),
-            cipher: Arc::new(SponsorshipCipher::new(deployment, keyring)?),
+            cipher,
+            operational,
             gate: majority_collection(&database, GATE),
             credentials: majority_collection(&database, CREDENTIALS),
             credential_registrations: majority_collection(&database, CREDENTIAL_REGISTRATIONS),
@@ -413,11 +467,22 @@ impl MongoSponsorshipStore {
             audits: majority_collection(&database, AUDITS),
             trigger_launches: majority_collection(&database, TRIGGER_LAUNCHES),
         };
+        store.validate_operational_dependencies().await?;
+        store.initialize_gate(&initial_gate).await?;
         store.probe_transaction_capability().await?;
         store.ensure_indexes().await?;
-        store.initialize_gate(&initial_gate).await?;
+        match store.resume_kill_switch_drain().await {
+            Ok(true) => {}
+            Ok(false) => tracing::warn!(
+                "sponsorship kill-switch drain remains incomplete after one bounded startup batch"
+            ),
+            Err(error) => {
+                tracing::warn!(%error, "sponsorship kill-switch drain will resume on the next retry")
+            }
+        }
         tracing::info!(
             sponsorship_encryption_key_id = store.cipher.current_key_id(),
+            sponsorship_operational_key_id = store.operational.current_key_id(),
             "Mongo sponsorship authority ready"
         );
         Ok(store)
@@ -495,11 +560,13 @@ impl MongoSponsorshipStore {
     async fn ensure_indexes(&self) -> Result<(), SponsorshipStoreError> {
         for index in [
             IndexModel::builder()
-                .keys(doc! { "provider": 1, "provider_credential_id_digest": 1 })
-                .options(unique_named("sponsorship_credential_provider_identity"))
+                .keys(doc! { "provider": 1, "provider_credential_id_aliases": 1 })
+                .options(unique_named(
+                    "sponsorship_credential_provider_identity_alias",
+                ))
                 .build(),
             IndexModel::builder()
-                .keys(doc! { "owner_subject": 1, "updated_at": -1, "_id": -1 })
+                .keys(doc! { "owner_subject": 1, "created_at": -1, "_id": -1 })
                 .options(named("sponsorship_credentials_by_owner"))
                 .build(),
             IndexModel::builder()
@@ -516,15 +583,26 @@ impl MongoSponsorshipStore {
                 .await
                 .map_err(|error| unavailable("create sponsorship credential index", error))?;
         }
-        self.credential_registrations
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "credential_id": 1 })
-                    .options(named("sponsorship_registration_by_credential"))
-                    .build(),
-            )
-            .await
-            .map_err(|error| unavailable("create sponsorship registration index", error))?;
+        for index in [
+            IndexModel::builder()
+                .keys(doc! { "request_aliases": 1 })
+                .options(
+                    IndexOptions::builder()
+                        .name("sponsorship_registration_by_request_alias".to_string())
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "credential_id": 1 })
+                .options(named("sponsorship_registration_by_credential"))
+                .build(),
+        ] {
+            self.credential_registrations
+                .create_index(index)
+                .await
+                .map_err(|error| unavailable("create sponsorship registration index", error))?;
+        }
         self.credential_operations
             .create_index(
                 IndexModel::builder()
@@ -540,7 +618,7 @@ impl MongoSponsorshipStore {
             .map_err(|error| unavailable("create credential operation index", error))?;
         for index in [
             IndexModel::builder()
-                .keys(doc! { "owner_subject": 1, "updated_at": -1, "_id": -1 })
+                .keys(doc! { "owner_subject": 1, "created_at": -1, "_id": -1 })
                 .options(named("sponsorship_policies_by_owner"))
                 .build(),
             IndexModel::builder()
@@ -557,21 +635,40 @@ impl MongoSponsorshipStore {
                 .await
                 .map_err(|error| unavailable("create sponsorship policy index", error))?;
         }
-        self.acceptances
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "policy_id": 1, "accepted_at": -1, "_id": -1 })
-                    .options(named("sponsorship_acceptances_by_policy"))
-                    .build(),
-            )
-            .await
-            .map_err(|error| unavailable("create sponsorship acceptance index", error))?;
+        for index in [
+            IndexModel::builder()
+                .keys(doc! { "idempotency_aliases": 1 })
+                .options(
+                    IndexOptions::builder()
+                        .name("sponsorship_acceptance_by_idempotency_alias".to_string())
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "policy_id": 1, "accepted_at": -1, "_id": -1 })
+                .options(named("sponsorship_acceptances_by_policy"))
+                .build(),
+        ] {
+            self.acceptances
+                .create_index(index)
+                .await
+                .map_err(|error| unavailable("create sponsorship acceptance index", error))?;
+        }
         for index in [
             IndexModel::builder()
                 .keys(
                     doc! { "state": 1, "lease.expires_at_database": 1, "updated_at": 1, "_id": 1 },
                 )
                 .options(named("sponsorship_activations_due"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "state": 1, "updated_at": 1, "_id": 1 })
+                .options(named("sponsorship_activations_recovery"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "state": 1, "created_at": 1, "_id": 1 })
+                .options(named("sponsorship_activations_kill_switch"))
                 .build(),
             IndexModel::builder()
                 .keys(doc! { "policy_id": 1, "state": 1, "updated_at": 1, "_id": 1 })
@@ -593,16 +690,24 @@ impl MongoSponsorshipStore {
                 .options(unique_named("sponsorship_grant_by_launch"))
                 .build(),
             IndexModel::builder()
-                .keys(doc! { "contributor": 1, "updated_at": -1, "_id": -1 })
+                .keys(doc! { "contributor": 1, "created_at": -1, "_id": -1 })
                 .options(named("sponsorship_grants_by_contributor"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "sponsor_subject": 1, "created_at": -1, "_id": -1 })
+                .options(named("sponsorship_grants_by_sponsor"))
                 .build(),
             IndexModel::builder()
                 .keys(doc! { "policy_id": 1, "state": 1, "expires_at": 1, "_id": 1 })
                 .options(named("sponsorship_grants_by_policy"))
                 .build(),
             IndexModel::builder()
-                .keys(doc! { "state": 1, "expires_at": 1, "updated_at": 1, "_id": 1 })
+                .keys(doc! { "state": 1, "expires_at": 1, "_id": 1 })
                 .options(named("sponsorship_grants_due"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "state": 1, "updated_at": 1, "_id": 1 })
+                .options(named("sponsorship_grants_recovery"))
                 .build(),
             IndexModel::builder()
                 .keys(doc! { "encryption_key_id": 1, "_id": 1 })
@@ -615,6 +720,10 @@ impl MongoSponsorshipStore {
                 .map_err(|error| unavailable("create sponsorship grant index", error))?;
         }
         for index in [
+            IndexModel::builder()
+                .keys(doc! { "request_aliases": 1 })
+                .options(unique_named("sponsorship_usage_by_request_alias"))
+                .build(),
             IndexModel::builder()
                 .keys(doc! { "grant_id": 1, "created_at": -1, "_id": -1 })
                 .options(named("sponsorship_usage_by_grant"))
@@ -651,6 +760,105 @@ impl MongoSponsorshipStore {
                 .create_index(index)
                 .await
                 .map_err(|error| unavailable("create sponsorship audit index", error))?;
+        }
+        Ok(())
+    }
+
+    async fn validate_operational_dependencies(&self) -> Result<(), SponsorshipStoreError> {
+        let mut provider_aliases = BTreeSet::new();
+        let mut credentials = self.credentials.find(doc! {}).await.map_err(|error| {
+            stored_read_failure("inventory credential operational identities", error)
+        })?;
+        while let Some(credential) = credentials.try_next().await.map_err(|error| {
+            stored_read_failure("inventory credential operational identities", error)
+        })? {
+            validate_credential_provider_aliases(&self.operational, &credential)?;
+            read_credential_record(&self.cipher, &self.operational, &credential)?;
+            for alias in &credential.provider_credential_id_aliases {
+                if !provider_aliases.insert((credential.provider.clone(), alias.clone())) {
+                    return Err(SponsorshipStoreError::Malformed(
+                        "provider credential identity alias is bound to multiple credentials"
+                            .into(),
+                    ));
+                }
+            }
+        }
+        let mut credential_operations =
+            self.credential_operations
+                .find(doc! {})
+                .await
+                .map_err(|error| {
+                    stored_read_failure("inventory credential operation identities", error)
+                })?;
+        while let Some(operation) = credential_operations.try_next().await.map_err(|error| {
+            stored_read_failure("inventory credential operation identities", error)
+        })? {
+            self.operational
+                .parse_configured(operation.id.client_request_id_digest.clone())
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+            read_ledger(operation)?;
+        }
+        let mut registrations =
+            self.credential_registrations
+                .find(doc! {})
+                .await
+                .map_err(|error| {
+                    stored_read_failure("inventory credential registration aliases", error)
+                })?;
+        while let Some(registration) = registrations.try_next().await.map_err(|error| {
+            stored_read_failure("inventory credential registration aliases", error)
+        })? {
+            validate_credential_registration_doc(&self.operational, &registration)?;
+        }
+        let mut acceptance_aliases = BTreeSet::new();
+        let mut acceptances = self.acceptances.find(doc! {}).await.map_err(|error| {
+            stored_read_failure("inventory acceptance operational identities", error)
+        })?;
+        while let Some(acceptance) = acceptances.try_next().await.map_err(|error| {
+            stored_read_failure("inventory acceptance operational identities", error)
+        })? {
+            read_acceptance(&self.operational, acceptance.clone())?;
+            for alias in acceptance.idempotency_aliases {
+                if !acceptance_aliases.insert(alias) {
+                    return Err(SponsorshipStoreError::Malformed(
+                        "acceptance idempotency alias is bound to multiple launches".into(),
+                    ));
+                }
+            }
+        }
+        let mut activations = self.activations.find(doc! {}).await.map_err(|error| {
+            stored_read_failure("inventory activation operational identities", error)
+        })?;
+        while let Some(activation) = activations.try_next().await.map_err(|error| {
+            stored_read_failure("inventory activation operational identities", error)
+        })? {
+            read_activation(&self.cipher, &self.operational, activation)?;
+        }
+        let mut grants = self.grants.find(doc! {}).await.map_err(|error| {
+            stored_read_failure("inventory grant operational identities", error)
+        })?;
+        while let Some(grant) = grants
+            .try_next()
+            .await
+            .map_err(|error| stored_read_failure("inventory grant operational identities", error))?
+        {
+            read_grant_record(&self.operational, &grant)?;
+        }
+        let mut reservation_aliases = BTreeSet::new();
+        let mut reservations = self.reservations.find(doc! {}).await.map_err(|error| {
+            stored_read_failure("inventory usage request operational identities", error)
+        })?;
+        while let Some(reservation) = reservations.try_next().await.map_err(|error| {
+            stored_read_failure("inventory usage request operational identities", error)
+        })? {
+            read_reservation(&self.operational, reservation.clone())?;
+            for alias in reservation.request_aliases {
+                if !reservation_aliases.insert(alias) {
+                    return Err(SponsorshipStoreError::Malformed(
+                        "usage request alias is bound to multiple reservations".into(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -870,6 +1078,7 @@ fn parse_material_state(
 
 struct DecodedCredential {
     record: SponsoredCredentialRecord,
+    provider_credential_id_aliases: Vec<String>,
     current_secret: Option<ProviderCredentialSecret>,
     pending_secret: Option<ProviderCredentialSecret>,
 }
@@ -877,6 +1086,7 @@ struct DecodedCredential {
 fn credential_doc(
     cipher: &SponsorshipCipher,
     record: &SponsoredCredentialRecord,
+    provider_credential_id_aliases: &[String],
     current_secret: Option<&str>,
     pending_secret: Option<&str>,
 ) -> Result<CredentialDoc, SponsorshipStoreError> {
@@ -884,11 +1094,39 @@ fn credential_doc(
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
     let record_id = record.id.0.as_str();
+    let authority_context = credential_cipher_context(
+        record_id,
+        &record.owner,
+        &record.authority.provider,
+        &record.authority.provider_policy_key,
+        &record.authority.provider_credential_id_digest,
+        &record.authority.ownership_verified_at,
+        &record.created_at,
+        record.authority.state_version,
+        record.authority.supports_expiry,
+        record.authority.supports_revocation,
+    )?;
     let current_secret = current_secret
-        .map(|secret| cipher.seal("credential", record_id, "current_secret", secret))
+        .map(|secret| {
+            cipher.seal(
+                "credential",
+                record_id,
+                "current_secret",
+                &authority_context,
+                secret,
+            )
+        })
         .transpose()?;
     let pending_secret = pending_secret
-        .map(|secret| cipher.seal("credential", record_id, "pending_secret", secret))
+        .map(|secret| {
+            cipher.seal(
+                "credential",
+                record_id,
+                "pending_secret",
+                &authority_context,
+                secret,
+            )
+        })
         .transpose()?;
     let retained = record.material_state == SponsoredCredentialMaterialState::Retained;
     let pending_material_required = record.state == SponsoredCredentialState::RotationPending
@@ -913,12 +1151,14 @@ fn credential_doc(
             "credential",
             record_id,
             "provider_policy_handle",
+            &authority_context,
             record
                 .authority
                 .provider_policy_handle
                 .expose_for_provider_or_encryption(),
         )?,
         provider_credential_id_digest: record.authority.provider_credential_id_digest.clone(),
+        provider_credential_id_aliases: provider_credential_id_aliases.to_vec(),
         provider_state_version: signed(
             record.authority.state_version,
             "credential provider state version",
@@ -941,16 +1181,40 @@ fn credential_doc(
         current_secret,
         pending_secret,
         encryption_key_id: cipher.current_key_id().into(),
+        authority_read_revision: 0,
     })
 }
 
 fn read_credential_record(
     cipher: &SponsorshipCipher,
+    operational: &SponsorshipOperationalPseudonymizer,
     document: &CredentialDoc,
 ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError> {
     validate_document_version(document.document_schema_version, "sponsorship credential")?;
+    validate_credential_provider_aliases(operational, document)?;
+    validate_credential_operation_dependencies(operational, document)?;
+    if document.authority_read_revision < 0 {
+        return Err(SponsorshipStoreError::Malformed(
+            "credential authority read revision is negative".into(),
+        ));
+    }
     let id = SponsoredCredentialId::parse(document.id.clone())
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    let authority_context = credential_cipher_context(
+        &document.id,
+        &document.owner,
+        &document.provider,
+        &document.provider_policy_key,
+        &document.provider_credential_id_digest,
+        &document.ownership_verified_at,
+        &document.created_at,
+        unsigned(
+            document.provider_state_version,
+            "credential provider state version",
+        )?,
+        document.supports_expiry,
+        document.supports_revocation,
+    )?;
     for envelope in [
         Some(&document.provider_policy_handle),
         document.current_secret.as_ref(),
@@ -969,6 +1233,7 @@ fn read_credential_record(
         "credential",
         &document.id,
         "provider_policy_handle",
+        &authority_context,
         &document.provider_policy_handle,
     )?;
     let record = SponsoredCredentialRecord {
@@ -1032,15 +1297,34 @@ fn read_credential_record(
 
 fn read_credential(
     cipher: &SponsorshipCipher,
+    operational: &SponsorshipOperationalPseudonymizer,
     document: CredentialDoc,
 ) -> Result<DecodedCredential, SponsorshipStoreError> {
-    let record = read_credential_record(cipher, &document)?;
+    let record = read_credential_record(cipher, operational, &document)?;
+    let authority_context = credential_cipher_context(
+        &document.id,
+        &document.owner,
+        &document.provider,
+        &document.provider_policy_key,
+        &document.provider_credential_id_digest,
+        &document.ownership_verified_at,
+        &document.created_at,
+        record.authority.state_version,
+        document.supports_expiry,
+        document.supports_revocation,
+    )?;
     let current_secret = document
         .current_secret
         .as_ref()
         .map(|envelope| {
             cipher
-                .open("credential", &document.id, "current_secret", envelope)
+                .open(
+                    "credential",
+                    &document.id,
+                    "current_secret",
+                    &authority_context,
+                    envelope,
+                )
                 .and_then(|opened| {
                     ProviderCredentialSecret::new(opened.plaintext.to_string())
                         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))
@@ -1052,7 +1336,13 @@ fn read_credential(
         .as_ref()
         .map(|envelope| {
             cipher
-                .open("credential", &document.id, "pending_secret", envelope)
+                .open(
+                    "credential",
+                    &document.id,
+                    "pending_secret",
+                    &authority_context,
+                    envelope,
+                )
                 .and_then(|opened| {
                     ProviderCredentialSecret::new(opened.plaintext.to_string())
                         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))
@@ -1061,6 +1351,7 @@ fn read_credential(
         .transpose()?;
     Ok(DecodedCredential {
         record,
+        provider_credential_id_aliases: document.provider_credential_id_aliases,
         current_secret,
         pending_secret,
     })
@@ -1091,6 +1382,7 @@ fn policy_doc(
         credential_id: policy.credential_id.0.clone(),
         state: policy_state_code(policy).into(),
         expires_at: policy.expires_at.clone(),
+        created_at: policy.created_at.clone(),
         updated_at: policy.updated_at.clone(),
         policy: policy.clone(),
         usage: PolicyUsageDoc {
@@ -1098,6 +1390,7 @@ fn policy_doc(
             reserved: usage.reserved.clone(),
             active_launches: i64::from(usage.active_launches),
         },
+        authority_read_revision: 0,
     })
 }
 
@@ -1105,6 +1398,11 @@ fn read_policy(
     document: PolicyDoc,
 ) -> Result<(SponsorshipPolicy, SponsorshipPolicyUsage), SponsorshipStoreError> {
     validate_document_version(document.document_schema_version, "sponsorship policy")?;
+    if document.authority_read_revision < 0 {
+        return Err(SponsorshipStoreError::Malformed(
+            "policy authority read revision is negative".into(),
+        ));
+    }
     document
         .policy
         .validate()
@@ -1114,6 +1412,7 @@ fn read_policy(
         || document.credential_id != document.policy.credential_id.0
         || document.state != policy_state_code(&document.policy)
         || document.expires_at != document.policy.expires_at
+        || document.created_at != document.policy.created_at
         || document.updated_at != document.policy.updated_at
     {
         return Err(SponsorshipStoreError::Malformed(
@@ -1141,29 +1440,62 @@ fn read_policy(
 }
 
 fn acceptance_doc(
+    operational: &SponsorshipOperationalPseudonymizer,
     acceptance: &SponsoredGrantAcceptance,
+    idempotency_candidates: &SponsorshipOperationalPseudonymSet,
 ) -> Result<AcceptanceDoc, SponsorshipStoreError> {
     acceptance
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    let idempotency_aliases = idempotency_candidates.encoded_candidates();
+    let aliases =
+        validate_operational_aliases(operational, &idempotency_aliases, "acceptance idempotency")?;
+    if acceptance.idempotency_key_hash != idempotency_candidates.current().as_str()
+        || !aliases.contains(&acceptance.idempotency_key_hash)
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "new acceptance canonical idempotency identity is not the current candidate".into(),
+        ));
+    }
     Ok(AcceptanceDoc {
         launch_id: acceptance.launch_id.0.clone(),
         document_schema_version: DOCUMENT_SCHEMA_VERSION,
+        idempotency_aliases,
         contributor: acceptance.contributor.0.clone(),
         policy_id: acceptance.policy_id.0.clone(),
         accepted_at: acceptance.accepted_at.clone(),
         acceptance: acceptance.clone(),
+        authority_read_revision: 0,
     })
 }
 
 fn read_acceptance(
+    operational: &SponsorshipOperationalPseudonymizer,
     document: AcceptanceDoc,
 ) -> Result<SponsoredGrantAcceptance, SponsorshipStoreError> {
     validate_document_version(document.document_schema_version, "sponsorship acceptance")?;
+    if document.authority_read_revision < 0 {
+        return Err(SponsorshipStoreError::Malformed(
+            "acceptance authority read revision is negative".into(),
+        ));
+    }
     document
         .acceptance
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    let aliases = validate_operational_aliases(
+        operational,
+        &document.idempotency_aliases,
+        "acceptance idempotency",
+    )?;
+    let canonical = operational
+        .parse_configured(document.acceptance.idempotency_key_hash.clone())
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    if !aliases.contains(canonical.as_str()) {
+        return Err(SponsorshipStoreError::Malformed(
+            "acceptance idempotency aliases omit the canonical identity".into(),
+        ));
+    }
     if document.launch_id != document.acceptance.launch_id.0
         || document.contributor != document.acceptance.contributor.0
         || document.policy_id != document.acceptance.policy_id.0
@@ -1249,6 +1581,7 @@ fn provider_receipt_doc(
     cipher: &SponsorshipCipher,
     record_kind: &str,
     record_id: &str,
+    authority_context: &str,
     receipt: &ProviderGrantReceipt,
 ) -> Result<ProviderReceiptDoc, SponsorshipStoreError> {
     Ok(ProviderReceiptDoc {
@@ -1256,6 +1589,7 @@ fn provider_receipt_doc(
             record_kind,
             record_id,
             "provider_grant_id",
+            authority_context,
             receipt
                 .provider_grant_id
                 .expose_for_provider_or_encryption(),
@@ -1269,6 +1603,7 @@ fn provider_receipt_doc(
             record_kind,
             record_id,
             "revocation_handle",
+            authority_context,
             receipt
                 .revocation_handle
                 .expose_for_provider_or_encryption(),
@@ -1281,6 +1616,7 @@ fn read_provider_receipt(
     cipher: &SponsorshipCipher,
     record_kind: &str,
     record_id: &str,
+    authority_context: &str,
     document: ProviderReceiptDoc,
     encryption_key_id: &str,
 ) -> Result<ProviderGrantReceipt, SponsorshipStoreError> {
@@ -1295,12 +1631,14 @@ fn read_provider_receipt(
         record_kind,
         record_id,
         "provider_grant_id",
+        authority_context,
         &document.provider_grant_id,
     )?;
     let revocation_handle = cipher.open(
         record_kind,
         record_id,
         "revocation_handle",
+        authority_context,
         &document.revocation_handle,
     )?;
     Ok(ProviderGrantReceipt {
@@ -1325,13 +1663,31 @@ fn activation_doc(
     intent
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    let authority_context = activation_cipher_context(
+        &intent.launch_id.0,
+        &intent.session_id.0,
+        &intent.policy_id.0,
+        intent.policy_generation,
+        intent.credential_generation,
+        &intent.launch_authority_digest,
+        &intent.acceptance_digest,
+        &intent.gate_fence,
+        &intent.allocation,
+        &intent.request_fingerprint,
+        &intent.billing_request_id,
+        &intent.provider_request_id,
+        &intent.created_at,
+    )?;
     let lease = match (&intent.lease, lease_expiry_database) {
-        (Some(lease), Some(expires_at_database)) => Some(ActivationLeaseDoc {
-            holder: lease.holder.clone(),
-            acquired_at: lease.acquired_at.clone(),
-            expires_at: lease.expires_at.clone(),
-            expires_at_database,
-        }),
+        (Some(lease), Some(expires_at_database)) => {
+            validate_activation_lease_database_binding(lease, expires_at_database)?;
+            Some(ActivationLeaseDoc {
+                holder: lease.holder.clone(),
+                acquired_at: lease.acquired_at.clone(),
+                expires_at: lease.expires_at.clone(),
+                expires_at_database,
+            })
+        }
         (None, None) => None,
         _ => {
             return Err(SponsorshipStoreError::Malformed(
@@ -1367,7 +1723,15 @@ fn activation_doc(
         provider_receipt: intent
             .provider_receipt
             .as_ref()
-            .map(|receipt| provider_receipt_doc(cipher, "activation", &intent.launch_id.0, receipt))
+            .map(|receipt| {
+                provider_receipt_doc(
+                    cipher,
+                    "activation",
+                    &intent.launch_id.0,
+                    &authority_context,
+                    receipt,
+                )
+            })
             .transpose()?,
         cleanup_operation: intent.cleanup_operation.as_ref().map(operation_doc),
         created_at: intent.created_at.clone(),
@@ -1378,9 +1742,32 @@ fn activation_doc(
 
 fn read_activation(
     cipher: &SponsorshipCipher,
+    operational: &SponsorshipOperationalPseudonymizer,
     document: ActivationDoc,
 ) -> Result<(GrantActivationIntent, Option<DateTime>), SponsorshipStoreError> {
     validate_document_version(document.document_schema_version, "grant activation")?;
+    let revision = unsigned(document.revision, "activation revision")?;
+    let policy_generation = unsigned(document.policy_generation, "activation policy generation")?;
+    let credential_generation = unsigned(
+        document.credential_generation,
+        "activation credential generation",
+    )?;
+    let gate_fence = read_gate_fence(document.gate_fence.clone())?;
+    let authority_context = activation_cipher_context(
+        &document.launch_id,
+        &document.session_id,
+        &document.policy_id,
+        policy_generation,
+        credential_generation,
+        &document.launch_authority_digest,
+        &document.acceptance_digest,
+        &gate_fence,
+        &document.allocation,
+        &document.request_fingerprint,
+        &document.billing_request_id,
+        &document.provider_request_id,
+        &document.created_at,
+    )?;
     let lease_expiry_database = document
         .lease
         .as_ref()
@@ -1391,14 +1778,11 @@ fn read_activation(
         session_id: SessionId(document.session_id),
         policy_id: SponsorshipPolicyId::parse(document.policy_id)
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?,
-        policy_generation: unsigned(document.policy_generation, "activation policy generation")?,
-        credential_generation: unsigned(
-            document.credential_generation,
-            "activation credential generation",
-        )?,
+        policy_generation,
+        credential_generation,
         launch_authority_digest: document.launch_authority_digest,
         acceptance_digest: document.acceptance_digest,
-        gate_fence: read_gate_fence(document.gate_fence)?,
+        gate_fence,
         allocation: document.allocation,
         request_fingerprint: document.request_fingerprint,
         billing_request_id: document.billing_request_id,
@@ -1410,7 +1794,7 @@ fn read_activation(
             .map(parse_activation_denial)
             .transpose()?,
         capacity_held: document.capacity_held,
-        revision: unsigned(document.revision, "activation revision")?,
+        revision,
         lease: document.lease.map(|lease| GrantActivationLease {
             holder: lease.holder,
             acquired_at: lease.acquired_at,
@@ -1423,6 +1807,7 @@ fn read_activation(
                     cipher,
                     "activation",
                     &document.launch_id,
+                    &authority_context,
                     receipt,
                     &document.encryption_key_id,
                 )
@@ -1435,6 +1820,25 @@ fn read_activation(
     intent
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    operational
+        .parse_configured(intent.billing_request_id.clone())
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    operational
+        .parse_configured(intent.provider_request_id.clone())
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    if let Some(lease) = &intent.lease {
+        operational
+            .parse_configured(lease.holder.clone())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    }
+    if let Some(operation) = &intent.cleanup_operation {
+        operational
+            .parse_configured(operation.client_request_id_digest.clone())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    }
+    if let (Some(lease), Some(expires_at_database)) = (&intent.lease, lease_expiry_database) {
+        validate_activation_lease_database_binding(lease, expires_at_database)?;
+    }
     Ok((intent, lease_expiry_database))
 }
 
@@ -1465,12 +1869,64 @@ fn parse_grant_state(value: &str) -> Result<SponsoredGrantState, SponsorshipStor
 
 fn grant_doc(
     cipher: &SponsorshipCipher,
+    operational: &SponsorshipOperationalPseudonymizer,
     grant: &SponsoredGrant,
     receipt: &ProviderGrantReceipt,
+    sponsor_subject: &str,
 ) -> Result<GrantDoc, SponsorshipStoreError> {
     grant
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    require_receipt_matches_grant(operational, receipt, grant)?;
+    let authority_context = grant_cipher_context(grant)?;
+    let encrypted_receipt =
+        provider_receipt_doc(cipher, "grant", &grant.id.0, &authority_context, receipt)?;
+    grant_doc_with_encrypted_receipt(
+        grant,
+        sponsor_subject,
+        SponsoredUsageSummary::default(),
+        encrypted_receipt,
+        cipher.current_key_id().to_string(),
+    )
+}
+
+fn grant_doc_with_encrypted_receipt(
+    grant: &SponsoredGrant,
+    sponsor_subject: &str,
+    unresolved_usage: SponsoredUsageSummary,
+    provider_receipt: ProviderReceiptDoc,
+    encryption_key_id: String,
+) -> Result<GrantDoc, SponsorshipStoreError> {
+    grant
+        .validate()
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    if sponsor_subject.is_empty()
+        || sponsor_subject.len() > 255
+        || sponsor_subject != grant.sponsor_subject.0
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "grant sponsor subject index does not match its canonical authority".into(),
+        ));
+    }
+    let exposure = summary_add(&grant.usage, &unresolved_usage)?;
+    if !exposure.fits_within(&grant.allocation) {
+        return Err(SponsorshipStoreError::Malformed(
+            "grant usage plus unresolved holds exceeds its allocation".into(),
+        ));
+    }
+    if provider_receipt.provider_grant_id.key_id() != encryption_key_id
+        || provider_receipt.revocation_handle.key_id() != encryption_key_id
+        || unsigned(
+            provider_receipt.provider_state_version,
+            "provider grant state version",
+        )? != grant.authority.provider_state_version
+        || provider_receipt.expires_at != grant.authority.expires_at
+        || provider_receipt.issued_at != grant.authority.issued_at
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "encrypted provider receipt metadata does not match the grant authority".into(),
+        ));
+    }
     Ok(GrantDoc {
         id: grant.id.0.clone(),
         document_schema_version: DOCUMENT_SCHEMA_VERSION,
@@ -1484,6 +1940,7 @@ fn grant_doc(
         launch_id: grant.launch_id.0.clone(),
         session_id: grant.session_id.0.clone(),
         contributor: grant.contributor.0.clone(),
+        sponsor_subject: sponsor_subject.to_string(),
         terms_digest: grant.terms_digest.clone(),
         acceptance: grant.acceptance.clone(),
         authority: grant.authority.clone(),
@@ -1491,92 +1948,164 @@ fn grant_doc(
         state: grant_state_code(grant.state).into(),
         allocation: grant.allocation.clone(),
         usage: grant.usage.clone(),
+        unresolved_usage,
         generation: signed(grant.generation, "grant generation")?,
         created_at: grant.created_at.clone(),
         updated_at: grant.updated_at.clone(),
         expires_at: grant.authority.expires_at.clone(),
         revoked_at: grant.revoked_at.clone(),
         pending_revocation: grant.pending_revocation.as_ref().map(operation_doc),
-        provider_receipt: provider_receipt_doc(cipher, "grant", &grant.id.0, receipt)?,
-        encryption_key_id: cipher.current_key_id().into(),
+        provider_receipt,
+        encryption_key_id,
     })
 }
 
-fn read_grant(
-    cipher: &SponsorshipCipher,
-    document: GrantDoc,
-) -> Result<(SponsoredGrant, ProviderGrantReceipt), SponsorshipStoreError> {
+fn read_grant_record(
+    operational: &SponsorshipOperationalPseudonymizer,
+    document: &GrantDoc,
+) -> Result<SponsoredGrant, SponsorshipStoreError> {
     validate_document_version(document.document_schema_version, "sponsored grant")?;
-    let receipt = read_provider_receipt(
-        cipher,
-        "grant",
-        &document.id,
-        document.provider_receipt,
-        &document.encryption_key_id,
-    )?;
+    if document.provider_receipt.provider_grant_id.key_id() != document.encryption_key_id
+        || document.provider_receipt.revocation_handle.key_id() != document.encryption_key_id
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "grant encryption-key index does not match its receipt envelopes".into(),
+        ));
+    }
     let grant = SponsoredGrant {
         schema_version: u32::try_from(document.schema_version).map_err(|_| {
             SponsorshipStoreError::Malformed("stored grant schema is invalid".into())
         })?,
         id: SponsoredGrantId::parse(document.id.clone())
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?,
-        tenant_id: document.tenant_id,
-        policy_id: SponsorshipPolicyId::parse(document.policy_id)
+        tenant_id: document.tenant_id.clone(),
+        policy_id: SponsorshipPolicyId::parse(document.policy_id.clone())
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?,
         policy_generation: unsigned(document.policy_generation, "grant policy generation")?,
         credential_generation: unsigned(
             document.credential_generation,
             "grant credential generation",
         )?,
-        trigger_revision_id: TriggerRevisionId::parse(document.trigger_revision_id)
+        trigger_revision_id: TriggerRevisionId::parse(document.trigger_revision_id.clone())
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?,
-        trigger_revision_digest: document.trigger_revision_digest,
+        trigger_revision_digest: document.trigger_revision_digest.clone(),
         launch_id: LaunchId::parse(document.launch_id.clone())
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?,
-        session_id: SessionId(document.session_id),
+        session_id: SessionId(document.session_id.clone()),
         contributor: SubjectId(document.contributor.clone()),
-        terms_digest: document.terms_digest,
-        acceptance: document.acceptance,
-        authority: document.authority,
-        capability: document.capability,
+        sponsor_subject: SubjectId(document.sponsor_subject.clone()),
+        terms_digest: document.terms_digest.clone(),
+        acceptance: document.acceptance.clone(),
+        authority: document.authority.clone(),
+        capability: document.capability.clone(),
         state: parse_grant_state(&document.state)?,
-        allocation: document.allocation,
-        usage: document.usage,
+        allocation: document.allocation.clone(),
+        usage: document.usage.clone(),
         generation: unsigned(document.generation, "grant generation")?,
-        created_at: document.created_at,
-        updated_at: document.updated_at,
-        revoked_at: document.revoked_at,
+        created_at: document.created_at.clone(),
+        updated_at: document.updated_at.clone(),
+        revoked_at: document.revoked_at.clone(),
         pending_revocation: document
             .pending_revocation
+            .clone()
             .map(read_operation)
             .transpose()?,
     };
     grant
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    for identity in [
+        Some(grant.acceptance.idempotency_key_hash.as_str()),
+        Some(grant.authority.provider_grant_id_digest.as_str()),
+        Some(grant.authority.revocation_handle_digest.as_str()),
+        grant
+            .pending_revocation
+            .as_ref()
+            .map(|operation| operation.client_request_id_digest.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        operational
+            .parse_configured(identity.to_string())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    }
+    let exposure = summary_add(&grant.usage, &document.unresolved_usage)?;
+    if !exposure.fits_within(&grant.allocation) {
+        return Err(SponsorshipStoreError::Malformed(
+            "stored grant usage plus unresolved holds exceeds its allocation".into(),
+        ));
+    }
     if document.id != grant.id.0
         || document.launch_id != grant.launch_id.0
         || document.contributor != grant.contributor.0
+        || document.sponsor_subject.is_empty()
+        || document.sponsor_subject.len() > 255
         || document.expires_at != grant.authority.expires_at
     {
         return Err(SponsorshipStoreError::Malformed(
             "sponsored grant indexes do not match the canonical record".into(),
         ));
     }
+    Ok(grant)
+}
+
+fn require_grant_policy_bindings(
+    grant: &SponsoredGrant,
+    policy: &SponsorshipPolicy,
+) -> Result<(), SponsorshipStoreError> {
+    grant
+        .validate()
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    policy
+        .validate()
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    if grant.policy_id != policy.id
+        || grant.tenant_id != policy.tenant_id
+        || grant.sponsor_subject != *policy.owner.controller()
+        || grant.policy_generation > policy.generation
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "stored grant authority does not match its referenced sponsorship policy".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn read_grant(
+    cipher: &SponsorshipCipher,
+    operational: &SponsorshipOperationalPseudonymizer,
+    document: GrantDoc,
+) -> Result<(SponsoredGrant, ProviderGrantReceipt), SponsorshipStoreError> {
+    let grant = read_grant_record(operational, &document)?;
+    let authority_context = grant_cipher_context(&grant)?;
+    let receipt = read_provider_receipt(
+        cipher,
+        "grant",
+        &document.id,
+        &authority_context,
+        document.provider_receipt,
+        &document.encryption_key_id,
+    )?;
+    require_receipt_matches_grant(operational, &receipt, &grant)?;
     Ok((grant, receipt))
 }
 
 fn reservation_doc(
+    operational: &SponsorshipOperationalPseudonymizer,
     reservation: &SponsoredUsageReservation,
+    request_aliases: &[String],
     policy_id: &SponsorshipPolicyId,
     rate_observed_at: DateTime,
 ) -> Result<ReservationDoc, SponsorshipStoreError> {
     reservation
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    validate_operational_aliases(operational, request_aliases, "usage request identity")?;
     Ok(ReservationDoc {
-        stable_request_id: reservation.stable_request_id.clone(),
+        reservation_id: reservation.id.0.clone(),
         document_schema_version: DOCUMENT_SCHEMA_VERSION,
+        request_aliases: request_aliases.to_vec(),
         grant_id: reservation.grant_id.0.clone(),
         policy_id: policy_id.0.clone(),
         state: usage_state_code(reservation.state).into(),
@@ -1597,6 +2126,7 @@ fn usage_state_code(state: SponsoredUsageState) -> &'static str {
 }
 
 fn read_reservation(
+    operational: &SponsorshipOperationalPseudonymizer,
     document: ReservationDoc,
 ) -> Result<(SponsoredUsageReservation, SponsorshipPolicyId, DateTime), SponsorshipStoreError> {
     validate_document_version(
@@ -1607,7 +2137,12 @@ fn read_reservation(
         .reservation
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
-    if document.stable_request_id != document.reservation.stable_request_id
+    validate_operational_aliases(
+        operational,
+        &document.request_aliases,
+        "usage request identity",
+    )?;
+    if document.reservation_id != document.reservation.id.0
         || document.grant_id != document.reservation.grant_id.0
         || document.state != usage_state_code(document.reservation.state)
         || document.created_at != document.reservation.created_at
@@ -1695,18 +2230,555 @@ fn is_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn validate_operational_aliases(
+    pseudonymizer: &SponsorshipOperationalPseudonymizer,
+    aliases: &[String],
+    kind: &str,
+) -> Result<BTreeSet<String>, SponsorshipStoreError> {
+    if aliases.is_empty() || aliases.len() > MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS + 1 {
+        return Err(SponsorshipStoreError::Malformed(format!(
+            "stored {kind} aliases are empty or exceed the bounded keyring"
+        )));
+    }
+    let mut values = BTreeSet::new();
+    let mut key_ids = BTreeSet::new();
+    for encoded in aliases {
+        let alias = pseudonymizer
+            .parse_configured(encoded.clone())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if !values.insert(alias.as_str().to_string()) || !key_ids.insert(alias.key_id().to_string())
+        {
+            return Err(SponsorshipStoreError::Malformed(format!(
+                "stored {kind} aliases contain a duplicate value or key id"
+            )));
+        }
+    }
+    Ok(values)
+}
+
+fn validate_credential_provider_aliases(
+    pseudonymizer: &SponsorshipOperationalPseudonymizer,
+    document: &CredentialDoc,
+) -> Result<(), SponsorshipStoreError> {
+    let aliases = validate_operational_aliases(
+        pseudonymizer,
+        &document.provider_credential_id_aliases,
+        "provider credential identity",
+    )?;
+    let canonical = pseudonymizer
+        .parse_configured(document.provider_credential_id_digest.clone())
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    if !aliases.contains(canonical.as_str()) {
+        return Err(SponsorshipStoreError::Malformed(
+            "provider credential aliases omit the canonical authority identity".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_credential_operation_dependencies(
+    pseudonymizer: &SponsorshipOperationalPseudonymizer,
+    document: &CredentialDoc,
+) -> Result<(), SponsorshipStoreError> {
+    for client_request_id in document
+        .pending_operation
+        .as_ref()
+        .map(|operation| operation.client_request_id_digest.as_str())
+        .into_iter()
+        .chain(
+            document
+                .superseded_operation
+                .as_ref()
+                .map(|operation| operation.client_request_id_digest.as_str()),
+        )
+        .chain(
+            document
+                .last_completed_operation
+                .as_ref()
+                .map(|operation| operation.client_request_id_digest.as_str()),
+        )
+    {
+        pseudonymizer
+            .parse_configured(client_request_id.to_string())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn validate_credential_registration_doc(
+    pseudonymizer: &SponsorshipOperationalPseudonymizer,
+    document: &CredentialRegistrationDoc,
+) -> Result<(), SponsorshipStoreError> {
+    if document.document_schema_version != CREDENTIAL_REGISTRATION_DOCUMENT_SCHEMA_VERSION {
+        return Err(SponsorshipStoreError::Malformed(format!(
+            "stored credential registration document schema {} is unsupported",
+            document.document_schema_version
+        )));
+    }
+    let parsed_id = Uuid::parse_str(&document.id).map_err(|_| {
+        SponsorshipStoreError::Malformed("stored credential registration id is malformed".into())
+    })?;
+    if parsed_id.to_string() != document.id {
+        return Err(SponsorshipStoreError::Malformed(
+            "stored credential registration id is not canonical".into(),
+        ));
+    }
+    SponsoredCredentialId::parse(document.credential_id.clone())
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    validate_operational_aliases(
+        pseudonymizer,
+        &document.request_aliases,
+        "credential registration request",
+    )?;
+    validate_operational_aliases(
+        pseudonymizer,
+        &document.command_aliases,
+        "credential registration command",
+    )?;
+    if layer2_core::seconds_from_rfc3339(&document.created_at).is_none() {
+        return Err(SponsorshipStoreError::Malformed(
+            "stored credential registration time is malformed".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn aliases_match_candidates(
+    aliases: &[String],
+    candidates: &SponsorshipOperationalPseudonymSet,
+) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| aliases.iter().any(|alias| alias == candidate.as_str()))
+}
+
+fn credential_registration_doc(
+    identity: &SponsoredCredentialRegistrationIdentity,
+    credential_id: &SponsoredCredentialId,
+    created_at: &str,
+) -> CredentialRegistrationDoc {
+    CredentialRegistrationDoc {
+        id: Uuid::new_v4().to_string(),
+        document_schema_version: CREDENTIAL_REGISTRATION_DOCUMENT_SCHEMA_VERSION,
+        request_aliases: identity.request.encoded_candidates(),
+        command_aliases: identity.command.encoded_candidates(),
+        credential_id: credential_id.0.clone(),
+        created_at: created_at.to_string(),
+    }
+}
+
 fn credential_registration_bindings_match(
     stored: &SponsoredCredentialRecord,
     candidate: &SponsoredCredentialRecord,
 ) -> bool {
-    stored.id == candidate.id
-        && stored.owner == candidate.owner
+    stored.owner == candidate.owner
         && stored.authority.provider == candidate.authority.provider
         && stored.authority.provider_policy_key == candidate.authority.provider_policy_key
-        && stored.authority.provider_credential_id_digest
-            == candidate.authority.provider_credential_id_digest
         && stored.authority.supports_expiry == candidate.authority.supports_expiry
         && stored.authority.supports_revocation == candidate.authority.supports_revocation
+}
+
+fn credential_lineage_matches(
+    current: &SponsoredCredentialRecord,
+    candidate: &SponsoredCredentialRecord,
+) -> bool {
+    current.id == candidate.id
+        && current.owner == candidate.owner
+        && current.authority.provider == candidate.authority.provider
+        && current.authority.provider_policy_key == candidate.authority.provider_policy_key
+        && current.created_at == candidate.created_at
+}
+
+fn credential_authority_matches(
+    current: &SponsoredCredentialRecord,
+    candidate: &SponsoredCredentialRecord,
+) -> bool {
+    credential_lineage_matches(current, candidate) && current.authority == candidate.authority
+}
+
+fn credential_phase_update_is_legal(
+    current: &SponsoredCredentialRecord,
+    candidate: &SponsoredCredentialRecord,
+) -> bool {
+    if current.state != candidate.state
+        || !matches!(
+            current.state,
+            SponsoredCredentialState::RotationPending | SponsoredCredentialState::RevocationPending
+        )
+        || current.material_state != SponsoredCredentialMaterialState::Retained
+        || candidate.material_state != SponsoredCredentialMaterialState::Retained
+        || !credential_authority_matches(current, candidate)
+        || current.revoked_at != candidate.revoked_at
+        || current.superseded_operation != candidate.superseded_operation
+        || current.last_completed_operation != candidate.last_completed_operation
+        || candidate.updated_at < current.updated_at
+    {
+        return false;
+    }
+    let (Some(current_operation), Some(candidate_operation)) = (
+        current.pending_operation.as_ref(),
+        candidate.pending_operation.as_ref(),
+    ) else {
+        return false;
+    };
+    operation_lineage_matches(current_operation, candidate_operation)
+        && operation_phase_transition_is_legal(current_operation.phase, candidate_operation.phase)
+        && (current_operation.attempted_at.is_none()
+            || candidate_operation.phase == ProviderOperationPhase::Prepared
+            || current_operation.attempted_at == candidate_operation.attempted_at)
+}
+
+fn credential_emergency_revocation_is_legal(
+    current: &SponsoredCredentialRecord,
+    candidate: &SponsoredCredentialRecord,
+) -> bool {
+    if !matches!(
+        current.state,
+        SponsoredCredentialState::Active | SponsoredCredentialState::RotationPending
+    ) || candidate.state != SponsoredCredentialState::RevocationPending
+        || current.material_state != SponsoredCredentialMaterialState::Retained
+        || candidate.material_state != SponsoredCredentialMaterialState::Retained
+        || !credential_authority_matches(current, candidate)
+        || candidate.revoked_at.is_some()
+        || current.last_completed_operation != candidate.last_completed_operation
+        || candidate.updated_at < current.updated_at
+    {
+        return false;
+    }
+    let Some(operation) = candidate.pending_operation.as_ref() else {
+        return false;
+    };
+    if operation.kind != ProviderOperationKind::RevokeCredential
+        || operation.phase != ProviderOperationPhase::Prepared
+        || operation.attempted_at.is_some()
+        || operation.requested_at < current.updated_at
+    {
+        return false;
+    }
+    match current.state {
+        SponsoredCredentialState::Active => {
+            current.pending_operation.is_none()
+                && current.superseded_operation.is_none()
+                && candidate.superseded_operation.is_none()
+        }
+        SponsoredCredentialState::RotationPending => {
+            current.pending_operation.is_some()
+                && candidate.superseded_operation == current.pending_operation
+        }
+        SponsoredCredentialState::RevocationPending | SponsoredCredentialState::Revoked => false,
+    }
+}
+
+fn credential_update_is_legal(
+    current: &SponsoredCredentialRecord,
+    candidate: &SponsoredCredentialRecord,
+) -> bool {
+    credential_phase_update_is_legal(current, candidate)
+        || credential_emergency_revocation_is_legal(current, candidate)
+}
+
+fn credential_rotation_stage_is_legal(
+    current: &SponsoredCredentialRecord,
+    candidate: &SponsoredCredentialRecord,
+) -> bool {
+    if current.state != SponsoredCredentialState::Active
+        || candidate.state != SponsoredCredentialState::RotationPending
+        || current.material_state != SponsoredCredentialMaterialState::Retained
+        || candidate.material_state != SponsoredCredentialMaterialState::Retained
+        || !credential_authority_matches(current, candidate)
+        || current.pending_operation.is_some()
+        || current.superseded_operation.is_some()
+        || candidate.superseded_operation.is_some()
+        || current.last_completed_operation != candidate.last_completed_operation
+        || current.revoked_at.is_some()
+        || candidate.revoked_at.is_some()
+        || candidate.updated_at < current.updated_at
+    {
+        return false;
+    }
+    candidate
+        .pending_operation
+        .as_ref()
+        .is_some_and(|operation| {
+            operation.kind == ProviderOperationKind::RotateCredential
+                && operation.phase == ProviderOperationPhase::Prepared
+                && operation.attempted_at.is_none()
+                && operation.requested_at >= current.updated_at
+        })
+}
+
+fn policy_lineage_matches(current: &SponsorshipPolicy, candidate: &SponsorshipPolicy) -> bool {
+    current.id == candidate.id
+        && current.tenant_id == candidate.tenant_id
+        && current.owner == candidate.owner
+        && current.credential_id == candidate.credential_id
+        && current.provider_policy == candidate.provider_policy
+        && current.per_launch_quota == candidate.per_launch_quota
+        && current.aggregate_quota == candidate.aggregate_quota
+        && current.per_launch_budget_micros == candidate.per_launch_budget_micros
+        && current.aggregate_budget_micros == candidate.aggregate_budget_micros
+        && current.max_requests_per_minute == candidate.max_requests_per_minute
+        && current.max_concurrent_launches == candidate.max_concurrent_launches
+        && current.expires_at == candidate.expires_at
+        && current.created_at == candidate.created_at
+}
+
+fn policy_update_is_legal(current: &SponsorshipPolicy, candidate: &SponsorshipPolicy) -> bool {
+    if !policy_lineage_matches(current, candidate) || candidate.updated_at < current.updated_at {
+        return false;
+    }
+    match (current.state, candidate.state) {
+        (
+            layer2_core::SponsorshipPolicyState::Active,
+            layer2_core::SponsorshipPolicyState::Suspended,
+        ) => candidate.revoked_at.is_none(),
+        (
+            layer2_core::SponsorshipPolicyState::Active
+            | layer2_core::SponsorshipPolicyState::Suspended,
+            layer2_core::SponsorshipPolicyState::Revoked,
+        ) => candidate.revoked_at.as_deref() == Some(candidate.updated_at.as_str()),
+        _ => false,
+    }
+}
+
+fn grant_lineage_matches(current: &SponsoredGrant, candidate: &SponsoredGrant) -> bool {
+    current.id == candidate.id
+        && current.tenant_id == candidate.tenant_id
+        && current.policy_id == candidate.policy_id
+        && current.policy_generation == candidate.policy_generation
+        && current.credential_generation == candidate.credential_generation
+        && current.trigger_revision_id == candidate.trigger_revision_id
+        && current.trigger_revision_digest == candidate.trigger_revision_digest
+        && current.launch_id == candidate.launch_id
+        && current.session_id == candidate.session_id
+        && current.contributor == candidate.contributor
+        && current.sponsor_subject == candidate.sponsor_subject
+        && current.terms_digest == candidate.terms_digest
+        && current.acceptance == candidate.acceptance
+        && current.authority == candidate.authority
+        && current.created_at == candidate.created_at
+}
+
+fn grant_update_is_legal(current: &SponsoredGrant, candidate: &SponsoredGrant) -> bool {
+    if !grant_lineage_matches(current, candidate)
+        || current.usage != candidate.usage
+        || current.allocation != candidate.allocation
+        || current.revoked_at != candidate.revoked_at
+        || candidate.updated_at < current.updated_at
+    {
+        return false;
+    }
+    match (
+        current.state,
+        candidate.state,
+        &current.pending_revocation,
+        &candidate.pending_revocation,
+    ) {
+        (
+            SponsoredGrantState::Active | SponsoredGrantState::Suspended,
+            SponsoredGrantState::RevocationPending,
+            None,
+            Some(operation),
+        ) => {
+            matches!(
+                operation.kind,
+                ProviderOperationKind::RevokeGrant | ProviderOperationKind::CloseGrant
+            ) && operation.phase == ProviderOperationPhase::Prepared
+                && operation.attempted_at.is_none()
+                && operation.requested_at >= current.updated_at
+        }
+        (
+            SponsoredGrantState::RevocationPending,
+            SponsoredGrantState::RevocationPending,
+            Some(current_operation),
+            Some(candidate_operation),
+        ) => {
+            operation_lineage_matches(current_operation, candidate_operation)
+                && operation_phase_transition_is_legal(
+                    current_operation.phase,
+                    candidate_operation.phase,
+                )
+                && (current_operation.attempted_at.is_none()
+                    || candidate_operation.phase == ProviderOperationPhase::Prepared
+                    || current_operation.attempted_at == candidate_operation.attempted_at)
+        }
+        _ => false,
+    }
+}
+
+fn activation_lineage_matches(
+    current: &GrantActivationIntent,
+    candidate: &GrantActivationIntent,
+) -> bool {
+    current.launch_id == candidate.launch_id
+        && current.session_id == candidate.session_id
+        && current.policy_id == candidate.policy_id
+        && current.policy_generation == candidate.policy_generation
+        && current.credential_generation == candidate.credential_generation
+        && current.launch_authority_digest == candidate.launch_authority_digest
+        && current.acceptance_digest == candidate.acceptance_digest
+        && current.gate_fence == candidate.gate_fence
+        && current.allocation == candidate.allocation
+        && current.request_fingerprint == candidate.request_fingerprint
+        && current.billing_request_id == candidate.billing_request_id
+        && current.provider_request_id == candidate.provider_request_id
+        && current.created_at == candidate.created_at
+}
+
+fn activation_claim_bindings_match(
+    current: &GrantActivationIntent,
+    candidate: &GrantActivationIntent,
+    billing_request_candidates: &SponsorshipOperationalPseudonymSet,
+    provider_request_candidates: &SponsorshipOperationalPseudonymSet,
+) -> bool {
+    current.launch_id == candidate.launch_id
+        && current.session_id == candidate.session_id
+        && current.policy_id == candidate.policy_id
+        && current.policy_generation == candidate.policy_generation
+        && current.credential_generation == candidate.credential_generation
+        && current.launch_authority_digest == candidate.launch_authority_digest
+        && current.acceptance_digest == candidate.acceptance_digest
+        && current.gate_fence == candidate.gate_fence
+        && current.allocation == candidate.allocation
+        && current.request_fingerprint == candidate.request_fingerprint
+        && billing_request_candidates
+            .iter()
+            .any(|identity| identity.as_str() == current.billing_request_id)
+        && provider_request_candidates
+            .iter()
+            .any(|identity| identity.as_str() == current.provider_request_id)
+}
+
+fn operation_lineage_matches(
+    current: &PendingProviderOperation,
+    candidate: &PendingProviderOperation,
+) -> bool {
+    current.kind == candidate.kind
+        && current.provider_request_id == candidate.provider_request_id
+        && current.client_request_id_digest == candidate.client_request_id_digest
+        && current.payload_digest == candidate.payload_digest
+        && current.requested_at == candidate.requested_at
+}
+
+fn operation_phase_transition_is_legal(
+    current: ProviderOperationPhase,
+    candidate: ProviderOperationPhase,
+) -> bool {
+    matches!(
+        (current, candidate),
+        (
+            ProviderOperationPhase::Prepared,
+            ProviderOperationPhase::Attempting
+        ) | (
+            ProviderOperationPhase::Attempting,
+            ProviderOperationPhase::Prepared
+        ) | (
+            ProviderOperationPhase::Attempting | ProviderOperationPhase::Ambiguous,
+            ProviderOperationPhase::Ambiguous | ProviderOperationPhase::Rejected
+        )
+    )
+}
+
+fn activation_update_is_legal(
+    current: &GrantActivationIntent,
+    candidate: &GrantActivationIntent,
+) -> bool {
+    if !activation_lineage_matches(current, candidate)
+        || candidate.revision != current.revision.saturating_add(1)
+        || candidate.updated_at < current.updated_at
+        || candidate
+            .lease
+            .as_ref()
+            .is_some_and(|lease| current.lease.as_ref() != Some(lease))
+        || (!current.capacity_held && candidate.capacity_held)
+    {
+        return false;
+    }
+    match (&current.provider_receipt, &candidate.provider_receipt) {
+        (Some(current), Some(candidate)) if current != candidate => return false,
+        (Some(_), None) => return false,
+        (None, Some(_))
+            if !matches!(
+                (current.state, candidate.state),
+                (
+                    GrantActivationState::ProviderAttempting
+                        | GrantActivationState::ProviderAmbiguous,
+                    GrantActivationState::ProviderConfirmed
+                        | GrantActivationState::ProviderAmbiguous
+                )
+            ) =>
+        {
+            return false;
+        }
+        _ => {}
+    }
+    match (&current.cleanup_operation, &candidate.cleanup_operation) {
+        (None, None) => {}
+        (Some(current_operation), Some(candidate_operation))
+            if current.state == GrantActivationState::CleanupPending
+                && candidate.state == GrantActivationState::CleanupPending
+                && operation_lineage_matches(current_operation, candidate_operation)
+                && operation_phase_transition_is_legal(
+                    current_operation.phase,
+                    candidate_operation.phase,
+                )
+                && (current_operation.attempted_at.is_none()
+                    || candidate_operation.phase == ProviderOperationPhase::Prepared
+                    || current_operation.attempted_at == candidate_operation.attempted_at) => {}
+        _ => return false,
+    }
+    matches!(
+        (current.state, candidate.state, candidate.denial),
+        (
+            GrantActivationState::AwaitingBilling,
+            GrantActivationState::BillingAttempting,
+            None
+        ) | (
+            GrantActivationState::BillingAttempting,
+            GrantActivationState::AwaitingBilling | GrantActivationState::BillingAmbiguous,
+            None
+        ) | (
+            GrantActivationState::BillingAmbiguous,
+            GrantActivationState::BillingAmbiguous,
+            None
+        ) | (
+            GrantActivationState::BillingAttempting | GrantActivationState::BillingAmbiguous,
+            GrantActivationState::Denied,
+            Some(GrantActivationDenial::BillingRejected)
+        ) | (
+            GrantActivationState::ProviderAttempting,
+            GrantActivationState::AwaitingProvider
+                | GrantActivationState::ProviderAmbiguous
+                | GrantActivationState::ProviderConfirmed,
+            None
+        ) | (
+            GrantActivationState::ProviderAmbiguous,
+            GrantActivationState::ProviderAmbiguous | GrantActivationState::ProviderConfirmed,
+            None
+        ) | (
+            GrantActivationState::ProviderAttempting | GrantActivationState::ProviderAmbiguous,
+            GrantActivationState::Denied,
+            Some(GrantActivationDenial::ProviderRejected)
+        ) | (
+            GrantActivationState::CleanupPending,
+            GrantActivationState::CleanupPending,
+            None
+        )
+    )
+}
+
+fn require_successor_generation(
+    expected: u64,
+    candidate: u64,
+    resource: &str,
+) -> Result<(), SponsorshipStoreError> {
+    let successor = expected.checked_add(1).ok_or_else(|| {
+        SponsorshipStoreError::Malformed(format!("{resource} generation is exhausted"))
+    })?;
+    if candidate != successor {
+        return Err(SponsorshipStoreError::StaleGeneration);
+    }
+    Ok(())
 }
 
 fn credential_operation_completion(
@@ -1723,13 +2795,24 @@ fn credential_operation_completion(
         .last_completed_operation
         .as_ref()
         .ok_or(SponsorshipStoreError::Conflict)?;
-    if pending.kind != kind
+    if !matches!(
+        pending.phase,
+        ProviderOperationPhase::Attempting | ProviderOperationPhase::Ambiguous
+    ) || pending.kind != kind
         || completed.kind != kind
         || completed.outcome != outcome
         || pending.provider_request_id != completed.provider_request_id
         || pending.client_request_id_digest != completed.client_request_id_digest
         || pending.payload_digest != completed.payload_digest
         || current.id != candidate.id
+        || candidate.updated_at < current.updated_at
+        || completed.completed_at < pending.requested_at
+        || pending
+            .attempted_at
+            .as_ref()
+            .is_some_and(|attempted_at| completed.completed_at < *attempted_at)
+        || completed.completed_at < current.updated_at
+        || candidate.updated_at != completed.completed_at
     {
         return Err(SponsorshipStoreError::Conflict);
     }
@@ -1737,6 +2820,64 @@ fn credential_operation_completion(
         .validate()
         .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
     Ok(completed.clone())
+}
+
+fn credential_completion_shape_is_legal(
+    current: &SponsoredCredentialRecord,
+    candidate: &SponsoredCredentialRecord,
+    kind: ProviderOperationKind,
+    outcome: CompletedProviderOperationOutcome,
+) -> bool {
+    let Some(pending) = current.pending_operation.as_ref() else {
+        return false;
+    };
+    if !credential_lineage_matches(current, candidate)
+        || current.material_state != SponsoredCredentialMaterialState::Retained
+        || candidate.pending_operation.is_some()
+        || candidate.superseded_operation.is_some()
+    {
+        return false;
+    }
+    match (kind, outcome) {
+        (ProviderOperationKind::RotateCredential, CompletedProviderOperationOutcome::Confirmed) => {
+            current.state == SponsoredCredentialState::RotationPending
+                && candidate.state == SponsoredCredentialState::Active
+                && candidate.material_state == SponsoredCredentialMaterialState::Retained
+                && candidate.revoked_at.is_none()
+                && candidate.authority.provider == current.authority.provider
+                && candidate.authority.provider_policy_key == current.authority.provider_policy_key
+                && candidate.authority.provider_credential_id_digest
+                    != current.authority.provider_credential_id_digest
+                && candidate.authority.state_version > current.authority.state_version
+                && candidate.authority.supports_expiry == current.authority.supports_expiry
+                && candidate.authority.supports_revocation == current.authority.supports_revocation
+                && candidate.authority.ownership_verified_at >= pending.requested_at
+                && pending.attempted_at.as_ref().is_none_or(|attempted_at| {
+                    candidate.authority.ownership_verified_at >= *attempted_at
+                })
+                && candidate
+                    .last_completed_operation
+                    .as_ref()
+                    .is_some_and(|completed| {
+                        candidate.authority.ownership_verified_at <= completed.completed_at
+                    })
+        }
+        (ProviderOperationKind::RotateCredential, CompletedProviderOperationOutcome::Rejected) => {
+            current.state == SponsoredCredentialState::RotationPending
+                && candidate.state == SponsoredCredentialState::Active
+                && candidate.material_state == SponsoredCredentialMaterialState::Retained
+                && candidate.authority == current.authority
+                && candidate.revoked_at.is_none()
+        }
+        (ProviderOperationKind::RevokeCredential, CompletedProviderOperationOutcome::Confirmed) => {
+            current.state == SponsoredCredentialState::RevocationPending
+                && candidate.state == SponsoredCredentialState::Revoked
+                && candidate.material_state == SponsoredCredentialMaterialState::Retired
+                && candidate.authority == current.authority
+                && candidate.revoked_at.as_deref() == Some(candidate.updated_at.as_str())
+        }
+        _ => false,
+    }
 }
 
 fn ledger_doc(
@@ -1774,7 +2915,7 @@ fn read_ledger(
     Ok(operation)
 }
 
-fn acceptance_stable_fields_match(
+fn acceptance_payload_fields_match(
     stored: &SponsoredGrantAcceptance,
     candidate: &SponsoredGrantAcceptance,
 ) -> bool {
@@ -1786,7 +2927,28 @@ fn acceptance_stable_fields_match(
         && stored.policy_generation == candidate.policy_generation
         && stored.terms_digest == candidate.terms_digest
         && stored.launch_snapshot_digest == candidate.launch_snapshot_digest
-        && stored.idempotency_key_hash == candidate.idempotency_key_hash
+}
+
+fn acceptance_identity_matches(
+    stored: &SponsoredGrantAcceptance,
+    candidates: &SponsorshipOperationalPseudonymSet,
+) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| candidate.as_str() == stored.idempotency_key_hash)
+}
+
+fn launch_sponsorship_policy_id(
+    launch: &Launch,
+) -> Result<SponsorshipPolicyId, SponsorshipStoreError> {
+    launch
+        .revision
+        .content
+        .commercial_policy
+        .sponsorship
+        .as_ref()
+        .map(|binding| binding.policy_id.clone())
+        .ok_or(SponsorshipStoreError::LaunchAuthorityChanged)
 }
 
 fn database_time_string(now: DateTime) -> String {
@@ -1820,15 +2982,20 @@ fn timestamp_seconds(value: &str, field: &str) -> Result<u64, SponsorshipStoreEr
         .ok_or_else(|| SponsorshipStoreError::Malformed(format!("stored {field} is invalid")))
 }
 
+fn later_timestamp(current: &str, observed: &str) -> Result<String, SponsorshipStoreError> {
+    let current_seconds = timestamp_seconds(current, "current record update time")?;
+    let observed_seconds = timestamp_seconds(observed, "observed record update time")?;
+    Ok(if current_seconds > observed_seconds {
+        current.to_string()
+    } else {
+        observed.to_string()
+    })
+}
+
 fn activation_lease(
     holder: String,
     now: DateTime,
 ) -> Result<(GrantActivationLease, DateTime), SponsorshipStoreError> {
-    if !is_digest(&holder) {
-        return Err(SponsorshipStoreError::Malformed(
-            "grant activation lease holder is not a digest".into(),
-        ));
-    }
     let expires_millis = now
         .timestamp_millis()
         .checked_add(ACTIVATION_LEASE_MILLIS)
@@ -1847,6 +3014,28 @@ fn activation_lease(
     Ok((lease, expires_at_database))
 }
 
+fn validate_activation_lease_database_binding(
+    lease: &GrantActivationLease,
+    expires_at_database: DateTime,
+) -> Result<(), SponsorshipStoreError> {
+    if database_time_string(expires_at_database) != lease.expires_at {
+        return Err(SponsorshipStoreError::Malformed(
+            "activation lease database expiry does not match its public expiry".into(),
+        ));
+    }
+    let acquired = timestamp_seconds(&lease.acquired_at, "activation lease acquisition")?;
+    let expires = timestamp_seconds(&lease.expires_at, "activation lease expiry")?;
+    let expected_duration = u64::try_from(ACTIVATION_LEASE_MILLIS / 1_000).map_err(|_| {
+        SponsorshipStoreError::Malformed("activation lease duration is invalid".into())
+    })?;
+    if expires.checked_sub(acquired) != Some(expected_duration) {
+        return Err(SponsorshipStoreError::Malformed(
+            "activation lease does not have the required fixed duration".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn grant_capacity_is_released(state: SponsoredGrantState) -> bool {
     matches!(
         state,
@@ -1857,33 +3046,157 @@ fn grant_capacity_is_released(state: SponsoredGrantState) -> bool {
     )
 }
 
-fn sensitive_digest(domain: &str, value: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(domain.as_bytes());
-    hasher.update([0]);
-    hasher.update((value.len() as u64).to_be_bytes());
-    hasher.update(value.as_bytes());
-    format!("{:x}", hasher.finalize())
+fn deterministic_grant_id_matches(id: &SponsoredGrantId, provider_request_id: &str) -> bool {
+    let digest = Sha256::digest(
+        [
+            b"cma-sponsored-grant-id-v1:".as_slice(),
+            provider_request_id.as_bytes(),
+        ]
+        .concat(),
+    );
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    id.0 == Uuid::from_bytes(bytes).to_string()
+}
+
+fn canonical_cipher_context<T: Serialize + ?Sized>(
+    domain: &str,
+    authority: &T,
+) -> Result<String, SponsorshipStoreError> {
+    let encoded = serde_json::to_vec(&(domain, authority)).map_err(|_| {
+        SponsorshipStoreError::Malformed(
+            "canonical sponsorship ciphertext authority cannot be encoded".into(),
+        )
+    })?;
+    Ok(format!("{:x}", Sha256::digest(encoded)))
+}
+
+#[allow(clippy::too_many_arguments)] // Every value binds ciphertext to its public authority.
+fn credential_cipher_context(
+    id: &str,
+    owner: &SponsorBillingOwner,
+    provider: &str,
+    provider_policy_key: &str,
+    provider_credential_id_digest: &str,
+    ownership_verified_at: &str,
+    created_at: &str,
+    provider_state_version: u64,
+    supports_expiry: bool,
+    supports_revocation: bool,
+) -> Result<String, SponsorshipStoreError> {
+    canonical_cipher_context(
+        "cma-sponsorship-credential-cipher-authority-v1",
+        &(
+            id,
+            owner,
+            provider,
+            provider_policy_key,
+            provider_credential_id_digest,
+            ownership_verified_at,
+            created_at,
+            provider_state_version,
+            supports_expiry,
+            supports_revocation,
+        ),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Every value binds ciphertext to its activation authority.
+fn activation_cipher_context(
+    launch_id: &str,
+    session_id: &str,
+    policy_id: &str,
+    policy_generation: u64,
+    credential_generation: u64,
+    launch_authority_digest: &str,
+    acceptance_digest: &str,
+    gate_fence: &SponsorshipGateFence,
+    allocation: &SponsoredUsageSummary,
+    request_fingerprint: &str,
+    billing_request_id: &str,
+    provider_request_id: &str,
+    created_at: &str,
+) -> Result<String, SponsorshipStoreError> {
+    canonical_cipher_context(
+        "cma-sponsorship-activation-cipher-authority-v1",
+        &(
+            launch_id,
+            session_id,
+            policy_id,
+            policy_generation,
+            credential_generation,
+            launch_authority_digest,
+            acceptance_digest,
+            &gate_fence.configuration_digest,
+            gate_fence.epoch,
+            gate_fence.kill_switch_engaged,
+            allocation,
+            request_fingerprint,
+            billing_request_id,
+            provider_request_id,
+            created_at,
+        ),
+    )
+}
+
+fn grant_cipher_context(grant: &SponsoredGrant) -> Result<String, SponsorshipStoreError> {
+    canonical_cipher_context(
+        "cma-sponsorship-grant-cipher-authority-v1",
+        &(
+            &grant.id.0,
+            &grant.tenant_id,
+            &grant.policy_id.0,
+            grant.policy_generation,
+            grant.credential_generation,
+            &grant.trigger_revision_id,
+            &grant.trigger_revision_digest,
+            &grant.launch_id.0,
+            &grant.session_id.0,
+            &grant.contributor,
+            &grant.terms_digest,
+            &grant.acceptance,
+            &grant.authority,
+            &grant.allocation,
+            &grant.created_at,
+        ),
+    )
 }
 
 fn require_receipt_matches_grant(
+    operational: &SponsorshipOperationalPseudonymizer,
     receipt: &ProviderGrantReceipt,
     grant: &SponsoredGrant,
 ) -> Result<(), SponsorshipStoreError> {
-    let provider_grant_id_digest = sensitive_digest(
-        "cma-provider-grant-id-v1",
-        receipt
-            .provider_grant_id
-            .expose_for_provider_or_encryption(),
-    );
-    let revocation_handle_digest = sensitive_digest(
-        "cma-provider-revocation-handle-v1",
-        receipt
-            .revocation_handle
-            .expose_for_provider_or_encryption(),
-    );
-    if grant.authority.provider_grant_id_digest != provider_grant_id_digest
-        || grant.authority.revocation_handle_digest != revocation_handle_digest
+    let provider_grant_id_candidates = operational
+        .pseudonymize(
+            layer2_core::SponsorshipOperationalDomain::ProviderGrantAuthority,
+            &[
+                &grant.id.0,
+                receipt
+                    .provider_grant_id
+                    .expose_for_provider_or_encryption(),
+            ],
+        )
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    let revocation_handle_candidates = operational
+        .pseudonymize(
+            layer2_core::SponsorshipOperationalDomain::ProviderRevocationAuthority,
+            &[
+                &grant.id.0,
+                receipt
+                    .revocation_handle
+                    .expose_for_provider_or_encryption(),
+            ],
+        )
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    if !provider_grant_id_candidates
+        .iter()
+        .any(|candidate| candidate.as_str() == grant.authority.provider_grant_id_digest)
+        || !revocation_handle_candidates
+            .iter()
+            .any(|candidate| candidate.as_str() == grant.authority.revocation_handle_digest)
         || grant.authority.provider_state_version != receipt.provider_state_version
         || grant.authority.expires_at != receipt.expires_at
         || grant.authority.issued_at != receipt.issued_at
@@ -1899,6 +3212,7 @@ impl MongoSponsorshipStore {
     async fn complete_credential_mutation(
         &self,
         expected_generation: u64,
+        provider_identity: Option<&SponsorshipOperationalPseudonymSet>,
         record: &SponsoredCredentialRecord,
         audit: SponsoredAuditEvent,
         kind: ProviderOperationKind,
@@ -1908,6 +3222,21 @@ impl MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
+        require_successor_generation(expected_generation, record.generation, "credential")?;
+        if let Some(provider_identity) = provider_identity {
+            validate_operational_aliases(
+                &self.operational,
+                &provider_identity.encoded_candidates(),
+                "provider credential rotation candidate",
+            )?;
+            if record.authority.provider_credential_id_digest
+                != provider_identity.current().as_str()
+            {
+                return Err(SponsorshipStoreError::Malformed(
+                    "rotated credential canonical provider identity is not current".into(),
+                ));
+            }
+        }
         if !matches!(
             (kind, outcome),
             (
@@ -1926,12 +3255,13 @@ impl MongoSponsorshipStore {
             (
                 self.clone(),
                 expected_generation,
+                provider_identity.cloned(),
                 record.clone(),
                 audit,
                 kind,
                 outcome,
             ),
-            |session, (store, expected, candidate, audit, kind, outcome)| {
+            |session, (store, expected, provider_identity, candidate, audit, kind, outcome)| {
                 async move {
                     let current = store
                         .credential_in_transaction(session, &candidate.id)
@@ -1944,7 +3274,12 @@ impl MongoSponsorshipStore {
                             Err(custom(SponsorshipStoreError::StaleGeneration))
                         };
                     }
-                    if current.record.material_state != SponsoredCredentialMaterialState::Retained {
+                    if !credential_completion_shape_is_legal(
+                        &current.record,
+                        candidate,
+                        *kind,
+                        *outcome,
+                    ) {
                         return Err(custom(SponsorshipStoreError::Conflict));
                     }
                     let completion = credential_operation_completion(
@@ -1982,17 +3317,20 @@ impl MongoSponsorshipStore {
                             {
                                 return Err(custom(SponsorshipStoreError::Conflict));
                             }
+                            let provider_identity = provider_identity.as_ref().ok_or_else(|| {
+                                custom(SponsorshipStoreError::Malformed(
+                                    "credential rotation completion omitted provider identity candidates"
+                                        .into(),
+                                ))
+                            })?;
                             if store
-                                .credentials
-                                .find_one(doc! {
-                                    "_id": { "$ne": &candidate.id.0 },
-                                    "provider": &candidate.authority.provider,
-                                    "provider_credential_id_digest":
-                                        &candidate.authority.provider_credential_id_digest,
-                                })
-                                .session(&mut *session)
+                                .provider_credential_binding_in_transaction(
+                                    session,
+                                    &candidate.authority.provider,
+                                    provider_identity,
+                                )
                                 .await?
-                                .is_some()
+                                .is_some_and(|document| document.id != candidate.id.0)
                             {
                                 return Err(custom(SponsorshipStoreError::Conflict));
                             }
@@ -2035,9 +3373,18 @@ impl MongoSponsorshipStore {
                         }
                         _ => return Err(custom(SponsorshipStoreError::Conflict)),
                     };
-                    let replacement =
-                        credential_doc(&store.cipher, candidate, current_secret, pending_secret)
-                            .map_err(custom)?;
+                    let provider_aliases = provider_identity
+                        .as_ref()
+                        .map(SponsorshipOperationalPseudonymSet::encoded_candidates)
+                        .unwrap_or_else(|| current.provider_credential_id_aliases.clone());
+                    let replacement = credential_doc(
+                        &store.cipher,
+                        candidate,
+                        &provider_aliases,
+                        current_secret,
+                        pending_secret,
+                    )
+                    .map_err(custom)?;
                     let result = store
                         .credentials
                         .replace_one(
@@ -2076,7 +3423,9 @@ impl MongoSponsorshipStore {
             .find_one(doc! { "_id": &launch_id.0 })
             .session(session)
             .await?
-            .map(|document| read_activation(&self.cipher, document).map_err(custom))
+            .map(|document| {
+                read_activation(&self.cipher, &self.operational, document).map_err(custom)
+            })
             .transpose()
     }
 
@@ -2084,26 +3433,101 @@ impl MongoSponsorshipStore {
         &self,
         session: &mut ClientSession,
         grant_id: &SponsoredGrantId,
-    ) -> mongodb::error::Result<Option<(SponsoredGrant, ProviderGrantReceipt)>> {
+    ) -> mongodb::error::Result<Option<(SponsoredGrant, GrantDoc)>> {
         self.grants
             .find_one(doc! { "_id": &grant_id.0 })
             .session(session)
             .await?
-            .map(|document| read_grant(&self.cipher, document).map_err(custom))
+            .map(|document| {
+                read_grant_record(&self.operational, &document)
+                    .map(|grant| (grant, document))
+                    .map_err(custom)
+            })
             .transpose()
     }
 
     async fn reservation_in_transaction(
         &self,
         session: &mut ClientSession,
-        stable_request_id: &str,
-    ) -> mongodb::error::Result<Option<(SponsoredUsageReservation, SponsorshipPolicyId, DateTime)>>
-    {
+        reservation_id: &SponsoredUsageReservationId,
+    ) -> mongodb::error::Result<
+        Option<(
+            SponsoredUsageReservation,
+            SponsorshipPolicyId,
+            DateTime,
+            Vec<String>,
+        )>,
+    > {
         self.reservations
-            .find_one(doc! { "_id": stable_request_id })
+            .find_one(doc! { "_id": &reservation_id.0 })
             .session(session)
             .await?
-            .map(|document| read_reservation(document).map_err(custom))
+            .map(|document| {
+                let request_aliases = document.request_aliases.clone();
+                read_reservation(&self.operational, document)
+                    .map(|(reservation, policy_id, observed_at)| {
+                        (reservation, policy_id, observed_at, request_aliases)
+                    })
+                    .map_err(custom)
+            })
+            .transpose()
+    }
+
+    async fn reservation_for_request_in_transaction(
+        &self,
+        session: &mut ClientSession,
+        candidates: &SponsorshipOperationalPseudonymSet,
+    ) -> mongodb::error::Result<
+        Option<(
+            SponsoredUsageReservation,
+            SponsorshipPolicyId,
+            DateTime,
+            Vec<String>,
+        )>,
+    > {
+        let aliases = candidates.encoded_candidates();
+        validate_operational_aliases(&self.operational, &aliases, "usage request candidate")
+            .map_err(custom)?;
+        let mut cursor = self
+            .reservations
+            .find(doc! { "request_aliases": { "$in": aliases } })
+            .limit((MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS + 2) as i64)
+            .session(&mut *session)
+            .await?;
+        let matches = cursor.stream(&mut *session).try_collect::<Vec<_>>().await?;
+        if matches.len() > 1 {
+            return Err(custom(SponsorshipStoreError::Malformed(
+                "usage request candidates resolve multiple durable reservations".into(),
+            )));
+        }
+        matches
+            .into_iter()
+            .next()
+            .map(|document| {
+                let request_aliases = document.request_aliases.clone();
+                read_reservation(&self.operational, document)
+                    .map(|(reservation, policy_id, observed_at)| {
+                        (reservation, policy_id, observed_at, request_aliases)
+                    })
+                    .map_err(custom)
+            })
+            .transpose()
+    }
+
+    async fn acceptance_in_transaction(
+        &self,
+        session: &mut ClientSession,
+        launch_id: &LaunchId,
+    ) -> mongodb::error::Result<Option<SponsoredGrantAcceptance>> {
+        self.acceptances
+            .find_one_and_update(
+                doc! { "_id": &launch_id.0 },
+                doc! { "$inc": { "authority_read_revision": 1_i64 } },
+            )
+            .return_document(ReturnDocument::After)
+            .session(session)
+            .await?
+            .map(|document| read_acceptance(&self.operational, document).map_err(custom))
             .transpose()
     }
 
@@ -2210,14 +3634,25 @@ impl MongoSponsorshipStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)] // The CAS commits one exact encrypted grant tuple.
     async fn replace_grant_in_transaction(
         &self,
         session: &mut ClientSession,
         expected_generation: u64,
         grant: &SponsoredGrant,
-        receipt: &ProviderGrantReceipt,
+        sponsor_subject: &str,
+        unresolved_usage: SponsoredUsageSummary,
+        encrypted_receipt: ProviderReceiptDoc,
+        encryption_key_id: String,
     ) -> mongodb::error::Result<()> {
-        let replacement = grant_doc(&self.cipher, grant, receipt).map_err(custom)?;
+        let replacement = grant_doc_with_encrypted_receipt(
+            grant,
+            sponsor_subject,
+            unresolved_usage,
+            encrypted_receipt,
+            encryption_key_id,
+        )
+        .map_err(custom)?;
         let result = self
             .grants
             .replace_one(
@@ -2236,6 +3671,76 @@ impl MongoSponsorshipStore {
         Ok(())
     }
 
+    async fn current_activation_dependencies_in_transaction(
+        &self,
+        session: &mut ClientSession,
+        intent: &GrantActivationIntent,
+        now: &str,
+    ) -> mongodb::error::Result<(
+        SponsoredLaunchAuthority,
+        SponsoredGrantAcceptance,
+        SponsorshipPolicy,
+        SponsoredCredentialRecord,
+    )> {
+        self.require_gate_in_transaction(session, &intent.gate_fence)
+            .await?;
+        let launch = self
+            .launch_in_transaction(session, &intent.launch_id)
+            .await?
+            .ok_or_else(|| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
+        let policy_id = launch_sponsorship_policy_id(&launch).map_err(custom)?;
+        let stored_acceptance = self
+            .acceptance_in_transaction(session, &intent.launch_id)
+            .await?
+            .ok_or_else(|| custom(SponsorshipStoreError::AcceptanceChanged))?;
+        let (policy, usage) = self
+            .policy_in_transaction(session, &policy_id)
+            .await?
+            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
+        let credential = self
+            .credential_record_in_transaction(session, &policy.credential_id)
+            .await?
+            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
+        let current_launch = SponsoredLaunchAuthority::from_launch(&launch, &policy)
+            .map_err(|_| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
+        if current_launch.state != SponsoredLaunchState::Starting
+            || current_launch.session_id.as_ref() != Some(&intent.session_id)
+            || current_launch.digest != intent.launch_authority_digest
+        {
+            return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
+        }
+        if stored_acceptance.digest != intent.acceptance_digest
+            || stored_acceptance.launch_id != current_launch.launch_id
+            || stored_acceptance.contributor != current_launch.contributor
+            || stored_acceptance.revision_id != current_launch.revision_id
+            || stored_acceptance.revision_digest != current_launch.revision_digest
+            || stored_acceptance.policy_id != current_launch.policy_id
+            || stored_acceptance.launch_snapshot_digest != current_launch.launch_snapshot_digest
+        {
+            return Err(custom(SponsorshipStoreError::AcceptanceChanged));
+        }
+        let terms = SponsoredGrantTerms::from_policy(&policy, &usage)
+            .map_err(|error| custom(SponsorshipStoreError::Malformed(error.to_string())))?;
+        if !policy.is_available_at(now)
+            || policy.id != intent.policy_id
+            || policy.generation != intent.policy_generation
+            || stored_acceptance.policy_generation != policy.generation
+            || stored_acceptance.terms_digest != terms.digest
+            || credential.state != SponsoredCredentialState::Active
+            || credential.material_state != SponsoredCredentialMaterialState::Retained
+            || credential.generation != intent.credential_generation
+            || credential.owner != policy.owner
+            || credential.authority.provider != policy.provider_policy.provider
+            || credential.authority.provider_policy_key
+                != policy.provider_policy.provider_policy_key
+            || intent.allocation.quota != policy.per_launch_quota
+            || intent.allocation.spend_micros != policy.per_launch_budget_micros
+        {
+            return Err(custom(SponsorshipStoreError::GrantUnavailable));
+        }
+        Ok((current_launch, stored_acceptance, policy, credential))
+    }
+
     async fn require_activation_dependencies_in_transaction(
         &self,
         session: &mut ClientSession,
@@ -2243,67 +3748,17 @@ impl MongoSponsorshipStore {
         launch: &SponsoredLaunchAuthority,
         acceptance: &SponsoredGrantAcceptance,
         now: &str,
-    ) -> mongodb::error::Result<()> {
-        self.require_gate_in_transaction(session, &intent.gate_fence)
+    ) -> mongodb::error::Result<(SponsorshipPolicy, SponsoredCredentialRecord)> {
+        let (current_launch, stored_acceptance, policy, credential) = self
+            .current_activation_dependencies_in_transaction(session, intent, now)
             .await?;
-        let current_launch = self
-            .launch_authority_in_transaction(session, &launch.launch_id)
-            .await?
-            .ok_or_else(|| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
-        if current_launch != *launch
-            || launch.state != SponsoredLaunchState::Starting
-            || launch.session_id.is_none()
-            || launch.session_id.as_ref() != Some(&intent.session_id)
-            || launch.digest != intent.launch_authority_digest
-        {
+        if current_launch != *launch {
             return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
         }
-        let stored_acceptance = self
-            .acceptances
-            .find_one(doc! { "_id": &launch.launch_id.0 })
-            .session(&mut *session)
-            .await?
-            .map(read_acceptance)
-            .transpose()
-            .map_err(custom)?
-            .ok_or_else(|| custom(SponsorshipStoreError::AcceptanceChanged))?;
-        if stored_acceptance != *acceptance
-            || acceptance.digest != intent.acceptance_digest
-            || acceptance.launch_id != launch.launch_id
-            || acceptance.contributor != launch.contributor
-            || acceptance.revision_id != launch.revision_id
-            || acceptance.revision_digest != launch.revision_digest
-            || acceptance.policy_id != launch.policy_id
-            || acceptance.launch_snapshot_digest != launch.launch_snapshot_digest
-        {
+        if stored_acceptance != *acceptance {
             return Err(custom(SponsorshipStoreError::AcceptanceChanged));
         }
-        let (policy, _) = self
-            .policy_in_transaction(session, &intent.policy_id)
-            .await?
-            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
-        let credential = self
-            .credential_in_transaction(session, &policy.credential_id)
-            .await?
-            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
-        if !policy.is_available_at(now)
-            || policy.id != launch.policy_id
-            || policy.tenant_id != launch.tenant_id
-            || policy.generation != intent.policy_generation
-            || credential.record.state != SponsoredCredentialState::Active
-            || credential.record.material_state != SponsoredCredentialMaterialState::Retained
-            || credential.current_secret.is_none()
-            || credential.record.generation != intent.credential_generation
-            || credential.record.owner != policy.owner
-            || credential.record.authority.provider != policy.provider_policy.provider
-            || credential.record.authority.provider_policy_key
-                != policy.provider_policy.provider_policy_key
-            || intent.allocation.quota != policy.per_launch_quota
-            || intent.allocation.spend_micros != policy.per_launch_budget_micros
-        {
-            return Err(custom(SponsorshipStoreError::GrantUnavailable));
-        }
-        Ok(())
+        Ok((policy, credential))
     }
 
     async fn activation_dependencies_are_current_in_transaction(
@@ -2312,32 +3767,9 @@ impl MongoSponsorshipStore {
         intent: &GrantActivationIntent,
         now: DateTime,
     ) -> mongodb::error::Result<bool> {
-        let Some(launch) = self
-            .launch_authority_in_transaction(session, &intent.launch_id)
-            .await?
-        else {
-            return Ok(false);
-        };
-        let Some(acceptance) = self
-            .acceptances
-            .find_one(doc! { "_id": &intent.launch_id.0 })
-            .session(&mut *session)
-            .await?
-            .map(read_acceptance)
-            .transpose()
-            .map_err(custom)?
-        else {
-            return Ok(false);
-        };
         let now_string = database_time_string(now);
         if let Err(error) = self
-            .require_activation_dependencies_in_transaction(
-                session,
-                intent,
-                &launch,
-                &acceptance,
-                &now_string,
-            )
+            .current_activation_dependencies_in_transaction(session, intent, &now_string)
             .await
         {
             if error
@@ -2367,26 +3799,6 @@ impl MongoSponsorshipStore {
             }
         }
         Ok(true)
-    }
-
-    async fn require_current_terms_in_transaction(
-        &self,
-        session: &mut ClientSession,
-        intent: &GrantActivationIntent,
-        acceptance: &SponsoredGrantAcceptance,
-    ) -> mongodb::error::Result<()> {
-        let (policy, usage) = self
-            .policy_in_transaction(session, &intent.policy_id)
-            .await?
-            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
-        let terms = SponsoredGrantTerms::from_policy(&policy, &usage)
-            .map_err(|error| custom(SponsorshipStoreError::Malformed(error.to_string())))?;
-        if acceptance.policy_generation != terms.policy_generation
-            || acceptance.terms_digest != terms.digest
-        {
-            return Err(custom(SponsorshipStoreError::AcceptanceChanged));
-        }
-        Ok(())
     }
 
     async fn reserve_activation_allocation_in_transaction(
@@ -2428,61 +3840,50 @@ impl MongoSponsorshipStore {
             .policy_in_transaction(session, &intent.policy_id)
             .await?
             .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
+        self.release_activation_allocation_for_policy_in_transaction(
+            session, intent, &policy, &mut usage,
+        )
+        .await
+    }
+
+    async fn release_activation_allocation_for_policy_in_transaction(
+        &self,
+        session: &mut ClientSession,
+        intent: &GrantActivationIntent,
+        policy: &SponsorshipPolicy,
+        usage: &mut SponsorshipPolicyUsage,
+    ) -> mongodb::error::Result<()> {
+        if intent.policy_id != policy.id {
+            return Err(custom(SponsorshipStoreError::Malformed(
+                "activation allocation references a different sponsorship policy".into(),
+            )));
+        }
         usage.reserved = summary_sub(&usage.reserved, &intent.allocation).map_err(custom)?;
         usage.active_launches = usage
             .active_launches
             .checked_sub(1)
             .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-        self.replace_policy_usage_in_transaction(session, &policy, &usage)
+        self.replace_policy_usage_in_transaction(session, policy, usage)
             .await
-    }
-
-    async fn unresolved_usage_for_grant_in_transaction(
-        &self,
-        session: &mut ClientSession,
-        grant: &SponsoredGrant,
-        excluded_request_id: Option<&str>,
-    ) -> mongodb::error::Result<SponsoredUsageSummary> {
-        let mut filter = doc! {
-            "grant_id": &grant.id.0,
-            "state": { "$in": ["reserved", "ambiguous"] },
-        };
-        if let Some(excluded) = excluded_request_id {
-            filter.insert("_id", doc! { "$ne": excluded });
-        }
-        let mut cursor = self
-            .reservations
-            .find(filter)
-            .session(&mut *session)
-            .await?;
-        let mut held = SponsoredUsageSummary::default();
-        while let Some(document) = cursor.next(&mut *session).await.transpose()? {
-            let (reservation, policy_id, _) = read_reservation(document).map_err(custom)?;
-            if reservation.grant_id != grant.id || policy_id != grant.policy_id {
-                return Err(custom(SponsorshipStoreError::Malformed(
-                    "usage reservation authority indexes are inconsistent".into(),
-                )));
-            }
-            held = summary_add(&held, &reservation.reserved).map_err(custom)?;
-        }
-        Ok(held)
     }
 
     async fn release_terminal_grant_capacity_in_transaction(
         &self,
         session: &mut ClientSession,
         grant: &SponsoredGrant,
-        excluded_request_id: Option<&str>,
+        unresolved_usage: &SponsoredUsageSummary,
     ) -> mongodb::error::Result<()> {
-        let unresolved = self
-            .unresolved_usage_for_grant_in_transaction(session, grant, excluded_request_id)
-            .await?;
         let unused = summary_sub(&grant.allocation, &grant.usage).map_err(custom)?;
-        let releasable = summary_sub(&unused, &unresolved).map_err(custom)?;
+        let releasable = summary_sub(&unused, unresolved_usage).map_err(custom)?;
         let (policy, mut usage) = self
             .policy_in_transaction(session, &grant.policy_id)
             .await?
-            .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
+            .ok_or_else(|| {
+                custom(SponsorshipStoreError::Malformed(
+                    "stored grant references a missing sponsorship policy".into(),
+                ))
+            })?;
+        require_grant_policy_bindings(grant, &policy).map_err(custom)?;
         usage.reserved = summary_sub(&usage.reserved, &releasable).map_err(custom)?;
         usage.active_launches = usage
             .active_launches
@@ -2508,11 +3909,71 @@ impl MongoSponsorshipStore {
         id: &SponsoredCredentialId,
     ) -> mongodb::error::Result<Option<DecodedCredential>> {
         self.credentials
-            .find_one(doc! { "_id": &id.0 })
+            .find_one_and_update(
+                doc! { "_id": &id.0 },
+                doc! { "$inc": { "authority_read_revision": 1_i64 } },
+            )
+            .return_document(ReturnDocument::After)
             .session(session)
             .await?
-            .map(|document| read_credential(&self.cipher, document).map_err(custom))
+            .map(|document| {
+                read_credential(&self.cipher, &self.operational, document).map_err(custom)
+            })
             .transpose()
+    }
+
+    async fn credential_registration_binding_in_transaction(
+        &self,
+        session: &mut ClientSession,
+        candidates: &SponsorshipOperationalPseudonymSet,
+    ) -> mongodb::error::Result<Option<CredentialRegistrationDoc>> {
+        let mut cursor = self
+            .credential_registrations
+            .find(doc! {
+                "request_aliases": { "$in": candidates.encoded_candidates() }
+            })
+            .limit((MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS + 2) as i64)
+            .session(&mut *session)
+            .await?;
+        let matches = cursor.stream(&mut *session).try_collect::<Vec<_>>().await?;
+        if matches.len() > 1 {
+            return Err(custom(SponsorshipStoreError::Malformed(
+                "credential registration candidates resolve multiple durable bindings".into(),
+            )));
+        }
+        let binding = matches.into_iter().next();
+        if let Some(binding) = &binding {
+            validate_credential_registration_doc(&self.operational, binding).map_err(custom)?;
+        }
+        Ok(binding)
+    }
+
+    async fn provider_credential_binding_in_transaction(
+        &self,
+        session: &mut ClientSession,
+        provider: &str,
+        candidates: &SponsorshipOperationalPseudonymSet,
+    ) -> mongodb::error::Result<Option<CredentialDoc>> {
+        let mut cursor = self
+            .credentials
+            .find(doc! {
+                "provider": provider,
+                "provider_credential_id_aliases": { "$in": candidates.encoded_candidates() },
+            })
+            .limit((MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS + 2) as i64)
+            .session(&mut *session)
+            .await?;
+        let matches = cursor.stream(&mut *session).try_collect::<Vec<_>>().await?;
+        if matches.len() > 1 {
+            return Err(custom(SponsorshipStoreError::Malformed(
+                "provider credential candidates resolve multiple durable lineages".into(),
+            )));
+        }
+        let binding = matches.into_iter().next();
+        if let Some(binding) = &binding {
+            validate_credential_provider_aliases(&self.operational, binding).map_err(custom)?;
+        }
+        Ok(binding)
     }
 
     async fn credential_record_in_transaction(
@@ -2521,10 +3982,16 @@ impl MongoSponsorshipStore {
         id: &SponsoredCredentialId,
     ) -> mongodb::error::Result<Option<SponsoredCredentialRecord>> {
         self.credentials
-            .find_one(doc! { "_id": &id.0 })
+            .find_one_and_update(
+                doc! { "_id": &id.0 },
+                doc! { "$inc": { "authority_read_revision": 1_i64 } },
+            )
+            .return_document(ReturnDocument::After)
             .session(session)
             .await?
-            .map(|document| read_credential_record(&self.cipher, &document).map_err(custom))
+            .map(|document| {
+                read_credential_record(&self.cipher, &self.operational, &document).map_err(custom)
+            })
             .transpose()
     }
 
@@ -2534,28 +4001,15 @@ impl MongoSponsorshipStore {
         id: &SponsorshipPolicyId,
     ) -> mongodb::error::Result<Option<(SponsorshipPolicy, SponsorshipPolicyUsage)>> {
         self.policies
-            .find_one(doc! { "_id": &id.0 })
+            .find_one_and_update(
+                doc! { "_id": &id.0 },
+                doc! { "$inc": { "authority_read_revision": 1_i64 } },
+            )
+            .return_document(ReturnDocument::After)
             .session(session)
             .await?
             .map(|document| read_policy(document).map_err(custom))
             .transpose()
-    }
-
-    async fn gate_in_transaction(
-        &self,
-        session: &mut ClientSession,
-    ) -> mongodb::error::Result<SponsorshipGateFence> {
-        let document = self
-            .gate
-            .find_one(doc! { "_id": GATE_ID })
-            .session(session)
-            .await?
-            .ok_or_else(|| {
-                custom(SponsorshipStoreError::Malformed(
-                    "the sponsorship gate is missing".into(),
-                ))
-            })?;
-        read_gate(document).map_err(custom)
     }
 
     async fn require_gate_in_transaction(
@@ -2563,42 +4017,588 @@ impl MongoSponsorshipStore {
         session: &mut ClientSession,
         expected: &SponsorshipGateFence,
     ) -> mongodb::error::Result<()> {
-        let current = self.gate_in_transaction(session).await?;
-        if &current != expected || current.kill_switch_engaged {
+        let document = self
+            .gate
+            .find_one_and_update(
+                doc! {
+                    "_id": GATE_ID,
+                    "configuration_digest": &expected.configuration_digest,
+                    "epoch": signed(expected.epoch, "sponsorship gate epoch").map_err(custom)?,
+                    "kill_switch_engaged": false,
+                },
+                doc! { "$inc": { "authority_read_revision": 1_i64 } },
+            )
+            .return_document(ReturnDocument::After)
+            .session(session)
+            .await?
+            .ok_or_else(|| custom(SponsorshipStoreError::GateChanged))?;
+        let current = read_gate(document).map_err(custom)?;
+        if &current != expected {
             return Err(custom(SponsorshipStoreError::GateChanged));
         }
         Ok(())
     }
 
-    async fn launch_authority_in_transaction(
+    async fn launch_in_transaction(
         &self,
         session: &mut ClientSession,
         id: &LaunchId,
-    ) -> mongodb::error::Result<Option<SponsoredLaunchAuthority>> {
+    ) -> mongodb::error::Result<Option<Launch>> {
         let document = self
             .trigger_launches
-            .find_one(doc! { "_id": &id.0 })
-            .session(session)
+            .find_one_and_update(
+                doc! { "_id": &id.0 },
+                doc! { "$inc": { "sponsorship_read_revision": 1_i64 } },
+            )
+            .return_document(ReturnDocument::After)
+            .session(&mut *session)
             .await?;
-        document
-            .map(decode_launch_authority)
-            .transpose()
+        let Some(document) = document else {
+            return Ok(None);
+        };
+        read_launch(document)
+            .map_err(map_trigger_read_error)
+            .map(Some)
             .map_err(custom)
+    }
+
+    async fn resume_kill_switch_drain(&self) -> Result<bool, SponsorshipStoreError> {
+        let document = self
+            .gate
+            .find_one(doc! { "_id": GATE_ID })
+            .await
+            .map_err(|error| stored_read_failure("read kill-switch drain state", error))?
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed("the sponsorship gate is missing".into())
+            })?;
+        let fence = read_gate(document.clone())?;
+        if !fence.kill_switch_engaged || document.kill_switch_drain_complete {
+            return Ok(true);
+        }
+        let engagement_id = document.kill_switch_engagement_id.ok_or_else(|| {
+            SponsorshipStoreError::Malformed("kill-switch engagement identity is missing".into())
+        })?;
+        let audit = self
+            .audits
+            .find_one(doc! { "_id": &engagement_id })
+            .await
+            .map_err(|error| stored_read_failure("read kill-switch engagement audit", error))?
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "unfinished kill-switch drain has no engagement audit".into(),
+                )
+            })?;
+        let audit = read_audit(audit)?;
+        self.drain_kill_switch_engagement(&engagement_id, &audit)
+            .await
+    }
+
+    async fn drain_kill_switch_engagement(
+        &self,
+        engagement_id: &str,
+        engagement_audit: &SponsoredAuditEvent,
+    ) -> Result<bool, SponsorshipStoreError> {
+        let mut cursor = self
+            .activations
+            .find(doc! {
+                "state": { "$in": ["awaiting_billing", "awaiting_provider"] }
+            })
+            .sort(doc! { "created_at": 1, "_id": 1 })
+            .limit(MAX_KILL_SWITCH_INVALIDATIONS)
+            .await
+            .map_err(|error| unavailable("discover kill-switch drain work", error))?;
+        let mut activation_ids = Vec::new();
+        while let Some(document) = cursor
+            .try_next()
+            .await
+            .map_err(|error| unavailable("read kill-switch drain work", error))?
+        {
+            let (intent, _) = read_activation(&self.cipher, &self.operational, document)?;
+            activation_ids.push((intent.launch_id, intent.policy_id));
+        }
+        for (launch_id, policy_id) in activation_ids {
+            self.drain_one_kill_switch_activation(
+                engagement_id,
+                engagement_audit,
+                &launch_id,
+                &policy_id,
+            )
+            .await?;
+        }
+        self.finish_kill_switch_drain(engagement_id).await
+    }
+
+    async fn drain_one_kill_switch_activation(
+        &self,
+        engagement_id: &str,
+        engagement_audit: &SponsoredAuditEvent,
+        launch_id: &LaunchId,
+        policy_id: &SponsorshipPolicyId,
+    ) -> Result<bool, SponsorshipStoreError> {
+        self.transaction(
+            (
+                self.clone(),
+                engagement_id.to_string(),
+                engagement_audit.clone(),
+                launch_id.clone(),
+                policy_id.clone(),
+            ),
+            |session, (store, engagement_id, engagement_audit, launch_id, policy_id)| {
+                async move {
+                    let gate = store
+                        .gate
+                        .find_one_and_update(
+                            doc! {
+                                "_id": GATE_ID,
+                                "kill_switch_engaged": true,
+                                "kill_switch_engagement_id": &*engagement_id,
+                                "kill_switch_drain_complete": false,
+                            },
+                            doc! { "$inc": { "authority_read_revision": 1_i64 } },
+                        )
+                        .return_document(ReturnDocument::After)
+                        .session(&mut *session)
+                        .await?
+                        .ok_or_else(|| custom(SponsorshipStoreError::GateChanged))?;
+                    read_gate(gate).map_err(custom)?;
+                    let (policy, mut usage) = store
+                        .policy_in_transaction(session, policy_id)
+                        .await?
+                        .ok_or_else(|| {
+                            custom(SponsorshipStoreError::Malformed(
+                                "drainable activation references a missing policy".into(),
+                            ))
+                        })?;
+                    let Some((mut intent, _)) =
+                        store.activation_in_transaction(session, launch_id).await?
+                    else {
+                        return Ok(false);
+                    };
+                    if !matches!(
+                        intent.state,
+                        GrantActivationState::AwaitingBilling
+                            | GrantActivationState::AwaitingProvider
+                    ) {
+                        return Ok(false);
+                    }
+                    if intent.capacity_held {
+                        store
+                            .release_activation_allocation_for_policy_in_transaction(
+                                session, &intent, &policy, &mut usage,
+                            )
+                            .await?;
+                    }
+                    let expected_revision = intent.revision;
+                    intent.state = GrantActivationState::Denied;
+                    intent.denial = Some(GrantActivationDenial::AuthorityInvalidated);
+                    intent.capacity_held = false;
+                    intent.lease = None;
+                    intent.revision = intent.revision.checked_add(1).ok_or_else(|| {
+                        custom(SponsorshipStoreError::Malformed(
+                            "activation revision exhausted".into(),
+                        ))
+                    })?;
+                    intent.updated_at =
+                        later_timestamp(&intent.updated_at, &engagement_audit.occurred_at)
+                            .map_err(custom)?;
+                    intent.validate().map_err(|error| {
+                        custom(SponsorshipStoreError::Malformed(error.to_string()))
+                    })?;
+                    let event = SponsoredAuditEvent {
+                        event_id: deterministic_uuid(
+                            "cma-sponsorship-kill-switch-drain-audit-v1",
+                            &[engagement_id, &intent.launch_id.0],
+                        ),
+                        action: SponsoredAuditAction::GrantDenied,
+                        actor_digest: engagement_audit.actor_digest.clone(),
+                        policy_id: Some(intent.policy_id.clone()),
+                        grant_id: None,
+                        stable_request_id_digest: None,
+                        outcome_code: "kill_switch_invalidated".into(),
+                        occurred_at: intent.updated_at.clone(),
+                    };
+                    store
+                        .replace_activation_in_transaction(
+                            session,
+                            expected_revision,
+                            &intent,
+                            None,
+                        )
+                        .await?;
+                    store.audit_in_transaction(session, &event).await?;
+                    Ok(true)
+                }
+                .boxed()
+            },
+        )
+        .await
+    }
+
+    async fn finish_kill_switch_drain(
+        &self,
+        engagement_id: &str,
+    ) -> Result<bool, SponsorshipStoreError> {
+        self.transaction(
+            (self.clone(), engagement_id.to_string()),
+            |session, (store, engagement_id)| {
+                async move {
+                    let gate = store
+                        .gate
+                        .find_one_and_update(
+                            doc! {
+                                "_id": GATE_ID,
+                                "kill_switch_engaged": true,
+                                "kill_switch_engagement_id": &*engagement_id,
+                            },
+                            doc! { "$inc": { "authority_read_revision": 1_i64 } },
+                        )
+                        .return_document(ReturnDocument::After)
+                        .session(&mut *session)
+                        .await?
+                        .ok_or_else(|| custom(SponsorshipStoreError::GateChanged))?;
+                    let fence = read_gate(gate.clone()).map_err(custom)?;
+                    if gate.kill_switch_drain_complete {
+                        return Ok(true);
+                    }
+                    if !fence.kill_switch_engaged {
+                        return Err(custom(SponsorshipStoreError::GateChanged));
+                    }
+                    if store
+                        .activations
+                        .find_one(doc! {
+                            "state": { "$in": ["awaiting_billing", "awaiting_provider"] }
+                        })
+                        .session(&mut *session)
+                        .await?
+                        .is_some()
+                    {
+                        return Ok(false);
+                    }
+                    let result = store
+                        .gate
+                        .update_one(
+                            doc! {
+                                "_id": GATE_ID,
+                                "kill_switch_engaged": true,
+                                "kill_switch_engagement_id": &*engagement_id,
+                                "kill_switch_drain_complete": false,
+                            },
+                            doc! { "$set": { "kill_switch_drain_complete": true } },
+                        )
+                        .session(&mut *session)
+                        .await?;
+                    if result.modified_count != 1 {
+                        return Err(custom(SponsorshipStoreError::GateChanged));
+                    }
+                    Ok(true)
+                }
+                .boxed()
+            },
+        )
+        .await
     }
 }
 
-/// Kept as one replacement point for the typed Trigger/sponsorship integration.
-///
-/// The merged Trigger model does not yet contain the tenant/policy binding or a
-/// sponsorship-aware effective snapshot. Inventing those values in persistence
-/// would weaken the Launch CAS, so a present Launch fails closed until the core
-/// mapping can call `SponsoredLaunchAuthority::from_launch`.
-fn decode_launch_authority(
-    _document: Document,
-) -> Result<SponsoredLaunchAuthority, SponsorshipStoreError> {
-    Err(SponsorshipStoreError::Unavailable(
-        "the durable Launch does not yet expose the typed sponsorship authority mapping".into(),
-    ))
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryCursorWire {
+    version: u8,
+    domain: String,
+    updated_at: String,
+    id: String,
+}
+
+fn validate_page_cursor(cursor: &PageCursor) -> Result<(), SponsorshipStoreError> {
+    if layer2_core::seconds_from_rfc3339(&cursor.created_at).is_none()
+        || cursor.id.is_empty()
+        || cursor.id.len() > 512
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "sponsorship page cursor is not usable".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_subject_query(subject: &SubjectId) -> Result<(), SponsorshipStoreError> {
+    if subject.0.is_empty() || subject.0.len() > 255 {
+        return Err(SponsorshipStoreError::Malformed(
+            "sponsorship owner or contributor subject is not usable".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn newest_page_filter(
+    base: Document,
+    page: &PageRequest,
+) -> Result<Document, SponsorshipStoreError> {
+    let Some(cursor) = page.cursor() else {
+        return Ok(base);
+    };
+    validate_page_cursor(cursor)?;
+    Ok(doc! {
+        "$and": [
+            base,
+            {
+                "$or": [
+                    { "created_at": { "$lt": &cursor.created_at } },
+                    {
+                        "created_at": &cursor.created_at,
+                        "_id": { "$lt": &cursor.id },
+                    },
+                ],
+            },
+        ],
+    })
+}
+
+fn page_query_limit(page: &PageRequest) -> i64 {
+    i64::from(page.limit()) + 1
+}
+
+fn finish_newest_page<T>(
+    mut items: Vec<T>,
+    page: &PageRequest,
+    key: impl Fn(&T) -> (&str, &str),
+) -> Page<T> {
+    let limit = page.limit() as usize;
+    let has_more = items.len() > limit;
+    items.truncate(limit);
+    let next = has_more.then(|| {
+        let (created_at, id) = key(items
+            .last()
+            .expect("a full sponsorship page has a final row"));
+        PageCursor::new(created_at, id)
+    });
+    Page { items, next }
+}
+
+fn decode_recovery_cursor(
+    page: &SponsorshipRecoveryPageRequest,
+    domain: &str,
+) -> Result<Option<(String, String)>, SponsorshipStoreError> {
+    let Some(cursor) = page.cursor() else {
+        return Ok(None);
+    };
+    if cursor.is_empty() || cursor.len() > MAX_SPONSORSHIP_RECOVERY_CURSOR_BYTES {
+        return Err(SponsorshipStoreError::Malformed(
+            "sponsorship recovery cursor is not usable".into(),
+        ));
+    }
+    let decoded = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| {
+        SponsorshipStoreError::Malformed("sponsorship recovery cursor is not usable".into())
+    })?;
+    if decoded.len() > MAX_SPONSORSHIP_RECOVERY_CURSOR_BYTES {
+        return Err(SponsorshipStoreError::Malformed(
+            "sponsorship recovery cursor is not usable".into(),
+        ));
+    }
+    let cursor: RecoveryCursorWire = serde_json::from_slice(&decoded).map_err(|_| {
+        SponsorshipStoreError::Malformed("sponsorship recovery cursor is not usable".into())
+    })?;
+    if cursor.version != 1
+        || cursor.domain != domain
+        || layer2_core::seconds_from_rfc3339(&cursor.updated_at).is_none()
+        || cursor.id.is_empty()
+        || cursor.id.len() > 512
+    {
+        return Err(SponsorshipStoreError::Malformed(
+            "sponsorship recovery cursor is not usable".into(),
+        ));
+    }
+    Ok(Some((cursor.updated_at, cursor.id)))
+}
+
+fn recovery_page_filter(
+    base: Document,
+    page: &SponsorshipRecoveryPageRequest,
+    domain: &str,
+) -> Result<Document, SponsorshipStoreError> {
+    recovery_page_filter_on(base, page, domain, "updated_at")
+}
+
+fn recovery_page_filter_on(
+    base: Document,
+    page: &SponsorshipRecoveryPageRequest,
+    domain: &str,
+    ordered_field: &str,
+) -> Result<Document, SponsorshipStoreError> {
+    let Some((ordered_at, id)) = decode_recovery_cursor(page, domain)? else {
+        return Ok(base);
+    };
+    let mut strictly_later = Document::new();
+    strictly_later.insert(ordered_field, doc! { "$gt": &ordered_at });
+    let mut same_time_later_id = Document::new();
+    same_time_later_id.insert(ordered_field, &ordered_at);
+    same_time_later_id.insert("_id", doc! { "$gt": &id });
+    Ok(doc! {
+        "$and": [
+            base,
+            {
+                "$or": [
+                    strictly_later,
+                    same_time_later_id,
+                ],
+            },
+        ],
+    })
+}
+
+fn encode_recovery_cursor(
+    domain: &str,
+    updated_at: &str,
+    id: &str,
+) -> Result<String, SponsorshipStoreError> {
+    let encoded = serde_json::to_vec(&RecoveryCursorWire {
+        version: 1,
+        domain: domain.to_string(),
+        updated_at: updated_at.to_string(),
+        id: id.to_string(),
+    })
+    .map_err(|_| {
+        SponsorshipStoreError::Malformed("sponsorship recovery cursor cannot be encoded".into())
+    })?;
+    let cursor = URL_SAFE_NO_PAD.encode(encoded);
+    if cursor.len() > MAX_SPONSORSHIP_RECOVERY_CURSOR_BYTES {
+        return Err(SponsorshipStoreError::Malformed(
+            "sponsorship recovery cursor exceeds its size bound".into(),
+        ));
+    }
+    Ok(cursor)
+}
+
+fn finish_recovery_page<T>(
+    mut items: Vec<T>,
+    page: &SponsorshipRecoveryPageRequest,
+    domain: &str,
+    key: impl Fn(&T) -> (&str, &str),
+) -> Result<SponsorshipRecoveryPage<T>, SponsorshipStoreError> {
+    let limit = page.limit() as usize;
+    let has_more = items.len() > limit;
+    items.truncate(limit);
+    let next = has_more
+        .then(|| {
+            let (updated_at, id) = key(items.last().expect("a full recovery page has a final row"));
+            encode_recovery_cursor(domain, updated_at, id)
+        })
+        .transpose()?;
+    Ok(SponsorshipRecoveryPage { items, next })
+}
+
+fn recovery_query_limit(page: &SponsorshipRecoveryPageRequest) -> i64 {
+    i64::from(page.limit()) + 1
+}
+
+fn rewrap_kind_code(kind: SponsorshipCiphertextRecordKind) -> &'static str {
+    match kind {
+        SponsorshipCiphertextRecordKind::Credential => "credential",
+        SponsorshipCiphertextRecordKind::GrantActivation => "grant_activation",
+        SponsorshipCiphertextRecordKind::Grant => "grant",
+    }
+}
+
+fn rewrap_domain(kind: SponsorshipCiphertextRecordKind, retiring_key_id: &str) -> String {
+    format!("rewrap:{}:{retiring_key_id}", rewrap_kind_code(kind))
+}
+
+const REWRAP_CURSOR_STAMP: &str = "1970-01-01T00:00:00Z";
+
+fn rewrap_page_filter(
+    base: Document,
+    page: &SponsorshipRecoveryPageRequest,
+    domain: &str,
+) -> Result<Document, SponsorshipStoreError> {
+    let Some((stamp, id)) = decode_recovery_cursor(page, domain)? else {
+        return Ok(base);
+    };
+    if stamp != REWRAP_CURSOR_STAMP {
+        return Err(SponsorshipStoreError::Malformed(
+            "sponsorship rewrap cursor is not usable".into(),
+        ));
+    }
+    Ok(doc! {
+        "$and": [
+            base,
+            { "_id": { "$gt": id } },
+        ],
+    })
+}
+
+fn finish_rewrap_page(
+    mut items: Vec<SponsorshipCiphertextRewrapCandidate>,
+    page: &SponsorshipRecoveryPageRequest,
+    domain: &str,
+) -> Result<SponsorshipRecoveryPage<SponsorshipCiphertextRewrapCandidate>, SponsorshipStoreError> {
+    let limit = page.limit() as usize;
+    let has_more = items.len() > limit;
+    items.truncate(limit);
+    let next = has_more
+        .then(|| {
+            encode_recovery_cursor(
+                domain,
+                REWRAP_CURSOR_STAMP,
+                &items
+                    .last()
+                    .expect("a full rewrap page has a final row")
+                    .record_id,
+            )
+        })
+        .transpose()?;
+    Ok(SponsorshipRecoveryPage { items, next })
+}
+
+fn envelope_bson(envelope: &SponsorshipCipherEnvelope) -> Result<Bson, SponsorshipStoreError> {
+    mongodb::bson::serialize_to_bson(envelope).map_err(|_| {
+        SponsorshipStoreError::Malformed(
+            "rewrapped sponsorship ciphertext cannot be serialized".into(),
+        )
+    })
+}
+
+fn rewrap_document_fingerprint(
+    kind: SponsorshipCiphertextRecordKind,
+    document: &Document,
+) -> Result<String, SponsorshipStoreError> {
+    let encoded = mongodb::bson::serialize_to_vec(document).map_err(|_| {
+        SponsorshipStoreError::Malformed("sponsorship rewrap snapshot cannot be serialized".into())
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"cma-sponsorship-rewrap-document-v1");
+    hasher.update([0]);
+    hasher.update(rewrap_kind_code(kind).as_bytes());
+    hasher.update([0]);
+    hasher.update((encoded.len() as u64).to_be_bytes());
+    hasher.update(encoded);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn decode_rewrap_document<T: serde::de::DeserializeOwned>(
+    document: Document,
+    resource: &str,
+) -> Result<T, SponsorshipStoreError> {
+    mongodb::bson::deserialize_from_document(document).map_err(|_| {
+        SponsorshipStoreError::Malformed(format!(
+            "stored {resource} cannot be decoded for ciphertext rewrap"
+        ))
+    })
+}
+
+fn rewrap_exact_document_filter(
+    document: &Document,
+    record_id: &str,
+    retiring_key_id: &str,
+) -> Document {
+    doc! {
+        "_id": record_id,
+        "encryption_key_id": retiring_key_id,
+        "$expr": {
+            "$eq": [
+                "$$ROOT",
+                { "$literal": Bson::Document(document.clone()) },
+            ],
+        },
+    }
 }
 
 #[async_trait::async_trait]
@@ -2621,117 +4621,204 @@ impl SponsorshipStore for MongoSponsorshipStore {
         audit: SponsoredAuditEvent,
     ) -> Result<SponsorshipGateFence, SponsorshipStoreError> {
         validate_audit_event(&audit)?;
-        self.transaction((self.clone(), audit), |session, (store, audit)| {
-            async move {
-                let mut gate = store.gate_in_transaction(session).await?;
-                if gate.epoch != expected_epoch {
-                    return Err(custom(SponsorshipStoreError::GateChanged));
-                }
-                let now = store.database_now(session).await?;
-                let now_string = database_time_string(now);
-                let mut cursor = store
-                    .activations
-                    .find(doc! {
-                        "state": { "$in": ["awaiting_billing", "awaiting_provider"] }
-                    })
-                    .session(&mut *session)
-                    .await?;
-                let mut terminalizable = Vec::new();
-                while let Some(document) = cursor.next(&mut *session).await.transpose()? {
-                    terminalizable.push(read_activation(&store.cipher, document).map_err(custom)?);
-                }
-                for (mut intent, _) in terminalizable {
-                    if intent.capacity_held {
-                        let (policy, mut usage) = store
-                            .policy_in_transaction(session, &intent.policy_id)
-                            .await?
-                            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
-                        usage.reserved =
-                            summary_sub(&usage.reserved, &intent.allocation).map_err(custom)?;
-                        usage.active_launches = usage
-                            .active_launches
-                            .checked_sub(1)
-                            .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                        let replacement = policy_doc(&policy, &usage).map_err(custom)?;
-                        store
-                            .policies
-                            .replace_one(doc! { "_id": &policy.id.0 }, replacement)
-                            .session(&mut *session)
-                            .await?;
-                    }
-                    let expected_revision = intent.revision;
-                    intent.state = GrantActivationState::Denied;
-                    intent.denial = Some(GrantActivationDenial::AuthorityInvalidated);
-                    intent.capacity_held = false;
-                    intent.lease = None;
-                    intent.revision = intent.revision.checked_add(1).ok_or_else(|| {
+        let (gate, engagement_id, drain_audit) = self
+            .transaction((self.clone(), audit), |session, (store, audit)| {
+                async move {
+                    let next_epoch = expected_epoch.checked_add(1).ok_or_else(|| {
                         custom(SponsorshipStoreError::Malformed(
-                            "activation revision exhausted".into(),
+                            "sponsorship gate epoch exhausted".into(),
                         ))
                     })?;
-                    intent.updated_at = now_string.clone();
-                    let replacement =
-                        activation_doc(&store.cipher, &intent, None).map_err(custom)?;
-                    let result = store
-                        .activations
-                        .replace_one(
+                    let document = store
+                        .gate
+                        .find_one_and_update(
                             doc! {
-                                "_id": &intent.launch_id.0,
-                                "revision": signed(expected_revision, "activation revision")
+                                "_id": GATE_ID,
+                                "epoch": signed(expected_epoch, "sponsorship gate epoch")
                                     .map_err(custom)?,
+                                "kill_switch_engaged": false,
                             },
-                            replacement,
+                            doc! {
+                                "$set": {
+                                    "epoch": signed(next_epoch, "sponsorship gate epoch")
+                                        .map_err(custom)?,
+                                    "kill_switch_engaged": true,
+                                    "kill_switch_engagement_id": &audit.event_id,
+                                    "kill_switch_drain_complete": false,
+                                },
+                                "$inc": { "authority_read_revision": 1_i64 },
+                            },
                         )
+                        .return_document(ReturnDocument::After)
                         .session(&mut *session)
                         .await?;
-                    if result.modified_count != 1 {
-                        return Err(custom(SponsorshipStoreError::StaleGeneration));
+                    if let Some(document) = document {
+                        let gate = read_gate(document).map_err(custom)?;
+                        store.audit_in_transaction(session, audit).await?;
+                        return Ok((gate, audit.event_id.clone(), audit.clone()));
                     }
+
+                    let document = store
+                        .gate
+                        .find_one(doc! { "_id": GATE_ID })
+                        .session(&mut *session)
+                        .await?
+                        .ok_or_else(|| {
+                            custom(SponsorshipStoreError::Malformed(
+                                "the sponsorship gate is missing".into(),
+                            ))
+                        })?;
+                    let gate = read_gate(document.clone()).map_err(custom)?;
+                    let exact_epoch = gate.epoch == expected_epoch
+                        || gate.epoch == expected_epoch.saturating_add(1);
+                    if !gate.kill_switch_engaged || !exact_epoch {
+                        return Err(custom(SponsorshipStoreError::GateChanged));
+                    }
+                    let engagement_id = document.kill_switch_engagement_id.ok_or_else(|| {
+                        custom(SponsorshipStoreError::Malformed(
+                            "engaged kill switch has no durable identity".into(),
+                        ))
+                    })?;
+                    let stored_audit = store
+                        .audits
+                        .find_one(doc! { "_id": &engagement_id })
+                        .session(&mut *session)
+                        .await?
+                        .ok_or_else(|| {
+                            custom(SponsorshipStoreError::Malformed(
+                                "engaged kill switch has no caller audit".into(),
+                            ))
+                        })?;
+                    let stored_audit = read_audit(stored_audit).map_err(custom)?;
+                    Ok((gate, engagement_id, stored_audit))
                 }
-                gate.epoch = gate.epoch.checked_add(1).ok_or_else(|| {
-                    custom(SponsorshipStoreError::Malformed(
-                        "sponsorship gate epoch exhausted".into(),
-                    ))
-                })?;
-                gate.kill_switch_engaged = true;
-                let result = store
-                    .gate
-                    .replace_one(
-                        doc! {
-                            "_id": GATE_ID,
-                            "epoch": signed(expected_epoch, "sponsorship gate epoch")
-                                .map_err(custom)?,
-                        },
-                        gate_doc(&gate).map_err(custom)?,
-                    )
-                    .session(&mut *session)
-                    .await?;
-                if result.modified_count != 1 {
-                    return Err(custom(SponsorshipStoreError::GateChanged));
-                }
-                store.audit_in_transaction(session, audit).await?;
-                Ok(gate)
+                .boxed()
+            })
+            .await?;
+        match self
+            .drain_kill_switch_engagement(&engagement_id, &drain_audit)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(SponsorshipStoreError::Unavailable(format!(
+                    "kill switch engagement '{engagement_id}' is durable but its bounded activation drain remains pending"
+                )));
             }
-            .boxed()
-        })
-        .await
+            Err(error) => {
+                tracing::warn!(%error, %engagement_id, "kill switch engaged; bounded activation drain remains pending");
+                return Err(error);
+            }
+        }
+        Ok(gate)
     }
 
     async fn launch_authority(
         &self,
         launch_id: &LaunchId,
     ) -> Result<Option<SponsoredLaunchAuthority>, SponsorshipStoreError> {
-        let document = self
-            .trigger_launches
-            .find_one(doc! { "_id": &launch_id.0 })
-            .await
-            .map_err(|error| stored_read_failure("read sponsored Launch authority", error))?;
-        document.map(decode_launch_authority).transpose()
+        self.transaction(
+            (self.clone(), launch_id.clone()),
+            |session, (store, launch_id)| {
+                async move {
+                    let Some(launch) = store.launch_in_transaction(session, launch_id).await?
+                    else {
+                        return Ok(None);
+                    };
+                    let policy_id = launch_sponsorship_policy_id(&launch).map_err(custom)?;
+                    let (policy, _) = store
+                        .policy_in_transaction(session, &policy_id)
+                        .await?
+                        .ok_or_else(|| {
+                            custom(SponsorshipStoreError::Malformed(
+                                "the durable Launch names no sponsorship policy".into(),
+                            ))
+                        })?;
+                    SponsoredLaunchAuthority::from_launch(&launch, &policy)
+                        .map(Some)
+                        .map_err(|error| {
+                            custom(SponsorshipStoreError::Malformed(error.to_string()))
+                        })
+                }
+                .boxed()
+            },
+        )
+        .await
+    }
+
+    async fn credential_registration(
+        &self,
+        identity: &SponsoredCredentialRegistrationIdentity,
+    ) -> Result<Option<SponsoredCredentialRecord>, SponsorshipStoreError> {
+        validate_operational_aliases(
+            &self.operational,
+            &identity.request.encoded_candidates(),
+            "credential registration request candidate",
+        )?;
+        validate_operational_aliases(
+            &self.operational,
+            &identity.command.encoded_candidates(),
+            "credential registration command candidate",
+        )?;
+        self.transaction(
+            (self.clone(), identity.clone()),
+            |session, (store, identity)| {
+                async move {
+                    let Some(binding) = store
+                        .credential_registration_binding_in_transaction(session, &identity.request)
+                        .await?
+                    else {
+                        return Ok(None);
+                    };
+                    if !aliases_match_candidates(&binding.command_aliases, &identity.command) {
+                        return Err(custom(SponsorshipStoreError::Conflict));
+                    }
+                    let request_aliases = identity.request.encoded_candidates();
+                    let command_aliases = identity.command.encoded_candidates();
+                    if binding.request_aliases != request_aliases
+                        || binding.command_aliases != command_aliases
+                    {
+                        let updated = store
+                            .credential_registrations
+                            .update_one(
+                                doc! { "_id": &binding.id },
+                                doc! {
+                                    "$set": {
+                                        "request_aliases": request_aliases,
+                                        "command_aliases": command_aliases,
+                                    }
+                                },
+                            )
+                            .session(&mut *session)
+                            .await?;
+                        if updated.matched_count != 1 {
+                            return Err(custom(SponsorshipStoreError::Conflict));
+                        }
+                    }
+                    let credential_id = SponsoredCredentialId::parse(binding.credential_id)
+                        .map_err(|error| {
+                            custom(SponsorshipStoreError::Malformed(error.to_string()))
+                        })?;
+                    let stored = store
+                        .credential_in_transaction(session, &credential_id)
+                        .await?
+                        .ok_or_else(|| {
+                            custom(SponsorshipStoreError::Malformed(
+                                "credential registration points to no record".into(),
+                            ))
+                        })?;
+                    Ok(Some(stored.record))
+                }
+                .boxed()
+            },
+        )
+        .await
     }
 
     async fn insert_credential(
         &self,
-        registration_idempotency_hash: &str,
+        identity: &SponsoredCredentialRegistrationIdentity,
+        provider_identity: &SponsorshipOperationalPseudonymSet,
         record: &SponsoredCredentialRecord,
         secret: &ProviderCredentialSecret,
         audit: SponsoredAuditEvent,
@@ -2740,11 +4827,38 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
-        if !is_digest(registration_idempotency_hash)
+        validate_operational_aliases(
+            &self.operational,
+            &identity.request.encoded_candidates(),
+            "credential registration request candidate",
+        )?;
+        validate_operational_aliases(
+            &self.operational,
+            &identity.command.encoded_candidates(),
+            "credential registration command candidate",
+        )?;
+        let provider_aliases = provider_identity.encoded_candidates();
+        validate_operational_aliases(
+            &self.operational,
+            &provider_aliases,
+            "provider credential identity candidate",
+        )?;
+        if record.authority.provider_credential_id_digest != provider_identity.current().as_str() {
+            return Err(SponsorshipStoreError::Malformed(
+                "credential canonical provider identity is not the current candidate".into(),
+            ));
+        }
+        if record.generation != 1
+            || record.state != SponsoredCredentialState::Active
             || record.material_state != SponsoredCredentialMaterialState::Retained
+            || record.revoked_at.is_some()
+            || record.pending_operation.is_some()
+            || record.superseded_operation.is_some()
+            || record.last_completed_operation.is_some()
+            || record.created_at != record.updated_at
         {
             return Err(SponsorshipStoreError::Malformed(
-                "credential registration identity or material state is invalid".into(),
+                "credential registration identity or initial lifecycle shape is invalid".into(),
             ));
         }
         let secret = Zeroizing::new(secret.expose().to_string());
@@ -2753,24 +4867,43 @@ impl SponsorshipStore for MongoSponsorshipStore {
                 .transaction(
                     (
                         self.clone(),
-                        registration_idempotency_hash.to_string(),
+                        identity.clone(),
+                        provider_identity.clone(),
                         record.clone(),
                         secret.clone(),
                         audit.clone(),
                     ),
-                    |session, (store, registration_hash, candidate, secret, audit)| {
+                    |session, (store, identity, provider_identity, candidate, secret, audit)| {
                         async move {
                             if let Some(binding) = store
-                                .credential_registrations
-                                .find_one(doc! { "_id": &*registration_hash })
-                                .session(&mut *session)
+                                .credential_registration_binding_in_transaction(
+                                    session,
+                                    &identity.request,
+                                )
                                 .await?
                             {
-                                validate_document_version(
-                                    binding.document_schema_version,
-                                    "credential registration",
-                                )
-                                .map_err(custom)?;
+                                if !aliases_match_candidates(
+                                    &binding.command_aliases,
+                                    &identity.command,
+                                ) {
+                                    return Err(custom(SponsorshipStoreError::Conflict));
+                                }
+                                let updated = store
+                                    .credential_registrations
+                                    .update_one(
+                                        doc! { "_id": &binding.id },
+                                        doc! {
+                                            "$set": {
+                                                "request_aliases": identity.request.encoded_candidates(),
+                                                "command_aliases": identity.command.encoded_candidates(),
+                                            }
+                                        },
+                                    )
+                                    .session(&mut *session)
+                                    .await?;
+                                if updated.matched_count != 1 {
+                                    return Err(custom(SponsorshipStoreError::Conflict));
+                                }
                                 let id = SponsoredCredentialId::parse(binding.credential_id)
                                     .map_err(|error| {
                                         custom(SponsorshipStoreError::Malformed(error.to_string()))
@@ -2779,46 +4912,111 @@ impl SponsorshipStore for MongoSponsorshipStore {
                                     .credential_in_transaction(session, &id)
                                     .await?
                                     .ok_or_else(|| {
-                                    custom(SponsorshipStoreError::Malformed(
-                                        "credential registration points to no record".into(),
-                                    ))
-                                })?;
-                                if credential_registration_bindings_match(&stored.record, candidate)
-                                {
+                                        custom(SponsorshipStoreError::Malformed(
+                                            "credential registration points to no record".into(),
+                                        ))
+                                    })?;
+                                if credential_registration_bindings_match(
+                                    &stored.record,
+                                    candidate,
+                                ) {
+                                    if !provider_identity.iter().any(|identity| {
+                                        identity.as_str()
+                                            == stored
+                                                .record
+                                                .authority
+                                                .provider_credential_id_digest
+                                    }) {
+                                        return Err(custom(SponsorshipStoreError::Conflict));
+                                    }
+                                    let migrated = store
+                                        .credentials
+                                        .update_one(
+                                            doc! { "_id": &stored.record.id.0 },
+                                            doc! {
+                                                "$set": {
+                                                    "provider_credential_id_aliases":
+                                                        provider_identity.encoded_candidates(),
+                                                }
+                                            },
+                                        )
+                                        .session(&mut *session)
+                                        .await?;
+                                    if migrated.matched_count != 1 {
+                                        return Err(custom(SponsorshipStoreError::Conflict));
+                                    }
                                     return Ok(stored.record);
                                 }
                                 return Err(custom(SponsorshipStoreError::Conflict));
                             }
+
                             if let Some(document) = store
-                                .credentials
-                                .find_one(doc! {
-                                    "provider": &candidate.authority.provider,
-                                    "provider_credential_id_digest":
-                                        &candidate.authority.provider_credential_id_digest,
-                                })
-                                .session(&mut *session)
+                                .provider_credential_binding_in_transaction(
+                                    session,
+                                    &candidate.authority.provider,
+                                    provider_identity,
+                                )
                                 .await?
                             {
-                                let stored =
-                                    read_credential(&store.cipher, document).map_err(custom)?;
+                                if !provider_identity.iter().any(|identity| {
+                                    identity.as_str()
+                                        == document.provider_credential_id_digest
+                                }) {
+                                    return Err(custom(SponsorshipStoreError::Malformed(
+                                        "provider credential aliases do not bind their canonical authority"
+                                            .into(),
+                                    )));
+                                }
+                                let id = SponsoredCredentialId::parse(document.id).map_err(
+                                    |error| {
+                                        custom(SponsorshipStoreError::Malformed(error.to_string()))
+                                    },
+                                )?;
+                                let stored = store
+                                    .credential_in_transaction(session, &id)
+                                    .await?
+                                    .ok_or_else(|| {
+                                        custom(SponsorshipStoreError::Malformed(
+                                            "credential provider identity points to no record"
+                                                .into(),
+                                        ))
+                                    })?;
                                 if !credential_registration_bindings_match(
                                     &stored.record,
                                     candidate,
-                                ) {
+                                ) || stored.current_secret.as_ref().is_none_or(|stored_secret| {
+                                    stored_secret.expose() != secret.as_str()
+                                }) {
+                                    return Err(custom(SponsorshipStoreError::Conflict));
+                                }
+                                let migrated = store
+                                    .credentials
+                                    .update_one(
+                                        doc! { "_id": &stored.record.id.0 },
+                                        doc! {
+                                            "$set": {
+                                                "provider_credential_id_aliases":
+                                                    provider_identity.encoded_candidates(),
+                                            }
+                                        },
+                                    )
+                                    .session(&mut *session)
+                                    .await?;
+                                if migrated.matched_count != 1 {
                                     return Err(custom(SponsorshipStoreError::Conflict));
                                 }
                                 store
                                     .credential_registrations
-                                    .insert_one(CredentialRegistrationDoc {
-                                        registration_idempotency_hash: registration_hash.clone(),
-                                        document_schema_version: DOCUMENT_SCHEMA_VERSION,
-                                        credential_id: stored.record.id.0.clone(),
-                                        created_at: candidate.created_at.clone(),
-                                    })
+                                    .insert_one(credential_registration_doc(
+                                        identity,
+                                        &stored.record.id,
+                                        &candidate.created_at,
+                                    ))
                                     .session(&mut *session)
                                     .await?;
                                 return Ok(stored.record);
                             }
+
                             if let Some(stored) = store
                                 .credential_in_transaction(session, &candidate.id)
                                 .await?
@@ -2828,24 +5026,40 @@ impl SponsorshipStore for MongoSponsorshipStore {
                                         stored_secret.expose() == secret.as_str()
                                     })
                                 {
+                                    let migrated = store
+                                        .credentials
+                                        .update_one(
+                                            doc! { "_id": &candidate.id.0 },
+                                            doc! {
+                                                "$set": {
+                                                    "provider_credential_id_aliases":
+                                                        provider_identity.encoded_candidates(),
+                                                }
+                                            },
+                                        )
+                                        .session(&mut *session)
+                                        .await?;
+                                    if migrated.matched_count != 1 {
+                                        return Err(custom(SponsorshipStoreError::Conflict));
+                                    }
                                     store
                                         .credential_registrations
-                                        .insert_one(CredentialRegistrationDoc {
-                                            registration_idempotency_hash: registration_hash
-                                                .clone(),
-                                            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-                                            credential_id: candidate.id.0.clone(),
-                                            created_at: candidate.created_at.clone(),
-                                        })
+                                        .insert_one(credential_registration_doc(
+                                            identity,
+                                            &candidate.id,
+                                            &candidate.created_at,
+                                        ))
                                         .session(&mut *session)
                                         .await?;
                                     return Ok(stored.record);
                                 }
                                 return Err(custom(SponsorshipStoreError::Conflict));
                             }
+
                             let document = credential_doc(
                                 &store.cipher,
                                 candidate,
+                                &provider_identity.encoded_candidates(),
                                 Some(secret.as_str()),
                                 None,
                             )
@@ -2857,12 +5071,11 @@ impl SponsorshipStore for MongoSponsorshipStore {
                                 .await?;
                             store
                                 .credential_registrations
-                                .insert_one(CredentialRegistrationDoc {
-                                    registration_idempotency_hash: registration_hash.clone(),
-                                    document_schema_version: DOCUMENT_SCHEMA_VERSION,
-                                    credential_id: candidate.id.0.clone(),
-                                    created_at: candidate.created_at.clone(),
-                                })
+                                .insert_one(credential_registration_doc(
+                                    identity,
+                                    &candidate.id,
+                                    &candidate.created_at,
+                                ))
                                 .session(&mut *session)
                                 .await?;
                             store.audit_in_transaction(session, audit).await?;
@@ -2891,8 +5104,43 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .map_err(|error| stored_read_failure("read sponsored credential metadata", error))?;
         document
             .as_ref()
-            .map(|document| read_credential_record(&self.cipher, document))
+            .map(|document| read_credential_record(&self.cipher, &self.operational, document))
             .transpose()
+    }
+
+    async fn credentials_for_owner(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredCredentialRecord>, SponsorshipStoreError> {
+        validate_subject_query(owner)?;
+        let filter = newest_page_filter(doc! { "owner_subject": &owner.0 }, page)?;
+        let documents = self
+            .credentials
+            .find(filter)
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(page_query_limit(page))
+            .await
+            .map_err(|error| stored_read_failure("list owner sponsorship credentials", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| stored_read_failure("list owner sponsorship credentials", error))?;
+        let mut records = Vec::with_capacity(documents.len());
+        for document in documents {
+            if document.owner_subject != owner.0 {
+                return Err(SponsorshipStoreError::Malformed(
+                    "owner credential index crossed its subject boundary".into(),
+                ));
+            }
+            records.push(read_credential_record(
+                &self.cipher,
+                &self.operational,
+                &document,
+            )?);
+        }
+        Ok(finish_newest_page(records, page, |record| {
+            (&record.created_at, &record.id.0)
+        }))
     }
 
     async fn credential(
@@ -2906,7 +5154,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .map_err(|error| stored_read_failure("read sponsored credential", error))?;
         document
             .map(|document| {
-                let decoded = read_credential(&self.cipher, document)?;
+                let decoded = read_credential(&self.cipher, &self.operational, document)?;
                 let stored = StoredSponsoredCredential {
                     record: decoded.record,
                     secret: decoded.current_secret,
@@ -2921,26 +5169,49 @@ impl SponsorshipStore for MongoSponsorshipStore {
         &self,
         id: &SponsoredCredentialId,
         kind: ProviderOperationKind,
-        client_request_id_digest: &str,
+        client_request_identity: &SponsorshipOperationalPseudonymSet,
     ) -> Result<Option<CompletedProviderOperation>, SponsorshipStoreError> {
-        let document = self
+        validate_operational_aliases(
+            &self.operational,
+            &client_request_identity.encoded_candidates(),
+            "credential operation request candidate",
+        )?;
+        let documents = self
             .credential_operations
-            .find_one(doc! {
+            .find(doc! {
                 "_id.credential_id": &id.0,
                 "_id.operation_kind": operation_kind_code(kind),
-                "_id.client_request_id_digest": client_request_id_digest,
+                "_id.client_request_id_digest": {
+                    "$in": client_request_identity.encoded_candidates(),
+                },
             })
+            .limit((MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS + 2) as i64)
+            .await
+            .map_err(|error| {
+                stored_read_failure("read sponsored credential operation replay", error)
+            })?
+            .try_collect::<Vec<_>>()
             .await
             .map_err(|error| {
                 stored_read_failure("read sponsored credential operation replay", error)
             })?;
-        document
+        if documents.len() > 1 {
+            return Err(SponsorshipStoreError::Malformed(
+                "credential operation candidates resolve multiple durable operations".into(),
+            ));
+        }
+        documents
+            .into_iter()
+            .next()
             .map(|document| {
                 if document.id.credential_id != id.0 {
                     return Err(SponsorshipStoreError::Malformed(
                         "credential operation replay identity is inconsistent".into(),
                     ));
                 }
+                self.operational
+                    .parse_configured(document.id.client_request_id_digest.clone())
+                    .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
                 read_ledger(document)
             })
             .transpose()
@@ -2957,6 +5228,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
+        require_successor_generation(expected_generation, record.generation, "credential")?;
         let secret = secret.map(|secret| Zeroizing::new(secret.expose().to_string()));
         self.transaction(
             (
@@ -2972,17 +5244,15 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         .credential_in_transaction(session, &candidate.id)
                         .await?
                         .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                    if candidate.material_state != current.record.material_state
-                        || candidate.material_state != SponsoredCredentialMaterialState::Retained
-                    {
-                        return Err(custom(SponsorshipStoreError::Conflict));
-                    }
                     if current.record.generation != *expected {
                         return if current.record == *candidate {
                             Ok(current.record)
                         } else {
                             Err(custom(SponsorshipStoreError::StaleGeneration))
                         };
+                    }
+                    if !credential_update_is_legal(&current.record, candidate) {
+                        return Err(custom(SponsorshipStoreError::Conflict));
                     }
                     let current_secret = supplied_secret
                         .as_ref()
@@ -2996,6 +5266,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     let replacement = credential_doc(
                         &store.cipher,
                         candidate,
+                        &current.provider_credential_id_aliases,
                         current_secret,
                         current
                             .pending_secret
@@ -3038,6 +5309,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
+        require_successor_generation(expected_generation, record.generation, "credential")?;
         let pending = record
             .pending_operation
             .as_ref()
@@ -3072,15 +5344,15 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         .credential_in_transaction(session, &candidate.id)
                         .await?
                         .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                    if current.record.material_state != SponsoredCredentialMaterialState::Retained {
-                        return Err(custom(SponsorshipStoreError::Conflict));
-                    }
                     if current.record.generation != *expected {
                         return if current.record == *candidate {
                             Ok(current.record)
                         } else {
                             Err(custom(SponsorshipStoreError::StaleGeneration))
                         };
+                    }
+                    if !credential_rotation_stage_is_legal(&current.record, candidate) {
+                        return Err(custom(SponsorshipStoreError::Conflict));
                     }
                     let current_secret = current.current_secret.as_ref().ok_or_else(|| {
                         custom(SponsorshipStoreError::Malformed(
@@ -3090,6 +5362,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     let replacement_doc = credential_doc(
                         &store.cipher,
                         candidate,
+                        &current.provider_credential_id_aliases,
                         Some(current_secret.expose()),
                         Some(replacement.as_str()),
                     )
@@ -3129,7 +5402,8 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .map_err(|error| stored_read_failure("read pending credential rotation", error))?;
         document
             .map(|document| {
-                read_credential(&self.cipher, document).map(|decoded| decoded.pending_secret)
+                read_credential(&self.cipher, &self.operational, document)
+                    .map(|decoded| decoded.pending_secret)
             })
             .transpose()
             .map(Option::flatten)
@@ -3138,11 +5412,13 @@ impl SponsorshipStore for MongoSponsorshipStore {
     async fn complete_credential_rotation(
         &self,
         expected_generation: u64,
+        provider_identity: &SponsorshipOperationalPseudonymSet,
         record: &SponsoredCredentialRecord,
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError> {
         self.complete_credential_mutation(
             expected_generation,
+            Some(provider_identity),
             record,
             audit,
             ProviderOperationKind::RotateCredential,
@@ -3159,6 +5435,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError> {
         self.complete_credential_mutation(
             expected_generation,
+            None,
             record,
             audit,
             ProviderOperationKind::RotateCredential,
@@ -3175,6 +5452,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError> {
         self.complete_credential_mutation(
             expected_generation,
+            None,
             record,
             audit,
             ProviderOperationKind::RevokeCredential,
@@ -3192,6 +5470,12 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
+        if policy.generation != 1
+            || policy.state != layer2_core::SponsorshipPolicyState::Active
+            || policy.revoked_at.is_some()
+        {
+            return Err(SponsorshipStoreError::StaleGeneration);
+        }
         let usage = SponsorshipPolicyUsage {
             consumed: Default::default(),
             reserved: Default::default(),
@@ -3202,13 +5486,9 @@ impl SponsorshipStore for MongoSponsorshipStore {
             (self.clone(), candidate, policy.clone(), audit),
             |session, (store, candidate, policy, audit)| {
                 async move {
-                    if let Some(stored) = store
-                        .policies
-                        .find_one(doc! { "_id": &policy.id.0 })
-                        .session(&mut *session)
-                        .await?
+                    if let Some((stored, _)) =
+                        store.policy_in_transaction(session, &policy.id).await?
                     {
-                        let (stored, _) = read_policy(stored).map_err(custom)?;
                         if stored != *policy {
                             return Err(custom(SponsorshipStoreError::Conflict));
                         }
@@ -3233,6 +5513,19 @@ impl SponsorshipStore for MongoSponsorshipStore {
                             )));
                         }
                         return Ok(stored);
+                    }
+                    let credential = store
+                        .credential_record_in_transaction(session, &policy.credential_id)
+                        .await?
+                        .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
+                    if credential.state != SponsoredCredentialState::Active
+                        || credential.material_state != SponsoredCredentialMaterialState::Retained
+                        || credential.owner != policy.owner
+                        || credential.authority.provider != policy.provider_policy.provider
+                        || credential.authority.provider_policy_key
+                            != policy.provider_policy.provider_policy_key
+                    {
+                        return Err(custom(SponsorshipStoreError::GrantUnavailable));
                     }
                     store
                         .policies
@@ -3270,6 +5563,40 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .map(|value| value.map(|(policy, _)| policy))
     }
 
+    async fn policies_for_owner(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<StoredSponsorshipPolicy>, SponsorshipStoreError> {
+        validate_subject_query(owner)?;
+        let filter = newest_page_filter(doc! { "owner_subject": &owner.0 }, page)?;
+        let documents = self
+            .policies
+            .find(filter)
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(page_query_limit(page))
+            .await
+            .map_err(|error| stored_read_failure("list owner sponsorship policies", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| stored_read_failure("list owner sponsorship policies", error))?;
+        let mut records = Vec::with_capacity(documents.len());
+        for document in documents {
+            if document.owner_subject != owner.0 {
+                return Err(SponsorshipStoreError::Malformed(
+                    "owner policy index crossed its subject boundary".into(),
+                ));
+            }
+            let (policy, usage) = read_policy(document)?;
+            let stored = StoredSponsorshipPolicy { policy, usage };
+            stored.validate()?;
+            records.push(stored);
+        }
+        Ok(finish_newest_page(records, page, |stored| {
+            (&stored.policy.created_at, &stored.policy.id.0)
+        }))
+    }
+
     async fn policy_usage(
         &self,
         id: &SponsorshipPolicyId,
@@ -3299,6 +5626,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
+        require_successor_generation(expected_generation, policy.generation, "policy")?;
         self.transaction(
             (self.clone(), expected_generation, policy.clone(), audit),
             |session, (store, expected, candidate, audit)| {
@@ -3307,15 +5635,24 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         .policy_in_transaction(session, &candidate.id)
                         .await?
                         .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                    if current.state == layer2_core::SponsorshipPolicyState::Revoked {
-                        return Ok(current);
-                    }
                     if current.generation != *expected {
                         return if current == *candidate {
                             Ok(current)
                         } else {
                             Err(custom(SponsorshipStoreError::StaleGeneration))
                         };
+                    }
+                    if !policy_update_is_legal(&current, candidate) {
+                        return Err(custom(SponsorshipStoreError::Conflict));
+                    }
+                    let exposure = usage.exposure().map_err(|error| {
+                        custom(SponsorshipStoreError::Malformed(error.to_string()))
+                    })?;
+                    if !exposure.quota.fits_within(candidate.aggregate_quota)
+                        || exposure.spend_micros > candidate.aggregate_budget_micros
+                        || usage.active_launches > candidate.max_concurrent_launches
+                    {
+                        return Err(custom(SponsorshipStoreError::Conflict));
                     }
                     let replacement = policy_doc(candidate, &usage).map_err(custom)?;
                     let result = store
@@ -3351,61 +5688,136 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&command.audit)?;
-        self.transaction((self.clone(), command), |session, (store, command)| {
-            async move {
-                if let Some(stored) = store
-                    .acceptances
-                    .find_one(doc! { "_id": &command.acceptance.launch_id.0 })
-                    .session(&mut *session)
-                    .await?
-                {
-                    let stored = read_acceptance(stored).map_err(custom)?;
-                    if stored.contributor != command.acceptance.contributor {
+        let replay_candidate = command.acceptance.clone();
+        let replay_candidates = command.idempotency_candidates.clone();
+        let result = self
+            .transaction((self.clone(), command), |session, (store, command)| {
+                async move {
+                    if let Some(stored_document) = store
+                        .acceptances
+                        .find_one(doc! { "_id": &command.acceptance.launch_id.0 })
+                        .session(&mut *session)
+                        .await?
+                    {
+                        let stored_aliases = stored_document.idempotency_aliases.clone();
+                        let stored =
+                            read_acceptance(&store.operational, stored_document).map_err(custom)?;
+                        if stored.contributor != command.acceptance.contributor {
+                            return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
+                        }
+                        if acceptance_identity_matches(&stored, &command.idempotency_candidates) {
+                            let aliases = command.idempotency_candidates.encoded_candidates();
+                            if stored_aliases != aliases {
+                                let updated = store
+                                    .acceptances
+                                    .update_one(
+                                        doc! {
+                                            "_id": &stored.launch_id.0,
+                                            "acceptance.idempotency_key_hash":
+                                                &stored.idempotency_key_hash,
+                                        },
+                                        doc! { "$set": { "idempotency_aliases": aliases } },
+                                    )
+                                    .session(&mut *session)
+                                    .await?;
+                                if updated.matched_count != 1 {
+                                    return Err(custom(SponsorshipStoreError::Conflict));
+                                }
+                            }
+                            return if acceptance_payload_fields_match(&stored, &command.acceptance)
+                            {
+                                Ok(stored)
+                            } else {
+                                Err(custom(SponsorshipStoreError::Conflict))
+                            };
+                        }
+                        return Err(custom(SponsorshipStoreError::Conflict));
+                    }
+                    store
+                        .require_gate_in_transaction(session, &command.gate_fence)
+                        .await?;
+                    let launch = store
+                        .launch_in_transaction(session, &command.launch_authority.launch_id)
+                        .await?
+                        .ok_or_else(|| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
+                    let policy_id = launch_sponsorship_policy_id(&launch).map_err(custom)?;
+                    if let Some(stored) = store
+                        .acceptance_in_transaction(session, &command.acceptance.launch_id)
+                        .await?
+                    {
+                        if stored.contributor != command.acceptance.contributor {
+                            return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
+                        }
+                        if acceptance_identity_matches(&stored, &command.idempotency_candidates) {
+                            return if acceptance_payload_fields_match(&stored, &command.acceptance)
+                            {
+                                Ok(stored)
+                            } else {
+                                Err(custom(SponsorshipStoreError::Conflict))
+                            };
+                        }
+                        return Err(custom(SponsorshipStoreError::Conflict));
+                    }
+                    let (policy, usage) =
+                        store
+                            .policy_in_transaction(session, &policy_id)
+                            .await?
+                            .ok_or_else(|| custom(SponsorshipStoreError::AcceptanceChanged))?;
+                    let current_launch = SponsoredLaunchAuthority::from_launch(&launch, &policy)
+                        .map_err(|_| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
+                    if current_launch != command.launch_authority
+                        || current_launch.state != SponsoredLaunchState::TermsReview
+                        || current_launch.session_id.is_some()
+                        || command.acceptance.launch_id != current_launch.launch_id
+                        || command.acceptance.contributor != current_launch.contributor
+                        || command.acceptance.revision_id != current_launch.revision_id
+                        || command.acceptance.revision_digest != current_launch.revision_digest
+                        || command.acceptance.policy_id != current_launch.policy_id
+                        || command.acceptance.launch_snapshot_digest
+                            != current_launch.launch_snapshot_digest
+                    {
                         return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
                     }
-                    if stored.idempotency_key_hash == command.acceptance.idempotency_key_hash {
-                        return if acceptance_stable_fields_match(&stored, &command.acceptance) {
-                            Ok(stored)
-                        } else {
-                            Err(custom(SponsorshipStoreError::Conflict))
-                        };
+                    let terms =
+                        SponsoredGrantTerms::from_policy(&policy, &usage).map_err(|error| {
+                            custom(SponsorshipStoreError::Malformed(error.to_string()))
+                        })?;
+                    if command.acceptance.policy_generation != policy.generation
+                        || command.acceptance.terms_digest != terms.digest
+                    {
+                        return Err(custom(SponsorshipStoreError::AcceptanceChanged));
                     }
+                    store
+                        .acceptances
+                        .insert_one(
+                            acceptance_doc(
+                                &store.operational,
+                                &command.acceptance,
+                                &command.idempotency_candidates,
+                            )
+                            .map_err(custom)?,
+                        )
+                        .session(&mut *session)
+                        .await?;
+                    store.audit_in_transaction(session, &command.audit).await?;
+                    Ok(command.acceptance.clone())
                 }
-                store
-                    .require_gate_in_transaction(session, &command.gate_fence)
-                    .await?;
-                let current_launch = store
-                    .launch_authority_in_transaction(session, &command.launch_authority.launch_id)
-                    .await?
-                    .ok_or_else(|| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
-                if current_launch != command.launch_authority
-                    || current_launch.state != SponsoredLaunchState::TermsReview
-                    || current_launch.session_id.is_some()
-                    || command.acceptance.launch_id != current_launch.launch_id
-                    || command.acceptance.contributor != current_launch.contributor
-                    || command.acceptance.revision_id != current_launch.revision_id
-                    || command.acceptance.revision_digest != current_launch.revision_digest
-                    || command.acceptance.policy_id != current_launch.policy_id
-                    || command.acceptance.launch_snapshot_digest
-                        != current_launch.launch_snapshot_digest
+                .boxed()
+            })
+            .await;
+        if result == Err(SponsorshipStoreError::Conflict) {
+            if let Some(stored) = self
+                .acceptance_for_request(&replay_candidate.launch_id, &replay_candidates)
+                .await?
+            {
+                if acceptance_identity_matches(&stored, &replay_candidates)
+                    && acceptance_payload_fields_match(&stored, &replay_candidate)
                 {
-                    return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
+                    return Ok(stored);
                 }
-                store
-                    .acceptances
-                    .replace_one(
-                        doc! { "_id": &command.acceptance.launch_id.0 },
-                        acceptance_doc(&command.acceptance).map_err(custom)?,
-                    )
-                    .upsert(true)
-                    .session(&mut *session)
-                    .await?;
-                store.audit_in_transaction(session, &command.audit).await?;
-                Ok(command.acceptance.clone())
             }
-            .boxed()
-        })
-        .await
+        }
+        result
     }
 
     async fn acceptance_for_launch(
@@ -3416,8 +5828,65 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .find_one(doc! { "_id": &launch_id.0 })
             .await
             .map_err(|error| stored_read_failure("read sponsored acceptance", error))?
-            .map(read_acceptance)
+            .map(|document| read_acceptance(&self.operational, document))
             .transpose()
+    }
+
+    async fn acceptance_for_request(
+        &self,
+        launch_id: &LaunchId,
+        idempotency_candidates: &SponsorshipOperationalPseudonymSet,
+    ) -> Result<Option<SponsoredGrantAcceptance>, SponsorshipStoreError> {
+        validate_operational_aliases(
+            &self.operational,
+            &idempotency_candidates.encoded_candidates(),
+            "acceptance idempotency candidate",
+        )?;
+        self.transaction(
+            (
+                self.clone(),
+                launch_id.clone(),
+                idempotency_candidates.clone(),
+            ),
+            |session, (store, launch_id, candidates)| {
+                async move {
+                    let Some(document) = store
+                        .acceptances
+                        .find_one(doc! { "_id": &launch_id.0 })
+                        .session(&mut *session)
+                        .await?
+                    else {
+                        return Ok(None);
+                    };
+                    let stored_aliases = document.idempotency_aliases.clone();
+                    let acceptance =
+                        read_acceptance(&store.operational, document).map_err(custom)?;
+                    if acceptance_identity_matches(&acceptance, candidates) {
+                        let aliases = candidates.encoded_candidates();
+                        if stored_aliases != aliases {
+                            let result = store
+                                .acceptances
+                                .update_one(
+                                    doc! {
+                                        "_id": &launch_id.0,
+                                        "acceptance.idempotency_key_hash":
+                                            &acceptance.idempotency_key_hash,
+                                    },
+                                    doc! { "$set": { "idempotency_aliases": aliases } },
+                                )
+                                .session(&mut *session)
+                                .await?;
+                            if result.matched_count != 1 {
+                                return Err(custom(SponsorshipStoreError::Conflict));
+                            }
+                        }
+                    }
+                    Ok(Some(acceptance))
+                }
+                .boxed()
+            },
+        )
+        .await
     }
 
     async fn claim_grant_activation(
@@ -3442,9 +5911,40 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .acceptance
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
-        if !is_digest(&command.holder) {
+        for (candidates, kind) in [
+            (
+                &command.holder_candidates,
+                "activation lease holder candidate",
+            ),
+            (
+                &command.billing_request_candidates,
+                "activation billing request candidate",
+            ),
+            (
+                &command.provider_request_candidates,
+                "activation provider request candidate",
+            ),
+        ] {
+            validate_operational_aliases(
+                &self.operational,
+                &candidates.encoded_candidates(),
+                kind,
+            )?;
+        }
+        if command.candidate.billing_request_id
+            != command.billing_request_candidates.current().as_str()
+            || command.candidate.provider_request_id
+                != command.provider_request_candidates.current().as_str()
+            || command.candidate.revision != 1
+            || command.candidate.state != GrantActivationState::AwaitingBilling
+            || command.candidate.denial.is_some()
+            || command.candidate.capacity_held
+            || command.candidate.provider_receipt.is_some()
+            || command.candidate.cleanup_operation.is_some()
+            || command.candidate.created_at != command.candidate.updated_at
+        {
             return Err(SponsorshipStoreError::Malformed(
-                "activation lease holder is not a digest".into(),
+                "activation claim identity or initial lifecycle shape is invalid".into(),
             ));
         }
         self.transaction((self.clone(), command), |session, (store, command)| {
@@ -3464,15 +5964,19 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     .activation_in_transaction(session, &command.candidate.launch_id)
                     .await?
                 {
-                    if existing.request_fingerprint != command.candidate.request_fingerprint
-                        || existing.billing_request_id != command.candidate.billing_request_id
-                        || existing.provider_request_id != command.candidate.provider_request_id
-                    {
+                    if !activation_claim_bindings_match(
+                        &existing,
+                        &command.candidate,
+                        &command.billing_request_candidates,
+                        &command.provider_request_candidates,
+                    ) {
                         return Err(custom(SponsorshipStoreError::Conflict));
                     }
                     if matches!(
                         existing.state,
-                        GrantActivationState::Committed | GrantActivationState::Denied
+                        GrantActivationState::Committed
+                            | GrantActivationState::Denied
+                            | GrantActivationState::Cleaned
                     ) || lease_expiry.is_some_and(|expires| expires > now)
                     {
                         return Ok(GrantActivationClaim {
@@ -3480,22 +5984,31 @@ impl SponsorshipStore for MongoSponsorshipStore {
                             intent: existing,
                         });
                     }
+                    if !matches!(
+                        existing.state,
+                        GrantActivationState::AwaitingBilling
+                            | GrantActivationState::BillingAttempting
+                            | GrantActivationState::BillingAmbiguous
+                            | GrantActivationState::AwaitingProvider
+                            | GrantActivationState::ProviderAttempting
+                            | GrantActivationState::ProviderAmbiguous
+                            | GrantActivationState::ProviderConfirmed
+                    ) || existing.cleanup_operation.is_some()
+                    {
+                        return Err(custom(SponsorshipStoreError::Conflict));
+                    }
                     if !existing.capacity_held {
-                        store
-                            .require_current_terms_in_transaction(
-                                session,
-                                &existing,
-                                &command.acceptance,
-                            )
-                            .await?;
                         store
                             .reserve_activation_allocation_in_transaction(session, &existing)
                             .await?;
                         existing.capacity_held = true;
                     }
                     let expected_revision = existing.revision;
-                    let (lease, expires_at_database) =
-                        activation_lease(command.holder.clone(), now).map_err(custom)?;
+                    let (lease, expires_at_database) = activation_lease(
+                        command.holder_candidates.current().as_str().to_string(),
+                        now,
+                    )
+                    .map_err(custom)?;
                     existing.lease = Some(lease);
                     existing.revision = existing.revision.checked_add(1).ok_or_else(|| {
                         custom(SponsorshipStoreError::Malformed(
@@ -3522,13 +6035,13 @@ impl SponsorshipStore for MongoSponsorshipStore {
 
                 let mut candidate = command.candidate.clone();
                 store
-                    .require_current_terms_in_transaction(session, &candidate, &command.acceptance)
-                    .await?;
-                store
                     .reserve_activation_allocation_in_transaction(session, &candidate)
                     .await?;
-                let (lease, expires_at_database) =
-                    activation_lease(command.holder.clone(), now).map_err(custom)?;
+                let (lease, expires_at_database) = activation_lease(
+                    command.holder_candidates.current().as_str().to_string(),
+                    now,
+                )
+                .map_err(custom)?;
                 candidate.capacity_held = true;
                 candidate.lease = Some(lease);
                 candidate.updated_at = now_string;
@@ -3561,7 +6074,9 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .find_one(doc! { "_id": &launch_id.0 })
             .await
             .map_err(|error| stored_read_failure("read grant activation", error))?
-            .map(|document| read_activation(&self.cipher, document).map(|(intent, _)| intent))
+            .map(|document| {
+                read_activation(&self.cipher, &self.operational, document).map(|(intent, _)| intent)
+            })
             .transpose()
     }
 
@@ -3573,9 +6088,25 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .operation
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        validate_operational_aliases(
+            &self.operational,
+            &command.holder_candidates.encoded_candidates(),
+            "activation cleanup holder candidate",
+        )?;
+        validate_operational_aliases(
+            &self.operational,
+            &command
+                .operation_client_request_candidates
+                .encoded_candidates(),
+            "activation cleanup operation candidate",
+        )?;
         if command.operation.kind != ProviderOperationKind::RevokeUncommittedGrant
             || command.operation.phase != ProviderOperationPhase::Prepared
-            || !is_digest(&command.holder)
+            || command.operation.client_request_id_digest
+                != command
+                    .operation_client_request_candidates
+                    .current()
+                    .as_str()
         {
             return Err(SponsorshipStoreError::Conflict);
         }
@@ -3606,8 +6137,12 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     GrantActivationState::ProviderConfirmed
                     | GrantActivationState::ProviderAmbiguous => {
                         if held
-                            && intent.lease.as_ref().map(|lease| lease.holder.as_str())
-                                != Some(command.holder.as_str())
+                            && !intent.lease.as_ref().is_some_and(|lease| {
+                                command
+                                    .holder_candidates
+                                    .iter()
+                                    .any(|candidate| candidate.as_str() == lease.holder)
+                            })
                         {
                             return Ok(GrantActivationClaim {
                                 acquired: false,
@@ -3623,8 +6158,10 @@ impl SponsorshipStore for MongoSponsorshipStore {
                                 "cleanup activation has no provider operation".into(),
                             ))
                         })?;
-                        if existing.provider_request_id != command.operation.provider_request_id
-                            || existing.payload_digest != command.operation.payload_digest
+                        if existing.kind != ProviderOperationKind::RevokeUncommittedGrant
+                            || !command.operation_client_request_candidates.iter().any(
+                                |candidate| candidate.as_str() == existing.client_request_id_digest,
+                            )
                         {
                             return Err(custom(SponsorshipStoreError::Conflict));
                         }
@@ -3638,8 +6175,11 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     _ => return Err(custom(SponsorshipStoreError::Conflict)),
                 }
                 let expected_revision = intent.revision;
-                let (lease, expires_at_database) =
-                    activation_lease(command.holder.clone(), now).map_err(custom)?;
+                let (lease, expires_at_database) = activation_lease(
+                    command.holder_candidates.current().as_str().to_string(),
+                    now,
+                )
+                .map_err(custom)?;
                 intent.revision = intent.revision.checked_add(1).ok_or_else(|| {
                     custom(SponsorshipStoreError::Malformed(
                         "activation revision exhausted".into(),
@@ -3672,11 +6212,11 @@ impl SponsorshipStore for MongoSponsorshipStore {
         &self,
         command: ClaimInvalidatedGrantActivation,
     ) -> Result<GrantActivationClaim, SponsorshipStoreError> {
-        if !is_digest(&command.holder) {
-            return Err(SponsorshipStoreError::Malformed(
-                "activation lease holder is not a digest".into(),
-            ));
-        }
+        validate_operational_aliases(
+            &self.operational,
+            &command.holder_candidates.encoded_candidates(),
+            "invalidated activation holder candidate",
+        )?;
         self.transaction((self.clone(), command), |session, (store, command)| {
             async move {
                 let now = store.database_now(session).await?;
@@ -3707,8 +6247,11 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     });
                 }
                 let expected_revision = intent.revision;
-                let (lease, expires_at_database) =
-                    activation_lease(command.holder.clone(), now).map_err(custom)?;
+                let (lease, expires_at_database) = activation_lease(
+                    command.holder_candidates.current().as_str().to_string(),
+                    now,
+                )
+                .map_err(custom)?;
                 intent.revision = intent.revision.checked_add(1).ok_or_else(|| {
                     custom(SponsorshipStoreError::Malformed(
                         "activation revision exhausted".into(),
@@ -3742,6 +6285,10 @@ impl SponsorshipStore for MongoSponsorshipStore {
         command: BeginProviderGrantIssue,
     ) -> Result<GrantActivationIntent, SponsorshipStoreError> {
         command
+            .intent
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        command
             .launch_authority
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
@@ -3749,14 +6296,30 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .acceptance
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if command.intent.launch_id != command.launch_id
+            || command.intent.revision != command.expected_revision
+        {
+            return Err(SponsorshipStoreError::Conflict);
+        }
         self.transaction((self.clone(), command), |session, (store, command)| {
             async move {
                 let now = store.database_now(session).await?;
+                let now_string = database_time_string(now);
+                let dependencies = store
+                    .require_activation_dependencies_in_transaction(
+                        session,
+                        &command.intent,
+                        &command.launch_authority,
+                        &command.acceptance,
+                        &now_string,
+                    )
+                    .await;
                 let (mut intent, lease_expiry) = store
                     .activation_in_transaction(session, &command.launch_id)
                     .await?
                     .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                if intent.revision != command.expected_revision
+                if intent != command.intent
+                    || intent.revision != command.expected_revision
                     || intent.lease.as_ref().map(|lease| lease.holder.as_str())
                         != Some(command.holder.as_str())
                     || lease_expiry.is_none_or(|expires| expires <= now)
@@ -3778,18 +6341,9 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         "activation revision exhausted".into(),
                     ))
                 })?;
-                intent.updated_at = database_time_string(now);
-                match store
-                    .require_activation_dependencies_in_transaction(
-                        session,
-                        &intent,
-                        &command.launch_authority,
-                        &command.acceptance,
-                        &intent.updated_at,
-                    )
-                    .await
-                {
-                    Ok(()) => {
+                intent.updated_at = now_string;
+                match dependencies {
+                    Ok(_) => {
                         intent.state = GrantActivationState::ProviderAttempting;
                         intent.denial = None;
                     }
@@ -3844,11 +6398,9 @@ impl SponsorshipStore for MongoSponsorshipStore {
         intent
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
-        if !is_digest(holder) {
-            return Err(SponsorshipStoreError::Malformed(
-                "activation lease holder is not a digest".into(),
-            ));
-        }
+        self.operational
+            .parse_configured(holder.to_string())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         self.transaction(
             (
                 self.clone(),
@@ -3859,6 +6411,16 @@ impl SponsorshipStore for MongoSponsorshipStore {
             |session, (store, expected, holder, candidate)| {
                 async move {
                     let now = store.database_now(session).await?;
+                    if matches!(
+                        candidate.state,
+                        GrantActivationState::AwaitingBilling
+                            | GrantActivationState::BillingAttempting
+                            | GrantActivationState::AwaitingProvider
+                    ) {
+                        store
+                            .require_gate_in_transaction(session, &candidate.gate_fence)
+                            .await?;
+                    }
                     let (stored, lease_expiry) = store
                         .activation_in_transaction(session, &candidate.launch_id)
                         .await?
@@ -3880,22 +6442,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         ))
                     })?;
                     if candidate.revision != next_revision
-                        || stored.launch_id != candidate.launch_id
-                        || stored.session_id != candidate.session_id
-                        || stored.policy_id != candidate.policy_id
-                        || stored.policy_generation != candidate.policy_generation
-                        || stored.credential_generation != candidate.credential_generation
-                        || stored.launch_authority_digest != candidate.launch_authority_digest
-                        || stored.acceptance_digest != candidate.acceptance_digest
-                        || stored.gate_fence != candidate.gate_fence
-                        || stored.allocation != candidate.allocation
-                        || stored.request_fingerprint != candidate.request_fingerprint
-                        || stored.billing_request_id != candidate.billing_request_id
-                        || stored.provider_request_id != candidate.provider_request_id
-                        || stored.created_at != candidate.created_at
-                        || (candidate.lease.is_some() && candidate.lease != stored.lease)
-                        || (stored.provider_receipt.is_some()
-                            && candidate.provider_receipt.is_none())
+                        || !activation_update_is_legal(&stored, candidate)
                     {
                         return Err(custom(SponsorshipStoreError::Conflict));
                     }
@@ -3935,6 +6482,17 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .grant
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if command.grant.generation != 1 {
+            return Err(SponsorshipStoreError::StaleGeneration);
+        }
+        if command.grant.state != SponsoredGrantState::Active
+            || command.grant.usage != SponsoredUsageSummary::default()
+            || command.grant.revoked_at.is_some()
+            || command.grant.pending_revocation.is_some()
+            || command.grant.created_at != command.grant.updated_at
+        {
+            return Err(SponsorshipStoreError::Conflict);
+        }
         command
             .launch_authority
             .validate()
@@ -3945,117 +6503,185 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_gate(&command.gate_fence)?;
         validate_audit_event(&command.audit)?;
-        self.transaction((self.clone(), command), |session, (store, command)| {
-            async move {
-                let now = store.database_now(session).await?;
-                let (stored, lease_expiry) = store
-                    .activation_in_transaction(session, &command.intent.launch_id)
-                    .await?
-                    .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                if stored.revision != command.expected_revision
-                    || stored.lease.as_ref().map(|lease| lease.holder.as_str())
-                        != Some(command.holder.as_str())
-                    || lease_expiry.is_none_or(|expires| expires <= now)
-                    || stored.state != GrantActivationState::ProviderConfirmed
-                    || !stored.capacity_held
-                    || command.intent.state != GrantActivationState::Committed
-                    || command.intent.capacity_held
-                    || command.intent.lease.is_some()
-                    || stored.provider_receipt.is_none()
-                    || command.intent.provider_receipt != stored.provider_receipt
-                {
+        let replay_candidate = command.grant.clone();
+        let result = self
+            .transaction((self.clone(), command), |session, (store, command)| {
+                async move {
                     if let Some(document) = store
                         .grants
                         .find_one(doc! { "launch_id": &command.grant.launch_id.0 })
                         .session(&mut *session)
                         .await?
                     {
-                        let (grant, _) = read_grant(&store.cipher, document).map_err(custom)?;
+                        let (grant, _) = read_grant(&store.cipher, &store.operational, document)
+                            .map_err(custom)?;
                         return if grant == command.grant {
                             Ok(grant)
                         } else {
                             Err(custom(SponsorshipStoreError::Conflict))
                         };
                     }
-                    return Err(custom(SponsorshipStoreError::StaleGeneration));
-                }
-                store
-                    .require_activation_dependencies_in_transaction(
-                        session,
-                        &stored,
-                        &command.launch_authority,
-                        &command.acceptance,
-                        &database_time_string(now),
-                    )
-                    .await?;
-                store
-                    .require_gate_in_transaction(session, &command.gate_fence)
-                    .await?;
-                if command.intent.revision
-                    != command.expected_revision.checked_add(1).ok_or_else(|| {
+                    let now = store.database_now(session).await?;
+                    if command.intent.gate_fence != command.gate_fence {
+                        return Err(custom(SponsorshipStoreError::GateChanged));
+                    }
+                    let (policy, credential) = store
+                        .require_activation_dependencies_in_transaction(
+                            session,
+                            &command.intent,
+                            &command.launch_authority,
+                            &command.acceptance,
+                            &database_time_string(now),
+                        )
+                        .await?;
+                    let (stored, lease_expiry) = store
+                        .activation_in_transaction(session, &command.intent.launch_id)
+                        .await?
+                        .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
+                    if stored.revision != command.expected_revision
+                        || stored.lease.as_ref().map(|lease| lease.holder.as_str())
+                            != Some(command.holder.as_str())
+                        || lease_expiry.is_none_or(|expires| expires <= now)
+                        || stored.state != GrantActivationState::ProviderConfirmed
+                        || !stored.capacity_held
+                        || command.intent.state != GrantActivationState::Committed
+                        || command.intent.capacity_held
+                        || command.intent.lease.is_some()
+                        || stored.provider_receipt.is_none()
+                        || command.intent.provider_receipt != stored.provider_receipt
+                        || !activation_lineage_matches(&stored, &command.intent)
+                        || stored.denial.is_some()
+                        || command.intent.denial.is_some()
+                        || stored.cleanup_operation.is_some()
+                        || command.intent.cleanup_operation.is_some()
+                    {
+                        return Err(custom(SponsorshipStoreError::StaleGeneration));
+                    }
+                    if command.intent.revision
+                        != command.expected_revision.checked_add(1).ok_or_else(|| {
+                            custom(SponsorshipStoreError::Malformed(
+                                "activation revision exhausted".into(),
+                            ))
+                        })?
+                        || command.intent.launch_authority_digest != command.launch_authority.digest
+                        || command.intent.acceptance_digest != command.acceptance.digest
+                        || command.intent.gate_fence != command.gate_fence
+                        || command.grant.acceptance != command.acceptance
+                        || command.grant.terms_digest != command.acceptance.terms_digest
+                        || command.grant.allocation != stored.allocation
+                        || command.grant.policy_id != stored.policy_id
+                        || command.grant.policy_id != command.launch_authority.policy_id
+                        || command.grant.policy_generation != stored.policy_generation
+                        || command.grant.policy_generation != policy.generation
+                        || command.grant.credential_generation != stored.credential_generation
+                        || command.grant.credential_generation != credential.generation
+                        || command.grant.tenant_id != command.launch_authority.tenant_id
+                        || command.grant.launch_id != command.launch_authority.launch_id
+                        || command.grant.contributor != command.launch_authority.contributor
+                        || command.grant.trigger_revision_id != command.launch_authority.revision_id
+                        || command.grant.trigger_revision_digest
+                            != command.launch_authority.revision_digest
+                        || command.launch_authority.session_id.as_ref()
+                            != Some(&command.grant.session_id)
+                        || command.grant.created_at != command.intent.updated_at
+                        || command.grant.created_at < stored.updated_at
+                        || !deterministic_grant_id_matches(
+                            &command.grant.id,
+                            &stored.provider_request_id,
+                        )
+                        || credential.owner != policy.owner
+                        || credential.authority.provider != policy.provider_policy.provider
+                        || credential.authority.provider_policy_key
+                            != policy.provider_policy.provider_policy_key
+                    {
+                        return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
+                    }
+                    let receipt = stored.provider_receipt.clone().ok_or_else(|| {
                         custom(SponsorshipStoreError::Malformed(
-                            "activation revision exhausted".into(),
+                            "confirmed activation has no provider receipt".into(),
                         ))
-                    })?
-                    || command.intent.launch_authority_digest != command.launch_authority.digest
-                    || command.intent.acceptance_digest != command.acceptance.digest
-                    || command.grant.acceptance != command.acceptance
-                    || command.grant.allocation != stored.allocation
-                    || command.grant.policy_id != stored.policy_id
-                    || command.grant.policy_generation != stored.policy_generation
-                    || command.grant.credential_generation != stored.credential_generation
-                    || command.grant.launch_id != command.launch_authority.launch_id
-                    || command.grant.contributor != command.launch_authority.contributor
-                    || command.grant.trigger_revision_id != command.launch_authority.revision_id
-                    || command.grant.trigger_revision_digest
-                        != command.launch_authority.revision_digest
-                    || command.launch_authority.session_id.as_ref()
-                        != Some(&command.grant.session_id)
-                {
-                    return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
+                    })?;
+                    let database_now = database_time_seconds(now).map_err(custom)?;
+                    let issued =
+                        timestamp_seconds(&receipt.issued_at, "provider receipt issue time")
+                            .map_err(custom)?;
+                    let expires = timestamp_seconds(&receipt.expires_at, "provider receipt expiry")
+                        .map_err(custom)?;
+                    let created =
+                        timestamp_seconds(&command.grant.created_at, "grant creation time")
+                            .map_err(custom)?;
+                    let policy_expires =
+                        timestamp_seconds(&policy.expires_at, "policy expiry").map_err(custom)?;
+                    if issued > database_now
+                        || expires <= database_now
+                        || expires > policy_expires
+                        || created > database_now
+                        || created < issued
+                        || created >= expires
+                    {
+                        return Err(custom(SponsorshipStoreError::GrantUnavailable));
+                    }
+                    require_receipt_matches_grant(&store.operational, &receipt, &command.grant)
+                        .map_err(custom)?;
+                    if store
+                        .grants
+                        .find_one(doc! { "launch_id": &command.grant.launch_id.0 })
+                        .session(&mut *session)
+                        .await?
+                        .is_some()
+                    {
+                        return Err(custom(SponsorshipStoreError::Conflict));
+                    }
+                    store
+                        .grants
+                        .insert_one(
+                            grant_doc(
+                                &store.cipher,
+                                &store.operational,
+                                &command.grant,
+                                &receipt,
+                                &policy.owner.controller().0,
+                            )
+                            .map_err(custom)?,
+                        )
+                        .session(&mut *session)
+                        .await?;
+                    store
+                        .replace_activation_in_transaction(
+                            session,
+                            command.expected_revision,
+                            &command.intent,
+                            None,
+                        )
+                        .await?;
+                    store.audit_in_transaction(session, &command.audit).await?;
+                    Ok(command.grant.clone())
                 }
-                let receipt = stored.provider_receipt.clone().ok_or_else(|| {
-                    custom(SponsorshipStoreError::Malformed(
-                        "confirmed activation has no provider receipt".into(),
-                    ))
-                })?;
-                let database_now = database_time_seconds(now).map_err(custom)?;
-                let issued = timestamp_seconds(&receipt.issued_at, "provider receipt issue time")
-                    .map_err(custom)?;
-                let expires = timestamp_seconds(&receipt.expires_at, "provider receipt expiry")
-                    .map_err(custom)?;
-                if issued > database_now || expires <= database_now {
-                    return Err(custom(SponsorshipStoreError::GrantUnavailable));
+                .boxed()
+            })
+            .await;
+        if matches!(
+            &result,
+            Err(SponsorshipStoreError::Conflict | SponsorshipStoreError::StaleGeneration)
+        ) {
+            let stored = self
+                .grants
+                .find_one(doc! { "launch_id": &replay_candidate.launch_id.0 })
+                .await
+                .map_err(|error| {
+                    stored_read_failure("authenticate committed sponsored grant replay", error)
+                })?
+                .map(|document| {
+                    read_grant(&self.cipher, &self.operational, document).map(|(grant, _)| grant)
+                })
+                .transpose()?;
+            if let Some(stored) = stored {
+                if stored == replay_candidate {
+                    return Ok(stored);
                 }
-                require_receipt_matches_grant(&receipt, &command.grant).map_err(custom)?;
-                if store
-                    .grants
-                    .find_one(doc! { "launch_id": &command.grant.launch_id.0 })
-                    .session(&mut *session)
-                    .await?
-                    .is_some()
-                {
-                    return Err(custom(SponsorshipStoreError::Conflict));
-                }
-                store
-                    .grants
-                    .insert_one(grant_doc(&store.cipher, &command.grant, &receipt).map_err(custom)?)
-                    .session(&mut *session)
-                    .await?;
-                store
-                    .replace_activation_in_transaction(
-                        session,
-                        command.expected_revision,
-                        &command.intent,
-                        None,
-                    )
-                    .await?;
-                store.audit_in_transaction(session, &command.audit).await?;
-                Ok(command.grant.clone())
             }
-            .boxed()
-        })
-        .await
+        }
+        result
     }
 
     async fn complete_grant_activation_cleanup(
@@ -4064,6 +6690,10 @@ impl SponsorshipStore for MongoSponsorshipStore {
     ) -> Result<GrantActivationIntent, SponsorshipStoreError> {
         command
             .intent
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        command
+            .operation
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&command.audit)?;
@@ -4077,6 +6707,10 @@ impl SponsorshipStore for MongoSponsorshipStore {
                 if stored == command.intent {
                     return Ok(stored);
                 }
+                let stored_operation = stored
+                    .cleanup_operation
+                    .as_ref()
+                    .ok_or_else(|| custom(SponsorshipStoreError::StaleGeneration))?;
                 if stored.revision != command.expected_revision
                     || stored.lease.as_ref().map(|lease| lease.holder.as_str())
                         != Some(command.holder.as_str())
@@ -4084,10 +6718,19 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     || stored.state != GrantActivationState::CleanupPending
                     || !stored.capacity_held
                     || stored.provider_receipt != command.intent.provider_receipt
+                    || !activation_lineage_matches(&stored, &command.intent)
                     || command.intent.state != GrantActivationState::Cleaned
+                    || command.intent.denial.is_some()
                     || command.intent.capacity_held
                     || command.intent.lease.is_some()
                     || command.intent.cleanup_operation.is_some()
+                    || !matches!(
+                        stored_operation.phase,
+                        ProviderOperationPhase::Attempting | ProviderOperationPhase::Ambiguous
+                    )
+                    || !operation_lineage_matches(stored_operation, &command.operation)
+                    || command.intent.updated_at < stored.updated_at
+                    || command.audit.occurred_at != command.intent.updated_at
                     || command.intent.revision
                         != command.expected_revision.checked_add(1).ok_or_else(|| {
                             custom(SponsorshipStoreError::Malformed(
@@ -4140,10 +6783,25 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         != Some(command.holder.as_str())
                     || lease_expiry.is_none_or(|expires| expires <= now)
                     || !stored.capacity_held
+                    || !matches!(
+                        stored.state,
+                        GrantActivationState::BillingAttempting
+                            | GrantActivationState::BillingAmbiguous
+                            | GrantActivationState::ProviderAttempting
+                            | GrantActivationState::ProviderAmbiguous
+                    )
+                    || !activation_lineage_matches(&stored, &command.intent)
+                    || stored.provider_receipt.is_some()
+                    || command.intent.provider_receipt.is_some()
+                    || stored.cleanup_operation.is_some()
+                    || command.intent.cleanup_operation.is_some()
+                    || stored.denial.is_some()
                     || command.intent.state != GrantActivationState::Denied
                     || command.intent.denial != Some(GrantActivationDenial::AuthorityInvalidated)
                     || command.intent.capacity_held
                     || command.intent.lease.is_some()
+                    || command.intent.updated_at < stored.updated_at
+                    || command.audit.occurred_at != command.intent.updated_at
                     || command.intent.revision
                         != command.expected_revision.checked_add(1).ok_or_else(|| {
                             custom(SponsorshipStoreError::Malformed(
@@ -4180,7 +6838,9 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .find_one(doc! { "_id": &grant_id.0 })
             .await
             .map_err(|error| stored_read_failure("read encrypted provider grant receipt", error))?
-            .map(|document| read_grant(&self.cipher, document).map(|(_, receipt)| receipt))
+            .map(|document| {
+                read_grant(&self.cipher, &self.operational, document).map(|(_, receipt)| receipt)
+            })
             .transpose()
     }
 
@@ -4192,8 +6852,83 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .find_one(doc! { "_id": &id.0 })
             .await
             .map_err(|error| stored_read_failure("read sponsored grant", error))?
-            .map(|document| read_grant(&self.cipher, document).map(|(grant, _)| grant))
+            .as_ref()
+            .map(|document| read_grant_record(&self.operational, document))
             .transpose()
+    }
+
+    async fn grants_for_contributor(
+        &self,
+        contributor: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrant>, SponsorshipStoreError> {
+        validate_subject_query(contributor)?;
+        let filter = newest_page_filter(doc! { "contributor": &contributor.0 }, page)?;
+        let documents = self
+            .grants
+            .find(filter)
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(page_query_limit(page))
+            .await
+            .map_err(|error| stored_read_failure("list contributor sponsored grants", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| stored_read_failure("list contributor sponsored grants", error))?;
+        let mut grants = Vec::with_capacity(documents.len());
+        for document in documents {
+            if document.contributor != contributor.0 {
+                return Err(SponsorshipStoreError::Malformed(
+                    "contributor grant index crossed its subject boundary".into(),
+                ));
+            }
+            grants.push(read_grant_record(&self.operational, &document)?);
+        }
+        Ok(finish_newest_page(grants, page, |grant| {
+            (&grant.created_at, &grant.id.0)
+        }))
+    }
+
+    async fn grants_for_sponsor(
+        &self,
+        sponsor: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<SponsoredGrant>, SponsorshipStoreError> {
+        validate_subject_query(sponsor)?;
+        let filter = newest_page_filter(doc! { "sponsor_subject": &sponsor.0 }, page)?;
+        let documents = self
+            .grants
+            .find(filter)
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(page_query_limit(page))
+            .await
+            .map_err(|error| stored_read_failure("list sponsor-owned grants", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| stored_read_failure("list sponsor-owned grants", error))?;
+        let mut grants = Vec::with_capacity(documents.len());
+        for document in documents {
+            if document.sponsor_subject != sponsor.0 {
+                return Err(SponsorshipStoreError::Malformed(
+                    "sponsor grant index crossed its subject boundary".into(),
+                ));
+            }
+            let grant = read_grant_record(&self.operational, &document)?;
+            let policy = self.policy(&grant.policy_id).await?.ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "sponsor grant index references a missing policy".into(),
+                )
+            })?;
+            require_grant_policy_bindings(&grant, &policy)?;
+            if policy.owner.controller() != sponsor {
+                return Err(SponsorshipStoreError::Malformed(
+                    "sponsor grant index does not match its policy owner".into(),
+                ));
+            }
+            grants.push(grant);
+        }
+        Ok(finish_newest_page(grants, page, |grant| {
+            (&grant.created_at, &grant.id.0)
+        }))
     }
 
     async fn grant_for_launch(
@@ -4204,20 +6939,61 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .find_one(doc! { "launch_id": &launch_id.0 })
             .await
             .map_err(|error| stored_read_failure("read sponsored grant for Launch", error))?
-            .map(|document| read_grant(&self.cipher, document).map(|(grant, _)| grant))
+            .as_ref()
+            .map(|document| read_grant_record(&self.operational, document))
             .transpose()
     }
 
     async fn usage_reservation(
         &self,
-        stable_request_id: &str,
+        reservation_id: &SponsoredUsageReservationId,
     ) -> Result<Option<SponsoredUsageReservation>, SponsorshipStoreError> {
         self.reservations
-            .find_one(doc! { "_id": stable_request_id })
+            .find_one(doc! { "_id": &reservation_id.0 })
             .await
             .map_err(|error| stored_read_failure("read sponsored usage reservation", error))?
-            .map(|document| read_reservation(document).map(|(reservation, _, _)| reservation))
+            .map(|document| {
+                read_reservation(&self.operational, document).map(|(reservation, _, _)| reservation)
+            })
             .transpose()
+    }
+
+    async fn usage_reservation_for_request(
+        &self,
+        request_identity: &SponsorshipOperationalPseudonymSet,
+    ) -> Result<Option<SponsoredUsageReservation>, SponsorshipStoreError> {
+        let aliases = request_identity.encoded_candidates();
+        validate_operational_aliases(&self.operational, &aliases, "usage request candidate")?;
+        self.transaction(
+            (self.clone(), request_identity.clone()),
+            |session, (store, candidates)| {
+                async move {
+                    let Some((reservation, _, _, stored_aliases)) = store
+                        .reservation_for_request_in_transaction(session, candidates)
+                        .await?
+                    else {
+                        return Ok(None);
+                    };
+                    let aliases = candidates.encoded_candidates();
+                    if stored_aliases != aliases {
+                        let updated = store
+                            .reservations
+                            .update_one(
+                                doc! { "_id": &reservation.id.0 },
+                                doc! { "$set": { "request_aliases": aliases } },
+                            )
+                            .session(&mut *session)
+                            .await?;
+                        if updated.matched_count != 1 {
+                            return Err(custom(SponsorshipStoreError::Conflict));
+                        }
+                    }
+                    Ok(Some(reservation))
+                }
+                .boxed()
+            },
+        )
+        .await
     }
 
     async fn replace_grant(
@@ -4230,11 +7006,12 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
+        require_successor_generation(expected_generation, grant.generation, "grant")?;
         self.transaction(
             (self.clone(), expected_generation, grant.clone(), audit),
             |session, (store, expected, candidate, audit)| {
                 async move {
-                    let (stored, receipt) = store
+                    let (stored, stored_document) = store
                         .grant_in_transaction(session, &candidate.id)
                         .await?
                         .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
@@ -4248,18 +7025,19 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     if stored == *candidate {
                         return Ok(stored);
                     }
-                    if stored.usage != candidate.usage
-                        || stored.allocation != candidate.allocation
-                        || stored.id != candidate.id
-                        || stored.policy_id != candidate.policy_id
-                        || stored.launch_id != candidate.launch_id
-                        || stored.credential_generation != candidate.credential_generation
-                    {
-                        return Err(custom(SponsorshipStoreError::StaleGeneration));
+                    if !grant_update_is_legal(&stored, candidate) {
+                        return Err(custom(SponsorshipStoreError::Conflict));
                     }
-                    require_receipt_matches_grant(&receipt, candidate).map_err(custom)?;
                     store
-                        .replace_grant_in_transaction(session, *expected, candidate, &receipt)
+                        .replace_grant_in_transaction(
+                            session,
+                            *expected,
+                            candidate,
+                            &stored_document.sponsor_subject,
+                            stored_document.unresolved_usage,
+                            stored_document.provider_receipt,
+                            stored_document.encryption_key_id,
+                        )
                         .await?;
                     store.audit_in_transaction(session, audit).await?;
                     Ok(candidate.clone())
@@ -4281,6 +7059,7 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         validate_audit_event(&audit)?;
+        require_successor_generation(expected_generation, grant.generation, "grant")?;
         self.transaction(
             (
                 self.clone(),
@@ -4291,10 +7070,32 @@ impl SponsorshipStore for MongoSponsorshipStore {
             ),
             |session, (store, expected, candidate, reason, audit)| {
                 async move {
-                    let (stored, receipt) = store
+                    let (policy, _) = store
+                        .policy_in_transaction(session, &candidate.policy_id)
+                        .await?
+                        .ok_or_else(|| {
+                            custom(SponsorshipStoreError::Malformed(
+                                "stored grant references a missing sponsorship policy".into(),
+                            ))
+                        })?;
+                    let credential = if matches!(
+                        *reason,
+                        GrantCapacityRelease::Revoked | GrantCapacityRelease::Closed
+                    ) {
+                        Some(
+                            store
+                                .credential_record_in_transaction(session, &policy.credential_id)
+                                .await?
+                                .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?,
+                        )
+                    } else {
+                        None
+                    };
+                    let (stored, stored_document) = store
                         .grant_in_transaction(session, &candidate.id)
                         .await?
                         .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
+                    require_grant_policy_bindings(&stored, &policy).map_err(custom)?;
                     if stored == *candidate {
                         return Ok(stored);
                     }
@@ -4309,36 +7110,118 @@ impl SponsorshipStore for MongoSponsorshipStore {
                     };
                     if grant_capacity_is_released(stored.state)
                         || candidate.state != expected_state
-                        || candidate.generation
-                            != expected.checked_add(1).ok_or_else(|| {
-                                custom(SponsorshipStoreError::Malformed(
-                                    "grant generation exhausted".into(),
-                                ))
-                            })?
-                        || stored.policy_id != candidate.policy_id
+                        || !grant_lineage_matches(&stored, candidate)
                         || stored.usage != candidate.usage
                         || stored.allocation != candidate.allocation
+                        || candidate.pending_revocation.is_some()
+                        || candidate.updated_at < stored.updated_at
                     {
                         return Err(custom(SponsorshipStoreError::Conflict));
                     }
-                    if *reason == GrantCapacityRelease::Expired {
-                        let now = database_time_seconds(store.database_now(session).await?)
+                    match *reason {
+                        GrantCapacityRelease::Expired => {
+                            let now = database_time_seconds(store.database_now(session).await?)
+                                .map_err(custom)?;
+                            let expiry = timestamp_seconds(
+                                &stored.authority.expires_at,
+                                "provider grant expiry",
+                            )
                             .map_err(custom)?;
-                        let expiry = timestamp_seconds(
-                            &stored.authority.expires_at,
-                            "provider grant expiry",
-                        )
-                        .map_err(custom)?;
-                        if now < expiry {
-                            return Err(custom(SponsorshipStoreError::GrantUnavailable));
+                            if now < expiry {
+                                return Err(custom(SponsorshipStoreError::GrantUnavailable));
+                            }
+                        }
+                        GrantCapacityRelease::Exhausted => {
+                            if !candidate.usage.reaches_any_limit(&candidate.allocation) {
+                                return Err(custom(SponsorshipStoreError::Conflict));
+                            }
+                        }
+                        GrantCapacityRelease::Revoked | GrantCapacityRelease::Closed => {
+                            let expected_kind = if *reason == GrantCapacityRelease::Revoked {
+                                ProviderOperationKind::RevokeGrant
+                            } else {
+                                ProviderOperationKind::CloseGrant
+                            };
+                            let operation = stored.pending_revocation.as_ref();
+                            if operation.is_some_and(|operation| operation.kind != expected_kind) {
+                                return Err(custom(SponsorshipStoreError::Conflict));
+                            }
+                            let credential = credential
+                                .as_ref()
+                                .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
+                            let confirmed_revocation = credential
+                                .last_completed_operation
+                                .as_ref()
+                                .filter(|operation| {
+                                    operation.kind == ProviderOperationKind::RevokeCredential
+                                        && operation.outcome
+                                            == CompletedProviderOperationOutcome::Confirmed
+                                });
+                            let globally_retired = credential.state
+                                == SponsoredCredentialState::Revoked
+                                && credential.material_state
+                                    == SponsoredCredentialMaterialState::Retired
+                                && credential.revoked_at.is_some()
+                                && confirmed_revocation.is_some()
+                                && policy.id == stored.policy_id
+                                && policy.tenant_id == stored.tenant_id
+                                && policy.generation >= stored.policy_generation
+                                && credential.generation > stored.credential_generation
+                                && credential.owner == policy.owner
+                                && credential.authority.provider == policy.provider_policy.provider
+                                && credential.authority.provider_policy_key
+                                    == policy.provider_policy.provider_policy_key;
+                            let attempted_grant_revocation = stored.state
+                                == SponsoredGrantState::RevocationPending
+                                && operation.is_some_and(|operation| {
+                                    matches!(
+                                        operation.phase,
+                                        ProviderOperationPhase::Attempting
+                                            | ProviderOperationPhase::Ambiguous
+                                    )
+                                });
+                            if !globally_retired && !attempted_grant_revocation {
+                                return Err(custom(SponsorshipStoreError::Conflict));
+                            }
+                            let terminal_at = candidate
+                                .revoked_at
+                                .as_ref()
+                                .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
+                            if terminal_at < &stored.created_at
+                                || terminal_at < &stored.authority.issued_at
+                                || candidate.updated_at < *terminal_at
+                                || operation.is_some_and(|operation| {
+                                    terminal_at < &operation.requested_at
+                                        || operation
+                                            .attempted_at
+                                            .as_ref()
+                                            .is_some_and(|attempted_at| terminal_at < attempted_at)
+                                })
+                                || confirmed_revocation.is_some_and(|completion| {
+                                    terminal_at < &completion.completed_at
+                                })
+                            {
+                                return Err(custom(SponsorshipStoreError::Conflict));
+                            }
                         }
                     }
-                    require_receipt_matches_grant(&receipt, candidate).map_err(custom)?;
                     store
-                        .release_terminal_grant_capacity_in_transaction(session, &stored, None)
+                        .release_terminal_grant_capacity_in_transaction(
+                            session,
+                            &stored,
+                            &stored_document.unresolved_usage,
+                        )
                         .await?;
                     store
-                        .replace_grant_in_transaction(session, *expected, candidate, &receipt)
+                        .replace_grant_in_transaction(
+                            session,
+                            *expected,
+                            candidate,
+                            &stored_document.sponsor_subject,
+                            stored_document.unresolved_usage,
+                            stored_document.provider_receipt,
+                            stored_document.encryption_key_id,
+                        )
                         .await?;
                     store.audit_in_transaction(session, audit).await?;
                     Ok(candidate.clone())
@@ -4366,163 +7249,256 @@ impl SponsorshipStore for MongoSponsorshipStore {
             .launch_authority
             .validate()
             .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        let request_aliases = command.request.request_identity.encoded_candidates();
+        validate_operational_aliases(
+            &self.operational,
+            &request_aliases,
+            "usage request candidate",
+        )?;
         validate_gate(&command.gate_fence)?;
         validate_audit_event(&audit)?;
-        self.transaction(
-            (self.clone(), command, request_fingerprint, audit),
-            |session, (store, command, request_fingerprint, audit)| {
-                async move {
-                    if let Some((existing, _, _)) = store
-                        .reservation_in_transaction(session, &command.request.stable_request_id)
-                        .await?
-                    {
-                        if existing.idempotency_fingerprint
-                            != command.request.idempotency_fingerprint
+        let replay_identity = command.request.request_identity.clone();
+        let replay_fingerprint = command.request.idempotency_fingerprint.clone();
+        let result = self
+            .transaction(
+                (self.clone(), command, request_fingerprint, audit),
+                |session, (store, command, request_fingerprint, audit)| {
+                    async move {
+                        if let Some((existing, _, _, stored_aliases)) = store
+                            .reservation_for_request_in_transaction(
+                                session,
+                                &command.request.request_identity,
+                            )
+                            .await?
+                        {
+                            if existing.idempotency_fingerprint
+                                != command.request.idempotency_fingerprint
+                            {
+                                return Err(custom(SponsorshipStoreError::Conflict));
+                            }
+                            let request_aliases =
+                                command.request.request_identity.encoded_candidates();
+                            if stored_aliases != request_aliases {
+                                let updated = store
+                                    .reservations
+                                    .update_one(
+                                        doc! { "_id": &existing.id.0 },
+                                        doc! { "$set": { "request_aliases": request_aliases } },
+                                    )
+                                    .session(&mut *session)
+                                    .await?;
+                                if updated.matched_count != 1 {
+                                    return Err(custom(SponsorshipStoreError::Conflict));
+                                }
+                            }
+                            return Ok(SponsoredUsageReservationOutcome {
+                                disposition: ReservationDisposition::Existing,
+                                reservation: existing,
+                            });
+                        }
+                        let now = store.database_now(session).await?;
+                        let now_string = database_time_string(now);
+                        store
+                            .require_gate_in_transaction(session, &command.gate_fence)
+                            .await?;
+                        if command.request.price_quote_digest != command.price_quote.digest
+                            || command.request.maximum != command.price_quote.maximum
                         {
                             return Err(custom(SponsorshipStoreError::Conflict));
                         }
-                        return Ok(SponsoredUsageReservationOutcome {
-                            disposition: ReservationDisposition::Existing,
-                            reservation: existing,
-                        });
-                    }
-                    let now = store.database_now(session).await?;
-                    let now_string = database_time_string(now);
-                    store
-                        .require_gate_in_transaction(session, &command.gate_fence)
-                        .await?;
-                    if command.request.price_quote_digest != command.price_quote.digest
-                        || command.request.maximum != command.price_quote.maximum
-                    {
-                        return Err(custom(SponsorshipStoreError::Conflict));
-                    }
-                    let current_launch = store
-                        .launch_authority_in_transaction(
-                            session,
-                            &command.launch_authority.launch_id,
+                        let launch = store
+                            .launch_in_transaction(session, &command.launch_authority.launch_id)
+                            .await?
+                            .ok_or_else(|| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
+                        let policy_id = launch_sponsorship_policy_id(&launch).map_err(custom)?;
+                        let acceptance = store
+                            .acceptance_in_transaction(session, &launch.id)
+                            .await?
+                            .ok_or_else(|| custom(SponsorshipStoreError::AcceptanceChanged))?;
+                        let (policy, _) =
+                            store
+                                .policy_in_transaction(session, &policy_id)
+                                .await?
+                                .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
+                        let credential = store
+                            .credential_record_in_transaction(session, &policy.credential_id)
+                            .await?
+                            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
+                        let (grant, grant_document) = store
+                            .grant_in_transaction(session, &command.request.grant_id)
+                            .await?
+                            .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
+                        require_grant_policy_bindings(&grant, &policy).map_err(custom)?;
+                        let current_launch = SponsoredLaunchAuthority::from_launch(
+                            &launch, &policy,
                         )
-                        .await?
-                        .ok_or_else(|| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
-                    if current_launch != command.launch_authority
-                        || !matches!(
-                            current_launch.state,
-                            SponsoredLaunchState::Active | SponsoredLaunchState::Recoverable
-                        )
-                    {
-                        return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
-                    }
-                    let (grant, _) = store
-                        .grant_in_transaction(session, &command.request.grant_id)
-                        .await?
-                        .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
-                    let (policy, _) = store
-                        .policy_in_transaction(session, &grant.policy_id)
-                        .await?
-                        .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
-                    let credential = store
-                        .credential_record_in_transaction(session, &policy.credential_id)
-                        .await?
-                        .ok_or_else(|| custom(SponsorshipStoreError::GrantUnavailable))?;
-                    if !grant.is_active_at(&now_string)
-                        || !policy.is_available_at(&now_string)
-                        || credential.state != SponsoredCredentialState::Active
-                        || credential.material_state != SponsoredCredentialMaterialState::Retained
-                        || credential.owner != policy.owner
-                        || credential.authority.provider != policy.provider_policy.provider
-                        || credential.authority.provider_policy_key
-                            != policy.provider_policy.provider_policy_key
-                        || grant.policy_generation != command.policy_generation
-                        || policy.generation != command.policy_generation
-                        || grant.credential_generation != command.credential_generation
-                        || grant.contributor != command.request.requester
-                        || grant.capability.fingerprint != command.request.capability_fingerprint
-                        || grant.tenant_id != command.request.tenant_id
-                        || grant.trigger_revision_id != command.request.trigger_revision_id
-                        || grant.trigger_revision_digest != command.request.trigger_revision_digest
-                        || grant.launch_id != command.request.launch_id
-                        || grant.session_id != command.request.session_id
-                        || grant.launch_id != current_launch.launch_id
-                        || current_launch.session_id.as_ref() != Some(&grant.session_id)
-                        || current_launch.contributor != grant.contributor
-                        || command.request.provider != policy.provider_policy.provider
-                        || !policy
-                            .provider_policy
-                            .allowed_models
-                            .contains(&command.request.model)
-                        || !policy
-                            .provider_policy
-                            .allowed_resources
-                            .contains(&command.request.resource)
-                    {
-                        return Err(custom(SponsorshipStoreError::GrantUnavailable));
-                    }
-                    let launch_held = store
-                        .unresolved_usage_for_grant_in_transaction(session, &grant, None)
-                        .await?;
-                    let launch_projected = summary_add(&grant.usage, &launch_held)
-                        .and_then(|usage| summary_add(&usage, &command.request.maximum))
-                        .map_err(custom)?;
-                    if !launch_projected.quota.fits_within(grant.allocation.quota) {
-                        return Err(custom(SponsorshipStoreError::LaunchQuotaExceeded));
-                    }
-                    if launch_projected.spend_micros > grant.allocation.spend_micros {
-                        return Err(custom(SponsorshipStoreError::LaunchBudgetExceeded));
-                    }
+                        .map_err(|_| custom(SponsorshipStoreError::LaunchAuthorityChanged))?;
+                        if current_launch != command.launch_authority
+                            || !matches!(
+                                current_launch.state,
+                                SponsoredLaunchState::Active | SponsoredLaunchState::Recoverable
+                            )
+                        {
+                            return Err(custom(SponsorshipStoreError::LaunchAuthorityChanged));
+                        }
+                        let terms_digest = SponsoredGrantTerms::digest_from_policy(&policy)
+                            .map_err(|error| {
+                                custom(SponsorshipStoreError::Malformed(error.to_string()))
+                            })?;
+                        if !grant.is_active_at(&now_string)
+                            || !policy.is_available_at(&now_string)
+                            || credential.state != SponsoredCredentialState::Active
+                            || credential.material_state
+                                != SponsoredCredentialMaterialState::Retained
+                            || credential.generation < grant.credential_generation
+                            || credential.owner != policy.owner
+                            || credential.authority.provider != policy.provider_policy.provider
+                            || credential.authority.provider_policy_key
+                                != policy.provider_policy.provider_policy_key
+                            || grant.policy_generation != command.policy_generation
+                            || policy.generation != command.policy_generation
+                            || grant.credential_generation != command.credential_generation
+                            || acceptance != grant.acceptance
+                            || acceptance.policy_generation != policy.generation
+                            || acceptance.terms_digest != terms_digest
+                            || grant.terms_digest != acceptance.terms_digest
+                            || acceptance.launch_id != current_launch.launch_id
+                            || acceptance.contributor != current_launch.contributor
+                            || acceptance.revision_id != current_launch.revision_id
+                            || acceptance.revision_digest != current_launch.revision_digest
+                            || acceptance.policy_id != current_launch.policy_id
+                            || acceptance.launch_snapshot_digest
+                                != current_launch.launch_snapshot_digest
+                            || grant.contributor != command.request.requester
+                            || grant.capability.fingerprint
+                                != command.request.capability_fingerprint
+                            || grant.tenant_id != command.request.tenant_id
+                            || grant.trigger_revision_id != command.request.trigger_revision_id
+                            || grant.trigger_revision_digest
+                                != command.request.trigger_revision_digest
+                            || grant.launch_id != command.request.launch_id
+                            || grant.session_id != command.request.session_id
+                            || grant.launch_id != current_launch.launch_id
+                            || grant.tenant_id != current_launch.tenant_id
+                            || grant.policy_id != current_launch.policy_id
+                            || grant.trigger_revision_id != current_launch.revision_id
+                            || grant.trigger_revision_digest != current_launch.revision_digest
+                            || current_launch.session_id.as_ref() != Some(&grant.session_id)
+                            || current_launch.contributor != grant.contributor
+                            || command.request.provider != policy.provider_policy.provider
+                            || !policy
+                                .provider_policy
+                                .allowed_models
+                                .contains(&command.request.model)
+                            || !policy
+                                .provider_policy
+                                .allowed_resources
+                                .contains(&command.request.resource)
+                        {
+                            return Err(custom(SponsorshipStoreError::GrantUnavailable));
+                        }
+                        let launch_projected =
+                            summary_add(&grant.usage, &grant_document.unresolved_usage)
+                                .and_then(|usage| summary_add(&usage, &command.request.maximum))
+                                .map_err(custom)?;
+                        if !launch_projected.quota.fits_within(grant.allocation.quota) {
+                            return Err(custom(SponsorshipStoreError::LaunchQuotaExceeded));
+                        }
+                        if launch_projected.spend_micros > grant.allocation.spend_micros {
+                            return Err(custom(SponsorshipStoreError::LaunchBudgetExceeded));
+                        }
 
-                    store
-                        .advance_policy_rate_fence_in_transaction(session, &policy.id)
-                        .await?;
-                    let window_start = DateTime::from_millis(
-                        now.timestamp_millis()
-                            .checked_sub(RATE_WINDOW_MILLIS)
-                            .ok_or_else(|| {
-                                custom(SponsorshipStoreError::Malformed(
-                                    "sponsorship rate window underflowed".into(),
-                                ))
-                            })?,
-                    );
-                    let recent = store
-                        .reservations
-                        .count_documents(doc! {
-                            "policy_id": &policy.id.0,
-                            "rate_observed_at": { "$gt": window_start },
+                        store
+                            .advance_policy_rate_fence_in_transaction(session, &policy.id)
+                            .await?;
+                        let window_start = DateTime::from_millis(
+                            now.timestamp_millis()
+                                .checked_sub(RATE_WINDOW_MILLIS)
+                                .ok_or_else(|| {
+                                    custom(SponsorshipStoreError::Malformed(
+                                        "sponsorship rate window underflowed".into(),
+                                    ))
+                                })?,
+                        );
+                        let recent = store
+                            .reservations
+                            .count_documents(doc! {
+                                "policy_id": &policy.id.0,
+                                "rate_observed_at": { "$gt": window_start },
+                            })
+                            .session(&mut *session)
+                            .await?;
+                        if recent >= u64::from(policy.max_requests_per_minute) {
+                            return Err(custom(SponsorshipStoreError::RateExceeded));
+                        }
+
+                        let reservation = SponsoredUsageReservation {
+                            id: command.request.reservation_id.clone(),
+                            idempotency_fingerprint: command
+                                .request
+                                .idempotency_fingerprint
+                                .clone(),
+                            request_fingerprint: request_fingerprint.clone(),
+                            grant_id: grant.id.clone(),
+                            price_quote: command.price_quote.clone(),
+                            reserved: command.request.maximum.clone(),
+                            state: SponsoredUsageState::Reserved,
+                            created_at: command.now.clone(),
+                            updated_at: command.now.clone(),
+                            actual: None,
+                        };
+                        reservation.validate().map_err(|error| {
+                            custom(SponsorshipStoreError::Malformed(error.to_string()))
+                        })?;
+                        let unresolved_usage =
+                            summary_add(&grant_document.unresolved_usage, &reservation.reserved)
+                                .map_err(custom)?;
+                        store
+                            .replace_grant_in_transaction(
+                                session,
+                                grant.generation,
+                                &grant,
+                                &grant_document.sponsor_subject,
+                                unresolved_usage,
+                                grant_document.provider_receipt,
+                                grant_document.encryption_key_id,
+                            )
+                            .await?;
+                        store
+                            .reservations
+                            .insert_one(
+                                reservation_doc(
+                                    &store.operational,
+                                    &reservation,
+                                    &command.request.request_identity.encoded_candidates(),
+                                    &policy.id,
+                                    now,
+                                )
+                                .map_err(custom)?,
+                            )
+                            .session(&mut *session)
+                            .await?;
+                        store.audit_in_transaction(session, audit).await?;
+                        Ok(SponsoredUsageReservationOutcome {
+                            disposition: ReservationDisposition::Created,
+                            reservation,
                         })
-                        .session(&mut *session)
-                        .await?;
-                    if recent >= u64::from(policy.max_requests_per_minute) {
-                        return Err(custom(SponsorshipStoreError::RateExceeded));
                     }
-
-                    let reservation = SponsoredUsageReservation {
-                        stable_request_id: command.request.stable_request_id.clone(),
-                        idempotency_fingerprint: command.request.idempotency_fingerprint.clone(),
-                        request_fingerprint: request_fingerprint.clone(),
-                        grant_id: grant.id,
-                        price_quote: command.price_quote.clone(),
-                        reserved: command.request.maximum.clone(),
-                        state: SponsoredUsageState::Reserved,
-                        created_at: command.now.clone(),
-                        updated_at: command.now.clone(),
-                        actual: None,
-                    };
-                    reservation.validate().map_err(|error| {
-                        custom(SponsorshipStoreError::Malformed(error.to_string()))
-                    })?;
-                    store
-                        .reservations
-                        .insert_one(reservation_doc(&reservation, &policy.id, now).map_err(custom)?)
-                        .session(&mut *session)
-                        .await?;
-                    store.audit_in_transaction(session, audit).await?;
-                    Ok(SponsoredUsageReservationOutcome {
-                        disposition: ReservationDisposition::Created,
-                        reservation,
-                    })
+                    .boxed()
+                },
+            )
+            .await;
+        if result == Err(SponsorshipStoreError::Conflict) {
+            if let Some(existing) = self.usage_reservation_for_request(&replay_identity).await? {
+                if existing.idempotency_fingerprint == replay_fingerprint {
+                    return Ok(SponsoredUsageReservationOutcome {
+                        disposition: ReservationDisposition::Existing,
+                        reservation: existing,
+                    });
                 }
-                .boxed()
-            },
-        )
-        .await
+            }
+        }
+        result
     }
 
     async fn reconcile_usage(
@@ -4535,8 +7511,8 @@ impl SponsorshipStore for MongoSponsorshipStore {
             (self.clone(), command, audit),
             |session, (store, command, audit)| {
                 async move {
-                    let (current, policy_id, rate_observed_at) = store
-                        .reservation_in_transaction(session, &command.stable_request_id)
+                    let (current, policy_id, rate_observed_at, request_aliases) = store
+                        .reservation_in_transaction(session, &command.reservation_id)
                         .await?
                         .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
                     if current.request_fingerprint != command.request_fingerprint {
@@ -4576,98 +7552,122 @@ impl SponsorshipStore for MongoSponsorshipStore {
                         custom(SponsorshipStoreError::Malformed(error.to_string()))
                     })?;
 
-                    if let Some(actual) = command
-                        .actual
-                        .as_ref()
-                        .filter(|_| command.outcome == SponsoredUsageState::Settled)
-                    {
-                        let (mut grant, receipt) = store
+                    if matches!(
+                        command.outcome,
+                        SponsoredUsageState::Settled | SponsoredUsageState::Released
+                    ) {
+                        let (mut grant, grant_document) = store
                             .grant_in_transaction(session, &current.grant_id)
                             .await?
                             .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
                         let expected_generation = grant.generation;
-                        grant.usage = summary_add(&grant.usage, actual).map_err(custom)?;
-                        grant.updated_at = replacement.updated_at.clone();
+                        let unresolved_usage =
+                            summary_sub(&grant_document.unresolved_usage, &current.reserved)
+                                .map_err(custom)?;
                         let capacity_was_released = grant_capacity_is_released(grant.state);
-                        let becomes_exhausted = !capacity_was_released
-                            && matches!(
-                                grant.state,
-                                SponsoredGrantState::Active | SponsoredGrantState::Suspended
-                            )
-                            && grant.usage.reaches_any_limit(&grant.allocation);
-                        let (policy, mut usage) = store
-                            .policy_in_transaction(session, &grant.policy_id)
-                            .await?
-                            .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                        usage.consumed = summary_add(&usage.consumed, actual).map_err(custom)?;
-                        let released_hold = if capacity_was_released {
-                            &current.reserved
-                        } else {
-                            actual
-                        };
-                        usage.reserved =
-                            summary_sub(&usage.reserved, released_hold).map_err(custom)?;
-                        store
-                            .replace_policy_usage_in_transaction(session, &policy, &usage)
-                            .await?;
-                        if becomes_exhausted {
-                            grant.generation =
-                                grant.generation.checked_add(1).ok_or_else(|| {
-                                    custom(SponsorshipStoreError::Malformed(
-                                        "grant generation exhausted".into(),
-                                    ))
-                                })?;
-                            grant.state = SponsoredGrantState::Exhausted;
-                            grant.refresh_capability().map_err(|error| {
-                                custom(SponsorshipStoreError::Malformed(error.to_string()))
-                            })?;
-                            store
-                                .release_terminal_grant_capacity_in_transaction(
-                                    session,
-                                    &grant,
-                                    Some(&current.stable_request_id),
+
+                        if let Some(actual) = command
+                            .actual
+                            .as_ref()
+                            .filter(|_| command.outcome == SponsoredUsageState::Settled)
+                        {
+                            grant.usage = summary_add(&grant.usage, actual).map_err(custom)?;
+                            grant.updated_at = replacement.updated_at.clone();
+                            let becomes_exhausted = !capacity_was_released
+                                && matches!(
+                                    grant.state,
+                                    SponsoredGrantState::Active | SponsoredGrantState::Suspended
                                 )
-                                .await?;
-                        }
-                        grant.validate().map_err(|error| {
-                            custom(SponsorshipStoreError::Malformed(error.to_string()))
-                        })?;
-                        require_receipt_matches_grant(&receipt, &grant).map_err(custom)?;
-                        store
-                            .replace_grant_in_transaction(
-                                session,
-                                expected_generation,
-                                &grant,
-                                &receipt,
-                            )
-                            .await?;
-                    } else if command.outcome == SponsoredUsageState::Released {
-                        let (grant, _) = store
-                            .grant_in_transaction(session, &current.grant_id)
-                            .await?
-                            .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
-                        if grant_capacity_is_released(grant.state) {
+                                && grant.usage.reaches_any_limit(&grant.allocation);
                             let (policy, mut usage) = store
                                 .policy_in_transaction(session, &grant.policy_id)
                                 .await?
-                                .ok_or_else(|| custom(SponsorshipStoreError::Conflict))?;
+                                .ok_or_else(|| {
+                                    custom(SponsorshipStoreError::Malformed(
+                                        "stored grant references a missing sponsorship policy"
+                                            .into(),
+                                    ))
+                                })?;
+                            require_grant_policy_bindings(&grant, &policy).map_err(custom)?;
+                            usage.consumed =
+                                summary_add(&usage.consumed, actual).map_err(custom)?;
+                            let released_hold = if capacity_was_released {
+                                &current.reserved
+                            } else {
+                                actual
+                            };
+                            usage.reserved =
+                                summary_sub(&usage.reserved, released_hold).map_err(custom)?;
+                            store
+                                .replace_policy_usage_in_transaction(session, &policy, &usage)
+                                .await?;
+                            if becomes_exhausted {
+                                grant.generation =
+                                    grant.generation.checked_add(1).ok_or_else(|| {
+                                        custom(SponsorshipStoreError::Malformed(
+                                            "grant generation exhausted".into(),
+                                        ))
+                                    })?;
+                                grant.state = SponsoredGrantState::Exhausted;
+                                grant.refresh_capability().map_err(|error| {
+                                    custom(SponsorshipStoreError::Malformed(error.to_string()))
+                                })?;
+                                store
+                                    .release_terminal_grant_capacity_in_transaction(
+                                        session,
+                                        &grant,
+                                        &unresolved_usage,
+                                    )
+                                    .await?;
+                            }
+                        } else if capacity_was_released {
+                            let (policy, mut usage) = store
+                                .policy_in_transaction(session, &grant.policy_id)
+                                .await?
+                                .ok_or_else(|| {
+                                    custom(SponsorshipStoreError::Malformed(
+                                        "stored grant references a missing sponsorship policy"
+                                            .into(),
+                                    ))
+                                })?;
+                            require_grant_policy_bindings(&grant, &policy).map_err(custom)?;
                             usage.reserved =
                                 summary_sub(&usage.reserved, &current.reserved).map_err(custom)?;
                             store
                                 .replace_policy_usage_in_transaction(session, &policy, &usage)
                                 .await?;
                         }
+                        grant.validate().map_err(|error| {
+                            custom(SponsorshipStoreError::Malformed(error.to_string()))
+                        })?;
+                        store
+                            .replace_grant_in_transaction(
+                                session,
+                                expected_generation,
+                                &grant,
+                                &grant_document.sponsor_subject,
+                                unresolved_usage,
+                                grant_document.provider_receipt,
+                                grant_document.encryption_key_id,
+                            )
+                            .await?;
                     }
 
                     let result = store
                         .reservations
                         .replace_one(
                             doc! {
-                                "_id": &current.stable_request_id,
+                                "_id": &current.id.0,
                                 "state": usage_state_code(current.state),
                             },
-                            reservation_doc(&replacement, &policy_id, rate_observed_at)
-                                .map_err(custom)?,
+                            reservation_doc(
+                                &store.operational,
+                                &replacement,
+                                &request_aliases,
+                                &policy_id,
+                                rate_observed_at,
+                            )
+                            .map_err(custom)?,
                         )
                         .session(&mut *session)
                         .await?;
@@ -4681,6 +7681,607 @@ impl SponsorshipStore for MongoSponsorshipStore {
             },
         )
         .await
+    }
+
+    async fn credential_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredCredentialId>, SponsorshipStoreError> {
+        const DOMAIN: &str = "credential_recovery";
+        let filter = recovery_page_filter(
+            doc! { "state": { "$in": ["rotation_pending", "revocation_pending"] } },
+            page,
+            DOMAIN,
+        )?;
+        let documents = self
+            .credentials
+            .find(filter)
+            .sort(doc! { "updated_at": 1, "_id": 1 })
+            .limit(recovery_query_limit(page))
+            .await
+            .map_err(|error| unavailable("discover credential recovery work", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read credential recovery work", error))?;
+        let mut rows = Vec::with_capacity(documents.len());
+        for document in documents {
+            let record = read_credential_record(&self.cipher, &self.operational, &document)?;
+            if !matches!(
+                record.state,
+                SponsoredCredentialState::RotationPending
+                    | SponsoredCredentialState::RevocationPending
+            ) {
+                return Err(SponsorshipStoreError::Malformed(
+                    "credential recovery index contains a terminal row".into(),
+                ));
+            }
+            rows.push((record.updated_at, record.id));
+        }
+        let page = finish_recovery_page(rows, page, DOMAIN, |row| (&row.0, &row.1 .0))?;
+        Ok(SponsorshipRecoveryPage {
+            items: page.items.into_iter().map(|(_, id)| id).collect(),
+            next: page.next,
+        })
+    }
+
+    async fn activation_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<LaunchId>, SponsorshipStoreError> {
+        const DOMAIN: &str = "activation_recovery";
+        let states = [
+            "billing_attempting",
+            "billing_ambiguous",
+            "provider_attempting",
+            "provider_ambiguous",
+            "provider_confirmed",
+            "cleanup_pending",
+        ];
+        let filter = recovery_page_filter(doc! { "state": { "$in": states } }, page, DOMAIN)?;
+        let documents = self
+            .activations
+            .find(filter)
+            .sort(doc! { "updated_at": 1, "_id": 1 })
+            .limit(recovery_query_limit(page))
+            .await
+            .map_err(|error| unavailable("discover activation recovery work", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read activation recovery work", error))?;
+        let mut rows = Vec::with_capacity(documents.len());
+        for document in documents {
+            let (intent, _) = read_activation(&self.cipher, &self.operational, document)?;
+            if !matches!(
+                intent.state,
+                GrantActivationState::BillingAttempting
+                    | GrantActivationState::BillingAmbiguous
+                    | GrantActivationState::ProviderAttempting
+                    | GrantActivationState::ProviderAmbiguous
+                    | GrantActivationState::ProviderConfirmed
+                    | GrantActivationState::CleanupPending
+            ) {
+                return Err(SponsorshipStoreError::Malformed(
+                    "activation recovery index contains a terminal row".into(),
+                ));
+            }
+            rows.push((intent.updated_at, intent.launch_id));
+        }
+        let page = finish_recovery_page(rows, page, DOMAIN, |row| (&row.0, &row.1 .0))?;
+        Ok(SponsorshipRecoveryPage {
+            items: page.items.into_iter().map(|(_, id)| id).collect(),
+            next: page.next,
+        })
+    }
+
+    async fn grant_recovery_candidates(
+        &self,
+        as_of: &str,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredGrantId>, SponsorshipStoreError> {
+        if layer2_core::seconds_from_rfc3339(as_of).is_none() {
+            return Err(SponsorshipStoreError::Malformed(
+                "grant recovery clock fence is not a CMA timestamp".into(),
+            ));
+        }
+        let domain = format!("grant_recovery:{as_of}");
+        let revocation_filter = recovery_page_filter_on(
+            doc! {
+                "state": "revocation_pending",
+                "updated_at": { "$lte": as_of },
+            },
+            page,
+            &domain,
+            "updated_at",
+        )?;
+        let revocation_documents = self
+            .grants
+            .find(revocation_filter)
+            .sort(doc! { "updated_at": 1, "_id": 1 })
+            .hint(Hint::Name("sponsorship_grants_recovery".into()))
+            .limit(recovery_query_limit(page))
+            .await
+            .map_err(|error| unavailable("discover grant revocation recovery work", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read grant revocation recovery work", error))?;
+        let mut rows =
+            Vec::with_capacity(revocation_documents.len() + 2 * (page.limit() as usize + 1));
+        for document in revocation_documents {
+            let grant = read_grant_record(&self.operational, &document)?;
+            if grant.state != SponsoredGrantState::RevocationPending
+                || grant.updated_at.as_str() > as_of
+            {
+                return Err(SponsorshipStoreError::Malformed(
+                    "grant revocation recovery index contains an ineligible row".into(),
+                ));
+            }
+            rows.push((grant.updated_at, grant.id));
+        }
+
+        for (state_code, expected_state) in [
+            ("active", SponsoredGrantState::Active),
+            ("suspended", SponsoredGrantState::Suspended),
+        ] {
+            let expiry_filter = recovery_page_filter_on(
+                doc! {
+                    "state": state_code,
+                    "expires_at": { "$lte": as_of },
+                },
+                page,
+                &domain,
+                "expires_at",
+            )?;
+            let documents = self
+                .grants
+                .find(expiry_filter)
+                .sort(doc! { "expires_at": 1, "_id": 1 })
+                .hint(Hint::Name("sponsorship_grants_due".into()))
+                .limit(recovery_query_limit(page))
+                .await
+                .map_err(|error| unavailable("discover due grant expiry work", error))?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| unavailable("read due grant expiry work", error))?;
+            for document in documents {
+                let grant = read_grant_record(&self.operational, &document)?;
+                if grant.state != expected_state || grant.authority.expires_at.as_str() > as_of {
+                    return Err(SponsorshipStoreError::Malformed(
+                        "grant expiry index contains an ineligible row".into(),
+                    ));
+                }
+                rows.push((grant.authority.expires_at, grant.id));
+            }
+        }
+
+        rows.sort_by(|left, right| (&left.0, &left.1 .0).cmp(&(&right.0, &right.1 .0)));
+        let page = finish_recovery_page(rows, page, &domain, |row| (&row.0, &row.1 .0))?;
+        Ok(SponsorshipRecoveryPage {
+            items: page.items.into_iter().map(|(_, id)| id).collect(),
+            next: page.next,
+        })
+    }
+
+    async fn usage_recovery_candidates(
+        &self,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsoredUsageReservationId>, SponsorshipStoreError> {
+        const DOMAIN: &str = "usage_recovery";
+        let filter = recovery_page_filter(doc! { "state": "ambiguous" }, page, DOMAIN)?;
+        let documents = self
+            .reservations
+            .find(filter)
+            .sort(doc! { "updated_at": 1, "_id": 1 })
+            .limit(recovery_query_limit(page))
+            .await
+            .map_err(|error| unavailable("discover usage recovery work", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read usage recovery work", error))?;
+        let mut rows = Vec::with_capacity(documents.len());
+        for document in documents {
+            let (reservation, _, _) = read_reservation(&self.operational, document)?;
+            if reservation.state != SponsoredUsageState::Ambiguous {
+                return Err(SponsorshipStoreError::Malformed(
+                    "usage recovery index contains a terminal row".into(),
+                ));
+            }
+            rows.push((reservation.updated_at, reservation.id));
+        }
+        let page = finish_recovery_page(rows, page, DOMAIN, |row| (&row.0, &row.1 .0))?;
+        Ok(SponsorshipRecoveryPage {
+            items: page.items.into_iter().map(|(_, id)| id).collect(),
+            next: page.next,
+        })
+    }
+
+    async fn ciphertext_rewrap_candidates(
+        &self,
+        kind: SponsorshipCiphertextRecordKind,
+        retiring_key_id: &str,
+        page: &SponsorshipRecoveryPageRequest,
+    ) -> Result<SponsorshipRecoveryPage<SponsorshipCiphertextRewrapCandidate>, SponsorshipStoreError>
+    {
+        validate_key_id(retiring_key_id).map_err(SponsorshipStoreError::Malformed)?;
+        if retiring_key_id == self.cipher.current_key_id() {
+            return Ok(SponsorshipRecoveryPage {
+                items: Vec::new(),
+                next: None,
+            });
+        }
+        let domain = rewrap_domain(kind, retiring_key_id);
+        let base = doc! { "encryption_key_id": retiring_key_id };
+        let filter = rewrap_page_filter(base, page, &domain)?;
+        let mut items = Vec::new();
+        match kind {
+            SponsorshipCiphertextRecordKind::Credential => {
+                let documents = self
+                    .credentials
+                    .clone_with_type::<Document>()
+                    .find(filter)
+                    .sort(doc! { "_id": 1 })
+                    .limit(recovery_query_limit(page))
+                    .await
+                    .map_err(|error| unavailable("discover credential rewrap work", error))?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(|error| unavailable("read credential rewrap work", error))?;
+                for raw_document in documents {
+                    let document_fingerprint = rewrap_document_fingerprint(kind, &raw_document)?;
+                    let document: CredentialDoc =
+                        decode_rewrap_document(raw_document, "sponsorship credential")?;
+                    SponsoredCredentialId::parse(document.id.clone())
+                        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+                    if document.encryption_key_id != retiring_key_id
+                        || document.provider_policy_handle.key_id() != retiring_key_id
+                        || document
+                            .current_secret
+                            .as_ref()
+                            .is_some_and(|envelope| envelope.key_id() != retiring_key_id)
+                        || document
+                            .pending_secret
+                            .as_ref()
+                            .is_some_and(|envelope| envelope.key_id() != retiring_key_id)
+                    {
+                        return Err(SponsorshipStoreError::Malformed(
+                            "credential rewrap index does not match its envelopes".into(),
+                        ));
+                    }
+                    items.push(SponsorshipCiphertextRewrapCandidate {
+                        kind,
+                        record_id: document.id,
+                        retiring_key_id: retiring_key_id.to_string(),
+                        document_fingerprint,
+                    });
+                }
+            }
+            SponsorshipCiphertextRecordKind::GrantActivation => {
+                let documents = self
+                    .activations
+                    .clone_with_type::<Document>()
+                    .find(filter)
+                    .sort(doc! { "_id": 1 })
+                    .limit(recovery_query_limit(page))
+                    .await
+                    .map_err(|error| unavailable("discover activation rewrap work", error))?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(|error| unavailable("read activation rewrap work", error))?;
+                for raw_document in documents {
+                    let document_fingerprint = rewrap_document_fingerprint(kind, &raw_document)?;
+                    let document: ActivationDoc =
+                        decode_rewrap_document(raw_document, "sponsorship grant activation")?;
+                    LaunchId::parse(document.launch_id.clone())
+                        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+                    if document.encryption_key_id != retiring_key_id
+                        || document.provider_receipt.as_ref().is_some_and(|receipt| {
+                            receipt.provider_grant_id.key_id() != retiring_key_id
+                                || receipt.revocation_handle.key_id() != retiring_key_id
+                        })
+                    {
+                        return Err(SponsorshipStoreError::Malformed(
+                            "activation rewrap index does not match its envelopes".into(),
+                        ));
+                    }
+                    items.push(SponsorshipCiphertextRewrapCandidate {
+                        kind,
+                        record_id: document.launch_id,
+                        retiring_key_id: retiring_key_id.to_string(),
+                        document_fingerprint,
+                    });
+                }
+            }
+            SponsorshipCiphertextRecordKind::Grant => {
+                let documents = self
+                    .grants
+                    .clone_with_type::<Document>()
+                    .find(filter)
+                    .sort(doc! { "_id": 1 })
+                    .limit(recovery_query_limit(page))
+                    .await
+                    .map_err(|error| unavailable("discover grant rewrap work", error))?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(|error| unavailable("read grant rewrap work", error))?;
+                for raw_document in documents {
+                    let document_fingerprint = rewrap_document_fingerprint(kind, &raw_document)?;
+                    let document: GrantDoc =
+                        decode_rewrap_document(raw_document, "sponsored grant")?;
+                    SponsoredGrantId::parse(document.id.clone())
+                        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+                    if document.encryption_key_id != retiring_key_id
+                        || document.provider_receipt.provider_grant_id.key_id() != retiring_key_id
+                        || document.provider_receipt.revocation_handle.key_id() != retiring_key_id
+                    {
+                        return Err(SponsorshipStoreError::Malformed(
+                            "grant rewrap index does not match its envelopes".into(),
+                        ));
+                    }
+                    items.push(SponsorshipCiphertextRewrapCandidate {
+                        kind,
+                        record_id: document.id,
+                        retiring_key_id: retiring_key_id.to_string(),
+                        document_fingerprint,
+                    });
+                }
+            }
+        }
+        finish_rewrap_page(items, page, &domain)
+    }
+
+    async fn rewrap_ciphertext(
+        &self,
+        candidate: &SponsorshipCiphertextRewrapCandidate,
+    ) -> Result<bool, SponsorshipStoreError> {
+        validate_key_id(&candidate.retiring_key_id).map_err(SponsorshipStoreError::Malformed)?;
+        if !is_digest(&candidate.document_fingerprint) {
+            return Err(SponsorshipStoreError::Malformed(
+                "sponsorship rewrap document fingerprint is not a digest".into(),
+            ));
+        }
+        if candidate.retiring_key_id == self.cipher.current_key_id() {
+            return Ok(false);
+        }
+        let lookup_filter = doc! {
+            "_id": &candidate.record_id,
+            "encryption_key_id": &candidate.retiring_key_id,
+        };
+        let current_key_id = self.cipher.current_key_id().to_string();
+        let modified = match candidate.kind {
+            SponsorshipCiphertextRecordKind::Credential => {
+                SponsoredCredentialId::parse(candidate.record_id.clone())
+                    .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+                let Some(raw_document) = self
+                    .credentials
+                    .clone_with_type::<Document>()
+                    .find_one(lookup_filter.clone())
+                    .await
+                    .map_err(|error| stored_read_failure("read credential for rewrap", error))?
+                else {
+                    return Ok(false);
+                };
+                if rewrap_document_fingerprint(candidate.kind, &raw_document)?
+                    != candidate.document_fingerprint
+                {
+                    return Ok(false);
+                }
+                let filter = rewrap_exact_document_filter(
+                    &raw_document,
+                    &candidate.record_id,
+                    &candidate.retiring_key_id,
+                );
+                let document: CredentialDoc =
+                    decode_rewrap_document(raw_document, "sponsorship credential")?;
+                let record = read_credential_record(&self.cipher, &self.operational, &document)?;
+                let context = credential_cipher_context(
+                    &document.id,
+                    &record.owner,
+                    &record.authority.provider,
+                    &record.authority.provider_policy_key,
+                    &record.authority.provider_credential_id_digest,
+                    &record.authority.ownership_verified_at,
+                    &record.created_at,
+                    record.authority.state_version,
+                    record.authority.supports_expiry,
+                    record.authority.supports_revocation,
+                )?;
+                let required = |field: &str,
+                                envelope: &SponsorshipCipherEnvelope|
+                 -> Result<SponsorshipCipherEnvelope, SponsorshipStoreError> {
+                    self.cipher
+                        .rewrap("credential", &document.id, field, &context, envelope)?
+                        .ok_or_else(|| {
+                            SponsorshipStoreError::Malformed(
+                                "credential rewrap key index is already current".into(),
+                            )
+                        })
+                };
+                let mut set = Document::new();
+                set.insert(
+                    "provider_policy_handle",
+                    envelope_bson(&required(
+                        "provider_policy_handle",
+                        &document.provider_policy_handle,
+                    )?)?,
+                );
+                if let Some(envelope) = &document.current_secret {
+                    set.insert(
+                        "current_secret",
+                        envelope_bson(&required("current_secret", envelope)?)?,
+                    );
+                }
+                if let Some(envelope) = &document.pending_secret {
+                    set.insert(
+                        "pending_secret",
+                        envelope_bson(&required("pending_secret", envelope)?)?,
+                    );
+                }
+                set.insert("encryption_key_id", current_key_id.clone());
+                self.credentials
+                    .update_one(filter, doc! { "$set": set })
+                    .await
+                    .map_err(|error| unavailable("rewrap credential ciphertext", error))?
+                    .modified_count
+            }
+            SponsorshipCiphertextRecordKind::GrantActivation => {
+                LaunchId::parse(candidate.record_id.clone())
+                    .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+                let Some(raw_document) = self
+                    .activations
+                    .clone_with_type::<Document>()
+                    .find_one(lookup_filter.clone())
+                    .await
+                    .map_err(|error| stored_read_failure("read activation for rewrap", error))?
+                else {
+                    return Ok(false);
+                };
+                if rewrap_document_fingerprint(candidate.kind, &raw_document)?
+                    != candidate.document_fingerprint
+                {
+                    return Ok(false);
+                }
+                let filter = rewrap_exact_document_filter(
+                    &raw_document,
+                    &candidate.record_id,
+                    &candidate.retiring_key_id,
+                );
+                let document: ActivationDoc =
+                    decode_rewrap_document(raw_document, "sponsorship grant activation")?;
+                let (intent, _) =
+                    read_activation(&self.cipher, &self.operational, document.clone())?;
+                let context = activation_cipher_context(
+                    &intent.launch_id.0,
+                    &intent.session_id.0,
+                    &intent.policy_id.0,
+                    intent.policy_generation,
+                    intent.credential_generation,
+                    &intent.launch_authority_digest,
+                    &intent.acceptance_digest,
+                    &intent.gate_fence,
+                    &intent.allocation,
+                    &intent.request_fingerprint,
+                    &intent.billing_request_id,
+                    &intent.provider_request_id,
+                    &intent.created_at,
+                )?;
+                let mut set = Document::new();
+                if let Some(mut receipt) = document.provider_receipt {
+                    receipt.provider_grant_id = self
+                        .cipher
+                        .rewrap(
+                            "activation",
+                            &document.launch_id,
+                            "provider_grant_id",
+                            &context,
+                            &receipt.provider_grant_id,
+                        )?
+                        .ok_or_else(|| {
+                            SponsorshipStoreError::Malformed(
+                                "activation rewrap key index is already current".into(),
+                            )
+                        })?;
+                    receipt.revocation_handle = self
+                        .cipher
+                        .rewrap(
+                            "activation",
+                            &document.launch_id,
+                            "revocation_handle",
+                            &context,
+                            &receipt.revocation_handle,
+                        )?
+                        .ok_or_else(|| {
+                            SponsorshipStoreError::Malformed(
+                                "activation rewrap key index is already current".into(),
+                            )
+                        })?;
+                    set.insert(
+                        "provider_receipt",
+                        mongodb::bson::serialize_to_bson(&receipt).map_err(|_| {
+                            SponsorshipStoreError::Malformed(
+                                "rewrapped activation receipt cannot be serialized".into(),
+                            )
+                        })?,
+                    );
+                }
+                set.insert("encryption_key_id", current_key_id.clone());
+                self.activations
+                    .update_one(filter, doc! { "$set": set })
+                    .await
+                    .map_err(|error| unavailable("rewrap activation ciphertext", error))?
+                    .modified_count
+            }
+            SponsorshipCiphertextRecordKind::Grant => {
+                SponsoredGrantId::parse(candidate.record_id.clone())
+                    .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+                let Some(raw_document) = self
+                    .grants
+                    .clone_with_type::<Document>()
+                    .find_one(lookup_filter)
+                    .await
+                    .map_err(|error| stored_read_failure("read grant for rewrap", error))?
+                else {
+                    return Ok(false);
+                };
+                if rewrap_document_fingerprint(candidate.kind, &raw_document)?
+                    != candidate.document_fingerprint
+                {
+                    return Ok(false);
+                }
+                let filter = rewrap_exact_document_filter(
+                    &raw_document,
+                    &candidate.record_id,
+                    &candidate.retiring_key_id,
+                );
+                let document: GrantDoc = decode_rewrap_document(raw_document, "sponsored grant")?;
+                let (grant, _) = read_grant(&self.cipher, &self.operational, document.clone())?;
+                let context = grant_cipher_context(&grant)?;
+                let mut receipt = document.provider_receipt;
+                receipt.provider_grant_id = self
+                    .cipher
+                    .rewrap(
+                        "grant",
+                        &document.id,
+                        "provider_grant_id",
+                        &context,
+                        &receipt.provider_grant_id,
+                    )?
+                    .ok_or_else(|| {
+                        SponsorshipStoreError::Malformed(
+                            "grant rewrap key index is already current".into(),
+                        )
+                    })?;
+                receipt.revocation_handle = self
+                    .cipher
+                    .rewrap(
+                        "grant",
+                        &document.id,
+                        "revocation_handle",
+                        &context,
+                        &receipt.revocation_handle,
+                    )?
+                    .ok_or_else(|| {
+                        SponsorshipStoreError::Malformed(
+                            "grant rewrap key index is already current".into(),
+                        )
+                    })?;
+                self.grants
+                    .update_one(
+                        filter,
+                        doc! {
+                            "$set": {
+                                "provider_receipt": mongodb::bson::serialize_to_bson(&receipt)
+                                    .map_err(|_| SponsorshipStoreError::Malformed(
+                                        "rewrapped grant receipt cannot be serialized".into()
+                                    ))?,
+                                "encryption_key_id": current_key_id,
+                            },
+                        },
+                    )
+                    .await
+                    .map_err(|error| unavailable("rewrap grant ciphertext", error))?
+                    .modified_count
+            }
+        };
+        Ok(modified == 1)
     }
 
     async fn audit_events(
@@ -4741,20 +8342,42 @@ fn validate_transaction_topology_reply(reply: &Document) -> Result<(), Sponsorsh
 
 fn gate_doc(fence: &SponsorshipGateFence) -> Result<GateDoc, SponsorshipStoreError> {
     validate_gate(fence)?;
+    let engagement_id = fence.kill_switch_engaged.then(|| {
+        deterministic_uuid(
+            "cma-sponsorship-initial-kill-switch-v1",
+            &[&fence.configuration_digest, &fence.epoch.to_string()],
+        )
+    });
     Ok(GateDoc {
         id: GATE_ID.into(),
         document_schema_version: DOCUMENT_SCHEMA_VERSION,
         configuration_digest: fence.configuration_digest.clone(),
         epoch: signed(fence.epoch, "sponsorship gate epoch")?,
         kill_switch_engaged: fence.kill_switch_engaged,
+        kill_switch_engagement_id: engagement_id,
+        kill_switch_drain_complete: true,
+        authority_read_revision: 0,
     })
 }
 
 fn read_gate(document: GateDoc) -> Result<SponsorshipGateFence, SponsorshipStoreError> {
     validate_document_version(document.document_schema_version, "sponsorship gate")?;
-    if document.id != GATE_ID {
+    if document.id != GATE_ID
+        || document.authority_read_revision < 0
+        || (document.kill_switch_engaged != document.kill_switch_engagement_id.is_some())
+        || (!document.kill_switch_engaged && !document.kill_switch_drain_complete)
+        || document
+            .kill_switch_engagement_id
+            .as_ref()
+            .is_some_and(|id| {
+                uuid::Uuid::parse_str(id)
+                    .map(|parsed| parsed.to_string() != *id)
+                    .unwrap_or(true)
+            })
+    {
         return Err(SponsorshipStoreError::Malformed(
-            "stored sponsorship gate has an unsupported identity".into(),
+            "stored sponsorship gate has invalid identity, engagement, drain, or read metadata"
+                .into(),
         ));
     }
     let fence = SponsorshipGateFence {
@@ -4764,6 +8387,22 @@ fn read_gate(document: GateDoc) -> Result<SponsorshipGateFence, SponsorshipStore
     };
     validate_gate(&fence)?;
     Ok(fence)
+}
+
+fn deterministic_uuid(domain: &str, values: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    for value in values {
+        hasher.update([0]);
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes).to_string()
 }
 
 fn validate_gate(fence: &SponsorshipGateFence) -> Result<(), SponsorshipStoreError> {
@@ -4817,6 +8456,16 @@ fn stored_read_failure(context: &str, error: Error) -> SponsorshipStoreError {
     }
 }
 
+fn map_trigger_read_error(error: TriggerStoreError) -> SponsorshipStoreError {
+    match error {
+        TriggerStoreError::Unavailable(message) => SponsorshipStoreError::Unavailable(message),
+        TriggerStoreError::Malformed(message) => SponsorshipStoreError::Malformed(message),
+        other => SponsorshipStoreError::Malformed(format!(
+            "the durable Launch cannot be decoded as sponsorship authority: {other}"
+        )),
+    }
+}
+
 fn map_transaction_result<T>(
     result: mongodb::error::Result<T>,
 ) -> Result<T, SponsorshipStoreError> {
@@ -4851,10 +8500,13 @@ fn custom(error: SponsorshipStoreError) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::super::sponsorship_encryption::SponsorshipEncryptionKey;
+    use super::super::sponsorship_encryption::{
+        SponsorshipEncryptionKey, SponsorshipOperationalKey,
+    };
     use super::*;
 
     const TEST_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const TEST_ROTATED_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
     const TEST_NOW: &str = "2026-01-02T03:04:05Z";
 
     fn test_keyring() -> SponsorshipKeyring {
@@ -4870,6 +8522,73 @@ mod tests {
         SponsorshipCipher::new("test-deployment", test_keyring()).unwrap()
     }
 
+    fn test_operational_keyring() -> SponsorshipOperationalKeyring {
+        SponsorshipOperationalKeyring::new(
+            "test-operational-current",
+            SponsorshipOperationalKey::from_bytes([0x22; 32]),
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn test_operational() -> SponsorshipOperationalPseudonymizer {
+        test_operational_keyring()
+            .pseudonymizer("test-deployment")
+            .unwrap()
+    }
+
+    fn test_provider_identity() -> SponsorshipOperationalPseudonymSet {
+        test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ProviderCredentialAuthority,
+                &["openai", "provider-credential-id"],
+            )
+            .unwrap()
+    }
+
+    fn retiring_test_cipher() -> SponsorshipCipher {
+        let keyring = SponsorshipKeyring::new(
+            "test-retiring",
+            SponsorshipEncryptionKey::from_base64(TEST_KEY).unwrap(),
+            Vec::new(),
+        )
+        .unwrap();
+        SponsorshipCipher::new("test-deployment", keyring).unwrap()
+    }
+
+    fn rotating_test_keyring() -> SponsorshipKeyring {
+        SponsorshipKeyring::new(
+            "test-current",
+            SponsorshipEncryptionKey::from_base64(TEST_ROTATED_KEY).unwrap(),
+            vec![(
+                "test-retiring".into(),
+                SponsorshipEncryptionKey::from_base64(TEST_KEY).unwrap(),
+            )],
+        )
+        .unwrap()
+    }
+
+    fn rotated_test_keyring() -> SponsorshipKeyring {
+        SponsorshipKeyring::new(
+            "test-current",
+            SponsorshipEncryptionKey::from_base64(TEST_ROTATED_KEY).unwrap(),
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn rotating_test_operational_keyring() -> SponsorshipOperationalKeyring {
+        SponsorshipOperationalKeyring::new(
+            "test-operational-rotated",
+            SponsorshipOperationalKey::from_bytes([0x23; 32]),
+            vec![(
+                "test-operational-current".into(),
+                SponsorshipOperationalKey::from_bytes([0x22; 32]),
+            )],
+        )
+        .unwrap()
+    }
+
     fn credential_fixture() -> SponsoredCredentialRecord {
         SponsoredCredentialRecord {
             schema_version: layer2_core::SPONSORSHIP_SCHEMA_VERSION,
@@ -4883,7 +8602,10 @@ mod tests {
                 provider_policy_key: "default".into(),
                 provider_policy_handle: SensitiveProviderValue::new("provider-policy-handle")
                     .unwrap(),
-                provider_credential_id_digest: "a".repeat(64),
+                provider_credential_id_digest: test_provider_identity()
+                    .current()
+                    .as_str()
+                    .to_string(),
                 state_version: 1,
                 ownership_verified_at: TEST_NOW.into(),
                 supports_expiry: true,
@@ -4899,6 +8621,629 @@ mod tests {
             superseded_operation: None,
             last_completed_operation: None,
         }
+    }
+
+    fn pending_operation_fixture(
+        kind: ProviderOperationKind,
+        phase: ProviderOperationPhase,
+        requested_at: &str,
+    ) -> PendingProviderOperation {
+        let client_request_id_digest = test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::CredentialOperationRequest,
+                &["fixture", operation_kind_code(kind)],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        PendingProviderOperation {
+            kind,
+            phase,
+            provider_request_id: "b".repeat(64),
+            client_request_id_digest,
+            payload_digest: "d".repeat(64),
+            requested_at: requested_at.into(),
+            attempted_at: (phase != ProviderOperationPhase::Prepared)
+                .then(|| "2026-01-02T03:04:07Z".into()),
+        }
+    }
+
+    fn rotation_pending_fixture(phase: ProviderOperationPhase) -> SponsoredCredentialRecord {
+        let mut credential = credential_fixture();
+        credential.state = SponsoredCredentialState::RotationPending;
+        credential.generation = 2;
+        credential.pending_operation = Some(pending_operation_fixture(
+            ProviderOperationKind::RotateCredential,
+            phase,
+            "2026-01-02T03:04:06Z",
+        ));
+        credential.updated_at = if phase == ProviderOperationPhase::Prepared {
+            "2026-01-02T03:04:06Z".into()
+        } else {
+            "2026-01-02T03:04:07Z".into()
+        };
+        credential.validate().unwrap();
+        credential
+    }
+
+    #[test]
+    fn credential_rotation_staging_only_accepts_active_to_prepared() {
+        let current = credential_fixture();
+        let mut candidate = rotation_pending_fixture(ProviderOperationPhase::Prepared);
+        candidate.id = current.id.clone();
+        candidate.owner = current.owner.clone();
+        candidate.authority = current.authority.clone();
+        candidate.created_at = current.created_at.clone();
+
+        assert!(credential_rotation_stage_is_legal(&current, &candidate));
+
+        let mut attempting = candidate.clone();
+        let operation = attempting.pending_operation.as_mut().unwrap();
+        operation.phase = ProviderOperationPhase::Attempting;
+        operation.attempted_at = Some("2026-01-02T03:04:07Z".into());
+        attempting.updated_at = "2026-01-02T03:04:07Z".into();
+        assert!(!credential_rotation_stage_is_legal(&current, &attempting));
+
+        let mut wrong_state = candidate;
+        wrong_state.state = SponsoredCredentialState::RevocationPending;
+        assert!(!credential_rotation_stage_is_legal(&current, &wrong_state));
+    }
+
+    #[test]
+    fn credential_pending_operation_phase_matrix_is_closed() {
+        let prepared = rotation_pending_fixture(ProviderOperationPhase::Prepared);
+        let mut attempting = prepared.clone();
+        attempting.generation += 1;
+        attempting.updated_at = "2026-01-02T03:04:07Z".into();
+        let operation = attempting.pending_operation.as_mut().unwrap();
+        operation.phase = ProviderOperationPhase::Attempting;
+        operation.attempted_at = Some("2026-01-02T03:04:07Z".into());
+        assert!(credential_phase_update_is_legal(&prepared, &attempting));
+
+        for phase in [
+            ProviderOperationPhase::Prepared,
+            ProviderOperationPhase::Ambiguous,
+            ProviderOperationPhase::Rejected,
+        ] {
+            let mut candidate = attempting.clone();
+            candidate.generation += 1;
+            candidate.updated_at = "2026-01-02T03:04:08Z".into();
+            let operation = candidate.pending_operation.as_mut().unwrap();
+            operation.phase = phase;
+            if phase == ProviderOperationPhase::Prepared {
+                operation.attempted_at = None;
+            }
+            assert!(credential_phase_update_is_legal(&attempting, &candidate));
+        }
+
+        let mut repeated_attempt = attempting.clone();
+        repeated_attempt.generation += 1;
+        repeated_attempt.updated_at = "2026-01-02T03:04:08Z".into();
+        assert!(!credential_phase_update_is_legal(
+            &attempting,
+            &repeated_attempt
+        ));
+
+        let mut cleared = attempting.clone();
+        cleared.generation += 1;
+        cleared.updated_at = "2026-01-02T03:04:08Z".into();
+        cleared.pending_operation = None;
+        assert!(!credential_phase_update_is_legal(&attempting, &cleared));
+    }
+
+    #[test]
+    fn credential_pending_operation_identity_and_request_time_are_immutable() {
+        let current = rotation_pending_fixture(ProviderOperationPhase::Prepared);
+        let mut candidate = current.clone();
+        candidate.generation += 1;
+        candidate.updated_at = "2026-01-02T03:04:07Z".into();
+        let operation = candidate.pending_operation.as_mut().unwrap();
+        operation.phase = ProviderOperationPhase::Attempting;
+        operation.attempted_at = Some("2026-01-02T03:04:07Z".into());
+
+        let mut changed_provider_request = candidate.clone();
+        changed_provider_request
+            .pending_operation
+            .as_mut()
+            .unwrap()
+            .provider_request_id = "e".repeat(64);
+        assert!(!credential_phase_update_is_legal(
+            &current,
+            &changed_provider_request
+        ));
+
+        let mut changed_client_request = candidate.clone();
+        changed_client_request
+            .pending_operation
+            .as_mut()
+            .unwrap()
+            .client_request_id_digest = "e".repeat(64);
+        assert!(!credential_phase_update_is_legal(
+            &current,
+            &changed_client_request
+        ));
+
+        let mut changed_payload = candidate.clone();
+        changed_payload
+            .pending_operation
+            .as_mut()
+            .unwrap()
+            .payload_digest = "e".repeat(64);
+        assert!(!credential_phase_update_is_legal(
+            &current,
+            &changed_payload
+        ));
+
+        let mut changed_requested_at = candidate;
+        changed_requested_at
+            .pending_operation
+            .as_mut()
+            .unwrap()
+            .requested_at = TEST_NOW.into();
+        assert!(!credential_phase_update_is_legal(
+            &current,
+            &changed_requested_at
+        ));
+    }
+
+    #[test]
+    fn credential_rotation_can_only_be_superseded_by_exact_revocation_lineage() {
+        let current = rotation_pending_fixture(ProviderOperationPhase::Attempting);
+        let mut candidate = current.clone();
+        candidate.generation += 1;
+        candidate.state = SponsoredCredentialState::RevocationPending;
+        candidate.updated_at = "2026-01-02T03:04:08Z".into();
+        candidate.superseded_operation = current.pending_operation.clone();
+        candidate.pending_operation = Some(pending_operation_fixture(
+            ProviderOperationKind::RevokeCredential,
+            ProviderOperationPhase::Prepared,
+            "2026-01-02T03:04:08Z",
+        ));
+        candidate
+            .pending_operation
+            .as_mut()
+            .unwrap()
+            .provider_request_id = "e".repeat(64);
+        assert!(credential_update_is_legal(&current, &candidate));
+
+        let mut cleared = candidate.clone();
+        cleared.superseded_operation = None;
+        assert!(!credential_update_is_legal(&current, &cleared));
+
+        let mut substituted = candidate;
+        substituted
+            .superseded_operation
+            .as_mut()
+            .unwrap()
+            .provider_request_id = "f".repeat(64);
+        assert!(!credential_update_is_legal(&current, &substituted));
+    }
+
+    #[test]
+    fn credential_rotation_completion_requires_advanced_bound_authority() {
+        let current = rotation_pending_fixture(ProviderOperationPhase::Attempting);
+        let pending = current.pending_operation.as_ref().unwrap();
+        let mut candidate = current.clone();
+        candidate.generation += 1;
+        candidate.state = SponsoredCredentialState::Active;
+        candidate.pending_operation = None;
+        candidate.updated_at = "2026-01-02T03:04:08Z".into();
+        candidate.authority.provider_credential_id_digest = test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ProviderCredentialAuthority,
+                &["openai", "rotated-provider-credential-id"],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        candidate.authority.state_version += 1;
+        candidate.authority.ownership_verified_at = "2026-01-02T03:04:07Z".into();
+        candidate.last_completed_operation = Some(CompletedProviderOperation {
+            kind: pending.kind,
+            provider_request_id: pending.provider_request_id.clone(),
+            client_request_id_digest: pending.client_request_id_digest.clone(),
+            payload_digest: pending.payload_digest.clone(),
+            outcome: CompletedProviderOperationOutcome::Confirmed,
+            completed_at: candidate.updated_at.clone(),
+        });
+        candidate.validate().unwrap();
+
+        assert!(credential_completion_shape_is_legal(
+            &current,
+            &candidate,
+            ProviderOperationKind::RotateCredential,
+            CompletedProviderOperationOutcome::Confirmed,
+        ));
+        credential_operation_completion(
+            &current,
+            &candidate,
+            ProviderOperationKind::RotateCredential,
+            CompletedProviderOperationOutcome::Confirmed,
+        )
+        .unwrap();
+
+        let mut stale_authority = candidate.clone();
+        stale_authority.authority.state_version = current.authority.state_version;
+        assert!(!credential_completion_shape_is_legal(
+            &current,
+            &stale_authority,
+            ProviderOperationKind::RotateCredential,
+            CompletedProviderOperationOutcome::Confirmed,
+        ));
+
+        let mut substituted_identity = candidate.clone();
+        substituted_identity.authority.provider_credential_id_digest =
+            current.authority.provider_credential_id_digest.clone();
+        assert!(!credential_completion_shape_is_legal(
+            &current,
+            &substituted_identity,
+            ProviderOperationKind::RotateCredential,
+            CompletedProviderOperationOutcome::Confirmed,
+        ));
+
+        let mut early_evidence = candidate.clone();
+        early_evidence.authority.ownership_verified_at = TEST_NOW.into();
+        assert!(!credential_completion_shape_is_legal(
+            &current,
+            &early_evidence,
+            ProviderOperationKind::RotateCredential,
+            CompletedProviderOperationOutcome::Confirmed,
+        ));
+
+        let mut early_completion = candidate;
+        early_completion
+            .last_completed_operation
+            .as_mut()
+            .unwrap()
+            .completed_at = "2026-01-02T03:04:06Z".into();
+        early_completion.updated_at = "2026-01-02T03:04:06Z".into();
+        assert!(matches!(
+            credential_operation_completion(
+                &current,
+                &early_completion,
+                ProviderOperationKind::RotateCredential,
+                CompletedProviderOperationOutcome::Confirmed,
+            ),
+            Err(SponsorshipStoreError::Conflict)
+        ));
+    }
+
+    fn policy_fixture() -> SponsorshipPolicy {
+        SponsorshipPolicy {
+            schema_version: layer2_core::SPONSORSHIP_SCHEMA_VERSION,
+            id: SponsorshipPolicyId::new(),
+            tenant_id: "tenant-a".into(),
+            owner: credential_fixture().owner,
+            credential_id: SponsoredCredentialId::new(),
+            provider_policy: layer2_core::SponsoredProviderPolicy {
+                provider: "openai".into(),
+                provider_policy_key: "default".into(),
+                allowed_models: std::collections::BTreeSet::from(["gpt-5".into()]),
+                allowed_resources: std::collections::BTreeSet::from(["responses".into()]),
+            },
+            per_launch_quota: layer2_core::SponsoredQuota {
+                requests: 1,
+                input_tokens: 10,
+                output_tokens: 10,
+            },
+            aggregate_quota: layer2_core::SponsoredQuota {
+                requests: 10,
+                input_tokens: 100,
+                output_tokens: 100,
+            },
+            per_launch_budget_micros: 100,
+            aggregate_budget_micros: 1_000,
+            max_requests_per_minute: 10,
+            max_concurrent_launches: 2,
+            expires_at: "2027-01-02T03:04:05Z".into(),
+            state: layer2_core::SponsorshipPolicyState::Active,
+            generation: 1,
+            created_at: TEST_NOW.into(),
+            updated_at: TEST_NOW.into(),
+            revoked_at: None,
+        }
+    }
+
+    fn grant_fixture(
+        state: SponsoredGrantState,
+        expires_at: &str,
+    ) -> (SponsoredGrant, ProviderGrantReceipt) {
+        let id = SponsoredGrantId::new();
+        let launch_id = LaunchId::new();
+        let session_id = SessionId(format!("session-{}", Uuid::new_v4().simple()));
+        let policy_id = SponsorshipPolicyId::new();
+        let revision_id = TriggerRevisionId::new();
+        let contributor = SubjectId("grant-recovery-contributor".into());
+        let provider_grant_id = format!("provider-grant-{}", Uuid::new_v4().simple());
+        let revocation_handle = format!("provider-revocation-{}", Uuid::new_v4().simple());
+        let issued_at = "2026-01-02T03:04:06Z";
+        let created_at = "2026-01-02T03:04:07Z";
+        let updated_at = "2026-01-02T03:04:08Z";
+        let acceptance_idempotency = test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::AcceptanceRequest,
+                &[&launch_id.0, &contributor.0, "grant-fixture-acceptance"],
+            )
+            .unwrap();
+        let mut acceptance = SponsoredGrantAcceptance {
+            launch_id: launch_id.clone(),
+            contributor: contributor.clone(),
+            revision_id: revision_id.clone(),
+            revision_digest: "1".repeat(64),
+            policy_id: policy_id.clone(),
+            policy_generation: 1,
+            terms_digest: "2".repeat(64),
+            launch_snapshot_digest: "3".repeat(64),
+            accepted_at: TEST_NOW.into(),
+            idempotency_key_hash: acceptance_idempotency.current().as_str().to_string(),
+            digest: String::new(),
+        };
+        acceptance.digest = acceptance.calculate_digest().unwrap();
+        let receipt = ProviderGrantReceipt {
+            provider_grant_id: SensitiveProviderValue::new(provider_grant_id.clone()).unwrap(),
+            provider_state_version: 1,
+            expires_at: expires_at.into(),
+            revocation_handle: SensitiveProviderValue::new(revocation_handle.clone()).unwrap(),
+            issued_at: issued_at.into(),
+        };
+        let operational = test_operational();
+        let provider_grant_id_digest = operational
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ProviderGrantAuthority,
+                &[&id.0, &provider_grant_id],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        let revocation_handle_digest = operational
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ProviderRevocationAuthority,
+                &[&id.0, &revocation_handle],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        let mut grant = SponsoredGrant {
+            schema_version: layer2_core::SPONSORSHIP_SCHEMA_VERSION,
+            id: id.clone(),
+            tenant_id: "tenant-a".into(),
+            policy_id,
+            policy_generation: 1,
+            credential_generation: 1,
+            trigger_revision_id: revision_id,
+            trigger_revision_digest: "1".repeat(64),
+            launch_id: launch_id.clone(),
+            session_id: session_id.clone(),
+            contributor,
+            sponsor_subject: SubjectId("grant-recovery-sponsor".into()),
+            terms_digest: "2".repeat(64),
+            acceptance,
+            authority: ProviderGrantAuthority {
+                provider_grant_id_digest,
+                provider_state_version: 1,
+                expires_at: expires_at.into(),
+                revocation_handle_digest,
+                issued_at: issued_at.into(),
+            },
+            capability: InertGrantCapability {
+                grant_id: id,
+                grant_generation: 1,
+                policy_generation: 1,
+                launch_id,
+                session_id,
+                expires_at: expires_at.into(),
+                fingerprint: String::new(),
+            },
+            state,
+            allocation: SponsoredUsageSummary {
+                quota: layer2_core::SponsoredQuota {
+                    requests: 10,
+                    input_tokens: 1_000,
+                    output_tokens: 1_000,
+                },
+                spend_micros: 10_000,
+            },
+            usage: SponsoredUsageSummary::default(),
+            generation: 1,
+            created_at: created_at.into(),
+            updated_at: updated_at.into(),
+            revoked_at: None,
+            pending_revocation: None,
+        };
+        grant.refresh_capability().unwrap();
+        grant.validate().unwrap();
+        (grant, receipt)
+    }
+
+    fn usage_reservation_fixture(
+        grant_id: SponsoredGrantId,
+        state: SponsoredUsageState,
+    ) -> SponsoredUsageReservation {
+        let maximum = SponsoredUsageSummary {
+            quota: layer2_core::SponsoredQuota {
+                requests: 1,
+                input_tokens: 10,
+                output_tokens: 10,
+            },
+            spend_micros: 100,
+        };
+        let mut price_quote = layer2_core::SponsoredPriceQuote {
+            provider: "openai".into(),
+            model: "gpt-5".into(),
+            resource: "responses".into(),
+            maximum: maximum.clone(),
+            pricing_generation: 1,
+            digest: String::new(),
+        };
+        price_quote.digest = price_quote.calculate_digest().unwrap();
+        let reservation = SponsoredUsageReservation {
+            id: SponsoredUsageReservationId::new(),
+            idempotency_fingerprint: "8".repeat(64),
+            request_fingerprint: "9".repeat(64),
+            grant_id,
+            price_quote,
+            reserved: maximum,
+            state,
+            created_at: TEST_NOW.into(),
+            updated_at: TEST_NOW.into(),
+            actual: None,
+        };
+        reservation.validate().unwrap();
+        reservation
+    }
+
+    fn activation_fixture(
+        policy_id: &SponsorshipPolicyId,
+        gate_fence: &SponsorshipGateFence,
+        state: GrantActivationState,
+        created_at: &str,
+        capacity_held: bool,
+    ) -> GrantActivationIntent {
+        let launch_id = LaunchId::new();
+        let operational = test_operational();
+        let billing_request_id = operational
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ActivationRequest,
+                &[&launch_id.0, "billing-fixture"],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        let provider_request_id = operational
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ActivationRequest,
+                &[&launch_id.0, "provider-fixture"],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        let mut intent = GrantActivationIntent {
+            launch_id: launch_id.clone(),
+            session_id: SessionId(format!("session-{}", Uuid::new_v4().simple())),
+            policy_id: policy_id.clone(),
+            policy_generation: 1,
+            credential_generation: 1,
+            launch_authority_digest: "5".repeat(64),
+            acceptance_digest: "6".repeat(64),
+            gate_fence: gate_fence.clone(),
+            allocation: SponsoredUsageSummary {
+                quota: layer2_core::SponsoredQuota {
+                    requests: 1,
+                    input_tokens: 10,
+                    output_tokens: 10,
+                },
+                spend_micros: 100,
+            },
+            request_fingerprint: "7".repeat(64),
+            billing_request_id,
+            provider_request_id,
+            state,
+            denial: None,
+            capacity_held,
+            revision: 1,
+            lease: None,
+            provider_receipt: None,
+            cleanup_operation: None,
+            created_at: created_at.into(),
+            updated_at: created_at.into(),
+        };
+        if matches!(
+            state,
+            GrantActivationState::BillingAttempting | GrantActivationState::ProviderAttempting
+        ) {
+            let acquired = DateTime::parse_rfc3339_str(created_at).unwrap();
+            let holder = operational
+                .pseudonymize(
+                    layer2_core::SponsorshipOperationalDomain::ActivationRequest,
+                    &[&launch_id.0, "holder-fixture"],
+                )
+                .unwrap()
+                .current()
+                .as_str()
+                .to_string();
+            let (lease, _) = activation_lease(holder, acquired).unwrap();
+            intent.lease = Some(lease);
+        }
+        intent.validate().unwrap();
+        intent
+    }
+
+    fn kill_switch_audit(occurred_at: &str) -> SponsoredAuditEvent {
+        SponsoredAuditEvent {
+            event_id: Uuid::new_v4().to_string(),
+            action: SponsoredAuditAction::KillSwitchEngaged,
+            actor_digest: "a".repeat(64),
+            policy_id: None,
+            grant_id: None,
+            stable_request_id_digest: None,
+            outcome_code: "engaged".into(),
+            occurred_at: occurred_at.into(),
+        }
+    }
+
+    fn rewrap_public_projection(
+        kind: SponsorshipCiphertextRecordKind,
+        mut document: Document,
+    ) -> Document {
+        document.remove("encryption_key_id");
+        match kind {
+            SponsorshipCiphertextRecordKind::Credential => {
+                document.remove("provider_policy_handle");
+                document.remove("current_secret");
+                document.remove("pending_secret");
+            }
+            SponsorshipCiphertextRecordKind::GrantActivation
+            | SponsorshipCiphertextRecordKind::Grant => {
+                if let Ok(receipt) = document.get_document_mut("provider_receipt") {
+                    receipt.remove("provider_grant_id");
+                    receipt.remove("revocation_handle");
+                }
+            }
+        }
+        document
+    }
+
+    fn bson_tree_has_string(value: &Bson, key: &str, expected: &str) -> bool {
+        match value {
+            Bson::Document(document) => document.iter().any(|(candidate, value)| {
+                (candidate == key && value.as_str() == Some(expected))
+                    || bson_tree_has_string(value, key, expected)
+            }),
+            Bson::Array(values) => values
+                .iter()
+                .any(|value| bson_tree_has_string(value, key, expected)),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn policy_updates_require_monotonic_transition_and_exact_revocation_time() {
+        let current = policy_fixture();
+        let mut suspended = current.clone();
+        suspended.generation += 1;
+        suspended.state = layer2_core::SponsorshipPolicyState::Suspended;
+        suspended.updated_at = "2026-01-02T03:04:06Z".into();
+        assert!(policy_update_is_legal(&current, &suspended));
+
+        let mut regressed = suspended.clone();
+        regressed.updated_at = "2026-01-02T03:04:04Z".into();
+        assert!(!policy_update_is_legal(&current, &regressed));
+
+        let mut revoked = suspended.clone();
+        revoked.state = layer2_core::SponsorshipPolicyState::Revoked;
+        revoked.generation += 1;
+        revoked.updated_at = "2026-01-02T03:04:07Z".into();
+        revoked.revoked_at = Some(revoked.updated_at.clone());
+        assert!(policy_update_is_legal(&suspended, &revoked));
+
+        revoked.revoked_at = Some("2026-01-02T03:04:06Z".into());
+        assert!(!policy_update_is_legal(&suspended, &revoked));
     }
 
     #[test]
@@ -4941,9 +9286,16 @@ mod tests {
     #[test]
     fn sponsorship_metadata_read_never_authenticates_credential_secrets() {
         let cipher = test_cipher();
+        let operational = test_operational();
         let record = credential_fixture();
-        let document =
-            credential_doc(&cipher, &record, Some("provider-credential-secret"), None).unwrap();
+        let document = credential_doc(
+            &cipher,
+            &record,
+            &test_provider_identity().encoded_candidates(),
+            Some("provider-credential-secret"),
+            None,
+        )
+        .unwrap();
 
         let mut raw = mongodb::bson::serialize_to_document(&document).unwrap();
         let current_secret = raw
@@ -4953,10 +9305,13 @@ mod tests {
             Some(Bson::Binary(ciphertext)) => ciphertext.bytes[0] ^= 0x80,
             _ => panic!("credential ciphertext is stored as BSON binary"),
         }
-        let document = mongodb::bson::deserialize_from_document(raw).unwrap();
+        let document: CredentialDoc = mongodb::bson::deserialize_from_document(raw).unwrap();
 
-        assert_eq!(read_credential_record(&cipher, &document).unwrap(), record);
-        let error = match read_credential(&cipher, document) {
+        assert_eq!(
+            read_credential_record(&cipher, &operational, &document).unwrap(),
+            record
+        );
+        let error = match read_credential(&cipher, &operational, document) {
             Err(error) => error,
             Ok(_) => panic!("tampered credential material must fail authentication"),
         };
@@ -4965,34 +9320,218 @@ mod tests {
     }
 
     #[test]
-    fn sponsorship_credential_bson_rejects_index_and_schema_drift() {
+    fn sponsorship_ciphertext_rejects_same_record_public_authority_substitution() {
         let cipher = test_cipher();
         let record = credential_fixture();
-        let document =
-            credential_doc(&cipher, &record, Some("provider-credential-secret"), None).unwrap();
+        let original = credential_cipher_context(
+            &record.id.0,
+            &record.owner,
+            &record.authority.provider,
+            &record.authority.provider_policy_key,
+            &record.authority.provider_credential_id_digest,
+            &record.authority.ownership_verified_at,
+            &record.created_at,
+            record.authority.state_version,
+            record.authority.supports_expiry,
+            record.authority.supports_revocation,
+        )
+        .unwrap();
+        let mut substituted_owner = record.owner.clone();
+        match &mut substituted_owner {
+            SponsorBillingOwner::Developer { display_name, .. }
+            | SponsorBillingOwner::Organization { display_name, .. } => {
+                *display_name = "Substituted Owner".into();
+            }
+        }
+        let substituted = credential_cipher_context(
+            &record.id.0,
+            &substituted_owner,
+            &record.authority.provider,
+            &record.authority.provider_policy_key,
+            &record.authority.provider_credential_id_digest,
+            &record.authority.ownership_verified_at,
+            &record.created_at,
+            record.authority.state_version,
+            record.authority.supports_expiry,
+            record.authority.supports_revocation,
+        )
+        .unwrap();
+        let envelope = cipher
+            .seal(
+                "credential",
+                &record.id.0,
+                "current_secret",
+                &original,
+                "provider-credential-secret",
+            )
+            .unwrap();
+        assert!(matches!(
+            cipher.open(
+                "credential",
+                &record.id.0,
+                "current_secret",
+                &substituted,
+                &envelope,
+            ),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+
+        let gate = SponsorshipGateFence {
+            configuration_digest: "f".repeat(64),
+            epoch: 7,
+            kill_switch_engaged: false,
+        };
+        let allocation = SponsoredUsageSummary {
+            quota: layer2_core::SponsoredQuota {
+                requests: 1,
+                input_tokens: 10,
+                output_tokens: 10,
+            },
+            spend_micros: 100,
+        };
+        let launch_id = LaunchId::new();
+        let policy_id = SponsorshipPolicyId::new();
+        let original = activation_cipher_context(
+            &launch_id.0,
+            "session-a",
+            &policy_id.0,
+            3,
+            5,
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &gate,
+            &allocation,
+            &"c".repeat(64),
+            &"d".repeat(64),
+            &"e".repeat(64),
+            TEST_NOW,
+        )
+        .unwrap();
+        let substituted = activation_cipher_context(
+            &launch_id.0,
+            "session-a",
+            &policy_id.0,
+            4,
+            5,
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &gate,
+            &allocation,
+            &"c".repeat(64),
+            &"d".repeat(64),
+            &"e".repeat(64),
+            TEST_NOW,
+        )
+        .unwrap();
+        let envelope = cipher
+            .seal(
+                "activation",
+                "activation-a",
+                "provider_grant_id",
+                &original,
+                "provider-grant-id",
+            )
+            .unwrap();
+        assert!(matches!(
+            cipher.open(
+                "activation",
+                "activation-a",
+                "provider_grant_id",
+                &substituted,
+                &envelope,
+            ),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn sponsorship_credential_bson_rejects_index_and_schema_drift() {
+        let cipher = test_cipher();
+        let operational = test_operational();
+        let record = credential_fixture();
+        let document = credential_doc(
+            &cipher,
+            &record,
+            &test_provider_identity().encoded_candidates(),
+            Some("provider-credential-secret"),
+            None,
+        )
+        .unwrap();
         assert_eq!(
-            read_credential(&cipher, document.clone()).unwrap().record,
+            read_credential(&cipher, &operational, document.clone())
+                .unwrap()
+                .record,
             record
         );
 
         let mut unsupported = document.clone();
         unsupported.document_schema_version += 1;
         assert!(matches!(
-            read_credential_record(&cipher, &unsupported),
+            read_credential_record(&cipher, &operational, &unsupported),
             Err(SponsorshipStoreError::Malformed(_))
         ));
 
         let mut wrong_owner_index = document.clone();
         wrong_owner_index.owner_subject = "different-owner".into();
         assert!(matches!(
-            read_credential_record(&cipher, &wrong_owner_index),
+            read_credential_record(&cipher, &operational, &wrong_owner_index),
             Err(SponsorshipStoreError::Malformed(_))
         ));
 
         let mut wrong_key_index = document;
         wrong_key_index.encryption_key_id = "unknown-key".into();
         assert!(matches!(
-            read_credential_record(&cipher, &wrong_key_index),
+            read_credential_record(&cipher, &operational, &wrong_key_index),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn sponsorship_usage_bson_contains_only_opaque_and_keyed_request_identities() {
+        const RAW_REQUEST_ID: &str = "12345678";
+        let operational = test_operational();
+        let reservation =
+            usage_reservation_fixture(SponsoredGrantId::new(), SponsoredUsageState::Ambiguous);
+        let candidates = operational
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::UsageRequest,
+                &[&reservation.grant_id.0, "usage-requester", RAW_REQUEST_ID],
+            )
+            .unwrap();
+        let document = reservation_doc(
+            &operational,
+            &reservation,
+            &candidates.encoded_candidates(),
+            &SponsorshipPolicyId::new(),
+            DateTime::parse_rfc3339_str(TEST_NOW).unwrap(),
+        )
+        .unwrap();
+        let raw = mongodb::bson::serialize_to_document(&document).unwrap();
+        assert_eq!(raw.get_str("_id").unwrap(), reservation.id.0);
+        assert!(raw.get("stable_request_id").is_none());
+        assert!(raw
+            .get_document("reservation")
+            .unwrap()
+            .get("stable_request_id")
+            .is_none());
+        assert!(!raw.to_string().contains(RAW_REQUEST_ID));
+        assert!(!format!("{document:?}").contains("sp1."));
+        assert_eq!(
+            read_reservation(&operational, document.clone()).unwrap().0,
+            reservation
+        );
+
+        let mut mismatched_id = document.clone();
+        mismatched_id.reservation_id = SponsoredUsageReservationId::new().0;
+        assert!(matches!(
+            read_reservation(&operational, mismatched_id),
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+
+        let mut unknown_alias = document;
+        unknown_alias.request_aliases = vec![format!("sp1.unknown.{}", "a".repeat(64))];
+        assert!(matches!(
+            read_reservation(&operational, unknown_alias),
             Err(SponsorshipStoreError::Malformed(_))
         ));
     }
@@ -5000,7 +9539,16 @@ mod tests {
     #[test]
     fn sponsorship_activation_leases_are_derived_from_database_time() {
         let now = DateTime::from_millis(1_700_000_000_123);
-        let (lease, expiry) = activation_lease("b".repeat(64), now).unwrap();
+        let holder = test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ActivationRequest,
+                &["activation-lease-fixture"],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        let (lease, expiry) = activation_lease(holder, now).unwrap();
         assert_eq!(
             expiry.timestamp_millis() - now.timestamp_millis(),
             ACTIVATION_LEASE_MILLIS
@@ -5013,6 +9561,7 @@ mod tests {
             timestamp_seconds(&lease.expires_at, "lease expiry").unwrap(),
             database_time_seconds(expiry).unwrap()
         );
+        assert!(activation_lease("b".repeat(64), now).is_err());
         assert!(activation_lease("not-a-digest".into(), now).is_err());
     }
 
@@ -5039,17 +9588,240 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set or mongos"]
-    async fn real_mongo_sponsorship_startup_commits_transaction_probe_and_builds_indexes() {
+    async fn real_mongo_usage_aliases_rotate_recover_and_fail_closed_on_collisions() {
+        const RAW_REQUEST_ID: &str = "12345678";
         let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
             .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
         let client = Client::with_uri_str(&uri)
             .await
             .expect("test Mongo connects");
         let database_name = format!(
-            "chrono_sponsorship_startup_{}_{}",
+            "cma_usage_alias_{}_{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        );
+        assert!(database_name.len() <= 63);
+        let gate = SponsorshipGateFence {
+            configuration_digest: "7".repeat(64),
+            epoch: 1,
+            kill_switch_engaged: false,
+        };
+        let old_operational_keyring = SponsorshipOperationalKeyring::new(
+            "usage-operational-0",
+            SponsorshipOperationalKey::from_bytes([0x30; 32]),
+            Vec::new(),
+        )
+        .unwrap();
+        let old_operational = old_operational_keyring
+            .pseudonymizer("test-deployment")
+            .unwrap();
+        let store = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            test_keyring(),
+            old_operational_keyring,
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+        let reservation =
+            usage_reservation_fixture(SponsoredGrantId::new(), SponsoredUsageState::Ambiguous);
+        let policy_id = SponsorshipPolicyId::new();
+        let old_candidates = old_operational
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::UsageRequest,
+                &[&reservation.grant_id.0, "usage-requester", RAW_REQUEST_ID],
+            )
+            .unwrap();
+        store
+            .reservations
+            .insert_one(
+                reservation_doc(
+                    &old_operational,
+                    &reservation,
+                    &old_candidates.encoded_candidates(),
+                    &policy_id,
+                    DateTime::parse_rfc3339_str(TEST_NOW).unwrap(),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let raw_reservations = store.reservations.clone_with_type::<Document>();
+        let raw = raw_reservations
+            .find_one(doc! { "_id": &reservation.id.0 })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(raw.get_str("_id").unwrap(), reservation.id.0);
+        assert!(raw.get("stable_request_id").is_none());
+        assert!(raw
+            .get_document("reservation")
+            .unwrap()
+            .get("stable_request_id")
+            .is_none());
+        assert!(!raw.to_string().contains(RAW_REQUEST_ID));
+        assert!(store
+            .usage_reservation(&SponsoredUsageReservationId(RAW_REQUEST_ID.into()))
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store.usage_reservation(&reservation.id).await.unwrap(),
+            Some(reservation.clone())
+        );
+        assert_eq!(
+            store
+                .usage_recovery_candidates(&SponsorshipRecoveryPageRequest::new(10, None))
+                .await
+                .unwrap()
+                .items,
+            vec![reservation.id.clone()]
+        );
+
+        let rotated_operational_keyring = SponsorshipOperationalKeyring::new(
+            "usage-operational-4",
+            SponsorshipOperationalKey::from_bytes([0x34; 32]),
+            vec![
+                (
+                    "usage-operational-3".into(),
+                    SponsorshipOperationalKey::from_bytes([0x33; 32]),
+                ),
+                (
+                    "usage-operational-2".into(),
+                    SponsorshipOperationalKey::from_bytes([0x32; 32]),
+                ),
+                (
+                    "usage-operational-1".into(),
+                    SponsorshipOperationalKey::from_bytes([0x31; 32]),
+                ),
+                (
+                    "usage-operational-0".into(),
+                    SponsorshipOperationalKey::from_bytes([0x30; 32]),
+                ),
+            ],
+        )
+        .unwrap();
+        let rotated_operational = rotated_operational_keyring
+            .pseudonymizer("test-deployment")
+            .unwrap();
+        let rotated_candidates = rotated_operational
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::UsageRequest,
+                &[&reservation.grant_id.0, "usage-requester", RAW_REQUEST_ID],
+            )
+            .unwrap();
+        let rotated = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            test_keyring(),
+            rotated_operational_keyring,
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            rotated
+                .usage_reservation_for_request(&rotated_candidates)
+                .await
+                .unwrap(),
+            Some(reservation.clone())
+        );
+        let migrated = rotated
+            .reservations
+            .find_one(doc! { "_id": &reservation.id.0 })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            migrated.request_aliases,
+            rotated_candidates.encoded_candidates()
+        );
+        assert_eq!(migrated.request_aliases.len(), 5);
+
+        let raw_gate = rotated.gate.clone_with_type::<Document>();
+        let gate_before_refusal = raw_gate.find_one(doc! {}).await.unwrap();
+        let missing_predecessors = SponsorshipOperationalKeyring::new(
+            "usage-operational-4",
+            SponsorshipOperationalKey::from_bytes([0x34; 32]),
+            Vec::new(),
+        )
+        .unwrap();
+        assert!(matches!(
+            MongoSponsorshipStore::open(
+                &client,
+                &database_name,
+                "test-deployment",
+                test_keyring(),
+                missing_predecessors,
+                gate.clone(),
+            )
+            .await,
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+        assert_eq!(
+            raw_gate.find_one(doc! {}).await.unwrap(),
+            gate_before_refusal
+        );
+
+        let collision =
+            usage_reservation_fixture(reservation.grant_id.clone(), SponsoredUsageState::Ambiguous);
+        let collision_document = reservation_doc(
+            &rotated_operational,
+            &collision,
+            &[rotated_candidates.current().as_str().to_string()],
+            &policy_id,
+            DateTime::parse_rfc3339_str(TEST_NOW).unwrap(),
+        )
+        .unwrap();
+        let collision_error = rotated
+            .reservations
+            .insert_one(collision_document.clone())
+            .await
+            .unwrap_err();
+        assert!(is_duplicate_key(&collision_error));
+
+        rotated
+            .reservations
+            .drop_index("sponsorship_usage_by_request_alias")
+            .await
+            .unwrap();
+        rotated
+            .reservations
+            .insert_one(collision_document)
+            .await
+            .unwrap();
+        assert!(matches!(
+            rotated
+                .usage_reservation_for_request(&rotated_candidates)
+                .await,
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+
+        client
+            .database(&database_name)
+            .drop()
+            .await
+            .expect("temporary usage-alias database drops");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set or mongos"]
+    async fn real_mongo_sponsorship_startup_builds_indexed_clock_fenced_grant_recovery() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("test Mongo connects");
+        let database_name = format!(
+            "cma_sponsor_{}_{}",
             std::process::id(),
             uuid::Uuid::new_v4().simple()
         );
+        assert!(database_name.len() <= 63);
         let gate = SponsorshipGateFence {
             configuration_digest: "c".repeat(64),
             epoch: 1,
@@ -5060,6 +9832,7 @@ mod tests {
             &database_name,
             "test-deployment",
             test_keyring(),
+            test_operational_keyring(),
             gate.clone(),
         )
         .await
@@ -5069,7 +9842,7 @@ mod tests {
         let credential_indexes = store.credentials.list_index_names().await.unwrap();
         assert!(credential_indexes
             .iter()
-            .any(|name| name == "sponsorship_credential_provider_identity"));
+            .any(|name| name == "sponsorship_credential_provider_identity_alias"));
         assert!(credential_indexes
             .iter()
             .any(|name| name == "sponsorship_credentials_by_owner"));
@@ -5081,11 +9854,829 @@ mod tests {
         assert!(activation_indexes
             .iter()
             .any(|name| name == "sponsorship_activations_due"));
+        let grant_indexes = store.grants.list_index_names().await.unwrap();
+        assert!(grant_indexes
+            .iter()
+            .any(|name| name == "sponsorship_grants_due"));
+        assert!(grant_indexes
+            .iter()
+            .any(|name| name == "sponsorship_grants_recovery"));
+
+        let (due_active, due_active_receipt) =
+            grant_fixture(SponsoredGrantState::Active, "2026-01-02T03:05:00Z");
+        let (due_suspended, due_suspended_receipt) =
+            grant_fixture(SponsoredGrantState::Suspended, "2026-01-02T03:05:01Z");
+        let (future_active, future_active_receipt) =
+            grant_fixture(SponsoredGrantState::Active, "2026-01-02T03:06:00Z");
+        for (grant, receipt) in [
+            (&due_active, &due_active_receipt),
+            (&due_suspended, &due_suspended_receipt),
+            (&future_active, &future_active_receipt),
+        ] {
+            store
+                .grants
+                .insert_one(
+                    grant_doc(
+                        &store.cipher,
+                        &store.operational,
+                        grant,
+                        receipt,
+                        "grant-recovery-sponsor",
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let cutoff = "2026-01-02T03:05:30Z";
+        let first = store
+            .grant_recovery_candidates(cutoff, &SponsorshipRecoveryPageRequest::new(1, None))
+            .await
+            .unwrap();
+        assert_eq!(first.items, vec![due_active.id.clone()]);
+        let cursor = first.next.expect("the second due grant continues the page");
+        let second = store
+            .grant_recovery_candidates(
+                cutoff,
+                &SponsorshipRecoveryPageRequest::new(1, Some(cursor.clone())),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.items, vec![due_suspended.id.clone()]);
+        assert!(second.next.is_none());
+        assert!(matches!(
+            store
+                .grant_recovery_candidates(
+                    "2026-01-02T03:06:30Z",
+                    &SponsorshipRecoveryPageRequest::new(1, Some(cursor)),
+                )
+                .await,
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+        assert!(matches!(
+            store
+                .grant_recovery_candidates(
+                    "not-a-clock-fence",
+                    &SponsorshipRecoveryPageRequest::default(),
+                )
+                .await,
+            Err(SponsorshipStoreError::Malformed(_))
+        ));
+        let later = store
+            .grant_recovery_candidates(
+                "2026-01-02T03:06:30Z",
+                &SponsorshipRecoveryPageRequest::new(10, None),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            later.items,
+            vec![due_active.id, due_suspended.id, future_active.id]
+        );
+
+        let explain = client
+            .database(&database_name)
+            .run_command(doc! {
+                "explain": {
+                    "find": GRANTS,
+                    "filter": {
+                        "state": "active",
+                        "expires_at": { "$lte": cutoff },
+                    },
+                    "sort": { "expires_at": 1, "_id": 1 },
+                    "hint": "sponsorship_grants_due",
+                    "limit": 51,
+                },
+                "verbosity": "executionStats",
+            })
+            .await
+            .unwrap();
+        let explain = Bson::Document(explain);
+        assert!(bson_tree_has_string(
+            &explain,
+            "indexName",
+            "sponsorship_grants_due"
+        ));
+        assert!(bson_tree_has_string(&explain, "stage", "IXSCAN"));
+        assert!(!bson_tree_has_string(&explain, "stage", "SORT"));
 
         client
             .database(&database_name)
             .drop()
             .await
             .expect("temporary sponsorship database drops");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set or mongos"]
+    async fn real_mongo_ciphertext_rewrap_uses_exact_document_cas_and_preserves_mutations() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("test Mongo connects");
+        let database_name = format!(
+            "cma_rewrap_{}_{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        );
+        assert!(database_name.len() <= 63);
+        let gate = SponsorshipGateFence {
+            configuration_digest: "d".repeat(64),
+            epoch: 1,
+            kill_switch_engaged: false,
+        };
+        let store = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            rotating_test_keyring(),
+            rotating_test_operational_keyring(),
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+        let retiring_cipher = retiring_test_cipher();
+        let raw_credentials = store.credentials.clone_with_type::<Document>();
+        let raw_activations = store.activations.clone_with_type::<Document>();
+        let raw_grants = store.grants.clone_with_type::<Document>();
+
+        let credential = credential_fixture();
+        let mut credential_document = mongodb::bson::serialize_to_document(
+            &credential_doc(
+                &retiring_cipher,
+                &credential,
+                &test_provider_identity().encoded_candidates(),
+                Some("provider-credential-secret"),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        credential_document.insert(
+            "rewrap_sentinel",
+            doc! { "kind": "credential", "nullable": Bson::Null },
+        );
+        raw_credentials
+            .insert_one(credential_document)
+            .await
+            .unwrap();
+
+        let (mut grant, receipt) =
+            grant_fixture(SponsoredGrantState::Active, "2027-01-02T03:04:05Z");
+        let mut activation = activation_fixture(
+            &SponsorshipPolicyId::new(),
+            &gate,
+            GrantActivationState::ProviderAmbiguous,
+            "2026-01-02T03:04:06Z",
+            true,
+        );
+        activation.provider_receipt = Some(receipt.clone());
+        activation.validate().unwrap();
+        let mut activation_document = mongodb::bson::serialize_to_document(
+            &activation_doc(&retiring_cipher, &activation, None).unwrap(),
+        )
+        .unwrap();
+        activation_document.insert(
+            "rewrap_sentinel",
+            doc! { "kind": "activation", "nullable": Bson::Null },
+        );
+        raw_activations
+            .insert_one(activation_document)
+            .await
+            .unwrap();
+
+        let mut grant_document = mongodb::bson::serialize_to_document(
+            &grant_doc(
+                &retiring_cipher,
+                &test_operational(),
+                &grant,
+                &receipt,
+                grant.sponsor_subject.0.as_str(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        grant_document.insert(
+            "rewrap_sentinel",
+            doc! { "kind": "grant", "nullable": Bson::Null },
+        );
+        raw_grants.insert_one(grant_document).await.unwrap();
+
+        let records = [
+            (
+                SponsorshipCiphertextRecordKind::Credential,
+                credential.id.0.clone(),
+            ),
+            (
+                SponsorshipCiphertextRecordKind::GrantActivation,
+                activation.launch_id.0.clone(),
+            ),
+            (SponsorshipCiphertextRecordKind::Grant, grant.id.0.clone()),
+        ];
+        let mut stale_candidates = Vec::new();
+        for (kind, record_id) in &records {
+            let page = store
+                .ciphertext_rewrap_candidates(
+                    *kind,
+                    "test-retiring",
+                    &SponsorshipRecoveryPageRequest::new(10, None),
+                )
+                .await
+                .unwrap();
+            assert!(page.next.is_none());
+            assert_eq!(page.items.len(), 1);
+            assert_eq!(page.items[0].record_id, *record_id);
+            assert!(is_digest(&page.items[0].document_fingerprint));
+            stale_candidates.push(page.items[0].clone());
+        }
+
+        let mut mutated_credential = credential.clone();
+        mutated_credential.generation += 1;
+        mutated_credential.updated_at = "2026-01-02T03:04:07Z".into();
+        mutated_credential.validate().unwrap();
+        let mut credential_document = mongodb::bson::serialize_to_document(
+            &credential_doc(
+                &retiring_cipher,
+                &mutated_credential,
+                &test_provider_identity().encoded_candidates(),
+                Some("provider-credential-secret"),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        credential_document.insert(
+            "rewrap_sentinel",
+            doc! { "kind": "credential", "nullable": Bson::Null, "mutation": 2 },
+        );
+        raw_credentials
+            .replace_one(doc! { "_id": &credential.id.0 }, credential_document)
+            .await
+            .unwrap();
+
+        activation.state = GrantActivationState::ProviderConfirmed;
+        activation.revision += 1;
+        activation.updated_at = "2026-01-02T03:04:07Z".into();
+        activation.validate().unwrap();
+        let mut activation_document = mongodb::bson::serialize_to_document(
+            &activation_doc(&retiring_cipher, &activation, None).unwrap(),
+        )
+        .unwrap();
+        activation_document.insert(
+            "rewrap_sentinel",
+            doc! { "kind": "activation", "nullable": Bson::Null, "mutation": 2 },
+        );
+        raw_activations
+            .replace_one(doc! { "_id": &activation.launch_id.0 }, activation_document)
+            .await
+            .unwrap();
+
+        grant.usage = SponsoredUsageSummary {
+            quota: layer2_core::SponsoredQuota {
+                requests: 1,
+                input_tokens: 50,
+                output_tokens: 25,
+            },
+            spend_micros: 500,
+        };
+        grant.updated_at = "2026-01-02T03:04:09Z".into();
+        grant.validate().unwrap();
+        let unresolved_usage = SponsoredUsageSummary {
+            quota: layer2_core::SponsoredQuota {
+                requests: 1,
+                input_tokens: 10,
+                output_tokens: 10,
+            },
+            spend_micros: 100,
+        };
+        let mut mutated_grant_document = grant_doc(
+            &retiring_cipher,
+            &test_operational(),
+            &grant,
+            &receipt,
+            grant.sponsor_subject.0.as_str(),
+        )
+        .unwrap();
+        mutated_grant_document.unresolved_usage = unresolved_usage.clone();
+        let mut mutated_grant_document =
+            mongodb::bson::serialize_to_document(&mutated_grant_document).unwrap();
+        mutated_grant_document.insert(
+            "rewrap_sentinel",
+            doc! { "kind": "grant", "nullable": Bson::Null, "mutation": 2 },
+        );
+        raw_grants
+            .replace_one(doc! { "_id": &grant.id.0 }, mutated_grant_document)
+            .await
+            .unwrap();
+
+        for candidate in &stale_candidates {
+            assert!(!store.rewrap_ciphertext(candidate).await.unwrap());
+        }
+        let stored_credential = store.credential(&credential.id).await.unwrap().unwrap();
+        assert_eq!(stored_credential.record, mutated_credential);
+        assert_eq!(
+            stored_credential.secret.unwrap().expose(),
+            "provider-credential-secret"
+        );
+        assert_eq!(
+            store
+                .grant_activation(&activation.launch_id)
+                .await
+                .unwrap()
+                .unwrap(),
+            activation
+        );
+        assert_eq!(store.grant(&grant.id).await.unwrap().unwrap(), grant);
+        assert_eq!(
+            raw_grants
+                .find_one(doc! { "_id": &grant.id.0 })
+                .await
+                .unwrap()
+                .unwrap()
+                .get_document("unresolved_usage")
+                .unwrap(),
+            &mongodb::bson::serialize_to_document(&unresolved_usage).unwrap()
+        );
+
+        for (kind, record_id) in &records {
+            let candidate = store
+                .ciphertext_rewrap_candidates(
+                    *kind,
+                    "test-retiring",
+                    &SponsorshipRecoveryPageRequest::new(10, None),
+                )
+                .await
+                .unwrap()
+                .items
+                .into_iter()
+                .next()
+                .unwrap();
+            assert_eq!(candidate.record_id, record_id.as_str());
+            let collection = match kind {
+                SponsorshipCiphertextRecordKind::Credential => raw_credentials.clone(),
+                SponsorshipCiphertextRecordKind::GrantActivation => raw_activations.clone(),
+                SponsorshipCiphertextRecordKind::Grant => raw_grants.clone(),
+            };
+            let before = collection
+                .find_one(doc! { "_id": &record_id })
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                rewrap_document_fingerprint(*kind, &before).unwrap(),
+                candidate.document_fingerprint
+            );
+            assert!(store.rewrap_ciphertext(&candidate).await.unwrap());
+            let after = collection
+                .find_one(doc! { "_id": &record_id })
+                .await
+                .unwrap()
+                .unwrap();
+            assert_ne!(before, after);
+            assert_eq!(
+                rewrap_public_projection(*kind, before),
+                rewrap_public_projection(*kind, after.clone())
+            );
+            assert_eq!(after.get_str("encryption_key_id").unwrap(), "test-current");
+            assert!(!store.rewrap_ciphertext(&candidate).await.unwrap());
+        }
+
+        let stored_credential = store.credential(&credential.id).await.unwrap().unwrap();
+        assert_eq!(stored_credential.record, mutated_credential);
+        assert_eq!(
+            stored_credential.secret.unwrap().expose(),
+            "provider-credential-secret"
+        );
+        assert_eq!(
+            store
+                .grant_activation(&activation.launch_id)
+                .await
+                .unwrap()
+                .unwrap(),
+            activation
+        );
+        assert_eq!(store.grant(&grant.id).await.unwrap().unwrap(), grant);
+        assert_eq!(
+            store.provider_grant_receipt(&grant.id).await.unwrap(),
+            Some(receipt.clone())
+        );
+        for (kind, _) in &records {
+            assert!(store
+                .ciphertext_rewrap_candidates(
+                    *kind,
+                    "test-retiring",
+                    &SponsorshipRecoveryPageRequest::new(10, None),
+                )
+                .await
+                .unwrap()
+                .items
+                .is_empty());
+        }
+
+        let without_retired_aead = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            rotated_test_keyring(),
+            rotating_test_operational_keyring(),
+            gate.clone(),
+        )
+        .await
+        .expect("rewrapped records open after the retired AEAD key is removed");
+        let reopened_credential = without_retired_aead
+            .credential(&credential.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reopened_credential.record, mutated_credential);
+        assert_eq!(
+            reopened_credential.secret.unwrap().expose(),
+            "provider-credential-secret"
+        );
+        assert_eq!(
+            without_retired_aead
+                .grant_activation(&activation.launch_id)
+                .await
+                .unwrap()
+                .unwrap(),
+            activation
+        );
+        assert_eq!(
+            without_retired_aead
+                .grant(&grant.id)
+                .await
+                .unwrap()
+                .unwrap(),
+            grant
+        );
+        assert_eq!(
+            without_retired_aead
+                .provider_grant_receipt(&grant.id)
+                .await
+                .unwrap(),
+            Some(receipt)
+        );
+
+        client
+            .database(&database_name)
+            .drop()
+            .await
+            .expect("temporary rewrap database drops");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set or mongos"]
+    async fn real_mongo_kill_switch_drain_is_bounded_resumable_and_fences_late_awaiting_states() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("test Mongo connects");
+        let database_name = format!(
+            "cma_drain_{}_{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        );
+        assert!(database_name.len() <= 63);
+        let gate = SponsorshipGateFence {
+            configuration_digest: "d".repeat(64),
+            epoch: 1,
+            kill_switch_engaged: false,
+        };
+        let store = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            test_keyring(),
+            test_operational_keyring(),
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+        let mut policy = policy_fixture();
+        policy.max_concurrent_launches = 10;
+        policy.aggregate_quota = layer2_core::SponsoredQuota {
+            requests: 10,
+            input_tokens: 100,
+            output_tokens: 100,
+        };
+        policy.aggregate_budget_micros = 1_000;
+        policy.validate().unwrap();
+        store
+            .policies
+            .insert_one(policy_doc(&policy, &SponsorshipPolicyUsage::default()).unwrap())
+            .await
+            .unwrap();
+        let held_policy = policy_fixture();
+        let held_usage = SponsorshipPolicyUsage {
+            consumed: SponsoredUsageSummary::default(),
+            reserved: SponsoredUsageSummary {
+                quota: layer2_core::SponsoredQuota {
+                    requests: 2,
+                    input_tokens: 20,
+                    output_tokens: 20,
+                },
+                spend_micros: 200,
+            },
+            active_launches: 2,
+        };
+        store
+            .policies
+            .insert_one(policy_doc(&held_policy, &held_usage).unwrap())
+            .await
+            .unwrap();
+
+        let activation_count = usize::try_from(MAX_KILL_SWITCH_INVALIDATIONS).unwrap() * 2 + 1;
+        let mut documents = Vec::with_capacity(activation_count);
+        for index in 0..activation_count {
+            let state = if index % 2 == 0 {
+                GrantActivationState::AwaitingBilling
+            } else {
+                GrantActivationState::AwaitingProvider
+            };
+            let (policy_id, created_at, capacity_held) = if index < 2 {
+                (&held_policy.id, "2026-01-02T03:04:05Z", true)
+            } else {
+                (&policy.id, "2026-01-02T03:04:06Z", false)
+            };
+            let intent = activation_fixture(policy_id, &gate, state, created_at, capacity_held);
+            documents.push(activation_doc(&store.cipher, &intent, None).unwrap());
+        }
+        store.activations.insert_many(documents).await.unwrap();
+
+        let first_audit = kill_switch_audit("2026-01-02T03:04:07Z");
+        let first_engagement_id = first_audit.event_id.clone();
+        let first = store.engage_kill_switch(gate.epoch, first_audit).await;
+        assert!(matches!(first, Err(SponsorshipStoreError::Unavailable(_))));
+        let after_first = store
+            .gate
+            .find_one(doc! { "_id": GATE_ID })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(after_first.kill_switch_engaged);
+        assert!(!after_first.kill_switch_drain_complete);
+        assert_eq!(after_first.epoch, 2);
+        assert_eq!(
+            after_first.kill_switch_engagement_id.as_deref(),
+            Some(first_engagement_id.as_str())
+        );
+        assert_eq!(
+            store
+                .activations
+                .count_documents(doc! {
+                    "state": { "$in": ["awaiting_billing", "awaiting_provider"] }
+                })
+                .await
+                .unwrap(),
+            u64::try_from(MAX_KILL_SWITCH_INVALIDATIONS + 1).unwrap()
+        );
+        assert_eq!(
+            store.policy_usage(&held_policy.id).await.unwrap(),
+            SponsorshipPolicyUsage::default()
+        );
+        assert_eq!(
+            store
+                .audits
+                .count_documents(doc! { "policy_id": &held_policy.id.0 })
+                .await
+                .unwrap(),
+            2
+        );
+
+        let restarted = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            test_keyring(),
+            test_operational_keyring(),
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+        let after_restart = restarted
+            .gate
+            .find_one(doc! { "_id": GATE_ID })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!after_restart.kill_switch_drain_complete);
+        assert_eq!(after_restart.epoch, 2);
+        assert_eq!(
+            restarted
+                .activations
+                .count_documents(doc! {
+                    "state": { "$in": ["awaiting_billing", "awaiting_provider"] }
+                })
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            restarted.policy_usage(&held_policy.id).await.unwrap(),
+            SponsorshipPolicyUsage::default()
+        );
+        assert_eq!(
+            restarted
+                .audits
+                .count_documents(doc! { "policy_id": &held_policy.id.0 })
+                .await
+                .unwrap(),
+            2
+        );
+
+        let completed = MongoSponsorshipStore::open(
+            &client,
+            &database_name,
+            "test-deployment",
+            test_keyring(),
+            test_operational_keyring(),
+            gate.clone(),
+        )
+        .await
+        .unwrap();
+        let completed_gate = completed
+            .gate
+            .find_one(doc! { "_id": GATE_ID })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(completed_gate.kill_switch_drain_complete);
+        assert_eq!(completed_gate.epoch, 2);
+        assert_eq!(
+            completed_gate.kill_switch_engagement_id.as_deref(),
+            Some(first_engagement_id.as_str())
+        );
+        assert_eq!(
+            completed
+                .activations
+                .count_documents(doc! {
+                    "state": { "$in": ["awaiting_billing", "awaiting_provider"] }
+                })
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            completed.policy_usage(&held_policy.id).await.unwrap(),
+            SponsorshipPolicyUsage::default()
+        );
+        assert_eq!(
+            completed
+                .audits
+                .count_documents(doc! { "policy_id": &held_policy.id.0 })
+                .await
+                .unwrap(),
+            2
+        );
+
+        let replay = completed
+            .engage_kill_switch(2, kill_switch_audit("2026-01-02T03:04:08Z"))
+            .await
+            .expect("an exact bodyless retry observes the completed engagement");
+        assert_eq!(replay.epoch, 2);
+        assert!(replay.kill_switch_engaged);
+        assert_eq!(
+            completed.policy_usage(&held_policy.id).await.unwrap(),
+            SponsorshipPolicyUsage::default()
+        );
+        assert_eq!(
+            completed
+                .audits
+                .count_documents(doc! { "policy_id": &held_policy.id.0 })
+                .await
+                .unwrap(),
+            2
+        );
+
+        let mut dispatch_intent = activation_fixture(
+            &held_policy.id,
+            &gate,
+            GrantActivationState::AwaitingBilling,
+            "2026-01-02T03:04:09Z",
+            true,
+        );
+        let acquired = DateTime::parse_rfc3339_str(&dispatch_intent.created_at).unwrap();
+        let dispatch_holder = test_operational()
+            .pseudonymize(
+                layer2_core::SponsorshipOperationalDomain::ActivationRequest,
+                &[&dispatch_intent.launch_id.0, "dispatch-holder-fixture"],
+            )
+            .unwrap()
+            .current()
+            .as_str()
+            .to_string();
+        let (dispatch_lease, dispatch_lease_expiry) =
+            activation_lease(dispatch_holder.clone(), acquired).unwrap();
+        dispatch_intent.lease = Some(dispatch_lease);
+        dispatch_intent.validate().unwrap();
+        let dispatch_usage = SponsorshipPolicyUsage {
+            consumed: SponsoredUsageSummary::default(),
+            reserved: dispatch_intent.allocation.clone(),
+            active_launches: 1,
+        };
+        completed
+            .policies
+            .replace_one(
+                doc! { "_id": &held_policy.id.0 },
+                policy_doc(&held_policy, &dispatch_usage).unwrap(),
+            )
+            .await
+            .unwrap();
+        completed
+            .activations
+            .insert_one(
+                activation_doc(
+                    &completed.cipher,
+                    &dispatch_intent,
+                    Some(dispatch_lease_expiry),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let mut dispatch_candidate = dispatch_intent.clone();
+        dispatch_candidate.state = GrantActivationState::BillingAttempting;
+        dispatch_candidate.revision += 1;
+        dispatch_candidate.updated_at = "2026-01-02T03:04:10Z".into();
+        dispatch_candidate.validate().unwrap();
+        assert_eq!(
+            completed
+                .update_grant_activation(
+                    dispatch_intent.revision,
+                    dispatch_holder.as_str(),
+                    &dispatch_candidate,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipStoreError::GateChanged
+        );
+        assert_eq!(
+            completed
+                .grant_activation(&dispatch_intent.launch_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .state,
+            GrantActivationState::AwaitingBilling
+        );
+        assert_eq!(
+            completed.policy_usage(&held_policy.id).await.unwrap(),
+            dispatch_usage
+        );
+
+        for (attempting, awaiting) in [
+            (
+                GrantActivationState::BillingAttempting,
+                GrantActivationState::AwaitingBilling,
+            ),
+            (
+                GrantActivationState::ProviderAttempting,
+                GrantActivationState::AwaitingProvider,
+            ),
+        ] {
+            let intent =
+                activation_fixture(&policy.id, &gate, attempting, "2026-01-02T03:04:09Z", true);
+            let lease_expiry =
+                DateTime::parse_rfc3339_str(intent.lease.as_ref().unwrap().expires_at.as_str())
+                    .unwrap();
+            let holder = intent.lease.as_ref().unwrap().holder.clone();
+            completed
+                .activations
+                .insert_one(activation_doc(&completed.cipher, &intent, Some(lease_expiry)).unwrap())
+                .await
+                .unwrap();
+            let mut candidate = intent.clone();
+            candidate.state = awaiting;
+            candidate.capacity_held = false;
+            candidate.lease = None;
+            candidate.revision += 1;
+            candidate.updated_at = "2026-01-02T03:04:10Z".into();
+            candidate.validate().unwrap();
+            assert_eq!(
+                completed
+                    .update_grant_activation(intent.revision, holder.as_str(), &candidate)
+                    .await
+                    .unwrap_err(),
+                SponsorshipStoreError::GateChanged
+            );
+            assert_eq!(
+                completed
+                    .grant_activation(&intent.launch_id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                attempting
+            );
+        }
+
+        client
+            .database(&database_name)
+            .drop()
+            .await
+            .expect("temporary kill-switch database drops");
     }
 }
