@@ -123,6 +123,13 @@ pub trait SponsorshipStore: Send + Sync {
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError>;
 
+    /// Read credential authority and lifecycle metadata without loading or
+    /// decrypting current or staged provider credential material.
+    async fn credential_record(
+        &self,
+        id: &SponsoredCredentialId,
+    ) -> Result<Option<SponsoredCredentialRecord>, SponsorshipStoreError>;
+
     /// Atomically read the record and its matching current secret. Definitive
     /// revocation returns a validated record with `secret=None`.
     async fn credential(
