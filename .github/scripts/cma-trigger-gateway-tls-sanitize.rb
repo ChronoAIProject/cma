@@ -19,12 +19,22 @@ begin
   data = secret.fetch("data")
   raise ArgumentError unless data.is_a?(Hash) && data.keys.sort == %w[tls.crt tls.key]
 
-  certificate_pem = Base64.strict_decode64(data.fetch("tls.crt"))
+  certificate_source = Base64.strict_decode64(data.fetch("tls.crt"))
   key_pem = Base64.strict_decode64(data.fetch("tls.key"))
-  blocks = certificate_pem.scan(/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/m)
-  raise ArgumentError if blocks.empty?
+  certificate_blocks = []
+  certificate_remainder = certificate_source
+  certificate_pattern = /\A[[:space:]]*(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/m
+  while (match = certificate_pattern.match(certificate_remainder))
+    certificate_blocks << match[1]
+    certificate_remainder = certificate_remainder.byteslice(match[0].bytesize..-1)
+  end
+  raise ArgumentError unless certificate_remainder.match?(/\A[[:space:]]*\z/)
 
-  leaf = OpenSSL::X509::Certificate.new(blocks.fetch(0))
+  certificates = certificate_blocks.map { |block| OpenSSL::X509::Certificate.new(block) }
+  raise ArgumentError if certificates.empty?
+
+  certificate_pem = certificates.map(&:to_pem).join
+  leaf = certificates.fetch(0)
   key = OpenSSL::PKey.read(key_pem)
   public_key = leaf.public_key
   challenge = OpenSSL::Random.random_bytes(32)
@@ -42,9 +52,6 @@ begin
       "uid" => secret.dig("metadata", "uid"),
       "resourceVersion" => secret.dig("metadata", "resourceVersion"),
       "deletionTimestamp" => secret.dig("metadata", "deletionTimestamp"),
-      "labels" => secret.dig("metadata", "labels"),
-      "annotations" => secret.dig("metadata", "annotations"),
-      "ownerReferences" => secret.dig("metadata", "ownerReferences"),
     },
     "type" => secret["type"],
     "dataKeys" => data.keys.sort,
