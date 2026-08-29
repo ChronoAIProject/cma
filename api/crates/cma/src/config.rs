@@ -331,6 +331,7 @@ pub struct SponsorshipWorkerConfig {
 #[derive(Clone)]
 pub struct SponsorshipSecretsConfig {
     pub encryption_keyring: zeroize::Zeroizing<String>,
+    pub operational_keyring: zeroize::Zeroizing<String>,
     pub audit_hmac_key: zeroize::Zeroizing<String>,
 }
 
@@ -339,6 +340,7 @@ impl std::fmt::Debug for SponsorshipSecretsConfig {
         formatter
             .debug_struct("SponsorshipSecretsConfig")
             .field("encryption_keyring", &"<redacted>")
+            .field("operational_keyring", &"<redacted>")
             .field("audit_hmac_key", &"<redacted>")
             .finish()
     }
@@ -473,10 +475,15 @@ impl SponsorshipRuntimeConfig {
             optional_from(&mut lookup, "CHRONO_SPONSORSHIP_WORKER_CONCURRENCY")?;
         let encryption_keyring_file =
             optional_from(&mut lookup, "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE")?;
+        let operational_keyring_file =
+            optional_from(&mut lookup, "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE")?;
         let audit_hmac_key_file =
             optional_from(&mut lookup, "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE")?;
         let encryption_keyring_inline =
             optional_from(&mut lookup, "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING")?
+                .map(zeroize::Zeroizing::new);
+        let operational_keyring_inline =
+            optional_from(&mut lookup, "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING")?
                 .map(zeroize::Zeroizing::new);
         let audit_hmac_key_inline =
             optional_from(&mut lookup, "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY")?
@@ -515,6 +522,7 @@ impl SponsorshipRuntimeConfig {
             &worker_max_pages,
             &worker_concurrency,
             &encryption_keyring_file,
+            &operational_keyring_file,
             &audit_hmac_key_file,
         ]
         .into_iter()
@@ -523,6 +531,12 @@ impl SponsorshipRuntimeConfig {
         if encryption_keyring_inline.is_some() {
             return Err(
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING is not accepted; mount the dedicated sponsorship keyring and set CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE"
+                    .into(),
+            );
+        }
+        if operational_keyring_inline.is_some() {
+            return Err(
+                "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING is not accepted; mount the dedicated sponsorship operational keyring and set CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE"
                     .into(),
             );
         }
@@ -890,6 +904,10 @@ impl SponsorshipRuntimeConfig {
             encryption_keyring_file,
             "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
         )?;
+        let operational_keyring_file = required_sponsorship_value(
+            operational_keyring_file,
+            "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE",
+        )?;
         let audit_hmac_key_file = required_sponsorship_value(
             audit_hmac_key_file,
             "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE",
@@ -897,6 +915,18 @@ impl SponsorshipRuntimeConfig {
         ensure_distinct_secret_files(
             "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
             &encryption_keyring_file,
+            "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE",
+            &operational_keyring_file,
+        )?;
+        ensure_distinct_secret_files(
+            "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
+            &encryption_keyring_file,
+            "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE",
+            &audit_hmac_key_file,
+        )?;
+        ensure_distinct_secret_files(
+            "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE",
+            &operational_keyring_file,
             "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE",
             &audit_hmac_key_file,
         )?;
@@ -909,6 +939,18 @@ impl SponsorshipRuntimeConfig {
             )?
             .ok_or_else(|| {
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE did not resolve a mounted secret"
+                    .to_string()
+            })?,
+        );
+        let operational_keyring = zeroize::Zeroizing::new(
+            optional_file_secret_from_values(
+                "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE",
+                "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING",
+                Some(operational_keyring_file),
+                None,
+            )?
+            .ok_or_else(|| {
+                "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE did not resolve a mounted secret"
                     .to_string()
             })?,
         );
@@ -929,6 +971,10 @@ impl SponsorshipRuntimeConfig {
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
                 &encryption_keyring,
             ),
+            (
+                "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE",
+                &operational_keyring,
+            ),
             ("CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE", &audit_hmac_key),
         ] {
             if value.len() > MAX_FILE_SECRET_BYTES {
@@ -937,14 +983,18 @@ impl SponsorshipRuntimeConfig {
                 ));
             }
         }
-        if encryption_keyring.as_str() == audit_hmac_key.as_str() {
+        if encryption_keyring.as_str() == operational_keyring.as_str()
+            || encryption_keyring.as_str() == audit_hmac_key.as_str()
+            || operational_keyring.as_str() == audit_hmac_key.as_str()
+        {
             return Err(
-                "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE and CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE must contain independent secret material"
+                "sponsorship encryption, operational, and audit key files must have pairwise non-identical file contents"
                     .into(),
             );
         }
         let secrets = SponsorshipSecretsConfig {
             encryption_keyring,
+            operational_keyring,
             audit_hmac_key,
         };
 
@@ -2149,7 +2199,7 @@ mod tests {
 
     use super::*;
 
-    const SPONSORSHIP_REQUIRED_CONFIG_KEYS: [&str; 33] = [
+    const SPONSORSHIP_REQUIRED_CONFIG_KEYS: [&str; 34] = [
         "CHRONO_SPONSORSHIP_EPOCH",
         "CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST",
         "CHRONO_SPONSORSHIP_EXPIRY_EVIDENCE_ID",
@@ -2182,11 +2232,13 @@ mod tests {
         "CHRONO_SPONSORSHIP_WORKER_MAX_PAGES",
         "CHRONO_SPONSORSHIP_WORKER_CONCURRENCY",
         "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE",
+        "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE",
         "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE",
     ];
 
     struct SponsorshipSecretFiles {
         keyring: PathBuf,
+        operational_keyring: PathBuf,
         audit_hmac: PathBuf,
     }
 
@@ -2196,13 +2248,18 @@ mod tests {
             let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let prefix = format!("cma-sponsorship-config-{}-{sequence}", std::process::id());
             let keyring = std::env::temp_dir().join(format!("{prefix}-keyring"));
+            let operational_keyring =
+                std::env::temp_dir().join(format!("{prefix}-operational-keyring"));
             let audit_hmac = std::env::temp_dir().join(format!("{prefix}-audit-hmac"));
             std::fs::write(&keyring, "fixture-encryption-keyring\n")
                 .expect("the keyring fixture is writable");
+            std::fs::write(&operational_keyring, "fixture-operational-keyring\n")
+                .expect("the operational keyring fixture is writable");
             std::fs::write(&audit_hmac, "fixture-audit-hmac-key\n")
                 .expect("the audit-HMAC fixture is writable");
             Self {
                 keyring,
+                operational_keyring,
                 audit_hmac,
             }
         }
@@ -2211,6 +2268,7 @@ mod tests {
     impl Drop for SponsorshipSecretFiles {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.keyring);
+            let _ = std::fs::remove_file(&self.operational_keyring);
             let _ = std::fs::remove_file(&self.audit_hmac);
         }
     }
@@ -2369,6 +2427,10 @@ mod tests {
             (
                 "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE".into(),
                 files.keyring.to_string_lossy().into_owned(),
+            ),
+            (
+                "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE".into(),
+                files.operational_keyring.to_string_lossy().into_owned(),
             ),
             (
                 "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE".into(),
@@ -2737,6 +2799,10 @@ mod tests {
                 "inline-keyring-must-not-leak",
             ),
             (
+                "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING",
+                "inline-operational-keyring-must-not-leak",
+            ),
+            (
                 "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY",
                 "inline-audit-key-must-not-leak",
             ),
@@ -2761,11 +2827,32 @@ mod tests {
         std::fs::write(&files.audit_hmac, "fixture-encryption-keyring\n")
             .expect("the duplicate-material fixture is writable");
         assert!(sponsorship_config(&complete)
-            .expect_err("the two files cannot reuse one secret")
-            .contains("independent secret material"));
+            .expect_err("the two files cannot have identical payloads")
+            .contains("pairwise non-identical file contents"));
 
         std::fs::write(&files.audit_hmac, "fixture-audit-hmac-key\n")
             .expect("the audit fixture is restored");
+        std::fs::write(&files.operational_keyring, "fixture-encryption-keyring\n")
+            .expect("the duplicate operational fixture is writable");
+        let error = sponsorship_config(&complete)
+            .expect_err("the operational and encryption payloads cannot be identical");
+        assert!(error.contains("pairwise non-identical file contents"));
+        assert!(!error.contains("fixture-encryption-keyring"));
+
+        const OPERATIONAL_FILE_MARKER: &str = "operational-file-secret-must-not-leak";
+        std::fs::write(
+            &files.operational_keyring,
+            OPERATIONAL_FILE_MARKER.repeat(MAX_FILE_SECRET_BYTES),
+        )
+        .expect("the oversized operational fixture is writable");
+        let error = sponsorship_config(&complete)
+            .expect_err("an oversized operational keyring fails closed");
+        assert!(error.contains("CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE"));
+        assert!(error.contains("secret-file limit"));
+        assert!(!error.contains(OPERATIONAL_FILE_MARKER));
+
+        std::fs::write(&files.operational_keyring, "fixture-operational-keyring\n")
+            .expect("the operational fixture is restored");
         std::fs::write(&files.keyring, " \n").expect("the empty fixture is writable");
         let error =
             sponsorship_config(&complete).expect_err("an empty sponsorship keyring fails closed");
@@ -2785,6 +2872,7 @@ mod tests {
         let debug = format!("{config:?}");
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("fixture-encryption-keyring"));
+        assert!(!debug.contains("fixture-operational-keyring"));
         assert!(!debug.contains("fixture-audit-hmac-key"));
     }
 
@@ -3409,6 +3497,7 @@ mod tests {
         }
         for forbidden in [
             "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING",
+            "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING",
             "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY",
         ] {
             assert!(
@@ -3436,6 +3525,7 @@ mod tests {
         );
         assert_eq!(deployment.matches("mountPath: /var/secrets").count(), 1);
         assert!(!deployment.contains("CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE"));
+        assert!(!deployment.contains("CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE"));
         assert!(!deployment.contains("CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE"));
 
         let resources = provider_class
@@ -3454,6 +3544,7 @@ mod tests {
         assert!(!secret.lines().any(|line| line.starts_with("data:")));
         for forbidden in [
             "CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING",
+            "CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING",
             "CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY",
         ] {
             assert!(
