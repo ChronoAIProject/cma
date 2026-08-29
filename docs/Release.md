@@ -744,22 +744,40 @@ directory is synchronously durable outside the operator host. Rollback files are
 created directly under that custody root, not copied there after mutation.
 
 ```sh
-CMA_GATEWAY_RELEASE_REVISION='<reviewed-full-SHA>' \
-CMA_GATEWAY_CONFIRM=adopt-v0.10-route \
+CMA_GATEWAY_RELEASE_REVISION='<reviewed-full-SHA>'
+cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref \
+  --points-at "${CMA_GATEWAY_RELEASE_REVISION}" \
+  --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' 'refs/tags/v*')"
+[[ "${cma_gateway_release_tag_record}" =~ ^(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\|tag\|commit\|${CMA_GATEWAY_RELEASE_REVISION}$ ]]
+cma_gateway_release_tag="${BASH_REMATCH[1]}"
+unset cma_gateway_release_tag_record
+CMA_GATEWAY_RELEASE_REVISION="${CMA_GATEWAY_RELEASE_REVISION}" \
+CMA_GATEWAY_CONFIRM="adopt-${cma_gateway_release_tag}-route" \
 CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer \
 CMA_GATEWAY_ROLLBACK_CUSTODY_ROOT='<durable-absolute-directory>' \
 CMA_GATEWAY_ROLLBACK_CUSTODY_CONFIRM=durable-off-host \
-  .github/scripts/cma-trigger-gateway-adoption.sh --adopt
+CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>' \
+CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>' \
+CMA_GATEWAY_PROJECTION_DIR='<absolute-reviewed-source-projection-directory>' \
+CMA_GATEWAY_PROJECTION_SHA256='<externally-recorded-source-projection-SHA-256>' \
+CMA_GATEWAY_ADOPTED_PROJECTION_PARENT='<absolute-off-host-projection-directory>' \
+CMA_GATEWAY_TRUSTED_PATH='<reviewed-absolute-command-search-path>' \
+CMA_GATEWAY_TOOLCHAIN_TRUST_CONFIRM=reviewed-host-toolchain \
+  .github/scripts/cma-trigger-gateway-launch.sh adoption --adopt
 ```
 
 Run that command only in a release terminal whose output is durably recorded
 outside the operator host. The program captures the four live source objects in
 a private child of the attested custody root, file-fsyncs each object while
 changing it to mode `0400`, fsyncs the custody directories where the filesystem
-supports directory fsync, and only then prints both its path and
-`Gateway rollback SHA-256`. Record both values in the external release record as
-soon as they appear and retain the sealed directory through release completion.
-The digest authenticates those four files; it is not a substitute for them.
+supports directory fsync, and only then prints one success acknowledgement with
+the rollback path and `Gateway rollback SHA-256`, the adopted projection path
+and SHA-256, and its pre-adoption source-projection predecessor SHA-256. Record
+all five values in the external release record as soon as they appear and retain
+both sealed directories through release completion. Carry the adopted digest as
+`CMA_GATEWAY_SOURCE_PROJECTION_SHA256` and the predecessor digest as
+`CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256` when fencing. Each digest
+authenticates its retained artifact; it is not a substitute for that artifact.
 
 Before its first write, the program accepts only the exact legacy or
 already-adopted source pair, proves all three route generations and the effective
@@ -799,7 +817,13 @@ initial health write without inventing a `/ready` prerequisite, while refusing
 to change health over unproved routes or an unknown effective path. It then
 waits for the exact source specs and current route generations, proves the
 restored effective health check and backends, reruns the old-image probes, and
-performs a final sealed-state read. The rollback directory is retained after any
+performs a final sealed-state read. Before reporting rollback success it then
+revalidates the externally sealed pre-adoption projection, takes a fresh stable
+two-read closed projection of the complete Kubernetes and Compute graph, and
+compares behavior derived from every retained backend-service, health-check,
+URL-map, proxy, certificate, firewall, and NEG field with behavior derived from
+that sealed source capture. A partial route/health predicate cannot establish
+rollback success. The rollback directory is retained after any
 post-mutation failure, including a successfully proved automatic rollback.
 The successful adoption path also masks `HUP`, `INT`, `QUIT`, and `TERM` before it marks
 the mutation closed or clears the `EXIT` rollback trap. Temporary cleanup and
@@ -812,16 +836,39 @@ four-file directory and the independently recorded digest first; if either is
 lost, stop for incident recovery because the digest alone cannot reconstruct a
 rollback. Manual restore has its own explicit confirmation and refuses a
 different or unsealed directory. Re-establish the exclusive spec-writer window
-before setting its attestation; the program server-side dry-runs all four sealed
-snapshot replacements against the then-current objects before its first restore
-write:
+before setting its attestation; the program validates the required source
+projection directory, ownership, modes, independently supplied SHA-256, and
+capture-to-projection regeneration before its first restore write. It also
+requires the retained admission-bootstrap receipt and its independently
+recorded digest, re-verifies the exact live policy and binding, and stops before
+any restore write if that custody or enforcement proof is unavailable. Both
+`capture.json` and `projection.json` must also be schema version 1, mode
+`source`, and the exact pre-adoption lifecycle root
+`{stage:"source",predecessorSha256:"genesis"}`; an adopted, fenced, rollback, or
+final projection cannot authorize manual restore. It then
+server-side dry-runs all four sealed snapshot replacements against the
+then-current objects before that write and repeats the full projection proof
+after convergence:
 
 ```sh
-CMA_GATEWAY_RELEASE_REVISION='<reviewed-full-SHA>' \
-CMA_GATEWAY_CONFIRM=restore-v0.10-route \
+CMA_GATEWAY_RELEASE_REVISION='<reviewed-full-SHA>'
+cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref \
+  --points-at "${CMA_GATEWAY_RELEASE_REVISION}" \
+  --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' 'refs/tags/v*')"
+[[ "${cma_gateway_release_tag_record}" =~ ^(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\|tag\|commit\|${CMA_GATEWAY_RELEASE_REVISION}$ ]]
+cma_gateway_release_tag="${BASH_REMATCH[1]}"
+unset cma_gateway_release_tag_record
+CMA_GATEWAY_RELEASE_REVISION="${CMA_GATEWAY_RELEASE_REVISION}" \
+CMA_GATEWAY_CONFIRM="restore-${cma_gateway_release_tag}-route" \
 CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer \
 CMA_GATEWAY_ROLLBACK_SHA256='<externally-recorded-rollback-SHA-256>' \
-  .github/scripts/cma-trigger-gateway-adoption.sh \
+CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>' \
+CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>' \
+CMA_GATEWAY_PROJECTION_DIR='<absolute-reviewed-source-projection-directory>' \
+CMA_GATEWAY_PROJECTION_SHA256='<externally-recorded-source-projection-SHA-256>' \
+CMA_GATEWAY_TRUSTED_PATH='<reviewed-absolute-command-search-path>' \
+CMA_GATEWAY_TOOLCHAIN_TRUST_CONFIRM=reviewed-host-toolchain \
+  .github/scripts/cma-trigger-gateway-launch.sh adoption \
     --restore '<retained-sealed-rollback-directory>'
 ```
 
@@ -892,24 +939,80 @@ Production must remain on `v0.7.0` until operators have proved Atlas backup/PITR
 Run this once for each existing production database:
 
 1. Confirm the old deployment is healthy. Verify directly that `sessions` and `session_events` are writable collections, record their UUIDs and document counts, and confirm `sessions_v2`, `sessions_v3`, `session_events_v2`, `session_coordination_receipts`, and `_cma_session_namespace_cutovers` are absent. If the source is not exactly raw legacy state, stop and investigate; do not adapt this procedure around it.
-2. Fence ordinary traffic, then stop every old CMA replica and prevent it from returning. Before this first production write, establish the full checked-routing-graph writer freeze defined in section 4 and export `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer`; keep that real freeze in force through the fence proof and scale-down. This freeze must also block every Pod create/update path that could add `release.chrono-ai.fun/cutover-fence=mongodb-715`; reserve that selector through admission policy or an equivalently enforced deployment freeze. Invoke the reviewed `--fence` transaction rather than pasting a raw Service patch. It proves before, throughout, and after the drain that no Pod carries the reserved label, compare-and-replaces the Service's exact source selector with that label, and then requires the identical two-sweep pinned Service/EndpointSlice/all-zone NEG drain proof used by restoration. The JSON Patch `test` operation makes the selector change fail closed if the live value has drifted; investigate drift instead of editing the expected value during the release. A nonzero patch result is ambiguous rather than proof of failure: the transaction re-reads the live Service and succeeds only if the exact pinned fence plus the complete external drain are independently proved. The entrypoint is idempotent: if an ambiguous exit or later scale-down failure leaves the exact pinned fence in place, rerun the same command to re-prove the complete drain, never patch back to source. Keep this Service fence unchanged through both captures, coordination activation, and the final unflagged restart. It covers both routing generations: the legacy app-origin path reaches `Service/cma-api` through the web image's nginx proxy, while the adopted app-origin and direct API Gateway rules target that Service themselves. Only the adopted direct route may be reopened for the new API.
+2. Fence ordinary traffic, then stop every old CMA replica and prevent it from returning. Before this first production write, establish the full checked-routing-graph writer freeze defined in section 4 and export `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer`; keep that real freeze in force through the fence proof and scale-down. This freeze must also block every Pod create/update path that could add `release.chrono-ai.fun/cutover-fence=mongodb-715`; reserve that selector through admission policy or an equivalently enforced deployment freeze. Invoke the reviewed `--fence` transaction rather than pasting a raw Service patch. It proves before, throughout, and after the drain that no Pod carries the reserved label, compare-and-replaces the Service's exact source selector with that label, and then requires the identical two-sweep pinned Service/EndpointSlice/all-zone NEG drain proof used by restoration. The JSON Patch `test` operation makes the selector change fail closed if the live value has drifted; investigate drift instead of editing the expected value during the release. A nonzero patch result is ambiguous rather than proof of failure: the transaction re-reads the live Service and succeeds only if the exact pinned fence plus the complete external drain are independently proved. Before its Service patch, the entrypoint prints the already committed durable receipt path and SHA-256. Persist that acknowledgement from the release terminal even when a later drain or projection step fails. If an ambiguous exit leaves the exact pinned fence in place, export that independently recorded digest and rerun the reviewed `--fence` entrypoint as shown in the second block below; never derive the digest from local custody and never patch back to source. Keep this Service fence unchanged through both captures, coordination activation, and the final unflagged restart. It covers both routing generations: the legacy app-origin path reaches `Service/cma-api` through the web image's nginx proxy, while the adopted app-origin and direct API Gateway rules target that Service themselves. Only the adopted direct route may be reopened for the new API.
+
+   Run both blocks below in one dedicated shell and keep the writer freeze in force between them:
 
    ```bash
-   (
-     set -euo pipefail
-     : "${CMA_GATEWAY_RELEASE_REVISION:?export the reviewed full release commit before fencing traffic}"
-     : "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?export sole-spec-writer only after establishing the section 4 writer freeze}"
-     CMA_GATEWAY_CONFIRM=fence-v0.10-traffic \
-     CMA_GATEWAY_RELEASE_REVISION="${CMA_GATEWAY_RELEASE_REVISION}" \
-     CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM="${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM}" \
-       .github/scripts/cma-trigger-gateway-restore-traffic.sh --fence
-     kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=0
-     kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot wait --for=delete pod \
-       -l app.kubernetes.io/name=cma-api --timeout=120s
-   )
+   set -euo pipefail
+   : "${CMA_GATEWAY_RELEASE_REVISION:?export the reviewed full release commit before fencing traffic}"
+   : "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?export sole-spec-writer only after establishing the section 4 writer freeze}"
+   cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref \
+     --points-at "${CMA_GATEWAY_RELEASE_REVISION}" \
+     --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' 'refs/tags/v*')"
+   [[ "${cma_gateway_release_tag_record}" =~ ^(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\|tag\|commit\|${CMA_GATEWAY_RELEASE_REVISION}$ ]]
+   cma_gateway_release_tag="${BASH_REMATCH[1]}"
+   unset cma_gateway_release_tag_record
+   CMA_GATEWAY_CONFIRM="fence-${cma_gateway_release_tag}-traffic" \
+   CMA_GATEWAY_RELEASE_REVISION="${CMA_GATEWAY_RELEASE_REVISION}" \
+   CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM="${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM}" \
+   CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>' \
+   CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>' \
+   CMA_GATEWAY_FENCE_LABEL_RESERVATION_CONFIRM=live-denial-drill-v1 \
+   CMA_GATEWAY_SOURCE_PROJECTION='<absolute-adopted-source-projection>/projection.json' \
+   CMA_GATEWAY_SOURCE_PROJECTION_SHA256='<independently-recorded-adopted-projection-SHA-256>' \
+   CMA_GATEWAY_SOURCE_PROJECTION_PREDECESSOR_SHA256='<independently-recorded-source-projection-SHA-256>' \
+   CMA_GATEWAY_FENCE_RECEIPT_DIR='<absolute-off-host-fence-receipt-directory>' \
+   CMA_GATEWAY_FENCE_RECEIPT_CONFIRM=durable-prepatch-root-v1 \
+   CMA_GATEWAY_FENCED_PROJECTION_PARENT='<absolute-off-host-fenced-projection-directory>' \
+   CMA_GATEWAY_TRUSTED_PATH='<reviewed-absolute-command-search-path>' \
+   CMA_GATEWAY_TOOLCHAIN_TRUST_CONFIRM=reviewed-host-toolchain \
+     .github/scripts/cma-trigger-gateway-launch.sh traffic --fence
    ```
 
-   The subshell refuses to scale down until the reviewed fence transaction has re-verified the clean release checkout, applied the exact source-to-fence compare-and-swap, and performed the same pinned Service/EndpointSlice/all-zone NEG proof used by restoration. Every advertised zonal NEG must be empty across two coherent sweeps under unchanged Service UID, resourceVersion, NEG identity, and EndpointSlice identities. A missing Compute permission, malformed provider response, identity drift, nonempty NEG, or deadline failure stops the cutover with no automatic reopen. The zero-writer boundary is reached only after this external drain proof, the Deployment is at zero, every old API pod is confirmed deleted, and every outstanding MongoDB operation, object mutation, and external provider create, delete, or replacement call has finished. Rotate or revoke the old workload's database, storage, and provider credentials where the deployment permits that stronger fence. If any later step fails, leave the no-match Service selector in place until an explicit incident decision is complete. Do not install a shell trap or other automatic cleanup that could reopen traffic after a failed release.
+   The receipt acknowledgement is printed before the Service mutation and therefore remains in the durable terminal record even if the command later exits nonzero. Before any retry or scale-down, record its exact path and SHA-256 outside the operator host. Export that independently recorded digest as `CMA_GATEWAY_FENCE_RECEIPT_SHA256`; do not derive it again from the local receipt for the next proof. A successful fence also prints the durable `fenced-pre-scale` projection path and SHA-256. Record that digest independently as `CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256` before scaling down or starting the separate fence-proof process.
+
+   The fence writer also emits `CMA fence receipt candidate before publication`
+   to stderr with the intended receipt path and digest before its atomic rename.
+   That candidate line is not a success acknowledgement. Retain it so the exact
+   identity is still available if rename succeeds but a later directory-fsync
+   barrier fails. In that recovery case, verify the published bundle at the
+   candidate path, retain the candidate digest outside local custody, export it
+   as `CMA_GATEWAY_FENCE_RECEIPT_SHA256`, and rerun `--fence`. The retry accepts
+   and durably re-synchronizes only the byte-identical receipt it had constructed;
+   never replace the externally held digest with `receipt.sha256` from the same
+   local bundle.
+
+   ```bash
+   : "${CMA_GATEWAY_FENCE_RECEIPT_SHA256:?export the independently recorded fence-receipt SHA-256}"
+   : "${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:?export the independently recorded fenced-pre-scale projection SHA-256}"
+   : "${CMA_GATEWAY_RELEASE_REVISION:?retain the reviewed full release commit}"
+   : "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?retain the checked-routing-graph writer freeze}"
+   cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref \
+     --points-at "${CMA_GATEWAY_RELEASE_REVISION}" \
+     --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' 'refs/tags/v*')"
+   [[ "${cma_gateway_release_tag_record}" =~ ^(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\|tag\|commit\|${CMA_GATEWAY_RELEASE_REVISION}$ ]]
+   cma_gateway_release_tag="${BASH_REMATCH[1]}"
+   unset cma_gateway_release_tag_record
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot wait --for=delete pod \
+     -l app.kubernetes.io/name=cma-api --timeout=120s
+   CMA_GATEWAY_CONFIRM="prove-${cma_gateway_release_tag}-fence" \
+   CMA_GATEWAY_RELEASE_REVISION="${CMA_GATEWAY_RELEASE_REVISION}" \
+   CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM="${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM}" \
+   CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>' \
+   CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>' \
+   CMA_GATEWAY_FENCE_LABEL_RESERVATION_CONFIRM=live-denial-drill-v1 \
+   CMA_GATEWAY_FENCE_RECEIPT_DIR='<absolute-off-host-fence-receipt-directory>' \
+   CMA_GATEWAY_FENCE_RECEIPT_SHA256="${CMA_GATEWAY_FENCE_RECEIPT_SHA256}" \
+   CMA_GATEWAY_FENCED_PROJECTION_PARENT='<absolute-off-host-fenced-projection-directory>' \
+   CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256}" \
+   CMA_GATEWAY_TRUSTED_PATH='<reviewed-absolute-command-search-path>' \
+   CMA_GATEWAY_TOOLCHAIN_TRUST_CONFIRM=reviewed-host-toolchain \
+     .github/scripts/cma-trigger-gateway-launch.sh traffic --prove-fence
+   ```
+
+   The first transaction refuses to return until it has re-verified the clean release checkout, applied or independently observed the exact source-to-fence compare-and-swap, and performed the pinned Service/EndpointSlice/all-zone NEG proof. Its durable `fenced-pre-scale` projection records the exact `cma-api` Deployment UID and the pre-scale Pod name/UID set rooted in the pre-patch receipt. The second transaction authenticates that predecessor against the independently retained pre-scale digest and revalidates the independently authenticated fence receipt after scale-down, requires the same Deployment UID to be stably observed at zero desired, current, updated, ready, and available replicas, requires the label-selected Pod list to be empty, and independently reads every recorded predecessor Pod name with `--ignore-not-found` to prove deletion. Only then does it repeat the complete external drain proof and commit the successor `fenced-post-scale` projection required by step 10. Record the second transaction's printed projection path and SHA-256 outside the operator host as `CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256` before step 10; the restore process will not trust a digest recovered from the colocated projection receipt. Every advertised zonal NEG must be empty across two coherent sweeps under unchanged Service UID, resourceVersion, NEG identity, and EndpointSlice identities. A missing Compute permission, malformed provider response, identity drift, nonempty NEG, undeleted predecessor Pod, incomplete Deployment convergence, or deadline failure stops the cutover without emitting the post-scale artifact and with no automatic reopen. The zero-writer boundary is reached only after this external drain proof, the Deployment is at zero, every old API pod is confirmed deleted, and every outstanding MongoDB operation, object mutation, and external provider create, delete, or replacement call has finished. Rotate or revoke the old workload's database, storage, and provider credentials where the deployment permits that stronger fence. If any later step fails, leave the no-match Service selector in place until an explicit incident decision is complete. Do not install a shell trap or other automatic cleanup that could reopen traffic after a failed release.
 
 3. **Capture recovery unit A.** At this zero-writer boundary, take one transaction-consistent MongoDB backup or snapshot containing the raw collections and a version-retained recovery point for `CHRONO_CONTEXT_BUCKET`. Record both recovery identifiers and timestamps as one unit. If object storage is deliberately unconfigured, record that fact with the MongoDB recovery point. Prove the capture completed successfully before continuing.
 4. Select the explicit legacy maintenance stage in the live ConfigMap, then apply the new API Deployment. The tuple is exact: stage `legacy`, legacy acknowledgement `drained`, and an empty coordination acknowledgement. Applying the Deployment is safe only after capture A because its first new pod now has no normal-startup path. Run this in a dedicated shell that remains open through capture B so the exact pod identity selected here remains available to step 5.
@@ -1085,6 +1188,7 @@ Run this once for each existing production database:
 
    ```bash
    set -euo pipefail
+   : "${CMA_EXPECTED_API_IMAGE_ID:?set the immutable registry imageID from the verified release-image evidence}"
    kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot patch configmap cma-api --type merge \
      -p '{"data":{"CHRONO_MONGODB_CUTOVER_STAGE":"","CHRONO_MONGODB_LEGACY_CUTOVER":"","CHRONO_MONGODB_COORDINATION_CUTOVER":""}}'
    kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=0
@@ -1120,9 +1224,46 @@ Run this once for each existing production database:
      --for=condition=Ready "pod/${cma_final_pod}" --timeout=31m
    cma_final_pod_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get pod "${cma_final_pod}" -o json)"
    cma_final_pod_ip="$(printf '%s' "${cma_final_pod_json}" | jq -er '.status.podIP')"
+   cma_final_pod_image="$(printf '%s' "${cma_final_pod_json}" | jq -er \
+     'if (.spec.containers | length) == 1 and .spec.containers[0].name == "api" then .spec.containers[0].image else error("final Pod container set is not exact") end')"
+   cma_final_pod_image_id="$(printf '%s' "${cma_final_pod_json}" | jq -er \
+     'if (.status.containerStatuses | length) == 1 and .status.containerStatuses[0].name == "api" then .status.containerStatuses[0].imageID else error("final Pod status set is not exact") end')"
+   cma_final_replica_set="$(printf '%s' "${cma_final_pod_json}" | jq -er \
+     'if .metadata.ownerReferences == [(.metadata.ownerReferences[0])] and .metadata.ownerReferences[0].apiVersion == "apps/v1" and .metadata.ownerReferences[0].kind == "ReplicaSet" and .metadata.ownerReferences[0].controller == true and .metadata.ownerReferences[0].blockOwnerDeletion == true then .metadata.ownerReferences[0].name else error("final Pod owner is not one exact ReplicaSet") end')"
+   cma_final_replica_set_uid="$(printf '%s' "${cma_final_pod_json}" | jq -er \
+     '.metadata.ownerReferences[0].uid')"
+   cma_final_replica_set_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get replicaset "${cma_final_replica_set}" -o json)"
+   cma_final_deployment_uid="$(printf '%s' "${cma_final_replica_set_json}" | jq -er \
+     --arg uid "${cma_final_replica_set_uid}" \
+     'if .metadata.uid == $uid and .metadata.ownerReferences == [(.metadata.ownerReferences[0])] and .metadata.ownerReferences[0].apiVersion == "apps/v1" and .metadata.ownerReferences[0].kind == "Deployment" and .metadata.ownerReferences[0].name == "cma-api" and .metadata.ownerReferences[0].controller == true and .metadata.ownerReferences[0].blockOwnerDeletion == true then .metadata.ownerReferences[0].uid else error("final ReplicaSet owner is not the exact cma-api Deployment") end')"
+   cma_final_deployment_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get deployment cma-api -o json)"
+   test "${cma_final_pod_image_id}" = "${CMA_EXPECTED_API_IMAGE_ID}"
+   [[ "${cma_final_pod_image_id}" =~ ^(docker-pullable://)?us-central1-docker\.pkg\.dev/example-project-01/example-registry-02/cma-api@sha256:[0-9a-f]{64}$ ]]
    printf '%s' "${cma_final_pod_json}" | \
      jq -e --arg uid "${cma_final_pod_uid}" --arg ip "${cma_final_pod_ip}" \
-     '(.status.containerStatuses // [] | map(select(.name == "api"))) as $api | (.status.conditions // [] | map(select(.type == "Ready" and .status == "True"))) as $ready | .metadata.uid == $uid and .status.podIP == $ip and ($api | length) == 1 and $api[0].started == true and $api[0].restartCount == 0 and ($ready | length) == 1'
+       --arg rs "${cma_final_replica_set}" --arg rs_uid "${cma_final_replica_set_uid}" \
+       --arg image "${cma_final_pod_image}" --arg image_id "${CMA_EXPECTED_API_IMAGE_ID}" \
+     '.metadata.uid == $uid and .status.podIP == $ip and .metadata.ownerReferences == [{apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,kind:"ReplicaSet",name:$rs,uid:$rs_uid}] and (.status.containerStatuses // [] | map(select(.name == "api" and .image == $image and .imageID == $image_id and .ready == true and .started == true and .restartCount == 0)) | length) == 1 and (.status.conditions // [] | map(select(.type == "Ready" and .status == "True")) | length) == 1'
+   printf '%s' "${cma_final_replica_set_json}" | jq -e \
+     --arg uid "${cma_final_replica_set_uid}" --arg deployment_uid "${cma_final_deployment_uid}" \
+     '.metadata.uid == $uid and .metadata.ownerReferences == [{apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,kind:"Deployment",name:"cma-api",uid:$deployment_uid}] and .spec.replicas == 1 and .status.observedGeneration == .metadata.generation and .status.replicas == 1 and .status.readyReplicas == 1 and .status.availableReplicas == 1'
+   printf '%s' "${cma_final_deployment_json}" | jq -e \
+     --arg uid "${cma_final_deployment_uid}" \
+     '.metadata.uid == $uid and .metadata.name == "cma-api" and .metadata.namespace == "chrono-bot" and .spec.replicas == 1 and .status.observedGeneration == .metadata.generation and .status.replicas == 1 and .status.updatedReplicas == 1 and .status.readyReplicas == 1 and .status.availableReplicas == 1 and (.status.unavailableReplicas // 0) == 0'
+   (
+     cma_workload_proof_dir="$(mktemp -d)"
+     trap 'rm -rf "${cma_workload_proof_dir}"' EXIT HUP INT QUIT TERM
+     chmod 700 "${cma_workload_proof_dir}"
+     printf '%s\n' "${cma_final_deployment_json}" >"${cma_workload_proof_dir}/deployment.json"
+     printf '%s\n' "${cma_final_replica_set_json}" >"${cma_workload_proof_dir}/replicaset.json"
+     printf '%s\n' "${cma_final_pod_json}" >"${cma_workload_proof_dir}/pod.json"
+     chmod 600 "${cma_workload_proof_dir}"/*.json
+     ruby --disable-gems .github/scripts/cma-trigger-gateway-projection.rb \
+       --validate-workload infra/api/deployment.yaml \
+       "${cma_workload_proof_dir}/deployment.json" \
+       "${cma_workload_proof_dir}/replicaset.json" \
+       "${cma_workload_proof_dir}/pod.json"
+   )
    ```
 
    The bounded creation gate fails immediately on multiple candidates. A timeout, replacement, or restart again leaves traffic fenced and does not prove that database work stopped. Port-forward directly to the already captured and verified pod from the same shell:
@@ -1139,9 +1280,11 @@ Run this once for each existing production database:
      "pod/${cma_final_pod}" 18080:8080
    ```
 
-   Verify all three live cutover values are empty and the same protected UUIDs and contracts remain. In the other terminal, rerun the exact normal-mode HTTP and fence gate from step 8 and perform the representative authenticated reads through the port-forward. Stop the port-forward manually but keep this shell and its three `cma_final_pod*` identity variables before restoring traffic.
+   Verify all three live cutover values are empty and the same protected UUIDs and contracts remain. In the other terminal, rerun the exact normal-mode HTTP and fence gate from step 8 and perform the representative authenticated reads through the port-forward. Stop the port-forward manually but keep this shell and every captured `cma_final_*` workload identity and image variable before restoring traffic.
 
-10. Restore ordinary traffic only after every final check has passed. In the retained step 9 parent shell, disable xtrace, establish `umask 077`, and require `ulimit -c 0` before retrieving or exporting the short-lived bearer; abort while traffic remains fenced if any protection cannot be established. Re-establish the full checked-routing-graph freeze from the adoption section, set the distinct destructive-intent guard `CMA_GATEWAY_CONFIRM=restore-v0.10-traffic`, and export `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer`; keep that window through the final post-open route/policy proof, success output, and re-fence trap removal. Only after the parent-shell protections are active, export a short-lived release access token as `CHRONO_RELEASE_ACCESS_TOKEN`, the exact reviewed 40-hex commit as `CMA_GATEWAY_RELEASE_REVISION`, the retained adoption snapshot path as `CMA_GATEWAY_ROLLBACK_DIR`, and its independently recorded digest as `CMA_GATEWAY_ROLLBACK_SHA256` in that same shell. Invoke the checked-in Bash program from the clean checkout root; do not paste or source its implementation. At process startup, before parsing the remaining program or reading the inherited bearer, the program independently re-establishes `umask 077`, disables core dumps, and disables inherited xtrace. Before its first cluster action, it verifies the dedicated confirmation, the exact freeze attestation, the clean reviewed commit, and its own executable Git blob. On every pre-validation recheck it also byte-binds the Gateway state checker and the sourced adoption helper to their exact reviewed Git blobs, then revalidates the external snapshot seal before invoking the checker. The checker binds the adopted live objects' UIDs and owned metadata to that snapshot. Every Compute truth read starts `gcloud` under `env -i`, retaining only the operator's `HOME` for the default Cloud SDK active configuration, the current command `PATH`, `LC_ALL=C`, and `CLOUDSDK_CORE_HTTP_TIMEOUT=15`; inherited SDK property, endpoint, credential, custom-CA, Python, and proxy variables cannot redirect those reads. The program removes the credential from the exported environment before spawning any child and supplies it to `curl` through a protected file descriptor rather than an argument. Every Kubernetes and Compute call has both a client request timeout and an outer process deadline, the checker has its own outer deadline, and each EndpointSlice/NEG convergence operation has an explicit five-minute `SECONDS` deadline. Replace the exact fence selector with the source selector by another compare-and-replace JSON Patch, wait for coherent EndpointSlice and zonal NEG convergence, require exactly the verified pod in both projections, and verify authenticated reads through both the direct API hostname and the app-origin API route. The installed traps only re-fence traffic; they never reopen it. The program erases its private credential copy on success, and the calling shell clears its copy after either success or failure.
+10. Restore ordinary traffic only after every final check has passed. In the retained step 9 parent shell, disable xtrace, establish `umask 077`, and require `ulimit -c 0` before retrieving or exporting the short-lived bearer; abort while traffic remains fenced if any protection cannot be established. Re-establish the full checked-routing-graph freeze from the adoption section, derive the distinct destructive-intent guard as `restore-<exact-release-tag>-traffic` from the single annotated SemVer tag on `CMA_GATEWAY_RELEASE_REVISION`, and export `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer`; keep that window through the final post-open route/policy proof, success output, and re-fence trap removal. Only after the parent-shell protections are active, export a short-lived release access token as `CHRONO_RELEASE_ACCESS_TOKEN`, the exact reviewed 40-hex commit as `CMA_GATEWAY_RELEASE_REVISION`, the retained adoption snapshot path as `CMA_GATEWAY_ROLLBACK_DIR`, and its independently recorded digest as `CMA_GATEWAY_ROLLBACK_SHA256` in that same shell. Invoke the checked-in program only through `cma-trigger-gateway-launch.sh` from the clean checkout root; do not paste, source, or execute the traffic implementation directly. At process startup, before parsing the remaining program or reading the inherited bearer, the launcher and traffic program independently re-establish `umask 077`, disable core dumps, and disable inherited xtrace. Before its first cluster action, the program verifies the tag-derived confirmation, exact freeze attestation, clean reviewed commit, and its own executable Git blob. On every pre-validation recheck it also byte-binds the Gateway state checker, sourced adoption helper, API/web Deployment manifests, and API ConfigMap to their exact reviewed Git blobs, then revalidates the external snapshot seal before invoking the checker. The checker binds the adopted live objects' UIDs and owned metadata to that snapshot. Every Compute truth read starts `gcloud` under `env -i`, retaining only the operator's `HOME` for the default Cloud SDK active configuration, the current command `PATH`, `LC_ALL=C`, and `CLOUDSDK_CORE_HTTP_TIMEOUT=15`; inherited SDK property, endpoint, credential, custom-CA, Python, and proxy variables cannot redirect those reads. The launcher removes the credential from the exported environment before spawning any child and supplies it to the traffic program through protected descriptor 8; only `curl` receives it through a separate protected descriptor rather than an argument. Every Kubernetes and Compute call has both a client request timeout and an outer process deadline, the checker has its own outer deadline, and each EndpointSlice/NEG convergence operation has an explicit five-minute `SECONDS` deadline. Replace the exact fence selector with the source selector by another compare-and-replace JSON Patch, wait for coherent EndpointSlice and zonal NEG convergence, require exactly the verified Deployment-to-ReplicaSet-to-Pod chain and immutable image digest in both projections, and verify authenticated reads through both the direct API hostname and the app-origin API route. The installed traps only re-fence traffic; they never reopen it. The program erases its private credential copy on success, and the calling shell clears its copy after either success or failure.
+
+   The retained shell must also pass the durable admission receipt and its independently recorded digest, the live-denial drill acknowledgement, the original fence-receipt custody directory and independently recorded receipt digest, the fenced projection parent used before scale-down, the independently recorded `fenced-pre-scale` and `fenced-post-scale` projection digests, and a pre-existing owned final-projection parent. Every successor validator receives and enforces the exact expected lifecycle stage and predecessor digest again after capture publication. These are inputs to the pre-reopen and final closed projections; none is reconstructed from a colocated checksum or transient shell state.
 
 The checked adoption and traffic-restoration executables are intentionally
 hard-disabled by a reviewed source constant in this evidence-tooling revision.
@@ -1173,17 +1316,41 @@ fi
 
 # Retrieve and export the short-lived bearer only after the checks above.
 : "${CHRONO_RELEASE_ACCESS_TOKEN:?export the short-lived release access token while traffic is fenced}"
-: "${CMA_GATEWAY_CONFIRM:?set CMA_GATEWAY_CONFIRM=restore-v0.10-traffic while traffic is fenced}"
 : "${CMA_GATEWAY_RELEASE_REVISION:?export the reviewed full release commit while traffic is fenced}"
 : "${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM:?re-establish the checked-routing-graph freeze while traffic is fenced}"
 : "${CMA_GATEWAY_ROLLBACK_DIR:?export the retained sealed adoption snapshot path}"
 : "${CMA_GATEWAY_ROLLBACK_SHA256:?export the independently recorded adoption snapshot digest}"
+: "${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256:?export the independently recorded fenced-pre-scale projection SHA-256}"
+: "${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256:?export the independently recorded fenced-post-scale projection SHA-256}"
+cma_gateway_release_tag_record="$(git --no-replace-objects for-each-ref \
+  --points-at "${CMA_GATEWAY_RELEASE_REVISION}" \
+  --format='%(refname:strip=2)|%(objecttype)|%(*objecttype)|%(*objectname)' 'refs/tags/v*')"
+[[ "${cma_gateway_release_tag_record}" =~ ^(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\|tag\|commit\|${CMA_GATEWAY_RELEASE_REVISION}$ ]]
+cma_gateway_release_tag="${BASH_REMATCH[1]}"
+unset cma_gateway_release_tag_record
 cma_restore_status=0
 # shellcheck disable=SC2154 # Retained variables are set in this step 9 parent shell.
+CMA_GATEWAY_CONFIRM="restore-${cma_gateway_release_tag}-traffic" \
+CMA_GATEWAY_ADMISSION_RECEIPT='<absolute-admission-receipt>' \
+CMA_GATEWAY_ADMISSION_RECEIPT_SHA256='<externally-recorded-admission-receipt-SHA-256>' \
+CMA_GATEWAY_FENCE_LABEL_RESERVATION_CONFIRM=live-denial-drill-v1 \
+CMA_GATEWAY_FENCE_RECEIPT_DIR='<absolute-off-host-fence-receipt-directory>' \
+CMA_GATEWAY_FENCE_RECEIPT_SHA256='<externally-recorded-fence-receipt-SHA-256>' \
+CMA_GATEWAY_FENCED_PROJECTION_PARENT='<absolute-off-host-fenced-projection-directory>' \
+CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256="${CMA_GATEWAY_FENCED_PRE_SCALE_PROJECTION_SHA256}" \
+CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256="${CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256}" \
+CMA_GATEWAY_FINAL_PROJECTION_PARENT='<absolute-off-host-final-projection-directory>' \
+CMA_FINAL_DEPLOYMENT_UID="${cma_final_deployment_uid}" \
+CMA_FINAL_REPLICA_SET="${cma_final_replica_set}" \
+CMA_FINAL_REPLICA_SET_UID="${cma_final_replica_set_uid}" \
 CMA_FINAL_POD="${cma_final_pod}" \
 CMA_FINAL_POD_UID="${cma_final_pod_uid}" \
 CMA_FINAL_POD_IP="${cma_final_pod_ip}" \
-  .github/scripts/cma-trigger-gateway-restore-traffic.sh || \
+CMA_FINAL_POD_IMAGE="${cma_final_pod_image}" \
+CMA_FINAL_POD_IMAGE_ID="${cma_final_pod_image_id}" \
+CMA_GATEWAY_TRUSTED_PATH='<reviewed-absolute-command-search-path>' \
+CMA_GATEWAY_TOOLCHAIN_TRUST_CONFIRM=reviewed-host-toolchain \
+  .github/scripts/cma-trigger-gateway-launch.sh traffic || \
     cma_restore_status=$?
 unset CHRONO_RELEASE_ACCESS_TOKEN
 if [ "${cma_restore_status}" -ne 0 ]; then
@@ -1194,7 +1361,7 @@ unset cma_restore_status
 
 A nonzero response from the reopen patch is never interpreted as proof that traffic stayed fenced. The script reads the live selector: an observed source selector is immediately changed back with an exact source-to-fence patch, while an unreadable or unknown selector is a critical manual-fence condition. Zero routable EndpointSlice entries alone are not accepted as an external fence. Every initial or repeated fence proof parses the exact `cma-api` NEG name and unique zones from the fenced Service, bounded-reads every advertised zonal membership with `compute.networkEndpointGroups.listNetworkEndpoints`, and requires every response to be an empty JSON array. It re-reads and binds the Service UID, `resourceVersion`, selector, port, NEG name and zones plus the complete EndpointSlice name/UID/resourceVersion set around each Compute sweep; any change makes the proof fail rather than mixing observations. Two consecutive all-empty sweeps under the same Service and EndpointSlice records are required. Only then may re-fencing report success or set `cma_traffic_open=0`.
 
-Reopening uses the converse proof. The only routable EndpointSlice entry must have the exact one-element address array for the verified pod plus its Pod name, namespace, and UID. Across all advertised zones, the NEG population must contain exactly one endpoint with that same pod IP and port `8080`, under unchanged Service and EndpointSlice records. The first successful call retains one normalized record containing the Service UID/resourceVersion/NEG identity, complete EndpointSlice identity and ready-endpoint projection, and full normalized NEG member object. The proof runs once before public traffic checks and again after the final route/policy check; the second result must be byte-identical to the first successful normalized Service, EndpointSlice, and NEG projection. Any extra address, Pod identity, NEG member, replacement UID, or intervening resource version triggers re-fencing. After that second proof, the program re-reads the exact Pod UID, IP, readiness, started state, and zero restart count immediately before commit; deletion, restart, or readiness drift also re-fences.
+Reopening uses the converse proof. The only routable EndpointSlice entry must have the exact one-element address array for the verified pod plus its Pod name, namespace, and UID. Across all advertised zones, the NEG population must contain exactly one endpoint with that same pod IP and port `8080`, under unchanged Service and EndpointSlice records. Before the selector changes, the program also proves the retained Pod has exactly one controlling ReplicaSet owner, that ReplicaSet has exactly one controlling `cma-api` Deployment owner, and all three UIDs equal the identities captured in step 9. The reviewed projection contract parses `infra/api/deployment.yaml`, applies only the closed Kubernetes defaults named by that contract, and then requires complete equality with the live Deployment spec and ReplicaSet template. It derives the Pod spec from that same template and permits only the exact scheduler fields, default NoExecute tolerations, and one standard `kube-api-access-*` projected service-account volume/mount used by this cluster. Command, args, environment, `envFrom`, service account, security context, probes, resources, affinity, volumes, mounts, container count, or any other same-image admission/spec drift therefore fails. The runtime container status image must equal the manifest image and its `imageID` must equal the externally verified immutable registry digest captured in step 9. Both the `fenced-pre-reopen` and `final-reopen` projections capture the full normalized Deployment, retained ReplicaSet, and retained Pod objects and seal their exact ownership chain, resource identities, spec SHA-256 values, Pod IP, manifest image, and immutable `imageID` in `graph.apiWorkload.verified`. Bash binds that sealed proof back to every retained step 9 value and reruns the full reviewed workload validator on the sealed objects. Each fenced and final-source validator returns the SHA-256 of the exact projection bytes that passed its lifecycle-ancestry, workload, and live-routing checks; every caller validates and acknowledges that returned digest without reopening the mutable projection path. An exact live workload recheck immediately before the Service reopen and another immediately after final projection validation bracket both capture windows, so a replacement workload cannot be transiently served or accepted as final success. The first successful endpoint call retains one normalized record containing the Service UID/resourceVersion/NEG identity, complete EndpointSlice identity and ready-endpoint projection, and full normalized NEG member object. The proof runs once before public traffic checks and again after the final route/policy check; the second result must be byte-identical to the first successful normalized Service, EndpointSlice, and NEG projection. Any extra address, workload-owner drift, workload-spec drift, image drift, Pod identity, NEG member, replacement UID, or intervening resource version triggers re-fencing. After that second proof, the program re-reads the complete Deployment-to-ReplicaSet-to-Pod chain, full workload specs, immutable imageID, Pod IP, readiness, started state, and zero restart count immediately before commit; deletion, restart, ownership drift, spec drift, or readiness drift also re-fences.
 
 Before reopening and again after the public checks, the script reasserts the clean reviewed checkout, its own reviewed executable blob, both reviewed helper blobs, the externally authenticated snapshot, all three generation-matched routes and the health policy with snapshot-bound UIDs and owned metadata, both effective 660-second backend services bound to the advertised NEGs, and the effective `/ready` health check; drift leaves or returns traffic fenced. After reopening, a command error, an unexpected routable endpoint, a timeout, a signal, or any public or authenticated verification failure takes the same fail-closed path. The `EXIT` trap passes the already captured status into its handler; the handler masks ordinary termination signals as its first command, closes the reserved credential descriptor, and only then reads that argument or changes any other state, so a repeated signal cannot interrupt re-fencing. The discovery check parses the CMA OpenAPI 3.1 document rather than accepting an arbitrary 2xx response from the legacy SPA fallback. Only the exact pod name, UID, and address recorded in step 9 can pass the EndpointSlice gate. After both authenticated reads and the final route/policy recheck succeed, the success path masks `HUP`, `INT`, `QUIT`, and `TERM`, erases the private bearer value and captured response bodies, and prints explicit success while the `EXIT` re-fence trap remains armed. An output failure therefore re-fences. Only after that acknowledgement succeeds does it mark restoration committed, disarm the `EXIT` trap, and restore the ordinary signal dispositions.
 
