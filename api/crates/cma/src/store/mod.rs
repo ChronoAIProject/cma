@@ -16,6 +16,7 @@ pub mod mongo;
 pub mod operation;
 pub mod settings;
 pub mod skill_packs;
+mod sponsorship_encryption;
 pub mod tickets;
 pub mod token;
 pub mod trigger;
@@ -41,6 +42,7 @@ pub use trigger::MongoTriggerStore;
 pub use trigger_workspace::ChronoStorageTriggerWorkspaceStore;
 
 pub(crate) use encryption::AuthEncryptionKey;
+pub(crate) use sponsorship_encryption::{SponsorshipEncryptionKey, SponsorshipKeyring};
 
 /// Everything this deployment keeps in MongoDB.
 ///
