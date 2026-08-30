@@ -549,7 +549,7 @@ function TriggerReviewRoute({
           }),
       );
       const started = await executeCommand(
-        { ...identity, request, persistRequest: true },
+        { ...identity, request, persistRequest: true, replayCompleted: true },
         'Launch start',
         (idempotencyKey, frozen) =>
           startLaunch(
