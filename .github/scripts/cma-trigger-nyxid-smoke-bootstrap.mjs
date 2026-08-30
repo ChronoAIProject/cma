@@ -25,7 +25,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const NYXID_BASE_URL = "https://nyx-api.chrono-ai.fun";
 const NYXID_SOURCE_REPOSITORY = "ChronoAIProject/NyxID";
-const NYXID_SOURCE_REVISION = "245600cb15110c43aafed77c8a8ee73f655ac060";
+const NYXID_SOURCE_REVISION = "0243b5478b5d7b93220b1a5ef495776ee8d7dc41";
 const NYXID_API_VERSION = "0.10.0";
 const NYXID_SOURCE_REF_URL =
   "https://api.github.com/repos/ChronoAIProject/NyxID/git/ref/heads/main";
