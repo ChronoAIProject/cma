@@ -222,6 +222,37 @@ describe('durable browser command ledger', () => {
     expect(await tabB.pending([RESOURCE])).toBeNull();
   });
 
+  it('replays one completed key when a one-shot command reaches another tab late', async () => {
+    const tabA = new BrowserCommandLedger({
+      ownerId: 'owner-a',
+      instanceId: 'tab-a',
+    });
+    const tabB = new BrowserCommandLedger({
+      ownerId: 'owner-a',
+      instanceId: 'tab-b',
+    });
+    const oneShot = { ...command(), replayCompleted: true };
+    const firstSend = vi.fn().mockResolvedValue('one result');
+    const replaySend = vi.fn().mockResolvedValue('replayed result');
+
+    await expect(tabA.execute(oneShot, 'Launch start', firstSend)).resolves.toBe('one result');
+    await expect(tabB.execute(oneShot, 'Launch start', replaySend)).resolves.toBe(
+      'replayed result',
+    );
+    expect(replaySend.mock.calls[0]?.[0]).toBe(firstSend.mock.calls[0]?.[0]);
+
+    const changedSend = vi.fn().mockResolvedValue('changed result');
+    await expect(
+      tabA.execute(
+        { ...command({ expectedRevision: 8 }), replayCompleted: true },
+        'Launch start',
+        changedSend,
+      ),
+    ).resolves.toBe('changed result');
+    expect(changedSend.mock.calls[0]?.[0]).not.toBe(firstSend.mock.calls[0]?.[0]);
+    expect(await tabB.pending([RESOURCE])).toBeNull();
+  });
+
   it.each(['finite', 'unresolved'] as const)(
     'does not let a late %s result from an expired claim disturb its successor',
     async (outcome) => {
