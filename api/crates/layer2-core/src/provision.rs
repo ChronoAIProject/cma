@@ -171,6 +171,8 @@ impl SessionService {
             .as_ref()
             .and_then(|record| record.trigger_origin.as_ref());
         let runtime_policy_required = trigger_origin.is_some();
+        let sponsored_model_required = trigger_origin
+            .is_some_and(|origin| origin.billing_mode == crate::BillingMode::Sponsored);
         options.restricted_service_gateway = runtime_policy_required;
         let trigger_timeout_seconds =
             trigger_origin.map(|origin| u64::from(origin.timeout_seconds));
@@ -258,6 +260,7 @@ impl SessionService {
                 platform_briefing: platform_briefing.to_string(),
                 reaches,
                 runtime_policy_required,
+                sponsored_model_required,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })

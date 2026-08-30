@@ -117,6 +117,9 @@ pub(crate) enum ControlFrame {
         #[serde(default)]
         operation_id: Option<String>,
         value: String,
+        /// Exact non-secret durable generation paired with `value`.
+        #[serde(default)]
+        custody_generation: Option<u64>,
     },
     /// Install one authenticated, launch-scoped runtime policy or tombstone.
     ///
@@ -126,6 +129,12 @@ pub(crate) enum ControlFrame {
     GithubCapability {
         operation_id: String,
         envelope: String,
+    },
+    /// Install one non-secret sponsored-model authority in the model proxy.
+    /// The independently delivered session credential remains outside it.
+    SponsoredModelAuthority {
+        operation_id: String,
+        authority: crate::sponsored_model::SponsoredModelRuntimeAuthority,
     },
     /// Restart the supervised program under a different front-end.
     ///
@@ -153,6 +162,9 @@ pub(crate) const CREDENTIAL_RESULT: &str = "credential_result";
 
 /// The tag returned after a signed GitHub policy/tombstone was settled.
 pub(crate) const GITHUB_CAPABILITY_RESULT: &str = "github_capability_result";
+
+/// The tag returned after sponsored model authority was installed or refused.
+pub(crate) const SPONSORED_MODEL_AUTHORITY_RESULT: &str = "sponsored_model_authority_result";
 
 /// A process ending sent to the control plane after its terminal is drained.
 #[derive(Debug, serde::Serialize)]
@@ -446,10 +458,18 @@ pub(crate) async fn control(
         Ok(ControlFrame::Credential {
             operation_id,
             value,
+            custody_generation,
         }) => {
             // Never logged with its value; the holder reports only that a
             // replacement happened.
-            state.credential.set(value).await;
+            let installed = state
+                .credential
+                .install(value, custody_generation, state.sponsored_model.required())
+                .await
+                .is_ok();
+            if !installed {
+                tracing::warn!(runtime, "credential installation was refused");
+            }
             // Legacy callers sent no operation id and expect no unsolicited
             // result frame. Current callers get an answer only after `set`
             // completed, so the answer is evidence that the new value is live.
@@ -457,7 +477,7 @@ pub(crate) async fn control(
                 let answer = serde_json::json!({
                     "t": CREDENTIAL_RESULT,
                     "operation_id": operation_id,
-                    "installed": true,
+                    "installed": installed,
                 })
                 .to_string();
                 if replies.send(answer).await.is_err() {
@@ -504,6 +524,41 @@ pub(crate) async fn control(
                 tracing::warn!(
                     runtime,
                     "the link closed before GitHub capability installation could be acknowledged"
+                );
+            }
+        }
+        Ok(ControlFrame::SponsoredModelAuthority {
+            operation_id,
+            authority,
+        }) => {
+            let result = state.sponsored_model.install(runtime, authority).await;
+            let answer = match result {
+                Ok(receipt) => serde_json::json!({
+                    "t": SPONSORED_MODEL_AUTHORITY_RESULT,
+                    "operation_id": operation_id,
+                    "accepted": true,
+                    "runtime_audience": receipt.runtime_audience,
+                    "session_id": receipt.session_id,
+                    "session_credential_generation": receipt.session_credential_generation,
+                    "launch_id": receipt.launch_id,
+                    "grant_id": receipt.grant_id,
+                    "grant_generation": receipt.grant_generation,
+                    "policy_generation": receipt.policy_generation,
+                    "maximum_output_tokens_per_request": receipt.maximum_output_tokens_per_request,
+                    "capability_fingerprint": receipt.capability_fingerprint,
+                }),
+                Err(refusal) => serde_json::json!({
+                    "t": SPONSORED_MODEL_AUTHORITY_RESULT,
+                    "operation_id": operation_id,
+                    "accepted": false,
+                    "refusal": refusal.wire_name(),
+                }),
+            }
+            .to_string();
+            if replies.send(answer).await.is_err() {
+                tracing::warn!(
+                    runtime,
+                    "the link closed before sponsored model authority installation could be acknowledged"
                 );
             }
         }

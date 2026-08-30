@@ -15,6 +15,105 @@ use std::num::{NonZeroU32, NonZeroU64};
 
 use tokio::sync::mpsc;
 
+/// One credential delivery bound to its exact durable custody generation.
+///
+/// The value remains opaque outside the issuer and runtime proxy. The optional
+/// generation is non-secret correlation metadata: sources without durable
+/// provider-key custody leave it absent, while sponsored runtimes require it
+/// so their bearer and model-gateway envelope can never describe different
+/// credential generations.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RuntimeCredential {
+    value: String,
+    custody_generation: Option<NonZeroU64>,
+}
+
+impl RuntimeCredential {
+    /// A credential whose source cannot prove a durable custody generation.
+    pub fn new(value: String) -> Self {
+        Self {
+            value,
+            custody_generation: None,
+        }
+    }
+
+    /// A credential paired with the exact generation committed to custody.
+    pub fn with_custody_generation(value: String, custody_generation: NonZeroU64) -> Self {
+        Self {
+            value,
+            custody_generation: Some(custody_generation),
+        }
+    }
+
+    /// Expose the opaque value only at a delivery or authentication boundary.
+    pub fn expose(&self) -> &str {
+        &self.value
+    }
+
+    /// Exact durable custody generation paired with this value, when known.
+    pub fn custody_generation(&self) -> Option<NonZeroU64> {
+        self.custody_generation
+    }
+
+    /// Consume this delivery while preserving only its opaque value.
+    pub fn into_value(self) -> String {
+        self.value
+    }
+}
+
+impl From<String> for RuntimeCredential {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for RuntimeCredential {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_string())
+    }
+}
+
+impl From<&RuntimeCredential> for RuntimeCredential {
+    fn from(value: &RuntimeCredential) -> Self {
+        value.clone()
+    }
+}
+
+impl std::fmt::Debug for RuntimeCredential {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuntimeCredential")
+            .field(
+                "value",
+                &format_args!("<redacted {} bytes>", self.value.len()),
+            )
+            .field("custody_generation", &self.custody_generation)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod runtime_credential_tests {
+    use super::*;
+
+    #[test]
+    fn credential_and_control_debug_are_redacted() {
+        let credential = RuntimeCredential::with_custody_generation(
+            "secret-runtime-bearer".into(),
+            NonZeroU64::new(8).unwrap(),
+        );
+        let frame = TerminalInput::Credential {
+            operation_id: "operation-1".into(),
+            credential: credential.clone(),
+        };
+
+        for rendered in [format!("{credential:?}"), format!("{frame:?}")] {
+            assert!(!rendered.contains("secret-runtime-bearer"));
+            assert!(rendered.contains("custody_generation"));
+        }
+    }
+}
+
 /// Size of the runtime's terminal, in character cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TermSize {
@@ -289,6 +388,13 @@ pub struct RuntimeSpec {
     /// Provider-neutral intent: Layer 3 transports an opaque runtime policy
     /// and never interprets its provider-shaped contents.
     pub runtime_policy_required: bool,
+    /// Whether model calls must remain fenced until CMA installs one exact
+    /// sponsored grant authority on the live runtime.
+    ///
+    /// This is independent of `runtime_policy_required`: the latter governs
+    /// contributor-owned service access, while this flag prevents the model
+    /// proxy from using that contributor authority for sponsored spend.
+    pub sponsored_model_required: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -446,6 +552,77 @@ pub struct RuntimePolicyReceipt {
     pub revoked: bool,
 }
 
+/// Canonical HTTPS origin of the CMA-owned sponsored model gateway.
+///
+/// An origin is carried explicitly during authority installation. It is never
+/// inferred from another service URL, and it contains no path on which URL
+/// resolution could silently change the selected gateway route.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct SponsoredModelGatewayOrigin(String);
+
+impl SponsoredModelGatewayOrigin {
+    pub fn parse(value: impl Into<String>) -> Result<Self, &'static str> {
+        let value = value.into();
+        let parsed = url::Url::parse(&value).map_err(|_| "gateway origin is not a URL")?;
+        if parsed.scheme() != "https"
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.path() != "/"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || parsed.origin().ascii_serialization() != value
+        {
+            return Err("gateway origin must be one exact canonical HTTPS origin");
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Provider-neutral authority installed only in a sponsored runtime's local
+/// model proxy. Every field is non-secret; the separate session credential is
+/// held by the supervisor and supplied independently at request time.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SponsoredModelRuntimeAuthority {
+    pub version: u32,
+    pub gateway_origin: SponsoredModelGatewayOrigin,
+    pub runtime_audience: String,
+    pub session_id: String,
+    pub session_credential_generation: u64,
+    pub launch_id: String,
+    pub grant_id: String,
+    pub grant_generation: u64,
+    pub policy_generation: u64,
+    pub maximum_output_tokens_per_request: u64,
+    pub expires_at: String,
+    pub capability_fingerprint: String,
+}
+
+pub const SPONSORED_MODEL_RUNTIME_AUTHORITY_VERSION: u32 = 2;
+/// The single policy resource represented by the sponsored Responses data plane.
+pub const SPONSORED_MODEL_RESOURCE: &str = "responses";
+
+/// Exact acknowledgement returned by the runtime after installing sponsored
+/// model authority. The control plane compares every field to its command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsoredModelAuthorityReceipt {
+    pub runtime_audience: String,
+    pub session_id: String,
+    pub session_credential_generation: u64,
+    pub launch_id: String,
+    pub grant_id: String,
+    pub grant_generation: u64,
+    pub policy_generation: u64,
+    pub maximum_output_tokens_per_request: u64,
+    pub capability_fingerprint: String,
+}
+
 /// Closed runtime refusal vocabulary exposed by the policy readiness lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimePolicyRefusal {
@@ -568,13 +745,20 @@ pub enum TerminalInput {
     Credential {
         /// Opaque request correlation generated by the control plane.
         operation_id: String,
-        /// Secret value to install. Never render this variant with its value.
-        value: String,
+        /// Redacted bearer and its exact non-secret custody generation.
+        credential: RuntimeCredential,
     },
     /// Install one opaque authenticated policy envelope or tombstone.
     RuntimePolicy {
         operation_id: String,
         envelope: String,
+    },
+    /// Install one exact sponsored model authority in the supervisor's local
+    /// proxy. The authority is inert without the independently delivered
+    /// session credential and contains no provider credential or grant handle.
+    SponsoredModelAuthority {
+        operation_id: String,
+        authority: SponsoredModelRuntimeAuthority,
     },
     /// Restart the supervised program under a different front-end.
     ///

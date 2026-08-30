@@ -746,6 +746,91 @@ impl RuntimePolicyWaiters {
     }
 }
 
+/// Sponsored-model authority acknowledgements, correlated to one operation and
+/// one exact socket generation.
+#[derive(Clone, Default)]
+pub(crate) struct SponsoredModelAuthorityWaiters(
+    std::sync::Arc<tokio::sync::Mutex<BTreeMap<(String, String), SponsoredModelAuthorityWaiter>>>,
+);
+
+struct SponsoredModelAuthorityWaiter {
+    link: WeakTerminalInputSender,
+    answer: oneshot::Sender<link::SponsoredModelAuthorityAnswer>,
+}
+
+impl SponsoredModelAuthorityWaiters {
+    pub(crate) async fn expect(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+    ) -> oneshot::Receiver<link::SponsoredModelAuthorityAnswer> {
+        let (tx, rx) = oneshot::channel();
+        self.0.lock().await.insert(
+            (handle.to_string(), operation_id.to_string()),
+            SponsoredModelAuthorityWaiter {
+                link: link.downgrade(),
+                answer: tx,
+            },
+        );
+        rx
+    }
+
+    pub(crate) async fn settle(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+        answer: link::SponsoredModelAuthorityAnswer,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if same_link {
+            if let Some(waiter) = waiters.remove(&key) {
+                let _ = waiter.answer.send(answer);
+            }
+        }
+    }
+
+    pub(crate) async fn forget_operation(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if same_link {
+            waiters.remove(&key);
+        }
+    }
+
+    pub(crate) async fn fail(&self, handle: &str, operation_id: &str) {
+        self.0
+            .lock()
+            .await
+            .remove(&(handle.to_string(), operation_id.to_string()));
+    }
+
+    pub(crate) async fn forget_link(&self, handle: &str, link: &TerminalInputSender) {
+        self.0.lock().await.retain(|(runtime, _), waiter| {
+            runtime != handle
+                || waiter
+                    .link
+                    .upgrade()
+                    .is_some_and(|expected| !expected.same_channel(link))
+        });
+    }
+}
+
 /// Registration and cleanup for one runtime link generation.
 ///
 /// A generation supervisor owns reader, writer, and registry cleanup, while
@@ -759,6 +844,7 @@ pub(crate) struct LinkLifecycle {
     switch_waiters: SwitchWaiters,
     credential_waiters: CredentialWaiters,
     runtime_policy_waiters: RuntimePolicyWaiters,
+    sponsored_model_authority_waiters: SponsoredModelAuthorityWaiters,
 }
 
 impl LinkLifecycle {
@@ -802,12 +888,16 @@ impl LinkLifecycle {
             let switch_waiters = self.switch_waiters.clone();
             let credential_waiters = self.credential_waiters.clone();
             let runtime_policy_waiters = self.runtime_policy_waiters.clone();
+            let sponsored_model_authority_waiters = self.sponsored_model_authority_waiters.clone();
             let retirement = tokio::spawn(async move {
                 switch_waiters.forget(&runtime, &previous.sender).await;
                 credential_waiters
                     .forget_link(&runtime, &previous.sender)
                     .await;
                 runtime_policy_waiters
+                    .forget_link(&runtime, &previous.sender)
+                    .await;
+                sponsored_model_authority_waiters
                     .forget_link(&runtime, &previous.sender)
                     .await;
                 previous.retire().await;
@@ -845,6 +935,9 @@ impl LinkLifecycle {
         self.runtime_policy_waiters
             .forget_link(&self.runtime, link)
             .await;
+        self.sponsored_model_authority_waiters
+            .forget_link(&self.runtime, link)
+            .await;
     }
 
     pub(crate) async fn forget_if_whole_retired(&self, link: &TerminalInputSender) {
@@ -861,6 +954,9 @@ impl LinkLifecycle {
                 .forget_link(&self.runtime, link)
                 .await;
             self.runtime_policy_waiters
+                .forget_link(&self.runtime, link)
+                .await;
+            self.sponsored_model_authority_waiters
                 .forget_link(&self.runtime, link)
                 .await;
         }
@@ -916,6 +1012,23 @@ impl LinkLifecycle {
             .fail(&self.runtime, operation_id)
             .await;
     }
+
+    pub(crate) async fn settle_sponsored_model_authority(
+        &self,
+        link: &TerminalInputSender,
+        operation_id: &str,
+        answer: link::SponsoredModelAuthorityAnswer,
+    ) {
+        self.sponsored_model_authority_waiters
+            .settle(&self.runtime, operation_id, link, answer)
+            .await;
+    }
+
+    pub(crate) async fn fail_sponsored_model_authority(&self, operation_id: &str) {
+        self.sponsored_model_authority_waiters
+            .fail(&self.runtime, operation_id)
+            .await;
+    }
 }
 
 /// A kernel running in a provider-managed sandbox.
@@ -956,6 +1069,7 @@ pub struct HostedKernel {
     credential_waiters: CredentialWaiters,
     /// Opaque runtime-policy acknowledgements awaiting this socket generation.
     runtime_policy_waiters: RuntimePolicyWaiters,
+    sponsored_model_authority_waiters: SponsoredModelAuthorityWaiters,
 }
 
 impl HostedKernel {
@@ -1000,6 +1114,7 @@ impl HostedKernel {
             switch_waiters: SwitchWaiters::default(),
             credential_waiters: CredentialWaiters::default(),
             runtime_policy_waiters: RuntimePolicyWaiters::default(),
+            sponsored_model_authority_waiters: SponsoredModelAuthorityWaiters::default(),
         }
     }
 
@@ -1747,10 +1862,14 @@ impl HostedKernel {
         let switch_waiters = self.switch_waiters.clone();
         let credential_waiters = self.credential_waiters.clone();
         let runtime_policy_waiters = self.runtime_policy_waiters.clone();
+        let sponsored_model_authority_waiters = self.sponsored_model_authority_waiters.clone();
         let retirement = tokio::spawn(async move {
             switch_waiters.forget(&handle, &link.sender).await;
             credential_waiters.forget_link(&handle, &link.sender).await;
             runtime_policy_waiters
+                .forget_link(&handle, &link.sender)
+                .await;
+            sponsored_model_authority_waiters
                 .forget_link(&handle, &link.sender)
                 .await;
             link.retire().await;
@@ -1832,6 +1951,7 @@ impl HostedKernel {
             switch_waiters: self.switch_waiters.clone(),
             credential_waiters: self.credential_waiters.clone(),
             runtime_policy_waiters: self.runtime_policy_waiters.clone(),
+            sponsored_model_authority_waiters: self.sponsored_model_authority_waiters.clone(),
         }
     }
 
@@ -2425,15 +2545,22 @@ where
                 TerminalInput::RuntimePolicy { operation_id, .. } => Some(operation_id.clone()),
                 _ => None,
             };
+            let sponsored_model_operation = match &input {
+                TerminalInput::SponsoredModelAuthority { operation_id, .. } => {
+                    Some(operation_id.clone())
+                }
+                _ => None,
+            };
             let message = match input {
                 TerminalInput::Credential {
                     operation_id,
-                    value,
+                    credential,
                 } => tokio_tungstenite::tungstenite::Message::Text(
                     serde_json::json!({
                         "t": "credential",
                         "operation_id": operation_id,
-                        "value": value,
+                        "value": credential.expose(),
+                        "custody_generation": credential.custody_generation().map(std::num::NonZeroU64::get),
                     })
                     .to_string(),
                 ),
@@ -2445,6 +2572,17 @@ where
                         "t": "github_capability",
                         "operation_id": operation_id,
                         "envelope": envelope,
+                    })
+                    .to_string(),
+                ),
+                TerminalInput::SponsoredModelAuthority {
+                    operation_id,
+                    authority,
+                } => tokio_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "t": "sponsored_model_authority",
+                        "operation_id": operation_id,
+                        "authority": authority,
                     })
                     .to_string(),
                 ),
@@ -2472,6 +2610,13 @@ where
                     (policy_operation, lifecycle.as_ref())
                 {
                     lifecycle.fail_runtime_policy(&operation_id).await;
+                }
+                if let (Some(operation_id), Some(lifecycle)) =
+                    (sponsored_model_operation, lifecycle.as_ref())
+                {
+                    lifecycle
+                        .fail_sponsored_model_authority(&operation_id)
+                        .await;
                 }
                 return Err(AdapterError::Unavailable(
                     "the conversation control link write failed".into(),

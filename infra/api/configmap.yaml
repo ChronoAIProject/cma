@@ -212,11 +212,11 @@ data:
   CHRONO_TRIGGER_WORKER_PAGE_SIZE: "50"
   CHRONO_TRIGGER_WORKER_MAX_PAGES: "20"
   CHRONO_TRIGGER_WORKER_CONCURRENCY: "4"
-  # Issue #671 sponsorship is a separate post-MVP authority. The only dormant
+  # Issue #671 sponsorship is a separate post-MVP authority. The checked-in
   # tuple is disabled with the kill switch engaged and every other value empty.
   # Supplying any one staging value requires the complete tuple at startup;
-  # this build rejects enabled=true even when that tuple is complete because no
-  # sponsorship store or provider/billing/pricing adapter is composed.
+  # enabled composition is available only with separately reviewed production
+  # evidence, adapters, and secret projections.
   CHRONO_SPONSORSHIP_ENABLED: "false"
   CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED: "true"
   CHRONO_SPONSORSHIP_EPOCH: ""

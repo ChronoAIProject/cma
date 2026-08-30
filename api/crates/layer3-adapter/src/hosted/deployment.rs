@@ -155,6 +155,10 @@ impl Deployment {
                 spec.runtime_policy_required.to_string(),
             ),
             (
+                "CHRONO_SPONSORED_MODEL_REQUIRED".to_string(),
+                spec.sponsored_model_required.to_string(),
+            ),
+            (
                 "CHRONO_GITHUB_CAPABILITY_VERIFY_KEYS".to_string(),
                 self.runtime_policy_verification_keys.clone(),
             ),
