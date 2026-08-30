@@ -15,6 +15,7 @@ mod link;
 mod prelude;
 mod pty;
 mod resources;
+mod sponsored_model;
 mod telemetry;
 mod upstream;
 mod workspace;
@@ -34,6 +35,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::bridge::Bridge;
 use crate::github_capability::GithubCapabilityGate;
 use crate::pty::PtyRegistry;
+use crate::sponsored_model::SponsoredModelGate;
 use crate::upstream::{CredentialHolder, UpstreamState};
 
 #[derive(Default)]
@@ -121,6 +123,9 @@ pub(crate) struct AppState {
     credential: CredentialHolder,
     /// Signed GitHub policy shared by the control lane and platform proxy.
     github_capability: GithubCapabilityGate,
+    /// Sponsored grant authority shared by the control lane and model proxy.
+    /// It is never attached to the separately authorized platform proxy.
+    sponsored_model: SponsoredModelGate,
     /// Fixed command-sandbox proof for Trigger runtimes.
     gateway_probe: gateway_probe::GatewayProbe,
     /// This pod's home directory, where the agent keeps its conversation.
@@ -209,6 +214,8 @@ impl AppState {
             commands: commands.iter().map(|c| (*c).to_string()).collect(),
             credential: CredentialHolder::new(),
             github_capability: GithubCapabilityGate::disabled(),
+            sponsored_model: SponsoredModelGate::new(false, String::new())
+                .expect("a disabled sponsored-model gate needs no session"),
             gateway_probe: gateway_probe::GatewayProbe::disabled(std::path::PathBuf::from(
                 "/home/chrono/workspace",
             )),
@@ -450,7 +457,19 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    let discovered_bind_ip = if capability_required && configured_bind.ip().is_unspecified() {
+    let sponsored_model_required = match std::env::var("CHRONO_SPONSORED_MODEL_REQUIRED")
+        .unwrap_or_else(|_| "false".to_string())
+        .as_str()
+    {
+        "true" => true,
+        "false" => false,
+        _ => {
+            tracing::error!("CHRONO_SPONSORED_MODEL_REQUIRED must be exactly true or false");
+            std::process::exit(2);
+        }
+    };
+    let isolated_runtime_required = capability_required || sponsored_model_required;
+    let discovered_bind_ip = if isolated_runtime_required && configured_bind.ip().is_unspecified() {
         match discover_non_loopback_ip() {
             Ok(ip) => Some(ip),
             Err(error) => {
@@ -461,15 +480,18 @@ async fn main() {
     } else {
         None
     };
-    let bind = match hardened_runtime_bind(configured_bind, capability_required, discovered_bind_ip)
-    {
+    let bind = match hardened_runtime_bind(
+        configured_bind,
+        isolated_runtime_required,
+        discovered_bind_ip,
+    ) {
         Ok(bind) => bind,
         Err(error) => {
             tracing::error!(%error, "runtime supervisor bind is not safe for Trigger isolation");
             std::process::exit(2);
         }
     };
-    if capability_required {
+    if isolated_runtime_required {
         if let Err(error) = start_trigger_loopback_isolation_fronts().await {
             tracing::error!(%error, "Trigger loopback isolation fronts could not start");
             std::process::exit(2);
@@ -490,6 +512,14 @@ async fn main() {
         std::process::exit(2);
     }
     let session_id = std::env::var("CHRONO_SESSION_ID").unwrap_or_default();
+    let sponsored_model =
+        match SponsoredModelGate::new(sponsored_model_required, session_id.clone()) {
+            Ok(gate) => gate,
+            Err(error) => {
+                tracing::error!(%error, "sponsored model configuration is not usable");
+                std::process::exit(2);
+            }
+        };
     let reaches = std::env::var("CHRONO_SESSION_REACHES")
         .unwrap_or_default()
         .split(',')
@@ -519,14 +549,16 @@ async fn main() {
         .unwrap_or_else(|_| "127.0.0.1:9091".to_string())
         .parse()
         .expect("CHRONO_UPSTREAM_BIND must be a socket address");
-    if capability_required && proxy_bind != "127.0.0.1:9091".parse().unwrap() {
+    if isolated_runtime_required && proxy_bind != "127.0.0.1:9091".parse().unwrap() {
         tracing::error!(%proxy_bind, "a Trigger model proxy must remain on its isolated loopback address");
         std::process::exit(2);
     }
     let upstream_base = std::env::var("CHRONO_UPSTREAM_BASE_URL").unwrap_or_default();
-    if let Err(error) = validate_trigger_upstream(&upstream_base, capability_required) {
-        tracing::error!(%error, upstream = "model", "a Trigger runtime upstream is missing");
-        std::process::exit(2);
+    if !sponsored_model_required {
+        if let Err(error) = validate_trigger_upstream(&upstream_base, capability_required) {
+            tracing::error!(%error, upstream = "model", "a Trigger runtime upstream is missing");
+            std::process::exit(2);
+        }
     }
 
     // What the model endpoint last refused with, if it has refused anything.
@@ -535,7 +567,7 @@ async fn main() {
     // unreliable and sometimes absent.
     let mut model_fault = upstream::UpstreamFault::default();
 
-    if upstream_base.trim().is_empty() {
+    if upstream_base.trim().is_empty() && !sponsored_model_required {
         // Without an upstream the agent can still run interactively; it simply
         // has nothing to call. Saying so beats a confusing failure mid-turn.
         tracing::warn!(
@@ -548,6 +580,7 @@ async fn main() {
             upstream_base.clone(),
             credential.clone(),
             None,
+            Some(sponsored_model.clone()),
         )
         .await
         {
@@ -603,6 +636,7 @@ async fn main() {
             platform_upstream,
             credential.clone(),
             Some(github_capability.clone()),
+            None,
         )
         .await
         {
@@ -622,6 +656,7 @@ async fn main() {
         commands,
         credential,
         github_capability,
+        sponsored_model,
         gateway_probe,
         home: home.clone(),
         workspace_root,
@@ -877,6 +912,7 @@ mod trigger_isolation_tests {
             address,
             "https://upstream.example".into(),
             CredentialHolder::new(),
+            None,
             None,
         )
         .await;
@@ -1167,10 +1203,14 @@ async fn spawn_credential_proxy(
     upstream_base: String,
     credential: CredentialHolder,
     github_capability: Option<GithubCapabilityGate>,
+    sponsored_model: Option<SponsoredModelGate>,
 ) -> Result<upstream::UpstreamFault, String> {
     let mut state = UpstreamState::new(upstream_base.clone(), credential);
     if let Some(gate) = github_capability {
         state = state.with_github_capability(gate);
+    }
+    if let Some(gate) = sponsored_model {
+        state = state.with_sponsored_model(gate);
     }
     let fault = state.fault();
     let app = Router::new()

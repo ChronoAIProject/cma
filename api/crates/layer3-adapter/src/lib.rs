@@ -29,14 +29,16 @@ mod task_retirement;
 mod terminal_input;
 
 pub use runtime::{
-    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeGatewayProbeOutcome,
-    RuntimeGatewayProbeReceipt, RuntimeGatewayProbeRequest, RuntimeGeneration, RuntimeHandle,
-    RuntimeIdentity, RuntimeListing, RuntimeLossReason, RuntimeMode, RuntimeOptions,
-    RuntimePermission, RuntimePolicyObservation, RuntimePolicyReceipt, RuntimePolicyRefusal,
-    RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TermSize, TerminalChannel,
-    TerminalInput, TerminalOutput, WorkspaceCheckpointDisposition, WorkspaceCheckpointPackage,
-    WorkspaceCheckpointRequest, WorkspaceEntryKind, WorkspaceEntryPackage, WorkspacePackage,
-    WorkspaceWriterState, RUNTIME_GATEWAY_PROBE_VERSION,
+    ResourceSample, RuntimeCapacity, RuntimeCredential, RuntimeEnvironment,
+    RuntimeGatewayProbeOutcome, RuntimeGatewayProbeReceipt, RuntimeGatewayProbeRequest,
+    RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeLossReason,
+    RuntimeMode, RuntimeOptions, RuntimePermission, RuntimePolicyObservation, RuntimePolicyReceipt,
+    RuntimePolicyRefusal, RuntimeReservationIdentity, RuntimeSpec, SkillPackage,
+    SponsoredModelAuthorityReceipt, SponsoredModelGatewayOrigin, SponsoredModelRuntimeAuthority,
+    TermSize, TerminalChannel, TerminalInput, TerminalOutput, WorkspaceCheckpointDisposition,
+    WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
+    WorkspaceEntryPackage, WorkspacePackage, WorkspaceWriterState, RUNTIME_GATEWAY_PROBE_VERSION,
+    SPONSORED_MODEL_RESOURCE, SPONSORED_MODEL_RUNTIME_AUTHORITY_VERSION,
 };
 pub use terminal_input::TerminalInputSender;
 
@@ -261,7 +263,7 @@ pub trait KernelAdapter: Send + Sync {
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: &RuntimeCredential,
     ) -> Result<(), AdapterError>;
 
     /// Install one authenticated runtime policy and wait for the exact runtime
@@ -277,6 +279,18 @@ pub trait KernelAdapter: Send + Sync {
     ) -> Result<RuntimePolicyReceipt, AdapterError> {
         Err(AdapterError::Unsupported(
             "this runtime does not accept authenticated policy data".to_string(),
+        ))
+    }
+
+    /// Install one exact CMA sponsored-model authority on a live runtime and
+    /// wait for that runtime generation to acknowledge every binding.
+    async fn install_sponsored_model_authority(
+        &self,
+        _handle: &RuntimeHandle,
+        _authority: &SponsoredModelRuntimeAuthority,
+    ) -> Result<SponsoredModelAuthorityReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not accept sponsored model authority".to_string(),
         ))
     }
 
@@ -483,7 +497,7 @@ mod tests {
         async fn refresh_credential(
             &self,
             _handle: &RuntimeHandle,
-            _credential: &str,
+            _credential: &RuntimeCredential,
         ) -> Result<(), AdapterError> {
             Ok(())
         }

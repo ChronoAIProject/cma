@@ -92,6 +92,10 @@ fn test_routes() -> Router {
             get(|| async { StatusCode::NO_CONTENT }),
         )
         .route(
+            "/internal/v1/sponsored-model/responses",
+            post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
             "/api/v1/agui/triggers/{public_id}",
             get(|| async { StatusCode::NO_CONTENT }),
         )
@@ -299,6 +303,45 @@ async fn sponsorship_rate_refusals_are_private_and_do_not_reflect_the_request() 
         .oneshot(subject_request(Method::GET, &uri))
         .await
         .expect("router answers");
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("no-store"))
+    );
+    assert_eq!(
+        response.headers().get(header::REFERRER_POLICY),
+        Some(&HeaderValue::from_static("no-referrer"))
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
+}
+
+#[tokio::test]
+async fn private_gateway_network_admission_rejects_with_private_headers() {
+    const SECRET_MARKER: &str = "private-gateway-rate-limit-secret";
+    let limiters = complete_limiters(
+        one(),
+        generous(),
+        generous(),
+        generous(),
+        generous(),
+        TrustedProxyConfig::sample(),
+    );
+    let app = with_sponsorship_privacy(test_routes().layer(axum::middleware::from_fn_with_state(
+        limiters,
+        rate_limit::admit,
+    )));
+    let uri = format!("/internal/v1/sponsored-model/responses?credential={SECRET_MARKER}");
+
+    assert_eq!(
+        status(&app, request(Method::POST, &uri, None, None)).await,
+        StatusCode::NO_CONTENT
+    );
+    let response = app
+        .oneshot(request(Method::POST, &uri, None, None))
+        .await
+        .expect("router answers");
+
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         response.headers().get(header::CACHE_CONTROL),

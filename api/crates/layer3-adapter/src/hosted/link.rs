@@ -20,8 +20,9 @@ use super::{AbortLinkOnDrop, HostedKernel, SUPERVISOR_PORT};
 use crate::supervisor;
 use crate::task_retirement::TaskRetirement;
 use crate::{
-    AdapterError, RuntimeHandle, RuntimePolicyReceipt, TerminalChannel, TerminalInput,
-    TerminalInputSender, TerminalOutput,
+    AdapterError, RuntimeHandle, RuntimePolicyReceipt, SponsoredModelAuthorityReceipt,
+    SponsoredModelRuntimeAuthority, TerminalChannel, TerminalInput, TerminalInputSender,
+    TerminalOutput,
 };
 
 /// How many output chunks may queue before the relay applies backpressure.
@@ -63,6 +64,12 @@ const POLICY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 #[cfg(test)]
 const POLICY_DEADLINE: std::time::Duration = std::time::Duration::from_millis(100);
 
+#[cfg(not(test))]
+const SPONSORED_MODEL_AUTHORITY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(test)]
+const SPONSORED_MODEL_AUTHORITY_DEADLINE: std::time::Duration =
+    std::time::Duration::from_millis(100);
+
 /// The tag a supervisor answers a plane switch with, matching the runtime's
 /// own constant. One word, agreed at both ends.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
@@ -72,6 +79,7 @@ pub(crate) const CREDENTIAL_RESULT: &str = "credential_result";
 
 /// The tag a supervisor answers an opaque runtime-policy installation with.
 pub(crate) const RUNTIME_POLICY_RESULT: &str = "github_capability_result";
+pub(crate) const SPONSORED_MODEL_AUTHORITY_RESULT: &str = "sponsored_model_authority_result";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimePolicyAnswer {
@@ -79,6 +87,13 @@ pub(crate) struct RuntimePolicyAnswer {
     pub generation: Option<u64>,
     pub fence: Option<u64>,
     pub revoked: Option<bool>,
+    pub refusal: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SponsoredModelAuthorityAnswer {
+    pub accepted: bool,
+    pub receipt: Option<SponsoredModelAuthorityReceipt>,
     pub refusal: Option<String>,
 }
 
@@ -147,6 +162,47 @@ pub(crate) fn runtime_policy_answer(text: &str) -> Option<(String, RuntimePolicy
             generation: None,
             fence: None,
             revoked: None,
+            refusal: Some(value.get("refusal")?.as_str()?.to_string()),
+        }
+    };
+    Some((operation_id, answer))
+}
+
+/// Read a sponsored-model authority result only when its complete exact receipt
+/// is present. A partial success is a protocol failure, never an installation.
+pub(crate) fn sponsored_model_authority_answer(
+    text: &str,
+) -> Option<(String, SponsoredModelAuthorityAnswer)> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("t")?.as_str()? != SPONSORED_MODEL_AUTHORITY_RESULT {
+        return None;
+    }
+    let operation_id = value.get("operation_id")?.as_str()?.to_string();
+    let accepted = value.get("accepted")?.as_bool()?;
+    let answer = if accepted {
+        SponsoredModelAuthorityAnswer {
+            accepted,
+            receipt: Some(SponsoredModelAuthorityReceipt {
+                runtime_audience: value.get("runtime_audience")?.as_str()?.to_string(),
+                session_id: value.get("session_id")?.as_str()?.to_string(),
+                session_credential_generation: value
+                    .get("session_credential_generation")?
+                    .as_u64()?,
+                launch_id: value.get("launch_id")?.as_str()?.to_string(),
+                grant_id: value.get("grant_id")?.as_str()?.to_string(),
+                grant_generation: value.get("grant_generation")?.as_u64()?,
+                policy_generation: value.get("policy_generation")?.as_u64()?,
+                maximum_output_tokens_per_request: value
+                    .get("maximum_output_tokens_per_request")?
+                    .as_u64()?,
+                capability_fingerprint: value.get("capability_fingerprint")?.as_str()?.to_string(),
+            }),
+            refusal: None,
+        }
+    } else {
+        SponsoredModelAuthorityAnswer {
+            accepted,
+            receipt: None,
             refusal: Some(value.get("refusal")?.as_str()?.to_string()),
         }
     };
@@ -260,6 +316,12 @@ impl HostedKernel {
                 TerminalInput::RuntimePolicy { operation_id, .. } => Some(operation_id.clone()),
                 _ => None,
             };
+            let sponsored_model_operation = match &input {
+                TerminalInput::SponsoredModelAuthority { operation_id, .. } => {
+                    Some(operation_id.clone())
+                }
+                _ => None,
+            };
             let message = Self::encode(input, framed);
             let sandbox = sandbox.clone();
             let sink = std::sync::Arc::clone(&sink);
@@ -272,6 +334,11 @@ impl HostedKernel {
                     }
                     if let Some(operation_id) = policy_operation {
                         lifecycle.fail_runtime_policy(&operation_id).await;
+                    }
+                    if let Some(operation_id) = sponsored_model_operation {
+                        lifecycle
+                            .fail_sponsored_model_authority(&operation_id)
+                            .await;
                     }
                     return Err(AdapterError::Unavailable(format!(
                         "sandbox terminal write failed: {error}"
@@ -334,6 +401,14 @@ impl HostedKernel {
                             if let Some(link) = link_for_reader.upgrade() {
                                 lifecycle_for_reader
                                     .settle_runtime_policy(&link, &operation_id, answer)
+                                    .await;
+                            }
+                        } else if let Some((operation_id, answer)) =
+                            sponsored_model_authority_answer(&text)
+                        {
+                            if let Some(link) = link_for_reader.upgrade() {
+                                lifecycle_for_reader
+                                    .settle_sponsored_model_authority(&link, &operation_id, answer)
                                     .await;
                             }
                         } else if let Some(accepted) = switch_answer(&text) {
@@ -410,8 +485,9 @@ impl HostedKernel {
     pub(crate) async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: impl Into<crate::RuntimeCredential>,
     ) -> Result<(), AdapterError> {
+        let credential = credential.into();
         let operation_id = uuid::Uuid::new_v4().simple().to_string();
         // Choose the socket generation and register its exact operation before
         // enqueueing. A replacement is therefore wholly before or after this
@@ -440,7 +516,7 @@ impl HostedKernel {
         if link
             .send(TerminalInput::Credential {
                 operation_id: operation_id.clone(),
-                value: credential.to_string(),
+                credential,
             })
             .await
             .is_err()
@@ -553,6 +629,72 @@ impl HostedKernel {
                     .await;
                 Err(AdapterError::Unavailable(format!(
                     "runtime {} did not acknowledge policy data",
+                    handle.0
+                )))
+            }
+        }
+    }
+
+    /// Install one sponsored-model authority on the exact open runtime link.
+    pub(crate) async fn install_sponsored_model_authority(
+        &self,
+        handle: &RuntimeHandle,
+        authority: &SponsoredModelRuntimeAuthority,
+    ) -> Result<SponsoredModelAuthorityReceipt, AdapterError> {
+        let operation_id = uuid::Uuid::new_v4().simple().to_string();
+        let link_and_answer = {
+            let links = self.links.lock().await;
+            match links.get(&handle.0) {
+                Some(link) => {
+                    let link = link.sender.clone();
+                    let answer = self
+                        .sponsored_model_authority_waiters
+                        .expect(&handle.0, &operation_id, &link)
+                        .await;
+                    Some((link, answer))
+                }
+                None => None,
+            }
+        };
+        let Some((link, answer)) = link_and_answer else {
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {} has no open link to carry sponsored model authority",
+                handle.0
+            )));
+        };
+        if link
+            .send(TerminalInput::SponsoredModelAuthority {
+                operation_id: operation_id.clone(),
+                authority: authority.clone(),
+            })
+            .await
+            .is_err()
+        {
+            self.link_lifecycle(&handle.0).forget(&link).await;
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link closed before sponsored model authority reached it",
+                handle.0
+            )));
+        }
+        match tokio::time::timeout(SPONSORED_MODEL_AUTHORITY_DEADLINE, answer).await {
+            Ok(Ok(answer)) if answer.accepted => Ok(answer
+                .receipt
+                .expect("an accepted sponsored model authority answer carries a receipt")),
+            Ok(Ok(answer)) => Err(AdapterError::Rejected(format!(
+                "runtime {} refused sponsored model authority: {}",
+                handle.0,
+                answer.refusal.as_deref().unwrap_or("unspecified_refusal")
+            ))),
+            Ok(Err(_)) => Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link ended before it acknowledged sponsored model authority",
+                handle.0
+            ))),
+            Err(_) => {
+                self.sponsored_model_authority_waiters
+                    .forget_operation(&handle.0, &operation_id, &link)
+                    .await;
+                Err(AdapterError::Unavailable(format!(
+                    "runtime {} did not acknowledge sponsored model authority",
                     handle.0
                 )))
             }
@@ -697,12 +839,13 @@ impl HostedKernel {
             }
             TerminalInput::Credential {
                 operation_id,
-                value,
+                credential,
             } => Message::Text(
                 serde_json::json!({
                     "t": "credential",
                     "operation_id": operation_id,
-                    "value": value,
+                    "value": credential.expose(),
+                    "custody_generation": credential.custody_generation().map(std::num::NonZeroU64::get),
                 })
                 .to_string(),
             ),
@@ -714,6 +857,17 @@ impl HostedKernel {
                     "t": "github_capability",
                     "operation_id": operation_id,
                     "envelope": envelope,
+                })
+                .to_string(),
+            ),
+            TerminalInput::SponsoredModelAuthority {
+                operation_id,
+                authority,
+            } => Message::Text(
+                serde_json::json!({
+                    "t": "sponsored_model_authority",
+                    "operation_id": operation_id,
+                    "authority": authority,
                 })
                 .to_string(),
             ),
