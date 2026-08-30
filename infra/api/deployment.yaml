@@ -54,6 +54,8 @@ spec:
       # frame is held by the runtime's bridge while nothing is attached and
       # delivered to the next process that attaches, which is the same path a
       # lost control plane already relies on.
+      # CMA bounds concurrent HTTP/worker drain to 15s and cancels recovery
+      # lanes after 10s, leaving five seconds for runtime and kubelet teardown.
       terminationGracePeriodSeconds: 20
       # The sandbox key is delivered by the platform's secret provider, which
       # identifies the workload by its service account. Running as "default"

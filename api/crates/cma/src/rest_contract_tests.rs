@@ -1359,7 +1359,7 @@ impl KernelAdapter for TestKernel {
     async fn refresh_credential(
         &self,
         _handle: &RuntimeHandle,
-        _credential: &str,
+        _credential: &layer3_adapter::RuntimeCredential,
     ) -> Result<(), AdapterError> {
         Ok(())
     }

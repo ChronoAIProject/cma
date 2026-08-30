@@ -51,6 +51,7 @@ mod rotate;
 mod runtime_policy;
 mod sequence;
 mod spend;
+mod sponsored_model_authority;
 
 #[cfg(test)]
 #[path = "provision_tests.rs"]
@@ -202,7 +203,8 @@ pub use recovery_pair::{
 };
 pub use resources::{HeldReading, ResourceReading, ResourceStatus};
 pub use runtime_policy::{
-    RuntimeGatewayReachabilityError, RuntimeGatewayReachabilityReceipt, RuntimePolicyObservation,
+    RuntimeGatewayReachabilityError, RuntimeGatewayReachabilityReceipt,
+    RuntimeGatewayReconciliationReceipt, RuntimePolicyObservation,
 };
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
@@ -213,6 +215,7 @@ pub use session::{
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
+pub use sponsored_model_authority::SponsoredModelAuthorityError;
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, HandoverSnapshot,
     HandoverStore, InitialPromptDispatch, OperationClaim, OperationReservation, OperationStore,

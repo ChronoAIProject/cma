@@ -69,8 +69,9 @@ impl SessionService {
             tracing::warn!(session_id = %id, %kernel, "no adapter to give a credential through");
             return Ok(false);
         };
+        let delivery = layer3_adapter::RuntimeCredential::new(credential.to_string());
         if let Err(error) = adapter
-            .refresh_credential(expected_runtime, credential)
+            .refresh_credential(expected_runtime, &delivery)
             .await
         {
             // Never logged with its value — only that one did not arrive.
@@ -184,7 +185,7 @@ impl SessionService {
         let runtime = expected_runtime.clone();
         let finalization = tokio::spawn(async move {
             if !source
-                .confirm_credential_delivery(&id, &owner, &services, &credential, &target)
+                .confirm_credential_delivery(&id, &owner, &services, credential.expose(), &target)
                 .await?
             {
                 return Ok(false);
@@ -197,7 +198,7 @@ impl SessionService {
                 tracing::warn!(session_id = %id, runtime = %target.runtime_id, "credential was acknowledged after its runtime entry changed");
                 return Ok(false);
             };
-            entry.subject_credential = Some(credential);
+            entry.subject_credential = Some(credential.into_value());
             Ok::<bool, crate::store::StoreError>(true)
         });
         finalization.await.map_err(|error| {
@@ -326,6 +327,7 @@ impl SessionService {
         // The custody callbacks are infallible. Coordination/store failures are
         // deliberately collapsed into this compatibility wrapper's bool; a
         // fallible caller must use `push_session_credential_with` instead.
+        let credential = layer3_adapter::RuntimeCredential::new(credential);
         self.push_credential_with(
             id,
             None,
@@ -344,20 +346,22 @@ impl SessionService {
     /// called only after the adapter acknowledges that exact installation. The
     /// latter is mandatory service-owned finalization: caller cancellation and
     /// a lease deadline do not interrupt it once acknowledgement has arrived.
-    pub async fn push_session_credential_with<P, PFut, C, CFut>(
+    pub async fn push_session_credential_with<T, P, PFut, C, CFut>(
         self: &Arc<Self>,
         id: &SessionId,
-        credential: &str,
+        credential: T,
         prepare: P,
         commit: C,
     ) -> Result<bool, crate::store::StoreError>
     where
+        T: Into<layer3_adapter::RuntimeCredential>,
         P: FnOnce(CredentialDeliveryTarget) -> PFut + Send + 'static,
         PFut: Future<Output = Result<bool, crate::store::StoreError>> + Send + 'static,
         C: FnOnce(CredentialDeliveryTarget) -> CFut + Send + 'static,
         CFut: Future<Output = Result<bool, crate::store::StoreError>> + Send + 'static,
     {
-        self.push_credential_with(id, None, credential, prepare, commit)
+        let credential = credential.into();
+        self.push_credential_with(id, None, &credential, prepare, commit)
             .await
     }
 
@@ -370,10 +374,11 @@ impl SessionService {
         subject: &SubjectId,
         credential: &str,
     ) -> bool {
+        let credential = layer3_adapter::RuntimeCredential::new(credential.to_string());
         self.push_credential_with(
             id,
             Some(subject.clone()),
-            credential,
+            &credential,
             |_target| async { Ok::<bool, crate::store::StoreError>(true) },
             |_target| async { Ok::<bool, crate::store::StoreError>(true) },
         )
@@ -385,7 +390,7 @@ impl SessionService {
         self: &Arc<Self>,
         id: &SessionId,
         expected_subject: Option<SubjectId>,
-        credential: &str,
+        credential: &layer3_adapter::RuntimeCredential,
         prepare: P,
         commit: C,
     ) -> Result<bool, crate::store::StoreError>
@@ -395,7 +400,7 @@ impl SessionService {
         C: FnOnce(CredentialDeliveryTarget) -> CFut + Send + 'static,
         CFut: Future<Output = Result<bool, crate::store::StoreError>> + Send + 'static,
     {
-        let selected = credential.to_string();
+        let selected = credential.clone();
         self.push_selected_credential_with(
             id,
             expected_subject,
@@ -414,8 +419,16 @@ impl SessionService {
     ) -> Result<bool, crate::store::StoreError>
     where
         P: FnOnce(CredentialDeliveryTarget) -> PFut + Send + 'static,
-        PFut: Future<Output = Result<Option<String>, crate::store::StoreError>> + Send + 'static,
-        C: FnOnce(CredentialDeliveryTarget, String) -> CFut + Send + 'static,
+        PFut: Future<
+                Output = Result<
+                    Option<layer3_adapter::RuntimeCredential>,
+                    crate::store::StoreError,
+                >,
+            > + Send
+            + 'static,
+        C: FnOnce(CredentialDeliveryTarget, layer3_adapter::RuntimeCredential) -> CFut
+            + Send
+            + 'static,
         CFut: Future<Output = Result<bool, crate::store::StoreError>> + Send + 'static,
     {
         let Some(record) = self.store.get(id).await? else {
@@ -524,7 +537,7 @@ impl SessionService {
                     tracing::warn!(session_id = %id, runtime = %target.runtime_id, "credential was acknowledged after its runtime entry changed");
                     return Ok(Ok(false));
                 };
-                entry.subject_credential = Some(credential);
+                entry.subject_credential = Some(credential.into_value());
                 Ok(Ok(true))
             })
             .await;
@@ -611,7 +624,7 @@ impl SessionService {
                             &commit_id,
                             &commit_owner,
                             &commit_services,
-                            &credential,
+                            credential.expose(),
                             &target,
                         )
                         .await

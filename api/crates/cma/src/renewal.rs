@@ -213,7 +213,7 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
                         prepare_auth
                             .prepare_reissue_delivery_with_budget(
                                 &prepare_session,
-                                &prepare_value,
+                                prepare_value.expose(),
                                 &target,
                                 replace_before,
                                 &prepare_budget,
@@ -224,7 +224,7 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
                         commit_auth
                             .confirm_reissue_delivery_with_budget(
                                 &commit_session,
-                                &commit_value,
+                                commit_value.expose(),
                                 &target,
                                 replace_before,
                                 &commit_budget,
@@ -537,7 +537,7 @@ mod tests {
             .await
             .expect("stale B retires and fresh C mints")
             .expect("C is selected");
-        assert_eq!(value, "full-key-3");
+        assert_eq!(value.expose(), "full-key-3");
         assert!(budget.take(1), "runtime delivery fits the item allowance");
         let target = CredentialDeliveryTarget {
             runtime_generation: 2,
@@ -546,7 +546,7 @@ mod tests {
         assert!(auth
             .prepare_reissue_delivery_with_budget(
                 &session,
-                &value,
+                value.expose(),
                 &target,
                 replace_before,
                 &budget,
@@ -556,7 +556,7 @@ mod tests {
         assert!(auth
             .confirm_reissue_delivery_with_budget(
                 &session,
-                &value,
+                value.expose(),
                 &target,
                 replace_before,
                 &budget,

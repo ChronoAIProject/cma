@@ -808,6 +808,7 @@ async fn run_release_journey() {
         checkpoint_store: Some(objects.clone()),
         diff_store: Some(objects.clone()),
         sessions: Some(sessions.clone()),
+        sponsorship: None,
         capability_signer: Some(test_signer()),
         fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         changed_file_limit: TEST_CHANGED_FILE_LIMIT,

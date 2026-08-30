@@ -9,10 +9,12 @@
 
 mod lifecycle;
 mod model;
+mod model_gateway;
 mod ports;
 mod usage;
 mod validation;
 
 pub use lifecycle::*;
 pub use model::*;
+pub use model_gateway::*;
 pub use ports::*;
