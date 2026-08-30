@@ -5,6 +5,7 @@ use std::fmt;
 
 use ring::hmac;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -26,6 +27,12 @@ pub const MAX_SPONSORED_MODELS: usize = 32;
 pub const MAX_SPONSORED_RESOURCES: usize = 32;
 pub const MAX_SPONSORED_AUDIT_PAGE: usize = 200;
 pub const MAX_PREVIOUS_SPONSORSHIP_OPERATIONAL_KEYS: usize = 4;
+/// Maximum canonical Responses JSON retained for one recoverable dispatch.
+pub const MAX_SPONSORED_MODEL_REQUEST_BYTES: usize = 1024 * 1024;
+pub const SPONSORED_MODEL_DISPATCH_PAYLOAD_SCHEMA_VERSION: u32 = 1;
+/// Maximum canonical provider response retained for exact settled replay.
+pub const MAX_SPONSORED_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+pub const SPONSORED_MODEL_RESPONSE_PAYLOAD_SCHEMA_VERSION: u32 = 1;
 
 const SPONSORSHIP_OPERATIONAL_PSEUDONYM_PREFIX: &str = "sp1.";
 const SPONSORSHIP_OPERATIONAL_KEY_BYTES: usize = 32;
@@ -182,6 +189,8 @@ impl SponsorshipOperationalPseudonymSet {
 pub enum SponsorshipOperationalDomain {
     CredentialRegistrationRequest,
     CredentialRegistrationCommand,
+    PolicyCreationRequest,
+    PolicyCreationCommand,
     CredentialReplacement,
     CredentialOperationRequest,
     AcceptanceRequest,
@@ -202,6 +211,8 @@ impl SponsorshipOperationalDomain {
             Self::CredentialRegistrationCommand => {
                 "cma-sponsored-operational-registration-command-v1"
             }
+            Self::PolicyCreationRequest => "cma-sponsored-operational-policy-creation-request-v1",
+            Self::PolicyCreationCommand => "cma-sponsored-operational-policy-creation-command-v1",
             Self::CredentialReplacement => "cma-sponsored-operational-credential-replacement-v1",
             Self::CredentialOperationRequest => {
                 "cma-sponsored-operational-credential-operation-request-v1"
@@ -612,6 +623,30 @@ impl SponsorBillingOwner {
         }
     }
 
+    /// Stable deployment-local admission identity for one billing sponsor.
+    ///
+    /// Display names and organization administrators are mutable presentation
+    /// or control data, so neither may partition sponsor-wide policy and Launch
+    /// ceilings. Developer subjects and organization ids are the durable
+    /// authority components instead.
+    pub fn sponsorship_authority_key(&self) -> Result<String, TriggerValidationError> {
+        self.validate()?;
+        match self {
+            Self::Developer { subject, .. } => canonical_digest(&(
+                "cma-sponsorship-sponsor-authority-v1",
+                "developer",
+                &subject.0,
+            )),
+            Self::Organization {
+                organization_id, ..
+            } => canonical_digest(&(
+                "cma-sponsorship-sponsor-authority-v1",
+                "organization",
+                organization_id,
+            )),
+        }
+    }
+
     pub(super) fn validate(&self) -> Result<(), TriggerValidationError> {
         validate_identifier("billing_owner.controller", &self.controller().0, 255)?;
         validate_display_name("billing_owner.display_name", self.display_name())?;
@@ -717,6 +752,48 @@ impl fmt::Debug for SponsoredCredentialRecord {
 }
 
 impl SponsoredCredentialRecord {
+    /// Whether retained root authority may be opened to observe existing model
+    /// custody. Rotation keeps the prior root material readable for recovery,
+    /// but a provider-dispatch claim remains blocked until rotation resolves.
+    /// Revocation recovery is allowed only before its first provider attempt.
+    pub fn permits_retained_model_recovery_authority(&self) -> bool {
+        self.material_state == SponsoredCredentialMaterialState::Retained
+            && match self.state {
+                SponsoredCredentialState::Active | SponsoredCredentialState::RotationPending => {
+                    true
+                }
+                SponsoredCredentialState::RevocationPending => {
+                    self.pending_operation.as_ref().is_some_and(|operation| {
+                        operation.kind == ProviderOperationKind::RevokeCredential
+                            && operation.phase == ProviderOperationPhase::Prepared
+                            && operation.attempted_at.is_none()
+                    })
+                }
+                SponsoredCredentialState::Revoked => false,
+            }
+    }
+
+    /// Whether already-encrypted model request custody may cross another
+    /// provider-dispatch claim. New reservations require `Active`; this
+    /// narrower recovery exception exists only while revocation is durably
+    /// fail-closed but has not begun at the provider.
+    pub fn permits_retained_model_dispatch(&self) -> bool {
+        self.material_state == SponsoredCredentialMaterialState::Retained
+            && match self.state {
+                SponsoredCredentialState::Active => true,
+                SponsoredCredentialState::RevocationPending => {
+                    self.pending_operation.as_ref().is_some_and(|operation| {
+                        operation.kind == ProviderOperationKind::RevokeCredential
+                            && operation.phase == ProviderOperationPhase::Prepared
+                            && operation.attempted_at.is_none()
+                    })
+                }
+                SponsoredCredentialState::RotationPending | SponsoredCredentialState::Revoked => {
+                    false
+                }
+            }
+    }
+
     pub fn validate(&self) -> Result<(), TriggerValidationError> {
         if self.schema_version != SPONSORSHIP_SCHEMA_VERSION || self.generation == 0 {
             return Err(TriggerValidationError::field(
@@ -935,6 +1012,165 @@ pub struct SponsoredQuota {
     pub requests: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+/// Deployment-owned ceilings applied to every sponsored policy and Launch.
+///
+/// This value is carried by the durable gate fence as well as the in-process
+/// gate. Store implementations can therefore enforce admission with their own
+/// transactional clock while the service proves that the same authority was
+/// reviewed in configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SponsorshipRuntimeLimits {
+    pub default_policy_expiry_seconds: u64,
+    pub maximum_policy_expiry_seconds: u64,
+    pub maximum_active_policies_per_sponsor: u32,
+    pub launch_rate_window_seconds: u64,
+    pub maximum_launches_per_sponsor_per_window: u32,
+    pub maximum_per_launch_quota: SponsoredQuota,
+    pub maximum_policy_quota: SponsoredQuota,
+    pub maximum_requests_per_minute: u32,
+    pub maximum_per_launch_budget_micros: u64,
+    pub maximum_policy_budget_micros: u64,
+    pub maximum_concurrent_launches: u32,
+}
+
+impl SponsorshipRuntimeLimits {
+    pub fn disabled() -> Self {
+        Self {
+            default_policy_expiry_seconds: 0,
+            maximum_policy_expiry_seconds: 0,
+            maximum_active_policies_per_sponsor: 0,
+            launch_rate_window_seconds: 0,
+            maximum_launches_per_sponsor_per_window: 0,
+            maximum_per_launch_quota: SponsoredQuota::default(),
+            maximum_policy_quota: SponsoredQuota::default(),
+            maximum_requests_per_minute: 0,
+            maximum_per_launch_budget_micros: 0,
+            maximum_policy_budget_micros: 0,
+            maximum_concurrent_launches: 0,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), TriggerValidationError> {
+        if self.default_policy_expiry_seconds == 0
+            || self.maximum_policy_expiry_seconds == 0
+            || self.default_policy_expiry_seconds > self.maximum_policy_expiry_seconds
+            || self.maximum_active_policies_per_sponsor == 0
+            || self.launch_rate_window_seconds == 0
+            || self.maximum_launches_per_sponsor_per_window == 0
+            || !self.maximum_per_launch_quota.is_nonzero()
+            || !self.maximum_policy_quota.is_nonzero()
+            || !self
+                .maximum_per_launch_quota
+                .fits_within(self.maximum_policy_quota)
+            || self.maximum_requests_per_minute == 0
+            || self.maximum_per_launch_budget_micros == 0
+            || self.maximum_policy_budget_micros == 0
+            || self.maximum_per_launch_budget_micros > self.maximum_policy_budget_micros
+            || self.maximum_concurrent_launches == 0
+        {
+            return Err(TriggerValidationError::field(
+                "sponsorship_runtime_limits",
+                "must contain positive, internally ordered deployment ceilings",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Resolve an omitted publisher expiry from one service-clock observation.
+    ///
+    /// The resolved timestamp is persisted as ordinary policy data. Stores
+    /// still recheck it against their own authoritative clock before admission.
+    pub fn resolve_policy_expiry(
+        &self,
+        requested: Option<String>,
+        now: &str,
+    ) -> Result<String, TriggerValidationError> {
+        self.validate()?;
+        validate_timestamp("sponsorship_policy_observed_at", now)?;
+        if let Some(requested) = requested {
+            validate_timestamp("sponsorship_policy.expires_at", &requested)?;
+            return Ok(requested);
+        }
+
+        let now_seconds = crate::seconds_from_rfc3339(now).ok_or_else(|| {
+            TriggerValidationError::field(
+                "sponsorship_policy_observed_at",
+                "must be a canonical timestamp",
+            )
+        })?;
+        let expires_seconds = now_seconds
+            .checked_add(self.default_policy_expiry_seconds)
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "sponsorship_policy.expires_at",
+                    "deployment default expiry overflowed",
+                )
+            })?;
+        let expires_at = std::time::UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs(expires_seconds))
+            .map(crate::rfc3339_at)
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "sponsorship_policy.expires_at",
+                    "deployment default expiry overflowed",
+                )
+            })?;
+        validate_timestamp("sponsorship_policy.expires_at", &expires_at)?;
+        Ok(expires_at)
+    }
+
+    /// Prove every publisher-selected policy dimension against deployment
+    /// authority at one already-validated clock observation.
+    pub fn require_policy_at(
+        &self,
+        policy: &SponsorshipPolicy,
+        now: &str,
+    ) -> Result<(), TriggerValidationError> {
+        self.validate()?;
+        policy.validate()?;
+        validate_timestamp("sponsorship_policy_observed_at", now)?;
+        let now_seconds = crate::seconds_from_rfc3339(now).ok_or_else(|| {
+            TriggerValidationError::field(
+                "sponsorship_policy_observed_at",
+                "must be a canonical timestamp",
+            )
+        })?;
+        let expires_seconds = crate::seconds_from_rfc3339(&policy.expires_at).ok_or_else(|| {
+            TriggerValidationError::field(
+                "sponsorship_policy.expires_at",
+                "must be a canonical timestamp",
+            )
+        })?;
+        let latest_expiry = now_seconds
+            .checked_add(self.maximum_policy_expiry_seconds)
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "sponsorship_policy.expires_at",
+                    "deployment expiry authority overflowed",
+                )
+            })?;
+        if expires_seconds <= now_seconds
+            || expires_seconds > latest_expiry
+            || !policy
+                .per_launch_quota
+                .fits_within(self.maximum_per_launch_quota)
+            || !policy
+                .aggregate_quota
+                .fits_within(self.maximum_policy_quota)
+            || policy.per_launch_budget_micros > self.maximum_per_launch_budget_micros
+            || policy.aggregate_budget_micros > self.maximum_policy_budget_micros
+            || policy.max_requests_per_minute > self.maximum_requests_per_minute
+            || policy.max_concurrent_launches > self.maximum_concurrent_launches
+        {
+            return Err(TriggerValidationError::field(
+                "sponsorship_policy",
+                "exceeds deployment-owned expiry, quota, budget, rate, or concurrency authority",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl SponsoredQuota {
@@ -1524,9 +1760,26 @@ impl SponsoredLaunchAuthority {
                 ))
             }
         };
-        let generation = launch.revision_number.checked_add(1).ok_or_else(|| {
-            TriggerValidationError::field("launch.revision_number", "is exhausted")
-        })?;
+        // Launch worker leases, effect receipts, and retry bookkeeping all advance
+        // `revision_number`. None of those changes sponsorship authority, and
+        // binding grant activation to that global CAS would make an ambiguous
+        // provider operation impossible to reconcile after the worker persisted
+        // its retry state. Session attachment is the sponsorship-relevant
+        // authority transition: before it there is no spend authority, and after
+        // it the exact deterministic session remains stable for the Launch.
+        let generation = launch
+            .session
+            .as_ref()
+            .map(|session| {
+                session.runtime_generation.checked_add(1).ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "launch.session.runtime_generation",
+                        "is exhausted",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(1);
         let mut authority = Self {
             tenant_id: binding.tenant_id.clone(),
             launch_id: launch.id.clone(),
@@ -1621,6 +1874,8 @@ pub struct SponsorshipGateFence {
     pub configuration_digest: String,
     pub epoch: u64,
     pub kill_switch_engaged: bool,
+    pub trusted_provider_policy_key: String,
+    pub runtime_limits: SponsorshipRuntimeLimits,
 }
 
 impl SponsorshipGateFence {
@@ -1635,6 +1890,11 @@ impl SponsorshipGateFence {
                 "must be positive",
             ));
         }
+        validate_policy_token(
+            "sponsorship_gate.trusted_provider_policy_key",
+            &self.trusted_provider_policy_key,
+        )?;
+        self.runtime_limits.validate()?;
         Ok(())
     }
 }
@@ -2197,6 +2457,24 @@ pub struct CommitGrantActivation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsorshipPolicyCreationIdentity {
+    pub request: SponsorshipOperationalPseudonymSet,
+    pub command: SponsorshipOperationalPseudonymSet,
+    /// Canonical digest of the caller payload before service-generated expiry
+    /// timestamps are applied. It is non-reversible and lets persistence
+    /// distinguish an exact replay from the same key carrying new contents.
+    pub payload_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistSponsorshipPolicy {
+    pub policy: SponsorshipPolicy,
+    pub idempotency: SponsorshipPolicyCreationIdentity,
+    pub gate_fence: SponsorshipGateFence,
+    pub audit: SponsoredAuditEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistSponsoredAcceptance {
     pub acceptance: SponsoredGrantAcceptance,
     /// Complete bounded current/predecessor aliases for the raw idempotency
@@ -2516,9 +2794,48 @@ impl SponsoredUsageRequest {
 #[serde(rename_all = "snake_case")]
 pub enum SponsoredUsageState {
     Reserved,
+    Attempting,
     Ambiguous,
     Settled,
     Released,
+}
+
+/// Short durable ownership window for one provider dispatch attempt.
+///
+/// The store creates both timestamps from its authoritative clock. A retry may
+/// observe the immutable provider operation while this lease is live, but it
+/// cannot issue another provider call until the lease expires and a new claim
+/// is atomically admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SponsoredUsageDispatchLease {
+    pub holder: String,
+    pub acquired_at: String,
+    pub expires_at: String,
+}
+
+impl SponsoredUsageDispatchLease {
+    pub fn validate(&self) -> Result<(), TriggerValidationError> {
+        let holder = Uuid::parse_str(&self.holder).map_err(|_| {
+            TriggerValidationError::field("usage_dispatch_lease.holder", "must be a canonical UUID")
+        })?;
+        if holder.to_string() != self.holder {
+            return Err(TriggerValidationError::field(
+                "usage_dispatch_lease.holder",
+                "must be a canonical UUID",
+            ));
+        }
+        validate_timestamp("usage_dispatch_lease.acquired_at", &self.acquired_at)?;
+        validate_timestamp("usage_dispatch_lease.expires_at", &self.expires_at)?;
+        if !timestamp_not_after(&self.acquired_at, &self.expires_at)
+            || self.acquired_at == self.expires_at
+        {
+            return Err(TriggerValidationError::field(
+                "usage_dispatch_lease.expires_at",
+                "must follow lease acquisition",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2532,6 +2849,12 @@ pub struct SponsoredUsageReservation {
     pub price_quote: SponsoredPriceQuote,
     pub reserved: SponsoredUsageSummary,
     pub state: SponsoredUsageState,
+    /// Monotonic provider-dispatch claim generation. Legacy and generic usage
+    /// reservations remain at zero until they cross this model dispatch path.
+    #[serde(default)]
+    pub dispatch_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_lease: Option<SponsoredUsageDispatchLease>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2563,6 +2886,33 @@ impl SponsoredUsageReservation {
             return Err(TriggerValidationError::field(
                 "usage_reservation.reserved",
                 "must equal the durable trusted price quote maximum",
+            ));
+        }
+        if let Some(lease) = &self.dispatch_lease {
+            lease.validate()?;
+            if !timestamp_not_after(&self.created_at, &lease.acquired_at)
+                || !timestamp_not_after(&lease.acquired_at, &self.updated_at)
+            {
+                return Err(TriggerValidationError::field(
+                    "usage_reservation.dispatch_lease",
+                    "must belong to the reservation's current update",
+                ));
+            }
+        }
+        if self.state == SponsoredUsageState::Reserved
+            && (self.dispatch_revision != 0 || self.dispatch_lease.is_some())
+        {
+            return Err(TriggerValidationError::field(
+                "usage_reservation.dispatch",
+                "a reserved operation must never have crossed provider dispatch",
+            ));
+        }
+        if (self.state == SponsoredUsageState::Attempting)
+            != (self.dispatch_revision > 0 && self.dispatch_lease.is_some())
+        {
+            return Err(TriggerValidationError::field(
+                "usage_reservation.dispatch",
+                "attempting state must carry one positive durable dispatch claim",
             ));
         }
         if (self.state == SponsoredUsageState::Settled) != self.actual.is_some() {
@@ -2597,6 +2947,352 @@ pub struct SponsoredUsageReservationOutcome {
     pub reservation: SponsoredUsageReservation,
 }
 
+/// Exact canonical request body retained only for model-provider recovery.
+///
+/// The value deliberately has no serialization implementation and always
+/// redacts diagnostics. A durable store must encrypt the exposed canonical
+/// bytes and erase them atomically when the reservation becomes terminal.
+pub struct SponsoredModelDispatchPayload {
+    schema_version: u32,
+    request_digest: String,
+    canonical_request: Zeroizing<String>,
+}
+
+impl SponsoredModelDispatchPayload {
+    pub fn from_request(
+        request_digest: impl Into<String>,
+        request: &Value,
+    ) -> Result<Self, TriggerValidationError> {
+        let request_digest = request_digest.into();
+        let canonical_request =
+            String::from_utf8(canonical_json_bytes(request)?).map_err(|_| {
+                TriggerValidationError::field(
+                    "sponsored_model.request",
+                    "could not be represented as canonical UTF-8 JSON",
+                )
+            })?;
+        let payload = Self {
+            schema_version: SPONSORED_MODEL_DISPATCH_PAYLOAD_SCHEMA_VERSION,
+            request_digest,
+            canonical_request: Zeroizing::new(canonical_request),
+        };
+        payload.validate()?;
+        Ok(payload)
+    }
+
+    pub fn from_encrypted_canonical_request(
+        schema_version: u32,
+        request_digest: impl Into<String>,
+        canonical_request: impl Into<String>,
+    ) -> Result<Self, TriggerValidationError> {
+        let payload = Self {
+            schema_version,
+            request_digest: request_digest.into(),
+            canonical_request: Zeroizing::new(canonical_request.into()),
+        };
+        payload.validate()?;
+        Ok(payload)
+    }
+
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    pub fn request_digest(&self) -> &str {
+        &self.request_digest
+    }
+
+    /// Exposed only to the encrypted store implementation. These bytes must
+    /// never enter diagnostics, public serialization, or a runtime response.
+    pub fn expose_canonical_request_for_encryption(&self) -> &str {
+        self.canonical_request.as_str()
+    }
+
+    pub fn request(&self) -> Result<Value, TriggerValidationError> {
+        self.validate()?;
+        serde_json::from_str(self.canonical_request.as_str()).map_err(|_| {
+            TriggerValidationError::field(
+                "sponsored_model.request",
+                "encrypted canonical JSON could not be decoded",
+            )
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), TriggerValidationError> {
+        if self.schema_version != SPONSORED_MODEL_DISPATCH_PAYLOAD_SCHEMA_VERSION {
+            return Err(TriggerValidationError::field(
+                "sponsored_model.dispatch_payload.schema_version",
+                "is unsupported",
+            ));
+        }
+        validate_digest(
+            "sponsored_model.dispatch_payload.request_digest",
+            &self.request_digest,
+        )?;
+        if self.canonical_request.is_empty()
+            || self.canonical_request.len() > MAX_SPONSORED_MODEL_REQUEST_BYTES
+        {
+            return Err(TriggerValidationError::field(
+                "sponsored_model.dispatch_payload.request",
+                "must fit within the sponsored model request bound",
+            ));
+        }
+        let request: Value =
+            serde_json::from_str(self.canonical_request.as_str()).map_err(|_| {
+                TriggerValidationError::field(
+                    "sponsored_model.dispatch_payload.request",
+                    "must contain valid JSON",
+                )
+            })?;
+        if !request.is_object()
+            || canonical_json_bytes(&request)?.as_slice() != self.canonical_request.as_bytes()
+            || lower_hex(Sha256::digest(self.canonical_request.as_bytes())) != self.request_digest
+        {
+            return Err(TriggerValidationError::field(
+                "sponsored_model.dispatch_payload.request",
+                "must be canonical object JSON matching its digest",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Clone for SponsoredModelDispatchPayload {
+    fn clone(&self) -> Self {
+        Self {
+            schema_version: self.schema_version,
+            request_digest: self.request_digest.clone(),
+            canonical_request: Zeroizing::new(self.canonical_request.to_string()),
+        }
+    }
+}
+
+impl PartialEq for SponsoredModelDispatchPayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.schema_version == other.schema_version
+            && self.request_digest == other.request_digest
+            && self.canonical_request.as_str() == other.canonical_request.as_str()
+    }
+}
+
+impl Eq for SponsoredModelDispatchPayload {}
+
+impl fmt::Debug for SponsoredModelDispatchPayload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SponsoredModelDispatchPayload")
+            .field("schema_version", &self.schema_version)
+            .field("request_digest", &self.request_digest)
+            .field("canonical_request", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Exact canonical provider response retained only for settled replay.
+///
+/// The bytes have no serialization implementation, are always redacted from
+/// diagnostics, and must be encrypted by persistence under the settled
+/// reservation's authenticated accounting context.
+pub struct SponsoredModelResponsePayload {
+    schema_version: u32,
+    request_digest: String,
+    response_digest: String,
+    actual_quota: SponsoredQuota,
+    canonical_response: Zeroizing<String>,
+}
+
+impl SponsoredModelResponsePayload {
+    pub fn from_response(
+        request_digest: impl Into<String>,
+        actual_quota: SponsoredQuota,
+        response: &Value,
+    ) -> Result<Self, TriggerValidationError> {
+        let canonical_response =
+            String::from_utf8(canonical_json_bytes(response)?).map_err(|_| {
+                TriggerValidationError::field(
+                    "sponsored_model.response",
+                    "could not be represented as canonical UTF-8 JSON",
+                )
+            })?;
+        let response_digest = lower_hex(Sha256::digest(canonical_response.as_bytes()));
+        let payload = Self {
+            schema_version: SPONSORED_MODEL_RESPONSE_PAYLOAD_SCHEMA_VERSION,
+            request_digest: request_digest.into(),
+            response_digest,
+            actual_quota,
+            canonical_response: Zeroizing::new(canonical_response),
+        };
+        payload.validate()?;
+        Ok(payload)
+    }
+
+    pub fn from_encrypted_canonical_response(
+        schema_version: u32,
+        request_digest: impl Into<String>,
+        response_digest: impl Into<String>,
+        actual_quota: SponsoredQuota,
+        canonical_response: impl Into<String>,
+    ) -> Result<Self, TriggerValidationError> {
+        let payload = Self {
+            schema_version,
+            request_digest: request_digest.into(),
+            response_digest: response_digest.into(),
+            actual_quota,
+            canonical_response: Zeroizing::new(canonical_response.into()),
+        };
+        payload.validate()?;
+        Ok(payload)
+    }
+
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    pub fn request_digest(&self) -> &str {
+        &self.request_digest
+    }
+
+    pub fn response_digest(&self) -> &str {
+        &self.response_digest
+    }
+
+    pub fn actual_quota(&self) -> SponsoredQuota {
+        self.actual_quota
+    }
+
+    pub fn expose_canonical_response_for_encryption(&self) -> &str {
+        self.canonical_response.as_str()
+    }
+
+    pub fn response(&self) -> Result<Value, TriggerValidationError> {
+        self.validate()?;
+        serde_json::from_str(self.canonical_response.as_str()).map_err(|_| {
+            TriggerValidationError::field(
+                "sponsored_model.response",
+                "encrypted canonical JSON could not be decoded",
+            )
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), TriggerValidationError> {
+        if self.schema_version != SPONSORED_MODEL_RESPONSE_PAYLOAD_SCHEMA_VERSION {
+            return Err(TriggerValidationError::field(
+                "sponsored_model.response_payload.schema_version",
+                "is unsupported",
+            ));
+        }
+        validate_digest(
+            "sponsored_model.response_payload.request_digest",
+            &self.request_digest,
+        )?;
+        validate_digest(
+            "sponsored_model.response_payload.response_digest",
+            &self.response_digest,
+        )?;
+        if self.actual_quota.requests != 1
+            || self.canonical_response.is_empty()
+            || self.canonical_response.len() > MAX_SPONSORED_MODEL_RESPONSE_BYTES
+        {
+            return Err(TriggerValidationError::field(
+                "sponsored_model.response_payload",
+                "must contain one bounded provider response",
+            ));
+        }
+        let response: Value =
+            serde_json::from_str(self.canonical_response.as_str()).map_err(|_| {
+                TriggerValidationError::field(
+                    "sponsored_model.response_payload.response",
+                    "must contain valid JSON",
+                )
+            })?;
+        if !response.is_object()
+            || canonical_json_bytes(&response)?.as_slice() != self.canonical_response.as_bytes()
+            || lower_hex(Sha256::digest(self.canonical_response.as_bytes())) != self.response_digest
+        {
+            return Err(TriggerValidationError::field(
+                "sponsored_model.response_payload.response",
+                "must be canonical object JSON matching its digest",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Clone for SponsoredModelResponsePayload {
+    fn clone(&self) -> Self {
+        Self {
+            schema_version: self.schema_version,
+            request_digest: self.request_digest.clone(),
+            response_digest: self.response_digest.clone(),
+            actual_quota: self.actual_quota,
+            canonical_response: Zeroizing::new(self.canonical_response.to_string()),
+        }
+    }
+}
+
+impl PartialEq for SponsoredModelResponsePayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.schema_version == other.schema_version
+            && self.request_digest == other.request_digest
+            && self.response_digest == other.response_digest
+            && self.actual_quota == other.actual_quota
+            && self.canonical_response.as_str() == other.canonical_response.as_str()
+    }
+}
+
+impl Eq for SponsoredModelResponsePayload {}
+
+impl fmt::Debug for SponsoredModelResponsePayload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SponsoredModelResponsePayload")
+            .field("schema_version", &self.schema_version)
+            .field("request_digest", &self.request_digest)
+            .field("response_digest", &self.response_digest)
+            .field("actual_quota", &self.actual_quota)
+            .field("canonical_response", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct SponsoredModelRecoveryRecord {
+    pub reservation: SponsoredUsageReservation,
+    pub dispatch: SponsoredModelDispatchPayload,
+}
+
+impl fmt::Debug for SponsoredModelRecoveryRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SponsoredModelRecoveryRecord")
+            .field("reservation", &self.reservation)
+            .field("dispatch", &self.dispatch)
+            .finish()
+    }
+}
+
+pub(super) fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>, TriggerValidationError> {
+    serde_json::to_vec(&canonical_json(value)).map_err(|_| {
+        TriggerValidationError::field("sponsored_model.request", "could not be canonicalized")
+    })
+}
+
+fn canonical_json(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(canonical_json).collect()),
+        Value::Object(object) => {
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            let mut canonical = serde_json::Map::new();
+            for key in keys {
+                canonical.insert(key.clone(), canonical_json(&object[key]));
+            }
+            Value::Object(canonical)
+        }
+        scalar => scalar.clone(),
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ReserveSponsoredUsage {
     pub request: SponsoredUsageRequest,
@@ -2608,10 +3304,46 @@ pub struct ReserveSponsoredUsage {
     /// not compare it to the current root generation after a successful
     /// rotation; current credential state remains the revocation fence.
     pub credential_generation: u64,
+    /// Present only for the model dispatch path. Generic accounting
+    /// reservations carry no provider payload.
+    pub model_dispatch: Option<SponsoredModelDispatchPayload>,
     /// Service request time retained in reservation/audit metadata. It is not
     /// authoritative for expiry or rate limiting; those checks use database
     /// time in the reservation transaction.
     pub now: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimSponsoredUsageDispatch {
+    pub reservation_id: SponsoredUsageReservationId,
+    pub request_fingerprint: String,
+    pub expected_state: SponsoredUsageState,
+    pub expected_dispatch_revision: u64,
+    pub capability: InertGrantCapability,
+    pub gate_fence: SponsorshipGateFence,
+    /// Opaque claim identity. Persistence supplies all lease timestamps.
+    pub holder: String,
+    pub audit: SponsoredAuditEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsoredUsageDispatchClaim {
+    pub acquired: bool,
+    pub reservation: SponsoredUsageReservation,
+}
+
+/// Reconciliation authority for mutations derived from provider dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SponsoredUsageReconciliationFence {
+    /// Completion emitted by the exact durable claim owner.
+    DispatchClaim { revision: u64, holder: String },
+    /// Definitive provider observation for this exact durable generation.
+    ProviderObservation {
+        state: SponsoredUsageState,
+        revision: u64,
+    },
+    /// First dispatch was definitively refused before any provider attempt.
+    NeverDispatched,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2624,6 +3356,10 @@ pub struct ReconcileSponsoredUsage {
     pub actual: Option<SponsoredUsageSummary>,
     pub outcome: SponsoredUsageState,
     pub observed_at: String,
+    pub dispatch_fence: Option<SponsoredUsageReconciliationFence>,
+    /// Present only when a sponsored model settlement atomically exchanges
+    /// request custody for exact encrypted response replay.
+    pub model_response: Option<SponsoredModelResponsePayload>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2645,6 +3381,7 @@ pub enum SponsoredAuditAction {
     GrantClosed,
     GrantExpired,
     UsageReserved,
+    UsageDispatchClaimed,
     UsageDenied,
     UsageReconciled,
     AbuseReported,

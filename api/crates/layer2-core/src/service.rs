@@ -995,7 +995,13 @@ impl SessionService {
                     })
                     && pricing.micros_per_hour > 0
             }
-            crate::BillingMode::Sponsored => false,
+            crate::BillingMode::Sponsored => {
+                pricing.policy_reference == crate::CMA_TRIGGER_SPONSORED_POLICY_V1
+                    && pricing.rate_card.is_none()
+                    && pricing.rate.is_none()
+                    && pricing.micros_per_hour == 0
+                    && pricing.estimated_micros == 0
+            }
         };
         if !common_is_valid || !terms_are_valid {
             return Err(crate::TriggerAdmissionError::PricingUnavailable(
@@ -1062,9 +1068,26 @@ impl SessionService {
                     expires_at: launch.draft_expires_at.clone(),
                 })
             }
-            crate::BillingMode::Sponsored => Err(crate::TriggerAdmissionError::PricingUnavailable(
-                "sponsored billing is disabled for the public MVP".into(),
-            )),
+            crate::BillingMode::Sponsored => {
+                if policy.policy_reference != crate::CMA_TRIGGER_SPONSORED_POLICY_V1 {
+                    return Err(crate::TriggerAdmissionError::PricingUnavailable(
+                        "the sponsored policy reference is not deployment-owned".into(),
+                    ));
+                }
+                Ok(crate::PricingSnapshot {
+                    policy_reference: policy.policy_reference.clone(),
+                    billing_mode: policy.billing_mode,
+                    rate_card: None,
+                    rate: None,
+                    currency: CURRENCY.into(),
+                    cpu_millis: size.cpu_millis(),
+                    memory_mib: size.memory_mib(),
+                    micros_per_hour: 0,
+                    estimated_micros: 0,
+                    quoted_at: now.to_string(),
+                    expires_at: launch.draft_expires_at.clone(),
+                })
+            }
         }
     }
 
@@ -1500,11 +1523,7 @@ pub(crate) fn trigger_session_origin(
             micros_per_hour: pricing.micros_per_hour,
             quoted_at: pricing.quoted_at.clone(),
         }),
-        crate::BillingMode::Sponsored => {
-            return Err(CoreError::InvalidRequest(
-                "sponsored Trigger billing is disabled".into(),
-            ));
-        }
+        crate::BillingMode::Sponsored => None,
     };
     let origin = crate::TriggerSessionOrigin {
         launch_id: launch.id.clone(),

@@ -1515,9 +1515,10 @@ pub trait CredentialSource: Send + Sync {
         services: &[ServiceId],
         caller_credential: Option<&crate::session::CallerCredential>,
         _target: &crate::CredentialDeliveryTarget,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<layer3_adapter::RuntimeCredential>, StoreError> {
         self.credential_for(session, subject, services, caller_credential)
             .await
+            .map(|credential| credential.map(layer3_adapter::RuntimeCredential::new))
     }
 
     /// Confirm a correlated acknowledgement for an exact runtime target.

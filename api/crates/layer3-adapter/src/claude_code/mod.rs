@@ -173,7 +173,7 @@ impl KernelAdapter for ClaudeCodeAdapter {
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: &crate::RuntimeCredential,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
     }
@@ -184,6 +184,16 @@ impl KernelAdapter for ClaudeCodeAdapter {
         envelope: &str,
     ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
         self.hosted.install_runtime_policy(handle, envelope).await
+    }
+
+    async fn install_sponsored_model_authority(
+        &self,
+        handle: &RuntimeHandle,
+        authority: &crate::SponsoredModelRuntimeAuthority,
+    ) -> Result<crate::SponsoredModelAuthorityReceipt, AdapterError> {
+        self.hosted
+            .install_sponsored_model_authority(handle, authority)
+            .await
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {

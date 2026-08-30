@@ -36,6 +36,10 @@ pub enum SponsorshipStoreError {
     AggregateBudgetExceeded,
     #[error("the sponsored request rate is exhausted")]
     RateExceeded,
+    #[error("the sponsor has reached the active-policy limit")]
+    ActivePolicyLimit,
+    #[error("the sponsor has reached the Launch admission rate")]
+    SponsorLaunchRateExceeded,
     #[error("the sponsored Launch concurrency limit is exhausted")]
     ConcurrentLaunchLimit,
 }
@@ -152,6 +156,7 @@ pub enum SponsorshipCiphertextRecordKind {
     Credential,
     GrantActivation,
     Grant,
+    UsageReservation,
 }
 
 /// One exact old-key record selected for compare-and-swap re-encryption.
@@ -317,6 +322,8 @@ pub trait SponsorshipStore: Send + Sync {
 
     /// Commit a definitive provider revocation receipt, mark material retired,
     /// and erase both current and staged encrypted secrets in the same write.
+    /// The same atomic write must reject retirement while any nonterminal model
+    /// reservation retains encrypted request custody for this credential.
     /// Ambiguous, unavailable, or rejected operations must never call this.
     async fn complete_credential_revocation(
         &self,
@@ -325,10 +332,17 @@ pub trait SponsorshipStore: Send + Sync {
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError>;
 
+    /// Insert an active policy only after atomically fencing deployment
+    /// authority, checking database-time expiry, and serializing the sponsor's
+    /// active-policy count. Exact id replay is free and returns the winner.
+    async fn policy_creation(
+        &self,
+        identity: &SponsorshipPolicyCreationIdentity,
+    ) -> Result<Option<SponsorshipPolicy>, SponsorshipStoreError>;
+
     async fn insert_policy(
         &self,
-        policy: &SponsorshipPolicy,
-        audit: SponsoredAuditEvent,
+        command: PersistSponsorshipPolicy,
     ) -> Result<SponsorshipPolicy, SponsorshipStoreError>;
 
     async fn policy(
@@ -388,6 +402,9 @@ pub trait SponsorshipStore: Send + Sync {
     /// must reject a candidate carrying a lease and create/compare lease times
     /// from database time in the same CAS (for MongoDB, `$$NOW` or a
     /// transactionally equivalent server-time expression), never caller time.
+    /// A new Launch must also serialize sponsor-wide admission and count only
+    /// database-time admissions inside the gate's configured rate window.
+    /// Existing activation retries do not consume another sponsor admission.
     async fn claim_grant_activation(
         &self,
         command: ClaimGrantActivation,
@@ -548,6 +565,24 @@ pub trait SponsorshipStore: Send + Sync {
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredUsageReservationOutcome, SponsorshipStoreError>;
 
+    /// Atomically acquire one provider-dispatch attempt. Persistence must use
+    /// authoritative database time for the fixed lease, revalidate the current
+    /// gate and every live grant/policy/credential/Launch dependency, and CAS
+    /// the caller-observed state and dispatch revision. A live lease or a lost
+    /// CAS returns `acquired=false`; neither outcome may contact the provider.
+    /// New spend requires an active credential. Only an existing reservation
+    /// that still holds its authenticated encrypted model request may claim
+    /// while its retained credential is `RevocationPending` at an unattempted
+    /// `RevokeCredential/Prepared` operation; every later revocation phase is
+    /// fail-closed for dispatch.
+    /// Observation of an already attempted operation does not use this API,
+    /// while an authoritative provider `NotFound` must reacquire it before any
+    /// replacement call with the same immutable operation ID.
+    async fn claim_usage_dispatch(
+        &self,
+        command: ClaimSponsoredUsageDispatch,
+    ) -> Result<SponsoredUsageDispatchClaim, SponsorshipStoreError>;
+
     /// Atomically resolve a reservation and update grant/policy accounting.
     /// Before observing clock or pricing, the service returns a durable
     /// terminal reservation only when the request fingerprint, outcome, and
@@ -589,6 +624,22 @@ pub trait SponsorshipStore: Send + Sync {
         &self,
         page: &SponsorshipRecoveryPageRequest,
     ) -> Result<SponsorshipRecoveryPage<SponsoredUsageReservationId>, SponsorshipStoreError>;
+
+    /// Open the exact encrypted canonical model request for one nonterminal
+    /// reservation. Generic usage rows and terminal model rows return `None`.
+    /// Implementations must authenticate the payload against its immutable
+    /// reservation metadata before returning it.
+    async fn model_usage_recovery_record(
+        &self,
+        id: &SponsoredUsageReservationId,
+    ) -> Result<Option<SponsoredModelRecoveryRecord>, SponsorshipStoreError>;
+
+    /// Open the exact encrypted provider response for one settled model
+    /// reservation. Generic and non-settled rows return `None`.
+    async fn model_usage_settled_response(
+        &self,
+        id: &SponsoredUsageReservationId,
+    ) -> Result<Option<SponsoredModelResponsePayload>, SponsorshipStoreError>;
 
     /// Select records still indexed under one retiring key without decrypting
     /// unrelated rows. Rewrap must update ciphertext envelopes and their key

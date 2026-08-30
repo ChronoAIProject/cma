@@ -25,6 +25,30 @@ const MODEL: &str = "model-a";
 const RESOURCE: &str = "responses";
 const SECRET: &str = "fixture-provider-credential";
 
+fn runtime_limits() -> SponsorshipRuntimeLimits {
+    SponsorshipRuntimeLimits {
+        default_policy_expiry_seconds: 3_600,
+        maximum_policy_expiry_seconds: 86_400,
+        maximum_active_policies_per_sponsor: 32,
+        launch_rate_window_seconds: 60,
+        maximum_launches_per_sponsor_per_window: 100,
+        maximum_per_launch_quota: SponsoredQuota {
+            requests: 1_000,
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+        },
+        maximum_policy_quota: SponsoredQuota {
+            requests: 1_000,
+            input_tokens: 10_000_000,
+            output_tokens: 10_000_000,
+        },
+        maximum_requests_per_minute: 600,
+        maximum_per_launch_budget_micros: 1_000_000,
+        maximum_policy_budget_micros: 1_000_000,
+        maximum_concurrent_launches: 10,
+    }
+}
+
 struct MemoryState {
     authoritative_now: String,
     gate_fence: SponsorshipGateFence,
@@ -38,15 +62,22 @@ struct MemoryState {
     pending_credential_secrets: BTreeMap<String, String>,
     policies: BTreeMap<String, SponsorshipPolicy>,
     policy_usage: BTreeMap<String, SponsorshipPolicyUsage>,
+    policy_creations: Vec<MemoryPolicyCreation>,
     acceptances: BTreeMap<String, SponsoredGrantAcceptance>,
     acceptance_aliases: BTreeMap<String, BTreeSet<String>>,
     grants: BTreeMap<String, SponsoredGrant>,
     grants_by_launch: BTreeMap<String, String>,
     grant_receipts: BTreeMap<String, ProviderGrantReceipt>,
     activations: BTreeMap<String, GrantActivationIntent>,
+    launch_admissions: BTreeMap<String, (String, u64)>,
     reservations: BTreeMap<String, SponsoredUsageReservation>,
     reservation_aliases: BTreeMap<String, BTreeSet<String>>,
     reservation_policy: BTreeMap<String, String>,
+    reservation_credentials: BTreeMap<String, String>,
+    model_dispatches: BTreeMap<String, SponsoredModelDispatchPayload>,
+    model_responses: BTreeMap<String, SponsoredModelResponsePayload>,
+    model_recovery_settlement_race:
+        Option<(SponsoredUsageReservationId, SponsoredModelResponsePayload)>,
     reservation_times: BTreeMap<String, Vec<u64>>,
     audits: Vec<SponsoredAuditEvent>,
 }
@@ -59,6 +90,8 @@ impl Default for MemoryState {
                 configuration_digest: digest(b"unconfigured-gate"),
                 epoch: 1,
                 kill_switch_engaged: true,
+                trusted_provider_policy_key: POLICY_KEY.into(),
+                runtime_limits: runtime_limits(),
             },
             kill_switch_engagement_id: None,
             launches: BTreeMap::new(),
@@ -69,15 +102,21 @@ impl Default for MemoryState {
             pending_credential_secrets: BTreeMap::new(),
             policies: BTreeMap::new(),
             policy_usage: BTreeMap::new(),
+            policy_creations: Vec::new(),
             acceptances: BTreeMap::new(),
             acceptance_aliases: BTreeMap::new(),
             grants: BTreeMap::new(),
             grants_by_launch: BTreeMap::new(),
             grant_receipts: BTreeMap::new(),
             activations: BTreeMap::new(),
+            launch_admissions: BTreeMap::new(),
             reservations: BTreeMap::new(),
             reservation_aliases: BTreeMap::new(),
             reservation_policy: BTreeMap::new(),
+            reservation_credentials: BTreeMap::new(),
+            model_dispatches: BTreeMap::new(),
+            model_responses: BTreeMap::new(),
+            model_recovery_settlement_race: None,
             reservation_times: BTreeMap::new(),
             audits: Vec::new(),
         }
@@ -89,6 +128,14 @@ struct MemoryCredentialRegistration {
     request_aliases: BTreeSet<String>,
     command_aliases: BTreeSet<String>,
     credential_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct MemoryPolicyCreation {
+    request_aliases: BTreeSet<String>,
+    command_aliases: BTreeSet<String>,
+    payload_digest: String,
+    policy_id: String,
 }
 
 fn pseudonym_aliases(candidates: &SponsorshipOperationalPseudonymSet) -> BTreeSet<String> {
@@ -155,6 +202,8 @@ impl MemoryStore {
             configuration_digest: gate.configuration_digest().unwrap(),
             epoch: 1,
             kill_switch_engaged: gate.kill_switch_engaged,
+            trusted_provider_policy_key: gate.trusted_provider_policy_key.clone(),
+            runtime_limits: gate.runtime_limits.clone(),
         };
         state.kill_switch_engagement_id = None;
     }
@@ -306,6 +355,7 @@ impl SponsorshipStore for MemoryStore {
         state.gate_fence.epoch += 1;
         state.gate_fence.kill_switch_engaged = true;
         state.kill_switch_engagement_id = Some(audit.event_id.clone());
+        let engagement_audit = audit.clone();
         state.audits.push(audit);
         let authoritative_now = state.authoritative_now.clone();
         let terminalizable = state
@@ -336,6 +386,49 @@ impl SponsorshipStore for MemoryStore {
                 .validate()
                 .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
             state.activations.insert(launch_id, intent);
+        }
+        let never_attempted = state
+            .reservations
+            .values()
+            .filter(|reservation| reservation.state == SponsoredUsageState::Reserved)
+            .map(|reservation| reservation.id.0.clone())
+            .collect::<Vec<_>>();
+        for reservation_id in never_attempted {
+            let mut reservation = state.reservations.remove(&reservation_id).unwrap();
+            let terminal_policy = state
+                .grants
+                .get(&reservation.grant_id.0)
+                .filter(|grant| grant_capacity_is_released(grant.state))
+                .map(|grant| grant.policy_id.0.clone());
+            if let Some(policy_id) = terminal_policy.as_ref() {
+                let usage = state
+                    .policy_usage
+                    .get_mut(policy_id)
+                    .ok_or(SponsorshipStoreError::Conflict)?;
+                usage.reserved = usage
+                    .reserved
+                    .checked_sub(&reservation.reserved)
+                    .ok_or(SponsorshipStoreError::Conflict)?;
+            }
+            reservation.state = SponsoredUsageState::Released;
+            reservation.dispatch_lease = None;
+            reservation.updated_at = authoritative_now.clone();
+            reservation
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+            state.audits.push(SponsoredAuditEvent {
+                event_id: uuid::Uuid::new_v4().to_string(),
+                action: SponsoredAuditAction::UsageReconciled,
+                actor_digest: engagement_audit.actor_digest.clone(),
+                policy_id: terminal_policy.map(SponsorshipPolicyId),
+                grant_id: Some(reservation.grant_id.clone()),
+                stable_request_id_digest: None,
+                outcome_code: "kill_switch_invalidated".into(),
+                occurred_at: reservation.updated_at.clone(),
+            });
+            state.model_dispatches.remove(&reservation_id);
+            state.reservation_credentials.remove(&reservation_id);
+            state.reservations.insert(reservation_id, reservation);
         }
         Ok(state.gate_fence.clone())
     }
@@ -614,14 +707,61 @@ impl SponsorshipStore for MemoryStore {
         secret: Option<&ProviderCredentialSecret>,
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredCredentialRecord, SponsorshipStoreError> {
+        record
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         let mut state = self.state.lock().await;
+        let stored_record = state
+            .credentials
+            .get(&record.id.0)
+            .map(|(stored, _)| stored.clone())
+            .ok_or(SponsorshipStoreError::Conflict)?;
+        let begins_revocation_attempt = stored_record.state
+            == SponsoredCredentialState::RevocationPending
+            && record.state == SponsoredCredentialState::RevocationPending
+            && matches!(
+                (
+                    stored_record.pending_operation.as_ref(),
+                    record.pending_operation.as_ref(),
+                ),
+                (
+                    Some(PendingProviderOperation {
+                        kind: ProviderOperationKind::RevokeCredential,
+                        phase: ProviderOperationPhase::Prepared,
+                        ..
+                    }),
+                    Some(PendingProviderOperation {
+                        kind: ProviderOperationKind::RevokeCredential,
+                        phase: ProviderOperationPhase::Attempting,
+                        ..
+                    }),
+                )
+            );
+        if begins_revocation_attempt
+            && state.model_dispatches.keys().any(|reservation_id| {
+                state
+                    .reservation_credentials
+                    .get(reservation_id)
+                    .is_some_and(|credential_id| credential_id == &record.id.0)
+                    && state
+                        .reservations
+                        .get(reservation_id)
+                        .is_some_and(|reservation| {
+                            matches!(
+                                reservation.state,
+                                SponsoredUsageState::Reserved
+                                    | SponsoredUsageState::Attempting
+                                    | SponsoredUsageState::Ambiguous
+                            )
+                        })
+            })
+        {
+            return Err(SponsorshipStoreError::Conflict);
+        }
         let (stored, stored_secret) = state
             .credentials
             .get_mut(&record.id.0)
             .ok_or(SponsorshipStoreError::Conflict)?;
-        record
-            .validate()
-            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
         if record.material_state != stored.material_state
             || record.material_state != SponsoredCredentialMaterialState::Retained
         {
@@ -880,6 +1020,25 @@ impl SponsorshipStore for MemoryStore {
         {
             return Err(SponsorshipStoreError::Conflict);
         }
+        if state.model_dispatches.keys().any(|reservation_id| {
+            state
+                .reservation_credentials
+                .get(reservation_id)
+                .is_some_and(|credential_id| credential_id == &record.id.0)
+                && state
+                    .reservations
+                    .get(reservation_id)
+                    .is_some_and(|reservation| {
+                        matches!(
+                            reservation.state,
+                            SponsoredUsageState::Reserved
+                                | SponsoredUsageState::Attempting
+                                | SponsoredUsageState::Ambiguous
+                        )
+                    })
+        }) {
+            return Err(SponsorshipStoreError::Conflict);
+        }
         state.pending_credential_secrets.remove(&record.id.0);
         let (stored_record, stored_secret) = state
             .credentials
@@ -894,27 +1053,150 @@ impl SponsorshipStore for MemoryStore {
         Ok(record.clone())
     }
 
+    async fn policy_creation(
+        &self,
+        identity: &SponsorshipPolicyCreationIdentity,
+    ) -> Result<Option<SponsorshipPolicy>, SponsorshipStoreError> {
+        let mut state = self.state.lock().await;
+        let request_aliases = pseudonym_aliases(&identity.request);
+        let command_aliases = pseudonym_aliases(&identity.command);
+        let policy_id = {
+            let Some(binding) = state
+                .policy_creations
+                .iter_mut()
+                .find(|binding| aliases_match(&binding.request_aliases, &identity.request))
+            else {
+                return Ok(None);
+            };
+            if binding.payload_digest != identity.payload_digest
+                || !aliases_match(&binding.command_aliases, &identity.command)
+            {
+                return Err(SponsorshipStoreError::Conflict);
+            }
+            binding.request_aliases = request_aliases;
+            binding.command_aliases = command_aliases;
+            binding.policy_id.clone()
+        };
+        state
+            .policies
+            .get(&policy_id)
+            .cloned()
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "policy creation identity points to no policy".into(),
+                )
+            })
+            .map(Some)
+    }
+
     async fn insert_policy(
         &self,
-        policy: &SponsorshipPolicy,
-        audit: SponsoredAuditEvent,
+        command: PersistSponsorshipPolicy,
     ) -> Result<SponsorshipPolicy, SponsorshipStoreError> {
         let mut state = self.state.lock().await;
-        match state.policies.get(&policy.id.0) {
-            Some(stored) if stored == policy => Ok(stored.clone()),
-            Some(_) => Err(SponsorshipStoreError::Conflict),
+        let request_aliases = pseudonym_aliases(&command.idempotency.request);
+        let command_aliases = pseudonym_aliases(&command.idempotency.command);
+        if let Some(policy_id) = {
+            let binding = state.policy_creations.iter_mut().find(|binding| {
+                aliases_match(&binding.request_aliases, &command.idempotency.request)
+            });
+            if let Some(binding) = binding {
+                if binding.payload_digest != command.idempotency.payload_digest
+                    || !aliases_match(&binding.command_aliases, &command.idempotency.command)
+                {
+                    return Err(SponsorshipStoreError::Conflict);
+                }
+                binding.request_aliases = request_aliases.clone();
+                binding.command_aliases = command_aliases.clone();
+                Some(binding.policy_id.clone())
+            } else {
+                None
+            }
+        } {
+            return state.policies.get(&policy_id).cloned().ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "policy creation identity points to no policy".into(),
+                )
+            });
+        }
+        let existing = state.policies.get(&command.policy.id.0).cloned();
+        match existing {
+            Some(stored) => {
+                if stored != command.policy {
+                    return Err(SponsorshipStoreError::Conflict);
+                }
+                let Some(binding) = state
+                    .policy_creations
+                    .iter_mut()
+                    .find(|binding| binding.policy_id == command.policy.id.0)
+                else {
+                    return Err(SponsorshipStoreError::Malformed(
+                        "existing sponsorship policy has no creation identity".into(),
+                    ));
+                };
+                if binding.payload_digest != command.idempotency.payload_digest
+                    || !aliases_match(&binding.command_aliases, &command.idempotency.command)
+                {
+                    return Err(SponsorshipStoreError::Conflict);
+                }
+                binding.request_aliases = request_aliases;
+                binding.command_aliases = command_aliases;
+                Ok(stored)
+            }
             None => {
-                state.policies.insert(policy.id.0.clone(), policy.clone());
+                require_gate(&state, &command.gate_fence)?;
+                command
+                    .gate_fence
+                    .runtime_limits
+                    .require_policy_at(&command.policy, &state.authoritative_now)
+                    .map_err(|_| SponsorshipStoreError::Conflict)?;
+                if command.policy.provider_policy.provider_policy_key
+                    != command.gate_fence.trusted_provider_policy_key
+                {
+                    return Err(SponsorshipStoreError::Conflict);
+                }
+                let sponsor_key = command
+                    .policy
+                    .owner
+                    .sponsorship_authority_key()
+                    .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+                let active = state
+                    .policies
+                    .values()
+                    .filter(|candidate| {
+                        candidate.state == SponsorshipPolicyState::Active
+                            && candidate.is_available_at(&state.authoritative_now)
+                            && candidate.owner.sponsorship_authority_key().as_deref()
+                                == Ok(sponsor_key.as_str())
+                    })
+                    .count();
+                if active
+                    >= command
+                        .gate_fence
+                        .runtime_limits
+                        .maximum_active_policies_per_sponsor as usize
+                {
+                    return Err(SponsorshipStoreError::ActivePolicyLimit);
+                }
+                state
+                    .policies
+                    .insert(command.policy.id.0.clone(), command.policy.clone());
                 state.policy_usage.insert(
-                    policy.id.0.clone(),
+                    command.policy.id.0.clone(),
                     SponsorshipPolicyUsage {
                         consumed: SponsoredUsageSummary::default(),
                         reserved: SponsoredUsageSummary::default(),
                         active_launches: 0,
                     },
                 );
-                state.audits.push(audit);
-                Ok(policy.clone())
+                state.policy_creations.push(MemoryPolicyCreation {
+                    request_aliases,
+                    command_aliases,
+                    payload_digest: command.idempotency.payload_digest,
+                    policy_id: command.policy.id.0.clone(),
+                });
+                state.audits.push(command.audit);
+                Ok(command.policy)
             }
         }
     }
@@ -1186,7 +1468,43 @@ impl SponsorshipStore for MemoryStore {
         }
         let mut candidate = candidate;
         require_current_terms(&state, &candidate, &command.acceptance)?;
+        let sponsor_key = state
+            .policies
+            .get(&candidate.policy_id.0)
+            .ok_or(SponsorshipStoreError::GrantUnavailable)?
+            .owner
+            .sponsorship_authority_key()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        let now_seconds = crate::seconds_from_rfc3339(&authoritative_now).ok_or_else(|| {
+            SponsorshipStoreError::Malformed(
+                "authoritative sponsorship test clock is invalid".into(),
+            )
+        })?;
+        let window_start = now_seconds.saturating_sub(
+            candidate
+                .gate_fence
+                .runtime_limits
+                .launch_rate_window_seconds,
+        );
+        let recent = state
+            .launch_admissions
+            .values()
+            .filter(|(candidate_sponsor, admitted_at)| {
+                candidate_sponsor == &sponsor_key && *admitted_at > window_start
+            })
+            .count();
+        if recent
+            >= candidate
+                .gate_fence
+                .runtime_limits
+                .maximum_launches_per_sponsor_per_window as usize
+        {
+            return Err(SponsorshipStoreError::SponsorLaunchRateExceeded);
+        }
         reserve_activation_allocation(&mut state, &candidate)?;
+        state
+            .launch_admissions
+            .insert(candidate.launch_id.0.clone(), (sponsor_key, now_seconds));
         candidate.capacity_held = true;
         candidate.lease = Some(test_activation_lease(
             command.holder_candidates.current().as_str().to_string(),
@@ -1885,6 +2203,11 @@ impl SponsorshipStore for MemoryStore {
         command: ReserveSponsoredUsage,
         audit: SponsoredAuditEvent,
     ) -> Result<SponsoredUsageReservationOutcome, SponsorshipStoreError> {
+        if let Some(dispatch) = command.model_dispatch.as_ref() {
+            dispatch
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        }
         let mut state = self.state.lock().await;
         let authoritative_now = state.authoritative_now.clone();
         let fingerprint = command
@@ -1916,6 +2239,14 @@ impl SponsorshipStore for MemoryStore {
                 })?;
             if existing.idempotency_fingerprint != command.request.idempotency_fingerprint {
                 return Err(SponsorshipStoreError::Conflict);
+            }
+            match (
+                state.model_dispatches.get(&reservation_id),
+                command.model_dispatch.as_ref(),
+            ) {
+                (Some(stored), Some(candidate)) if stored == candidate => {}
+                (None, None) => {}
+                _ => return Err(SponsorshipStoreError::Conflict),
             }
             state
                 .reservation_aliases
@@ -1995,7 +2326,9 @@ impl SponsorshipStore for MemoryStore {
         for reservation in state.reservations.values().filter(|reservation| {
             matches!(
                 reservation.state,
-                SponsoredUsageState::Reserved | SponsoredUsageState::Ambiguous
+                SponsoredUsageState::Reserved
+                    | SponsoredUsageState::Attempting
+                    | SponsoredUsageState::Ambiguous
             )
         }) {
             if reservation.grant_id == grant.id {
@@ -2032,6 +2365,8 @@ impl SponsorshipStore for MemoryStore {
             price_quote: command.price_quote,
             reserved: command.request.maximum,
             state: SponsoredUsageState::Reserved,
+            dispatch_revision: 0,
+            dispatch_lease: None,
             created_at: command.now.clone(),
             updated_at: command.now,
             actual: None,
@@ -2045,6 +2380,14 @@ impl SponsorshipStore for MemoryStore {
         state
             .reservation_aliases
             .insert(reservation.id.0.clone(), request_aliases);
+        if let Some(dispatch) = command.model_dispatch {
+            state
+                .reservation_credentials
+                .insert(reservation.id.0.clone(), policy.credential_id.0);
+            state
+                .model_dispatches
+                .insert(reservation.id.0.clone(), dispatch);
+        }
         state
             .reservations
             .insert(reservation.id.0.clone(), reservation.clone());
@@ -2052,6 +2395,205 @@ impl SponsorshipStore for MemoryStore {
         Ok(SponsoredUsageReservationOutcome {
             disposition: ReservationDisposition::Created,
             reservation,
+        })
+    }
+
+    async fn claim_usage_dispatch(
+        &self,
+        command: ClaimSponsoredUsageDispatch,
+    ) -> Result<SponsoredUsageDispatchClaim, SponsorshipStoreError> {
+        SponsoredUsageReservationId::parse(command.reservation_id.0.clone())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if !is_test_digest(&command.request_fingerprint) {
+            return Err(SponsorshipStoreError::Malformed(
+                "usage dispatch request fingerprint is invalid".into(),
+            ));
+        }
+        command
+            .capability
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        command
+            .gate_fence
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if uuid::Uuid::parse_str(&command.holder)
+            .ok()
+            .is_none_or(|holder| holder.to_string() != command.holder)
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "usage dispatch holder is not a canonical UUID".into(),
+            ));
+        }
+        if command.audit.action != SponsoredAuditAction::UsageDispatchClaimed
+            || command.audit.outcome_code != "attempting"
+            || command.audit.stable_request_id_digest.is_none()
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "usage dispatch claim audit is invalid".into(),
+            ));
+        }
+
+        let mut state = self.state.lock().await;
+        let current = state
+            .reservations
+            .get(&command.reservation_id.0)
+            .cloned()
+            .ok_or(SponsorshipStoreError::Conflict)?;
+        current
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if state
+            .model_dispatches
+            .contains_key(&command.reservation_id.0)
+            && current.state == SponsoredUsageState::Ambiguous
+            && (current.dispatch_revision == 0 || current.dispatch_lease.is_some())
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "ambiguous model usage has no completed dispatch claim".into(),
+            ));
+        }
+        if current.request_fingerprint != command.request_fingerprint
+            || current.grant_id != command.capability.grant_id
+            || !state
+                .model_dispatches
+                .contains_key(&command.reservation_id.0)
+        {
+            return Err(SponsorshipStoreError::Conflict);
+        }
+        let authoritative_now = state.authoritative_now.clone();
+        let lease_is_live = current
+            .dispatch_lease
+            .as_ref()
+            .is_some_and(|lease| lease.expires_at.as_str() > authoritative_now.as_str());
+        if current.state != command.expected_state
+            || current.dispatch_revision != command.expected_dispatch_revision
+            || matches!(
+                current.state,
+                SponsoredUsageState::Settled | SponsoredUsageState::Released
+            )
+            || lease_is_live
+        {
+            return Ok(SponsoredUsageDispatchClaim {
+                acquired: false,
+                reservation: current,
+            });
+        }
+        if !matches!(
+            current.state,
+            SponsoredUsageState::Reserved
+                | SponsoredUsageState::Attempting
+                | SponsoredUsageState::Ambiguous
+        ) {
+            return Err(SponsorshipStoreError::Conflict);
+        }
+        require_gate(&state, &command.gate_fence)?;
+        let grant = state
+            .grants
+            .get(&current.grant_id.0)
+            .cloned()
+            .ok_or(SponsorshipStoreError::GrantUnavailable)?;
+        let policy = state
+            .policies
+            .get(&grant.policy_id.0)
+            .cloned()
+            .ok_or(SponsorshipStoreError::GrantUnavailable)?;
+        let credential = state
+            .credentials
+            .get(&policy.credential_id.0)
+            .map(|(credential, _)| credential.clone())
+            .ok_or(SponsorshipStoreError::GrantUnavailable)?;
+        let launch = state
+            .launches
+            .get(&grant.launch_id.0)
+            .cloned()
+            .ok_or(SponsorshipStoreError::LaunchAuthorityChanged)?;
+        let acceptance = state
+            .acceptances
+            .get(&grant.launch_id.0)
+            .cloned()
+            .ok_or(SponsorshipStoreError::AcceptanceChanged)?;
+        let terms_digest = SponsoredGrantTerms::digest_from_policy(&policy)
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        if state
+            .reservation_policy
+            .get(&current.id.0)
+            .is_none_or(|policy_id| policy_id != &policy.id.0)
+            || state
+                .reservation_credentials
+                .get(&current.id.0)
+                .is_none_or(|credential_id| credential_id != &policy.credential_id.0)
+            || !grant.is_active_at(&authoritative_now)
+            || grant.capability != command.capability
+            || !policy.is_available_at(&authoritative_now)
+            || command
+                .gate_fence
+                .runtime_limits
+                .require_policy_at(&policy, &authoritative_now)
+                .is_err()
+            || policy.provider_policy.provider_policy_key
+                != command.gate_fence.trusted_provider_policy_key
+            || grant.policy_generation != policy.generation
+            || !credential.permits_retained_model_dispatch()
+            || credential.generation < grant.credential_generation
+            || credential.owner != policy.owner
+            || credential.authority.provider != policy.provider_policy.provider
+            || credential.authority.provider_policy_key
+                != policy.provider_policy.provider_policy_key
+            || !matches!(
+                launch.state,
+                SponsoredLaunchState::Active | SponsoredLaunchState::Recoverable
+            )
+            || launch.launch_id != grant.launch_id
+            || launch.tenant_id != grant.tenant_id
+            || launch.policy_id != grant.policy_id
+            || launch.contributor != grant.contributor
+            || launch.session_id.as_ref() != Some(&grant.session_id)
+            || acceptance != grant.acceptance
+            || acceptance.policy_generation != policy.generation
+            || acceptance.terms_digest != terms_digest
+            || current.price_quote.provider != policy.provider_policy.provider
+            || !policy
+                .provider_policy
+                .allowed_models
+                .contains(&current.price_quote.model)
+            || !policy
+                .provider_policy
+                .allowed_resources
+                .contains(&current.price_quote.resource)
+        {
+            return Err(SponsorshipStoreError::GrantUnavailable);
+        }
+        if command.audit.policy_id.as_ref() != Some(&policy.id)
+            || command.audit.grant_id.as_ref() != Some(&grant.id)
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "usage dispatch claim audit target is invalid".into(),
+            ));
+        }
+
+        let mut claimed = current;
+        claimed.dispatch_revision = claimed.dispatch_revision.checked_add(1).ok_or_else(|| {
+            SponsorshipStoreError::Malformed("usage dispatch revision exhausted".into())
+        })?;
+        claimed.state = SponsoredUsageState::Attempting;
+        claimed.dispatch_lease = Some(test_usage_dispatch_lease(
+            command.holder,
+            &authoritative_now,
+        )?);
+        claimed.updated_at = authoritative_now;
+        claimed
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        state
+            .reservations
+            .insert(claimed.id.0.clone(), claimed.clone());
+        let mut audit = command.audit;
+        audit.occurred_at = claimed.updated_at.clone();
+        state.audits.push(audit);
+        Ok(SponsoredUsageDispatchClaim {
+            acquired: true,
+            reservation: claimed,
         })
     }
 
@@ -2073,7 +2615,71 @@ impl SponsorshipStore for MemoryStore {
             && current.actual == command.actual
             && command.actual_quota == current.actual.as_ref().map(|actual| actual.quota)
         {
-            return Ok(current);
+            let stored_response = state.model_responses.get(&command.reservation_id.0);
+            if stored_response == command.model_response.as_ref() {
+                return Ok(current);
+            }
+            return Err(SponsorshipStoreError::Conflict);
+        }
+        let has_model_custody = state
+            .model_dispatches
+            .contains_key(&command.reservation_id.0);
+        if has_model_custody != command.dispatch_fence.is_some() {
+            return Err(SponsorshipStoreError::Conflict);
+        }
+        if has_model_custody
+            && command.outcome == SponsoredUsageState::Settled
+            && command.model_response.is_none()
+        {
+            return Err(SponsorshipStoreError::Conflict);
+        }
+        if !has_model_custody && command.model_response.is_some() {
+            return Err(SponsorshipStoreError::Conflict);
+        }
+        match command.dispatch_fence.as_ref() {
+            Some(SponsoredUsageReconciliationFence::DispatchClaim { revision, holder }) => {
+                if current.state != SponsoredUsageState::Attempting
+                    || current.dispatch_revision != *revision
+                    || current
+                        .dispatch_lease
+                        .as_ref()
+                        .is_none_or(|lease| lease.holder != *holder)
+                {
+                    return Err(SponsorshipStoreError::StaleGeneration);
+                }
+            }
+            Some(SponsoredUsageReconciliationFence::ProviderObservation {
+                state: observed_state,
+                revision,
+            }) => {
+                if current.state != *observed_state
+                    || current.dispatch_revision != *revision
+                    || !matches!(
+                        command.outcome,
+                        SponsoredUsageState::Settled | SponsoredUsageState::Released
+                    )
+                {
+                    return Err(SponsorshipStoreError::StaleGeneration);
+                }
+            }
+            Some(SponsoredUsageReconciliationFence::NeverDispatched)
+                if command.outcome != SponsoredUsageState::Released
+                    || current.state != SponsoredUsageState::Reserved
+                    || current.dispatch_revision != 0
+                    || current.dispatch_lease.is_some() =>
+            {
+                return Err(SponsorshipStoreError::StaleGeneration);
+            }
+            Some(SponsoredUsageReconciliationFence::NeverDispatched) | None => {}
+        }
+        if has_model_custody
+            && command.outcome == SponsoredUsageState::Ambiguous
+            && !matches!(
+                command.dispatch_fence.as_ref(),
+                Some(SponsoredUsageReconciliationFence::DispatchClaim { .. })
+            )
+        {
+            return Err(SponsorshipStoreError::Conflict);
         }
         if matches!(
             current.state,
@@ -2096,8 +2702,23 @@ impl SponsorshipStore for MemoryStore {
                 return Err(SponsorshipStoreError::Conflict);
             }
         }
+        if let Some(response) = command.model_response.as_ref() {
+            response
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+            let dispatch = state
+                .model_dispatches
+                .get(&command.reservation_id.0)
+                .ok_or(SponsorshipStoreError::Conflict)?;
+            if response.request_digest() != dispatch.request_digest()
+                || Some(response.actual_quota()) != command.actual_quota
+            {
+                return Err(SponsorshipStoreError::Conflict);
+            }
+        }
         let mut replacement = current.clone();
         replacement.state = command.outcome;
+        replacement.dispatch_lease = None;
         replacement.actual = command.actual.clone();
         replacement.updated_at = command.observed_at;
         replacement
@@ -2175,6 +2796,19 @@ impl SponsorshipStore for MemoryStore {
         state
             .reservations
             .insert(command.reservation_id.0, replacement.clone());
+        if replacement.state == SponsoredUsageState::Settled {
+            if let Some(response) = command.model_response {
+                state
+                    .model_responses
+                    .insert(replacement.id.0.clone(), response);
+            }
+            state.model_dispatches.remove(&replacement.id.0);
+            state.reservation_credentials.remove(&replacement.id.0);
+        } else if replacement.state == SponsoredUsageState::Released {
+            state.model_dispatches.remove(&replacement.id.0);
+            state.model_responses.remove(&replacement.id.0);
+            state.reservation_credentials.remove(&replacement.id.0);
+        }
         state.audits.push(audit);
         Ok(replacement)
     }
@@ -2295,7 +2929,15 @@ impl SponsorshipStore for MemoryStore {
         let rows = state
             .reservations
             .values()
-            .filter(|reservation| reservation.state == SponsoredUsageState::Ambiguous)
+            .filter(|reservation| {
+                state.model_dispatches.contains_key(&reservation.id.0)
+                    && matches!(
+                        reservation.state,
+                        SponsoredUsageState::Reserved
+                            | SponsoredUsageState::Attempting
+                            | SponsoredUsageState::Ambiguous
+                    )
+            })
             .map(|reservation| (reservation.updated_at.clone(), reservation.id.clone()))
             .collect::<Vec<_>>();
         recovery_memory_page(rows, page, "usage_recovery", |row| (&row.0, &row.1 .0)).map(|page| {
@@ -2306,13 +2948,125 @@ impl SponsorshipStore for MemoryStore {
         })
     }
 
+    async fn model_usage_recovery_record(
+        &self,
+        id: &SponsoredUsageReservationId,
+    ) -> Result<Option<SponsoredModelRecoveryRecord>, SponsorshipStoreError> {
+        SponsoredUsageReservationId::parse(id.0.clone())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        let mut state = self.state.lock().await;
+        if state
+            .model_recovery_settlement_race
+            .as_ref()
+            .is_some_and(|(target, _)| target == id)
+        {
+            let (_, response) = state.model_recovery_settlement_race.take().unwrap();
+            let reservation = state.reservations.get_mut(&id.0).ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "model recovery race references a missing reservation".into(),
+                )
+            })?;
+            reservation.state = SponsoredUsageState::Settled;
+            reservation.actual = Some(reservation.reserved.clone());
+            reservation.dispatch_lease = None;
+            reservation.updated_at = LATER.into();
+            reservation
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+            state.model_dispatches.remove(&id.0);
+            state.reservation_credentials.remove(&id.0);
+            state.model_responses.insert(id.0.clone(), response);
+        }
+        let Some(reservation) = state.reservations.get(&id.0) else {
+            return Ok(None);
+        };
+        if !matches!(
+            reservation.state,
+            SponsoredUsageState::Reserved
+                | SponsoredUsageState::Attempting
+                | SponsoredUsageState::Ambiguous
+        ) {
+            return Ok(None);
+        }
+        let Some(dispatch) = state.model_dispatches.get(&id.0) else {
+            return Ok(None);
+        };
+        if reservation.state == SponsoredUsageState::Ambiguous
+            && (reservation.dispatch_revision == 0 || reservation.dispatch_lease.is_some())
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "ambiguous model usage has no completed dispatch claim".into(),
+            ));
+        }
+        let policy = state
+            .reservation_policy
+            .get(&id.0)
+            .and_then(|policy_id| state.policies.get(policy_id))
+            .ok_or_else(|| {
+                SponsorshipStoreError::Malformed(
+                    "model usage recovery references a missing policy".into(),
+                )
+            })?;
+        if state
+            .reservation_credentials
+            .get(&id.0)
+            .is_none_or(|credential_id| credential_id != &policy.credential_id.0)
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "model usage recovery credential index is inconsistent".into(),
+            ));
+        }
+        dispatch
+            .validate()
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        Ok(Some(SponsoredModelRecoveryRecord {
+            reservation: reservation.clone(),
+            dispatch: dispatch.clone(),
+        }))
+    }
+
+    async fn model_usage_settled_response(
+        &self,
+        id: &SponsoredUsageReservationId,
+    ) -> Result<Option<SponsoredModelResponsePayload>, SponsorshipStoreError> {
+        SponsoredUsageReservationId::parse(id.0.clone())
+            .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+        let state = self.state.lock().await;
+        let Some(reservation) = state.reservations.get(&id.0) else {
+            return Ok(None);
+        };
+        if reservation.state != SponsoredUsageState::Settled {
+            return Ok(None);
+        }
+        let response = state.model_responses.get(&id.0).cloned();
+        if let Some(response) = response.as_ref() {
+            response
+                .validate()
+                .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+            if reservation.actual.as_ref().map(|actual| actual.quota)
+                != Some(response.actual_quota())
+            {
+                return Err(SponsorshipStoreError::Malformed(
+                    "settled model response does not match its reservation".into(),
+                ));
+            }
+        }
+        Ok(response)
+    }
+
     async fn ciphertext_rewrap_candidates(
         &self,
-        _kind: SponsorshipCiphertextRecordKind,
+        kind: SponsorshipCiphertextRecordKind,
         _retiring_key_id: &str,
         _page: &SponsorshipRecoveryPageRequest,
     ) -> Result<SponsorshipRecoveryPage<SponsorshipCiphertextRewrapCandidate>, SponsorshipStoreError>
     {
+        match kind {
+            SponsorshipCiphertextRecordKind::Credential
+            | SponsorshipCiphertextRecordKind::GrantActivation
+            | SponsorshipCiphertextRecordKind::Grant
+            | SponsorshipCiphertextRecordKind::UsageReservation => {}
+        }
         Ok(SponsorshipRecoveryPage {
             items: Vec::new(),
             next: None,
@@ -2597,7 +3351,9 @@ fn unresolved_usage_for_grant(
             && excluded_reservation_id != Some(reservation.id.0.as_str())
             && matches!(
                 reservation.state,
-                SponsoredUsageState::Reserved | SponsoredUsageState::Ambiguous
+                SponsoredUsageState::Reserved
+                    | SponsoredUsageState::Attempting
+                    | SponsoredUsageState::Ambiguous
             )
     }) {
         held = add_usage(held, &reservation.reserved)?;
@@ -2649,6 +3405,35 @@ fn test_activation_lease(
             std::time::UNIX_EPOCH + std::time::Duration::from_secs(expires),
         ),
     })
+}
+
+fn test_usage_dispatch_lease(
+    holder: String,
+    now: &str,
+) -> Result<SponsoredUsageDispatchLease, SponsorshipStoreError> {
+    let acquired = crate::seconds_from_rfc3339(now)
+        .ok_or_else(|| SponsorshipStoreError::Malformed("invalid database clock".into()))?;
+    let expires = acquired
+        .checked_add(30)
+        .ok_or_else(|| SponsorshipStoreError::Malformed("database clock overflow".into()))?;
+    let lease = SponsoredUsageDispatchLease {
+        holder,
+        acquired_at: now.to_string(),
+        expires_at: crate::rfc3339_at(
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(expires),
+        ),
+    };
+    lease
+        .validate()
+        .map_err(|error| SponsorshipStoreError::Malformed(error.to_string()))?;
+    Ok(lease)
+}
+
+fn is_test_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn require_receipt_matches_grant(
@@ -3320,22 +4105,29 @@ impl SponsoredBillingProvider for FakeBilling {
 
 struct FakeClock {
     now: RwLock<String>,
+    observations: AtomicUsize,
 }
 
 impl FakeClock {
     fn new(now: &str) -> Self {
         Self {
             now: RwLock::new(now.to_string()),
+            observations: AtomicUsize::new(0),
         }
     }
 
     fn set(&self, now: &str) {
         *self.now.write().unwrap() = now.to_string();
     }
+
+    fn observations(&self) -> usize {
+        self.observations.load(Ordering::SeqCst)
+    }
 }
 
 impl SponsorshipClock for FakeClock {
     fn now(&self) -> String {
+        self.observations.fetch_add(1, Ordering::SeqCst);
         self.now.read().unwrap().clone()
     }
 }
@@ -3412,6 +4204,12 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn model_dispatch_payload(input: &str) -> SponsoredModelDispatchPayload {
+    let request = serde_json::json!({"input": input});
+    let canonical = serde_json::to_vec(&request).unwrap();
+    SponsoredModelDispatchPayload::from_request(digest(&canonical), &request).unwrap()
+}
+
 fn sensitive_test_digest(domain: &str, value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(domain.as_bytes());
@@ -3445,13 +4243,12 @@ fn enabled_gate() -> SponsorshipGate {
         enabled: true,
         expiry_evidence_id: Some("expiry-evidence-524".into()),
         revocation_evidence_id: Some("revocation-evidence-445".into()),
+        trusted_provider_policy_key: POLICY_KEY.into(),
         allowed_provider_policy_keys: BTreeSet::from([
             POLICY_KEY.into(),
             ALTERNATE_POLICY_KEY.into(),
         ]),
-        maximum_policy_budget_micros: 1_000_000,
-        maximum_policy_requests: 1_000,
-        maximum_concurrent_launches: 10,
+        runtime_limits: runtime_limits(),
         kill_switch_engaged: false,
     }
 }
@@ -3584,7 +4381,10 @@ mod current_tests {
     }
 
     async fn harness(limits: Limits) -> Harness {
-        let gate = enabled_gate();
+        harness_with_gate(limits, enabled_gate()).await
+    }
+
+    async fn harness_with_gate(limits: Limits, gate: SponsorshipGate) -> Harness {
         let store = Arc::new(MemoryStore::default());
         store.configure_gate(&gate).await;
         let provider = Arc::new(FakeProvider::default());
@@ -3629,6 +4429,7 @@ mod current_tests {
             .create_policy(
                 &sponsor,
                 CreateSponsorshipPolicy {
+                    stable_request_id: "create-policy-harness".into(),
                     tenant_id: "tenant-a".into(),
                     owner: owner(),
                     credential_id: credential.id,
@@ -3644,7 +4445,7 @@ mod current_tests {
                     aggregate_budget_micros: limits.aggregate_budget_micros,
                     max_requests_per_minute: limits.max_requests_per_minute,
                     max_concurrent_launches: limits.max_concurrent_launches,
-                    expires_at: POLICY_EXPIRY.into(),
+                    expires_at: Some(POLICY_EXPIRY.into()),
                 },
             )
             .await
@@ -3675,6 +4476,33 @@ mod current_tests {
 
     async fn default_harness() -> Harness {
         harness(Limits::default()).await
+    }
+
+    fn policy_command(
+        credential_id: SponsoredCredentialId,
+        tenant_id: &str,
+        expires_at: Option<&str>,
+    ) -> CreateSponsorshipPolicy {
+        let limits = Limits::default();
+        CreateSponsorshipPolicy {
+            stable_request_id: format!("create-policy-{tenant_id}"),
+            tenant_id: tenant_id.into(),
+            owner: owner(),
+            credential_id,
+            provider_policy: SponsoredProviderPolicy {
+                provider: PROVIDER.into(),
+                provider_policy_key: POLICY_KEY.into(),
+                allowed_models: BTreeSet::from([MODEL.into()]),
+                allowed_resources: BTreeSet::from([RESOURCE.into()]),
+            },
+            per_launch_quota: limits.per_launch_quota,
+            aggregate_quota: limits.aggregate_quota,
+            per_launch_budget_micros: limits.per_launch_budget_micros,
+            aggregate_budget_micros: limits.aggregate_budget_micros,
+            max_requests_per_minute: limits.max_requests_per_minute,
+            max_concurrent_launches: limits.max_concurrent_launches,
+            expires_at: expires_at.map(str::to_string),
+        }
     }
 
     fn restarted_service(harness: &Harness) -> SponsorshipService {
@@ -3730,9 +4558,17 @@ mod current_tests {
         harness: &Harness,
         suffix: &str,
     ) -> (LaunchId, SessionId) {
+        prepare_policy_activation(harness, &harness.policy, suffix).await
+    }
+
+    async fn prepare_policy_activation(
+        harness: &Harness,
+        policy: &SponsorshipPolicy,
+        suffix: &str,
+    ) -> (LaunchId, SessionId) {
         let launch_id = LaunchId::new();
         let session_id = SessionId(format!("session-{suffix}"));
-        let launch = launch_authority(&harness.policy, launch_id.clone(), contributor());
+        let launch = launch_authority(policy, launch_id.clone(), contributor());
         harness.store.put_launch(launch).await;
         let terms = harness
             .service
@@ -3745,7 +4581,7 @@ mod current_tests {
                 &harness.contributor,
                 AcceptSponsoredTerms {
                     launch_id: launch_id.clone(),
-                    policy_id: harness.policy.id.clone(),
+                    policy_id: policy.id.clone(),
                     terms_digest: terms.digest,
                     launch_snapshot_digest: digest(b"fixture-launch-snapshot"),
                     idempotency_key: format!("accept-additional-{suffix}"),
@@ -3806,6 +4642,596 @@ mod current_tests {
             maximum_quota: quota,
             capability: grant.capability.clone(),
         }
+    }
+
+    fn sponsored_model_request(stable_identity: &str, input: &str) -> SponsoredModelRequest {
+        let request = serde_json::json!({
+            "input": input,
+            "max_output_tokens": 10,
+            "model": MODEL,
+        });
+        let canonical = serde_json::to_vec(&request).unwrap();
+        SponsoredModelRequest {
+            stable_request_id: format!("smr-e-{}", digest(stable_identity.as_bytes())),
+            request_digest: digest(&canonical),
+            maximum_quota: SponsoredQuota {
+                requests: 1,
+                input_tokens: canonical.len() as u64,
+                output_tokens: 10,
+            },
+            model: MODEL.into(),
+            resource: RESOURCE.into(),
+            request,
+        }
+    }
+
+    struct RecordingModelProvider {
+        reject: bool,
+        observe_not_found: bool,
+        execute_calls: AtomicUsize,
+        observe_calls: AtomicUsize,
+    }
+
+    impl RecordingModelProvider {
+        fn confirming() -> Self {
+            Self {
+                reject: false,
+                observe_not_found: false,
+                execute_calls: AtomicUsize::new(0),
+                observe_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn rejecting() -> Self {
+            Self {
+                reject: true,
+                observe_not_found: false,
+                execute_calls: AtomicUsize::new(0),
+                observe_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn not_found_then_confirming() -> Self {
+            Self {
+                reject: false,
+                observe_not_found: true,
+                execute_calls: AtomicUsize::new(0),
+                observe_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SponsoredModelProvider for RecordingModelProvider {
+        async fn execute(
+            &self,
+            _provider: &str,
+            _authority: &SponsoredModelProviderAuthority,
+            _request: &SponsoredModelProviderRequest,
+        ) -> SponsoredModelProviderExecution {
+            self.execute_calls.fetch_add(1, Ordering::SeqCst);
+            if self.reject {
+                SponsoredModelProviderExecution::Rejected
+            } else {
+                SponsoredModelProviderExecution::Confirmed(SponsoredModelProviderResponse {
+                    response: serde_json::json!({
+                        "id": "durable-sponsored-response",
+                        "object": "response",
+                    }),
+                    actual_quota: SponsoredQuota {
+                        requests: 1,
+                        input_tokens: 1,
+                        output_tokens: 1,
+                    },
+                })
+            }
+        }
+
+        async fn observe(
+            &self,
+            _provider: &str,
+            _authority: &SponsoredModelProviderAuthority,
+            _request: &SponsoredModelProviderRequest,
+        ) -> SponsoredModelProviderObservation {
+            self.observe_calls.fetch_add(1, Ordering::SeqCst);
+            if self.observe_not_found {
+                SponsoredModelProviderObservation::NotFound
+            } else {
+                SponsoredModelProviderObservation::Pending
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn omitted_policy_expiry_uses_one_captured_service_clock_observation() {
+        let harness = default_harness().await;
+        harness.clock.set(LATER);
+        let observations = harness.clock.observations();
+
+        let policy = harness
+            .service
+            .create_policy(
+                &harness.sponsor,
+                policy_command(
+                    harness.policy.credential_id.clone(),
+                    "tenant-default-expiry",
+                    None,
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(policy.created_at, LATER);
+        assert_eq!(policy.updated_at, LATER);
+        assert_eq!(policy.expires_at, "2026-08-29T01:02:00Z");
+        assert_eq!(harness.clock.observations(), observations + 1);
+    }
+
+    #[tokio::test]
+    async fn explicit_policy_expiry_is_preserved() {
+        let harness = default_harness().await;
+        let explicit = "2026-08-29T00:30:00Z";
+
+        let policy = harness
+            .service
+            .create_policy(
+                &harness.sponsor,
+                policy_command(
+                    harness.policy.credential_id.clone(),
+                    "tenant-explicit-expiry",
+                    Some(explicit),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(policy.expires_at, explicit);
+    }
+
+    #[tokio::test]
+    async fn policy_creation_replays_exact_request_without_a_second_slot_or_audit() {
+        let harness = default_harness().await;
+        let command = policy_command(
+            harness.policy.credential_id.clone(),
+            "tenant-policy-replay",
+            Some(POLICY_EXPIRY),
+        );
+        let first = harness
+            .service
+            .create_policy(&harness.sponsor, command.clone())
+            .await
+            .unwrap();
+        let (policy_count, audit_count) = {
+            let state = harness.store.state.lock().await;
+            (state.policies.len(), state.audits.len())
+        };
+        let replay = harness
+            .service
+            .create_policy(&harness.sponsor, command)
+            .await
+            .unwrap();
+        assert_eq!(replay, first);
+        let state = harness.store.state.lock().await;
+        assert_eq!(state.policies.len(), policy_count);
+        assert_eq!(state.audits.len(), audit_count);
+    }
+
+    #[tokio::test]
+    async fn policy_creation_rejects_same_key_with_changed_payload() {
+        let harness = default_harness().await;
+        let command = policy_command(
+            harness.policy.credential_id.clone(),
+            "tenant-policy-conflict",
+            Some(POLICY_EXPIRY),
+        );
+        harness
+            .service
+            .create_policy(&harness.sponsor, command.clone())
+            .await
+            .unwrap();
+        let mut changed = command;
+        changed.aggregate_budget_micros += 1;
+        assert_eq!(
+            harness
+                .service
+                .create_policy(&harness.sponsor, changed)
+                .await
+                .unwrap_err(),
+            SponsorshipError::Store(SponsorshipStoreError::Conflict)
+        );
+        assert_eq!(harness.store.state.lock().await.policies.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_policy_creation_with_one_key_returns_one_winner() {
+        let harness = Arc::new(default_harness().await);
+        let command = policy_command(
+            harness.policy.credential_id.clone(),
+            "tenant-policy-concurrent-replay",
+            Some(POLICY_EXPIRY),
+        );
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let harness = Arc::clone(&harness);
+            let command = command.clone();
+            tasks.push(tokio::spawn(async move {
+                harness
+                    .service
+                    .create_policy(&harness.sponsor, command)
+                    .await
+            }));
+        }
+        let mut winner = None;
+        for task in tasks {
+            let policy = task.await.unwrap().unwrap();
+            if let Some(previous) = &winner {
+                assert_eq!(previous, &policy);
+            } else {
+                winner = Some(policy);
+            }
+        }
+        assert_eq!(harness.store.state.lock().await.policies.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn policy_expiry_defaulting_rejects_malformed_clock_and_overflow() {
+        let harness = default_harness().await;
+        harness.clock.set("not-a-clock");
+        assert!(matches!(
+            harness
+                .service
+                .create_policy(
+                    &harness.sponsor,
+                    policy_command(
+                        harness.policy.credential_id.clone(),
+                        "tenant-malformed-clock",
+                        None,
+                    ),
+                )
+                .await,
+            Err(SponsorshipError::Validation(_))
+        ));
+
+        let mut limits = runtime_limits();
+        limits.default_policy_expiry_seconds = u64::MAX;
+        limits.maximum_policy_expiry_seconds = u64::MAX;
+        assert!(limits.resolve_policy_expiry(None, NOW).is_err());
+    }
+
+    #[tokio::test]
+    async fn policy_expiry_is_rechecked_against_authoritative_store_time() {
+        let harness = default_harness().await;
+        harness.store.set_authoritative_now(EARLIER).await;
+        let policies_before = harness.store.state.lock().await.policies.len();
+
+        assert!(matches!(
+            harness
+                .service
+                .create_policy(
+                    &harness.sponsor,
+                    policy_command(
+                        harness.policy.credential_id.clone(),
+                        "tenant-store-expiry-fence",
+                        Some(POLICY_EXPIRY),
+                    ),
+                )
+                .await,
+            Err(SponsorshipError::Store(SponsorshipStoreError::Conflict))
+        ));
+        assert_eq!(
+            harness.store.state.lock().await.policies.len(),
+            policies_before
+        );
+    }
+
+    #[tokio::test]
+    async fn every_policy_dimension_is_bounded_by_runtime_authority() {
+        let harness = default_harness().await;
+        let policy = &harness.policy;
+        let assert_denied = |limits: SponsorshipRuntimeLimits| {
+            limits.validate().unwrap();
+            assert!(limits.require_policy_at(policy, NOW).is_err());
+        };
+
+        let mut limits = runtime_limits();
+        limits.maximum_policy_expiry_seconds -= 1;
+        assert_denied(limits);
+
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_quota.requests = policy.per_launch_quota.requests - 1;
+        assert_denied(limits);
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_quota.input_tokens = policy.per_launch_quota.input_tokens - 1;
+        assert_denied(limits);
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_quota.output_tokens = policy.per_launch_quota.output_tokens - 1;
+        assert_denied(limits);
+
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_quota.requests = policy.per_launch_quota.requests;
+        limits.maximum_policy_quota.requests = policy.aggregate_quota.requests - 1;
+        assert_denied(limits);
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_quota.input_tokens = policy.per_launch_quota.input_tokens;
+        limits.maximum_policy_quota.input_tokens = policy.aggregate_quota.input_tokens - 1;
+        assert_denied(limits);
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_quota.output_tokens = policy.per_launch_quota.output_tokens;
+        limits.maximum_policy_quota.output_tokens = policy.aggregate_quota.output_tokens - 1;
+        assert_denied(limits);
+
+        let mut limits = runtime_limits();
+        limits.maximum_requests_per_minute = policy.max_requests_per_minute - 1;
+        assert_denied(limits);
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_budget_micros = policy.per_launch_budget_micros - 1;
+        assert_denied(limits);
+        let mut limits = runtime_limits();
+        limits.maximum_per_launch_budget_micros = policy.per_launch_budget_micros;
+        limits.maximum_policy_budget_micros = policy.aggregate_budget_micros - 1;
+        assert_denied(limits);
+        let mut limits = runtime_limits();
+        limits.maximum_concurrent_launches = policy.max_concurrent_launches - 1;
+        assert_denied(limits);
+    }
+
+    #[test]
+    fn every_gate_authority_value_changes_the_configuration_digest() {
+        fn assert_changes(
+            gate: &SponsorshipGate,
+            base_digest: &str,
+            change: impl FnOnce(&mut SponsorshipGate),
+        ) {
+            let mut candidate = gate.clone();
+            change(&mut candidate);
+            assert_ne!(candidate.configuration_digest().unwrap(), base_digest);
+        }
+
+        let gate = enabled_gate();
+        let base_digest = gate.configuration_digest().unwrap();
+        assert_changes(&gate, &base_digest, |gate| gate.enabled = false);
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.expiry_evidence_id = Some("expiry-evidence-other".into())
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.revocation_evidence_id = Some("revocation-evidence-other".into())
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.trusted_provider_policy_key = ALTERNATE_POLICY_KEY.into()
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.allowed_provider_policy_keys
+                .insert("provider-b:least-privilege-v1".into());
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.default_policy_expiry_seconds += 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_policy_expiry_seconds -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_active_policies_per_sponsor -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.launch_rate_window_seconds += 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_launches_per_sponsor_per_window -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_per_launch_quota.requests -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_per_launch_quota.input_tokens -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_per_launch_quota.output_tokens -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_policy_quota.requests += 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_policy_quota.input_tokens += 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_policy_quota.output_tokens += 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_requests_per_minute -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_per_launch_budget_micros -= 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_policy_budget_micros += 1
+        });
+        assert_changes(&gate, &base_digest, |gate| {
+            gate.runtime_limits.maximum_concurrent_launches -= 1
+        });
+
+        let mut kill_switch_only = gate.clone();
+        kill_switch_only.kill_switch_engaged = true;
+        assert_eq!(
+            kill_switch_only.configuration_digest().unwrap(),
+            base_digest
+        );
+    }
+
+    #[test]
+    fn organization_sponsor_authority_is_stable_but_organization_bound() {
+        let original = SponsorBillingOwner::Organization {
+            organization_id: "organization-42".into(),
+            administrator: SubjectId("administrator-a".into()),
+            display_name: "Organization A".into(),
+        };
+        let changed_presentation_and_control = SponsorBillingOwner::Organization {
+            organization_id: "organization-42".into(),
+            administrator: SubjectId("administrator-b".into()),
+            display_name: "Renamed Organization".into(),
+        };
+        let different_organization = SponsorBillingOwner::Organization {
+            organization_id: "organization-43".into(),
+            administrator: SubjectId("administrator-b".into()),
+            display_name: "Renamed Organization".into(),
+        };
+
+        assert_eq!(
+            original.sponsorship_authority_key().unwrap(),
+            changed_presentation_and_control
+                .sponsorship_authority_key()
+                .unwrap()
+        );
+        assert_ne!(
+            original.sponsorship_authority_key().unwrap(),
+            different_organization.sponsorship_authority_key().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn allowlisted_but_non_trusted_policy_key_cannot_create_a_policy() {
+        let harness = default_harness().await;
+        let alternate = harness
+            .service
+            .register_credential(
+                &harness.sponsor,
+                RegisterSponsoredCredential {
+                    stable_request_id: "register-alternate-policy-key".into(),
+                    owner: owner(),
+                    provider: PROVIDER.into(),
+                    provider_policy_key: ALTERNATE_POLICY_KEY.into(),
+                    credential: ProviderCredentialSecret::new("other-provider-credential").unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+        let mut command = policy_command(
+            alternate.id,
+            "tenant-non-trusted-policy-key",
+            Some(POLICY_EXPIRY),
+        );
+        command.provider_policy.provider_policy_key = ALTERNATE_POLICY_KEY.into();
+
+        assert_eq!(
+            harness
+                .service
+                .create_policy(&harness.sponsor, command)
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderPolicyDenied
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_policy_admission_enforces_the_sponsor_wide_active_limit() {
+        let mut gate = enabled_gate();
+        gate.runtime_limits.maximum_active_policies_per_sponsor = 3;
+        let harness = Arc::new(harness_with_gate(Limits::default(), gate).await);
+        let mut tasks = Vec::new();
+        for index in 0..6 {
+            let harness = harness.clone();
+            tasks.push(tokio::spawn(async move {
+                harness
+                    .service
+                    .create_policy(
+                        &harness.sponsor,
+                        policy_command(
+                            harness.policy.credential_id.clone(),
+                            &format!("tenant-concurrent-policy-{index}"),
+                            Some(POLICY_EXPIRY),
+                        ),
+                    )
+                    .await
+            }));
+        }
+
+        let mut admitted = 0;
+        let mut refused = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                Ok(_) => admitted += 1,
+                Err(SponsorshipError::Store(SponsorshipStoreError::ActivePolicyLimit)) => {
+                    refused += 1
+                }
+                Err(error) => panic!("unexpected policy admission result: {error:?}"),
+            }
+        }
+        assert_eq!(admitted, 2);
+        assert_eq!(refused, 4);
+        assert_eq!(harness.store.state.lock().await.policies.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn expired_policies_do_not_consume_the_sponsor_active_limit() {
+        let mut gate = enabled_gate();
+        gate.runtime_limits.maximum_active_policies_per_sponsor = 1;
+        let harness = harness_with_gate(Limits::default(), gate).await;
+        harness.store.set_authoritative_now(POLICY_EXPIRY).await;
+        harness.clock.set(POLICY_EXPIRY);
+
+        let replacement = harness
+            .service
+            .create_policy(
+                &harness.sponsor,
+                policy_command(
+                    harness.policy.credential_id.clone(),
+                    "tenant-after-policy-expiry",
+                    None,
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replacement.expires_at, "2026-08-30T01:00:00Z");
+        assert_eq!(harness.store.state.lock().await.policies.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn sponsor_launch_window_spans_policies_but_retries_are_free_and_time_reopens_it() {
+        let mut gate = enabled_gate();
+        gate.runtime_limits.maximum_launches_per_sponsor_per_window = 1;
+        let harness = harness_with_gate(Limits::default(), gate).await;
+        prepare_activation(&harness).await;
+        let first = activate(&harness, "sponsor-window-first").await;
+        let retry = activate(&harness, "sponsor-window-first").await;
+        assert_eq!(retry, first);
+        assert_eq!(harness.store.state.lock().await.launch_admissions.len(), 1);
+
+        let second_policy = harness
+            .service
+            .create_policy(
+                &harness.sponsor,
+                policy_command(
+                    harness.policy.credential_id.clone(),
+                    "tenant-second-launch-policy",
+                    Some(POLICY_EXPIRY),
+                ),
+            )
+            .await
+            .unwrap();
+        let (second_launch, _) =
+            prepare_policy_activation(&harness, &second_policy, "sponsor-window-second").await;
+        let command = || ActivateSponsoredGrant {
+            stable_request_id: "sponsor-window-second".into(),
+            launch_id: second_launch.clone(),
+        };
+        assert_eq!(
+            harness
+                .service
+                .activate_grant(&harness.contributor, command())
+                .await
+                .unwrap_err(),
+            SponsorshipError::Store(SponsorshipStoreError::SponsorLaunchRateExceeded)
+        );
+        assert_eq!(harness.store.state.lock().await.launch_admissions.len(), 1);
+
+        harness.store.set_authoritative_now(LATER).await;
+        harness.clock.set(LATER);
+        let second = harness
+            .service
+            .activate_grant(&harness.contributor, command())
+            .await
+            .unwrap();
+        assert_eq!(second.policy_id, second_policy.id);
+        assert_eq!(harness.store.state.lock().await.launch_admissions.len(), 2);
     }
 
     #[tokio::test]
@@ -4223,6 +5649,8 @@ mod current_tests {
                         actual: None,
                         outcome: SponsoredUsageState::Released,
                         observed_at: NOW.into(),
+                        dispatch_fence: None,
+                        model_response: None,
                     },
                     stale_audit,
                 )
@@ -4286,7 +5714,7 @@ mod current_tests {
     }
 
     #[tokio::test]
-    async fn stable_usage_retry_returns_original_before_clock_or_repricing() {
+    async fn stable_usage_retry_returns_durable_row_before_clock_or_repricing() {
         let harness = default_harness().await;
         let grant = activate_for_usage(&harness).await;
         let quota = SponsoredQuota {
@@ -4316,7 +5744,13 @@ mod current_tests {
             .await
             .unwrap();
         assert_eq!(replayed.disposition, ReservationDisposition::Existing);
-        assert_eq!(replayed.reservation, created.reservation);
+        assert_eq!(replayed.reservation.id, created.reservation.id);
+        assert_eq!(
+            replayed.reservation.idempotency_fingerprint,
+            created.reservation.idempotency_fingerprint
+        );
+        assert_eq!(replayed.reservation.state, SponsoredUsageState::Released);
+        assert!(replayed.reservation.actual.is_none());
         assert_eq!(harness.pricing.quote_calls.load(Ordering::SeqCst), 1);
 
         assert_eq!(
@@ -4339,6 +5773,437 @@ mod current_tests {
             SponsorshipError::Store(SponsorshipStoreError::Conflict)
         );
         assert_eq!(harness.pricing.quote_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn model_usage_explicit_key_reused_with_changed_body_conflicts() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let quota = SponsoredQuota {
+            requests: 1,
+            input_tokens: 100,
+            output_tokens: 100,
+        };
+        let command = usage_command(&grant, "explicit-model-key", quota);
+        let first = harness
+            .service
+            .reserve_model_usage(
+                &harness.contributor,
+                command.clone(),
+                model_dispatch_payload("first body"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.disposition, ReservationDisposition::Created);
+
+        assert_eq!(
+            harness
+                .service
+                .reserve_model_usage(
+                    &harness.contributor,
+                    command,
+                    model_dispatch_payload("changed body"),
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::Store(SponsorshipStoreError::Conflict)
+        );
+        assert_eq!(harness.pricing.quote_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn model_settlement_atomically_swaps_exact_response_custody() {
+        fn claim_fence(
+            reservation: &SponsoredUsageReservation,
+        ) -> SponsoredUsageReconciliationFence {
+            SponsoredUsageReconciliationFence::DispatchClaim {
+                revision: reservation.dispatch_revision,
+                holder: reservation.dispatch_lease.as_ref().unwrap().holder.clone(),
+            }
+        }
+
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let quota = SponsoredQuota {
+            requests: 1,
+            input_tokens: 100,
+            output_tokens: 100,
+        };
+        let dispatch = model_dispatch_payload("settlement request custody");
+        let request_digest = dispatch.request_digest().to_string();
+        let reserved = harness
+            .service
+            .reserve_model_usage(
+                &harness.contributor,
+                usage_command(&grant, "exact-model-response-custody", quota),
+                dispatch,
+            )
+            .await
+            .unwrap()
+            .reservation;
+        let claimed = harness
+            .service
+            .claim_model_usage_dispatch(&grant.capability, &reserved)
+            .await
+            .unwrap();
+        let response_a = serde_json::json!({"id": "response-a", "object": "response"});
+        let response_b = serde_json::json!({"id": "response-b", "object": "response"});
+        let payload_a = SponsoredModelResponsePayload::from_response(
+            request_digest.clone(),
+            quota,
+            &response_a,
+        )
+        .unwrap();
+        let payload_b =
+            SponsoredModelResponsePayload::from_response(request_digest, quota, &response_b)
+                .unwrap();
+        let report = ReportSponsoredUsage {
+            reservation_id: claimed.id.clone(),
+            request_fingerprint: claimed.request_fingerprint.clone(),
+            actual_quota: Some(quota),
+            outcome: SponsoredUsageState::Settled,
+        };
+        let settlement_a = tokio::spawn({
+            let service = harness.service.clone();
+            let report = report.clone();
+            let fence = claim_fence(&claimed);
+            async move {
+                let meter = meter_caller();
+                service
+                    .reconcile_model_usage(&meter, report, Some(fence), Some(payload_a))
+                    .await
+            }
+        });
+        let settlement_b = tokio::spawn({
+            let service = harness.service.clone();
+            let report = report.clone();
+            let fence = claim_fence(&claimed);
+            async move {
+                let meter = meter_caller();
+                service
+                    .reconcile_model_usage(&meter, report, Some(fence), Some(payload_b))
+                    .await
+            }
+        });
+        let result_a = settlement_a.await.unwrap();
+        let result_b = settlement_b.await.unwrap();
+        assert_ne!(result_a.is_ok(), result_b.is_ok());
+        let losing = if result_a.is_err() {
+            result_a
+        } else {
+            result_b
+        };
+        assert_eq!(
+            losing.unwrap_err(),
+            SponsorshipError::Store(SponsorshipStoreError::Conflict)
+        );
+        let stored_response = harness
+            .store
+            .model_usage_settled_response(&claimed.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            stored_response.response().unwrap()["id"].as_str(),
+            Some("response-a" | "response-b")
+        ));
+        {
+            let state = harness.store.state.lock().await;
+            assert!(!state.model_dispatches.contains_key(&claimed.id.0));
+            assert!(state.model_responses.contains_key(&claimed.id.0));
+            assert!(!state.reservation_credentials.contains_key(&claimed.id.0));
+        }
+
+        let missing_dispatch = model_dispatch_payload("settlement missing response");
+        let missing = harness
+            .service
+            .reserve_model_usage(
+                &harness.contributor,
+                usage_command(&grant, "missing-model-response-custody", quota),
+                missing_dispatch,
+            )
+            .await
+            .unwrap()
+            .reservation;
+        let missing = harness
+            .service
+            .claim_model_usage_dispatch(&grant.capability, &missing)
+            .await
+            .unwrap();
+        assert_eq!(
+            harness
+                .service
+                .reconcile_model_usage(
+                    &harness.meter,
+                    ReportSponsoredUsage {
+                        reservation_id: missing.id.clone(),
+                        request_fingerprint: missing.request_fingerprint.clone(),
+                        actual_quota: Some(quota),
+                        outcome: SponsoredUsageState::Settled,
+                    },
+                    Some(claim_fence(&missing)),
+                    None,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::Store(SponsorshipStoreError::Conflict)
+        );
+        let released = harness
+            .service
+            .reconcile_model_usage(
+                &harness.meter,
+                ReportSponsoredUsage {
+                    reservation_id: missing.id.clone(),
+                    request_fingerprint: missing.request_fingerprint.clone(),
+                    actual_quota: None,
+                    outcome: SponsoredUsageState::Released,
+                },
+                Some(claim_fence(&missing)),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(released.state, SponsoredUsageState::Released);
+        {
+            let state = harness.store.state.lock().await;
+            assert!(!state.model_dispatches.contains_key(&released.id.0));
+            assert!(!state.model_responses.contains_key(&released.id.0));
+            assert!(!state.reservation_credentials.contains_key(&released.id.0));
+        }
+
+        let generic = harness
+            .service
+            .reserve_usage(
+                &harness.contributor,
+                usage_command(&grant, "generic-settlement-without-response", quota),
+            )
+            .await
+            .unwrap()
+            .reservation;
+        let generic = harness
+            .service
+            .reconcile_usage(
+                &harness.meter,
+                ReportSponsoredUsage {
+                    reservation_id: generic.id.clone(),
+                    request_fingerprint: generic.request_fingerprint.clone(),
+                    actual_quota: Some(quota),
+                    outcome: SponsoredUsageState::Settled,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(generic.state, SponsoredUsageState::Settled);
+        assert!(harness
+            .store
+            .model_usage_settled_response(&generic.id)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn exact_model_replay_reclassifies_terminal_transition_between_store_reads() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let request = sponsored_model_request("terminal-transition-race", "one provider result");
+        let dispatch = SponsoredModelDispatchPayload::from_request(
+            request.request_digest.clone(),
+            &request.request,
+        )
+        .unwrap();
+        let reserved = harness
+            .service
+            .reserve_model_usage(
+                &harness.contributor,
+                usage_command(
+                    &grant,
+                    request.stable_request_id.clone(),
+                    request.maximum_quota,
+                ),
+                dispatch,
+            )
+            .await
+            .unwrap()
+            .reservation;
+        let claimed = harness
+            .service
+            .claim_model_usage_dispatch(&grant.capability, &reserved)
+            .await
+            .unwrap();
+        let response_body = serde_json::json!({
+            "id": "response-committed-between-custody-reads",
+            "object": "response",
+        });
+        let response_payload = SponsoredModelResponsePayload::from_response(
+            request.request_digest.clone(),
+            claimed.reserved.quota,
+            &response_body,
+        )
+        .unwrap();
+        harness
+            .store
+            .state
+            .lock()
+            .await
+            .model_recovery_settlement_race = Some((claimed.id.clone(), response_payload));
+
+        let provider = Arc::new(RecordingModelProvider::confirming());
+        let data_plane = SponsoredModelDataPlaneService::new(
+            harness.service.clone(),
+            harness.store.clone(),
+            provider.clone(),
+        );
+        let replay = data_plane
+            .execute(&grant.capability, request)
+            .await
+            .unwrap();
+
+        assert_eq!(replay.response, response_body);
+        assert_eq!(replay.actual_quota, claimed.reserved.quota);
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.observe_calls.load(Ordering::SeqCst), 0);
+        let state = harness.store.state.lock().await;
+        assert_eq!(
+            state.reservations.get(&claimed.id.0).unwrap().state,
+            SponsoredUsageState::Settled
+        );
+        assert!(!state.model_dispatches.contains_key(&claimed.id.0));
+        assert!(state.model_responses.contains_key(&claimed.id.0));
+    }
+
+    #[tokio::test]
+    async fn exact_settled_model_replay_survives_exhaustion_and_root_retirement() {
+        let harness = harness(Limits {
+            per_launch_quota: SponsoredQuota {
+                requests: 1,
+                input_tokens: 1_000,
+                output_tokens: 1_000,
+            },
+            aggregate_quota: SponsoredQuota {
+                requests: 1,
+                input_tokens: 2_000,
+                output_tokens: 2_000,
+            },
+            per_launch_budget_micros: 100,
+            aggregate_budget_micros: 100,
+            max_requests_per_minute: 10,
+            max_concurrent_launches: 1,
+        })
+        .await;
+        let grant = activate_for_usage(&harness).await;
+        let capability = grant.capability.clone();
+        let request = sponsored_model_request("settled-terminal-replay", "original body");
+        let provider = Arc::new(RecordingModelProvider::confirming());
+        let data_plane = SponsoredModelDataPlaneService::new(
+            harness.service.clone(),
+            harness.store.clone(),
+            provider.clone(),
+        );
+
+        let first = data_plane
+            .execute(&capability, request.clone())
+            .await
+            .unwrap();
+        assert_eq!(first.response["id"], "durable-sponsored-response");
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            harness.store.grant(&grant.id).await.unwrap().unwrap().state,
+            SponsoredGrantState::Exhausted
+        );
+
+        let revoked = harness
+            .service
+            .revoke_credential(
+                &harness.sponsor,
+                &harness.policy.credential_id,
+                "retire-root-after-model-settlement",
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.state, SponsoredCredentialState::Revoked);
+        assert!(harness
+            .store
+            .credential(&harness.policy.credential_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .secret
+            .is_none());
+
+        let replay = data_plane
+            .execute(&capability, request.clone())
+            .await
+            .unwrap();
+        assert_eq!(replay, first);
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.observe_calls.load(Ordering::SeqCst), 0);
+
+        let changed_body = sponsored_model_request("settled-terminal-replay", "changed body");
+        assert!(matches!(
+            data_plane.execute(&capability, changed_body).await,
+            Err(SponsoredModelDataPlaneError::Sponsorship(
+                SponsorshipError::Store(SponsorshipStoreError::Conflict)
+            ))
+        ));
+        let mut changed_capability = capability;
+        changed_capability.fingerprint = digest(b"changed-capability-fingerprint");
+        assert!(matches!(
+            data_plane.execute(&changed_capability, request).await,
+            Err(SponsoredModelDataPlaneError::Sponsorship(
+                SponsorshipError::Store(SponsorshipStoreError::Conflict)
+            ))
+        ));
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.observe_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn exact_released_model_replay_precedes_closed_gate_and_retired_root() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let capability = grant.capability.clone();
+        let request = sponsored_model_request("released-terminal-replay", "refused body");
+        let provider = Arc::new(RecordingModelProvider::rejecting());
+        let data_plane = SponsoredModelDataPlaneService::new(
+            harness.service.clone(),
+            harness.store.clone(),
+            provider.clone(),
+        );
+
+        assert!(matches!(
+            data_plane.execute(&capability, request.clone()).await,
+            Err(SponsoredModelDataPlaneError::ProviderRejected)
+        ));
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 1);
+        harness
+            .service
+            .revoke_credential(
+                &harness.sponsor,
+                &harness.policy.credential_id,
+                "retire-root-after-model-release",
+            )
+            .await
+            .unwrap();
+        harness
+            .service
+            .engage_kill_switch(&harness.admin)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            data_plane.execute(&capability, request.clone()).await,
+            Err(SponsoredModelDataPlaneError::ReservationReleased)
+        ));
+        let changed = sponsored_model_request("released-terminal-replay", "different body");
+        assert!(matches!(
+            data_plane.execute(&capability, changed).await,
+            Err(SponsoredModelDataPlaneError::Sponsorship(
+                SponsorshipError::Store(SponsorshipStoreError::Conflict)
+            ))
+        ));
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.observe_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -4718,6 +6583,8 @@ mod current_tests {
                         actual: settled.actual.clone(),
                         outcome: SponsoredUsageState::Settled,
                         observed_at: LATER.into(),
+                        dispatch_fence: None,
+                        model_response: None,
                     },
                     replay_audit,
                 )
@@ -5276,6 +7143,7 @@ mod current_tests {
                 .create_policy(
                     &harness.sponsor,
                     CreateSponsorshipPolicy {
+                        stable_request_id: "malformed-credential-policy-request".into(),
                         tenant_id: "malformed-credential-policy".into(),
                         owner: owner(),
                         credential_id: harness.policy.credential_id.clone(),
@@ -5291,7 +7159,7 @@ mod current_tests {
                         aggregate_budget_micros: Limits::default().aggregate_budget_micros,
                         max_requests_per_minute: Limits::default().max_requests_per_minute,
                         max_concurrent_launches: Limits::default().max_concurrent_launches,
-                        expires_at: POLICY_EXPIRY.into(),
+                        expires_at: Some(POLICY_EXPIRY.into()),
                     },
                 )
                 .await,
@@ -5584,6 +7452,381 @@ mod current_tests {
     }
 
     #[tokio::test]
+    async fn credential_revocation_goes_fail_closed_before_custody_defers_provider_access() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let quota = SponsoredQuota {
+            requests: 1,
+            input_tokens: 100,
+            output_tokens: 100,
+        };
+        let reserved = harness
+            .service
+            .reserve_model_usage(
+                &harness.contributor,
+                usage_command(&grant, "revocation-custody-fence", quota),
+                model_dispatch_payload("request awaiting provider dispatch"),
+            )
+            .await
+            .unwrap()
+            .reservation;
+
+        assert_eq!(
+            harness
+                .service
+                .revoke_credential(
+                    &harness.sponsor,
+                    &harness.policy.credential_id,
+                    "credential-revocation-custody-fence",
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderOperationInProgress
+        );
+        assert_eq!(harness.provider.revoke_calls.load(Ordering::SeqCst), 0);
+        {
+            let state = harness.store.state.lock().await;
+            let (credential, secret) = state
+                .credentials
+                .get(&harness.policy.credential_id.0)
+                .unwrap();
+            assert_eq!(
+                credential.state,
+                SponsoredCredentialState::RevocationPending
+            );
+            assert_eq!(
+                credential.pending_operation.as_ref().unwrap().phase,
+                ProviderOperationPhase::Prepared
+            );
+            assert_eq!(
+                credential.material_state,
+                SponsoredCredentialMaterialState::Retained
+            );
+            assert_eq!(secret.as_deref(), Some(SECRET));
+            assert!(state.model_dispatches.contains_key(&reserved.id.0));
+        }
+
+        harness
+            .service
+            .reconcile_model_usage(
+                &harness.meter,
+                ReportSponsoredUsage {
+                    reservation_id: reserved.id.clone(),
+                    request_fingerprint: reserved.request_fingerprint.clone(),
+                    actual_quota: None,
+                    outcome: SponsoredUsageState::Released,
+                },
+                Some(SponsoredUsageReconciliationFence::NeverDispatched),
+                None,
+            )
+            .await
+            .unwrap();
+        let revoked = harness
+            .service
+            .revoke_credential(
+                &harness.sponsor,
+                &harness.policy.credential_id,
+                "credential-revocation-custody-fence",
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.state, SponsoredCredentialState::Revoked);
+        assert_eq!(harness.provider.revoke_calls.load(Ordering::SeqCst), 1);
+        let stored = harness
+            .store
+            .credential(&harness.policy.credential_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored.record.material_state,
+            SponsoredCredentialMaterialState::Retired
+        );
+        assert!(stored.secret.is_none());
+    }
+
+    #[tokio::test]
+    async fn prepared_credential_revocation_allows_expired_claim_redrive_then_retires_root() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let request = sponsored_model_request(
+            "prepared-revocation-model-redrive",
+            "request claimed before process crash",
+        );
+        let dispatch = SponsoredModelDispatchPayload::from_request(
+            request.request_digest.clone(),
+            &request.request,
+        )
+        .unwrap();
+        let reserved = harness
+            .service
+            .reserve_model_usage(
+                &harness.contributor,
+                usage_command(
+                    &grant,
+                    request.stable_request_id.clone(),
+                    request.maximum_quota,
+                ),
+                dispatch,
+            )
+            .await
+            .unwrap()
+            .reservation;
+        let crashed_claim = harness
+            .service
+            .claim_model_usage_dispatch(&grant.capability, &reserved)
+            .await
+            .unwrap();
+        assert_eq!(crashed_claim.dispatch_revision, 1);
+        harness.store.set_authoritative_now(LATER).await;
+        harness.clock.set(LATER);
+
+        let revocation_request = "prepared-revocation-model-redrive-root";
+        assert_eq!(
+            harness
+                .service
+                .revoke_credential(
+                    &harness.sponsor,
+                    &harness.policy.credential_id,
+                    revocation_request,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderOperationInProgress
+        );
+        assert_eq!(harness.provider.revoke_calls.load(Ordering::SeqCst), 0);
+
+        let provider = Arc::new(RecordingModelProvider::not_found_then_confirming());
+        let data_plane = SponsoredModelDataPlaneService::new(
+            harness.service.clone(),
+            harness.store.clone(),
+            provider.clone(),
+        );
+        let quote_calls = harness.pricing.quote_calls.load(Ordering::SeqCst);
+        assert!(matches!(
+            data_plane
+                .execute(
+                    &grant.capability,
+                    sponsored_model_request(
+                        "fresh-request-during-prepared-revocation",
+                        "new spend remains fail-closed",
+                    ),
+                )
+                .await,
+            Err(SponsoredModelDataPlaneError::Sponsorship(
+                SponsorshipError::CredentialUnavailable
+            ))
+        ));
+        assert_eq!(
+            harness.pricing.quote_calls.load(Ordering::SeqCst),
+            quote_calls
+        );
+        assert_eq!(provider.observe_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 0);
+
+        let response = data_plane
+            .execute(&grant.capability, request)
+            .await
+            .unwrap();
+        assert_eq!(response.response["id"], "durable-sponsored-response");
+        assert_eq!(provider.observe_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 1);
+        {
+            let state = harness.store.state.lock().await;
+            let settled = state.reservations.get(&crashed_claim.id.0).unwrap();
+            assert_eq!(settled.state, SponsoredUsageState::Settled);
+            assert_eq!(settled.dispatch_revision, 2);
+            assert!(!state.model_dispatches.contains_key(&settled.id.0));
+            assert!(state.model_responses.contains_key(&settled.id.0));
+        }
+
+        let revoked = harness
+            .service
+            .revoke_credential(
+                &harness.sponsor,
+                &harness.policy.credential_id,
+                revocation_request,
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.state, SponsoredCredentialState::Revoked);
+        assert_eq!(harness.provider.revoke_calls.load(Ordering::SeqCst), 1);
+        let stored = harness
+            .store
+            .credential(&harness.policy.credential_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored.record.material_state,
+            SponsoredCredentialMaterialState::Retired
+        );
+        assert!(stored.secret.is_none());
+    }
+
+    #[tokio::test]
+    async fn attempting_credential_revocation_blocks_model_recovery_and_claim() {
+        let harness = default_harness().await;
+        let grant = activate_for_usage(&harness).await;
+        let request = sponsored_model_request(
+            "attempting-revocation-model-fence",
+            "request must remain encrypted but undispatched",
+        );
+        let dispatch = SponsoredModelDispatchPayload::from_request(
+            request.request_digest.clone(),
+            &request.request,
+        )
+        .unwrap();
+        let reserved = harness
+            .service
+            .reserve_model_usage(
+                &harness.contributor,
+                usage_command(
+                    &grant,
+                    request.stable_request_id.clone(),
+                    request.maximum_quota,
+                ),
+                dispatch,
+            )
+            .await
+            .unwrap()
+            .reservation;
+        assert_eq!(
+            harness
+                .service
+                .revoke_credential(
+                    &harness.sponsor,
+                    &harness.policy.credential_id,
+                    "attempting-revocation-model-fence-root",
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderOperationInProgress
+        );
+        {
+            let mut state = harness.store.state.lock().await;
+            let (credential, _) = state
+                .credentials
+                .get_mut(&harness.policy.credential_id.0)
+                .unwrap();
+            credential.generation += 1;
+            let operation = credential.pending_operation.as_mut().unwrap();
+            operation.phase = ProviderOperationPhase::Attempting;
+            operation.attempted_at = Some(LATER.into());
+            credential.updated_at = LATER.into();
+            credential.validate().unwrap();
+        }
+
+        let provider = Arc::new(RecordingModelProvider::not_found_then_confirming());
+        let data_plane = SponsoredModelDataPlaneService::new(
+            harness.service.clone(),
+            harness.store.clone(),
+            provider.clone(),
+        );
+        assert!(matches!(
+            data_plane.execute(&grant.capability, request).await,
+            Err(SponsoredModelDataPlaneError::Sponsorship(
+                SponsorshipError::CredentialUnavailable
+            ))
+        ));
+        assert_eq!(provider.observe_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.execute_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            harness
+                .service
+                .claim_model_usage_dispatch(&grant.capability, &reserved)
+                .await
+                .unwrap_err(),
+            SponsorshipError::Store(SponsorshipStoreError::GrantUnavailable)
+        );
+        let state = harness.store.state.lock().await;
+        let current = state.reservations.get(&reserved.id.0).unwrap();
+        assert_eq!(current.state, SponsoredUsageState::Reserved);
+        assert_eq!(current.dispatch_revision, 0);
+        assert!(state.model_dispatches.contains_key(&reserved.id.0));
+    }
+
+    #[tokio::test]
+    async fn credential_revocation_completion_rechecks_custody_before_erasing_secrets() {
+        let harness = Arc::new(default_harness().await);
+        let grant = activate_for_usage(&harness).await;
+        let reservation = harness
+            .service
+            .reserve_usage(
+                &harness.contributor,
+                usage_command(
+                    &grant,
+                    "revocation-completion-custody-fence",
+                    SponsoredQuota {
+                        requests: 1,
+                        input_tokens: 100,
+                        output_tokens: 100,
+                    },
+                ),
+            )
+            .await
+            .unwrap()
+            .reservation;
+        harness
+            .provider
+            .block_credential_revoke
+            .store(true, Ordering::SeqCst);
+
+        let revocation = tokio::spawn({
+            let harness = harness.clone();
+            async move {
+                harness
+                    .service
+                    .revoke_credential(
+                        &harness.sponsor,
+                        &harness.policy.credential_id,
+                        "revocation-completion-custody-fence",
+                    )
+                    .await
+            }
+        });
+        harness.provider.credential_revoke_entered.notified().await;
+
+        {
+            let mut state = harness.store.state.lock().await;
+            state.reservation_credentials.insert(
+                reservation.id.0.clone(),
+                harness.policy.credential_id.0.clone(),
+            );
+            state.model_dispatches.insert(
+                reservation.id.0.clone(),
+                model_dispatch_payload("late authenticated request custody"),
+            );
+        }
+        harness.provider.release_credential_revoke.notify_one();
+
+        assert_eq!(
+            revocation.await.unwrap().unwrap_err(),
+            SponsorshipError::Store(SponsorshipStoreError::Conflict)
+        );
+        assert_eq!(harness.provider.revoke_calls.load(Ordering::SeqCst), 1);
+        let state = harness.store.state.lock().await;
+        let (credential, secret) = state
+            .credentials
+            .get(&harness.policy.credential_id.0)
+            .unwrap();
+        assert_eq!(
+            credential.state,
+            SponsoredCredentialState::RevocationPending
+        );
+        assert_eq!(
+            credential.pending_operation.as_ref().unwrap().phase,
+            ProviderOperationPhase::Attempting
+        );
+        assert_eq!(
+            credential.material_state,
+            SponsoredCredentialMaterialState::Retained
+        );
+        assert_eq!(secret.as_deref(), Some(SECRET));
+        assert!(state.model_dispatches.contains_key(&reservation.id.0));
+    }
+
+    #[tokio::test]
     async fn credential_rotation_and_revocations_reconcile_lost_responses() {
         let rotation = default_harness().await;
         *rotation.provider.rotate_mode.lock().await = ProviderMode::LostResponse;
@@ -5750,6 +7993,157 @@ mod current_tests {
             .unwrap();
         assert_eq!(released.reserved, SponsoredUsageSummary::default());
         assert_eq!(released.active_launches, 0);
+    }
+
+    #[tokio::test]
+    async fn internal_recovery_reuses_durable_credential_and_grant_operations() {
+        let rotation = default_harness().await;
+        *rotation.provider.rotate_mode.lock().await = ProviderMode::LostResponse;
+        assert_eq!(
+            rotation
+                .service
+                .rotate_credential(
+                    &rotation.sponsor,
+                    RotateSponsoredCredential {
+                        credential_id: rotation.policy.credential_id.clone(),
+                        stable_request_id: "worker-rotation-origin".into(),
+                        replacement: ProviderCredentialSecret::new("replacement-credential")
+                            .unwrap(),
+                    },
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderAmbiguous
+        );
+        let rotation_operation_id = rotation
+            .store
+            .state
+            .lock()
+            .await
+            .credentials
+            .get(&rotation.policy.credential_id.0)
+            .unwrap()
+            .0
+            .pending_operation
+            .as_ref()
+            .unwrap()
+            .provider_request_id
+            .clone();
+        assert_eq!(
+            rotation
+                .service
+                .recover_credential_operation(&rotation.admin, &rotation.policy.credential_id,)
+                .await
+                .unwrap_err(),
+            SponsorshipError::Forbidden,
+            "ConfigurePlatform is not worker recovery authority"
+        );
+        let rotated = restarted_service(&rotation)
+            .recover_credential_operation(&rotation.meter, &rotation.policy.credential_id)
+            .await
+            .unwrap();
+        assert_eq!(rotated.state, SponsoredCredentialState::Active);
+        assert_eq!(rotation.provider.rotate_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(rotation.provider.reconcile_calls.load(Ordering::SeqCst), 1);
+        assert!(rotation
+            .provider
+            .rotations
+            .lock()
+            .await
+            .contains_key(&rotation_operation_id));
+
+        let revocation = default_harness().await;
+        prepare_activation(&revocation).await;
+        let grant = activate(&revocation, "worker-grant-before-revocation").await;
+        *revocation.provider.revoke_mode.lock().await = ProviderMode::LostResponse;
+        assert_eq!(
+            revocation
+                .service
+                .revoke_grant(
+                    &revocation.sponsor,
+                    &grant.id,
+                    "worker-grant-revocation-origin",
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ProviderAmbiguous
+        );
+        let grant_operation_id = revocation
+            .store
+            .state
+            .lock()
+            .await
+            .grants
+            .get(&grant.id.0)
+            .unwrap()
+            .pending_revocation
+            .as_ref()
+            .unwrap()
+            .provider_request_id
+            .clone();
+        assert_eq!(
+            revocation
+                .service
+                .recover_grant(&revocation.admin, &grant.id, LATER)
+                .await
+                .unwrap_err(),
+            SponsorshipError::Forbidden
+        );
+        let recovered = restarted_service(&revocation)
+            .recover_grant(&revocation.meter, &grant.id, LATER)
+            .await
+            .unwrap();
+        assert_eq!(recovered.state, SponsoredGrantState::Revoked);
+        assert_eq!(revocation.provider.revoke_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            revocation.provider.reconcile_calls.load(Ordering::SeqCst),
+            1
+        );
+        assert!(revocation
+            .provider
+            .revocations
+            .lock()
+            .await
+            .contains(&grant_operation_id));
+    }
+
+    #[tokio::test]
+    async fn grant_recovery_holds_one_explicit_time_fence_and_only_meter_authority() {
+        let harness = default_harness().await;
+        prepare_activation(&harness).await;
+        let grant = activate(&harness, "worker-grant-before-expiry").await;
+
+        assert_eq!(
+            harness
+                .service
+                .sponsorship_recovery_time_fence(&harness.admin)
+                .unwrap_err(),
+            SponsorshipError::Forbidden
+        );
+        assert_eq!(
+            harness
+                .service
+                .sponsorship_recovery_time_fence(&harness.meter)
+                .unwrap(),
+            NOW
+        );
+        let unchanged = harness
+            .service
+            .recover_grant(&harness.meter, &grant.id, NOW)
+            .await
+            .unwrap();
+        assert_eq!(unchanged.state, SponsoredGrantState::Active);
+
+        const AFTER_EXPIRY: &str = "2026-08-29T02:00:00Z";
+        harness.clock.set(AFTER_EXPIRY);
+        harness.store.set_authoritative_now(AFTER_EXPIRY).await;
+        let expired = harness
+            .service
+            .recover_grant(&harness.meter, &grant.id, AFTER_EXPIRY)
+            .await
+            .unwrap();
+        assert_eq!(expired.state, SponsoredGrantState::Expired);
+        assert_eq!(harness.provider.revoke_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -7756,6 +10150,124 @@ mod current_tests {
                 .filter(|event| event.action == SponsoredAuditAction::TermsAccepted)
                 .count(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn start_acceptance_requires_the_current_contributor_and_durable_acceptance() {
+        let harness = default_harness().await;
+
+        assert_eq!(
+            harness
+                .service
+                .verify_current_start_acceptance(&harness.contributor.subject, &harness.launch_id,)
+                .await
+                .unwrap_err(),
+            SponsorshipError::TermsNotAccepted
+        );
+
+        accept(&harness, "start-boundary-acceptance").await;
+        harness
+            .service
+            .verify_current_start_acceptance(&harness.contributor.subject, &harness.launch_id)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            harness
+                .service
+                .verify_current_start_acceptance(
+                    &SubjectId("different-start-contributor".into()),
+                    &harness.launch_id,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::Forbidden
+        );
+    }
+
+    #[tokio::test]
+    async fn start_acceptance_rejects_future_evidence_and_changed_policy_terms() {
+        let future = default_harness().await;
+        accept(&future, "future-start-acceptance").await;
+        {
+            let mut state = future.store.state.lock().await;
+            let acceptance = state.acceptances.get_mut(&future.launch_id.0).unwrap();
+            acceptance.accepted_at = LATER.into();
+            acceptance.digest = acceptance.calculate_digest().unwrap();
+            acceptance.validate().unwrap();
+        }
+        assert_eq!(
+            future
+                .service
+                .verify_current_start_acceptance(&future.contributor.subject, &future.launch_id)
+                .await
+                .unwrap_err(),
+            SponsorshipError::TermsChanged
+        );
+
+        let changed = default_harness().await;
+        accept(&changed, "changed-policy-start-acceptance").await;
+        {
+            let mut state = changed.store.state.lock().await;
+            let policy = state.policies.get_mut(&changed.policy.id.0).unwrap();
+            policy.generation += 1;
+            policy.per_launch_budget_micros += 1;
+            policy.validate().unwrap();
+        }
+        assert_eq!(
+            changed
+                .service
+                .verify_current_start_acceptance(&changed.contributor.subject, &changed.launch_id)
+                .await
+                .unwrap_err(),
+            SponsorshipError::TermsChanged
+        );
+    }
+
+    #[tokio::test]
+    async fn start_acceptance_rejects_cross_tenant_and_nonreviewable_launches() {
+        let cross_tenant = default_harness().await;
+        accept(&cross_tenant, "cross-tenant-start-acceptance").await;
+        {
+            let mut state = cross_tenant.store.state.lock().await;
+            let launch = state.launches.get_mut(&cross_tenant.launch_id.0).unwrap();
+            launch.tenant_id = "different-tenant".into();
+            launch.digest = launch.calculate_digest().unwrap();
+            launch.validate().unwrap();
+        }
+        assert_eq!(
+            cross_tenant
+                .service
+                .verify_current_start_acceptance(
+                    &cross_tenant.contributor.subject,
+                    &cross_tenant.launch_id,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::PolicyUnavailable
+        );
+
+        let nonreviewable = default_harness().await;
+        accept(&nonreviewable, "nonreviewable-start-acceptance").await;
+        nonreviewable
+            .store
+            .update_launch_state(
+                &nonreviewable.launch_id,
+                SponsoredLaunchState::Starting,
+                Some(nonreviewable.session_id.clone()),
+            )
+            .await;
+        assert_eq!(
+            nonreviewable
+                .service
+                .verify_current_start_acceptance(
+                    &nonreviewable.contributor.subject,
+                    &nonreviewable.launch_id,
+                )
+                .await
+                .unwrap_err(),
+            SponsorshipError::ScopeDenied
         );
     }
 

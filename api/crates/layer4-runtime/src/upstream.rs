@@ -36,6 +36,9 @@ const CREDENTIAL_REFLECTION_FAULT: &str =
     "the upstream response was refused because it contained protected credential material";
 const ENCODED_RESPONSE_FAULT: &str =
     "the upstream response was refused because its encoded body could not be inspected";
+const MALFORMED_SPONSORED_RESPONSE_FAULT: &str =
+    "the sponsored model response was malformed or exceeded its size bound";
+const MAX_SPONSORED_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 use axum::{
     body::{Body, Bytes},
@@ -45,16 +48,73 @@ use axum::{
     Json,
 };
 use futures_util::{Stream, StreamExt};
+use std::num::NonZeroU64;
 use tokio::sync::RwLock;
 
 use crate::github_capability::{
     CapabilityRefusal, GithubCapabilityGate, MAX_BODY_BYTES as MAX_GITHUB_BODY_BYTES,
 };
+use crate::sponsored_model::{
+    SponsoredModelGate, SponsoredModelRefusal, MAX_REQUEST_BODY_BYTES as MAX_SPONSORED_BODY_BYTES,
+};
 
 /// The current credential, replaceable while requests are in flight.
 #[derive(Clone, Default)]
 pub struct CredentialHolder {
-    inner: Arc<RwLock<Option<String>>>,
+    inner: Arc<RwLock<Option<CredentialSnapshot>>>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct CredentialSnapshot {
+    value: String,
+    custody_generation: Option<NonZeroU64>,
+}
+
+impl CredentialSnapshot {
+    fn expose(&self) -> &str {
+        &self.value
+    }
+
+    fn custody_generation(&self) -> Option<NonZeroU64> {
+        self.custody_generation
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        self.value.as_bytes()
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.value.into_bytes()
+    }
+}
+
+impl std::ops::Deref for CredentialSnapshot {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.expose()
+    }
+}
+
+impl std::fmt::Debug for CredentialSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CredentialSnapshot")
+            .field(
+                "value",
+                &format_args!("<redacted {} bytes>", self.value.len()),
+            )
+            .field("custody_generation", &self.custody_generation)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CredentialInstallRefusal {
+    MissingGeneration,
+    ZeroGeneration,
+    GenerationRollback,
+    GenerationConflict,
 }
 
 impl CredentialHolder {
@@ -64,11 +124,68 @@ impl CredentialHolder {
     }
 
     /// Replace the credential. Takes effect on the next request.
+    #[cfg(test)]
     pub async fn set(&self, credential: String) {
-        let had = self.inner.read().await.is_some();
-        *self.inner.write().await = Some(credential);
+        self.install(credential, None, false)
+            .await
+            .expect("generation-less credentials remain valid outside sponsored mode");
+    }
+
+    /// Install one exact bearer/generation snapshot from the control lane.
+    pub(crate) async fn install(
+        &self,
+        value: String,
+        custody_generation: Option<u64>,
+        generation_required: bool,
+    ) -> Result<(), CredentialInstallRefusal> {
+        let custody_generation = match custody_generation {
+            Some(generation) => {
+                Some(NonZeroU64::new(generation).ok_or(CredentialInstallRefusal::ZeroGeneration)?)
+            }
+            None if generation_required => return Err(CredentialInstallRefusal::MissingGeneration),
+            None => None,
+        };
+        let candidate = CredentialSnapshot {
+            value,
+            custody_generation,
+        };
+        let mut installed = self.inner.write().await;
+        let replaced = installed.is_some();
+        match installed.as_ref() {
+            None => *installed = Some(candidate),
+            Some(current)
+                if current.custody_generation.is_none()
+                    && candidate.custody_generation.is_none() =>
+            {
+                *installed = Some(candidate);
+            }
+            Some(current) if current == &candidate => {}
+            Some(current)
+                if current.custody_generation.is_none()
+                    && candidate.custody_generation.is_some() =>
+            {
+                *installed = Some(candidate);
+            }
+            Some(current)
+                if current.custody_generation.is_some()
+                    && candidate.custody_generation.is_none() =>
+            {
+                return Err(CredentialInstallRefusal::GenerationRollback);
+            }
+            Some(current) if candidate.custody_generation < current.custody_generation => {
+                return Err(CredentialInstallRefusal::GenerationRollback);
+            }
+            Some(current)
+                if candidate.custody_generation == current.custody_generation
+                    && candidate.value != current.value =>
+            {
+                return Err(CredentialInstallRefusal::GenerationConflict);
+            }
+            Some(_) => *installed = Some(candidate),
+        }
         // Logged as a fact, never with the value.
-        tracing::info!(replaced = had, "upstream credential updated");
+        tracing::info!(replaced, "upstream credential updated");
+        Ok(())
     }
 
     /// Whether a credential is currently held.
@@ -76,7 +193,7 @@ impl CredentialHolder {
         self.inner.read().await.is_some()
     }
 
-    async fn get(&self) -> Option<String> {
+    async fn get(&self) -> Option<CredentialSnapshot> {
         self.inner.read().await.clone()
     }
 }
@@ -92,6 +209,9 @@ pub struct UpstreamState {
     /// Launch-scoped filter for the identity-platform proxy, absent on the
     /// model endpoint and on runtimes not provisioned for this flow.
     github_capability: Option<GithubCapabilityGate>,
+    /// Inert grant gate for the model proxy. When required, this is the only
+    /// source of an outbound target and `base_url` is never interpreted.
+    sponsored_model: Option<SponsoredModelGate>,
     /// The last refusal the model endpoint gave, if it has given one.
     ///
     /// Recorded because an agent's own account of a failed call is unreliable
@@ -141,6 +261,7 @@ impl UpstreamState {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             credential,
             github_capability: None,
+            sponsored_model: None,
             fault: UpstreamFault::default(),
             http: reqwest::Client::builder()
                 // A redirect is a new authority decision. Following one here
@@ -158,6 +279,12 @@ impl UpstreamState {
     /// Add the runtime's GitHub policy gate to the platform proxy.
     pub fn with_github_capability(mut self, gate: GithubCapabilityGate) -> Self {
         self.github_capability = Some(gate);
+        self
+    }
+
+    /// Add the sponsored grant gate to the model proxy only.
+    pub fn with_sponsored_model(mut self, gate: SponsoredModelGate) -> Self {
+        self.sponsored_model = Some(gate);
         self
     }
 
@@ -278,9 +405,10 @@ fn credential_prefix_suffix_len(haystack: &[u8], credential: &[u8]) -> usize {
 }
 
 fn response_headers_contain_credential(headers: &HeaderMap, credential: &[u8]) -> bool {
-    headers
-        .values()
-        .any(|value| contains_bytes(value.as_bytes(), credential))
+    headers.iter().any(|(name, value)| {
+        contains_bytes(name.as_str().as_bytes(), credential)
+            || contains_bytes(value.as_bytes(), credential)
+    })
 }
 
 fn response_has_unsupported_encoding(headers: &HeaderMap) -> bool {
@@ -383,15 +511,29 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
         .headers
         .get(RUNTIME_GATEWAY_PROBE_HEADER)
         .is_some_and(|value| value == RUNTIME_GATEWAY_PROBE_HEADER_VALUE);
-    let body_limit = state
-        .github_capability
+    let sponsored_model_required = state
+        .sponsored_model
         .as_ref()
-        .filter(|gate| gate.required())
-        .map(|_| MAX_GITHUB_BODY_BYTES)
-        .unwrap_or(usize::MAX);
+        .is_some_and(SponsoredModelGate::required);
+    if sponsored_model_required && !has_exact_sponsored_json_content_type(&parts.headers) {
+        return sponsored_model_refusal(SponsoredModelRefusal::MalformedRequest);
+    }
+    let body_limit = if sponsored_model_required {
+        MAX_SPONSORED_BODY_BYTES
+    } else {
+        state
+            .github_capability
+            .as_ref()
+            .filter(|gate| gate.required())
+            .map(|_| MAX_GITHUB_BODY_BYTES)
+            .unwrap_or(usize::MAX)
+    };
     let bytes = match axum::body::to_bytes(body, body_limit).await {
         Ok(b) => b,
         Err(e) => {
+            if sponsored_model_required {
+                return sponsored_model_refusal(SponsoredModelRefusal::MalformedRequest);
+            }
             if let Some(gate) = state
                 .github_capability
                 .as_ref()
@@ -405,10 +547,25 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
         }
     };
 
+    // Sponsored authority is evaluated first and selects the complete CMA
+    // target. No rejected request reaches credential lookup or ordinary URL
+    // resolution, which keeps required mode fail-closed by construction.
+    let sponsored = match state.sponsored_model.as_ref() {
+        Some(gate) => match gate
+            .validate(&parts.method, &parts.uri, &parts.headers, &bytes)
+            .await
+        {
+            Ok(request) => request,
+            Err(refusal) => return sponsored_model_refusal(refusal),
+        },
+        None => None,
+    };
+
     // Policy runs before credential lookup. A missing credential must not mask
     // a missing/revoked policy, and no rejected request may acquire a bearer.
-    let canonical = match state.github_capability.as_ref() {
-        Some(gate) => match gate
+    let canonical = match (sponsored.as_ref(), state.github_capability.as_ref()) {
+        (Some(_), _) => None,
+        (None, Some(gate)) => match gate
             .evaluate(
                 &parts.method,
                 &parts.uri,
@@ -420,25 +577,11 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
             Ok(request) => request,
             Err(refusal) => return capability_refusal(refusal),
         },
-        None => None,
+        (None, None) => None,
     };
 
-    let target = match canonical.as_ref() {
-        Some(request) => state.target_path(&request.path_and_query),
-        None => state.target(&parts.uri),
-    };
-    let target = match target {
-        Ok(target) => target,
-        Err(()) => {
-            tracing::warn!("unsafe credential-proxy target refused");
-            return (
-                StatusCode::BAD_REQUEST,
-                "request path is outside the configured upstream service",
-            )
-                .into_response();
-        }
-    };
-
+    let canonical_github = canonical.is_some();
+    let sponsored_request = sponsored.is_some();
     let Some(credential) = state.credential.get().await else {
         // Failing loudly beats forwarding an unauthenticated call and letting
         // the agent misread the upstream's 401 as a model error.
@@ -450,10 +593,38 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
             .into_response();
     };
 
-    let canonical_github = canonical.is_some();
-    let outbound_body = canonical
-        .map(|request| request.body)
-        .unwrap_or_else(|| bytes.to_vec());
+    let sponsored = match sponsored {
+        Some(request) => match request.prepare(credential.custody_generation()) {
+            Ok(request) => Some(request),
+            Err(refusal) => return sponsored_model_refusal(refusal),
+        },
+        None => None,
+    };
+
+    let (target, outbound_body, sponsored_stream_response) = match sponsored {
+        Some(request) => (request.target, request.body, request.stream_response),
+        None => {
+            let target = match canonical.as_ref() {
+                Some(request) => state.target_path(&request.path_and_query),
+                None => state.target(&parts.uri),
+            };
+            let target = match target {
+                Ok(target) => target,
+                Err(()) => {
+                    tracing::warn!("unsafe credential-proxy target refused");
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        "request path is outside the configured upstream service",
+                    )
+                        .into_response();
+                }
+            };
+            let body = canonical
+                .map(|request| request.body)
+                .unwrap_or_else(|| bytes.to_vec());
+            (target, body, false)
+        }
+    };
 
     let mut outbound = reqwest::Request::new(parts.method.clone(), target);
     // Copy the caller's headers except the ones we own or that must not travel.
@@ -475,9 +646,18 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
         {
             continue;
         }
+        if sponsored_request && !matches!(n.as_str(), "accept" | "user-agent") {
+            continue;
+        }
         outbound.headers_mut().insert(name.clone(), value.clone());
     }
-    match HeaderValue::from_str(&format!("Bearer {credential}")) {
+    if sponsored_request {
+        outbound.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+    }
+    match HeaderValue::from_str(&format!("Bearer {}", credential.expose())) {
         Ok(v) => {
             outbound
                 .headers_mut()
@@ -544,6 +724,10 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
                     parts.uri.path()
                 ));
             }
+            if sponsored_stream_response && status.is_success() {
+                return sponsored_event_stream_response(resp, credential, state.fault.clone())
+                    .await;
+            }
             let mut builder = Response::builder().status(status);
             for (name, value) in resp.headers().iter() {
                 // Re-chunked downstream, so the upstream framing headers cannot
@@ -584,6 +768,111 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
     }
 }
 
+async fn sponsored_event_stream_response(
+    response: reqwest::Response,
+    credential: CredentialSnapshot,
+    fault: UpstreamFault,
+) -> Response {
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = match axum::body::to_bytes(
+        Body::from_stream(response.bytes_stream()),
+        MAX_SPONSORED_RESPONSE_BYTES,
+    )
+    .await
+    {
+        Ok(body) => body,
+        Err(_) => {
+            fault.set(MALFORMED_SPONSORED_RESPONSE_FAULT.into());
+            return (StatusCode::BAD_GATEWAY, MALFORMED_SPONSORED_RESPONSE_FAULT).into_response();
+        }
+    };
+    if contains_bytes(&body, credential.as_bytes()) {
+        tracing::error!("upstream response contained protected credential material");
+        fault.set(CREDENTIAL_REFLECTION_FAULT.into());
+        return (StatusCode::BAD_GATEWAY, CREDENTIAL_REFLECTION_FAULT).into_response();
+    }
+    let response_value = match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(value) if value.is_object() => value,
+        _ => {
+            fault.set(MALFORMED_SPONSORED_RESPONSE_FAULT.into());
+            return (StatusCode::BAD_GATEWAY, MALFORMED_SPONSORED_RESPONSE_FAULT).into_response();
+        }
+    };
+    let Some(output) = response_value
+        .get("output")
+        .and_then(serde_json::Value::as_array)
+    else {
+        fault.set(MALFORMED_SPONSORED_RESPONSE_FAULT.into());
+        return (StatusCode::BAD_GATEWAY, MALFORMED_SPONSORED_RESPONSE_FAULT).into_response();
+    };
+
+    let mut event_stream = Vec::with_capacity(body.len().saturating_add(1024));
+    let mut sequence_number = 1_u64;
+    for (output_index, item) in output.iter().enumerate() {
+        let event = serde_json::json!({
+            "type": "response.output_item.done",
+            "sequence_number": sequence_number,
+            "output_index": output_index,
+            "item": item,
+        });
+        if append_sse_event(&mut event_stream, "response.output_item.done", &event).is_err() {
+            fault.set(MALFORMED_SPONSORED_RESPONSE_FAULT.into());
+            return (StatusCode::BAD_GATEWAY, MALFORMED_SPONSORED_RESPONSE_FAULT).into_response();
+        }
+        sequence_number = sequence_number.saturating_add(1);
+    }
+    let completed = serde_json::json!({
+        "type": "response.completed",
+        "sequence_number": sequence_number,
+        "response": response_value,
+    });
+    if append_sse_event(&mut event_stream, "response.completed", &completed).is_err() {
+        fault.set(MALFORMED_SPONSORED_RESPONSE_FAULT.into());
+        return (StatusCode::BAD_GATEWAY, MALFORMED_SPONSORED_RESPONSE_FAULT).into_response();
+    }
+    event_stream.extend_from_slice(b"data: [DONE]\n\n");
+
+    let mut builder = Response::builder().status(status);
+    for (name, value) in &headers {
+        let name_string = name.as_str().to_ascii_lowercase();
+        if matches!(
+            name_string.as_str(),
+            "content-length" | "transfer-encoding" | "content-type" | GATEWAY_OUTCOME_HEADER
+        ) {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    builder
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(event_stream))
+        .unwrap_or_else(|_| {
+            (StatusCode::BAD_GATEWAY, MALFORMED_SPONSORED_RESPONSE_FAULT).into_response()
+        })
+}
+
+fn append_sse_event(
+    target: &mut Vec<u8>,
+    event_name: &str,
+    event: &serde_json::Value,
+) -> Result<(), serde_json::Error> {
+    target.extend_from_slice(b"event: ");
+    target.extend_from_slice(event_name.as_bytes());
+    target.extend_from_slice(b"\ndata: ");
+    serde_json::to_writer(&mut *target, event)?;
+    target.extend_from_slice(b"\n\n");
+    Ok(())
+}
+
+fn has_exact_sponsored_json_content_type(headers: &HeaderMap) -> bool {
+    headers.get_all(header::CONTENT_TYPE).iter().count() == 1
+        && headers
+            .get(header::CONTENT_TYPE)
+            .is_some_and(|value| value.as_bytes() == b"application/json")
+        && !headers.contains_key(header::CONTENT_ENCODING)
+}
+
 fn capability_refusal(refusal: CapabilityRefusal) -> Response {
     (
         StatusCode::FORBIDDEN,
@@ -592,6 +881,27 @@ fn capability_refusal(refusal: CapabilityRefusal) -> Response {
             "type": "https://cma.chrono.ai/problems/github-capability-refused",
             "title": "GitHub capability refused",
             "status": 403,
+            "code": refusal.wire_name(),
+        })),
+    )
+        .into_response()
+}
+
+fn sponsored_model_refusal(refusal: SponsoredModelRefusal) -> Response {
+    let (status, outcome) = match refusal {
+        SponsoredModelRefusal::MissingAuthority => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            GATEWAY_OUTCOME_BROKER_TRANSIENT,
+        ),
+        _ => (StatusCode::FORBIDDEN, GATEWAY_OUTCOME_POLICY_DENIED),
+    };
+    (
+        status,
+        [(GATEWAY_OUTCOME_HEADER, outcome)],
+        Json(serde_json::json!({
+            "type": "https://cma.chrono.ai/problems/sponsored-model-refused",
+            "title": "Sponsored model request refused",
+            "status": status.as_u16(),
             "code": refusal.wire_name(),
         })),
     )
@@ -607,6 +917,23 @@ fn epoch_seconds(now: std::time::SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sponsored_authority() -> crate::sponsored_model::SponsoredModelRuntimeAuthority {
+        crate::sponsored_model::SponsoredModelRuntimeAuthority {
+            version: crate::sponsored_model::AUTHORITY_VERSION,
+            gateway_origin: "https://cma.internal.example".into(),
+            runtime_audience: "runtime-a".into(),
+            session_id: "sesn_trg_123456781234123412341234567890ab".into(),
+            session_credential_generation: 7,
+            launch_id: "11111111-1111-4111-8111-111111111111".into(),
+            grant_id: "22222222-2222-4222-8222-222222222222".into(),
+            grant_generation: 3,
+            policy_generation: 4,
+            maximum_output_tokens_per_request: 16,
+            expires_at: "2099-01-02T03:04:05Z".into(),
+            capability_fingerprint: "a".repeat(64),
+        }
+    }
 
     #[tokio::test]
     async fn a_holder_starts_empty_and_accepts_a_credential() {
@@ -635,6 +962,81 @@ mod tests {
         assert_eq!(b.get().await.as_deref(), Some("shared"));
     }
 
+    #[tokio::test]
+    async fn sponsored_credentials_require_exact_forward_only_generation_pairs() {
+        let holder = CredentialHolder::new();
+        assert_eq!(
+            holder.install("missing".into(), None, true).await,
+            Err(CredentialInstallRefusal::MissingGeneration)
+        );
+        assert_eq!(
+            holder.install("zero".into(), Some(0), true).await,
+            Err(CredentialInstallRefusal::ZeroGeneration)
+        );
+        holder
+            .install("bearer-7".into(), Some(7), true)
+            .await
+            .unwrap();
+        holder
+            .install("bearer-7".into(), Some(7), true)
+            .await
+            .unwrap();
+        assert_eq!(
+            holder.install("conflict".into(), Some(7), true).await,
+            Err(CredentialInstallRefusal::GenerationConflict)
+        );
+        assert_eq!(
+            holder.install("rollback".into(), Some(6), true).await,
+            Err(CredentialInstallRefusal::GenerationRollback)
+        );
+        holder
+            .install("bearer-8".into(), Some(8), true)
+            .await
+            .unwrap();
+        let installed = holder.get().await.unwrap();
+        assert_eq!(installed.expose(), "bearer-8");
+        assert_eq!(installed.custody_generation().unwrap().get(), 8);
+    }
+
+    #[tokio::test]
+    async fn rotated_bearer_snapshot_binds_the_same_generation_into_the_next_envelope() {
+        let gate =
+            SponsoredModelGate::new(true, "sesn_trg_123456781234123412341234567890ab".into())
+                .unwrap();
+        gate.install("runtime-a", sponsored_authority())
+            .await
+            .unwrap();
+        let holder = CredentialHolder::new();
+        holder
+            .install("bearer-7".into(), Some(7), true)
+            .await
+            .unwrap();
+        holder
+            .install("bearer-8".into(), Some(8), true)
+            .await
+            .unwrap();
+        let validated = gate
+            .validate(
+                &axum::http::Method::POST,
+                &"/responses".parse().unwrap(),
+                &HeaderMap::from_iter([(
+                    "idempotency-key".parse().unwrap(),
+                    "rotated-request".parse().unwrap(),
+                )]),
+                br#"{"model":"model-a","max_output_tokens":10}"#,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        let credential = holder.get().await.unwrap();
+        let prepared = validated.prepare(credential.custody_generation()).unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&prepared.body).unwrap();
+
+        assert_eq!(credential.expose(), "bearer-8");
+        assert_eq!(envelope["authority"]["session_credential_generation"], 8);
+    }
+
     #[test]
     fn reflected_credentials_and_encoded_bodies_are_refused_before_streaming() {
         let mut headers = HeaderMap::new();
@@ -642,6 +1044,8 @@ mod tests {
             "x-reflected-value",
             "prefix-agent-key-suffix".parse().unwrap(),
         );
+        assert!(response_headers_contain_credential(&headers, b"agent-key"));
+        headers.insert("agent-key-header", "safe".parse().unwrap());
         assert!(response_headers_contain_credential(&headers, b"agent-key"));
         assert!(!response_headers_contain_credential(
             &headers,
@@ -707,6 +1111,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn buffered_sponsored_responses_become_pinned_client_compatible_sse() {
+        async fn complete() -> impl IntoResponse {
+            axum::Json(serde_json::json!({
+                "id": "resp-1",
+                "object": "response",
+                "status": "completed",
+                "output": [{
+                    "id": "msg-1",
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "captured answer",
+                        "annotations": [],
+                        "logprobs": [],
+                    }],
+                }],
+                "usage": {
+                    "input_tokens": 4,
+                    "output_tokens": 2,
+                    "total_tokens": 6,
+                },
+            }))
+        }
+
+        let app = axum::Router::new().route("/response", axum::routing::get(complete));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let upstream = reqwest::get(format!("http://{address}/response"))
+            .await
+            .unwrap();
+
+        let response = sponsored_event_stream_response(
+            upstream,
+            CredentialSnapshot {
+                value: "independent-session-credential".into(),
+                custody_generation: NonZeroU64::new(7),
+            },
+            UpstreamFault::default(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/event-stream"))
+        );
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("event: response.output_item.done\n"));
+        assert!(body.contains("\"text\":\"captured answer\""));
+        assert!(body.contains("event: response.completed\n"));
+        assert!(body.ends_with("data: [DONE]\n\n"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn buffered_sponsored_sse_never_reflects_the_session_credential() {
+        let secret = "independent-session-credential-must-not-return";
+        let app = axum::Router::new().route(
+            "/response",
+            axum::routing::get(move || async move {
+                axum::Json(serde_json::json!({
+                    "id": "resp-reflected",
+                    "object": "response",
+                    "status": "completed",
+                    "output": [{"type": "message", "content": secret}],
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let upstream = reqwest::get(format!("http://{address}/response"))
+            .await
+            .unwrap();
+        let fault = UpstreamFault::default();
+
+        let response = sponsored_event_stream_response(
+            upstream,
+            CredentialSnapshot {
+                value: secret.into(),
+                custody_generation: NonZeroU64::new(7),
+            },
+            fault.clone(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        assert!(!contains_bytes(&body, secret.as_bytes()));
+        assert_eq!(fault.get().as_deref(), Some(CREDENTIAL_REFLECTION_FAULT));
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn github_policy_denial_precedes_credential_lookup_in_the_proxy() {
         use base64::Engine as _;
 
@@ -739,6 +1249,153 @@ mod tests {
             .await
             .unwrap();
         assert!(String::from_utf8_lossy(&body).contains("missing_policy"));
+    }
+
+    #[tokio::test]
+    async fn sponsored_request_before_authority_install_makes_zero_outbound_calls() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        async fn observed(State(calls): State<Arc<AtomicUsize>>) -> Response {
+            calls.fetch_add(1, Ordering::SeqCst);
+            StatusCode::OK.into_response()
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .fallback(axum::routing::any(observed))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let credential = CredentialHolder::new();
+        credential
+            .set("independent-session-credential".into())
+            .await;
+        let gate =
+            SponsoredModelGate::new(true, "sesn_trg_123456781234123412341234567890ab".into())
+                .unwrap();
+        let state =
+            UpstreamState::new(format!("http://{address}"), credential).with_sponsored_model(gate);
+        let request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/responses")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"model":"model-a","max_output_tokens":10}"#))
+            .unwrap();
+
+        let response = proxy(State(state), request).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.headers().get(GATEWAY_OUTCOME_HEADER),
+            Some(&HeaderValue::from_static(GATEWAY_OUTCOME_BROKER_TRANSIENT))
+        );
+        let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("missing_authority"));
+        tokio::task::yield_now().await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "neither the configured ordinary upstream nor any provider target is dispatched"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn required_sponsored_mode_never_falls_back_to_the_ordinary_upstream() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        async fn observed(State(calls): State<Arc<AtomicUsize>>) -> Response {
+            calls.fetch_add(1, Ordering::SeqCst);
+            StatusCode::OK.into_response()
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .fallback(axum::routing::any(observed))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let credential = CredentialHolder::new();
+        credential
+            .set("independent-session-credential".into())
+            .await;
+        let gate =
+            SponsoredModelGate::new(true, "sesn_trg_123456781234123412341234567890ab".into())
+                .unwrap();
+        gate.install("runtime-a", sponsored_authority())
+            .await
+            .unwrap();
+        let state =
+            UpstreamState::new(format!("http://{address}"), credential).with_sponsored_model(gate);
+        let request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/v1/chat/completions")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"model":"model-a","max_output_tokens":10}"#))
+            .unwrap();
+
+        let response = proxy(State(state), request).await;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("unsupported_request"));
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn sponsored_media_type_encoding_and_size_are_refused_before_credential_lookup() {
+        let gate =
+            SponsoredModelGate::new(true, "sesn_trg_123456781234123412341234567890ab".into())
+                .unwrap();
+        let state = UpstreamState::new("http://127.0.0.1:1", CredentialHolder::new())
+            .with_sponsored_model(gate);
+        let bodies = [
+            Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/responses")
+                .body(Body::from("{}"))
+                .unwrap(),
+            Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/responses")
+                .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+                .body(Body::from("{}"))
+                .unwrap(),
+            Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/responses")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CONTENT_ENCODING, "gzip")
+                .body(Body::from("{}"))
+                .unwrap(),
+            Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/responses")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(vec![b'x'; MAX_SPONSORED_BODY_BYTES + 1]))
+                .unwrap(),
+        ];
+
+        for request in bodies {
+            let response = proxy(State(state.clone()), request).await;
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .unwrap();
+            assert!(String::from_utf8_lossy(&body).contains("malformed_request"));
+        }
     }
 
     #[tokio::test]

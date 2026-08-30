@@ -698,12 +698,15 @@ impl KernelAdapter for FakeAdapter {
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: &layer3_adapter::RuntimeCredential,
     ) -> Result<(), AdapterError> {
         if !self.running.lock().await.contains_key(&handle.0) {
             return Err(AdapterError::Unavailable("no such runtime".into()));
         }
-        self.credentials.lock().await.push(credential.to_string());
+        self.credentials
+            .lock()
+            .await
+            .push(credential.expose().to_string());
         Ok(())
     }
 

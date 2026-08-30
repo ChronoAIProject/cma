@@ -3329,6 +3329,7 @@ async fn public_sponsorship_creation_refuses_unproven_organization_ownership() {
         (
             "/api/v1/sponsorships/policies",
             json!({
+                "stable_request_id": "organization-policy-request",
                 "tenant_id": "tenant-a",
                 "owner": {
                     "kind": "organization",
