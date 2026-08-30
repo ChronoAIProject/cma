@@ -65,14 +65,14 @@ impl KernelAdapter for RecordingAdapter {
     async fn refresh_credential(
         &self,
         _handle: &layer3_adapter::RuntimeHandle,
-        credential: &str,
+        credential: &layer3_adapter::RuntimeCredential,
     ) -> Result<(), layer3_adapter::AdapterError> {
         if self.refuse.load(Ordering::SeqCst) {
             return Err(layer3_adapter::AdapterError::Unavailable(
                 "the runtime did not take the credential".into(),
             ));
         }
-        self.sent.lock().await.push(credential.to_string());
+        self.sent.lock().await.push(credential.expose().to_string());
         Ok(())
     }
 
@@ -145,7 +145,7 @@ impl KernelAdapter for BlockingAdapter {
     async fn refresh_credential(
         &self,
         handle: &layer3_adapter::RuntimeHandle,
-        credential: &str,
+        credential: &layer3_adapter::RuntimeCredential,
     ) -> Result<(), layer3_adapter::AdapterError> {
         if self.block_next.swap(false, Ordering::SeqCst) {
             self.entered.notify_one();
@@ -154,7 +154,7 @@ impl KernelAdapter for BlockingAdapter {
         self.sent
             .lock()
             .await
-            .push((handle.0.clone(), credential.to_string()));
+            .push((handle.0.clone(), credential.expose().to_string()));
         Ok(())
     }
 
@@ -316,7 +316,7 @@ impl CredentialSource for CorrelatedCredentialSource {
         _services: &[crate::environment::ServiceId],
         _caller_credential: Option<&crate::session::CallerCredential>,
         target: &CredentialDeliveryTarget,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<layer3_adapter::RuntimeCredential>, StoreError> {
         let mut state = self.state.lock().await;
         let selected = match state.pending.clone() {
             Some(pending) => {
@@ -326,7 +326,7 @@ impl CredentialSource for CorrelatedCredentialSource {
             None => state.current.clone(),
         };
         state.preparations.push((target.clone(), selected.clone()));
-        Ok(Some(selected))
+        Ok(Some(layer3_adapter::RuntimeCredential::new(selected)))
     }
 
     async fn confirm_credential_delivery(

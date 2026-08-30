@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 # The vt parser that folds a runtime's terminal bytes into a screen. It lives
 # with the layer that owns the terminal, not with the session core.
 # For its CSPRNG-backed v4 generator, which is what a permission request is

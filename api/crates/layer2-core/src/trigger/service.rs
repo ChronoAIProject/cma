@@ -108,6 +108,8 @@ pub enum TriggerAdmissionError {
     PriceChanged,
     #[error("the reviewed price expired")]
     QuoteExpired,
+    #[error("the contributor has not accepted the current sponsored terms")]
+    SponsoredTermsNotAccepted,
     #[error("session quota or deployment capacity is exhausted: {0}")]
     QuotaExceeded(String),
     #[error("the pinned runtime does not support required capability {capability}")]
@@ -152,6 +154,16 @@ pub trait TriggerSponsorshipVerifier: Send + Sync {
         publisher: &SubjectId,
         binding: &SponsoredPolicyBinding,
     ) -> Result<(), TriggerAdmissionError>;
+
+    /// Prove the durable acceptance still matches the exact draft Launch and
+    /// current policy generation before Start mutates that Launch.
+    async fn verify_start_acceptance(
+        &self,
+        _contributor: &SubjectId,
+        _launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        Err(TriggerAdmissionError::SponsoredTermsNotAccepted)
+    }
 }
 
 #[async_trait]
@@ -167,6 +179,35 @@ impl TriggerSponsorshipVerifier for super::SponsorshipService {
                 TriggerAdmissionError::PricingUnavailable(
                     "the sponsored policy authority is unavailable".into(),
                 )
+            })
+    }
+
+    async fn verify_start_acceptance(
+        &self,
+        contributor: &SubjectId,
+        launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        self.verify_current_start_acceptance(contributor, launch_id)
+            .await
+            .map_err(|error| match error {
+                super::SponsorshipError::TermsNotAccepted
+                | super::SponsorshipError::TermsChanged
+                | super::SponsorshipError::Forbidden
+                | super::SponsorshipError::NotFound => {
+                    TriggerAdmissionError::SponsoredTermsNotAccepted
+                }
+                super::SponsorshipError::Disabled
+                | super::SponsorshipError::KillSwitch
+                | super::SponsorshipError::CapabilityEvidenceMissing
+                | super::SponsorshipError::InvalidGate
+                | super::SponsorshipError::PolicyUnavailable => {
+                    TriggerAdmissionError::PricingUnavailable(
+                        "the sponsored policy authority is unavailable".into(),
+                    )
+                }
+                _ => TriggerAdmissionError::Unavailable(
+                    "the sponsored acceptance authority could not be verified".into(),
+                ),
             })
     }
 }
@@ -459,6 +500,25 @@ impl TriggerService {
         })?;
         verifier
             .verify_policy_binding(publisher, binding)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn verify_sponsored_start_acceptance(
+        &self,
+        contributor: &SubjectId,
+        launch: &Launch,
+    ) -> Result<(), TriggerServiceError> {
+        if launch.revision.content.commercial_policy.billing_mode != BillingMode::Sponsored {
+            return Ok(());
+        }
+        let verifier = self.sponsorship.as_ref().ok_or_else(|| {
+            TriggerAdmissionError::PricingUnavailable(
+                "sponsored acceptance verification is not configured".into(),
+            )
+        })?;
+        verifier
+            .verify_start_acceptance(contributor, &launch.id)
             .await
             .map_err(Into::into)
     }
@@ -1054,6 +1114,8 @@ impl TriggerService {
         } = command;
         let mut launch = self.get_launch(owner, id).await?;
         self.fence_pre_start(expected_revision, &mut launch, &now, &correlation_id)
+            .await?;
+        self.verify_sponsored_start_acceptance(owner, &launch)
             .await?;
         if let Err(denial) = self.rollout.launch_orchestration(&launch) {
             if launch.blocked_reason.is_none() {

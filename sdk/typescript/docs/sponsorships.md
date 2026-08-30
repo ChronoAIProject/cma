@@ -53,10 +53,12 @@ authority.
 ## Availability and custody
 
 These methods establish a typed contract; they do not indicate that sponsorship is
-enabled. The checked-in CMA binary composition deliberately uses
-`sponsorships: None` because provider, billing, pricing, scheduler, worker, and
-runtime adapters are not composed. Sponsorship requests therefore remain
-unavailable until that composition is implemented and reviewed.
+enabled. CMA has a complete provider, billing, pricing, scheduler, worker,
+runtime, and private-gateway composition path when a complete enabled deployment
+tuple is supplied. The checked-in production configuration remains dormant and
+kill-switched, with no sponsorship secret projection, so public sponsorship
+requests remain unavailable until the reviewed evidence and provisioning for that
+deployment are complete.
 
 The Rust REST boundary copies each sponsorship JSON body from Axum's immutable
 `Bytes` into application-owned zeroizing storage, drops the immutable transport

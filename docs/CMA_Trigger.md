@@ -76,18 +76,18 @@ Deferred policy tracks are explicit rather than partially enabled:
 
 Native Layer 2 sponsorship models, encrypted Mongo persistence, REST routes,
 and four secret-free TypeScript SDK page reads now exist. The checked-in binary
-still wires `sponsorships: None`, however, and no provider, billing, pricing,
-scheduler, worker, or runtime adapter is composed. Its only production default is
-`CHRONO_SPONSORSHIP_ENABLED=false` with
+composes the provider, billing, pricing, scheduler, worker, runtime, and
+private-gateway paths when a complete enabled tuple is supplied. Its production
+manifests intentionally keep the runtime absent with
+`CHRONO_SPONSORSHIP_ENABLED=false` and
 `CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED=true`; every evidence, policy, limit,
-adapter, worker, fence, and secret-file key is empty. Any partial staging tuple
-fails CMA startup. Every `CHRONO_SPONSORSHIP_ENABLED=true` configuration also
-fails startup with a fixed instruction to keep sponsorship disabled and
-kill-switched, even when the rest of the tuple is complete. This is dormant
-fail-closed configuration, not partial sponsorship enablement. It does not
-provide usable sponsorship, release or deployment evidence, or the aggregate
-expiry/revocation and restart-recovery evidence required from #445/#524/#528
-and #675; it does not satisfy #671.
+adapter, worker, fence, and secret-file key is empty. Any partial, malformed,
+mismatched, or above-ceiling staging tuple fails CMA startup, and a disabled
+tuple cannot disengage the kill switch. This is dormant fail-closed
+configuration, not production sponsorship enablement. The current deployment
+still lacks usable sponsorship, release or deployment evidence, or the
+aggregate expiry/revocation and restart-recovery evidence required from
+#445/#524/#528 and #675; it does not satisfy #671.
 
 The current `ChronoAIProject/cma` repository is internal and has
 forking disabled. It is not an MVP fixture. #673 owns a disposable public
@@ -1233,10 +1233,10 @@ the same proof in D-09.
       #675 proves restart-safe owner recovery. Their evidence identifiers are
       deployment inputs, not free-form claims invented during rollout.
 - [ ] The implemented native models, encrypted Mongo persistence, REST routes,
-      and four secret-free SDK reads are wired into the binary only after
-      provider, billing, pricing, scheduler, worker, and runtime adapters are
-      implemented, separately reviewed, and composed. The checked-in
-      `sponsorships: None` wiring cannot issue or spend a grant.
+      and four secret-free SDK reads have a complete provider, billing, pricing,
+      scheduler, worker, runtime, and gateway composition path. Enable it only
+      after those adapters and the evidence gates are separately reviewed; the
+      checked-in manifests remain disabled and cannot issue or spend a grant.
 - [ ] The complete sponsorship gate, per-sponsor/per-Launch ceilings, worker
       budgets, canonical adapter identities/origins, and matching positive
       epoch/configuration digest pass the startup contract in the operations

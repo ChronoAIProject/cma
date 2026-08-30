@@ -286,11 +286,14 @@ rate/request-size limits are consumed here. Issue #671 remains the post-MVP
 sponsored-credential boundary and does not gate the contributor-owned public
 MVP. Native Layer 2 models, encrypted Mongo persistence, REST routes, four
 secret-free TypeScript SDK page reads, and the dormant configuration contract
-now exist. The checked-in binary still wires `sponsorships: None` and composes no
-provider, billing, pricing, scheduler, worker, or runtime adapter. This does not
-provide usable sponsorship, release or deployment evidence, the aggregate
-expiry/revocation and restart-recovery evidence required from #445/#524/#528 and
-#675, or secret provisioning; it does not satisfy #671.
+now exist. The binary has a complete provider, billing, pricing, scheduler,
+worker, runtime, and private-gateway composition path when a complete enabled
+tuple is supplied. The checked-in production configuration remains dormant and
+kill-switched (`CHRONO_SPONSORSHIP_ENABLED=false`,
+`CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED=true`) with no sponsorship secret
+projection, so this does not provide usable sponsorship, release or deployment
+evidence, the aggregate expiry/revocation and restart-recovery evidence required
+from #445/#524/#528 and #675, or secret provisioning; it does not satisfy #671.
 
 ### Pinned runtime network evidence
 
@@ -692,12 +695,13 @@ enabled by an MVP feature flag:
 
 Do not add these rows to the MVP go/no-go total. They become mandatory only for
 a later sponsorship release. None is satisfied by the native models, Mongo
-store, REST routes, four SDK reads, dormant configuration parser, or checked-in
-`sponsorships: None` wiring alone:
+store, REST routes, four SDK reads, dormant configuration parser, or a complete
+composition path alone. The checked-in production tuple remains dormant until
+the evidence and provisioning below are complete:
 
 | ID | Class | Required evidence | Exit condition |
 | --- | --- | --- | --- |
-| `SP-D-01` | D | Native-model invariants, encrypted Mongo durability/recovery, private REST contracts, four exact secret-free SDK page reads, and exact dormant, every-enabled-tuple, partial-disabled-tuple, digest/fence, evidence, allowlist, cap-ordering, adapter-origin, worker-bound, file-only secret, redaction, and fixed-manifest tests | Implemented boundaries pass their tests while the checked-in binary resolves to no sponsorship runtime; every enabled tuple returns the fixed not-composed refusal, and every partial or invalid disabled staging tuple fails startup without reading or exposing secret fixtures |
+| `SP-D-01` | D | Native-model invariants, encrypted Mongo durability/recovery, private REST contracts, four exact secret-free SDK page reads, and exact dormant, every-enabled-tuple, partial-disabled-tuple, digest/fence, evidence, allowlist, cap-ordering, adapter-origin, worker-bound, file-only secret, redaction, and fixed-manifest tests | Implemented boundaries pass their tests; a complete enabled tuple composes the authority, adapters, workers, and private gateway, while the checked-in dormant tuple constructs none of them and every partial or invalid staging tuple fails startup without reading or exposing secret fixtures |
 | `SP-S-01` | S | #445/#524/#528 provider expiry and lineage-wide revocation campaign plus #675 restart recovery | Evidence IDs in the gate resolve to reviewed immutable records for the exact provider adapter and deployment |
 | `SP-S-02` | S | Live encrypted-Mongo rotation/recovery plus provider, read-only billing-eligibility, pricing, scheduler, worker, runtime, and reconciliation adapter campaign | Ambiguous operations converge by stable identity, durable database-time fences prevent stale spend, and no adapter is inferred or substituted |
 | `SP-S-03` | S | Quota, token, budget, concurrency, sponsor Launch-rate, expiry, payment failure, provider outage, and emergency-kill campaign at every configured boundary | New spend stops at each boundary; recovery/export remains available; retries neither double-spend nor release capacity twice |

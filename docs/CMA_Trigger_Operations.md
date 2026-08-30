@@ -100,10 +100,11 @@ values fail startup rather than falling back to a broader policy.
 ### Dormant sponsorship boundary (#671)
 
 Native Layer 2 sponsorship models, encrypted Mongo persistence, REST routes,
-and four secret-free TypeScript SDK page reads exist. Sponsorship remains
-post-MVP because the checked-in binary wires `sponsorships: None` and composes
-no provider, billing, pricing, scheduler, worker, or runtime adapter. Keep the
-checked-in deployment state exactly as follows:
+and four secret-free TypeScript SDK page reads exist. The binary composes the
+provider, billing, pricing, scheduler, worker, runtime, and private-gateway
+paths only after a complete enabled tuple has passed startup validation. Keep
+the checked-in deployment state exactly as follows; this is why the shipped
+pods remain dormant and sponsorship is still post-MVP:
 
 ```text
 CHRONO_SPONSORSHIP_ENABLED=false
@@ -115,17 +116,12 @@ no sponsorship secret file is mounted
 An absent tuple and the exact empty ConfigMap declarations both resolve to no
 sponsorship runtime. Once any non-boolean value is supplied, CMA requires every
 field below, even when the complete tuple is staged with sponsorship disabled.
-`enabled=false` requires the kill switch to remain engaged. This build rejects
-every exact `CHRONO_SPONSORSHIP_ENABLED=true` value immediately, before reading
-the kill switch, mounted secrets, or the remaining tuple, with this fixed error:
-
-```text
-CHRONO_SPONSORSHIP_ENABLED=true is not available in this build because sponsorship persistence and provider, billing, and pricing adapters are not composed; keep CHRONO_SPONSORSHIP_ENABLED=false and CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED=true
-```
-
-The refusal applies even to an otherwise complete domain-valid gate. Empty,
-partial, malformed, mismatched, or above-ceiling disabled staging tuples also
-fail process startup; ordinary Trigger configuration is not substituted.
+`enabled=false` requires the kill switch to remain engaged. An enabled tuple is
+accepted only when its evidence, limits, adapter origins, worker bounds, fence,
+and mounted secret files are complete and mutually consistent; an incomplete,
+malformed, mismatched, or above-ceiling tuple fails process startup. The
+checked-in manifests do not provide those production prerequisites and must
+remain disabled.
 
 | Configuration group | Required keys once staged |
 | --- | --- |
@@ -183,14 +179,33 @@ the domain's canonical JSON tuple, in this exact order:
 
 ```text
 [
-  "cma-sponsorship-gate-v1",
+  "cma-sponsorship-gate-v2",
   enabled,
   expiry_evidence_id,
   revocation_evidence_id,
+  trusted_provider_policy_key,
   sorted_allowed_provider_policy_keys,
-  maximum_policy_budget_micros,
-  maximum_policy_requests,
-  maximum_concurrent_launches
+  {
+    "default_policy_expiry_seconds": default_policy_expiry_seconds,
+    "maximum_policy_expiry_seconds": maximum_policy_expiry_seconds,
+    "maximum_active_policies_per_sponsor": maximum_active_policies_per_sponsor,
+    "launch_rate_window_seconds": launch_rate_window_seconds,
+    "maximum_launches_per_sponsor_per_window": maximum_launches_per_sponsor_per_window,
+    "maximum_per_launch_quota": {
+      "requests": maximum_per_launch_requests,
+      "input_tokens": maximum_per_launch_input_tokens,
+      "output_tokens": maximum_per_launch_output_tokens
+    },
+    "maximum_policy_quota": {
+      "requests": maximum_policy_requests,
+      "input_tokens": maximum_policy_input_tokens,
+      "output_tokens": maximum_policy_output_tokens
+    },
+    "maximum_requests_per_minute": maximum_requests_per_minute,
+    "maximum_per_launch_budget_micros": maximum_per_launch_budget_micros,
+    "maximum_policy_budget_micros": maximum_policy_budget_micros,
+    "maximum_concurrent_launches": maximum_concurrent_launches
+  }
 ]
 ```
 
@@ -203,6 +218,33 @@ durably engaged fence at exactly epoch `N+1`, with the same configuration
 digest, so its bounded drain can finish. Every other epoch or switch-state
 drift aborts startup.
 
+The `expires_at` field on `POST /api/v1/sponsorships/policies` is optional. If
+it is omitted, Layer 2 captures the service clock once and persists an absolute
+expiry at that observation plus
+`CHRONO_SPONSORSHIP_DEFAULT_POLICY_EXPIRY_SECONDS`. An explicit canonical UTC
+expiry is preserved. In both cases, Mongo independently rejects an expiry that
+is already elapsed or more than
+`CHRONO_SPONSORSHIP_MAXIMUM_POLICY_EXPIRY_SECONDS` beyond database time; the
+service-clock calculation is not the durable admission authority.
+
+Sponsor-wide admissions are serialized by one deterministic document in
+`sponsorship_sponsor_counters`. Developer sponsorship is keyed only by subject;
+organization sponsorship is keyed only by organization ID, so display-name or
+organization-administrator changes cannot create a fresh limit partition. The
+document carries separate policy and Launch revisions. A policy transaction
+advances the policy revision, counts active policies whose database expiry is
+still in the future, and inserts the policy, counter, and audit atomically.
+Expired policies do not consume the active-policy ceiling.
+
+Each newly admitted Launch also inserts one immutable row in
+`sponsorship_sponsor_launch_admissions`, timestamped by Mongo and indexed by
+sponsor plus admission time. The same transaction advances the sponsor Launch
+revision, counts rows in the configured rolling window, and creates the grant
+activation. Exact activation retries first resolve the existing activation and
+its admission row, so they consume no additional rate admission. The active
+policy count and Launch rolling rate are sponsor-wide across all policies;
+`maximum_concurrent_launches` remains a per-policy capacity limit.
+
 Sponsorship recovery times are monotonic record fences, not trusted wall-clock
 observations. A backward service-clock step cannot move a usage reservation or
 grant behind its prior `updated_at`. Definitive global credential retirement
@@ -211,17 +253,24 @@ Mongo transaction revalidates the exact activation, policy, and advanced
 credential lineage. That transaction releases its allocation and concurrency
 hold exactly once and never calls the provider again.
 
+Recovery lanes are prepared during composition but start only after the HTTP
+listener binds. On `SIGTERM`, CMA stops scheduling new passes and drains HTTP
+and recovery work concurrently under one 15-second process deadline. An active
+recovery pass gets at most 10 seconds before its owned task is cancelled. The
+Deployment grants 20 seconds, leaving five seconds for cancellation joins,
+runtime teardown, and kubelet termination. Never raise either application
+deadline without first raising and reviewing `terminationGracePeriodSeconds`.
+
 Do not attempt activation from the current manifests. The implementation above
-does not provide usable sponsorship, release or deployment evidence, or the
-aggregate expiry/revocation and restart-recovery evidence required from
+does not provide usable production sponsorship, release or deployment evidence,
+or the aggregate expiry/revocation and restart-recovery evidence required from
 #445/#524/#528 and #675; it does not satisfy #671. The manifests name no reviewed
 sponsorship Secret Manager resources and adding an unprovisioned object to the
 mandatory CSI class would prevent a dormant CMA pod from starting. A future
-activation change must first provide the reviewed evidence and compose the
-sponsorship service with provider, billing, pricing, scheduler, worker, and
-runtime adapters, replace the explicit enabled-state startup refusal, then add
-three separately reviewed read-only secret projections and IAM grants, stage
-the complete disabled/kill-switched tuple, and pass the post-MVP readiness ledger.
+activation change must first provide that reviewed evidence, add three
+separately reviewed read-only secret projections and IAM grants, stage the
+complete disabled/kill-switched tuple during rollout, and pass the post-MVP
+readiness ledger before setting an enabled tuple.
 
 Provision the public GitHub observer as a dedicated credential-free NyxID
 service, not as the ordinary credential-backed `api-github` service. Its closed

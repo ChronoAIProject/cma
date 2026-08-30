@@ -2561,6 +2561,11 @@ fn validate_review_admission(
             if pricing.rate_card.is_some()
                 && pricing.rate.is_some()
                 && pricing.micros_per_hour > 0 => {}
+        super::BillingMode::Sponsored
+            if pricing.rate_card.is_none()
+                && pricing.rate.is_none()
+                && pricing.micros_per_hour == 0
+                && pricing.estimated_micros == 0 => {}
         _ => {
             return Err(TriggerValidationError::field(
                 "pricing",

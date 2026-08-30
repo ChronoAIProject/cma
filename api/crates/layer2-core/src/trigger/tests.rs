@@ -2248,11 +2248,15 @@ fn sponsored_launch_authority_is_derived_from_durable_launch_and_policy_state() 
     });
     let starting = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
     assert_eq!(starting.state, SponsoredLaunchState::Starting);
-    assert_eq!(starting.generation, 8);
+    assert_eq!(starting.generation, 4);
     assert_eq!(
         starting.session_id,
         Some(SessionId("session-sponsored".into()))
     );
+
+    launch.revision_number = 99;
+    let after_worker_bookkeeping = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(after_worker_bookkeeping, starting);
 
     launch.state = LaunchState::AuthRequired;
     let recoverable = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
@@ -5222,6 +5226,22 @@ fn admitted_effect_takeover_retains_audit_evidence_without_reusing_write_authori
         .validate_effect_for(&launch, &forged_execute)
         .is_err());
     assert!(launch.effect_authority_admission(&takeover).is_err());
+    assert_eq!(
+        launch
+            .historical_effect_authority_admission(&takeover)
+            .expect("reconciliation may read the exact retained admission"),
+        &admission
+    );
+    assert!(launch
+        .historical_effect_authority_admission(&forged_execute)
+        .is_err());
+    let wrong_intent = EffectClaim {
+        intent_key: "cma-trigger:wrong:fork:1".into(),
+        ..takeover.clone()
+    };
+    assert!(launch
+        .historical_effect_authority_admission(&wrong_intent)
+        .is_err());
 
     let mut recovery = launch.clone();
     recovery
@@ -5851,6 +5871,39 @@ impl TriggerSponsorshipVerifier for TestSponsorshipVerifier {
             ))
         }
     }
+
+    async fn verify_start_acceptance(
+        &self,
+        _contributor: &SubjectId,
+        _launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RefusingStartSponsorshipVerifier {
+    start_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl TriggerSponsorshipVerifier for RefusingStartSponsorshipVerifier {
+    async fn verify_policy_binding(
+        &self,
+        _publisher: &SubjectId,
+        _binding: &SponsoredPolicyBinding,
+    ) -> Result<(), TriggerAdmissionError> {
+        Ok(())
+    }
+
+    async fn verify_start_acceptance(
+        &self,
+        _contributor: &SubjectId,
+        _launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        self.start_calls.fetch_add(1, Ordering::SeqCst);
+        Err(TriggerAdmissionError::SponsoredTermsNotAccepted)
+    }
 }
 
 fn sponsored_content(owner: SubjectId) -> TriggerRevisionContent {
@@ -5897,6 +5950,85 @@ async fn sponsored_drafts_require_a_composed_owner_policy_verifier() {
         )
         .await
         .expect("the configured verifier admits the publisher's exact policy binding");
+}
+
+#[tokio::test]
+async fn sponsored_start_refusal_precedes_rollout_and_durable_launch_mutation() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let store = Arc::new(MemoryTriggerStore::default());
+    let admission = Arc::new(CountingAdmission::default());
+    let authority = Arc::new(CountingAuthority::default());
+    let sponsorship = Arc::new(RefusingStartSponsorshipVerifier::default());
+    let preparing = TriggerService::new(store.clone(), store.clone(), authority.clone())
+        .with_launch_admission(admission.clone())
+        .with_sponsorship_verifier(sponsorship.clone());
+    let draft = preparing
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            sponsored_content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = preparing
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let launch = preparing
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "sponsored-review",
+        )
+        .await
+        .unwrap();
+    let launch_calls_before = authority.launch_calls.load(Ordering::SeqCst);
+    let repository_id = published.revision.content.upstream.repository.repository_id;
+    let paused = TriggerService::new(store.clone(), store.clone(), authority.clone())
+        .with_launch_admission(admission.clone())
+        .with_sponsorship_verifier(sponsorship.clone())
+        .with_rollout(Arc::new(
+            TriggerRolloutPolicy::new(true, true, false, [publisher.0], [repository_id], 100)
+                .unwrap(),
+        ));
+
+    let error = paused
+        .start(
+            &contributor,
+            &launch.id,
+            StartLaunchCommand {
+                expected_revision: launch.revision_number,
+                confirmation: confirmation(
+                    ConfirmationAction::Start,
+                    &contributor,
+                    &launch.effective.digest,
+                ),
+                acknowledge_workflow_risk: false,
+                now: LATER.into(),
+                correlation_id: "unaccepted-sponsored-start".into(),
+            },
+        )
+        .await
+        .expect_err("current durable acceptance is mandatory at Start");
+
+    assert!(matches!(
+        error,
+        TriggerServiceError::Admission(TriggerAdmissionError::SponsoredTermsNotAccepted)
+    ));
+    assert_eq!(sponsorship.start_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(admission.start_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        authority.launch_calls.load(Ordering::SeqCst),
+        launch_calls_before
+    );
+    assert_eq!(
+        paused.get_launch(&contributor, &launch.id).await.unwrap(),
+        launch,
+        "acceptance refusal must happen before the rollout pause is persisted"
+    );
 }
 
 #[tokio::test]
@@ -6236,10 +6368,21 @@ async fn assert_expiry_was_fenced(
 }
 
 fn review_admission(launch: &Launch, now: &str) -> LaunchReviewAdmission {
+    let sponsored =
+        launch.revision.content.commercial_policy.billing_mode == BillingMode::Sponsored;
     LaunchReviewAdmission {
         pricing: PricingSnapshot {
-            policy_reference: CMA_TRIGGER_ZERO_COST_POLICY_V1.into(),
-            billing_mode: BillingMode::ZeroCost,
+            policy_reference: if sponsored {
+                CMA_TRIGGER_SPONSORED_POLICY_V1
+            } else {
+                CMA_TRIGGER_ZERO_COST_POLICY_V1
+            }
+            .into(),
+            billing_mode: if sponsored {
+                BillingMode::Sponsored
+            } else {
+                BillingMode::ZeroCost
+            },
             rate_card: None,
             rate: None,
             currency: crate::CURRENCY.into(),

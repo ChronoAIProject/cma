@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use layer3_adapter::{AdapterError, ConversationInput, ConversationInputSender, TerminalOutput};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::SystemTime;
 
 /// A screen model that records what it was fed, so the relay's behaviour
 /// can be observed without a real terminal parser.
@@ -664,8 +665,26 @@ impl crate::SessionWorkspaceSource for LifecycleTriggerWorkspace {
 
 struct TriggerCredential;
 
+fn trigger_credential_authority(session: &SessionId) -> crate::SessionCredentialAuthority {
+    crate::SessionCredentialAuthority {
+        session_id: session.clone(),
+        custody_generation: 1,
+        provider_key_id: "trigger-provider-key-1".into(),
+        provider_state_version: 1,
+        provider_expires_at_epoch_milliseconds: 4_000_000_000_000,
+        grant_fingerprint: "a".repeat(64),
+    }
+}
+
 #[async_trait]
 impl crate::CredentialSource for TriggerCredential {
+    async fn credential_authority(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::SessionCredentialAuthority>, StoreError> {
+        Ok(Some(trigger_credential_authority(session)))
+    }
+
     async fn exact_services_available(
         &self,
         _subject: &SubjectId,
@@ -4282,6 +4301,220 @@ async fn runtime_policy_and_gateway_probe_share_one_handle_and_lifecycle_fence()
     assert_eq!(probes[0].1, request);
     assert_eq!(receipt.policy.generation, 3);
     assert_eq!(receipt.policy.fence, 7);
+}
+
+fn trigger_gateway_probe(
+    fixture: &TriggerPromptFixture,
+) -> layer3_adapter::RuntimeGatewayProbeRequest {
+    let connection = fixture
+        .launch
+        .connection
+        .as_ref()
+        .expect("the Trigger Launch retains its exact connection");
+    layer3_adapter::RuntimeGatewayProbeRequest {
+        version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+        service_id: connection.service_id.clone(),
+        catalog_service_id: connection
+            .github_catalog_service_id
+            .clone()
+            .expect("fresh Trigger authority retains the GitHub catalog route"),
+        user_service_slug: connection
+            .github_user_service_slug
+            .clone()
+            .expect("fresh Trigger authority retains the GitHub user route"),
+        resource_id: fixture
+            .launch
+            .fork
+            .as_ref()
+            .expect("the prompt fixture retains its fork")
+            .repository
+            .repository_id,
+    }
+}
+
+#[tokio::test]
+async fn reach_reconciliation_observes_and_probes_without_reinstalling_policy() {
+    let fixture = trigger_prompt_fixture().await;
+    let reach = fixture
+        .launch
+        .reach
+        .as_ref()
+        .expect("the prompt fixture has completed Reach");
+    let expires_at_epoch_seconds = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(300);
+    *fixture.adapter.runtime_policy_observation.lock().await =
+        Some(layer3_adapter::RuntimePolicyObservation {
+            required: true,
+            supported: true,
+            installed: true,
+            revoked: false,
+            launch_id: Some(fixture.launch.id.0.clone()),
+            generation: Some(reach.policy_generation),
+            fence: Some(reach.policy_fence),
+            expires_at_epoch_seconds: Some(expires_at_epoch_seconds),
+            last_refusal: None,
+        });
+    *fixture.adapter.gateway_probe_receipt.lock().await =
+        Some(layer3_adapter::RuntimeGatewayProbeReceipt {
+            version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+            outcome: layer3_adapter::RuntimeGatewayProbeOutcome::Allowed,
+        });
+
+    let receipt = fixture
+        .service
+        .reconcile_runtime_policy_and_probe_with_credential_authority(
+            &fixture.session.id,
+            trigger_gateway_probe(&fixture),
+            &trigger_credential_authority(&fixture.session.id),
+            &fixture.launch.id.0,
+            reach.policy_generation,
+            reach.policy_fence,
+        )
+        .await
+        .expect("the exact installed policy and restricted probe reconcile");
+
+    assert_eq!(
+        receipt.reachability.runtime_audience,
+        reach.runtime_audience
+    );
+    assert_eq!(
+        receipt.reachability.policy.generation,
+        reach.policy_generation
+    );
+    assert_eq!(receipt.reachability.policy.fence, reach.policy_fence);
+    assert_eq!(receipt.expires_at_epoch_seconds, expires_at_epoch_seconds);
+    assert_eq!(
+        fixture
+            .adapter
+            .runtime_policy_observations
+            .lock()
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(fixture.adapter.gateway_probes.lock().await.len(), 1);
+    assert!(
+        fixture.adapter.runtime_policies.lock().await.is_empty(),
+        "reconciliation must never reinstall the GitHub policy"
+    );
+}
+
+#[tokio::test]
+async fn reach_reconciliation_rejects_policy_or_credential_drift_before_any_write() {
+    let cases = [
+        (Some("another-launch".into()), Some(1), Some(1), None),
+        (None, Some(2), Some(1), None),
+        (None, Some(1), Some(2), None),
+        (None, Some(1), Some(1), Some(1)),
+    ];
+    for (launch_override, generation, fence, expiry_override) in cases {
+        let fixture = trigger_prompt_fixture().await;
+        let reach = fixture.launch.reach.as_ref().unwrap();
+        let live_expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_add(300);
+        *fixture.adapter.runtime_policy_observation.lock().await =
+            Some(layer3_adapter::RuntimePolicyObservation {
+                required: true,
+                supported: true,
+                installed: true,
+                revoked: false,
+                launch_id: Some(launch_override.unwrap_or_else(|| fixture.launch.id.0.clone())),
+                generation,
+                fence,
+                expires_at_epoch_seconds: Some(expiry_override.unwrap_or(live_expiry)),
+                last_refusal: None,
+            });
+        *fixture.adapter.gateway_probe_receipt.lock().await =
+            Some(layer3_adapter::RuntimeGatewayProbeReceipt {
+                version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+                outcome: layer3_adapter::RuntimeGatewayProbeOutcome::Allowed,
+            });
+
+        assert_eq!(
+            fixture
+                .service
+                .reconcile_runtime_policy_and_probe_with_credential_authority(
+                    &fixture.session.id,
+                    trigger_gateway_probe(&fixture),
+                    &trigger_credential_authority(&fixture.session.id),
+                    &fixture.launch.id.0,
+                    reach.policy_generation,
+                    reach.policy_fence,
+                )
+                .await
+                .expect_err("drifted or expired policy evidence fails closed"),
+            crate::RuntimeGatewayReachabilityError::PolicyDenied
+        );
+        assert!(fixture.adapter.gateway_probes.lock().await.is_empty());
+        assert!(fixture.adapter.runtime_policies.lock().await.is_empty());
+    }
+
+    let fixture = trigger_prompt_fixture().await;
+    let reach = fixture.launch.reach.as_ref().unwrap();
+    let mut drifted = trigger_credential_authority(&fixture.session.id);
+    drifted.custody_generation += 1;
+    assert_eq!(
+        fixture
+            .service
+            .reconcile_runtime_policy_and_probe_with_credential_authority(
+                &fixture.session.id,
+                trigger_gateway_probe(&fixture),
+                &drifted,
+                &fixture.launch.id.0,
+                reach.policy_generation,
+                reach.policy_fence,
+            )
+            .await
+            .expect_err("credential drift fails before runtime observation"),
+        crate::RuntimeGatewayReachabilityError::CredentialAuthorityDrift
+    );
+    assert!(fixture
+        .adapter
+        .runtime_policy_observations
+        .lock()
+        .await
+        .is_empty());
+    assert!(fixture.adapter.gateway_probes.lock().await.is_empty());
+    assert!(fixture.adapter.runtime_policies.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn expired_sponsored_model_authority_is_rejected_before_runtime_selection() {
+    let fixture = trigger_prompt_fixture().await;
+    let capability = crate::InertGrantCapability {
+        grant_id: crate::SponsoredGrantId::parse("22222222-2222-4222-8222-222222222222").unwrap(),
+        grant_generation: 1,
+        policy_generation: 1,
+        launch_id: fixture.launch.id.clone(),
+        session_id: fixture.session.id.clone(),
+        expires_at: "1970-01-01T00:00:01Z".into(),
+        fingerprint: "f".repeat(64),
+    };
+    let gateway_origin = layer3_adapter::SponsoredModelGatewayOrigin::parse(
+        "https://sponsored-model-gateway.example",
+    )
+    .unwrap();
+
+    assert_eq!(
+        fixture
+            .service
+            .install_sponsored_model_authority(
+                &fixture.session.id,
+                &trigger_credential_authority(&fixture.session.id),
+                &capability,
+                16,
+                &gateway_origin,
+            )
+            .await
+            .expect_err("an expired capability never reaches the runtime adapter"),
+        crate::SponsoredModelAuthorityError::ScopeMismatch
+    );
 }
 
 #[tokio::test]
