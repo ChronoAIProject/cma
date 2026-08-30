@@ -11,7 +11,8 @@ use std::num::NonZeroU32;
 use axum::http::HeaderValue;
 use ipnet::IpNet;
 use layer2_core::{
-    RequiredCapability, SponsorshipGate, SponsorshipGateFence, TriggerRolloutPolicy,
+    RequiredCapability, SponsoredQuota, SponsorshipGate, SponsorshipGateFence,
+    SponsorshipRuntimeLimits, TriggerRolloutPolicy,
 };
 
 use crate::auth::AuthMode;
@@ -59,8 +60,6 @@ const MAX_SPONSORSHIP_WORKER_INTERVAL_SECONDS: u64 = 300;
 const MAX_SPONSORSHIP_WORKER_MAX_PAGES: usize = 100;
 const MAX_SPONSORSHIP_WORKER_CONCURRENCY: usize = 32;
 const MAX_FILE_SECRET_BYTES: usize = 65_536;
-const SPONSORSHIP_NOT_COMPOSED_ERROR: &str = "CHRONO_SPONSORSHIP_ENABLED=true is not available in this build because sponsorship persistence and provider, billing, and pricing adapters are not composed; keep CHRONO_SPONSORSHIP_ENABLED=false and CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED=true";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TriggerCleanupMode {
     DryRun,
@@ -290,23 +289,6 @@ fn parse_trigger_runtime_capabilities(
     Ok(parsed)
 }
 
-/// Deployment-owned ceilings that every sponsored policy must fit within.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SponsorshipLimitsConfig {
-    pub default_policy_expiry: std::time::Duration,
-    pub maximum_policy_expiry: std::time::Duration,
-    pub maximum_active_policies_per_sponsor: u32,
-    pub launch_rate_window: std::time::Duration,
-    pub maximum_launches_per_sponsor_per_window: u32,
-    pub maximum_per_launch_requests: u64,
-    pub maximum_requests_per_minute: u32,
-    pub maximum_per_launch_input_tokens: u64,
-    pub maximum_per_launch_output_tokens: u64,
-    pub maximum_policy_input_tokens: u64,
-    pub maximum_policy_output_tokens: u64,
-    pub maximum_per_launch_budget_micros: u64,
-}
-
 /// Reviewed identities and HTTPS origins for the three sponsorship ports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SponsorshipAdaptersConfig {
@@ -328,7 +310,6 @@ pub struct SponsorshipWorkerConfig {
 }
 
 /// Secret classes used only by sponsorship persistence and privacy-safe audit.
-#[allow(dead_code)] // Store and audit adapters are intentionally outside issue #671's config slice.
 #[derive(Clone)]
 pub struct SponsorshipSecretsConfig {
     pub encryption_keyring: zeroize::Zeroizing<String>,
@@ -347,18 +328,15 @@ impl std::fmt::Debug for SponsorshipSecretsConfig {
     }
 }
 
-/// Complete disabled sponsorship staging configuration.
+/// Complete sponsorship runtime or disabled staging configuration.
 ///
-/// The ordinary production default is `None`. A `Some` value means an operator
-/// supplied and validated the entire disabled, kill-switched tuple. This build
-/// refuses enabled configuration until its stores and adapters are composed.
-#[allow(dead_code)] // This issue declares the dormant tuple without composing adapters.
+/// The ordinary production default is `None`. A disabled `Some` value means an
+/// operator supplied and validated the entire kill-switched tuple without
+/// constructing its runtime dependencies.
 #[derive(Debug, Clone)]
 pub struct SponsorshipRuntimeConfig {
     pub gate: SponsorshipGate,
     pub fence: SponsorshipGateFence,
-    pub trusted_provider_policy_key: String,
-    pub limits: SponsorshipLimitsConfig,
     pub adapters: SponsorshipAdaptersConfig,
     pub worker: SponsorshipWorkerConfig,
     pub secrets: SponsorshipSecretsConfig,
@@ -376,9 +354,6 @@ impl SponsorshipRuntimeConfig {
             "CHRONO_SPONSORSHIP_ENABLED",
             &lookup_or(&mut lookup, "CHRONO_SPONSORSHIP_ENABLED", "false")?,
         )?;
-        if enabled {
-            return Err(SPONSORSHIP_NOT_COMPOSED_ERROR.into());
-        }
         let kill_switch_engaged = strict_bool(
             "CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED",
             &lookup_or(
@@ -547,10 +522,10 @@ impl SponsorshipRuntimeConfig {
                     .into(),
             );
         }
-        if kill_switch_engaged && !supplied {
+        if !enabled && kill_switch_engaged && !supplied {
             return Ok(None);
         }
-        if !kill_switch_engaged {
+        if !enabled && !kill_switch_engaged {
             return Err(
                 "CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED cannot be false while CHRONO_SPONSORSHIP_ENABLED=false"
                     .into(),
@@ -623,41 +598,6 @@ impl SponsorshipRuntimeConfig {
             MAX_SPONSORSHIP_CONCURRENT_LAUNCHES,
         )?;
 
-        let gate = SponsorshipGate {
-            enabled,
-            expiry_evidence_id: Some(expiry_evidence_id),
-            revocation_evidence_id: Some(revocation_evidence_id),
-            allowed_provider_policy_keys,
-            maximum_policy_budget_micros,
-            maximum_policy_requests,
-            maximum_concurrent_launches,
-            kill_switch_engaged,
-        };
-        let validation_gate = SponsorshipGate {
-            enabled: true,
-            kill_switch_engaged: false,
-            ..gate.clone()
-        };
-        validation_gate.validate().map_err(|error| {
-            format!("the configured CHRONO_SPONSORSHIP deployment gate is invalid: {error}")
-        })?;
-        let expected_digest = gate.configuration_digest().map_err(|error| {
-            format!("the CHRONO_SPONSORSHIP deployment gate cannot be digested: {error}")
-        })?;
-        if configuration_digest != expected_digest {
-            return Err(
-                "CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST does not match the configured sponsorship gate"
-                    .into(),
-            );
-        }
-        let fence = SponsorshipGateFence {
-            configuration_digest,
-            epoch,
-            kill_switch_engaged,
-        };
-        fence.validate().map_err(|error| {
-            format!("the configured CHRONO_SPONSORSHIP fence is invalid: {error}")
-        })?;
         let default_policy_expiry_seconds = parse_bounded_u64(
             "CHRONO_SPONSORSHIP_DEFAULT_POLICY_EXPIRY_SECONDS",
             &required_sponsorship_value(
@@ -802,20 +742,66 @@ impl SponsorshipRuntimeConfig {
                 return Err(format!("{per_launch_key} must not exceed {policy_key}"));
             }
         }
-        let limits = SponsorshipLimitsConfig {
-            default_policy_expiry: std::time::Duration::from_secs(default_policy_expiry_seconds),
-            maximum_policy_expiry: std::time::Duration::from_secs(maximum_policy_expiry_seconds),
+        let runtime_limits = SponsorshipRuntimeLimits {
+            default_policy_expiry_seconds,
+            maximum_policy_expiry_seconds,
             maximum_active_policies_per_sponsor,
-            launch_rate_window: std::time::Duration::from_secs(launch_rate_window_seconds),
+            launch_rate_window_seconds,
             maximum_launches_per_sponsor_per_window,
-            maximum_per_launch_requests,
+            maximum_per_launch_quota: SponsoredQuota {
+                requests: maximum_per_launch_requests,
+                input_tokens: maximum_per_launch_input_tokens,
+                output_tokens: maximum_per_launch_output_tokens,
+            },
+            maximum_policy_quota: SponsoredQuota {
+                requests: maximum_policy_requests,
+                input_tokens: maximum_policy_input_tokens,
+                output_tokens: maximum_policy_output_tokens,
+            },
             maximum_requests_per_minute,
-            maximum_per_launch_input_tokens,
-            maximum_per_launch_output_tokens,
-            maximum_policy_input_tokens,
-            maximum_policy_output_tokens,
             maximum_per_launch_budget_micros,
+            maximum_policy_budget_micros,
+            maximum_concurrent_launches,
         };
+        runtime_limits.validate().map_err(|error| {
+            format!("the configured CHRONO_SPONSORSHIP runtime limits are invalid: {error}")
+        })?;
+        let gate = SponsorshipGate {
+            enabled,
+            expiry_evidence_id: Some(expiry_evidence_id),
+            revocation_evidence_id: Some(revocation_evidence_id),
+            trusted_provider_policy_key: trusted_provider_policy_key.clone(),
+            allowed_provider_policy_keys,
+            runtime_limits: runtime_limits.clone(),
+            kill_switch_engaged,
+        };
+        let validation_gate = SponsorshipGate {
+            enabled: true,
+            kill_switch_engaged: false,
+            ..gate.clone()
+        };
+        validation_gate.validate().map_err(|error| {
+            format!("the configured CHRONO_SPONSORSHIP deployment gate is invalid: {error}")
+        })?;
+        let expected_digest = gate.configuration_digest().map_err(|error| {
+            format!("the CHRONO_SPONSORSHIP deployment gate cannot be digested: {error}")
+        })?;
+        if configuration_digest != expected_digest {
+            return Err(
+                "CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST does not match the configured sponsorship gate"
+                    .into(),
+            );
+        }
+        let fence = SponsorshipGateFence {
+            configuration_digest,
+            epoch,
+            kill_switch_engaged,
+            trusted_provider_policy_key,
+            runtime_limits,
+        };
+        fence.validate().map_err(|error| {
+            format!("the configured CHRONO_SPONSORSHIP fence is invalid: {error}")
+        })?;
 
         let adapters = SponsorshipAdaptersConfig {
             provider_adapter_id: parse_sponsorship_policy_token(
@@ -1005,8 +991,6 @@ impl SponsorshipRuntimeConfig {
         Ok(Some(Self {
             gate,
             fence,
-            trusted_provider_policy_key,
-            limits,
             adapters,
             worker,
             secrets,
@@ -1403,8 +1387,6 @@ pub struct Config {
     /// GitHub Trigger rollout and bounded worker controls.
     pub trigger: TriggerRuntimeConfig,
     /// Complete sponsorship controls, absent in the dormant deployment.
-    #[allow(dead_code)]
-    // Sponsorship has no runtime composition until its evidence gates land.
     pub sponsorship: Option<SponsorshipRuntimeConfig>,
     /// Current Ed25519 signer for short-lived runtime policies, when enabled.
     pub github_capability_signing: Option<GithubCapabilitySigningConfig>,
@@ -1747,6 +1729,29 @@ impl Config {
             AuthMode::Provider { .. } => "provider",
             AuthMode::Trusted { .. } => "trusted",
         }
+    }
+
+    /// Resolve the one origin installed into sponsored runtimes.
+    ///
+    /// Dormant and fully staged disabled deployments retain the ordinary HTTP
+    /// localhost development default. Enabled composition must call this
+    /// before constructing persistence, adapters, workers, or the gateway.
+    pub(crate) fn sponsorship_gateway_origin(
+        &self,
+    ) -> Result<Option<layer3_adapter::SponsoredModelGatewayOrigin>, String> {
+        let enabled = self
+            .sponsorship
+            .as_ref()
+            .is_some_and(|runtime| runtime.gate.enabled);
+        if !enabled {
+            return Ok(None);
+        }
+        layer3_adapter::SponsoredModelGatewayOrigin::parse(self.public_url.clone())
+            .map(Some)
+            .map_err(|_| {
+                "CHRONO_SERVER_PUBLIC_URL must be one exact canonical HTTPS origin when CHRONO_SPONSORSHIP_ENABLED=true"
+                    .to_string()
+            })
     }
 }
 
@@ -2324,10 +2329,29 @@ mod tests {
             enabled,
             expiry_evidence_id: Some("expiry-evidence-445".into()),
             revocation_evidence_id: Some("revocation-evidence-524-528".into()),
+            trusted_provider_policy_key: "provider-policy-v1".into(),
             allowed_provider_policy_keys,
-            maximum_policy_budget_micros: 1_000_000,
-            maximum_policy_requests: 500,
-            maximum_concurrent_launches: 10,
+            runtime_limits: SponsorshipRuntimeLimits {
+                default_policy_expiry_seconds: 900,
+                maximum_policy_expiry_seconds: 3_600,
+                maximum_active_policies_per_sponsor: 10,
+                launch_rate_window_seconds: 60,
+                maximum_launches_per_sponsor_per_window: 20,
+                maximum_per_launch_quota: SponsoredQuota {
+                    requests: 100,
+                    input_tokens: 100_000,
+                    output_tokens: 50_000,
+                },
+                maximum_policy_quota: SponsoredQuota {
+                    requests: 500,
+                    input_tokens: 500_000,
+                    output_tokens: 500_000,
+                },
+                maximum_requests_per_minute: 60,
+                maximum_per_launch_budget_micros: 100_000,
+                maximum_policy_budget_micros: 1_000_000,
+                maximum_concurrent_launches: 10,
+            },
             kill_switch_engaged,
         };
         BTreeMap::from([
@@ -2485,7 +2509,90 @@ mod tests {
     }
 
     #[test]
-    fn a_complete_tuple_can_be_staged_closed_but_never_enabled_in_this_build() {
+    fn disabled_sponsorship_does_not_construct_or_validate_a_gateway_origin() {
+        let absent = Config {
+            public_url: "http://localhost:8080".into(),
+            ..Config::sample()
+        };
+        assert!(absent
+            .sponsorship_gateway_origin()
+            .expect("the dormant HTTP development origin remains usable")
+            .is_none());
+
+        let files = SponsorshipSecretFiles::new();
+        let staged = sponsorship_config(&complete_sponsorship_values(&files, false, true))
+            .expect("the complete disabled tuple is valid")
+            .expect("the disabled tuple remains explicitly staged");
+        let staged = Config {
+            public_url: "http://localhost:8080".into(),
+            sponsorship: Some(staged),
+            ..Config::sample()
+        };
+        assert!(staged
+            .sponsorship_gateway_origin()
+            .expect("disabled staging does not activate gateway-origin policy")
+            .is_none());
+    }
+
+    #[test]
+    fn enabled_sponsorship_requires_the_exact_public_https_origin() {
+        let files = SponsorshipSecretFiles::new();
+        for kill_switch_engaged in [false, true] {
+            let sponsorship = sponsorship_config(&complete_sponsorship_values(
+                &files,
+                true,
+                kill_switch_engaged,
+            ))
+            .expect("the complete enabled tuple is valid")
+            .expect("enabled sponsorship has runtime configuration");
+            let config = Config {
+                public_url: "https://cma.example:8443".into(),
+                sponsorship: Some(sponsorship),
+                ..Config::sample()
+            };
+            let origin = config
+                .sponsorship_gateway_origin()
+                .expect("the exact HTTPS origin is valid")
+                .expect("enabled sponsorship constructs a gateway origin");
+            assert_eq!(origin.as_str(), "https://cma.example:8443");
+        }
+    }
+
+    #[test]
+    fn enabled_sponsorship_rejects_insecure_or_noncanonical_public_origins() {
+        let files = SponsorshipSecretFiles::new();
+        let sponsorship = sponsorship_config(&complete_sponsorship_values(&files, true, false))
+            .expect("the complete enabled tuple is valid")
+            .expect("enabled sponsorship has runtime configuration");
+        for public_url in [
+            "http://localhost:8080",
+            "https://CMA.example",
+            "https://cma.example:443",
+            "https://cma.example/",
+            "https://user@cma.example",
+            "https://cma.example/gateway",
+            "https://cma.example?tenant=other",
+            "https://cma.example#fragment",
+        ] {
+            let config = Config {
+                public_url: public_url.into(),
+                sponsorship: Some(sponsorship.clone()),
+                ..Config::sample()
+            };
+            let error = config
+                .sponsorship_gateway_origin()
+                .expect_err("enabled sponsorship must reject an unusable public origin");
+            assert!(error.contains("CHRONO_SERVER_PUBLIC_URL"), "{error}");
+            assert!(error.contains("canonical HTTPS origin"), "{error}");
+            assert!(
+                !error.contains(public_url),
+                "the error vocabulary stays fixed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_complete_tuple_can_be_staged_closed_or_enabled() {
         let files = SponsorshipSecretFiles::new();
         let staged = sponsorship_config(&complete_sponsorship_values(&files, false, true))
             .expect("the complete closed tuple is valid staging")
@@ -2493,40 +2600,48 @@ mod tests {
         assert!(!staged.gate.enabled);
         assert!(staged.gate.kill_switch_engaged);
         assert!(staged.fence.kill_switch_engaged);
-        assert_eq!(staged.trusted_provider_policy_key, "provider-policy-v1");
-        assert_eq!(staged.limits.default_policy_expiry.as_secs(), 900);
-        assert_eq!(staged.limits.maximum_requests_per_minute, 60);
+        assert_eq!(
+            staged.gate.trusted_provider_policy_key,
+            "provider-policy-v1"
+        );
+        assert_eq!(
+            staged.gate.runtime_limits.default_policy_expiry_seconds,
+            900
+        );
+        assert_eq!(staged.gate.runtime_limits.maximum_requests_per_minute, 60);
+        assert_eq!(staged.fence.runtime_limits, staged.gate.runtime_limits);
         assert_eq!(staged.adapters.provider_adapter_id, "provider-adapter-v1");
         assert_eq!(staged.worker.page_size, 50);
 
-        for values in [
-            BTreeMap::from([("CHRONO_SPONSORSHIP_ENABLED".into(), "true".into())]),
-            complete_sponsorship_values(&files, true, false),
-            complete_sponsorship_values(&files, true, true),
-        ] {
-            assert_eq!(
-                sponsorship_config(&values).expect_err(
-                    "enabled sponsorship must fail until runtime composition is implemented"
-                ),
-                SPONSORSHIP_NOT_COMPOSED_ERROR
-            );
+        for kill_switch_engaged in [false, true] {
+            let enabled = sponsorship_config(&complete_sponsorship_values(
+                &files,
+                true,
+                kill_switch_engaged,
+            ))
+            .expect("the complete enabled tuple is valid")
+            .expect("enabled sponsorship has runtime configuration");
+            assert!(enabled.gate.enabled);
+            assert_eq!(enabled.gate.kill_switch_engaged, kill_switch_engaged);
+            assert_eq!(enabled.fence.kill_switch_engaged, kill_switch_engaged);
         }
     }
 
     #[test]
     fn enabled_and_partially_staged_disabled_tuples_fail_startup() {
         let files = SponsorshipSecretFiles::new();
-        let incomplete = BTreeMap::from([
-            ("CHRONO_SPONSORSHIP_ENABLED".into(), "true".into()),
-            (
-                "CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED".into(),
-                "false".into(),
-            ),
-        ]);
-        assert_eq!(
-            sponsorship_config(&incomplete).expect_err("enabled configuration is unavailable"),
-            SPONSORSHIP_NOT_COMPOSED_ERROR
-        );
+        for kill_switch_engaged in ["false", "true"] {
+            let incomplete = BTreeMap::from([
+                ("CHRONO_SPONSORSHIP_ENABLED".into(), "true".into()),
+                (
+                    "CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED".into(),
+                    kill_switch_engaged.into(),
+                ),
+            ]);
+            let error = sponsorship_config(&incomplete)
+                .expect_err("an incomplete enabled tuple must fail startup");
+            assert!(error.contains("CHRONO_SPONSORSHIP_EPOCH"), "{error}");
+        }
 
         let complete = complete_sponsorship_values(&files, false, true);
         for missing in SPONSORSHIP_REQUIRED_CONFIG_KEYS {

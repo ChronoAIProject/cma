@@ -156,7 +156,8 @@ impl TriggerSessionOrigin {
             255,
         )?;
         match self.billing_mode {
-            crate::BillingMode::ZeroCost if self.pricing.is_none() => {}
+            crate::BillingMode::ZeroCost | crate::BillingMode::Sponsored
+                if self.pricing.is_none() => {}
             crate::BillingMode::Contributor if self.pricing.is_some() => {}
             _ => {
                 return Err(crate::TriggerValidationError::field(

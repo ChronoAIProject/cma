@@ -16,6 +16,29 @@ impl SponsorshipService {
         caller: &Caller,
         command: RequestSponsoredUsage,
     ) -> Result<SponsoredUsageReservationOutcome, SponsorshipError> {
+        self.reserve_usage_inner(caller, command, None).await
+    }
+
+    /// Reserve one model request while binding its durable replay identity to
+    /// the canonical request digest. This remains crate-private because the
+    /// generic public usage command deliberately does not carry model payloads.
+    pub(crate) async fn reserve_model_usage(
+        &self,
+        caller: &Caller,
+        command: RequestSponsoredUsage,
+        model_dispatch: SponsoredModelDispatchPayload,
+    ) -> Result<SponsoredUsageReservationOutcome, SponsorshipError> {
+        model_dispatch.validate()?;
+        self.reserve_usage_inner(caller, command, Some(model_dispatch))
+            .await
+    }
+
+    async fn reserve_usage_inner(
+        &self,
+        caller: &Caller,
+        command: RequestSponsoredUsage,
+        model_dispatch: Option<SponsoredModelDispatchPayload>,
+    ) -> Result<SponsoredUsageReservationOutcome, SponsorshipError> {
         require_contributor_capability(caller)?;
         validate_stable_request_id(&command.stable_request_id)?;
         validate_policy_token("usage.provider", &command.provider)?;
@@ -28,7 +51,14 @@ impl SponsorshipService {
             )
             .into());
         }
-        let idempotency_fingerprint = usage_idempotency_fingerprint(&caller.subject, &command)?;
+        let idempotency_fingerprint = match model_dispatch.as_ref() {
+            Some(model_dispatch) => model_usage_idempotency_fingerprint(
+                &caller.subject,
+                &command,
+                model_dispatch.request_digest(),
+            )?,
+            None => usage_idempotency_fingerprint(&caller.subject, &command)?,
+        };
         let request_identity = self.operational.pseudonymize(
             SponsorshipOperationalDomain::UsageRequest,
             &[
@@ -89,6 +119,8 @@ impl SponsorshipService {
             )
         })?;
         require_stored_grant_policy_bindings(&grant, &policy)?;
+        self.gate
+            .require_trusted_provider_policy_key(&policy.provider_policy.provider_policy_key)?;
         let stored_credential = self
             .store
             .credential_record(&policy.credential_id)
@@ -175,6 +207,7 @@ impl SponsorshipService {
                     gate_fence,
                     policy_generation: policy.generation,
                     credential_generation: grant.credential_generation,
+                    model_dispatch,
                     now,
                 },
                 audit,
@@ -182,10 +215,112 @@ impl SponsorshipService {
             .await?)
     }
 
+    /// Cross the provider-dispatch boundary under one durable, database-time
+    /// claim. Reading or reconciling a prior provider operation deliberately
+    /// does not require this admission; the first execution and every
+    /// authoritative `NotFound` retry do.
+    pub(crate) async fn claim_model_usage_dispatch(
+        &self,
+        capability: &InertGrantCapability,
+        reservation: &SponsoredUsageReservation,
+    ) -> Result<SponsoredUsageReservation, SponsorshipError> {
+        capability.validate()?;
+        reservation.validate()?;
+        if capability.grant_id != reservation.grant_id
+            || !matches!(
+                reservation.state,
+                SponsoredUsageState::Reserved
+                    | SponsoredUsageState::Attempting
+                    | SponsoredUsageState::Ambiguous
+            )
+        {
+            return Err(SponsorshipStoreError::Conflict.into());
+        }
+        let gate_fence = self.require_enabled().await?;
+        let grant = self
+            .store
+            .grant(&reservation.grant_id)
+            .await?
+            .ok_or(SponsorshipError::GrantUnavailable)?;
+        if grant.capability != *capability {
+            return Err(SponsorshipError::GrantUnavailable);
+        }
+        let holder = uuid::Uuid::new_v4().to_string();
+        let expected_revision = reservation.dispatch_revision;
+        let audit_time = monotonic_record_time(&reservation.updated_at, &self.clock.now());
+        let audit = SponsoredAuditEvent::privacy_safe(
+            &self.audit,
+            SponsoredAuditAction::UsageDispatchClaimed,
+            &grant.contributor,
+            SponsoredAuditTarget::Grant {
+                policy_id: grant.policy_id.clone(),
+                grant_id: grant.id.clone(),
+            },
+            Some(&reservation.id.0),
+            "attempting",
+            audit_time,
+        );
+        let claim = self
+            .store
+            .claim_usage_dispatch(ClaimSponsoredUsageDispatch {
+                reservation_id: reservation.id.clone(),
+                request_fingerprint: reservation.request_fingerprint.clone(),
+                expected_state: reservation.state,
+                expected_dispatch_revision: expected_revision,
+                capability: capability.clone(),
+                gate_fence,
+                holder: holder.clone(),
+                audit,
+            })
+            .await?;
+        claim.reservation.validate()?;
+        if !claim.acquired {
+            return Err(SponsorshipError::ProviderOperationInProgress);
+        }
+        if claim.reservation.id != reservation.id
+            || claim.reservation.request_fingerprint != reservation.request_fingerprint
+            || claim.reservation.grant_id != reservation.grant_id
+            || claim.reservation.state != SponsoredUsageState::Attempting
+            || claim.reservation.dispatch_revision != expected_revision.saturating_add(1)
+            || claim
+                .reservation
+                .dispatch_lease
+                .as_ref()
+                .is_none_or(|lease| lease.holder != holder)
+        {
+            return Err(SponsorshipStoreError::Malformed(
+                "usage dispatch claim does not match its durable reservation".into(),
+            )
+            .into());
+        }
+        Ok(claim.reservation)
+    }
+
     pub async fn reconcile_usage(
         &self,
         caller: &Caller,
         report: ReportSponsoredUsage,
+    ) -> Result<SponsoredUsageReservation, SponsorshipError> {
+        self.reconcile_usage_inner(caller, report, None, None).await
+    }
+
+    pub(crate) async fn reconcile_model_usage(
+        &self,
+        caller: &Caller,
+        report: ReportSponsoredUsage,
+        dispatch_fence: Option<SponsoredUsageReconciliationFence>,
+        model_response: Option<SponsoredModelResponsePayload>,
+    ) -> Result<SponsoredUsageReservation, SponsorshipError> {
+        self.reconcile_usage_inner(caller, report, dispatch_fence, model_response)
+            .await
+    }
+
+    async fn reconcile_usage_inner(
+        &self,
+        caller: &Caller,
+        report: ReportSponsoredUsage,
+        dispatch_fence: Option<SponsoredUsageReconciliationFence>,
+        model_response: Option<SponsoredModelResponsePayload>,
     ) -> Result<SponsoredUsageReservation, SponsorshipError> {
         caller
             .authorization
@@ -202,6 +337,53 @@ impl SponsorshipService {
         if reservation.request_fingerprint != report.request_fingerprint {
             return Err(SponsorshipStoreError::Conflict.into());
         }
+        if let Some(response) = model_response.as_ref() {
+            response.validate()?;
+            if report.outcome != SponsoredUsageState::Settled
+                || report.actual_quota != Some(response.actual_quota())
+            {
+                return Err(SponsorshipStoreError::Conflict.into());
+            }
+        }
+        if dispatch_fence.is_some()
+            && report.outcome == SponsoredUsageState::Settled
+            && model_response.is_none()
+        {
+            return Err(SponsorshipStoreError::Conflict.into());
+        }
+        if report.outcome != SponsoredUsageState::Settled && model_response.is_some() {
+            return Err(SponsorshipStoreError::Conflict.into());
+        }
+        match dispatch_fence.as_ref() {
+            Some(SponsoredUsageReconciliationFence::DispatchClaim { revision, holder }) => {
+                if *revision == 0
+                    || uuid::Uuid::parse_str(holder)
+                        .ok()
+                        .is_none_or(|parsed| parsed.to_string() != *holder)
+                {
+                    return Err(SponsorshipStoreError::Conflict.into());
+                }
+            }
+            Some(SponsoredUsageReconciliationFence::ProviderObservation { state, .. }) => {
+                if !matches!(
+                    state,
+                    SponsoredUsageState::Reserved
+                        | SponsoredUsageState::Attempting
+                        | SponsoredUsageState::Ambiguous
+                ) || !matches!(
+                    report.outcome,
+                    SponsoredUsageState::Settled | SponsoredUsageState::Released
+                ) {
+                    return Err(SponsorshipStoreError::Conflict.into());
+                }
+            }
+            Some(SponsoredUsageReconciliationFence::NeverDispatched)
+                if report.outcome != SponsoredUsageState::Released =>
+            {
+                return Err(SponsorshipStoreError::Conflict.into());
+            }
+            Some(SponsoredUsageReconciliationFence::NeverDispatched) | None => {}
+        }
         let terminal_replay_matches = match reservation.state {
             SponsoredUsageState::Settled => {
                 report.outcome == SponsoredUsageState::Settled
@@ -210,17 +392,32 @@ impl SponsorshipService {
             SponsoredUsageState::Released => {
                 report.outcome == SponsoredUsageState::Released && report.actual_quota.is_none()
             }
-            SponsoredUsageState::Reserved | SponsoredUsageState::Ambiguous => false,
+            SponsoredUsageState::Reserved
+            | SponsoredUsageState::Attempting
+            | SponsoredUsageState::Ambiguous => false,
         };
         if matches!(
             reservation.state,
             SponsoredUsageState::Settled | SponsoredUsageState::Released
         ) {
-            return if terminal_replay_matches {
-                Ok(reservation)
-            } else {
-                Err(SponsorshipStoreError::Conflict.into())
-            };
+            if !terminal_replay_matches {
+                return Err(SponsorshipStoreError::Conflict.into());
+            }
+            if let Some(candidate) = model_response.as_ref() {
+                let stored = self
+                    .store
+                    .model_usage_settled_response(&reservation.id)
+                    .await?
+                    .ok_or_else(|| {
+                        SponsorshipStoreError::Malformed(
+                            "settled model reservation has no response custody".into(),
+                        )
+                    })?;
+                if &stored != candidate {
+                    return Err(SponsorshipStoreError::Conflict.into());
+                }
+            }
+            return Ok(reservation);
         }
         let now = self.clock.now();
         validate_timestamp("now", &now)?;
@@ -260,10 +457,10 @@ impl SponsorshipService {
                 }
                 None
             }
-            SponsoredUsageState::Reserved => {
+            SponsoredUsageState::Reserved | SponsoredUsageState::Attempting => {
                 return Err(TriggerValidationError::field(
                     "usage.outcome",
-                    "reconciliation cannot return a reservation to reserved",
+                    "reconciliation cannot return a reservation to a dispatch state",
                 )
                 .into())
             }
@@ -280,6 +477,8 @@ impl SponsorshipService {
             actual,
             outcome: report.outcome,
             observed_at: transition_time.clone(),
+            dispatch_fence,
+            model_response,
         };
         let audit = SponsoredAuditEvent::privacy_safe(
             &self.audit,
@@ -291,7 +490,7 @@ impl SponsorshipService {
                 SponsoredUsageState::Settled => "settled",
                 SponsoredUsageState::Released => "released",
                 SponsoredUsageState::Ambiguous => "ambiguous",
-                SponsoredUsageState::Reserved => unreachable!(),
+                SponsoredUsageState::Reserved | SponsoredUsageState::Attempting => unreachable!(),
             },
             transition_time,
         );
