@@ -16,6 +16,7 @@ const BRANCH_NAME = `cma/${DRAFT.id}`;
 const COMMAND_DATABASE_NAME = 'cma-trigger-command-ledger';
 const COMMAND_DATABASE_STORE = 'owner-envelopes';
 const COMMAND_STORAGE_PREFIX = 'cma:trigger-command-ledger:v1:';
+const START_OVERLAP_TIMEOUT_MS = 5_000;
 
 const FORK_REPOSITORY = {
   ...DRAFT.revision_content.upstream.repository,
@@ -133,6 +134,10 @@ function openPullRequest() {
 }
 
 function browserState() {
+  let observeCompetingStart;
+  const competingStartObserved = new Promise((resolve) => {
+    observeCompetingStart = resolve;
+  });
   return {
     authenticated: false,
     launch: DRAFT,
@@ -146,6 +151,11 @@ function browserState() {
     },
     startRequests: [],
     startTransitions: 0,
+    startOverlap: {
+      waiting: false,
+      observed: competingStartObserved,
+      observe: observeCompetingStart,
+    },
     captureWrites: 0,
     publicationWrites: 0,
     proposalReads: 0,
@@ -219,6 +229,14 @@ async function stub(page, state) {
       const method = request.method();
       const launchPath = `/api/v1/launches/${DRAFT.id}`;
 
+      if (
+        state.startOverlap.waiting &&
+        ((path === `${launchPath}/start` && method === 'POST') ||
+          (path === launchPath && method === 'GET'))
+      ) {
+        state.startOverlap.observe();
+      }
+
       if (path === '/auth/session') {
         if (!state.authenticated) return respond(request, { authenticated: false }, 401);
         return respond(request, {
@@ -257,6 +275,14 @@ async function stub(page, state) {
         if (state.launch.state === 'draft') {
           state.startTransitions += 1;
           state.launch = progressingLaunch();
+        }
+        if (state.startRequests.length === 1) {
+          // The in-process fake can otherwise complete before Chromium schedules
+          // the second tab. Keep the winning request active until that tab either
+          // reaches the endpoint or observes the stored lease and reconciles.
+          state.startOverlap.waiting = true;
+          await Promise.race([state.startOverlap.observed, settle(START_OVERLAP_TIMEOUT_MS)]);
+          state.startOverlap.waiting = false;
         }
         return respond(request, state.launch, 202);
       }
@@ -646,7 +672,7 @@ async function main() {
     await page.bringToFront();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await textAppears(page, 'Open CMA session');
-    await settle(700);
+    await waitForBoundedLayout(page);
     await screenshot(page, 'ready-debug');
     await assertLayout(page, 'resumed ready Launch');
     if (!(await exactControl(page, 'a', 'Review contribution'))) {
