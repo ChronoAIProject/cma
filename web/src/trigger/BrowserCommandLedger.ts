@@ -17,6 +17,8 @@ export interface BrowserCommandIntent<TRequest = unknown> {
   readonly action: string;
   /** The exact request fields used to produce the public SDK call. */
   readonly request: TRequest;
+  /** Reuse an exact completed command key when this resource action is one-shot. */
+  readonly replayCompleted?: boolean;
   /**
    * Store the request only when it contains no credential or private prompt.
    * Otherwise only its SHA-256 fingerprint is durable.
@@ -658,10 +660,21 @@ export class BrowserCommandLedger {
       let available = commands;
       let sameResource = commands.find((command) => command.resource === prepared.intent.resource);
       if (sameResource?.completedAt !== undefined) {
-        // Completion settles the old user intent. Only a still-pending command
-        // may lend its key to a retry; an identical later action is a new intent.
-        available = commands.filter((item) => item.key !== sameResource?.key);
-        sameResource = undefined;
+        const replaysExactCompletedCommand =
+          prepared.intent.replayCompleted === true &&
+          sameResource.slot === prepared.intent.slot &&
+          sameResource.action === prepared.intent.action &&
+          sameResource.fingerprint === prepared.fingerprint;
+        if (replaysExactCompletedCommand) {
+          // One-shot commands such as Start must converge even when another
+          // tab reaches the ledger just after the winning response completed.
+          sameResource = { ...sameResource, completedAt: undefined };
+        } else {
+          // Completion settles the old user intent. Repeatable actions allocate
+          // a fresh key unless their caller explicitly opts into exact replay.
+          available = commands.filter((item) => item.key !== sameResource?.key);
+          sameResource = undefined;
+        }
       }
       let command: StoredCommand;
       if (sameResource === undefined) {
