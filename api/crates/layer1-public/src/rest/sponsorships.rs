@@ -237,6 +237,8 @@ impl From<QuotaRequest> for SponsoredQuota {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct CreatePolicyRequest {
+    /// Caller-stable identity. Reusing it with a changed body is rejected.
+    stable_request_id: String,
     tenant_id: String,
     owner: BillingOwnerRequest,
     credential_id: String,
@@ -250,7 +252,8 @@ struct CreatePolicyRequest {
     aggregate_budget_micros: u64,
     max_requests_per_minute: u32,
     max_concurrent_launches: u32,
-    expires_at: String,
+    /// Optional absolute expiry; omission uses the deployment policy default.
+    expires_at: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -933,6 +936,7 @@ async fn create_policy(
 ) -> Result<Response, SponsorshipRequestFailure> {
     let SponsorshipJson(body) = body?;
     let CreatePolicyRequest {
+        stable_request_id,
         tenant_id,
         owner,
         credential_id,
@@ -954,6 +958,7 @@ async fn create_policy(
         .create_policy(
             &caller,
             CreateSponsorshipPolicy {
+                stable_request_id,
                 tenant_id,
                 owner,
                 credential_id: parse_credential_id(credential_id)?,
@@ -1631,7 +1636,7 @@ impl IntoResponse for SponsorshipProblem {
                 "Sponsored state is temporarily unavailable.",
                 None,
             ),
-            SponsorshipError::Store(Store::RateExceeded) => (
+            SponsorshipError::Store(Store::RateExceeded | Store::SponsorLaunchRateExceeded) => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "sponsorship-rate-exhausted",
                 "sponsorship_rate_exhausted",
@@ -1649,6 +1654,7 @@ impl IntoResponse for SponsorshipProblem {
                 | Store::AggregateQuotaExceeded
                 | Store::LaunchBudgetExceeded
                 | Store::AggregateBudgetExceeded
+                | Store::ActivePolicyLimit
                 | Store::ConcurrentLaunchLimit,
             ) => (
                 StatusCode::CONFLICT,

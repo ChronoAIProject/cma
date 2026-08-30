@@ -24,6 +24,7 @@ fn conversation() -> RuntimeSpec {
         skills: Vec::new(),
         reaches: Vec::new(),
         runtime_policy_required: false,
+        sponsored_model_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),

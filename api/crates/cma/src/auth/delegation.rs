@@ -1,11 +1,13 @@
 //! Durable custody for the credential one session presents.
 
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::store::StoreError;
 use layer2_core::{CallerCredential, CredentialDeliveryTarget, ServiceId, SessionId, SubjectId};
+use layer3_adapter::RuntimeCredential;
 use sha2::{Digest, Sha256};
 
 use super::persistence::{
@@ -28,6 +30,14 @@ fn credential_is_deliverable(credential: &DurableCredential, replace_before: Sys
     credential
         .expires_at
         .is_none_or(|expires_at| expires_at > replace_before)
+}
+
+fn runtime_credential(credential: &DurableCredential) -> RuntimeCredential {
+    let value = credential.value.expose().to_owned();
+    match NonZeroU64::new(credential.custody_generation) {
+        Some(generation) => RuntimeCredential::with_custody_generation(value, generation),
+        None => RuntimeCredential::new(value),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -401,7 +411,7 @@ async fn commit_mint(
     credential: DurableCredential,
     replacement: bool,
     budget: Option<&AuthOperationBudget>,
-) -> Result<Option<String>, StoreError> {
+) -> Result<Option<RuntimeCredential>, StoreError> {
     loop {
         take_operation(budget, 1, "mint commit custody read")?;
         let Some(mut current) = store.credential(session).await? else {
@@ -417,11 +427,11 @@ async fn commit_mint(
             return Ok(None);
         }
 
-        let value = credential.value.expose().to_string();
         let before = current.clone();
         let custody_generation = next_generation(before.generation)?;
         let mut committed = credential.clone();
         committed.custody_generation = custody_generation;
+        let delivery = runtime_credential(&committed);
         current.lease = None;
         if replacement {
             if let Some(displaced) = current.pending.take() {
@@ -440,7 +450,7 @@ async fn commit_mint(
         }
 
         if replace_state(store, &before, current, budget).await? {
-            return Ok(Some(value));
+            return Ok(Some(delivery));
         }
     }
 }
@@ -459,7 +469,7 @@ async fn finish_mint(
     fence: u64,
     replacement: bool,
     budget: Option<AuthOperationBudget>,
-) -> Result<Option<String>, StoreError> {
+) -> Result<Option<RuntimeCredential>, StoreError> {
     take_operation(
         budget.as_ref(),
         2,
@@ -976,16 +986,18 @@ impl AuthState {
         services: &[ServiceId],
         replacement: bool,
     ) -> Result<Option<String>, StoreError> {
-        self.mint_session_credential_inner(
-            session,
-            subject,
-            services,
-            None,
-            replacement,
-            credential_replace_before(),
-            None,
-        )
-        .await
+        Ok(self
+            .mint_session_credential_inner(
+                session,
+                subject,
+                services,
+                None,
+                replacement,
+                credential_replace_before(),
+                None,
+            )
+            .await?
+            .map(RuntimeCredential::into_value))
     }
 
     async fn mint_session_credential_for_request(
@@ -995,16 +1007,18 @@ impl AuthState {
         services: &[ServiceId],
         caller_credential: Option<&CallerCredential>,
     ) -> Result<Option<String>, StoreError> {
-        self.mint_session_credential_inner(
-            session,
-            subject,
-            services,
-            caller_credential,
-            false,
-            credential_replace_before(),
-            None,
-        )
-        .await
+        Ok(self
+            .mint_session_credential_inner(
+                session,
+                subject,
+                services,
+                caller_credential,
+                false,
+                credential_replace_before(),
+                None,
+            )
+            .await?
+            .map(RuntimeCredential::into_value))
     }
 
     pub(super) async fn mint_session_credential_with_budget(
@@ -1015,7 +1029,7 @@ impl AuthState {
         replacement: bool,
         replace_before: SystemTime,
         budget: AuthOperationBudget,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<RuntimeCredential>, StoreError> {
         self.mint_session_credential_inner(
             session,
             subject,
@@ -1038,7 +1052,7 @@ impl AuthState {
         replacement: bool,
         replace_before: SystemTime,
         budget: Option<AuthOperationBudget>,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<RuntimeCredential>, StoreError> {
         let fingerprint = scope_fingerprint(services);
         let mut replacement = replacement;
         let Some(issuer) = self.issuer.read().await.clone() else {
@@ -1074,7 +1088,7 @@ impl AuthState {
                     } else {
                         credential_is_deliverable(effective, replace_before)
                     };
-                    return Ok(selected.then(|| effective.value.expose().to_owned()));
+                    return Ok(selected.then(|| runtime_credential(effective)));
                 }
                 if let Some(held) = current.current.as_ref() {
                     validate_credential_grant(held, subject, &fingerprint)?;
@@ -1083,7 +1097,7 @@ impl AuthState {
                         // replacement. A recorded pending value is handled above.
                         return Ok(None);
                     }
-                    return Ok(Some(held.value.expose().to_owned()));
+                    return Ok(Some(runtime_credential(held)));
                 }
                 if replacement {
                     return Ok(None);
@@ -1095,22 +1109,25 @@ impl AuthState {
                     return Ok(None);
                 }
                 if let Some(credential) = current.request_bound_credential {
-                    return Ok(Some(credential.into_inner()));
+                    return Ok(Some(RuntimeCredential::new(credential.into_inner())));
                 }
                 if let Some(credential) = caller_credential {
                     if !credential.is_request_bound() {
-                        return Ok(Some(credential.as_ref().to_owned()));
+                        return Ok(Some(RuntimeCredential::new(credential.as_ref().to_owned())));
                     }
                     let mut next = current.clone();
                     next.request_bound_credential =
                         Some(SecretValue::new(credential.as_ref().to_owned()));
                     if replace_state(&self.store, &current, next, budget.as_ref()).await? {
-                        return Ok(Some(credential.as_ref().to_owned()));
+                        return Ok(Some(RuntimeCredential::new(credential.as_ref().to_owned())));
                     }
                     continue;
                 }
                 take_operation(budget.as_ref(), 1, "subject access-token read")?;
-                return self.access_token(subject).await;
+                return self
+                    .access_token(subject)
+                    .await
+                    .map(|credential| credential.map(RuntimeCredential::new));
             }
         };
         let pinned_request_credential = if caller_credential
@@ -1168,7 +1185,7 @@ impl AuthState {
                 } else {
                     credential_is_deliverable(effective, replace_before)
                 };
-                return Ok(selected.then(|| effective.value.expose().to_owned()));
+                return Ok(selected.then(|| runtime_credential(effective)));
             }
             if replacement {
                 let Some(held) = current.current.as_ref() else {
@@ -1178,7 +1195,7 @@ impl AuthState {
             } else if let Some(held) = current.current.as_ref() {
                 validate_credential_grant(held, subject, &fingerprint)?;
                 if credential_is_deliverable(held, replace_before) {
-                    return Ok(Some(held.value.expose().to_owned()));
+                    return Ok(Some(runtime_credential(held)));
                 }
                 // The expired value remains current evidence until the fresh
                 // replacement is acknowledged and promoted.
@@ -1361,7 +1378,7 @@ impl AuthState {
         services: &[ServiceId],
         caller_credential: Option<&CallerCredential>,
         target: &CredentialDeliveryTarget,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<RuntimeCredential>, StoreError> {
         let fingerprint = scope_fingerprint(services);
         let replace_before = SystemTime::now() + CREDENTIAL_EXPIRY_MARGIN;
         let mut replace_after_cleanup = false;
@@ -1389,7 +1406,7 @@ impl AuthState {
                     replace_after_cleanup = true;
                     continue;
                 }
-                let selected = pending.value.expose().to_owned();
+                let selected = runtime_credential(pending);
                 if current.pending_target.as_ref() == Some(target) {
                     self.remember_credential_delivery_cutoff(session, target, replace_before)
                         .await;
@@ -1408,7 +1425,7 @@ impl AuthState {
             if let Some(held) = current.current.as_ref() {
                 validate_credential_grant(held, subject, &fingerprint)?;
                 let held_is_deliverable = credential_is_deliverable(held, replace_before);
-                let held_value = held.value.expose().to_owned();
+                let held_value = runtime_credential(held);
                 if replace_after_cleanup || !held_is_deliverable {
                     let replacement = self
                         .mint_session_credential_inner(
@@ -1851,7 +1868,7 @@ impl layer2_core::CredentialSource for AuthState {
         services: &[ServiceId],
         caller_credential: Option<&CallerCredential>,
         target: &CredentialDeliveryTarget,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<RuntimeCredential>, StoreError> {
         self.prepare_runtime_credential_delivery(
             session,
             subject,

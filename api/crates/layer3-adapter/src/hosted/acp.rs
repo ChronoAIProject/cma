@@ -264,6 +264,18 @@ impl Bridge {
                                         .settle_runtime_policy(&control, &operation_id, answer)
                                         .await;
                                 }
+                            } else if let Some((operation_id, answer)) =
+                                super::link::sponsored_model_authority_answer(&text)
+                            {
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle
+                                        .settle_sponsored_model_authority(
+                                            &control,
+                                            &operation_id,
+                                            answer,
+                                        )
+                                        .await;
+                                }
                             } else if let Some(accepted) = super::link::switch_answer(&text) {
                                 if let Some(control) = control_for_reader.upgrade() {
                                     lifecycle.settle(&control, accepted).await;

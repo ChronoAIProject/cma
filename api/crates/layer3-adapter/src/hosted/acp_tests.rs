@@ -454,7 +454,7 @@ async fn a_conversation_close_removes_its_registered_generation() {
     assert!(control
         .send(crate::TerminalInput::Credential {
             operation_id: "unused-operation".into(),
-            value: "unused".into(),
+            credential: crate::RuntimeCredential::from("unused"),
         })
         .await
         .is_err());

@@ -1199,7 +1199,7 @@ impl AuthState {
         services: &[layer2_core::ServiceId],
         replace_before: SystemTime,
         budget: AuthOperationBudget,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<layer3_adapter::RuntimeCredential>, StoreError> {
         self.mint_session_credential_with_budget(
             session,
             subject,
@@ -1834,6 +1834,7 @@ mod permissions;
 pub mod records;
 pub mod refresh;
 mod session_routes;
+mod sponsored_model;
 mod token;
 
 pub use records::SignInRecords;

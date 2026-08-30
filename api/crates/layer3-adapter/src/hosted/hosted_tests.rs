@@ -633,6 +633,7 @@ fn spec() -> RuntimeSpec {
         skills: Vec::new(),
         reaches: Vec::new(),
         runtime_policy_required: false,
+        sponsored_model_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
@@ -1408,10 +1409,10 @@ async fn a_credential_reaches_a_runtime_over_the_link_it_already_has() {
         match rx.recv().await.expect("the frame was sent") {
             TerminalInput::Credential {
                 operation_id,
-                value,
+                credential,
             } => {
                 assert!(!operation_id.is_empty());
-                assert_eq!(value, "a-fresh-credential");
+                assert_eq!(credential.expose(), "a-fresh-credential");
                 waiters.settle(&runtime, &operation_id, &tx, true).await;
             }
             other => panic!("expected a credential frame, got {other:?}"),
@@ -2415,7 +2416,10 @@ async fn a_conversations_control_lane_carries_a_credential() {
     control
         .send(TerminalInput::Credential {
             operation_id: "credential-operation".into(),
-            value: "a-real-credential-value".into(),
+            credential: crate::RuntimeCredential::with_custody_generation(
+                "a-real-credential-value".into(),
+                std::num::NonZeroU64::new(8).unwrap(),
+            ),
         })
         .await
         .expect("the lane accepts a credential");
@@ -2435,6 +2439,7 @@ async fn a_conversations_control_lane_carries_a_credential() {
     assert_eq!(parsed["t"], "credential");
     assert_eq!(parsed["operation_id"], "credential-operation");
     assert_eq!(parsed["value"], "a-real-credential-value");
+    assert_eq!(parsed["custody_generation"], 8);
 }
 
 #[tokio::test]
