@@ -47,10 +47,10 @@ known shapes fail closed as `ProtocolError`.
 The sponsorship exports intentionally provide only four secret-free page reads:
 owner credentials, owner policies with accounting, contributor grants, and sponsor
 grants. They include exact allowlist decoders and role-bound continuation checks,
-but no mutation client. The checked-in binary composition keeps its sponsorship
-service absent and composes no provider, billing, pricing, scheduler, worker, or
-runtime adapter, so these contract-first reads remain unavailable. See
-[Sponsorships](sponsorships.md) for the complete boundary.
+but no mutation client. CMA can compose the complete sponsorship service when a
+reviewed enabled deployment tuple is supplied; the checked-in production tuple is
+still dormant and kill-switched, so these contract-first reads remain unavailable
+there. See [Sponsorships](sponsorships.md) for the complete boundary.
 
 ## Request correlation
 

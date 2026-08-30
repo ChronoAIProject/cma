@@ -1916,11 +1916,11 @@ async fn runtime_delivery_prepare_retargets_pending_to_h2_and_fences_h1_confirma
     let scope = scope_fingerprint(&services);
     let h1 = delivery_target(7, "runtime-h1");
     let h2 = delivery_target(8, "runtime-h2");
-    let mut custody = state(
-        &session,
-        Some(credential("current-a", "value-a", &owner, &scope)),
-        Some(credential("pending-b", "value-b", &owner, &scope)),
-    );
+    let mut current = credential("current-a", "value-a", &owner, &scope);
+    current.custody_generation = 7;
+    let mut pending = credential("pending-b", "value-b", &owner, &scope);
+    pending.custody_generation = 8;
+    let mut custody = state(&session, Some(current), Some(pending));
     custody.pending_target = Some(h1.clone());
     store.insert_credential(custody).await.expect("store works");
 
@@ -1928,7 +1928,10 @@ async fn runtime_delivery_prepare_retargets_pending_to_h2_and_fences_h1_confirma
         auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
             .await
             .expect("H2 preparation persists its exact target"),
-        Some("value-b".into()),
+        Some(layer3_adapter::RuntimeCredential::with_custody_generation(
+            "value-b".into(),
+            std::num::NonZeroU64::new(8).unwrap(),
+        )),
         "a successor runtime selects pending B instead of ordinary current A"
     );
     let rebound = store
@@ -2108,7 +2111,10 @@ async fn abandoned_h1_binding_is_fenced_before_fresh_c_is_delivered_to_h2() {
         auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
             .await
             .expect("H2 authority fences stale B before selecting a value"),
-        Some("full-key-1".into())
+        Some(layer3_adapter::RuntimeCredential::with_custody_generation(
+            "full-key-1".into(),
+            std::num::NonZeroU64::new(3).unwrap(),
+        ))
     );
     assert_eq!(mints.load(Ordering::SeqCst), 1);
     let reminted = store
@@ -2227,7 +2233,10 @@ async fn expired_current_is_never_selected_and_remains_current_until_fresh_c_lan
         auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
             .await
             .expect("an expired current value causes a fresh replacement"),
-        Some("full-key-1".into())
+        Some(layer3_adapter::RuntimeCredential::with_custody_generation(
+            "full-key-1".into(),
+            std::num::NonZeroU64::new(2).unwrap(),
+        ))
     );
     assert_eq!(mints.load(Ordering::SeqCst), 1);
     let prepared = store

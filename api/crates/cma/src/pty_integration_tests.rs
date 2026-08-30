@@ -649,12 +649,12 @@ impl KernelAdapter for WireAdapter {
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: &layer3_adapter::RuntimeCredential,
     ) -> Result<(), AdapterError> {
         self.credentials
             .lock()
             .await
-            .push((handle.0.clone(), credential.to_string()));
+            .push((handle.0.clone(), credential.expose().to_string()));
         Ok(())
     }
 

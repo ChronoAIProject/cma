@@ -3295,6 +3295,14 @@ impl IntoResponse for TriggerProblem {
                             Some("pricing.expires_at".into()),
                             "Open a New Launch to review current pricing, quota, and runtime evidence.",
                         ),
+                        Admission::SponsoredTermsNotAccepted => (
+                            StatusCode::CONFLICT,
+                            "trigger-sponsored-terms-not-accepted",
+                            "trigger_sponsored_terms_not_accepted",
+                            error.to_string(),
+                            Some("sponsorship.terms".into()),
+                            "Review and explicitly accept the current sponsored scope, budget, and expiry before Start.",
+                        ),
                         Admission::QuotaExceeded(_) => (
                             StatusCode::CONFLICT,
                             "trigger-quota-exhausted",

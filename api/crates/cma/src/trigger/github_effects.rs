@@ -7,16 +7,19 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use layer2_core::{
     effect_requires_authority_admission, rfc3339_at, seconds_from_rfc3339, trigger_session_id,
-    AuthorityAdmissionSnapshot, AuthorityProvenance, BaselineImportBlob, BaselineImportChunk,
-    BaselineImportOutcome, BaselineObjectStore, BranchRecord, CapabilityAuthorityAdmission,
+    ActivateSponsoredGrant, AuthorityAdmissionSnapshot, AuthorityProvenance, Authorization,
+    BaselineImportBlob, BaselineImportChunk, BaselineImportOutcome, BaselineObjectStore,
+    BillingMode, BranchRecord, Caller, Capability, CapabilityAuthorityAdmission,
     CapabilityOperation, CapabilityRevocationState, CheckpointIntegrity, CheckpointObjectStore,
     CleanupReceipt, CleanupTarget, ConnectionSnapshot, CoreError, DelegationState, DiffArtifact,
     DiffArtifactObjectStore, DiffValidationOutcome, EffectClaim, EffectClaimMode, FailureClass,
-    Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind, LaunchEffectResult, LaunchFailure,
-    PullRequestRecord, PullRequestState, RecoveryState, RepositoryIdentity, Session,
-    SessionCredentialAuthority, SessionId, SessionLink, SessionService, SessionStatus,
-    TriggerAuthorityError, TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError,
-    WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
+    InertGrantCapability, Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind,
+    LaunchEffectResult, LaunchFailure, PullRequestRecord, PullRequestState, RecoveryState,
+    RepositoryIdentity, Session, SessionCredentialAuthority, SessionId, SessionLink,
+    SessionService, SessionStatus, SponsoredModelAuthorityError, SponsorshipError,
+    SponsorshipService, SponsorshipStoreError, SubjectId, TriggerAuthorityError,
+    TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint,
+    WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
     BASELINE_IMPORT_CHUNK_BYTES, CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
     PULL_REQUEST_STATUS_INTERVAL_SECONDS,
 };
@@ -263,6 +266,47 @@ trait TriggerSessionEffectPort: Send + Sync {
         layer2_core::RuntimeGatewayReachabilityError,
     >;
 
+    async fn reconcile_runtime_policy_and_probe(
+        &self,
+        session_id: &SessionId,
+        expected_credential_authority: &SessionCredentialAuthority,
+        probe: layer3_adapter::RuntimeGatewayProbeRequest,
+        expected_launch_id: &str,
+        expected_generation: u64,
+        expected_fence: u64,
+    ) -> Result<
+        layer2_core::RuntimeGatewayReconciliationReceipt,
+        layer2_core::RuntimeGatewayReachabilityError,
+    > {
+        let _ = (
+            session_id,
+            expected_credential_authority,
+            probe,
+            expected_launch_id,
+            expected_generation,
+            expected_fence,
+        );
+        Err(layer2_core::RuntimeGatewayReachabilityError::ProtocolUnsupported)
+    }
+
+    async fn install_sponsored_model_authority(
+        &self,
+        session_id: &SessionId,
+        expected_credential_authority: &SessionCredentialAuthority,
+        capability: &InertGrantCapability,
+        maximum_output_tokens_per_request: u64,
+        gateway_origin: &layer3_adapter::SponsoredModelGatewayOrigin,
+    ) -> Result<layer3_adapter::SponsoredModelAuthorityReceipt, SponsoredModelAuthorityError> {
+        let _ = (
+            session_id,
+            expected_credential_authority,
+            capability,
+            maximum_output_tokens_per_request,
+            gateway_origin,
+        );
+        Err(SponsoredModelAuthorityError::ProtocolUnsupported)
+    }
+
     async fn runtime_policy_audience(&self, session_id: &SessionId) -> Result<String, CoreError>;
 
     async fn runtime_policy_observation(
@@ -300,6 +344,52 @@ trait TriggerSessionEffectPort: Send + Sync {
             "workspace_checkpoint_v2".into(),
         ))
     }
+}
+
+#[async_trait]
+trait TriggerSponsorshipEffectPort: Send + Sync {
+    async fn activate_grant(
+        &self,
+        contributor: &SubjectId,
+        command: ActivateSponsoredGrant,
+    ) -> Result<ActivatedSponsoredModelGrant, SponsorshipError>;
+}
+
+#[derive(Clone)]
+struct ActivatedSponsoredModelGrant {
+    capability: InertGrantCapability,
+    maximum_output_tokens_per_request: u64,
+}
+
+struct SponsorshipServiceEffectPort(Arc<SponsorshipService>);
+
+#[async_trait]
+impl TriggerSponsorshipEffectPort for SponsorshipServiceEffectPort {
+    async fn activate_grant(
+        &self,
+        contributor: &SubjectId,
+        command: ActivateSponsoredGrant,
+    ) -> Result<ActivatedSponsoredModelGrant, SponsorshipError> {
+        let caller = Caller::new(
+            contributor.clone(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        let grant = self.0.activate_grant(&caller, command).await?;
+        grant.validate()?;
+        let maximum_output_tokens_per_request = (grant.allocation.quota.output_tokens
+            / grant.allocation.quota.requests)
+            .max(1)
+            .min(u64::from(u32::MAX));
+        Ok(ActivatedSponsoredModelGrant {
+            capability: grant.capability,
+            maximum_output_tokens_per_request,
+        })
+    }
+}
+
+struct SponsoredEffectRuntime {
+    sponsorships: Arc<dyn TriggerSponsorshipEffectPort>,
+    gateway_origin: layer3_adapter::SponsoredModelGatewayOrigin,
 }
 
 struct SessionServiceEffectPort(Arc<SessionService>);
@@ -357,6 +447,49 @@ impl TriggerSessionEffectPort for SessionServiceEffectPort {
                         .sign_policy(&capability)
                         .map_err(CoreError::InvalidRequest)
                 },
+            )
+            .await
+    }
+
+    async fn reconcile_runtime_policy_and_probe(
+        &self,
+        session_id: &SessionId,
+        expected_credential_authority: &SessionCredentialAuthority,
+        probe: layer3_adapter::RuntimeGatewayProbeRequest,
+        expected_launch_id: &str,
+        expected_generation: u64,
+        expected_fence: u64,
+    ) -> Result<
+        layer2_core::RuntimeGatewayReconciliationReceipt,
+        layer2_core::RuntimeGatewayReachabilityError,
+    > {
+        self.0
+            .reconcile_runtime_policy_and_probe_with_credential_authority(
+                session_id,
+                probe,
+                expected_credential_authority,
+                expected_launch_id,
+                expected_generation,
+                expected_fence,
+            )
+            .await
+    }
+
+    async fn install_sponsored_model_authority(
+        &self,
+        session_id: &SessionId,
+        expected_credential_authority: &SessionCredentialAuthority,
+        capability: &InertGrantCapability,
+        maximum_output_tokens_per_request: u64,
+        gateway_origin: &layer3_adapter::SponsoredModelGatewayOrigin,
+    ) -> Result<layer3_adapter::SponsoredModelAuthorityReceipt, SponsoredModelAuthorityError> {
+        self.0
+            .install_sponsored_model_authority(
+                session_id,
+                expected_credential_authority,
+                capability,
+                maximum_output_tokens_per_request,
+                gateway_origin,
             )
             .await
     }
@@ -733,6 +866,7 @@ pub(crate) struct GithubEffectExecutor {
     checkpoint_store: Option<Arc<dyn CheckpointObjectStore>>,
     diff_store: Option<Arc<dyn DiffArtifactObjectStore>>,
     sessions: Option<Arc<dyn TriggerSessionEffectPort>>,
+    sponsorship: Option<SponsoredEffectRuntime>,
     capability_signer: Option<Arc<CapabilitySigner>>,
     fork_readiness_timeout: Duration,
     changed_file_limit: u32,
@@ -771,6 +905,7 @@ impl GithubEffectExecutor {
             checkpoint_store: None,
             diff_store: None,
             sessions: None,
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -792,10 +927,23 @@ impl GithubEffectExecutor {
             checkpoint_store: Some(checkpoint_store),
             diff_store: Some(diff_store),
             sessions: Some(Arc::new(SessionServiceEffectPort(sessions))),
+            sponsorship: None,
             capability_signer: Some(capability_signer),
             fork_readiness_timeout: limits.fork_readiness_timeout,
             changed_file_limit: limits.changed_file_limit,
         }
+    }
+
+    pub(crate) fn with_sponsorship(
+        mut self,
+        sponsorships: Arc<SponsorshipService>,
+        gateway_origin: layer3_adapter::SponsoredModelGatewayOrigin,
+    ) -> Self {
+        self.sponsorship = Some(SponsoredEffectRuntime {
+            sponsorships: Arc::new(SponsorshipServiceEffectPort(sponsorships)),
+            gateway_origin,
+        });
+        self
     }
 
     #[cfg(test)]
@@ -806,6 +954,7 @@ impl GithubEffectExecutor {
             checkpoint_store: None,
             diff_store: None,
             sessions: None,
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -823,6 +972,7 @@ impl GithubEffectExecutor {
             checkpoint_store: None,
             diff_store: None,
             sessions: Some(sessions),
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -841,6 +991,7 @@ impl GithubEffectExecutor {
             checkpoint_store: None,
             diff_store: None,
             sessions: Some(sessions),
+            sponsorship: None,
             capability_signer: Some(capability_signer),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -859,6 +1010,7 @@ impl GithubEffectExecutor {
             checkpoint_store: Some(checkpoint_store),
             diff_store: None,
             sessions: Some(sessions),
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -1752,6 +1904,23 @@ impl GithubEffectExecutor {
         claim: &EffectClaim,
         capability_renewal: bool,
     ) -> EffectExecution {
+        let sponsored_authority_write = launch.revision.content.commercial_policy.billing_mode
+            == BillingMode::Sponsored
+            && (capability_renewal || claim.mode == EffectClaimMode::Execute);
+        let sponsored_runtime = if sponsored_authority_write {
+            match self.sponsorship.as_ref() {
+                Some(runtime) => Some(runtime),
+                None => {
+                    return authority_admission_failure(
+                        claim,
+                        "trigger_sponsorship_runtime_missing",
+                        "This sponsored Launch has no configured grant activation runtime.",
+                    )
+                }
+            }
+        } else {
+            None
+        };
         let capability_admission = if capability_renewal {
             launch
                 .capability_authority_admission
@@ -1767,7 +1936,10 @@ impl GithubEffectExecutor {
                 "The exact renewal fence has no committed capability authority admission.",
             );
         }
-        if claim.mode == EffectClaimMode::Reconcile && !capability_renewal {
+        if claim.mode == EffectClaimMode::Reconcile
+            && !sponsored_authority_write
+            && !capability_renewal
+        {
             return EffectExecution::Failed {
                 failure: failure(
                     FailureClass::RecoveryRequired,
@@ -1785,28 +1957,53 @@ impl GithubEffectExecutor {
         let Some(signer) = self.capability_signer.as_ref() else {
             return unsupported_effect(claim);
         };
-        let (authority, reserved_generation, reserved_expiry) = if let Some(admission) =
-            capability_admission
-        {
-            if admission
-                .snapshot
-                .validate_capability_for(launch, claim.fence, admission.target_policy_generation)
-                .is_err()
-            {
-                return authority_admission_failure(
-                    claim,
-                    "trigger_capability_authority_admission_invalid",
-                    "The committed capability authority does not match this fence.",
-                );
-            }
-            (
-                authority_from_snapshot(&admission.snapshot, claim),
-                Some(admission.target_policy_generation),
-                Some(admission.target_policy_expires_at_epoch_seconds),
-            )
-        } else {
-            (admitted_effect_authority(launch, claim), None, None)
-        };
+        let (authority, reserved_generation, reserved_expiry, policy_fence) =
+            if let Some(admission) = capability_admission {
+                if admission
+                    .snapshot
+                    .validate_capability_for(
+                        launch,
+                        claim.fence,
+                        admission.target_policy_generation,
+                    )
+                    .is_err()
+                {
+                    return authority_admission_failure(
+                        claim,
+                        "trigger_capability_authority_admission_invalid",
+                        "The committed capability authority does not match this fence.",
+                    );
+                }
+                (
+                    authority_from_snapshot(&admission.snapshot, claim),
+                    Some(admission.target_policy_generation),
+                    Some(admission.target_policy_expires_at_epoch_seconds),
+                    admission.snapshot.fence,
+                )
+            } else if claim.mode == EffectClaimMode::Reconcile {
+                let admission =
+                    match launch.historical_effect_authority_admission(claim) {
+                        Ok(admission) => admission,
+                        Err(_) => return authority_admission_failure(
+                            claim,
+                            "trigger_reach_reconciliation_admission_missing",
+                            "The retained Reach intent has no valid original authority admission.",
+                        ),
+                    };
+                (
+                    authority_from_snapshot(admission, claim),
+                    None,
+                    None,
+                    admission.fence,
+                )
+            } else {
+                (
+                    admitted_effect_authority(launch, claim),
+                    None,
+                    None,
+                    claim.fence,
+                )
+            };
         let authority = match authority {
             Ok(authority) => authority,
             Err(execution) => return *execution,
@@ -1839,26 +2036,12 @@ impl GithubEffectExecutor {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let expires_at =
-            reserved_expiry.unwrap_or_else(|| now.saturating_add(CAPABILITY_MAX_LIFETIME_SECONDS));
         let generation = reserved_generation.unwrap_or_else(|| {
             launch
                 .reach
                 .as_ref()
                 .map_or(1, |reach| reach.policy_generation.saturating_add(1))
         });
-        if expires_at <= now {
-            return EffectExecution::Failed {
-                failure: failure(
-                    FailureClass::RecoveryRequired,
-                    "trigger_capability_admission_expired",
-                    "The admitted policy generation expired before installation completed.",
-                    "CMA will reserve a later generation only after the prior TTL is safely past.",
-                    claim,
-                    None,
-                ),
-            };
-        }
         let (github_catalog_service_id, github_user_service_slug) =
             match authority.connection.github_binding() {
                 Ok((catalog_service_id, user_service_slug)) => (
@@ -1873,43 +2056,6 @@ impl GithubEffectExecutor {
                     )
                 }
             };
-        let capability = LaunchCapability {
-            version: CAPABILITY_POLICY_VERSION,
-            launch_id: launch.id.clone(),
-            session_id: session.session_id.clone(),
-            // Layer 2 fills this from the exact runtime handle while holding
-            // the session lifecycle fence.
-            runtime_audience: String::new(),
-            service_id: authority.connection.service_id.clone(),
-            github_catalog_service_id: github_catalog_service_id.clone(),
-            github_user_service_slug: github_user_service_slug.clone(),
-            upstream: authority.upstream.clone(),
-            fork: authority.fork.clone(),
-            allowed_ref: format!("refs/heads/{}", branch.name),
-            operations: launch
-                .revision
-                .content
-                .repository_access
-                .allowed_operation_classes
-                .iter()
-                .copied()
-                .map(CapabilityOperation::Repository)
-                .collect(),
-            generation,
-            fence: claim.fence,
-            not_before_epoch_seconds: now,
-            expires_at_epoch_seconds: expires_at,
-            issuer: "cma-trigger".into(),
-            audience: POLICY_AUDIENCE.into(),
-            signature_key_id: signer.key_id().to_string(),
-            numeric_binding_observed_at: authority.authority.observed_at.clone(),
-            revocation: CapabilityRevocationState::Active,
-        };
-        if let Err(execution) =
-            require_live_policy_install_authority(launch, claim, capability_renewal)
-        {
-            return *execution;
-        }
         let Some(admitted_credential_authority) = authority
             .authority
             .session_credential_authority
@@ -1934,28 +2080,105 @@ impl GithubEffectExecutor {
                 "The session credential changed after the committed Reach admission.",
             );
         }
-        let admitted = match sessions
-            .install_runtime_policy_and_probe(
-                &session.session_id,
-                &admitted_credential_authority,
-                capability,
-                Arc::clone(signer),
-                layer3_adapter::RuntimeGatewayProbeRequest {
-                    version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
-                    service_id: authority.connection.service_id.clone(),
-                    catalog_service_id: github_catalog_service_id.clone(),
-                    user_service_slug: github_user_service_slug.clone(),
-                    resource_id: authority.fork.repository_id,
-                },
-            )
-            .await
+        let probe = layer3_adapter::RuntimeGatewayProbeRequest {
+            version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: authority.connection.service_id.clone(),
+            catalog_service_id: github_catalog_service_id.clone(),
+            user_service_slug: github_user_service_slug.clone(),
+            resource_id: authority.fork.repository_id,
+        };
+        let (admitted, expires_at) = if claim.mode == EffectClaimMode::Reconcile
+            && !capability_renewal
         {
-            Ok(installed) => installed,
-            Err(error) => return runtime_gateway_reachability_failure(error, claim),
+            match sessions
+                .reconcile_runtime_policy_and_probe(
+                    &session.session_id,
+                    &admitted_credential_authority,
+                    probe,
+                    &launch.id.0,
+                    generation,
+                    policy_fence,
+                )
+                .await
+            {
+                Ok(reconciled) => (reconciled.reachability, reconciled.expires_at_epoch_seconds),
+                Err(error) => {
+                    return runtime_gateway_reconciliation_failure(
+                        error,
+                        claim,
+                        retained_resources(launch, claim),
+                    )
+                }
+            }
+        } else {
+            let expires_at = reserved_expiry
+                .unwrap_or_else(|| now.saturating_add(CAPABILITY_MAX_LIFETIME_SECONDS));
+            if expires_at <= now {
+                return EffectExecution::Failed {
+                    failure: failure(
+                        FailureClass::RecoveryRequired,
+                        "trigger_capability_admission_expired",
+                        "The admitted policy generation expired before installation completed.",
+                        "CMA will reserve a later generation only after the prior TTL is safely past.",
+                        claim,
+                        None,
+                    ),
+                };
+            }
+            let capability = LaunchCapability {
+                version: CAPABILITY_POLICY_VERSION,
+                launch_id: launch.id.clone(),
+                session_id: session.session_id.clone(),
+                // Layer 2 fills this from the exact runtime handle while holding
+                // the session lifecycle fence.
+                runtime_audience: String::new(),
+                service_id: authority.connection.service_id.clone(),
+                github_catalog_service_id: github_catalog_service_id.clone(),
+                github_user_service_slug: github_user_service_slug.clone(),
+                upstream: authority.upstream.clone(),
+                fork: authority.fork.clone(),
+                allowed_ref: format!("refs/heads/{}", branch.name),
+                operations: launch
+                    .revision
+                    .content
+                    .repository_access
+                    .allowed_operation_classes
+                    .iter()
+                    .copied()
+                    .map(CapabilityOperation::Repository)
+                    .collect(),
+                generation,
+                fence: policy_fence,
+                not_before_epoch_seconds: now,
+                expires_at_epoch_seconds: expires_at,
+                issuer: "cma-trigger".into(),
+                audience: POLICY_AUDIENCE.into(),
+                signature_key_id: signer.key_id().to_string(),
+                numeric_binding_observed_at: authority.authority.observed_at.clone(),
+                revocation: CapabilityRevocationState::Active,
+            };
+            if let Err(execution) =
+                require_live_policy_install_authority(launch, claim, capability_renewal)
+            {
+                return *execution;
+            }
+            match sessions
+                .install_runtime_policy_and_probe(
+                    &session.session_id,
+                    &admitted_credential_authority,
+                    capability,
+                    Arc::clone(signer),
+                    probe,
+                )
+                .await
+            {
+                Ok(installed) => (installed, expires_at),
+                Err(error) => return runtime_gateway_reachability_failure(error, claim),
+            }
         };
         let runtime_audience = admitted.runtime_audience;
         let receipt = admitted.policy;
-        if receipt.generation != generation || receipt.fence != claim.fence || receipt.revoked {
+        if receipt.generation != generation || receipt.fence != policy_fence || receipt.revoked {
             return EffectExecution::Failed {
                 failure: failure(
                     FailureClass::TerminalSecurity,
@@ -1972,7 +2195,7 @@ impl GithubEffectExecutor {
         resources.insert("catalog_service_id".into(), github_catalog_service_id);
         resources.insert("user_service_slug".into(), github_user_service_slug);
         resources.insert("policy_generation".into(), generation.to_string());
-        resources.insert("policy_fence".into(), claim.fence.to_string());
+        resources.insert("policy_fence".into(), policy_fence.to_string());
         resources.insert("runtime_audience".into(), runtime_audience.clone());
         resources.insert("policy_expires_at".into(), expires_at.to_string());
         resources.insert(
@@ -1980,13 +2203,29 @@ impl GithubEffectExecutor {
             admitted.probe_version.to_string(),
         );
         resources.insert("runtime_gateway_probe_outcome".into(), "allowed".into());
+        if let Some(sponsored_runtime) = sponsored_runtime {
+            if let Err(execution) = self
+                .activate_and_install_sponsored_model_authority(
+                    launch,
+                    claim,
+                    sessions.as_ref(),
+                    sponsored_runtime,
+                    &admitted_credential_authority,
+                    &runtime_audience,
+                    &mut resources,
+                )
+                .await
+            {
+                return execution;
+            }
+        }
         EffectExecution::Completed {
             result: LaunchEffectResult::Reach {
                 reach: layer2_core::ReachStatus {
                     service_id: authority.connection.service_id.clone(),
                     state: CapabilityRevocationState::Active,
                     policy_generation: generation,
-                    policy_fence: claim.fence,
+                    policy_fence,
                     runtime_audience: runtime_audience.clone(),
                     expires_at_epoch_seconds: expires_at,
                     numeric_binding_observed_at: authority.authority.observed_at.clone(),
@@ -2006,6 +2245,102 @@ impl GithubEffectExecutor {
                     .into(),
             external_resource_ids: resources,
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn activate_and_install_sponsored_model_authority(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+        sessions: &dyn TriggerSessionEffectPort,
+        runtime: &SponsoredEffectRuntime,
+        credential: &SessionCredentialAuthority,
+        expected_runtime_audience: &str,
+        resources: &mut BTreeMap<String, String>,
+    ) -> Result<(), EffectExecution> {
+        let session = launch.session.as_ref().ok_or_else(|| {
+            authority_admission_failure(
+                claim,
+                "trigger_sponsored_session_missing",
+                "The sponsored Launch has no exact session for grant activation.",
+            )
+        })?;
+        let stable_request_id = sponsored_activation_request_id(launch, &session.session_id);
+        let activated = runtime
+            .sponsorships
+            .activate_grant(
+                &launch.owner,
+                ActivateSponsoredGrant {
+                    stable_request_id,
+                    launch_id: launch.id.clone(),
+                },
+            )
+            .await
+            .map_err(|error| sponsorship_activation_failure(error, claim, resources.clone()))?;
+        let capability = activated.capability;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if capability.validate().is_err()
+            || capability.launch_id != launch.id
+            || capability.session_id != session.session_id
+            || seconds_from_rfc3339(&capability.expires_at).is_none_or(|expires| expires <= now)
+        {
+            return Err(EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::TerminalSecurity,
+                    "trigger_sponsored_capability_invalid",
+                    "The activated grant did not match this exact live Launch and session.",
+                    "Contact support; CMA did not install model authority or dispatch the prompt.",
+                    claim,
+                    None,
+                ),
+            });
+        }
+        let receipt = sessions
+            .install_sponsored_model_authority(
+                &session.session_id,
+                credential,
+                &capability,
+                activated.maximum_output_tokens_per_request,
+                &runtime.gateway_origin,
+            )
+            .await
+            .map_err(|error| sponsored_model_authority_failure(error, claim, resources.clone()))?;
+        if receipt.runtime_audience != expected_runtime_audience
+            || receipt.session_id != session.session_id.0
+            || receipt.session_credential_generation != credential.custody_generation
+            || receipt.launch_id != launch.id.0
+            || receipt.grant_id != capability.grant_id.0
+            || receipt.grant_generation != capability.grant_generation
+            || receipt.policy_generation != capability.policy_generation
+            || receipt.maximum_output_tokens_per_request
+                != activated.maximum_output_tokens_per_request
+            || receipt.capability_fingerprint != capability.fingerprint
+        {
+            return Err(EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::TerminalSecurity,
+                    "trigger_sponsored_authority_acknowledgement_mismatch",
+                    "The runtime acknowledged different sponsored model authority than CMA issued.",
+                    "Contact support; model access and initial prompt dispatch remain fail-closed.",
+                    claim,
+                    None,
+                ),
+            });
+        }
+        resources.insert("sponsored_grant_id".into(), capability.grant_id.0);
+        resources.insert(
+            "sponsored_grant_generation".into(),
+            capability.grant_generation.to_string(),
+        );
+        resources.insert(
+            "sponsored_policy_generation".into(),
+            capability.policy_generation.to_string(),
+        );
+        resources.insert("sponsored_model_authority".into(), "acknowledged".into());
+        Ok(())
     }
 
     async fn ensure_trigger_session(
@@ -3851,6 +4186,225 @@ fn runtime_gateway_reachability_failure(
     }
 }
 
+fn runtime_gateway_reconciliation_failure(
+    error: layer2_core::RuntimeGatewayReachabilityError,
+    claim: &EffectClaim,
+    resources: BTreeMap<String, String>,
+) -> EffectExecution {
+    use layer2_core::RuntimeGatewayReachabilityError as ReachabilityError;
+
+    match error {
+        ReachabilityError::TransientBrokerFailure | ReachabilityError::RuntimeUnavailable => {
+            sponsored_reconciliation(
+                claim,
+                resources,
+                FailureClass::RetryableTransient,
+                "trigger_reach_reconciliation_temporarily_unavailable",
+                "The exact runtime policy and restricted route could not be observed yet.",
+            )
+        }
+        ReachabilityError::Core(
+            CoreError::RuntimeUnavailable(_)
+            | CoreError::ServiceCatalogUnavailable(_)
+            | CoreError::SettingsUnavailable(_),
+        ) => sponsored_reconciliation(
+            claim,
+            resources,
+            FailureClass::RetryableTransient,
+            "trigger_reach_reconciliation_temporarily_unavailable",
+            "The exact runtime policy and restricted route could not be observed yet.",
+        ),
+        other => runtime_gateway_reachability_failure(other, claim),
+    }
+}
+
+fn sponsored_activation_request_id(launch: &Launch, session_id: &SessionId) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"cma-trigger-sponsored-activation-v1\0");
+    for binding in [
+        launch.id.0.as_str(),
+        launch.revision.id.0.as_str(),
+        launch.revision_digest.as_str(),
+        launch.effective.digest.as_str(),
+        session_id.0.as_str(),
+    ] {
+        digest.update((binding.len() as u64).to_be_bytes());
+        digest.update(binding.as_bytes());
+    }
+    format!("trigger-sponsored-activation-v1:{:x}", digest.finalize())
+}
+
+fn sponsorship_activation_failure(
+    error: SponsorshipError,
+    claim: &EffectClaim,
+    resources: BTreeMap<String, String>,
+) -> EffectExecution {
+    match error {
+        SponsorshipError::BillingAmbiguous
+        | SponsorshipError::ProviderAmbiguous
+        | SponsorshipError::ProviderOperationInProgress
+        | SponsorshipError::ActivationInProgress => sponsored_reconciliation(
+            claim,
+            resources,
+            FailureClass::AmbiguousExternal,
+            "trigger_sponsored_activation_ambiguous",
+            "Sponsored grant activation has an unresolved external outcome.",
+        ),
+        SponsorshipError::BillingUnavailable
+        | SponsorshipError::ProviderUnavailable
+        | SponsorshipError::Disabled
+        | SponsorshipError::KillSwitch
+        | SponsorshipError::CapabilityEvidenceMissing
+        | SponsorshipError::InvalidGate
+        | SponsorshipError::PolicyUnavailable
+        | SponsorshipError::CredentialUnavailable
+        | SponsorshipError::ProviderPolicyDenied
+        | SponsorshipError::PricingUnavailable
+        | SponsorshipError::PricingUnsupported => sponsored_reconciliation(
+            claim,
+            resources,
+            FailureClass::RetryableTransient,
+            "trigger_sponsored_activation_unavailable",
+            "Sponsored grant activation is currently unavailable under the deployment policy.",
+        ),
+        SponsorshipError::Store(
+            SponsorshipStoreError::Unavailable(_)
+            | SponsorshipStoreError::Conflict
+            | SponsorshipStoreError::StaleGeneration
+            | SponsorshipStoreError::LaunchQuotaExceeded
+            | SponsorshipStoreError::AggregateQuotaExceeded
+            | SponsorshipStoreError::LaunchBudgetExceeded
+            | SponsorshipStoreError::AggregateBudgetExceeded
+            | SponsorshipStoreError::RateExceeded
+            | SponsorshipStoreError::ActivePolicyLimit
+            | SponsorshipStoreError::SponsorLaunchRateExceeded
+            | SponsorshipStoreError::ConcurrentLaunchLimit,
+        ) => sponsored_reconciliation(
+            claim,
+            resources,
+            FailureClass::RetryableTransient,
+            "trigger_sponsored_activation_capacity_pending",
+            "Sponsored grant activation is waiting for durable capacity or reconciliation.",
+        ),
+        SponsorshipError::TermsNotAccepted | SponsorshipError::TermsChanged => {
+            EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::PolicyUserAction,
+                    "trigger_sponsored_terms_changed",
+                    "The current sponsored terms are not accepted for this exact Launch.",
+                    "Open a New Launch and accept the current terms before Start.",
+                    claim,
+                    None,
+                ),
+            }
+        }
+        SponsorshipError::BillingRejected | SponsorshipError::ProviderRejected => {
+            EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::PolicyUserAction,
+                    "trigger_sponsored_activation_rejected",
+                    "The sponsor's billing or provider policy rejected this grant.",
+                    "Contact the sponsor or open a Launch using contributor billing.",
+                    claim,
+                    None,
+                ),
+            }
+        }
+        SponsorshipError::GrantUnavailable
+        | SponsorshipError::Store(
+            SponsorshipStoreError::GateChanged
+            | SponsorshipStoreError::LaunchAuthorityChanged
+            | SponsorshipStoreError::AcceptanceChanged
+            | SponsorshipStoreError::GrantUnavailable,
+        ) => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::PolicyUserAction,
+                "trigger_sponsored_authority_changed",
+                "The sponsorship authority changed before grant activation completed.",
+                "Open a New Launch against the current sponsorship policy.",
+                claim,
+                None,
+            ),
+        },
+        SponsorshipError::NotFound
+        | SponsorshipError::Forbidden
+        | SponsorshipError::ScopeDenied
+        | SponsorshipError::Validation(_)
+        | SponsorshipError::Store(SponsorshipStoreError::Malformed(_)) => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::TerminalSecurity,
+                "trigger_sponsored_activation_scope_mismatch",
+                "The sponsored grant activation did not match this exact Launch authority.",
+                "Contact support; CMA did not install model authority or dispatch the prompt.",
+                claim,
+                None,
+            ),
+        },
+    }
+}
+
+fn sponsored_model_authority_failure(
+    error: SponsoredModelAuthorityError,
+    claim: &EffectClaim,
+    resources: BTreeMap<String, String>,
+) -> EffectExecution {
+    match error {
+        SponsoredModelAuthorityError::RuntimeUnavailable
+        | SponsoredModelAuthorityError::CredentialAuthorityUnavailable => sponsored_reconciliation(
+            claim,
+            resources,
+            FailureClass::RetryableTransient,
+            "trigger_sponsored_authority_install_pending",
+            "The exact runtime did not acknowledge sponsored model authority yet.",
+        ),
+        SponsoredModelAuthorityError::ProtocolUnsupported => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::TerminalValidation,
+                "trigger_sponsored_authority_protocol_unsupported",
+                "The eligible runtime does not support sponsored model authority.",
+                "Roll out an eligible runtime before enabling sponsored Launch admission.",
+                claim,
+                None,
+            ),
+        },
+        SponsoredModelAuthorityError::ScopeMismatch
+        | SponsoredModelAuthorityError::ProtocolViolation
+        | SponsoredModelAuthorityError::CredentialAuthorityDrift => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::TerminalSecurity,
+                "trigger_sponsored_authority_install_mismatch",
+                "The runtime or credential no longer matches the activated sponsored grant.",
+                "Contact support; model access and initial prompt dispatch remain fail-closed.",
+                claim,
+                None,
+            ),
+        },
+    }
+}
+
+fn sponsored_reconciliation(
+    claim: &EffectClaim,
+    resources: BTreeMap<String, String>,
+    class: FailureClass,
+    code: &'static str,
+    detail: &'static str,
+) -> EffectExecution {
+    let delay = reconciliation_delay(claim.reconciliation_attempt);
+    let reconcile_at = rfc3339_at(SystemTime::now() + Duration::from_secs(delay));
+    EffectExecution::ReconcileLater {
+        failure: failure(
+            class,
+            code,
+            detail,
+            "CMA will reconcile the same activation and will not mint a second grant.",
+            claim,
+            Some(reconcile_at.clone()),
+        ),
+        reconcile_at,
+        external_resource_ids: resources,
+    }
+}
+
 fn retained_resources(launch: &Launch, claim: &EffectClaim) -> BTreeMap<String, String> {
     launch
         .effects
@@ -4282,6 +4836,18 @@ fn service_failure(error: TriggerServiceError, claim: &EffectClaim) -> EffectExe
                     None,
                 ),
             },
+            layer2_core::TriggerAdmissionError::SponsoredTermsNotAccepted => {
+                EffectExecution::Failed {
+                    failure: failure(
+                        FailureClass::PolicyUserAction,
+                        "launch_sponsored_terms_review_required",
+                        "The retained Launch no longer has a current sponsored terms acceptance.",
+                        "Open a New Launch and explicitly accept the current sponsored terms before Start.",
+                        claim,
+                        None,
+                    ),
+                }
+            }
             layer2_core::TriggerAdmissionError::CapabilityUnsupported { .. }
             | layer2_core::TriggerAdmissionError::RuntimeChanged => EffectExecution::Failed {
                 failure: failure(
@@ -4591,6 +5157,84 @@ pub(in crate::trigger) mod tests {
         }
     }
 
+    fn sponsored_capability(
+        launch: &Launch,
+        session_id: SessionId,
+        expires_at: impl Into<String>,
+    ) -> InertGrantCapability {
+        InertGrantCapability {
+            grant_id: layer2_core::SponsoredGrantId::parse("22222222-2222-4222-8222-222222222222")
+                .unwrap(),
+            grant_generation: 1,
+            policy_generation: 1,
+            launch_id: launch.id.clone(),
+            session_id,
+            expires_at: expires_at.into(),
+            fingerprint: "f".repeat(64),
+        }
+    }
+
+    fn sponsored_authority_receipt(
+        capability: &InertGrantCapability,
+    ) -> layer3_adapter::SponsoredModelAuthorityReceipt {
+        layer3_adapter::SponsoredModelAuthorityReceipt {
+            runtime_audience: "sandbox-runtime-1".into(),
+            session_id: capability.session_id.0.clone(),
+            session_credential_generation: 1,
+            launch_id: capability.launch_id.0.clone(),
+            grant_id: capability.grant_id.0.clone(),
+            grant_generation: capability.grant_generation,
+            policy_generation: capability.policy_generation,
+            maximum_output_tokens_per_request: 500,
+            capability_fingerprint: capability.fingerprint.clone(),
+        }
+    }
+
+    struct FakeSponsorships {
+        answers: Mutex<VecDeque<Result<ActivatedSponsoredModelGrant, SponsorshipError>>>,
+        contributors: Mutex<Vec<SubjectId>>,
+        commands: Mutex<Vec<ActivateSponsoredGrant>>,
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl FakeSponsorships {
+        fn new(
+            answers: impl IntoIterator<Item = Result<InertGrantCapability, SponsorshipError>>,
+            events: Arc<Mutex<Vec<&'static str>>>,
+        ) -> Self {
+            Self {
+                answers: Mutex::new(
+                    answers
+                        .into_iter()
+                        .map(|answer| {
+                            answer.map(|capability| ActivatedSponsoredModelGrant {
+                                capability,
+                                maximum_output_tokens_per_request: 500,
+                            })
+                        })
+                        .collect(),
+                ),
+                contributors: Mutex::new(Vec::new()),
+                commands: Mutex::new(Vec::new()),
+                events,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TriggerSponsorshipEffectPort for FakeSponsorships {
+        async fn activate_grant(
+            &self,
+            contributor: &SubjectId,
+            command: ActivateSponsoredGrant,
+        ) -> Result<ActivatedSponsoredModelGrant, SponsorshipError> {
+            self.contributors.lock().unwrap().push(contributor.clone());
+            self.commands.lock().unwrap().push(command);
+            self.events.lock().unwrap().push("grant_activation");
+            self.answers.lock().unwrap().pop_front().unwrap()
+        }
+    }
+
     struct FakeSessions {
         answers: Mutex<VecDeque<SessionAnswer>>,
         prompt_answers: Mutex<VecDeque<Result<layer2_core::PromptDelivery, CoreError>>>,
@@ -4601,10 +5245,28 @@ pub(in crate::trigger) mod tests {
         reachability_error: Mutex<Option<layer2_core::RuntimeGatewayReachabilityError>>,
         gateway_probe_requests: Mutex<Vec<layer3_adapter::RuntimeGatewayProbeRequest>>,
         installed_policies: Mutex<Vec<LaunchCapability>>,
+        reconciliation_receipt: Mutex<Option<layer2_core::RuntimeGatewayReconciliationReceipt>>,
+        reconciliation_error: Mutex<Option<layer2_core::RuntimeGatewayReachabilityError>>,
+        reconciliation_probe_requests: Mutex<Vec<layer3_adapter::RuntimeGatewayProbeRequest>>,
+        model_authority_answers: Mutex<
+            VecDeque<
+                Result<
+                    layer3_adapter::SponsoredModelAuthorityReceipt,
+                    SponsoredModelAuthorityError,
+                >,
+            >,
+        >,
+        credential_authority: Mutex<Option<SessionCredentialAuthority>>,
+        installed_model_credential_authorities: Mutex<Vec<SessionCredentialAuthority>>,
+        installed_model_capabilities: Mutex<Vec<InertGrantCapability>>,
+        installed_model_gateway_origins: Mutex<Vec<layer3_adapter::SponsoredModelGatewayOrigin>>,
+        events: Arc<Mutex<Vec<&'static str>>>,
         calls: AtomicUsize,
         prompt_calls: AtomicUsize,
         checkpoint_calls: AtomicUsize,
         gateway_probe_calls: AtomicUsize,
+        reconciliation_calls: AtomicUsize,
+        model_authority_calls: AtomicUsize,
         retirement_error: Mutex<Option<CoreError>>,
         retirement_settled: AtomicBool,
         retirement_calls: AtomicUsize,
@@ -4622,10 +5284,21 @@ pub(in crate::trigger) mod tests {
                 reachability_error: Mutex::new(None),
                 gateway_probe_requests: Mutex::new(Vec::new()),
                 installed_policies: Mutex::new(Vec::new()),
+                reconciliation_receipt: Mutex::new(None),
+                reconciliation_error: Mutex::new(None),
+                reconciliation_probe_requests: Mutex::new(Vec::new()),
+                model_authority_answers: Mutex::new(VecDeque::new()),
+                credential_authority: Mutex::new(None),
+                installed_model_credential_authorities: Mutex::new(Vec::new()),
+                installed_model_capabilities: Mutex::new(Vec::new()),
+                installed_model_gateway_origins: Mutex::new(Vec::new()),
+                events: Arc::new(Mutex::new(Vec::new())),
                 calls: AtomicUsize::new(0),
                 prompt_calls: AtomicUsize::new(0),
                 checkpoint_calls: AtomicUsize::new(0),
                 gateway_probe_calls: AtomicUsize::new(0),
+                reconciliation_calls: AtomicUsize::new(0),
+                model_authority_calls: AtomicUsize::new(0),
                 retirement_error: Mutex::new(None),
                 retirement_settled: AtomicBool::new(true),
                 retirement_calls: AtomicUsize::new(0),
@@ -4644,70 +5317,25 @@ pub(in crate::trigger) mod tests {
         fn with_prompt_answers(
             answers: impl IntoIterator<Item = Result<layer2_core::PromptDelivery, CoreError>>,
         ) -> Self {
-            Self {
-                answers: Mutex::new(VecDeque::from([SessionAnswer::Evidence {
-                    status: SessionStatus::Ready,
-                    credential_ready: true,
-                    rotations: 0,
-                }])),
-                prompt_answers: Mutex::new(answers.into_iter().collect()),
-                checkpoint_answers: Mutex::new(VecDeque::new()),
-                checkpoint_requests: Mutex::new(Vec::new()),
-                policy_receipt: Mutex::new(None),
-                reachability_error: Mutex::new(None),
-                gateway_probe_requests: Mutex::new(Vec::new()),
-                installed_policies: Mutex::new(Vec::new()),
-                calls: AtomicUsize::new(0),
-                prompt_calls: AtomicUsize::new(0),
-                checkpoint_calls: AtomicUsize::new(0),
-                gateway_probe_calls: AtomicUsize::new(0),
-                retirement_error: Mutex::new(None),
-                retirement_settled: AtomicBool::new(true),
-                retirement_calls: AtomicUsize::new(0),
-                retired_session_ids: Mutex::new(Vec::new()),
-            }
+            let sessions = Self::new([SessionAnswer::Evidence {
+                status: SessionStatus::Ready,
+                credential_ready: true,
+                rotations: 0,
+            }]);
+            *sessions.prompt_answers.lock().unwrap() = answers.into_iter().collect();
+            sessions
         }
 
         fn with_policy_receipt(receipt: layer3_adapter::RuntimePolicyReceipt) -> Self {
-            Self {
-                answers: Mutex::new(VecDeque::new()),
-                prompt_answers: Mutex::new(VecDeque::new()),
-                checkpoint_answers: Mutex::new(VecDeque::new()),
-                checkpoint_requests: Mutex::new(Vec::new()),
-                policy_receipt: Mutex::new(Some(receipt)),
-                reachability_error: Mutex::new(None),
-                gateway_probe_requests: Mutex::new(Vec::new()),
-                installed_policies: Mutex::new(Vec::new()),
-                calls: AtomicUsize::new(0),
-                prompt_calls: AtomicUsize::new(0),
-                checkpoint_calls: AtomicUsize::new(0),
-                gateway_probe_calls: AtomicUsize::new(0),
-                retirement_error: Mutex::new(None),
-                retirement_settled: AtomicBool::new(true),
-                retirement_calls: AtomicUsize::new(0),
-                retired_session_ids: Mutex::new(Vec::new()),
-            }
+            let sessions = Self::new([]);
+            *sessions.policy_receipt.lock().unwrap() = Some(receipt);
+            sessions
         }
 
         fn with_reachability_error(error: layer2_core::RuntimeGatewayReachabilityError) -> Self {
-            Self {
-                answers: Mutex::new(VecDeque::new()),
-                prompt_answers: Mutex::new(VecDeque::new()),
-                checkpoint_answers: Mutex::new(VecDeque::new()),
-                checkpoint_requests: Mutex::new(Vec::new()),
-                policy_receipt: Mutex::new(None),
-                reachability_error: Mutex::new(Some(error)),
-                gateway_probe_requests: Mutex::new(Vec::new()),
-                installed_policies: Mutex::new(Vec::new()),
-                calls: AtomicUsize::new(0),
-                prompt_calls: AtomicUsize::new(0),
-                checkpoint_calls: AtomicUsize::new(0),
-                gateway_probe_calls: AtomicUsize::new(0),
-                retirement_error: Mutex::new(None),
-                retirement_settled: AtomicBool::new(true),
-                retirement_calls: AtomicUsize::new(0),
-                retired_session_ids: Mutex::new(Vec::new()),
-            }
+            let sessions = Self::new([]);
+            *sessions.reachability_error.lock().unwrap() = Some(error);
+            sessions
         }
 
         fn with_checkpoint_answers(
@@ -4715,24 +5343,14 @@ pub(in crate::trigger) mod tests {
                 Item = Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError>,
             >,
         ) -> Self {
-            Self {
-                answers: Mutex::new(VecDeque::new()),
-                prompt_answers: Mutex::new(VecDeque::new()),
-                checkpoint_answers: Mutex::new(answers.into_iter().collect()),
-                checkpoint_requests: Mutex::new(Vec::new()),
-                policy_receipt: Mutex::new(None),
-                reachability_error: Mutex::new(None),
-                gateway_probe_requests: Mutex::new(Vec::new()),
-                installed_policies: Mutex::new(Vec::new()),
-                calls: AtomicUsize::new(0),
-                prompt_calls: AtomicUsize::new(0),
-                checkpoint_calls: AtomicUsize::new(0),
-                gateway_probe_calls: AtomicUsize::new(0),
-                retirement_error: Mutex::new(None),
-                retirement_settled: AtomicBool::new(true),
-                retirement_calls: AtomicUsize::new(0),
-                retired_session_ids: Mutex::new(Vec::new()),
-            }
+            let sessions = Self::new([]);
+            *sessions.checkpoint_answers.lock().unwrap() = answers.into_iter().collect();
+            sessions
+        }
+
+        fn with_events(mut self, events: Arc<Mutex<Vec<&'static str>>>) -> Self {
+            self.events = events;
+            self
         }
     }
 
@@ -4784,7 +5402,13 @@ pub(in crate::trigger) mod tests {
             &self,
             session_id: &SessionId,
         ) -> Result<Option<SessionCredentialAuthority>, CoreError> {
-            Ok(Some(test_credential_authority(session_id)))
+            Ok(Some(
+                self.credential_authority
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| test_credential_authority(session_id)),
+            ))
         }
 
         async fn install_runtime_policy_and_probe(
@@ -4815,11 +5439,72 @@ pub(in crate::trigger) mod tests {
                 .map_err(CoreError::InvalidRequest)
                 .map_err(layer2_core::RuntimeGatewayReachabilityError::Core)?;
             self.installed_policies.lock().unwrap().push(capability);
+            self.events.lock().unwrap().push("github_probe_allowed");
             Ok(layer2_core::RuntimeGatewayReachabilityReceipt {
                 runtime_audience: "sandbox-runtime-1".into(),
                 policy: receipt,
                 probe_version: probe.version,
             })
+        }
+
+        async fn reconcile_runtime_policy_and_probe(
+            &self,
+            _session_id: &SessionId,
+            _expected_credential_authority: &SessionCredentialAuthority,
+            probe: layer3_adapter::RuntimeGatewayProbeRequest,
+            _expected_launch_id: &str,
+            _expected_generation: u64,
+            _expected_fence: u64,
+        ) -> Result<
+            layer2_core::RuntimeGatewayReconciliationReceipt,
+            layer2_core::RuntimeGatewayReachabilityError,
+        > {
+            self.reconciliation_calls.fetch_add(1, Ordering::SeqCst);
+            self.reconciliation_probe_requests
+                .lock()
+                .unwrap()
+                .push(probe);
+            if let Some(error) = self.reconciliation_error.lock().unwrap().clone() {
+                return Err(error);
+            }
+            let receipt = self
+                .reconciliation_receipt
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or(layer2_core::RuntimeGatewayReachabilityError::ProtocolUnsupported)?;
+            self.events.lock().unwrap().push("github_probe_reconciled");
+            Ok(receipt)
+        }
+
+        async fn install_sponsored_model_authority(
+            &self,
+            _session_id: &SessionId,
+            expected_credential_authority: &SessionCredentialAuthority,
+            capability: &InertGrantCapability,
+            _maximum_output_tokens_per_request: u64,
+            gateway_origin: &layer3_adapter::SponsoredModelGatewayOrigin,
+        ) -> Result<layer3_adapter::SponsoredModelAuthorityReceipt, SponsoredModelAuthorityError>
+        {
+            self.model_authority_calls.fetch_add(1, Ordering::SeqCst);
+            self.installed_model_credential_authorities
+                .lock()
+                .unwrap()
+                .push(expected_credential_authority.clone());
+            self.installed_model_capabilities
+                .lock()
+                .unwrap()
+                .push(capability.clone());
+            self.installed_model_gateway_origins
+                .lock()
+                .unwrap()
+                .push(gateway_origin.clone());
+            self.events.lock().unwrap().push("model_authority_install");
+            self.model_authority_answers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Err(SponsoredModelAuthorityError::ProtocolUnsupported))
         }
 
         async fn runtime_policy_audience(
@@ -4882,6 +5567,7 @@ pub(in crate::trigger) mod tests {
             _claim: &EffectClaim,
         ) -> Result<layer2_core::PromptDelivery, CoreError> {
             self.prompt_calls.fetch_add(1, Ordering::SeqCst);
+            self.events.lock().unwrap().push("prompt_dispatch");
             self.prompt_answers.lock().unwrap().pop_front().unwrap()
         }
 
@@ -7332,6 +8018,436 @@ pub(in crate::trigger) mod tests {
     }
 
     #[tokio::test]
+    async fn sponsored_reach_probes_then_activates_then_installs_before_initial_dispatch() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut launch = sponsored_reach_launch();
+        let capability = live_sponsored_capability(&launch);
+        let sessions = Arc::new(
+            FakeSessions::with_policy_receipt(layer3_adapter::RuntimePolicyReceipt {
+                generation: 1,
+                fence: 7,
+                revoked: false,
+            })
+            .with_events(events.clone()),
+        );
+        sessions
+            .model_authority_answers
+            .lock()
+            .unwrap()
+            .push_back(Ok(sponsored_authority_receipt(&capability)));
+        let sponsorships = Arc::new(FakeSponsorships::new(
+            [Ok(capability.clone())],
+            events.clone(),
+        ));
+        let executor = sponsored_executor(sessions.clone(), sponsorships.clone());
+        let mut reach_claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+        reach_claim.fence = 7;
+
+        let result = execute_with_admission(&executor, &mut launch, &reach_claim).await;
+        let reach = match result {
+            EffectExecution::Completed {
+                result: LaunchEffectResult::Reach { reach, .. },
+                ..
+            } => reach,
+            other => panic!("sponsored Reach must complete only after model authority: {other:?}"),
+        };
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            [
+                "github_probe_allowed",
+                "grant_activation",
+                "model_authority_install"
+            ]
+        );
+        assert_eq!(sessions.model_authority_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(sessions.prompt_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            sponsorships.contributors.lock().unwrap().as_slice(),
+            std::slice::from_ref(&launch.owner)
+        );
+        assert_eq!(
+            sessions
+                .installed_model_capabilities
+                .lock()
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&capability)
+        );
+        assert_eq!(
+            sessions.installed_model_gateway_origins.lock().unwrap()[0].as_str(),
+            "https://sponsored-model-gateway.example"
+        );
+
+        launch.reach = Some(reach);
+        sessions
+            .answers
+            .lock()
+            .unwrap()
+            .push_back(SessionAnswer::Evidence {
+                status: SessionStatus::Ready,
+                credential_ready: true,
+                rotations: 0,
+            });
+        sessions
+            .prompt_answers
+            .lock()
+            .unwrap()
+            .push_back(Ok(prompt_delivery(
+                &launch,
+                layer2_core::PromptDeliveryState::Queued,
+            )));
+        let dispatch = executor
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::InitialDispatch, EffectClaimMode::Execute),
+            )
+            .await;
+        assert!(matches!(
+            dispatch,
+            EffectExecution::RetryWithProgress {
+                result: LaunchEffectResult::InitialDispatch { .. },
+                ..
+            }
+        ));
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            [
+                "github_probe_allowed",
+                "grant_activation",
+                "model_authority_install",
+                "prompt_dispatch"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sponsored_reach_pre_probe_failure_never_activates_or_installs_model_authority() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut launch = sponsored_reach_launch();
+        let capability = live_sponsored_capability(&launch);
+        let sessions = Arc::new(
+            FakeSessions::with_reachability_error(
+                layer2_core::RuntimeGatewayReachabilityError::PolicyDenied,
+            )
+            .with_events(events.clone()),
+        );
+        let sponsorships = Arc::new(FakeSponsorships::new([Ok(capability)], events.clone()));
+        let executor = sponsored_executor(sessions.clone(), sponsorships.clone());
+
+        let result = execute_with_admission(
+            &executor,
+            &mut launch,
+            &claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute),
+        )
+        .await;
+
+        assert!(matches!(result, EffectExecution::Failed { .. }));
+        assert!(sponsorships.commands.lock().unwrap().is_empty());
+        assert_eq!(sessions.model_authority_calls.load(Ordering::SeqCst), 0);
+        assert!(sessions
+            .installed_model_capabilities
+            .lock()
+            .unwrap()
+            .is_empty());
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sponsored_provider_and_billing_ambiguity_always_enter_reconciliation() {
+        for error in [
+            SponsorshipError::ProviderAmbiguous,
+            SponsorshipError::BillingAmbiguous,
+        ] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut launch = sponsored_reach_launch();
+            let sessions = Arc::new(
+                FakeSessions::with_policy_receipt(layer3_adapter::RuntimePolicyReceipt {
+                    generation: 1,
+                    fence: 7,
+                    revoked: false,
+                })
+                .with_events(events.clone()),
+            );
+            let sponsorships = Arc::new(FakeSponsorships::new([Err(error)], events.clone()));
+            let executor = sponsored_executor(sessions.clone(), sponsorships);
+            let mut claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+            claim.fence = 7;
+
+            let result = execute_with_admission(&executor, &mut launch, &claim).await;
+
+            assert!(matches!(
+                result,
+                EffectExecution::ReconcileLater {
+                    failure: LaunchFailure {
+                        class: FailureClass::AmbiguousExternal,
+                        ref code,
+                        ..
+                    },
+                    ..
+                } if code == "trigger_sponsored_activation_ambiguous"
+            ));
+            assert_eq!(sessions.model_authority_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                events.lock().unwrap().as_slice(),
+                ["github_probe_allowed", "grant_activation"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sponsored_historical_reconciliation_never_reactivates_or_reinstalls_authority() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut launch = sponsored_reach_launch();
+        let capability = live_sponsored_capability(&launch);
+        let sessions = Arc::new(
+            FakeSessions::with_policy_receipt(layer3_adapter::RuntimePolicyReceipt {
+                generation: 1,
+                fence: 7,
+                revoked: false,
+            })
+            .with_events(events.clone()),
+        );
+        *sessions.model_authority_answers.lock().unwrap() =
+            VecDeque::from([Err(SponsoredModelAuthorityError::RuntimeUnavailable)]);
+        let sponsorships = Arc::new(FakeSponsorships::new(
+            [Ok(capability.clone())],
+            events.clone(),
+        ));
+        let executor = sponsored_executor(sessions.clone(), sponsorships.clone());
+        let mut execute_claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+        execute_claim.fence = 7;
+
+        let first = execute_with_admission(&executor, &mut launch, &execute_claim).await;
+        assert!(matches!(
+            first,
+            EffectExecution::ReconcileLater {
+                failure: LaunchFailure {
+                    ref code,
+                    class: FailureClass::RetryableTransient,
+                    ..
+                },
+                ..
+            } if code == "trigger_sponsored_authority_install_pending"
+        ));
+
+        launch.revision_number = launch.revision_number.saturating_add(50);
+        let first_reconciliation = promote_reach_to_reconciliation(&mut launch, &execute_claim, 8);
+        assert!(matches!(
+            executor.reconcile(&launch, &first_reconciliation).await,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::RecoveryRequired,
+                    ref code,
+                    ..
+                }
+            } if code == "trigger_reach_install_outcome_unknown"
+        ));
+
+        launch.revision_number = launch.revision_number.saturating_add(75);
+        let restart_reconciliation =
+            promote_reach_to_reconciliation(&mut launch, &execute_claim, 9);
+        assert!(matches!(
+            executor.reconcile(&launch, &restart_reconciliation).await,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::RecoveryRequired,
+                    ref code,
+                    ..
+                }
+            } if code == "trigger_reach_install_outcome_unknown"
+        ));
+
+        assert_eq!(sessions.installed_policies.lock().unwrap().len(), 1);
+        assert_eq!(sessions.reconciliation_calls.load(Ordering::SeqCst), 0);
+        assert!(sessions
+            .reconciliation_probe_requests
+            .lock()
+            .unwrap()
+            .is_empty());
+        assert_eq!(sessions.model_authority_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            sessions
+                .installed_model_capabilities
+                .lock()
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&capability)
+        );
+        let commands = sponsorships.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].launch_id, launch.id);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            [
+                "github_probe_allowed",
+                "grant_activation",
+                "model_authority_install",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sponsored_runtime_authority_acknowledgement_mismatches_fail_closed_field_by_field() {
+        for mismatch in 0..8 {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut launch = sponsored_reach_launch();
+            let capability = live_sponsored_capability(&launch);
+            let mut receipt = sponsored_authority_receipt(&capability);
+            match mismatch {
+                0 => receipt.runtime_audience = "another-runtime".into(),
+                1 => receipt.session_id = "sesn_another".into(),
+                2 => receipt.session_credential_generation += 1,
+                3 => receipt.launch_id = "11111111-1111-4111-8111-111111111111".into(),
+                4 => receipt.grant_id = "33333333-3333-4333-8333-333333333333".into(),
+                5 => receipt.grant_generation += 1,
+                6 => receipt.policy_generation += 1,
+                7 => receipt.capability_fingerprint = "e".repeat(64),
+                _ => unreachable!(),
+            }
+            let sessions = Arc::new(
+                FakeSessions::with_policy_receipt(layer3_adapter::RuntimePolicyReceipt {
+                    generation: 1,
+                    fence: 7,
+                    revoked: false,
+                })
+                .with_events(events.clone()),
+            );
+            sessions
+                .model_authority_answers
+                .lock()
+                .unwrap()
+                .push_back(Ok(receipt));
+            let sponsorships = Arc::new(FakeSponsorships::new([Ok(capability)], events.clone()));
+            let executor = sponsored_executor(sessions.clone(), sponsorships);
+            let mut claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+            claim.fence = 7;
+
+            let result = execute_with_admission(&executor, &mut launch, &claim).await;
+
+            assert!(matches!(
+                result,
+                EffectExecution::Failed {
+                    failure: LaunchFailure {
+                        class: FailureClass::TerminalSecurity,
+                        ref code,
+                        ..
+                    }
+                } if code == "trigger_sponsored_authority_acknowledgement_mismatch"
+            ));
+            assert_eq!(sessions.prompt_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn wrong_session_and_expired_sponsored_capabilities_never_reach_the_runtime() {
+        for invalid in ["wrong_session", "expired"] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut launch = sponsored_reach_launch();
+            let mut capability = live_sponsored_capability(&launch);
+            match invalid {
+                "wrong_session" => capability.session_id = SessionId("sesn_wrong".into()),
+                "expired" => capability.expires_at = "1970-01-01T00:00:01Z".into(),
+                _ => unreachable!(),
+            }
+            let sessions = Arc::new(
+                FakeSessions::with_policy_receipt(layer3_adapter::RuntimePolicyReceipt {
+                    generation: 1,
+                    fence: 7,
+                    revoked: false,
+                })
+                .with_events(events.clone()),
+            );
+            let sponsorships = Arc::new(FakeSponsorships::new([Ok(capability)], events.clone()));
+            let executor = sponsored_executor(sessions.clone(), sponsorships);
+            let mut claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+            claim.fence = 7;
+
+            let result = execute_with_admission(&executor, &mut launch, &claim).await;
+
+            assert!(matches!(
+                result,
+                EffectExecution::Failed {
+                    failure: LaunchFailure {
+                        class: FailureClass::TerminalSecurity,
+                        ref code,
+                        ..
+                    }
+                } if code == "trigger_sponsored_capability_invalid"
+            ));
+            assert_eq!(sessions.model_authority_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_sponsorship_does_not_change_ordinary_reach() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut launch = reach_launch();
+        let sessions = Arc::new(
+            FakeSessions::with_policy_receipt(layer3_adapter::RuntimePolicyReceipt {
+                generation: 1,
+                fence: 7,
+                revoked: false,
+            })
+            .with_events(events.clone()),
+        );
+        let sponsorships = Arc::new(FakeSponsorships::new([], events.clone()));
+        let executor = sponsored_executor(sessions.clone(), sponsorships.clone());
+        let mut claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+        claim.fence = 7;
+
+        assert!(matches!(
+            execute_with_admission(&executor, &mut launch, &claim).await,
+            EffectExecution::Completed {
+                result: LaunchEffectResult::Reach { .. },
+                ..
+            }
+        ));
+        assert!(sponsorships.commands.lock().unwrap().is_empty());
+        assert_eq!(sessions.model_authority_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(events.lock().unwrap().as_slice(), ["github_probe_allowed"]);
+    }
+
+    #[test]
+    fn sponsored_activation_identity_ignores_worker_and_launch_bookkeeping() {
+        let mut launch = sponsored_reach_launch();
+        let session_id = launch.session.as_ref().unwrap().session_id.clone();
+        let stable = sponsored_activation_request_id(&launch, &session_id);
+
+        launch.revision_number = 999;
+        launch.fencing_counter = 88;
+        launch.lease = Some(layer2_core::WorkerLease {
+            holder: "replacement-worker".into(),
+            fencing_token: 88,
+            acquired_at: "2026-08-27T00:02:00Z".into(),
+            expires_at: "2099-08-27T00:00:00Z".into(),
+        });
+        launch.effects.push(layer2_core::EffectRecord {
+            kind: LaunchEffectKind::Reach,
+            state: layer2_core::EffectState::Reconciling,
+            intent_key: "replacement-reconciliation".into(),
+            attempt: 9,
+            reconciliation_attempt: 7,
+            fence: 88,
+            authority_admission: None,
+            provider_request_id: None,
+            external_resource_ids: BTreeMap::new(),
+            next_attempt_at: None,
+            last_failure: None,
+            updated_at: "2026-08-27T00:02:00Z".into(),
+        });
+        assert_eq!(
+            sponsored_activation_request_id(&launch, &session_id),
+            stable
+        );
+
+        launch.revision_digest = "e".repeat(64);
+        assert_ne!(
+            sponsored_activation_request_id(&launch, &session_id),
+            stable
+        );
+    }
+
+    #[tokio::test]
     async fn expired_reach_lease_never_installs_runtime_policy() {
         let sessions = Arc::new(FakeSessions::with_policy_receipt(
             layer3_adapter::RuntimePolicyReceipt {
@@ -7442,6 +8558,92 @@ pub(in crate::trigger) mod tests {
         ));
         assert_eq!(sessions.gateway_probe_calls.load(Ordering::SeqCst), 0);
         assert!(sessions.installed_policies.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sponsored_capability_renewal_reinstalls_the_fresh_credential_generation() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sessions = Arc::new(
+            FakeSessions::with_policy_receipt(layer3_adapter::RuntimePolicyReceipt {
+                generation: 2,
+                fence: 9,
+                revoked: false,
+            })
+            .with_events(events.clone()),
+        );
+        let mut launch = initial_dispatch_launch();
+        launch.revision.content.commercial_policy.billing_mode = BillingMode::Sponsored;
+        let capability = live_sponsored_capability(&launch);
+        let mut fresh_credential =
+            test_credential_authority(&launch.session.as_ref().unwrap().session_id);
+        fresh_credential.custody_generation = 2;
+        fresh_credential.provider_key_id = "provider-session-key-2".into();
+        *sessions.credential_authority.lock().unwrap() = Some(fresh_credential.clone());
+        let mut model_receipt = sponsored_authority_receipt(&capability);
+        model_receipt.session_credential_generation = fresh_credential.custody_generation;
+        sessions
+            .model_authority_answers
+            .lock()
+            .unwrap()
+            .push_back(Ok(model_receipt));
+        let sponsorships = Arc::new(FakeSponsorships::new(
+            [Ok(capability.clone())],
+            events.clone(),
+        ));
+        let executor = sponsored_executor(sessions.clone(), sponsorships.clone());
+        let lease = layer2_core::WorkerLease {
+            holder: "sponsored-capability-renewal-worker".into(),
+            fencing_token: 9,
+            acquired_at: "2026-08-27T00:00:00Z".into(),
+            expires_at: "2099-08-27T00:00:00Z".into(),
+        };
+        launch.fencing_counter = lease.fencing_token;
+        launch.lease = Some(lease.clone());
+        let target_expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_add(CAPABILITY_MAX_LIFETIME_SECONDS);
+        let admission = executor
+            .admit_capability_renewal(&launch, lease.fencing_token, 2, target_expiry)
+            .await
+            .unwrap();
+        launch
+            .record_capability_authority_admission(&lease, admission, "2026-08-27T00:00:01Z")
+            .unwrap();
+
+        let renewal = executor
+            .renew_capability(&launch, lease.fencing_token)
+            .await
+            .unwrap();
+
+        assert_eq!(renewal.reach.policy_generation, 2);
+        assert_eq!(sessions.model_authority_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            sessions
+                .installed_model_credential_authorities
+                .lock()
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&fresh_credential)
+        );
+        assert_eq!(
+            sessions
+                .installed_model_capabilities
+                .lock()
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&capability)
+        );
+        assert_eq!(sponsorships.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            [
+                "github_probe_allowed",
+                "grant_activation",
+                "model_authority_install"
+            ]
+        );
     }
 
     #[tokio::test]
@@ -8782,6 +9984,54 @@ pub(in crate::trigger) mod tests {
         launch
     }
 
+    fn sponsored_reach_launch() -> Launch {
+        let mut launch = reach_launch();
+        // These executor tests isolate the post-Start data plane. The worker
+        // fixture has already exercised review/Start admission separately.
+        launch.revision.content.commercial_policy.billing_mode = BillingMode::Sponsored;
+        launch
+    }
+
+    fn live_sponsored_capability(launch: &Launch) -> InertGrantCapability {
+        sponsored_capability(
+            launch,
+            launch.session.as_ref().unwrap().session_id.clone(),
+            rfc3339_at(SystemTime::now() + Duration::from_secs(300)),
+        )
+    }
+
+    fn promote_reach_to_reconciliation(
+        launch: &mut Launch,
+        execute_claim: &EffectClaim,
+        fence: u64,
+    ) -> EffectClaim {
+        let record = launch
+            .effects
+            .iter_mut()
+            .find(|record| {
+                record.kind == execute_claim.kind && record.intent_key == execute_claim.intent_key
+            })
+            .expect("the executable Reach retained its admitted effect record");
+        record.state = layer2_core::EffectState::Reconciling;
+        record.reconciliation_attempt = record.reconciliation_attempt.saturating_add(1);
+        record.fence = fence;
+        launch.fencing_counter = fence;
+        launch.lease = Some(layer2_core::WorkerLease {
+            holder: format!("github-effect-reconciler-{fence}"),
+            fencing_token: fence,
+            acquired_at: "2026-08-27T00:01:00Z".into(),
+            expires_at: "2099-08-27T00:00:00Z".into(),
+        });
+        EffectClaim {
+            kind: execute_claim.kind,
+            mode: EffectClaimMode::Reconcile,
+            intent_key: execute_claim.intent_key.clone(),
+            attempt: execute_claim.attempt,
+            reconciliation_attempt: record.reconciliation_attempt,
+            fence,
+        }
+    }
+
     fn workspace_launch() -> Launch {
         let mut launch = reach_launch();
         launch.state = LaunchState::WorkspacePending;
@@ -9377,6 +10627,25 @@ pub(in crate::trigger) mod tests {
         )
     }
 
+    fn sponsored_executor(
+        sessions: Arc<FakeSessions>,
+        sponsorships: Arc<FakeSponsorships>,
+    ) -> GithubEffectExecutor {
+        let mut executor = GithubEffectExecutor::with_capability_ports(
+            Arc::new(FakeGithub::new([])),
+            sessions as Arc<dyn TriggerSessionEffectPort>,
+            test_signer(),
+        );
+        executor.sponsorship = Some(SponsoredEffectRuntime {
+            sponsorships,
+            gateway_origin: layer3_adapter::SponsoredModelGatewayOrigin::parse(
+                "https://sponsored-model-gateway.example",
+            )
+            .unwrap(),
+        });
+        executor
+    }
+
     fn diff_executor(github: Arc<FakeGithub>, store: Arc<FakeReviewStore>) -> GithubEffectExecutor {
         GithubEffectExecutor {
             github,
@@ -9384,6 +10653,7 @@ pub(in crate::trigger) mod tests {
             checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
             diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
             sessions: None,
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -9400,6 +10670,7 @@ pub(in crate::trigger) mod tests {
             checkpoint_store: None,
             diff_store: None,
             sessions: None,
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -9416,6 +10687,7 @@ pub(in crate::trigger) mod tests {
             checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
             diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
             sessions: None,
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -9432,6 +10704,7 @@ pub(in crate::trigger) mod tests {
             checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
             diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
             sessions: None,
+            sponsorship: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
             changed_file_limit: TEST_CHANGED_FILE_LIMIT,

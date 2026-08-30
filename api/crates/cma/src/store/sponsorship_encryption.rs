@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use layer2_core::{SponsorshipOperationalPseudonymizer, SponsorshipStoreError};
+use layer2_core::{
+    SponsorshipOperationalPseudonymizer, SponsorshipStoreError, MAX_SPONSORED_MODEL_REQUEST_BYTES,
+    MAX_SPONSORED_MODEL_RESPONSE_BYTES,
+};
 use mongodb::bson::{spec::BinarySubtype, Binary};
 use ring::{
     aead::{self, Aad, LessSafeKey, Nonce, UnboundKey},
@@ -214,6 +217,18 @@ impl SponsorshipKeyring {
         &self.current_key_id
     }
 
+    /// Key ids whose ciphertext must be rewrapped before the key can retire.
+    ///
+    /// This deliberately exposes no key bytes and says nothing about the
+    /// independently rotated operational-pseudonym keyring.
+    pub(crate) fn retiring_key_ids(&self) -> Vec<String> {
+        self.keys
+            .keys()
+            .filter(|key_id| *key_id != &self.current_key_id)
+            .cloned()
+            .collect()
+    }
+
     fn current(&self) -> &SponsorshipEncryptionKey {
         self.keys
             .get(&self.current_key_id)
@@ -345,6 +360,7 @@ impl SponsorshipOperationalKeyring {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn contains_key_id(&self, key_id: &str) -> bool {
         self.keys.contains_key(key_id)
     }
@@ -529,10 +545,65 @@ impl SponsorshipCipher {
         authority_context: &str,
         plaintext: &str,
     ) -> Result<SponsorshipCipherEnvelope, SponsorshipStoreError> {
+        self.seal_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            plaintext,
+            MAX_PLAINTEXT_BYTES,
+        )
+    }
+
+    pub(super) fn seal_model_request(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        plaintext: &str,
+    ) -> Result<SponsorshipCipherEnvelope, SponsorshipStoreError> {
+        self.seal_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            plaintext,
+            MAX_SPONSORED_MODEL_REQUEST_BYTES,
+        )
+    }
+
+    pub(super) fn seal_model_response(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        plaintext: &str,
+    ) -> Result<SponsorshipCipherEnvelope, SponsorshipStoreError> {
+        self.seal_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            plaintext,
+            MAX_SPONSORED_MODEL_RESPONSE_BYTES,
+        )
+    }
+
+    fn seal_with_limit(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        plaintext: &str,
+        maximum_plaintext_bytes: usize,
+    ) -> Result<SponsorshipCipherEnvelope, SponsorshipStoreError> {
         validate_context(record_kind, record_id, field, authority_context)?;
-        if plaintext.len() > MAX_PLAINTEXT_BYTES {
+        if plaintext.len() > maximum_plaintext_bytes {
             return Err(SponsorshipStoreError::Malformed(format!(
-                "sponsorship authority plaintext exceeds {MAX_PLAINTEXT_BYTES} bytes"
+                "sponsorship authority plaintext exceeds {maximum_plaintext_bytes} bytes"
             )));
         }
         let key_id = self.keyring.current_key_id().to_string();
@@ -583,6 +654,61 @@ impl SponsorshipCipher {
         authority_context: &str,
         envelope: &SponsorshipCipherEnvelope,
     ) -> Result<OpenedSponsorshipSecret, SponsorshipStoreError> {
+        self.open_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            envelope,
+            MAX_PLAINTEXT_BYTES,
+        )
+    }
+
+    pub(super) fn open_model_request(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        envelope: &SponsorshipCipherEnvelope,
+    ) -> Result<OpenedSponsorshipSecret, SponsorshipStoreError> {
+        self.open_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            envelope,
+            MAX_SPONSORED_MODEL_REQUEST_BYTES,
+        )
+    }
+
+    pub(super) fn open_model_response(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        envelope: &SponsorshipCipherEnvelope,
+    ) -> Result<OpenedSponsorshipSecret, SponsorshipStoreError> {
+        self.open_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            envelope,
+            MAX_SPONSORED_MODEL_RESPONSE_BYTES,
+        )
+    }
+
+    fn open_with_limit(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        envelope: &SponsorshipCipherEnvelope,
+        maximum_plaintext_bytes: usize,
+    ) -> Result<OpenedSponsorshipSecret, SponsorshipStoreError> {
         validate_context(record_kind, record_id, field, authority_context)?;
         if envelope.version != ENVELOPE_VERSION {
             return Err(SponsorshipStoreError::Malformed(format!(
@@ -595,7 +721,8 @@ impl SponsorshipCipher {
             || envelope.nonce.bytes.len() != aead::NONCE_LEN
             || envelope.ciphertext.subtype != BinarySubtype::Generic
             || envelope.ciphertext.bytes.len() < aead::AES_256_GCM.tag_len()
-            || envelope.ciphertext.bytes.len() > MAX_PLAINTEXT_BYTES + aead::AES_256_GCM.tag_len()
+            || envelope.ciphertext.bytes.len()
+                > maximum_plaintext_bytes + aead::AES_256_GCM.tag_len()
         {
             return Err(SponsorshipStoreError::Malformed(
                 "stored sponsorship ciphertext envelope is malformed".into(),
@@ -660,16 +787,79 @@ impl SponsorshipCipher {
         authority_context: &str,
         envelope: &SponsorshipCipherEnvelope,
     ) -> Result<Option<SponsorshipCipherEnvelope>, SponsorshipStoreError> {
-        let opened = self.open(record_kind, record_id, field, authority_context, envelope)?;
+        self.rewrap_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            envelope,
+            MAX_PLAINTEXT_BYTES,
+        )
+    }
+
+    pub(super) fn rewrap_model_request(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        envelope: &SponsorshipCipherEnvelope,
+    ) -> Result<Option<SponsorshipCipherEnvelope>, SponsorshipStoreError> {
+        self.rewrap_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            envelope,
+            MAX_SPONSORED_MODEL_REQUEST_BYTES,
+        )
+    }
+
+    pub(super) fn rewrap_model_response(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        envelope: &SponsorshipCipherEnvelope,
+    ) -> Result<Option<SponsorshipCipherEnvelope>, SponsorshipStoreError> {
+        self.rewrap_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            envelope,
+            MAX_SPONSORED_MODEL_RESPONSE_BYTES,
+        )
+    }
+
+    fn rewrap_with_limit(
+        &self,
+        record_kind: &str,
+        record_id: &str,
+        field: &str,
+        authority_context: &str,
+        envelope: &SponsorshipCipherEnvelope,
+        maximum_plaintext_bytes: usize,
+    ) -> Result<Option<SponsorshipCipherEnvelope>, SponsorshipStoreError> {
+        let opened = self.open_with_limit(
+            record_kind,
+            record_id,
+            field,
+            authority_context,
+            envelope,
+            maximum_plaintext_bytes,
+        )?;
         if !opened.needs_rewrap {
             return Ok(None);
         }
-        self.seal(
+        self.seal_with_limit(
             record_kind,
             record_id,
             field,
             authority_context,
             &opened.plaintext,
+            maximum_plaintext_bytes,
         )
         .map(Some)
     }
@@ -805,6 +995,19 @@ mod tests {
         )
         .unwrap_err();
         assert!(operational_duplicate.contains("material"));
+    }
+
+    #[test]
+    fn encryption_keyring_exposes_only_sorted_retiring_key_ids() {
+        let keyring = SponsorshipKeyring::new(
+            "current",
+            key(1),
+            [("old-z".to_string(), key(2)), ("old-a".to_string(), key(3))],
+        )
+        .unwrap();
+
+        assert_eq!(keyring.retiring_key_ids(), ["old-a", "old-z"]);
+        assert!(!keyring.retiring_key_ids().iter().any(|id| id == "current"));
     }
 
     #[test]

@@ -31,6 +31,13 @@ pub(super) fn require_contributor_capability(caller: &Caller) -> Result<(), Spon
         .map_err(|_| SponsorshipError::Forbidden)
 }
 
+pub(super) fn require_sponsorship_recovery(caller: &Caller) -> Result<(), SponsorshipError> {
+    caller
+        .authorization
+        .require(Capability::ReconcileSponsoredUsage)
+        .map_err(|_| SponsorshipError::Forbidden)
+}
+
 pub(super) fn usage_idempotency_fingerprint(
     requester: &SubjectId,
     command: &RequestSponsoredUsage,
@@ -45,6 +52,30 @@ pub(super) fn usage_idempotency_fingerprint(
         &command.resource,
         command.maximum_quota,
         &command.capability,
+    ))
+}
+
+/// Bind a model reservation to the canonical request body in addition to the
+/// caller's stable retry identity. The generic usage API intentionally has no
+/// payload field, so model calls use this separately versioned fingerprint to
+/// ensure reusing an explicit idempotency key with a changed body conflicts.
+pub(super) fn model_usage_idempotency_fingerprint(
+    requester: &SubjectId,
+    command: &RequestSponsoredUsage,
+    request_digest: &str,
+) -> Result<String, TriggerValidationError> {
+    command.capability.validate()?;
+    validate_digest("usage.request_digest", request_digest)?;
+    canonical_digest(&(
+        "cma-sponsored-model-usage-idempotency-v1",
+        &command.grant_id,
+        requester,
+        &command.provider,
+        &command.model,
+        &command.resource,
+        command.maximum_quota,
+        &command.capability,
+        request_digest,
     ))
 }
 
