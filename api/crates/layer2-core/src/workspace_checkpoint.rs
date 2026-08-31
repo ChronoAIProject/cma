@@ -113,7 +113,7 @@ impl SessionService {
             .trigger_origin
             .as_ref()
             .cloned()
-            .ok_or(CoreError::InvalidState)?;
+            .ok_or_else(CoreError::invalid_state)?;
         let runtime_generation = u64::from(record.session.rotations).saturating_add(1);
         let owner = record.session.owner.clone();
         let source = self
@@ -436,7 +436,7 @@ impl SessionService {
         let origin = record
             .trigger_origin
             .as_ref()
-            .ok_or(CoreError::InvalidState)?;
+            .ok_or_else(CoreError::invalid_state)?;
         let runtime_generation = u64::from(record.session.rotations).saturating_add(1);
         if &record.session.owner != owner
             || &origin.launch_id != launch_id

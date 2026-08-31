@@ -31,6 +31,7 @@ import {
 } from './http.js';
 import { PRICING_WIRE, SESSION_STATUSES, type SessionStatus } from './wire.js';
 import type {
+  ChatSession,
   CredentialMode,
   Kernel,
   KernelOffer,
@@ -41,6 +42,7 @@ import type {
   SessionCreator,
   SessionLifecycle,
   SessionPlane,
+  SessionSurface,
   StopReason,
   SessionService,
   SessionSize,
@@ -69,9 +71,13 @@ const SESSION_COLLECTION = '/api/v1/sessions';
 /** Lifecycle values the server accepts as an exact session-list filter. */
 export type SessionListStatus = Exclude<SessionLifecycle, 'unknown'>;
 
+/** Session families accepted by the exact list filter. */
+export type SessionListSurface = SessionSurface | 'agent';
+
 /** Position and optional exact status filter for one bounded session page. */
 export interface SessionPageRequest extends PageRequest {
   readonly status?: SessionListStatus;
+  readonly surface?: SessionListSurface;
 }
 
 /** Exact `StopReason` spellings serialized by layer2-core. */
@@ -110,6 +116,7 @@ interface SessionPayload {
   last_seq?: unknown;
   cols?: unknown;
   rows?: unknown;
+  chat?: unknown;
 }
 
 /**
@@ -137,6 +144,7 @@ export function toSession(raw: unknown): Session {
   return {
     id: p.id,
     kernel: p.kernel as Kernel,
+    chat: chatSession(p.chat),
     lifecycle: knownLifecycle ? (p.status as SessionStatus) : 'unknown',
     ...(knownLifecycle ? {} : { reportedStatus: p.status }),
     recoveryState:
@@ -160,6 +168,28 @@ export function toSession(raw: unknown): Session {
     // rather than trying and handling a refusal.
     capabilities: toCapabilities(raw),
     agent: agent(p.agent),
+  };
+}
+
+function chatSession(raw: unknown): ChatSession | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ProtocolError('session chat projection was not an object');
+  }
+  const chat = raw as Record<string, unknown>;
+  if (typeof chat.worktree_name !== 'string' || chat.worktree_name.trim() === '') {
+    throw new ProtocolError('session chat projection carried no worktree name');
+  }
+  if (typeof chat.worktree_path !== 'string' || chat.worktree_path.trim() === '') {
+    throw new ProtocolError('session chat projection carried no worktree path');
+  }
+  return {
+    worktreeName: chat.worktree_name,
+    worktreePath: chat.worktree_path,
+    title: typeof chat.title === 'string' ? chat.title : undefined,
+    pausedNotice: typeof chat.paused_notice === 'string' ? chat.paused_notice : undefined,
   };
 }
 
@@ -351,7 +381,13 @@ export async function listSessionPage(
   if (page.status !== undefined && !LIFECYCLES.includes(page.status)) {
     throw new ValidationError('session page status was not a known lifecycle');
   }
-  const target = pageTarget(SESSION_COLLECTION, page, { status: page.status });
+  if (page.surface !== undefined && page.surface !== 'chat' && page.surface !== 'agent') {
+    throw new ValidationError('session page surface was not chat or agent');
+  }
+  const target = pageTarget(SESSION_COLLECTION, page, {
+    status: page.status,
+    surface: page.surface,
+  });
   return requestPage(config, SESSION_COLLECTION, target, sessionList, options);
 }
 
@@ -468,6 +504,8 @@ function isPlane(value: unknown): value is SessionPlane {
 
 /** What a new session is asked for. */
 export interface CreateSession {
+  /** Deployment-managed surface, or an ordinary agent session when absent. */
+  readonly surface?: SessionSurface;
   /** Terminal width, in columns. */
   readonly cols?: number;
   /** Terminal height, in rows. */
@@ -654,6 +692,7 @@ export async function createSession(
     method: 'POST',
     expectedStatus: 201,
     body: {
+      surface: session.surface,
       cols: geometry?.cols,
       rows: geometry?.rows,
       // Omitted rather than sent as null when nothing was chosen: absent means

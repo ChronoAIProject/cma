@@ -133,9 +133,19 @@ impl TerminalGeometry {
     }
 }
 
+/// Deployment-managed surface selected when a session is created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSurface {
+    /// A worktree-backed thread on the owner's shared chat host.
+    Chat,
+}
+
 /// Parameters accepted when creating a session.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CreateSessionRequest {
+    /// Deployment-managed surface, or an ordinary agent session when absent.
+    pub surface: Option<SessionSurface>,
     /// Initial terminal dimensions, or the deployment default when absent.
     pub geometry: Option<TerminalGeometry>,
     /// Environment profile used to configure the new session.
@@ -224,6 +234,24 @@ impl SessionStatus {
     }
 }
 
+/// Session family accepted by the bounded session collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionSurfaceFilter {
+    /// Worktree-backed shared-host chat threads.
+    Chat,
+    /// Ordinary independently provisioned agent sessions.
+    Agent,
+}
+
+impl SessionSurfaceFilter {
+    pub(crate) const fn query_value(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Agent => "agent",
+        }
+    }
+}
+
 /// Smallest page accepted by CMA's bounded collections.
 pub const MIN_PAGE_SIZE: u16 = 1;
 
@@ -258,6 +286,7 @@ pub struct Page<T> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionPageRequest {
     status: Option<SessionStatus>,
+    surface: Option<SessionSurfaceFilter>,
     limit: Option<u16>,
     cursor: Option<String>,
     continuation: Option<PageContinuation>,
@@ -277,6 +306,17 @@ impl SessionPageRequest {
             ));
         }
         self.status = Some(status);
+        Ok(self)
+    }
+
+    /// Narrow the first page to chat threads or ordinary agent sessions.
+    pub fn with_surface(mut self, surface: SessionSurfaceFilter) -> Result<Self> {
+        if self.continuation.is_some() {
+            return Err(Error::protocol(
+                "a pagination continuation cannot be combined with a surface filter",
+            ));
+        }
+        self.surface = Some(surface);
         Ok(self)
     }
 
@@ -322,6 +362,11 @@ impl SessionPageRequest {
     /// Exact lifecycle filter, when this is a first-page request.
     pub fn status(&self) -> Option<SessionStatus> {
         self.status
+    }
+
+    /// Exact session-family filter, when this is a first-page request.
+    pub fn surface(&self) -> Option<SessionSurfaceFilter> {
+        self.surface
     }
 
     /// Requested first-page size, or `None` for the server default.
@@ -547,6 +592,37 @@ pub struct SessionPricing {
     pub quoted_at: String,
 }
 
+/// Shared-host worktree facts returned for a chat thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatSession {
+    /// Stable worktree allocation name within the shared host.
+    pub worktree_name: String,
+    /// Runtime path used as this conversation's working directory.
+    pub worktree_path: String,
+    /// Generated display title, when one has been committed.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Human-facing pause explanation, when the host is paused.
+    #[serde(default)]
+    pub paused_notice: Option<String>,
+}
+
+impl ChatSession {
+    fn validate(&self) -> Result<()> {
+        if self.worktree_name.trim().is_empty() {
+            return Err(Error::protocol(
+                "a chat session response contains an empty worktree name",
+            ));
+        }
+        if self.worktree_path.trim().is_empty() {
+            return Err(Error::protocol(
+                "a chat session response contains an empty worktree path",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A CMA session as returned by create, list, and read operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
@@ -561,6 +637,9 @@ pub struct Session {
     pub stop_reason: Option<StopReason>,
     /// Kernel serving the session.
     pub kernel: String,
+    /// Shared-host worktree facts for a chat thread.
+    #[serde(default)]
+    pub chat: Option<ChatSession>,
     /// Agent configuration fixed at creation.
     pub agent: Agent,
     /// Terminal width.
@@ -594,6 +673,9 @@ pub struct Session {
 
 impl Session {
     pub(crate) fn validate(self) -> Result<Self> {
+        if let Some(chat) = &self.chat {
+            chat.validate()?;
+        }
         TerminalGeometry::new(self.cols, self.rows)
             .map_err(|_| Error::protocol("a session response contains zero terminal geometry"))?;
         if self

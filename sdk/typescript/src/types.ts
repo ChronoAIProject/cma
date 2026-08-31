@@ -68,6 +68,17 @@ export type RecoveryState =
  */
 export type SessionPlane = 'terminal' | 'conversation';
 
+/** Deployment-managed surface selected when a session is created. */
+export type SessionSurface = 'chat';
+
+/** Shared-host worktree facts reported for a chat thread. */
+export interface ChatSession {
+  readonly worktreeName: string;
+  readonly worktreePath: string;
+  readonly title?: string;
+  readonly pausedNotice?: string;
+}
+
 /**
  * The identifier a session names its runtime by.
  *
@@ -121,6 +132,8 @@ export interface SessionService {
 export interface Session {
   readonly id: string;
   readonly kernel: Kernel;
+  /** Shared-host worktree facts, present only for chat threads. */
+  readonly chat?: ChatSession;
   readonly lifecycle: SessionLifecycle;
   /** Raw status from a newer server when `lifecycle` is `unknown`. */
   readonly reportedStatus?: string;

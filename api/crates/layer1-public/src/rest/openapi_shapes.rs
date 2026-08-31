@@ -84,6 +84,21 @@ pub(super) enum SessionMode {
     Conversation,
 }
 
+/// Deployment-managed session surface selected at creation.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SessionSurface {
+    Chat,
+}
+
+/// Session family accepted by the owner session collection.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SessionSurfaceFilter {
+    Chat,
+    Agent,
+}
+
 /// How much a session's runtime reserves.
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct SessionSize {

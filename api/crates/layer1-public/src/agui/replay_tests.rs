@@ -652,6 +652,7 @@ mod route_resume {
             granted_services: Some(Vec::new()),
             granted_skills: Some(Vec::new()),
             pricing: None,
+            chat: None,
             created_at: "2026-08-25T08:00:00Z".into(),
         });
         let store = Arc::new(ReplayStore::new(record, events));

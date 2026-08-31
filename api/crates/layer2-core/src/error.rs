@@ -71,6 +71,11 @@ pub enum CoreError {
     #[error("{}", session_limit_message(*limit, *live))]
     SessionLimitReached { limit: u32, live: u32 },
 
+    /// This host already contains its pinned maximum number of live threads.
+    /// Checked while holding host allocation authority and before provider work.
+    #[error("{live} of {limit} chat threads are already open for this owner")]
+    ChatThreadLimit { limit: u32, live: u32 },
+
     /// This deployment has no room left for a session that size.
     ///
     /// Distinct from a per-owner limit: the caller is not over an allowance of
@@ -107,8 +112,8 @@ pub enum CoreError {
     RuntimeRefused(String),
 
     /// The operation is not valid in the session's current state.
-    #[error("invalid state for operation")]
-    InvalidState,
+    #[error("{}", invalid_state_message(detail.as_deref()))]
+    InvalidState { detail: Option<String> },
 
     /// Ordinary owner input is fenced by a Trigger's initial prompt.
     #[error("the initial Trigger prompt currently owns session input ({0:?})")]
@@ -212,6 +217,18 @@ pub enum CoreError {
 }
 
 impl CoreError {
+    pub fn invalid_state() -> Self {
+        Self::InvalidState { detail: None }
+    }
+
+    pub fn chat_lifecycle_managed(operation: &str) -> Self {
+        Self::InvalidState {
+            detail: Some(format!(
+                "chat thread lifecycle is platform-managed; owner {operation} is not allowed"
+            )),
+        }
+    }
+
     /// A stable, machine-readable code for this condition.
     ///
     /// Interfaces map these onto their own error surfaces. The strings are part
@@ -228,11 +245,12 @@ impl CoreError {
             Self::InvalidPressurePolicy(_) => "invalid_pressure_policy",
             Self::SizeOutOfBounds(_) => "size_out_of_bounds",
             Self::SessionLimitReached { .. } => "session_limit_reached",
+            Self::ChatThreadLimit { .. } => "chat_thread_limit",
             Self::DeploymentAtCapacity { .. } => "deployment_at_capacity",
             Self::InvalidSessionSize(_) => "invalid_session_size",
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
             Self::RuntimeRefused(_) => "runtime_refused",
-            Self::InvalidState => "invalid_state",
+            Self::InvalidState { .. } => "invalid_state",
             Self::InitialPromptReserved(_) => "initial_prompt_reserved",
             Self::CapabilityUnsupported(_) => "capability_unsupported",
             Self::InvalidRequest(_) => "invalid_request",
@@ -246,6 +264,10 @@ impl CoreError {
             Self::ChatUnavailable(_) => "chat_unavailable",
         }
     }
+}
+
+fn invalid_state_message(detail: Option<&str>) -> &str {
+    detail.unwrap_or("invalid state for operation")
 }
 
 fn session_limit_message(limit: u32, live: u32) -> String {
@@ -297,6 +319,10 @@ mod tests {
                 maximum: 4_000,
             }),
             CoreError::SessionLimitReached { limit: 3, live: 3 },
+            CoreError::ChatThreadLimit {
+                limit: 10,
+                live: 10,
+            },
             CoreError::DeploymentAtCapacity {
                 requested_cpu_millis: 1_000,
                 requested_memory_mib: 1_024,
@@ -306,7 +332,7 @@ mod tests {
             CoreError::InvalidSessionSize(SessionSize::new(0, 512).expect_err("zero CPU fails")),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
-            CoreError::InvalidState,
+            CoreError::invalid_state(),
             CoreError::InitialPromptReserved(crate::PromptDeliveryState::DispatchFenced),
             CoreError::CapabilityUnsupported("terminal".into()),
             CoreError::InvalidRequest("x".into()),
@@ -337,11 +363,12 @@ mod tests {
                 | CoreError::InvalidPressurePolicy(_)
                 | CoreError::SizeOutOfBounds(_)
                 | CoreError::SessionLimitReached { .. }
+                | CoreError::ChatThreadLimit { .. }
                 | CoreError::DeploymentAtCapacity { .. }
                 | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
-                | CoreError::InvalidState
+                | CoreError::InvalidState { .. }
                 | CoreError::InitialPromptReserved(_)
                 | CoreError::CapabilityUnsupported(_)
                 | CoreError::InvalidRequest(_)

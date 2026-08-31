@@ -180,6 +180,7 @@ export {
   type PricingQuote,
   type SessionAllowance,
   type SessionListStatus,
+  type SessionListSurface,
   type SessionPageRequest,
   type SessionSpend,
   type UnpricedQuote,
@@ -328,6 +329,7 @@ export {
   type TriggerWorkflowChangePolicy,
 } from './triggers.js';
 export type {
+  ChatSession,
   CredentialMode,
   Kernel,
   KernelOffer,
@@ -338,6 +340,7 @@ export type {
   SessionCreator,
   SessionLifecycle,
   SessionPlane,
+  SessionSurface,
   SessionSize,
   SessionService,
   SessionSkill,

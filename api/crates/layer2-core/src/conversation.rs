@@ -412,7 +412,7 @@ impl SessionService {
                     SessionStatus::Rotating => {
                         unreachable!("interaction preflight refuses rotation")
                     }
-                    SessionStatus::Idle => return Err(CoreError::InvalidState),
+                    SessionStatus::Idle => return Err(CoreError::invalid_state()),
                     SessionStatus::Terminated => unreachable!("terminal status handled above"),
                 }
 
@@ -529,7 +529,7 @@ impl SessionService {
                     entry.session.capabilities.require(Capability::Steer)?;
                 }
                 if !entry.pending_approvals.is_empty() {
-                    return Err(CoreError::InvalidState);
+                    return Err(CoreError::invalid_state());
                 }
                 let runtime_id = entry.runtime.as_ref().map(|runtime| runtime.0.clone());
                 authority.ensure_runtime_delivery_allowed(
@@ -752,7 +752,7 @@ impl SessionService {
         resolutions: &[ApprovalResolution],
     ) -> Result<(), CoreError> {
         if resolutions.is_empty() {
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
 
         caller
@@ -817,7 +817,7 @@ impl SessionService {
                     !unique.insert(resolution.request_id.as_str())
                         || !entry.pending_approvals.contains_key(&resolution.request_id)
                 }) {
-                    return Err(CoreError::InvalidState);
+                    return Err(CoreError::invalid_state());
                 }
                 let input = entry.conversation.clone().ok_or_else(|| {
                     CoreError::RuntimeUnavailable("this session holds no conversation".into())

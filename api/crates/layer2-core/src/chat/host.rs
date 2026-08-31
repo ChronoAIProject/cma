@@ -90,6 +90,7 @@ pub enum ChatUnavailableCause {
     Disabled,
     HostStoreUnavailable,
     Provisioning,
+    RevivePending,
     Retired,
     CapabilityUnsupported(String),
     ProvisioningFailed {
@@ -108,6 +109,7 @@ impl ChatUnavailableCause {
             Self::NotConfigured
                 | Self::HostStoreUnavailable
                 | Self::Provisioning
+                | Self::RevivePending
                 | Self::ProvisioningFailed {
                     retryable: true,
                     ..
@@ -123,6 +125,7 @@ impl std::fmt::Display for ChatUnavailableCause {
             Self::Disabled => formatter.write_str("chat is disabled"),
             Self::HostStoreUnavailable => formatter.write_str("chat host storage is unavailable"),
             Self::Provisioning => formatter.write_str("the chat host is still provisioning"),
+            Self::RevivePending => formatter.write_str("chat host revival is pending"),
             Self::Retired => formatter.write_str("the chat host is retired"),
             Self::CapabilityUnsupported(capability) => {
                 write!(formatter, "the chat runtime does not support {capability}")
@@ -317,6 +320,14 @@ impl crate::service::SessionService {
             Some(host) if host.status == ChatHostStatus::Active => return Ok(host),
             Some(host) if host.status == ChatHostStatus::Retired => {
                 return Err(chat_unavailable(ChatUnavailableCause::Retired));
+            }
+            Some(host)
+                if matches!(
+                    host.status,
+                    ChatHostStatus::Paused | ChatHostStatus::Pausing | ChatHostStatus::Reviving
+                ) =>
+            {
+                return Err(chat_unavailable(ChatUnavailableCause::RevivePending));
             }
             Some(mut host)
                 if host.status == ChatHostStatus::Provisioning
