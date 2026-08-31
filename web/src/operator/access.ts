@@ -16,7 +16,8 @@ import type { AdminSession } from './types';
  */
 
 /** Which of the panel's views this is. */
-export type OperatorViewId = 'people' | 'activity' | 'namespace' | 'sessions' | 'settings';
+export type OperatorViewId =
+  'people' | 'activity' | 'namespace' | 'sessions' | 'settings' | 'chat_settings';
 
 /** One view of the operator panel, and what a caller must hold to see it. */
 export interface OperatorView {
@@ -34,7 +35,7 @@ export interface OperatorView {
 }
 
 /**
- * The five views, in the order the panel offers them.
+ * The six views, in the order the panel offers them.
  *
  * People first because every other record view names them, then what the
  * service was asked to do, then what is running, then the view that acts on
@@ -46,6 +47,7 @@ export const OPERATOR_VIEWS: readonly OperatorView[] = [
   { id: 'namespace', label: 'Namespace', capability: 'read_runtime_inventory' },
   { id: 'sessions', label: 'Sessions', capability: 'read_all_sessions' },
   { id: 'settings', label: 'Settings', capability: 'configure_platform' },
+  { id: 'chat_settings', label: 'Chat', capability: 'configure_platform' },
 ];
 
 /** The views this caller is offered. */

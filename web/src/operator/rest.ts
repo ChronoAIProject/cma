@@ -1,6 +1,8 @@
 import {
   ApiError,
+  changeChatSettings as changeSdkChatSettings,
   ProtocolError,
+  readChatSettings as readSdkChatSettings,
   request,
   requestPages,
   resolveConfig,
@@ -451,13 +453,35 @@ export function createRestOperatorStore(): OperatorStore {
       );
     },
 
-    async resetPlatformBriefing(expectedRevision: number): Promise<StoredPlatformSettings> {
+    async resetPlatformSettings(expectedRevision: number): Promise<StoredPlatformSettings> {
       return toStoredPlatformSettings(
         await call(`${BASE}/settings/reset`, {
           method: 'POST',
           body: { expected_revision: expectedRevision },
         }),
       );
+    },
+
+    async readChatSettings() {
+      try {
+        return await readSdkChatSettings(config);
+      } catch (cause) {
+        if (cause instanceof ApiError && cause.code === 'settings_conflict') {
+          throw new PlatformSettingsConflict(cause.message);
+        }
+        throw cause;
+      }
+    },
+
+    async changeChatSettings(expectedRevision, settings) {
+      try {
+        return await changeSdkChatSettings(config, expectedRevision, settings);
+      } catch (cause) {
+        if (cause instanceof ApiError && cause.code === 'settings_conflict') {
+          throw new PlatformSettingsConflict(cause.message);
+        }
+        throw cause;
+      }
     },
   };
 }
