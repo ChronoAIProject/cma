@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageStream } from './MessageStream';
 import { ApprovalCard } from './ApprovalCard';
 import { SignInCard } from './SignInCard';
@@ -68,6 +68,8 @@ interface ConversationSurfaceProps {
   readonly onInspect?: (call: ToolCallEntry) => void;
   /** The call the column is showing, when it is showing one. */
   readonly inspectingId?: string;
+  /** Hide link failures caused by an intentional lifecycle transition. */
+  readonly suppressConnectionFailure?: boolean;
 }
 
 /**
@@ -87,6 +89,7 @@ export function ConversationSurface({
   onWaitingChange,
   onInspect,
   inspectingId,
+  suppressConnectionFailure = false,
 }: ConversationSurfaceProps) {
   const [conversation, setConversation] = useState<Conversation>(initialConversation);
   const [link, setLink] = useState<LinkStatus>('reconnecting');
@@ -104,6 +107,11 @@ export function ConversationSurface({
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
   const [lossDismissed, setLossDismissed] = useState(false);
   const [resourcesUnreported, setResourcesUnreported] = useState(false);
+  const suppressConnectionFailureRef = useRef(suppressConnectionFailure);
+
+  useEffect(() => {
+    suppressConnectionFailureRef.current = suppressConnectionFailure;
+  }, [suppressConnectionFailure]);
 
   const client = useMemo(
     () => new AguiOperations(session.id, operations),
@@ -178,12 +186,16 @@ export function ConversationSurface({
       (status, failure) => {
         setLink(status);
         if (status === 'failed') {
-          const detail = failure?.message ?? 'the control plane gave no reason';
-          setLinkFailure(
-            failure?.status === undefined
-              ? `The session event stream failed: ${detail}`
-              : `The session event stream was refused (HTTP ${String(failure.status)}): ${detail}`,
-          );
+          if (suppressConnectionFailureRef.current) {
+            setLinkFailure(undefined);
+          } else {
+            const detail = failure?.message ?? 'the control plane gave no reason';
+            setLinkFailure(
+              failure?.status === undefined
+                ? `The session event stream failed: ${detail}`
+                : `The session event stream was refused (HTTP ${String(failure.status)}): ${detail}`,
+            );
+          }
         }
         if (status === 'live') {
           setLinkFailure(undefined);
@@ -255,13 +267,15 @@ export function ConversationSurface({
     onWaitingChange?.(state.waiting);
   }, [state.waiting, onWaitingChange]);
 
+  const visibleLinkFailure = suppressConnectionFailure ? undefined : linkFailure;
+
   const reason =
     state.reason ??
     (link === 'reconnecting' ? 'Reconnecting to this session.' : undefined) ??
-    linkFailure ??
+    visibleLinkFailure ??
     refusal;
 
-  const visibleFailure = linkFailure ?? refusal;
+  const visibleFailure = visibleLinkFailure ?? refusal;
 
   return (
     <section className="conversation" aria-label="Conversation">
