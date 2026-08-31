@@ -5,6 +5,7 @@ import {
   createSession,
   deleteSession,
   DeploymentAtCapacity,
+  readSession,
   reviveSession,
   SessionLimitReached,
   stopSession,
@@ -214,7 +215,39 @@ export function useSessionActions({
       setNotice(null);
       setActing(true);
       try {
-        await deleteSession(id);
+        try {
+          await deleteSession(id);
+        } catch (cause) {
+          try {
+            const fresh = await readSession(id);
+            setSessions((prev) =>
+              prev.map((session) => (session.id === id ? { ...session, ...fresh } : session)),
+            );
+            report(
+              cause,
+              'Deleting the session failed.',
+              fresh.lifecycle === 'terminated'
+                ? 'The session is terminated and its history remains available.'
+                : 'The session and its history remain available.',
+            );
+            return;
+          } catch (readCause) {
+            // A lost response can look like a failed delete even after the
+            // server committed it. The authoritative follow-up 404 means there
+            // is no failure to flash and the local record can be removed.
+            if (!(readCause instanceof ApiError && readCause.status === 404)) {
+              report(
+                cause,
+                'Deleting the session failed.',
+                'Its current state could not be confirmed. Refresh before trying again.',
+              );
+              return;
+            }
+          }
+        }
+        // A stream may close while the server performs a requested deletion.
+        // Clear any transport notice it raised before removing the session.
+        setNotice(null);
         setSessions((prev) => prev.filter((s) => s.id !== id));
         // Out of the history as well as out of the list: a deleted id left
         // there is a slot of the canvas's attachment budget spent remembering
@@ -236,8 +269,6 @@ export function useSessionActions({
             select(successor.id);
           }
         }
-      } catch (cause) {
-        report(cause, 'Deleting the session failed.', 'The session and its history are untouched.');
       } finally {
         refreshAllowance();
         setActing(false);
