@@ -109,6 +109,46 @@ fn changed_briefing() -> Value {
     })
 }
 
+fn complete_chat_settings() -> Value {
+    json!({
+        "enabled": true,
+        "workspace": {
+            "repository_url": "https://example.test/team/chat-workspace.git",
+            "branch": "development"
+        },
+        "agent": {
+            "model": "reasoning-model",
+            "reasoning_effort": "x_high",
+            "instructions": "Follow the repository's agent guidance.",
+            "record_tool_bodies": false
+        },
+        "message_prefixes": ["/formalize", "/check"],
+        "inactivity": { "pause_after_seconds": 1200 },
+        "setup": { "commands": ["tool install", "tool verify"] },
+        "host": {
+            "size": { "cpu_millis": 2000, "memory_mib": 4096 },
+            "max_threads": 12
+        }
+    })
+}
+
+fn submitted_texts(value: &Value, texts: &mut Vec<String>) {
+    match value {
+        Value::String(text) if text.len() >= 4 => texts.push(text.clone()),
+        Value::Array(values) => {
+            for value in values {
+                submitted_texts(value, texts);
+            }
+        }
+        Value::Object(object) => {
+            for value in object.values() {
+                submitted_texts(value, texts);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[tokio::test]
 async fn an_administrator_can_read_change_and_reset_the_briefing() {
     let app = app();
@@ -166,6 +206,333 @@ async fn an_administrator_can_read_change_and_reset_the_briefing() {
     assert_eq!(reset["settings"]["live_sessions"], 2);
     assert_ne!(reset["settings"]["briefing"], changed_briefing());
     assert_eq!(reset["previous"], changed["settings"]);
+}
+
+#[tokio::test]
+async fn a_full_chat_object_round_trips_and_a_chat_only_patch_preserves_everything_else() {
+    let app = app();
+    let first = app
+        .clone()
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "briefing": changed_briefing(),
+                "live_sessions": 4
+            })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let changed = app
+        .clone()
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 1,
+                "chat": complete_chat_settings()
+            })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(changed.status(), StatusCode::OK);
+    assert_eq!(
+        changed.extensions().get::<SettingsTouched>(),
+        Some(&SettingsTouched {
+            changed: vec!["chat"],
+            rate_card: None,
+        })
+    );
+    let changed = response_json(changed).await;
+    assert_eq!(changed["revision"], 2);
+    assert_eq!(changed["settings"]["chat"], complete_chat_settings());
+    assert_eq!(changed["settings"]["briefing"], changed_briefing());
+    assert_eq!(changed["settings"]["live_sessions"], 4);
+
+    let read = app
+        .clone()
+        .oneshot(request(Method::GET, "/api/v1/admin/settings", None, true))
+        .await
+        .expect("route answers");
+    assert_eq!(response_json(read).await["settings"], changed["settings"]);
+
+    let reset = app
+        .oneshot(request(
+            Method::POST,
+            "/api/v1/admin/settings/reset",
+            Some(json!({ "expected_revision": 2 })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(reset.status(), StatusCode::OK);
+    let reset = response_json(reset).await;
+    assert!(reset["settings"]["chat"].is_null());
+    assert_eq!(reset["settings"]["live_sessions"], 4);
+}
+
+#[tokio::test]
+async fn omitted_chat_fields_take_the_documented_defaults() {
+    let response = app()
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({ "expected_revision": 0, "chat": {} })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let chat = response_json(response).await["settings"]["chat"].clone();
+    assert_eq!(chat["enabled"], false);
+    assert_eq!(
+        chat["workspace"]["repository_url"],
+        "https://github.com/the-omega-institute/trureturing"
+    );
+    assert_eq!(chat["workspace"]["branch"], "dev");
+    assert_eq!(chat["agent"]["reasoning_effort"], "high");
+    assert_eq!(chat["agent"]["record_tool_bodies"], true);
+    assert_eq!(chat["message_prefixes"], json!(["/codex-formalize"]));
+    assert_eq!(chat["inactivity"]["pause_after_seconds"], 900);
+    assert_eq!(chat["host"]["max_threads"], 10);
+}
+
+#[tokio::test]
+async fn exact_chat_boundaries_are_inclusive_in_utf8_bytes() {
+    let repository_start = "https://example.test/";
+    let repository_end = "/repo";
+    let repository_url = format!(
+        "{repository_start}{}{repository_end}",
+        "a".repeat(512 - repository_start.len() - repository_end.len())
+    );
+    assert_eq!(repository_url.len(), 512);
+
+    let mut upper = complete_chat_settings();
+    upper["workspace"]["repository_url"] = repository_url.into();
+    upper["workspace"]["branch"] = "é".repeat(100).into();
+    upper["message_prefixes"] = json!(vec!["💡".repeat(64); 8]);
+    upper["inactivity"]["pause_after_seconds"] = 86_400.into();
+    upper["setup"]["commands"] = json!(vec!["💡".repeat(1_024); 16]);
+    upper["host"]["size"]["cpu_millis"] = u32::MAX.into();
+    upper["host"]["size"]["memory_mib"] = u32::MAX.into();
+    upper["host"]["max_threads"] = 50.into();
+
+    let app = app();
+    let response = app
+        .clone()
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({ "expected_revision": 0, "chat": upper })),
+            true,
+        ))
+        .await
+        .expect("upper boundaries answer");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let lower = json!({
+        "workspace": {
+            "repository_url": "https://x.co/r",
+            "branch": "b"
+        },
+        "message_prefixes": [],
+        "inactivity": { "pause_after_seconds": 60 },
+        "setup": { "commands": [] },
+        "host": {
+            "size": { "cpu_millis": 1, "memory_mib": 1 },
+            "max_threads": 1
+        }
+    });
+    let response = app
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({ "expected_revision": 1, "chat": lower })),
+            true,
+        ))
+        .await
+        .expect("lower boundaries answer");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn every_chat_validation_boundary_is_a_named_confidential_refusal() {
+    let long_url = format!("https://example.test/{}", "r".repeat(500));
+    let long_branch = "b".repeat(201);
+    let long_prefix = "p".repeat(257);
+    let long_command = "c".repeat(4_097);
+    let multibyte_branch = "é".repeat(101);
+    let multibyte_prefix = "💡".repeat(65);
+    let multibyte_command = "💡".repeat(1_025);
+    let cases = vec![
+        (
+            json!({"workspace": {"repository_url": "http://example.test/repo"}}),
+            "repository_url",
+            "chat.workspace.repository_url",
+        ),
+        (
+            json!({"workspace": {"repository_url": "https://user@example.test/repo"}}),
+            "repository_url",
+            "chat.workspace.repository_url",
+        ),
+        (
+            json!({"workspace": {"repository_url": long_url}}),
+            "repository_url",
+            "chat.workspace.repository_url",
+        ),
+        (
+            json!({"workspace": {"branch": ""}}),
+            "branch",
+            "chat.workspace.branch",
+        ),
+        (
+            json!({"workspace": {"branch": long_branch}}),
+            "branch",
+            "chat.workspace.branch",
+        ),
+        (
+            json!({"workspace": {"branch": multibyte_branch}}),
+            "branch",
+            "chat.workspace.branch",
+        ),
+        (
+            json!({"workspace": {"branch": "two words"}}),
+            "branch",
+            "chat.workspace.branch",
+        ),
+        (
+            json!({"message_prefixes": ["p", "p", "p", "p", "p", "p", "p", "p", "p"]}),
+            "message_prefixes",
+            "chat.message_prefixes",
+        ),
+        (
+            json!({"message_prefixes": ["  "]}),
+            "message_prefixes",
+            "chat.message_prefixes[0]",
+        ),
+        (
+            json!({"message_prefixes": [long_prefix]}),
+            "message_prefixes",
+            "chat.message_prefixes[0]",
+        ),
+        (
+            json!({"message_prefixes": [multibyte_prefix]}),
+            "message_prefixes",
+            "chat.message_prefixes[0]",
+        ),
+        (
+            json!({"message_prefixes": ["first\nsecond"]}),
+            "message_prefixes",
+            "chat.message_prefixes[0]",
+        ),
+        (
+            json!({"inactivity": {"pause_after_seconds": 59}}),
+            "pause_after_seconds",
+            "chat.inactivity.pause_after_seconds",
+        ),
+        (
+            json!({"inactivity": {"pause_after_seconds": 86_401}}),
+            "pause_after_seconds",
+            "chat.inactivity.pause_after_seconds",
+        ),
+        (
+            json!({"setup": {"commands": vec![""; 17]}}),
+            "commands",
+            "chat.setup.commands",
+        ),
+        (
+            json!({"setup": {"commands": [long_command]}}),
+            "commands",
+            "chat.setup.commands[0]",
+        ),
+        (
+            json!({"setup": {"commands": [multibyte_command]}}),
+            "commands",
+            "chat.setup.commands[0]",
+        ),
+        (
+            json!({"host": {"size": {"cpu_millis": 0, "memory_mib": 512}}}),
+            "size",
+            "chat.host.size",
+        ),
+        (
+            json!({"host": {"size": {"cpu_millis": 500, "memory_mib": 0}}}),
+            "size",
+            "chat.host.size",
+        ),
+        (
+            json!({"host": {"max_threads": 0}}),
+            "max_threads",
+            "chat.host.max_threads",
+        ),
+        (
+            json!({"host": {"max_threads": 51}}),
+            "max_threads",
+            "chat.host.max_threads",
+        ),
+    ];
+
+    for (chat, field, path) in cases {
+        let submitted = chat.to_string();
+        let mut scalar_texts = Vec::new();
+        submitted_texts(&chat, &mut scalar_texts);
+        let response = app()
+            .oneshot(request(
+                Method::PATCH,
+                "/api/v1/admin/settings",
+                Some(json!({ "expected_revision": 0, "chat": chat })),
+                true,
+            ))
+            .await
+            .expect("route answers");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{path}"
+        );
+        let body = response_json(response).await;
+        assert_eq!(body["code"], "invalid_request", "{path}");
+        assert_eq!(body["field"], field, "{path}");
+        assert_eq!(body["path"], path, "{path}");
+        assert!(
+            !body.to_string().contains(&submitted),
+            "submitted object leaked for {path}"
+        );
+        let rendered = body.to_string();
+        for scalar in scalar_texts {
+            assert!(
+                !rendered.contains(&scalar),
+                "submitted scalar leaked for {path}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_nested_chat_field_is_named_without_its_value() {
+    let planted = "private-value-must-not-return";
+    let response = app()
+        .oneshot(request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "chat": { "agent": { "secret_model_token": planted } }
+            })),
+            true,
+        ))
+        .await
+        .expect("route answers");
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response_json(response).await;
+    assert_eq!(body["field"], "secret_model_token");
+    assert_eq!(body["path"], "chat.agent.secret_model_token");
+    assert!(!body.to_string().contains(planted));
 }
 
 #[tokio::test]
