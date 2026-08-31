@@ -4,6 +4,7 @@ import type { ActivityFilter } from './activity';
 import { namesFrom } from './directory';
 import { viewsFor, type OperatorViewId } from './access';
 import { ActivityView, NamespaceView, PeopleView, SessionsView } from './views';
+import { ChatSettingsView } from './ChatSettingsView';
 import { PlatformSettingsView } from './PlatformSettingsView';
 import type { ActivityEntry, AdminSession, OperatorStore, Person, RuntimeInventory } from './types';
 import './OperatorPage.css';
@@ -11,7 +12,7 @@ import './OperatorPage.css';
 /**
  * Running the service — docs/Web_Style.md §14.
  *
- * Five views nobody but an operator can use: who is using it, what it has been
+ * Six views nobody but an operator can use: who is using it, what it has been
  * asked to do, what is running, acting on a session, and deployment policy.
  *
  * **A page, not a dialog.** It is the one surface that shows many rows at
@@ -46,6 +47,9 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
   // Once opened, keep the settings editor mounted so a tab switch cannot erase
   // an unsaved draft. It still makes no request before its view is first used.
   const [settingsOpened, setSettingsOpened] = useState(() => views[0]?.id === 'settings');
+  const [chatSettingsOpened, setChatSettingsOpened] = useState(
+    () => views[0]?.id === 'chat_settings',
+  );
   const [error, setError] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -191,7 +195,7 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
         </p>
       </div>
 
-      {/* The five views, as an underlined tablist — §19. */}
+      {/* The six views, as an underlined tablist - section 19. */}
       <div className="operator__tabs" role="tablist" aria-label="Operator views">
         {views.map((view) => (
           <button
@@ -206,6 +210,9 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
               setActive(view.id);
               if (view.id === 'settings') {
                 setSettingsOpened(true);
+              }
+              if (view.id === 'chat_settings') {
+                setChatSettingsOpened(true);
               }
               setError(undefined);
             }}
@@ -280,6 +287,12 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
         {settingsOpened ? (
           <div hidden={active !== 'settings'}>
             <PlatformSettingsView store={store} />
+          </div>
+        ) : null}
+
+        {chatSettingsOpened ? (
+          <div hidden={active !== 'chat_settings'}>
+            <ChatSettingsView store={store} />
           </div>
         ) : null}
       </div>
