@@ -357,6 +357,9 @@ export function EnvironmentProfiles({ store, onClose, kernels = [] }: Environmen
 /** One line describing what a profile carries. */
 function summarise(profile: EnvironmentProfile): string {
   const parts = [
+    profile.agent.size === undefined
+      ? 'Session resources: deployment default'
+      : `Session resources: ${String(profile.agent.size.cpuMillis)}m CPU, ${String(profile.agent.size.memoryMib)} MiB memory`,
     `${profile.variables.length} variable${profile.variables.length === 1 ? '' : 's'}`,
     `${profile.packages.length} package${profile.packages.length === 1 ? '' : 's'}`,
     `${profile.agent.skills.length} skill${profile.agent.skills.length === 1 ? '' : 's'}`,

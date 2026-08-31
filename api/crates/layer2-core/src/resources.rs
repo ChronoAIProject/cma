@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::ids::SessionId;
 use crate::service::{SessionService, RESOURCE_BUFFER};
+use crate::size::SessionSize;
 
 /// What a session is using.
 ///
@@ -88,6 +89,30 @@ pub(crate) fn reading_from(sample: layer3_adapter::ResourceSample) -> ResourceRe
     }
 }
 
+/// Fill limits the runtime cannot observe from the reservation CMA provisioned.
+///
+/// gVisor exposes the guest's own unlimited cgroup v1 controllers even when the
+/// Kubernetes pod has finite limits. A session-stated size is still exact: the
+/// same value is retained on the session and handed to the provider. Prefer an
+/// observed cgroup limit whenever one exists, and use that declaration only for
+/// an absent limit.
+pub(crate) fn with_declared_ceiling(
+    mut reading: ResourceReading,
+    declared: Option<SessionSize>,
+) -> ResourceReading {
+    if let Some(declared) = declared {
+        reading
+            .cpu_millis_limit
+            .get_or_insert(declared.cpu_millis());
+        reading.memory_bytes_limit.get_or_insert(
+            u64::from(declared.memory_mib())
+                .saturating_mul(1024)
+                .saturating_mul(1024),
+        );
+    }
+    reading
+}
+
 fn occupancy(used: u64, limit: Option<u64>) -> (Option<u64>, Option<u16>) {
     match limit {
         Some(limit) if limit > 0 => {
@@ -147,6 +172,12 @@ pub(crate) fn spawn_resource_watch(
     handle: RuntimeHandle,
 ) {
     tokio::spawn(async move {
+        let declared_ceiling = service
+            .entries
+            .read()
+            .await
+            .get(&id)
+            .and_then(|entry| entry.session.options.size);
         let (tx, mut rx) = mpsc::channel(RESOURCE_BUFFER);
         match adapter.watch_resources(&handle, tx).await {
             Ok(()) => {}
@@ -172,7 +203,7 @@ pub(crate) fn spawn_resource_watch(
         }
 
         while let Some(sample) = rx.recv().await {
-            let reading = reading_from(sample);
+            let reading = with_declared_ceiling(reading_from(sample), declared_ceiling);
             let at = Instant::now();
             let memory_pressure = memory_pressure_sample(&reading, at);
             let cpu_pressure = cpu_pressure_sample(&reading, at);
