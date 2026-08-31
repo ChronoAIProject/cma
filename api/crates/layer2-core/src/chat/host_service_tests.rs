@@ -8,15 +8,16 @@ use tokio::sync::Mutex;
 
 use super::*;
 use crate::store::{
-    ChatHostStore, Page, PageCursor, PageRequest, PlatformSettingsStore, StoreError,
+    ChatHostStore, Page, PageCursor, PageRequest, PlatformSettingsStore, SessionStore, StoreError,
 };
 use crate::test_support::{
-    fixture_skill_ports, FakeAdapter, FakeProfileStore, FakeStore, FixedCredential, NullScreen,
+    fixture_skill_ports, spec, user, FakeAdapter, FakeProfileStore, FakeStore, FixedCredential,
+    NullScreen,
 };
 use crate::{
-    AgentConfiguration, Baseline, CoreError, EnvironmentProfileService, KernelId, PlatformSettings,
-    PlatformSettingsService, ServiceId, SessionBriefing, SkillId, SoftwarePackage, StoredSettings,
-    SubjectId,
+    AgentConfiguration, Authorization, Baseline, Capability, CoreError, EnvironmentProfileService,
+    KernelId, PlatformSettings, PlatformSettingsService, ServiceId, SessionBriefing, SkillId,
+    SoftwarePackage, StoredSettings, SubjectId,
 };
 
 #[derive(Default)]
@@ -184,6 +185,7 @@ struct HostFixture {
     service: Arc<crate::SessionService>,
     adapter: Arc<FakeAdapter>,
     hosts: Arc<MemoryChatHosts>,
+    sessions: Arc<FakeStore>,
     settings: Arc<MutableSettings>,
 }
 
@@ -244,11 +246,39 @@ fn fixture_with_host_store(
     });
     let hosts = Arc::new(MemoryChatHosts::default());
     let sessions = Arc::new(FakeStore::default());
+    let service = host_service(
+        Arc::clone(&settings),
+        Arc::clone(&adapter),
+        Arc::clone(&hosts),
+        Arc::clone(&sessions),
+        environments,
+        compose_host_store,
+    );
+    HostFixture {
+        service,
+        adapter,
+        hosts,
+        sessions,
+        settings,
+    }
+}
+
+fn host_service(
+    settings: Arc<MutableSettings>,
+    adapter: Arc<FakeAdapter>,
+    hosts: Arc<MemoryChatHosts>,
+    sessions: Arc<FakeStore>,
+    environments: Arc<EnvironmentProfileService>,
+    compose_host_store: bool,
+) -> Arc<crate::SessionService> {
+    let settings_service = Arc::new(PlatformSettingsService::new(
+        settings as Arc<dyn PlatformSettingsStore>,
+    ));
     let (skills, _) = fixture_skill_ports(&sessions);
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(KernelId::new("fake"), adapter.clone());
     let screen: crate::ScreenFactory = Arc::new(|geometry| Box::new(NullScreen(geometry)));
-    let service = crate::SessionService::new(
+    crate::SessionService::new(
         adapters,
         screen,
         sessions,
@@ -266,13 +296,7 @@ fn fixture_with_host_store(
             adopts_untagged: false,
             ..crate::service::Deployment::default()
         },
-    );
-    HostFixture {
-        service,
-        adapter,
-        hosts,
-        settings,
-    }
+    )
 }
 
 fn chat_capabilities() -> KernelCapabilities {
@@ -290,6 +314,606 @@ async fn stored_host(fixture: &HostFixture, owner: &SubjectId) -> ChatHostRecord
         .await
         .unwrap()
         .expect("chat host is durable")
+}
+
+fn chat_spec() -> crate::SessionSpec {
+    crate::SessionSpec {
+        surface: Some(crate::SessionSurface::Chat),
+        ..spec()
+    }
+}
+
+fn operator() -> crate::Caller {
+    crate::Caller::new(
+        SubjectId("chat-operator".into()),
+        Authorization::from_capabilities([Capability::ControlAnySession]),
+    )
+}
+
+#[tokio::test]
+async fn chat_threads_share_one_host_and_pin_each_worktree_and_conversation() {
+    let mut chat = enabled_chat();
+    chat.host.max_threads = 3;
+    chat.workspace.branch = "release-chat".into();
+    chat.agent.model = Some("chat-model".into());
+    chat.agent.reasoning_effort = crate::ReasoningEffort::Medium;
+    chat.agent.record_tool_bodies = true;
+    let fixture = fixture(
+        platform_with(Some(chat)),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-threads");
+
+    let first = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .expect("the first chat thread is created");
+    let second = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .expect("the second chat thread reuses the host");
+
+    assert_eq!(fixture.adapter.provision_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.adapter.running.lock().await.len(), 1);
+    assert_eq!(fixture.hosts.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(first.chat.as_ref().unwrap().worktree_name, "chat-1");
+    assert_eq!(
+        first.chat.as_ref().unwrap().worktree_path,
+        "/workspace/chat-1"
+    );
+    assert_eq!(second.chat.as_ref().unwrap().worktree_name, "chat-2");
+    assert_eq!(
+        second.chat.as_ref().unwrap().worktree_path,
+        "/workspace/chat-2"
+    );
+    for session in [&first, &second] {
+        assert_eq!(session.options.mode, crate::SessionMode::Conversation);
+        assert_eq!(session.options.model.as_deref(), Some("chat-model"));
+        assert_eq!(
+            session.options.permission,
+            crate::PermissionMode::Unrestricted
+        );
+        assert_eq!(session.options.credential, crate::CredentialMode::Delegated);
+        assert_eq!(
+            session.options.reasoning_effort,
+            crate::ReasoningEffort::Medium
+        );
+        assert!(session.options.record_tool_bodies);
+        assert!(session.capabilities.conversation);
+        assert!(!session.capabilities.terminal);
+        assert!(session.environment_profile.is_none());
+        assert!(session.pricing.is_none());
+    }
+
+    let trees = fixture.adapter.workspace_trees.lock().await.clone();
+    assert_eq!(trees.len(), 2);
+    assert_eq!(trees[0].1.name, "chat-1");
+    assert_eq!(trees[0].1.base, "release-chat");
+    assert_eq!(trees[1].1.name, "chat-2");
+    assert_eq!(trees[1].1.base, "release-chat");
+    assert_eq!(trees[0].0, trees[1].0, "both trees use one runtime");
+
+    let options = fixture.adapter.conversation_options.lock().await.clone();
+    assert_eq!(options.len(), 2);
+    assert_eq!(
+        options[0].working_directory.as_deref(),
+        Some("/workspace/chat-1")
+    );
+    assert_eq!(
+        options[1].working_directory.as_deref(),
+        Some("/workspace/chat-2")
+    );
+    assert_eq!(
+        options[0].conversation_slot.as_deref(),
+        Some(first.id.0.as_str())
+    );
+    assert_eq!(
+        options[1].conversation_slot.as_deref(),
+        Some(second.id.0.as_str())
+    );
+    assert!(options
+        .iter()
+        .all(|options| options.resume_conversation.is_none()));
+
+    let records = fixture.sessions.sessions.lock().await;
+    for session in [&first, &second] {
+        let record = records.get(&session.id.0).expect("chat origin is durable");
+        let origin = record.chat_origin.as_ref().expect("private origin exists");
+        assert_eq!(record.runtime_id.as_deref(), Some(trees[0].0.as_str()));
+        assert_eq!(
+            origin.worktree_name,
+            session.chat.as_ref().unwrap().worktree_name
+        );
+        assert_eq!(
+            origin.worktree_path,
+            session.chat.as_ref().unwrap().worktree_path
+        );
+    }
+    drop(records);
+
+    let all = fixture
+        .service
+        .list_sessions(&caller, &crate::SessionListQuery::default())
+        .await
+        .unwrap();
+    let chats = fixture
+        .service
+        .list_sessions(
+            &caller,
+            &crate::SessionListQuery::default()
+                .with_surface(Some(crate::SessionSurfaceFilter::Chat)),
+        )
+        .await
+        .unwrap();
+    let agents = fixture
+        .service
+        .list_sessions(
+            &caller,
+            &crate::SessionListQuery::default()
+                .with_surface(Some(crate::SessionSurfaceFilter::Agent)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(all.items.len(), 2);
+    assert_eq!(chats.items.len(), 2);
+    assert!(agents.items.is_empty());
+    assert!(chats.items.iter().all(|session| session.chat.is_some()));
+    assert_eq!(
+        fixture
+            .service
+            .session_allowance(&caller)
+            .await
+            .unwrap()
+            .live,
+        0
+    );
+    assert_eq!(
+        fixture.sessions.reserved_capacity().await.unwrap().sessions,
+        0
+    );
+}
+
+#[tokio::test]
+async fn chat_thread_limit_refuses_before_provider_or_session_side_effects() {
+    let mut chat = enabled_chat();
+    chat.host.max_threads = 1;
+    let fixture = fixture(
+        platform_with(Some(chat)),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-thread-limit");
+    fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let trees_before = fixture.adapter.workspace_trees.lock().await.len();
+    let opens_before = fixture.adapter.rejoined.lock().await.len();
+    let credentials_before = fixture.adapter.credentials.lock().await.len();
+
+    let error = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .expect_err("the second live thread exceeds the pinned host cap");
+
+    assert_eq!(error, CoreError::ChatThreadLimit { limit: 1, live: 1 });
+    assert_eq!(fixture.adapter.provision_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture.adapter.workspace_trees.lock().await.len(),
+        trees_before
+    );
+    assert_eq!(fixture.adapter.rejoined.lock().await.len(), opens_before);
+    assert_eq!(
+        fixture.adapter.credentials.lock().await.len(),
+        credentials_before
+    );
+    assert_eq!(fixture.sessions.sessions.lock().await.len(), 1);
+    let host = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(host.threads.len(), 1);
+    assert_eq!(host.threads_created, 1);
+}
+
+#[tokio::test]
+async fn chat_environment_profile_is_refused_before_host_provisioning() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-chat-profile");
+    let mut requested = chat_spec();
+    requested.environment_profile = Some(crate::EnvironmentProfileId("envp_chat".into()));
+
+    let error = fixture
+        .service
+        .create_session(&caller, requested)
+        .await
+        .expect_err("chat configuration is deployment-owned");
+
+    assert!(matches!(error, CoreError::InvalidRequest(_)));
+    assert!(fixture.hosts.records().await.is_empty());
+    assert!(fixture.sessions.sessions.lock().await.is_empty());
+    assert_eq!(fixture.adapter.provision_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn failed_conversation_open_rolls_back_only_its_thread_and_keeps_the_host_retryable() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    fixture
+        .adapter
+        .refuse_conversation_open
+        .store(true, Ordering::SeqCst);
+    let caller = user("owner-thread-rollback");
+
+    let error = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .expect_err("the refused conversation does not create a chat row");
+
+    assert!(matches!(error, CoreError::RuntimeRefused(_)));
+    assert!(fixture.sessions.sessions.lock().await.is_empty());
+    let host = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(host.status, ChatHostStatus::Active);
+    assert_eq!(host.threads_created, 1);
+    assert_eq!(host.threads.len(), 1);
+    assert!(host.threads[0].removed);
+    assert_eq!(fixture.adapter.running.lock().await.len(), 1);
+    assert!(fixture.adapter.terminated.lock().await.is_empty());
+    assert_eq!(
+        fixture
+            .adapter
+            .removed_workspace_trees
+            .lock()
+            .await
+            .as_slice(),
+        &[(host.runtime_id.unwrap(), "chat-1".into())]
+    );
+
+    fixture
+        .adapter
+        .refuse_conversation_open
+        .store(false, Ordering::SeqCst);
+    let retry = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .expect("a later allocation reuses the clean host");
+    assert_eq!(retry.chat.unwrap().worktree_name, "chat-2");
+    assert_eq!(fixture.adapter.provision_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn owner_lifecycle_and_terminal_operations_name_chat_policy() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-chat-policy");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+
+    for error in [
+        fixture
+            .service
+            .stop_session(&caller, &session.id)
+            .await
+            .unwrap_err(),
+        fixture
+            .service
+            .terminate_session(&caller, &session.id)
+            .await
+            .unwrap_err(),
+        fixture
+            .service
+            .revive_session(&caller, &session.id)
+            .await
+            .unwrap_err(),
+        fixture
+            .service
+            .change_plane(&caller, &session.id, crate::SessionMode::Terminal)
+            .await
+            .unwrap_err(),
+    ] {
+        let CoreError::InvalidState {
+            detail: Some(detail),
+        } = error
+        else {
+            panic!("chat lifecycle refusal was not detailed: {error:?}");
+        };
+        assert!(detail.contains("chat"), "{detail}");
+        assert!(detail.contains("platform"), "{detail}");
+    }
+    let terminal = fixture
+        .service
+        .attach_terminal(
+            &caller,
+            &session.id,
+            crate::TerminalGeometry::default(),
+            crate::AttachmentClaim::Exclusive,
+        )
+        .await
+        .err()
+        .expect("chat has no terminal capability");
+    assert_eq!(
+        terminal,
+        CoreError::CapabilityUnsupported("terminal".into())
+    );
+    assert_eq!(fixture.adapter.running.lock().await.len(), 1);
+    assert!(fixture.adapter.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn operator_controls_only_the_thread_and_owner_delete_retires_the_last_host() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-chat-abuse-control");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let host_before = stored_host(&fixture, &caller.subject).await;
+    let runtime = host_before.runtime_id.clone().unwrap();
+
+    assert_eq!(
+        fixture
+            .service
+            .stop_any_session(&operator(), &session.id)
+            .await
+            .unwrap(),
+        caller.subject
+    );
+    assert_eq!(
+        fixture
+            .service
+            .get_session(&caller, &session.id)
+            .await
+            .unwrap()
+            .status,
+        crate::SessionStatus::Idle
+    );
+    assert_eq!(fixture.adapter.running.lock().await.len(), 1);
+    assert!(fixture.adapter.terminated.lock().await.is_empty());
+
+    fixture
+        .service
+        .terminate_any_session(&operator(), &session.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .service
+            .get_session(&caller, &session.id)
+            .await
+            .unwrap()
+            .status,
+        crate::SessionStatus::Terminated
+    );
+    assert!(fixture.adapter.running.lock().await.contains_key(&runtime));
+    assert!(fixture.adapter.terminated.lock().await.is_empty());
+
+    fixture
+        .service
+        .delete_session(&caller, &session.id)
+        .await
+        .expect("the owner may delete an operator-ended chat thread");
+    assert!(!fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .contains_key(&session.id.0));
+    let retired = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(retired.status, ChatHostStatus::Retired);
+    assert!(retired.threads[0].removed);
+    assert!(retired.runtime_id.is_none());
+    assert!(fixture.adapter.running.lock().await.is_empty());
+    assert_eq!(
+        fixture.adapter.terminated.lock().await.as_slice(),
+        &[runtime]
+    );
+}
+
+#[tokio::test]
+async fn failed_final_host_retirement_leaves_the_thread_row_for_cleanup_retry() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-chat-retirement-retry");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    fixture.adapter.fail_terminations.store(1, Ordering::SeqCst);
+
+    let error = fixture
+        .service
+        .delete_session(&caller, &session.id)
+        .await
+        .expect_err("unconfirmed host cleanup keeps the deletion retryable");
+    assert!(matches!(
+        error,
+        CoreError::ChatUnavailable(ChatUnavailableCause::ProvisioningFailed {
+            phase: ChatProvisioningPhase::Cleanup,
+            retryable: true,
+            ..
+        })
+    ));
+    assert!(fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .contains_key(&session.id.0));
+    let pending = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(pending.status, ChatHostStatus::Pausing);
+    assert!(pending.threads[0].removed);
+    assert!(pending.runtime_id.is_some());
+
+    fixture
+        .service
+        .delete_session(&caller, &session.id)
+        .await
+        .expect("retry completes host retirement and row deletion");
+    assert!(!fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .contains_key(&session.id.0));
+    let retired = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(retired.status, ChatHostStatus::Retired);
+    assert!(retired.runtime_id.is_none());
+}
+
+#[tokio::test]
+async fn paused_thread_delete_drops_its_restore_reference_without_provider_work() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-paused-chat-delete");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let mut paused = stored_host(&fixture, &caller.subject).await;
+    paused.status = ChatHostStatus::Paused;
+    paused.runtime_id = None;
+    paused.checkpoint = Some(ChatCheckpointRef {
+        conversations: vec![crate::ChatCheckpointConversationRef {
+            session_id: session.id.clone(),
+            object_reference: "objects/conversation".into(),
+            sha256: "d".repeat(64),
+            conversation_id: "conv-fixture".into(),
+        }],
+        ..checkpoint()
+    });
+    fixture
+        .hosts
+        .update_if_revision(paused.revision, &paused)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.adapter.running.lock().await.clear();
+    fixture.adapter.generations.lock().await.clear();
+    fixture.adapter.chat_hosts.lock().await.clear();
+    let removals_before = fixture.adapter.removed_workspace_trees.lock().await.len();
+
+    fixture
+        .service
+        .delete_session(&caller, &session.id)
+        .await
+        .expect("a paused chat thread is deleted from its restore set");
+
+    assert_eq!(
+        fixture.adapter.removed_workspace_trees.lock().await.len(),
+        removals_before,
+        "a paused host has no live provider worktree to remove"
+    );
+    let retired = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(retired.status, ChatHostStatus::Retired);
+    assert!(retired.threads[0].removed);
+    assert!(retired
+        .checkpoint
+        .as_ref()
+        .unwrap()
+        .conversations
+        .is_empty());
+    assert!(!fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .contains_key(&session.id.0));
+}
+
+#[tokio::test]
+async fn restart_readopts_the_exact_chat_slot_cwd_and_conversation_id() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-chat-restart");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    assert!(fixture.sessions.events.lock().await.iter().any(|event| {
+        event.session_id == session.id
+            && matches!(
+                &event.kind,
+                crate::StoredEventKind::Known(crate::EventKind::ConversationOpened {
+                    conversation_id
+                }) if conversation_id == "conv-fixture"
+            )
+    }));
+    let runtime_calls = fixture.adapter.provision_calls.load(Ordering::SeqCst);
+    let tree_calls = fixture.adapter.workspace_trees.lock().await.len();
+    let restarted = host_service(
+        Arc::clone(&fixture.settings),
+        Arc::clone(&fixture.adapter),
+        Arc::clone(&fixture.hosts),
+        Arc::clone(&fixture.sessions),
+        Arc::clone(fixture.service.environments()),
+        true,
+    );
+
+    restarted.reconcile().await;
+
+    assert_eq!(
+        fixture.adapter.provision_calls.load(Ordering::SeqCst),
+        runtime_calls
+    );
+    assert_eq!(
+        fixture.adapter.workspace_trees.lock().await.len(),
+        tree_calls
+    );
+    let options = fixture.adapter.conversation_options.lock().await.clone();
+    let resumed = options
+        .last()
+        .expect("the restarted service readopts the chat");
+    assert_eq!(
+        resumed.working_directory.as_deref(),
+        Some("/workspace/chat-1")
+    );
+    assert_eq!(
+        resumed.conversation_slot.as_deref(),
+        Some(session.id.0.as_str())
+    );
+    assert_eq!(resumed.resume_conversation.as_deref(), Some("conv-fixture"));
+    assert_eq!(
+        restarted
+            .get_session(&caller, &session.id)
+            .await
+            .unwrap()
+            .chat,
+        session.chat
+    );
 }
 
 #[tokio::test]

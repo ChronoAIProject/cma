@@ -4010,7 +4010,7 @@ async fn expired_authority_and_out_of_order_readiness_never_create_an_outbox() {
                 .service
                 .dispatch_trigger_prompt(&launch, &fixture.claim)
                 .await,
-            Err(CoreError::InvalidState)
+            Err(CoreError::InvalidState { .. })
         ));
         assert!(fixture
             .store

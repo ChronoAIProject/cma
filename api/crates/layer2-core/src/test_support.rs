@@ -1892,7 +1892,7 @@ impl SessionStore for FakeStore {
         let _transaction = self.transaction.lock().await;
         let mut reserved = Reserved::default();
         for record in self.sessions.lock().await.values() {
-            if record.session.wants_runtime() {
+            if record.chat_origin.is_none() && record.session.wants_runtime() {
                 reserved.include(record.session.options.size);
             }
         }
@@ -2099,6 +2099,10 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
         query
             .status
             .is_none_or(|status| record.session.status == status)
+            && query.surface.is_none_or(|surface| match surface {
+                crate::SessionSurfaceFilter::Chat => record.chat_origin.is_some(),
+                crate::SessionSurfaceFilter::Agent => record.chat_origin.is_none(),
+            })
             && query.page.cursor().is_none_or(|cursor| {
                 record.session.created_at < cursor.created_at
                     || (record.session.created_at == cursor.created_at
@@ -2113,6 +2117,12 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
     });
     let has_more = records.len() > query.page.limit() as usize;
     records.truncate(query.page.limit() as usize);
+    for record in &mut records {
+        record.session.chat = record
+            .chat_origin
+            .as_ref()
+            .map(crate::store::ChatOrigin::public_projection);
+    }
     let next = has_more.then(|| {
         let last = records
             .last()
@@ -2363,6 +2373,7 @@ pub(crate) async fn await_settled(
 
 pub(crate) fn spec() -> SessionSpec {
     SessionSpec {
+        surface: None,
         geometry: None,
         environment_profile: None,
         caller_credential: None,
@@ -2386,6 +2397,7 @@ mod runtime_started_store_tests {
 
     fn record() -> SessionRecord {
         SessionRecord::new(Session {
+            chat: None,
             id: SessionId("sesn_runtime_marker_fence".into()),
             owner: SubjectId("subject-runtime-marker-fence".into()),
             kernel: KernelId::new("example-runtime"),

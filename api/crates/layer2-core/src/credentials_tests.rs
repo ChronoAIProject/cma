@@ -602,6 +602,7 @@ async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
         .create_session(
             &owner,
             SessionSpec {
+                surface: None,
                 environment_profile: None,
                 geometry: None,
                 options: Default::default(),
@@ -650,6 +651,7 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
         .create_session(
             &owner,
             SessionSpec {
+                surface: None,
                 environment_profile: None,
                 geometry: None,
                 options: Default::default(),
@@ -703,6 +705,7 @@ async fn a_subject_renewal_does_not_replace_a_request_bound_session_credential()
         .create_session(
             &owner,
             SessionSpec {
+                surface: None,
                 environment_profile: None,
                 geometry: None,
                 options: Default::default(),
@@ -738,6 +741,7 @@ async fn a_renewal_does_not_leak_across_subjects() {
     svc.create_session(
         &owner,
         SessionSpec {
+            surface: None,
             environment_profile: None,
             geometry: None,
             options: Default::default(),
@@ -770,6 +774,7 @@ async fn a_terminated_session_is_not_renewed() {
         .create_session(
             &owner,
             SessionSpec {
+                surface: None,
                 environment_profile: None,
                 geometry: None,
                 options: Default::default(),
@@ -799,6 +804,7 @@ async fn a_session_is_minted_a_credential_even_when_the_caller_delegated_none() 
     svc.create_session(
         &owner,
         SessionSpec {
+            surface: None,
             environment_profile: None,
             geometry: None,
             caller_credential: None,

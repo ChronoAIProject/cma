@@ -1,12 +1,12 @@
 use super::*;
 use layer2_core::{
     store::{PendingHandover, PendingHandoverTarget},
-    AgentOptions, ConversationLink, ConversationWriteAuthority, Event, EventKind, GrantedSkill,
-    KernelId, PageCursor, PageRequest, Rate, RateCardId, RecoveryState, RuntimeCleanupReason,
-    Session, SessionBoundary, SessionCapabilities, SessionId, SessionLeaseRequest,
-    SessionListQuery, SessionMode, SessionOperation, SessionPricing, SessionRecord, SessionStatus,
-    SkillId, SkillPack, SkillPackDigest, SkillPackState, StopReason, StoredEventKind, SubjectId,
-    TerminalGeometry,
+    AgentOptions, ChatHostId, ChatOrigin, ConversationLink, ConversationWriteAuthority, Event,
+    EventKind, GrantedSkill, KernelId, PageCursor, PageRequest, Rate, RateCardId, RecoveryState,
+    RuntimeCleanupReason, Session, SessionBoundary, SessionCapabilities, SessionId,
+    SessionLeaseRequest, SessionListQuery, SessionMode, SessionOperation, SessionPricing,
+    SessionRecord, SessionStatus, SessionSurfaceFilter, SkillId, SkillPack, SkillPackDigest,
+    SkillPackState, StopReason, StoredEventKind, SubjectId, TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{
@@ -33,6 +33,7 @@ fn record_with(pricing: Option<SessionPricing>) -> SessionRecord {
         granted_services: None,
         granted_skills: None,
         pricing,
+        chat: None,
         created_at: "2026-08-23T04:00:00Z".into(),
     })
 }
@@ -168,6 +169,30 @@ fn session_pricing_round_trips_exactly() {
     let read = from_doc(stored).expect("price can be read");
 
     assert_eq!(read.session.pricing, Some(expected));
+}
+
+#[test]
+fn private_chat_origin_round_trips_and_derives_the_public_projection() {
+    let mut expected = record_with(None);
+    let origin = ChatOrigin {
+        host_id: ChatHostId("chho_round_trip".into()),
+        worktree_name: "chat-7".into(),
+        worktree_path: "/workspace/chat-7".into(),
+    };
+    expected.chat_origin = Some(origin.clone());
+    expected.session.chat = Some(origin.public_projection());
+
+    let stored = to_doc(&expected).expect("chat origin can be stored");
+    let document = mongodb::bson::serialize_to_document(&stored).expect("stored doc serializes");
+    assert!(document.contains_key("chat_origin"));
+    assert!(
+        !document.contains_key("chat"),
+        "public projection is derived on read"
+    );
+
+    let read = from_doc(stored).expect("chat origin can be read");
+    assert_eq!(read.chat_origin, Some(origin.clone()));
+    assert_eq!(read.session.chat, Some(origin.public_projection()));
 }
 
 #[test]
@@ -1075,6 +1100,7 @@ fn reserved_capacity_pipeline_matches_and_sums_only_durable_runtime_promises() {
         vec![
             doc! {
                 "$match": {
+                    "chat_origin": { "$exists": false },
                     "$or": [
                         {
                             "status": {
@@ -3767,6 +3793,24 @@ fn session_page_filter_pushes_status_and_both_cursor_keys_into_mongo() {
         }
     );
     assert_eq!(session_page_sort(), doc! { "created_at": -1, "_id": -1 });
+}
+
+#[test]
+fn session_page_filter_pushes_both_surface_families_into_mongo() {
+    for (surface, exists) in [
+        (SessionSurfaceFilter::Chat, true),
+        (SessionSurfaceFilter::Agent, false),
+    ] {
+        let query =
+            SessionListQuery::new(PageRequest::new(50, None), None).with_surface(Some(surface));
+        assert_eq!(
+            session_page_filter(doc! { "owner": "subject-a" }, &query).unwrap(),
+            doc! {
+                "owner": "subject-a",
+                "chat_origin": { "$exists": exists },
+            }
+        );
+    }
 }
 
 #[test]

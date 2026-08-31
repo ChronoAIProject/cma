@@ -771,6 +771,7 @@ impl Fixture {
                     runtime_credential: None,
                     requested_mode: None,
                     quoted_rate_card: None,
+                    surface: None,
                 },
             )
             .await

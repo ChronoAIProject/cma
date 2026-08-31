@@ -409,6 +409,7 @@ fn error_code(err: &CoreError) -> &'static str {
         // quietly become the wrong terminal frame.
         CoreError::SizeOutOfBounds(_) => "size_out_of_bounds",
         CoreError::SessionLimitReached { .. } => "session_limit_reached",
+        CoreError::ChatThreadLimit { .. } => "chat_thread_limit",
         // This interface attaches to an existing session, so deployment
         // admission has already happened. Keep the creation-only code explicit
         // so a later core variant still makes this projection fail to compile.
@@ -416,7 +417,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::InvalidSessionSize(_) => "invalid_session_size",
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
         CoreError::RuntimeRefused(_) => "runtime_refused",
-        CoreError::InvalidState => "invalid_state",
+        CoreError::InvalidState { .. } => "invalid_state",
         CoreError::InitialPromptReserved(_) => "initial_prompt_reserved",
         CoreError::CapabilityUnsupported(_) => "capability_unsupported",
         // This interface attaches to a session that already exists, so a

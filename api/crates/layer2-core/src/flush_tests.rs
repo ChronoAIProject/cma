@@ -23,6 +23,7 @@ fn id() -> SessionId {
 
 fn base_record() -> SessionRecord {
     SessionRecord::new(Session {
+        chat: None,
         id: id(),
         owner: SubjectId("subject-fifo".into()),
         kernel: KernelId::new("fake"),
