@@ -613,6 +613,7 @@ impl SessionService {
                 // rejoined before. Rejoining is the whole point: without it the
                 // runtime opens a second conversation beside the first.
                 let mut options = crate::provision::runtime_options(&record.session.options);
+                options.conversation_slot = Some(id.0.clone());
                 options.resume_conversation = conversation_id.clone();
                 options.restricted_service_gateway = record.trigger_origin.is_some();
                 if options.resume_conversation.is_none() {

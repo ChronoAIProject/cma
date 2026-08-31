@@ -147,6 +147,7 @@ impl SessionService {
         // runtime, so this is needed twice and computing it twice would be two
         // places for the translation to drift.
         let mut options = runtime_options(&spec.options);
+        options.conversation_slot = Some(id.0.clone());
         /*
          * Read from the session rather than from the profile, exactly as the
          * credential's own scope is: a session keeps what it was granted when
@@ -261,6 +262,8 @@ impl SessionService {
                 reaches,
                 runtime_policy_required,
                 sponsored_model_required,
+                workspace_source_required: false,
+                conversation_slots_required: None,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })
