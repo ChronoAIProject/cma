@@ -148,9 +148,10 @@ describe('whether another session may be created', () => {
 });
 
 describe('which sessions are listed', () => {
-  it('drops sessions the owner ended', () => {
-    // Asked for directly: an ended session must not stay in the left list.
-    expect(abilitiesFor(session('terminated', 'other')).listed).toBe(false);
+  it('keeps sessions the owner ended in the terminated group', () => {
+    // Terminating keeps the record and history. Only permanent delete removes
+    // it from the rail, so a normal termination remains discoverable.
+    expect(abilitiesFor(session('terminated', 'other')).listed).toBe(true);
   });
 
   it('keeps a session that ended by failing', () => {
@@ -161,9 +162,9 @@ describe('which sessions are listed', () => {
     expect(failed.reason).toMatch(/failed/i);
   });
 
-  it('lists everything that is not ended', () => {
-    const live = ALL.filter((l) => l !== 'terminated').map((l) => session(l));
-    expect(listable(live)).toHaveLength(live.length);
+  it('lists every lifecycle that still has a session record', () => {
+    const records = ALL.map((l) => session(l));
+    expect(listable(records)).toHaveLength(records.length);
   });
 
   it('filters a mixed list without reordering it', () => {
@@ -173,7 +174,12 @@ describe('which sessions are listed', () => {
       session('idle'),
       session('provisioning'),
     ];
-    expect(listable(sessions).map((s) => s.lifecycle)).toEqual(['running', 'idle', 'provisioning']);
+    expect(listable(sessions).map((s) => s.lifecycle)).toEqual([
+      'running',
+      'terminated',
+      'idle',
+      'provisioning',
+    ]);
   });
 
   it('handles an empty list', () => {
