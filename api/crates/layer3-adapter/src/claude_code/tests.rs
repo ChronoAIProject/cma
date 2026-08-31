@@ -25,6 +25,8 @@ fn conversation() -> RuntimeSpec {
         reaches: Vec::new(),
         runtime_policy_required: false,
         sponsored_model_required: false,
+        workspace_source_required: false,
+        conversation_slots_required: None,
         platform_briefing: String::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),
@@ -49,10 +51,25 @@ fn the_kernel_is_named_for_diagnostics_only() {
 
 #[test]
 fn this_kernel_binds_its_production_conversation_to_shared_acp_evidence() {
-    let binding = adapter("http://p").conversation_binding(&Default::default());
+    let options = RuntimeOptions {
+        working_directory: Some("/workspace/worktrees/chat-2".into()),
+        conversation_slot: Some("sesn_chat_2".into()),
+        ..Default::default()
+    };
+    let binding = adapter("http://p").conversation_binding(&options);
     assert_eq!(
         binding.evidence_contract(),
         crate::hosted::ConversationEvidenceContract::AcpV1
+    );
+    assert_eq!(
+        binding,
+        crate::hosted::AcpConversationBinding::new(
+            Some("default".into()),
+            None,
+            false,
+            options.working_directory,
+            options.conversation_slot,
+        )
     );
 }
 

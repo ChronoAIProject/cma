@@ -395,6 +395,17 @@ pub struct RuntimeSpec {
     /// contributor-owned service access, while this flag prevents the model
     /// proxy from using that contributor authority for sponsored spend.
     pub sponsored_model_required: bool,
+    /// Whether this runtime must support preparing a Git-backed workspace
+    /// source before any agent process starts.
+    pub workspace_source_required: bool,
+    /// Minimum number of independently supervised conversation processes the
+    /// runtime must support, or `None` when the caller needs only the legacy
+    /// single-conversation shape.
+    ///
+    /// A runtime asked for named conversation slots must also advertise the
+    /// coherent workspace checkpoint capability. Shared chat hosts cannot be
+    /// paused safely if their several writers cannot be fenced as one unit.
+    pub conversation_slots_required: Option<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -472,6 +483,45 @@ pub struct WorkspaceCheckpointPackage {
     pub archive: Vec<u8>,
 }
 
+/// A Git repository the runtime should materialize beneath its workspace.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSourceRequest {
+    /// Credential-free HTTPS repository URL.
+    #[serde(rename = "url")]
+    pub repository_url: String,
+    /// Branch, tag, or other Git selector to clone.
+    pub reference: String,
+    /// Single path component beneath the runtime workspace.
+    pub directory: String,
+}
+
+/// One independently writable worktree to add to a prepared workspace source.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceTreeRequest {
+    pub name: String,
+    pub base: String,
+}
+
+/// The runtime-resolved path of an added workspace tree.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceTreeReceipt {
+    pub path: String,
+}
+
+/// Bounded result of one administrator-owned workspace setup command.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSetupStep {
+    pub command_index: usize,
+    pub exit_code: i32,
+    pub output_excerpt: String,
+}
+
+/// Results returned in execution order for a workspace setup sequence.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSetupReceipt {
+    pub steps: Vec<WorkspaceSetupStep>,
+}
+
 /// What a runtime should be told about how to behave.
 ///
 /// Declared here rather than taken from the core, because this layer must not
@@ -501,6 +551,17 @@ pub struct RuntimeOptions {
     /// The adapter maps this provider-neutral requirement into its own named
     /// mode. It never means unrestricted filesystem or network access.
     pub restricted_service_gateway: bool,
+    /// Directory supplied verbatim to the hosted conversation protocol.
+    ///
+    /// `None` preserves the adapter's deployment-wide workspace default.
+    pub working_directory: Option<String>,
+    /// Opaque supervisor slot identity for this conversation.
+    ///
+    /// This is the control plane's session id, not the agent protocol's
+    /// conversation id in `resume_conversation`. It is needed before a new ACP
+    /// session has a protocol id and keeps several bridges in one runtime
+    /// independent. `None` retains the legacy unnamed slot.
+    pub conversation_slot: Option<String>,
     /// A conversation to rejoin rather than begin.
     ///
     /// Set when a control plane is taking back over a runtime that kept
