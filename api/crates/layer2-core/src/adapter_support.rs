@@ -67,6 +67,8 @@ pub(crate) struct FakeAdapter {
     pub(crate) rejoined: Mutex<Vec<Option<String>>>,
     /// Opaque supervisor slot selected for each conversation open.
     pub(crate) conversation_slots: Mutex<Vec<Option<String>>>,
+    /// Complete options supplied to each conversation open.
+    pub(crate) conversation_options: Mutex<Vec<layer3_adapter::RuntimeOptions>>,
     /// When set, enumeration fails. Models a provider that cannot be asked,
     /// which must never be read as a provider running nothing.
     pub(crate) refuse_list: bool,
@@ -264,6 +266,7 @@ impl Default for FakeAdapter {
             conversation: Mutex::default(),
             rejoined: Mutex::default(),
             conversation_slots: Mutex::default(),
+            conversation_options: Mutex::default(),
             credentials: Mutex::default(),
             sign_in_on_open: false,
             opening_updates: Mutex::default(),
@@ -759,6 +762,7 @@ impl KernelAdapter for FakeAdapter {
             .lock()
             .await
             .push(options.conversation_slot.clone());
+        self.conversation_options.lock().await.push(options.clone());
         if self
             .hold_conversation_open
             .load(std::sync::atomic::Ordering::SeqCst)

@@ -1123,12 +1123,13 @@ Content-Type: application/json
 
 | Field                 | Required | Notes                                                                                                                                         |
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surface`             | no       | Closed enum. `"chat"` creates a worktree-backed thread on the owner's deployment-managed shared host. Omit it for an ordinary agent session. Chat cannot be combined with `environment_profile` |
 | `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
 | `rows`                | no       | Initial terminal height                                                                                                                         |
 | `environment_profile` | no       | Id from [Environment Profiles](#3-environment-profiles). **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
 | `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
 
-**These four are the whole body.** An earlier version of this section
+**These five are the whole body.** An earlier version of this section
 documented `llm_source` as required, along with `environment`, `workspace`,
 `concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
 side-effecting `POST`. The body fields have never existed in the service and are
@@ -1142,6 +1143,12 @@ how freely it acts, whose access it spends, what it carries, and how much CPU
 and memory it reserves — so nothing else about the agent is sent here. The size
 is the profile's: omitting `agent.size` takes the deployment's reservation, and
 the answer is frozen for the life of the session, including across a rotation.
+
+`surface: "chat"` selects the deployment's chat settings instead of an
+environment profile. Those settings pin the host runtime, model, reasoning
+effort, delegated credential, setup, and workspace source for every thread on
+that owner's host. Sending both `surface: "chat"` and `environment_profile`
+returns `422 invalid_request`; neither setting silently wins.
 
 **A caller does not choose a kernel here.** Which one a session runs on comes
 from the [environment profile](#3-environment-profiles) it names, or from what
@@ -1194,6 +1201,22 @@ it may ask for without trying. `runtime_version`, `rotations` and `rotated_at`
 appear once a session has been moved, and are absent before that because a
 session that has never been rotated has nothing to explain.
 
+A chat thread additionally carries its durable worktree projection:
+
+```json
+{
+  "chat": {
+    "worktree_name": "chat-3",
+    "worktree_path": "/workspace/chat-3"
+  }
+}
+```
+
+`title` appears after automatic title generation commits one, and
+`paused_notice` appears while the shared host is paused. Both are omitted when
+absent. Host identity and provider runtime authority are private and never
+appear in this projection.
+
 A priced session also carries the price settled when it was created:
 
 ```json
@@ -1229,11 +1252,13 @@ who may read other owners' sessions. `limit` is absent when this deployment has
 set no limit. `exempt` is true only for a caller explicitly allowed to exceed
 the limit; it is not inferred from an absent limit.
 
-`live` counts records whose desired state wants a runtime: `provisioning`,
-`ready`, `running`, and `rotating`. It is read from the session record, never
-from provider inventory. An `idle` (paused) session consumes no slot, nor does
-a terminated one. Reviving a paused session is checked as a new ask, which is
-what prevents pause and revive from walking around the limit.
+`live` counts ordinary agent records whose desired state wants a runtime:
+`provisioning`, `ready`, `running`, and `rotating`. It is read from the session
+record, never from provider inventory. An `idle` (paused) session consumes no
+slot, nor does a terminated one. Reviving a paused session is checked as a new
+ask, which is what prevents pause and revive from walking around the limit.
+Chat threads are excluded because their shared host's `max_threads` is the
+independent bound; opening another chat window does not reserve another host.
 
 **This is advisory.** It exists so a client can offer only what will be
 permitted, rather than offering everything and letting people discover
@@ -1257,7 +1282,7 @@ hard distributed limit requires a conditional write in the session store.
 
 ```http
 GET    /api/v1/sessions/{id}
-GET    /api/v1/sessions?status=running&limit=50
+GET    /api/v1/sessions?status=running&surface=chat&limit=50
 POST   /api/v1/sessions/{id}/stop
 POST   /api/v1/sessions/{id}/revive
 GET    /api/v1/sessions/{id}/transcript
@@ -1275,6 +1300,7 @@ these query parameters:
 | Parameter | Meaning |
 |---|---|
 | `status` | Exact lifecycle value to retain, such as `running`; omit it for every status |
+| `surface` | `chat` retains shared-host chat threads; `agent` retains ordinary sessions; omit it for both |
 | `limit` | Page size, default `50`, clamped to `1..=200` (`0` becomes `1`) |
 | `cursor` | Opaque continuation copied from the previous response's next link |
 
@@ -1305,6 +1331,15 @@ names, not identifiers or the response itself. A newly created provisioning
 session can omit `agent.skills` until installation has actually been recorded.
 
 `DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
+
+Chat lifecycle is platform-managed. An owner cannot `stop`, `revive`, or
+change the plane of one chat thread; each returns `409 invalid_state` with
+chat-specific detail. Terminal endpoints are refused by the thread's granted
+capabilities. `DELETE` is allowed: it terminates the thread and removes its
+worktree from a live host, or removes it from the paused host's restore set.
+Deleting the final thread retires the now-empty shared host. Operator
+`stop_any` and `terminate_any` remain available for abuse response and affect
+the addressed thread without treating the shared host as owner-controlled.
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
 

@@ -287,6 +287,9 @@ struct SessionDoc {
     /// Internal Trigger provenance. Absent for every ordinary/legacy session.
     #[serde(default)]
     trigger_origin: Option<layer2_core::TriggerSessionOrigin>,
+    /// Internal shared-host provenance. Public chat facts are derived on read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat_origin: Option<layer2_core::ChatOrigin>,
     /// Internal initial-prompt outbox. Absent on ordinary and legacy sessions.
     #[serde(default)]
     initial_prompt: Option<layer2_core::InitialPromptDispatch>,
@@ -5862,6 +5865,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
         trigger_origin: r.trigger_origin.clone(),
+        chat_origin: r.chat_origin.clone(),
         initial_prompt: r.initial_prompt.clone(),
         rotation_claim: r.rotation_claim.clone(),
         pending_handover: r.pending_handover.clone(),
@@ -6042,7 +6046,8 @@ fn runtime_entitlement_filter() -> Result<Document, StoreError> {
 
 /// A bounded server-side sum of every durable promise that wants a runtime.
 fn reserved_capacity_pipeline() -> Result<Vec<Document>, StoreError> {
-    let entitlement = runtime_entitlement_filter()?;
+    let mut entitlement = runtime_entitlement_filter()?;
+    entitlement.insert("chat_origin", doc! { "$exists": false });
 
     Ok(vec![
         doc! { "$match": entitlement },
@@ -6100,6 +6105,10 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         .map_err(|e| StoreError::Malformed(e.to_string()))?;
     let status: layer2_core::SessionStatus = parse_plain(&d.status)?;
     let skill_packs = skill_pack_state_from_doc(d.skill_packs)?;
+    let chat = d
+        .chat_origin
+        .as_ref()
+        .map(layer2_core::ChatOrigin::public_projection);
     if status.is_interactive()
         && matches!(
             &skill_packs,
@@ -6115,6 +6124,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
     }
     Ok(SessionRecord {
         session: Session {
+            chat,
             id: SessionId(d.id),
             owner: SubjectId(d.owner),
             kernel: layer2_core::KernelId::new(d.kernel),
@@ -6152,6 +6162,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         runtime_id: d.runtime_id,
         context_ref: d.context_ref,
         trigger_origin: d.trigger_origin,
+        chat_origin: d.chat_origin,
         initial_prompt: d.initial_prompt,
         rotation_claim: d.rotation_claim,
         pending_handover: d.pending_handover,
@@ -6533,6 +6544,7 @@ impl SessionStore for MongoSessionStore {
     async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
         let mut entitlement = runtime_entitlement_filter()?;
         entitlement.insert("owner", owner.0.clone());
+        entitlement.insert("chat_origin", doc! { "$exists": false });
         let mut cursor = self
             .sessions
             .aggregate(visible_count_pipeline(entitlement))
@@ -7104,7 +7116,9 @@ impl MongoSessionStore {
                             }
                             let authority = runtime_authority_from_doc(stored)
                                 .map_err(mongodb::error::Error::custom)?;
-                            if authority.runtime_id.is_some() || cleanup_debts != 0 {
+                            if (authority.runtime_id.is_some() && stored.chat_origin.is_none())
+                                || cleanup_debts != 0
+                            {
                                 return Err(mongodb::error::Error::custom(
                                     StoreError::SessionCleanupPending {
                                         id: id.clone(),
@@ -7325,6 +7339,10 @@ fn session_page_filter(
 ) -> Result<Document, StoreError> {
     if let Some(status) = query.status {
         filter.insert("status", serde_plain_string(&status)?);
+    }
+    if let Some(surface) = query.surface {
+        let exists = matches!(surface, layer2_core::SessionSurfaceFilter::Chat);
+        filter.insert("chat_origin", doc! { "$exists": exists });
     }
     if let Some(cursor) = query.page.cursor() {
         filter.insert(

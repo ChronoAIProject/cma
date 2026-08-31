@@ -8,7 +8,7 @@ use axum::http::{header, HeaderMap, HeaderValue};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use layer2_core::{
     seconds_from_rfc3339, PageCursor, PageRequest, SessionListQuery, SessionStatus,
-    TriggerValidationError, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    SessionSurfaceFilter, TriggerValidationError, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 use serde::{de, Deserialize, Deserializer, Serialize};
 
@@ -18,6 +18,8 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 pub(crate) struct SessionPageParams {
     #[serde(default)]
     status: Option<SessionStatus>,
+    #[serde(default)]
+    surface: Option<SessionSurfaceFilter>,
     #[serde(default)]
     limit: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_session_cursor")]
@@ -30,6 +32,7 @@ impl SessionPageParams {
             PageRequest::new(bounded_limit(self.limit), self.cursor.clone()),
             self.status,
         )
+        .with_surface(self.surface)
     }
 
     pub(crate) fn next_headers(&self, path: &str, next: Option<&PageCursor>) -> HeaderMap {
@@ -38,6 +41,7 @@ impl SessionPageParams {
         };
         let query = serde_urlencoded::to_string(SessionNextQuery {
             status: self.status,
+            surface: self.surface,
             limit: bounded_limit(self.limit),
             cursor: encode_cursor(CursorCollection::Sessions, next),
         })
@@ -72,6 +76,7 @@ impl AdminSessionPageParams {
         };
         let query = serde_urlencoded::to_string(SessionNextQuery {
             status: self.status,
+            surface: None,
             limit: bounded_limit(self.limit),
             cursor: encode_cursor(CursorCollection::AdminSessions, next),
         })
@@ -84,6 +89,8 @@ impl AdminSessionPageParams {
 struct SessionNextQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<SessionStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    surface: Option<SessionSurfaceFilter>,
     limit: u32,
     cursor: String,
 }
@@ -329,6 +336,27 @@ mod tests {
         );
         let decoded: SessionPageParams = serde_urlencoded::from_str(&query).expect("cursor parses");
         assert_eq!(decoded.cursor, Some(original));
+    }
+
+    #[test]
+    fn session_surface_filters_parse_and_survive_continuation_links() {
+        for (wire, expected) in [
+            ("chat", SessionSurfaceFilter::Chat),
+            ("agent", SessionSurfaceFilter::Agent),
+        ] {
+            let params: SessionPageParams =
+                serde_urlencoded::from_str(&format!("surface={wire}&limit=7"))
+                    .expect("a documented surface parses");
+            assert_eq!(params.store_query().surface, Some(expected));
+
+            let next = PageCursor::new("2026-08-24T10:11:12Z", "sesn_surface");
+            let headers = params.next_headers("/api/v1/sessions", Some(&next));
+            let link = headers[header::LINK].to_str().unwrap();
+            assert!(link.contains(&format!("surface={wire}")), "{link}");
+            assert!(link.contains("limit=7"), "{link}");
+        }
+
+        assert!(serde_urlencoded::from_str::<SessionPageParams>("surface=workspace").is_err());
     }
 
     #[test]

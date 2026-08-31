@@ -3,6 +3,7 @@
 mod checkpoint;
 mod host;
 mod settings;
+mod threads;
 
 pub use checkpoint::{ChatCheckpointConversationRef, ChatCheckpointRef};
 pub use host::{

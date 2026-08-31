@@ -30,6 +30,7 @@ fn id() -> SessionId {
 
 fn record() -> SessionRecord {
     SessionRecord::new(Session {
+        chat: None,
         id: id(),
         owner: SubjectId("subject-log".into()),
         kernel: KernelId::new("fake"),

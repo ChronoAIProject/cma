@@ -184,6 +184,9 @@ impl IntoResponse for Problem {
             CoreError::SessionLimitReached { .. } => {
                 (StatusCode::CONFLICT, "session-limit-reached")
             }
+            CoreError::ChatThreadLimit { .. } => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "chat-thread-limit")
+            }
             CoreError::DeploymentAtCapacity { .. } => super::deployment_capacity::status_and_slug(),
             CoreError::RuntimeUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "runtime-unavailable")
@@ -191,7 +194,7 @@ impl IntoResponse for Problem {
             // The runtime answered and refused. That is distinct from absence,
             // even though both are transient and therefore both use 503.
             CoreError::RuntimeRefused(_) => (StatusCode::SERVICE_UNAVAILABLE, "runtime-refused"),
-            CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
+            CoreError::InvalidState { .. } => (StatusCode::CONFLICT, "invalid-state"),
             CoreError::InitialPromptReserved(_) => {
                 (StatusCode::CONFLICT, "initial-prompt-reserved")
             }
@@ -260,6 +263,10 @@ impl IntoResponse for Problem {
                     object.insert("maximum".into(), refusal.maximum.into());
                 }
                 CoreError::SessionLimitReached { limit, live } => {
+                    object.insert("limit".into(), (*limit).into());
+                    object.insert("live".into(), (*live).into());
+                }
+                CoreError::ChatThreadLimit { limit, live } => {
                     object.insert("limit".into(), (*limit).into());
                     object.insert("live".into(), (*live).into());
                 }
@@ -380,6 +387,10 @@ mod tests {
                 maximum: 4_000,
             }),
             CoreError::SessionLimitReached { limit: 3, live: 3 },
+            CoreError::ChatThreadLimit {
+                limit: 10,
+                live: 10,
+            },
             CoreError::DeploymentAtCapacity {
                 requested_cpu_millis: 2_000,
                 requested_memory_mib: 4_096,
@@ -389,7 +400,7 @@ mod tests {
             CoreError::InvalidSessionSize(SessionSize::new(0, 512).unwrap_err()),
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
-            CoreError::InvalidState,
+            CoreError::invalid_state(),
             CoreError::InitialPromptReserved(layer2_core::PromptDeliveryState::DispatchFenced),
             CoreError::CapabilityUnsupported("terminal".into()),
             CoreError::InvalidRequest("x".into()),
@@ -417,11 +428,12 @@ mod tests {
                 | CoreError::InvalidPressurePolicy(_)
                 | CoreError::SizeOutOfBounds(_)
                 | CoreError::SessionLimitReached { .. }
+                | CoreError::ChatThreadLimit { .. }
                 | CoreError::DeploymentAtCapacity { .. }
                 | CoreError::InvalidSessionSize(_)
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
-                | CoreError::InvalidState
+                | CoreError::InvalidState { .. }
                 | CoreError::InitialPromptReserved(_)
                 | CoreError::CapabilityUnsupported(_)
                 | CoreError::InvalidRequest(_)
@@ -556,7 +568,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_invalid_state_is_a_typed_conflict() {
-        let (status, body) = rendered(CoreError::InvalidState).await;
+        let (status, body) = rendered(CoreError::invalid_state()).await;
 
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(
@@ -607,6 +619,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_chat_thread_limit_is_a_422_with_both_counts() {
+        let (status, body) = rendered(CoreError::ChatThreadLimit { limit: 8, live: 8 }).await;
+
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(body["type"]
+            .as_str()
+            .unwrap()
+            .ends_with("/chat-thread-limit"));
+        assert_eq!(body["code"], "chat_thread_limit");
+        assert_eq!(body["limit"], 8);
+        assert_eq!(body["live"], 8);
+    }
+
+    #[tokio::test]
     async fn deployment_capacity_is_a_503_with_all_four_figures_and_never_a_404() {
         let (status, body) = rendered(CoreError::DeploymentAtCapacity {
             requested_cpu_millis: 2_000,
@@ -643,7 +669,10 @@ mod tests {
     #[tokio::test]
     async fn limit_fields_are_absent_from_every_other_problem() {
         for error in every_variant() {
-            if matches!(error, CoreError::SessionLimitReached { .. }) {
+            if matches!(
+                error,
+                CoreError::SessionLimitReached { .. } | CoreError::ChatThreadLimit { .. }
+            ) {
                 continue;
             }
             let (_, body) = rendered(error).await;

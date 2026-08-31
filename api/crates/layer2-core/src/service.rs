@@ -392,6 +392,9 @@ impl SessionService {
         caller: &Caller,
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
+        if spec.surface == Some(crate::SessionSurface::Chat) {
+            return self.create_chat_thread(caller, spec).await;
+        }
         self.create_session_with_identity(
             caller,
             spec,
@@ -578,6 +581,7 @@ impl SessionService {
         let id = identity.resolve_with(generate_fresh_id);
         let geometry = spec.geometry.unwrap_or_default();
         let session = Session {
+            chat: None,
             id: id.clone(),
             owner: caller.subject.clone(),
             kernel: agent.kernel.clone(),
@@ -788,6 +792,7 @@ impl SessionService {
             ]),
         );
         let spec = SessionSpec {
+            surface: None,
             options: AgentOptions::default(),
             geometry: None,
             environment_profile: Some(profile.id.clone()),

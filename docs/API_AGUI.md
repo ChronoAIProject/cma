@@ -170,7 +170,7 @@ Content-Type: application/json
   ],
   "tools": [],
   "context": [],
-  "forwardedProps": { "environmentProfile": "envp_7dec1b0ca73c46b88121b259577bbe96" }
+  "forwardedProps": { "surface": "chat" }
 }
 ```
 
@@ -179,7 +179,7 @@ Content-Type: application/json
 | `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected. The new session gets an identifier chosen by the service, not the one you sent, and every event on the run carries it: read `threadId` off the first event and use that from then on |
 | `runId` | Client-generated id for this turn; echoed on every event of the run stream. An explicit value names one subject- and effective-session-scoped admission with a five-minute execution lease; a finite stored outcome is replayable for 24 hours from its completion. Reusing it with the same final prompt or normalized approval resolutions replays that finite admission rather than delivering another action; changing that semantic action returns HTTP 422 with code `agui_operation_reused`. It must contain a non-whitespace character and differ from the effective `threadId`, or CMA returns HTTP 422 with code `invalid_request`. Frames read over `GET /api/v1/agui/events` carry the session's own id here — see §7 |
 | `messages` | The conversation. The final user message is the turn's input |
-| `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the profile it names or from what the deployment configured, and no interface chooses one |
+| `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `surface: "chat"` selects the deployment-managed chat surface; `environmentProfile` selects an ordinary session profile. They are mutually exclusive. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the selected configuration, and no interface chooses one |
 | `resume` | Present only when answering an interrupt — see §4 |
 
 `forwardedProps` is ignored on an existing thread because what it sets is frozen at session creation. Changing it requires a new thread.
@@ -206,10 +206,19 @@ finite creation outcome is retained for 24 hours from completion. Retrying it
 with the same creation-affecting properties resolves
 to the same core-minted session, and using the minted id directly reaches that
 same session. Reusing the requested alias with a different
-`environmentProfile` returns `agui_operation_reused`; it never provisions a
-second session under the ambiguous alias.
+`environmentProfile` or a different `surface` returns
+`agui_operation_reused`; it never provisions a second session under the
+ambiguous alias.
 
-`environmentProfile` is the one property in it this service reads. `kernel` is accepted and ignored, as the table above says; `llmSource` was named here as though it were honoured and frozen, and has never existed anywhere in the service — the same phantom `docs/API_REST.md` carried as `llm_source`. Both are gone from the example above, so it now shows only what sending actually does something.
+`environmentProfile` and `surface` are the creation properties this service
+reads. `surface` is a closed enum whose current value is `chat`. A chat surface
+uses the deployment's complete chat configuration and therefore cannot be
+combined with `environmentProfile`; that request returns `422 invalid_request`
+before a session or host is provisioned. `kernel` is accepted and ignored, as
+the table above says; `llmSource` was named here as though it were honoured and
+frozen, and has never existed anywhere in the service — the same phantom
+`docs/API_REST.md` carried as `llm_source`. Both are absent from the example
+above, so it shows only what sending actually changes.
 
 Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is CMA's own, so an unknown field there is refused by name.
 

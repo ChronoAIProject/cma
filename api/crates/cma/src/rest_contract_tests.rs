@@ -26,16 +26,17 @@ use layer1_public::{
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind,
-    HandoverSnapshot, HandoverStore, KernelId, OperationClaim, OperationReservation,
-    OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
-    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
-    ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
-    SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId,
-    SkillPack, SkillPackStore, SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry,
-    UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
+    ChatHostId, ChatOrigin, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, EnvironmentProfile,
+    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
+    EnvironmentProfileStore, Event, EventKind, HandoverSnapshot, HandoverStore, KernelId,
+    OperationClaim, OperationReservation, OperationStore, Page, PageCursor, PageRequest,
+    PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
+    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionLease, SessionListQuery,
+    SessionMode, SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus,
+    SessionStore, SessionSurfaceFilter, SkillCatalog, SkillId, SkillPack, SkillPackStore,
+    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
+    UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -787,6 +788,12 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
         query
             .status
             .is_none_or(|status| record.session.status == status)
+            && query.surface.is_none_or(|surface| {
+                matches!(
+                    (surface, record.chat_origin.is_some()),
+                    (SessionSurfaceFilter::Chat, true) | (SessionSurfaceFilter::Agent, false)
+                )
+            })
             && query.page.cursor().is_none_or(|cursor| {
                 record.session.created_at < cursor.created_at
                     || (record.session.created_at == cursor.created_at
@@ -1712,10 +1719,23 @@ fn session_record(sequence: usize, owner: &SubjectId, status: SessionStatus) -> 
         granted_services: Some(Vec::new()),
         granted_skills: Some(Vec::new()),
         pricing: None,
+        chat: None,
         // Every fixture deliberately ties on time, so traversal depends on
         // the durable id tie-breaker instead of passing accidentally.
         created_at: "2026-08-24T10:11:12Z".into(),
     })
+}
+
+fn chat_session_record(sequence: usize, owner: &SubjectId) -> SessionRecord {
+    let mut record = session_record(sequence, owner, SessionStatus::Ready);
+    let origin = ChatOrigin {
+        host_id: ChatHostId::for_owner(owner),
+        worktree_name: format!("chat-{sequence}"),
+        worktree_path: format!("/workspace/chat-{sequence}"),
+    };
+    record.session.chat = Some(origin.public_projection());
+    record.chat_origin = Some(origin);
+    record
 }
 
 async fn seed_sessions(
@@ -1748,6 +1768,7 @@ async fn create_ready_conversation_session(
                 runtime_credential: None,
                 requested_mode: Some(SessionMode::Conversation),
                 quoted_rate_card: None,
+                surface: None,
             },
         )
         .await
@@ -2536,6 +2557,7 @@ async fn a_capability_refusal_is_a_problem_without_a_started_run() {
                 runtime_credential: None,
                 requested_mode: Some(SessionMode::Terminal),
                 quoted_rate_card: None,
+                surface: None,
             },
         )
         .await
@@ -2602,6 +2624,7 @@ async fn a_terminal_run_records_lifecycle_before_its_missing_conversation_grant(
                 runtime_credential: None,
                 requested_mode: Some(SessionMode::Terminal),
                 quoted_rate_card: None,
+                surface: None,
             },
         )
         .await
@@ -3020,6 +3043,86 @@ async fn a_deferred_prompt_suppresses_its_durable_turn_started_projection() {
             "only the user echo's final projection frame is numbered: {next_wire:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_fresh_agui_alias_cannot_be_replayed_with_a_different_surface() {
+    let TestSurface { app, .. } = test_surface(true);
+    let requested = "frontend-thread-surface-contract";
+    let first = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": requested,
+                "runId": "run_surface_contract_first",
+                "messages": [{ "role": "user", "content": "create the ordinary thread" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the first run route answers");
+    assert_eq!(first.status(), StatusCode::OK);
+    drop(first);
+
+    let mismatch = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": requested,
+                "runId": "run_surface_contract_second",
+                "messages": [{ "role": "user", "content": "reuse the alias as chat" }],
+                "forwardedProps": { "surface": "chat" }
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the mismatched run route answers");
+    let problem = assert_problem(mismatch, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "agui_operation_reused");
+}
+
+#[tokio::test]
+async fn chat_and_environment_profile_are_refused_before_rest_or_agui_creation() {
+    let TestSurface { app, store, .. } = test_surface(true);
+
+    let rest = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            r#"{"surface":"chat","environment_profile":"envp_conflict"}"#,
+        ))
+        .await
+        .expect("the REST route answers");
+    let problem = assert_problem(rest, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "invalid_request");
+    assert!(problem["detail"].as_str().unwrap().contains("chat"));
+    assert!(store.state.lock().await.records.is_empty());
+
+    let agui = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": "frontend-thread-conflicting-chat-profile",
+                "runId": "run_conflicting_chat_profile",
+                "messages": [{ "role": "user", "content": "must not be delivered" }],
+                "forwardedProps": {
+                    "surface": "chat",
+                    "environmentProfile": "envp_conflict"
+                }
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the AG-UI route answers");
+    let problem = assert_problem(agui, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "invalid_request");
+    assert!(problem["detail"].as_str().unwrap().contains("chat"));
+    assert!(store.state.lock().await.records.is_empty());
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -4499,6 +4602,44 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         assert_only_schema_ref(&schemas[schema]["properties"][property], reference);
     }
 
+    assert_only_schema_ref(
+        &schemas["CreateSessionRequest"]["properties"]["surface"],
+        "#/components/schemas/SessionSurface",
+    );
+    assert_only_schema_ref(
+        &schemas["SessionView"]["properties"]["chat"],
+        "#/components/schemas/ChatSessionView",
+    );
+    assert_eq!(
+        schemas["SessionSurface"]["enum"],
+        serde_json::json!(["chat"])
+    );
+    assert_eq!(
+        schemas["SessionSurfaceFilter"]["enum"],
+        serde_json::json!(["chat", "agent"])
+    );
+    for property in ["worktree_name", "worktree_path", "title", "paused_notice"] {
+        assert!(
+            schemas["ChatSessionView"]["properties"]
+                .get(property)
+                .is_some(),
+            "chat projection is missing {property}: {}",
+            schemas["ChatSessionView"]
+        );
+    }
+    let surface_parameter = paths["/api/v1/sessions"]["get"]["parameters"]
+        .as_array()
+        .and_then(|parameters| {
+            parameters
+                .iter()
+                .find(|parameter| parameter["name"] == "surface")
+        })
+        .expect("the session collection documents its surface filter");
+    assert_only_schema_ref(
+        &surface_parameter["schema"],
+        "#/components/schemas/SessionSurfaceFilter",
+    );
+
     let discovery_document = &schemas["OpenApiDocument"];
     for required in ["openapi", "info", "paths"] {
         assert!(
@@ -5098,6 +5239,51 @@ async fn session_cursor_walk_has_no_overlap_and_status_is_an_exact_store_filter(
     assert_eq!(running.len(), 2);
     assert!(running.iter().all(|row| row["status"] == "running"));
     assert!(next_link(&headers).is_none());
+}
+
+#[tokio::test]
+async fn session_surface_filter_is_exact_and_survives_its_continuation() {
+    let TestSurface {
+        app, store, caller, ..
+    } = test_surface(true);
+    let records = [
+        session_record(0, &caller.subject, SessionStatus::Ready),
+        session_record(1, &caller.subject, SessionStatus::Ready),
+        chat_session_record(10, &caller.subject),
+        chat_session_record(11, &caller.subject),
+        chat_session_record(12, &caller.subject),
+    ];
+    let mut state = store.state.lock().await;
+    for record in records {
+        state.records.insert(record.session.id.0.clone(), record);
+    }
+    drop(state);
+
+    let (chat, headers) = get_collection(&app, "/api/v1/sessions?surface=chat&limit=2").await;
+    assert_eq!(chat.len(), 2);
+    assert!(chat.iter().all(|row| row.get("chat").is_some()));
+    let next = next_link(&headers).expect("three chat rows need a second page");
+    assert!(next.contains("surface=chat&limit=2&cursor="), "{next}");
+    let (last_chat, headers) = get_collection(&app, &next).await;
+    assert_eq!(last_chat.len(), 1);
+    assert!(last_chat[0].get("chat").is_some());
+    assert!(next_link(&headers).is_none());
+
+    let (agents, headers) = get_collection(&app, "/api/v1/sessions?surface=agent").await;
+    assert_eq!(agents.len(), 2);
+    assert!(agents.iter().all(|row| row.get("chat").is_none()));
+    assert!(next_link(&headers).is_none());
+
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/sessions?surface=workspace")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let problem = assert_problem(response, StatusCode::BAD_REQUEST).await;
+    assert_eq!(problem["code"], "invalid_query");
 }
 
 #[tokio::test]

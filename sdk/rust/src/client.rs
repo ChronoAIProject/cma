@@ -18,7 +18,8 @@ use crate::settings::SettingsEnvelope;
 use crate::{
     ApprovalDecision, ChatSettings, Conformance, CreateSessionRequest, Error, EventStream,
     MAX_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session,
-    SessionId, SessionInput, SessionPageRequest, StoredChatSettings, TerminalGeometry, Usage,
+    SessionId, SessionInput, SessionPageRequest, SessionSurface, StoredChatSettings,
+    TerminalGeometry, Usage,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -390,6 +391,8 @@ impl Client {
         #[derive(Serialize)]
         struct WireRequest<'a> {
             #[serde(skip_serializing_if = "Option::is_none")]
+            surface: Option<SessionSurface>,
+            #[serde(skip_serializing_if = "Option::is_none")]
             cols: Option<u16>,
             #[serde(skip_serializing_if = "Option::is_none")]
             rows: Option<u16>,
@@ -404,6 +407,7 @@ impl Client {
             .map(|geometry| geometry.validate("create request"))
             .transpose()?;
         let body = serde_json::to_value(WireRequest {
+            surface: request.surface,
             cols: geometry.map(|value| value.cols),
             rows: geometry.map(|value| value.rows),
             environment_profile: request.environment_profile.as_deref(),
@@ -422,10 +426,17 @@ impl Client {
             Some(continuation) => self.session_page_url(continuation.as_str())?,
             None => {
                 let mut url = self.endpoint(&["sessions"])?;
-                if page.status().is_some() || page.limit().is_some() || page.cursor().is_some() {
+                if page.status().is_some()
+                    || page.surface().is_some()
+                    || page.limit().is_some()
+                    || page.cursor().is_some()
+                {
                     let mut query = url.query_pairs_mut();
                     if let Some(status) = page.status() {
                         query.append_pair("status", status.query_value());
+                    }
+                    if let Some(surface) = page.surface() {
+                        query.append_pair("surface", surface.query_value());
                     }
                     if let Some(limit) = page.limit() {
                         query.append_pair("limit", &limit.to_string());

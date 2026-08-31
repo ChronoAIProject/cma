@@ -3112,6 +3112,7 @@ mod tests {
             granted_services: None,
             granted_skills: None,
             pricing: None,
+            chat: None,
             created_at: "2027-01-15T08:00:00Z".into(),
         });
         record.runtime_id = Some("runtime-original".into());

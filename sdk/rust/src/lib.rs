@@ -86,9 +86,9 @@ pub use settings::{
 pub use stream::EventStream;
 pub use triggers::*;
 pub use types::{
-    Agent, ApprovalDecision, Conformance, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE,
-    MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach,
-    ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput,
-    SessionPageRequest, SessionPricing, SessionSize, SessionStatus, Skill, StopReason,
-    TerminalGeometry, Usage,
+    Agent, ApprovalDecision, ChatSession, Conformance, CreateSessionRequest, CredentialMode,
+    MAX_PAGE_SIZE, MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, PermissionMode,
+    PublicIdentity, Reach, ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId,
+    SessionInput, SessionPageRequest, SessionPricing, SessionSize, SessionStatus, SessionSurface,
+    SessionSurfaceFilter, Skill, StopReason, TerminalGeometry, Usage,
 };

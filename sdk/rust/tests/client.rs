@@ -19,11 +19,11 @@ use cma_sdk::{
     PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
     PullRequestStatusRefreshRequest, ReasoningEffort, RecoverInitialPromptRequest,
     ResponseMetadata, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
-    SessionId, SessionInput, SessionPageRequest, SessionSize, SessionStatus, TerminalGeometry,
-    TriggerConnection, TriggerConnectionState, TriggerContentDraft, TriggerDraft, TriggerPreview,
-    TriggerPreviewAvailability, TriggerPreviewCost, TriggerPreviewUnavailableReason,
-    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
-    UpdateTriggerRequest, Usage,
+    SessionId, SessionInput, SessionPageRequest, SessionSize, SessionStatus, SessionSurface,
+    SessionSurfaceFilter, TerminalGeometry, TriggerConnection, TriggerConnectionState,
+    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewAvailability,
+    TriggerPreviewCost, TriggerPreviewUnavailableReason, TriggerRepositorySelection,
+    TriggerRevision, UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -394,6 +394,16 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(conformance.version, "development");
     let session: Session = serde_json::from_str(SESSION).expect("session fixture is typed");
     assert_eq!(session.id.as_str(), "sesn_fixture");
+    let chat = session
+        .chat
+        .expect("fixture carries the shared chat projection");
+    assert_eq!(chat.worktree_name, "chat-3");
+    assert_eq!(chat.worktree_path, "/workspace/chat-3");
+    assert_eq!(chat.title.as_deref(), Some("Fixture chat"));
+    assert_eq!(
+        chat.paused_notice.as_deref(),
+        Some("Paused after inactivity")
+    );
     let sessions: Vec<Session> = serde_json::from_str(SESSIONS).expect("list fixture is typed");
     assert_eq!(sessions.len(), 1);
     let event: Event = serde_json::from_str(EVENT).expect("event fixture is typed");
@@ -1553,6 +1563,7 @@ async fn every_required_operation_uses_the_server_fixture_shape() {
 
     client
         .create_session(CreateSessionRequest {
+            surface: None,
             geometry: Some(TerminalGeometry::new(120, 40).expect("valid geometry")),
             environment_profile: Some("envp_fixture".into()),
             quoted_rate_card: Some("rate_fixture".into()),
@@ -1641,6 +1652,48 @@ async fn every_required_operation_uses_the_server_fixture_shape() {
 }
 
 #[tokio::test]
+async fn chat_creation_serializes_the_closed_surface_value() {
+    let stub = Stub::start([StubResponse::json(StatusCode::CREATED, SESSION)]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let session = client
+        .create_session(CreateSessionRequest {
+            surface: Some(SessionSurface::Chat),
+            ..CreateSessionRequest::default()
+        })
+        .await
+        .expect("chat create succeeds");
+    assert_eq!(
+        session.chat.expect("chat projection").worktree_name,
+        "chat-3"
+    );
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[0].body).expect("request is JSON"),
+        serde_json::json!({ "surface": "chat" })
+    );
+}
+
+#[tokio::test]
+async fn malformed_chat_projection_is_a_protocol_failure() {
+    let mut malformed = fixture(SESSION);
+    malformed["chat"]["worktree_path"] = serde_json::Value::String(String::new());
+    let body = malformed.to_string();
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &body)]).await;
+    let (client, _) = stub_client(&stub, 1);
+    let id = SessionId::new("sesn_fixture").expect("fixture id is valid");
+
+    let error = client
+        .read_session(&id)
+        .await
+        .expect_err("an empty worktree path is not a usable chat projection");
+    assert!(matches!(error, Error::Protocol { .. }));
+    assert!(error.to_string().contains("worktree path"));
+}
+
+#[tokio::test]
 async fn list_sessions_finds_next_after_unrelated_link_header_fields() {
     let older = SESSIONS.replace("sesn_fixture", "sesn_older");
     let stub = Stub::start([
@@ -1701,7 +1754,7 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
     let stub = Stub::start([
         StubResponse::json(StatusCode::OK, SESSIONS).header(
             "link",
-            "</api/v1/sessions?status=running&limit=1&cursor=opaque-next>; rel=\"next\"",
+            "</api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque-next>; rel=\"next\"",
         ),
         StubResponse::json(StatusCode::OK, &older),
     ])
@@ -1710,6 +1763,8 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
     let request = SessionPageRequest::new()
         .with_status(SessionStatus::Running)
         .expect("a first-page status filter is accepted")
+        .with_surface(SessionSurfaceFilter::Chat)
+        .expect("a first-page surface filter is accepted")
         .with_limit(1)
         .expect("one is within the page bound")
         .with_cursor("opaque start")
@@ -1726,6 +1781,11 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
             .with_status(SessionStatus::Ready)
             .is_err()
     );
+    assert!(
+        SessionPageRequest::continuing(next.clone())
+            .with_surface(SessionSurfaceFilter::Agent)
+            .is_err()
+    );
     let last = client
         .list_session_page(SessionPageRequest::continuing(next))
         .await
@@ -1740,8 +1800,8 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
             .map(|request| request.uri.to_string())
             .collect::<Vec<_>>(),
         [
-            "/proxy/api/v1/sessions?status=running&limit=1&cursor=opaque+start",
-            "/proxy/api/v1/sessions?status=running&limit=1&cursor=opaque-next",
+            "/proxy/api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque+start",
+            "/proxy/api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque-next",
         ]
     );
 }

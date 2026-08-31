@@ -179,6 +179,9 @@ impl SessionService {
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
+        if record.chat_origin.is_some() {
+            return Err(CoreError::chat_lifecycle_managed("revive"));
+        }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
@@ -206,7 +209,7 @@ impl SessionService {
             })?;
 
         if !self.begin_start(id).await {
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
 
         let (record, restore, trigger_recovery) =
@@ -330,6 +333,7 @@ impl SessionService {
 
         let geometry = starting.session.geometry;
         let spec = SessionSpec {
+            surface: None,
             geometry: Some(geometry),
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),
@@ -613,6 +617,10 @@ impl SessionService {
                 // rejoined before. Rejoining is the whole point: without it the
                 // runtime opens a second conversation beside the first.
                 let mut options = crate::provision::runtime_options(&record.session.options);
+                options.working_directory = record
+                    .chat_origin
+                    .as_ref()
+                    .map(|origin| origin.worktree_path.clone());
                 options.conversation_slot = Some(id.0.clone());
                 options.resume_conversation = conversation_id.clone();
                 options.restricted_service_gateway = record.trigger_origin.is_some();
@@ -869,6 +877,50 @@ impl SessionService {
             }
         }
 
+        // A fresh chat thread deliberately enters through readoption because
+        // its runtime already belongs to the shared host. Preserve the name
+        // returned by that first open before the final history rebuild; without
+        // this event a control-plane restart would open a second conversation
+        // in the same slot instead of rejoining the first one.
+        let opened_conversation_id = conversation
+            .as_ref()
+            .and_then(|channel| channel.conversation_id.clone());
+        let expected_conversation_id = match (conversation_id.clone(), opened_conversation_id) {
+            (Some(recorded), Some(opened)) if recorded != opened => {
+                return Err(CoreError::RuntimeRefused(
+                    "the runtime rejoined a different conversation than the durable record names"
+                        .into(),
+                ));
+            }
+            (Some(recorded), _) => Some(recorded),
+            (None, Some(opened)) => {
+                self.persist_durably(
+                    &mut current,
+                    vec![Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::ConversationOpened {
+                            conversation_id: opened.clone(),
+                        },
+                        appended_at: String::new(),
+                    }],
+                )
+                .await
+                .map_err(store_failed)?;
+                if let Some(held) = lease.as_mut() {
+                    let boundary = crate::coordination::SessionBoundary::for_record(
+                        &current,
+                        held.boundary.authority.generation,
+                    );
+                    self.advance_runtime_lease(held, &boundary)
+                        .await
+                        .map_err(store_failed)?;
+                }
+                Some(opened)
+            }
+            (None, None) => None,
+        };
+
         // Rebuild from the final durable history after any readiness event.
         // The opening FIFO is still private and will be folded immediately
         // after this state is installed under the same two input/order gates.
@@ -880,7 +932,7 @@ impl SessionService {
                     "the runtime was reached but its final conversation state could not be rebuilt: {error}"
                 ))
             })?;
-        if final_history.conversation_id != conversation_id {
+        if final_history.conversation_id != expected_conversation_id {
             return Err(CoreError::RuntimeRefused(
                 "the conversation changed while its runtime was being reconnected".into(),
             ));
@@ -1008,7 +1060,7 @@ impl SessionService {
         // to install and acknowledge custody before this entry becomes valid
         // evidence that a retained rotation claim may clear. Waiting until
         // lease release would let an ordinary prompt win the credential race.
-        if self.credentials.is_some() {
+        if self.credentials.is_some() && current.chat_origin.is_none() {
             match self
                 .install_prepared_credential_while_lifecycle_locked(
                     &installation,
