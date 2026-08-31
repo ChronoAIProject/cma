@@ -9,14 +9,19 @@ use tokio::sync::broadcast::error::TryRecvError;
 
 use crate::authz::{Authorization, Caller};
 use crate::conversation_support::chunk;
+use crate::environment::AgentConfiguration;
 use crate::error::CoreError;
 use crate::ids::{SessionId, SubjectId};
 use crate::options::SessionMode;
-use crate::resources::{reading_from, ResourceReading, ResourceStatus};
+use crate::resources::{reading_from, with_declared_ceiling, ResourceReading, ResourceStatus};
 use crate::service::SessionService;
 use crate::session::{Session, SessionStatus};
 use crate::store::SessionStore;
-use crate::test_support::{admin, await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{
+    admin, await_settled, environments_defaulting_to, kernel, service, service_with_environments,
+    spec, user, FakeAdapter, FakeStore,
+};
+use crate::SessionSize;
 
 fn capable_fake() -> FakeAdapter {
     let mut fake = FakeAdapter::default();
@@ -163,6 +168,49 @@ fn reading_translation_moves_all_fourteen_fields_without_inventing_values() {
             interval_ms: Some(34),
         }
     );
+}
+
+#[test]
+fn a_declared_session_size_fills_only_limits_the_runtime_cannot_observe() {
+    let declared = SessionSize::new(2_000, 4_096).expect("the declared size is valid");
+    let mut reported = sample(20);
+    reported.cpu_millis_limit = None;
+    reported.memory_bytes_limit = Some(3 * 1024 * 1024 * 1024);
+
+    let reading = with_declared_ceiling(reading_from(reported), Some(declared));
+
+    assert_eq!(reading.cpu_millis_limit, Some(2_000));
+    assert_eq!(reading.memory_bytes_limit, Some(3 * 1024 * 1024 * 1024));
+}
+
+#[tokio::test]
+async fn a_session_reservation_backs_live_limits_hidden_by_the_runtime() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = capable_adapter();
+    let declared = SessionSize::new(2_000, 4_096).expect("the declared size is valid");
+    let environments = environments_defaulting_to(AgentConfiguration {
+        kernel: kernel(),
+        size: Some(declared),
+        ..Default::default()
+    });
+    let service = service_with_environments(store, Arc::clone(&adapter), environments);
+    let alice = user("alice");
+    let session = ready(&service, &alice, None).await;
+    let sender = resource_sender(&adapter).await;
+    let mut hidden = sample(30);
+    hidden.cpu_millis_limit = None;
+    hidden.memory_bytes_limit = None;
+
+    sender
+        .send(hidden.clone())
+        .await
+        .expect("resource watch remains open");
+
+    let mut expected = reading_from(hidden);
+    expected.cpu_millis_limit = Some(2_000);
+    expected.memory_bytes_limit = Some(4_096 * 1024 * 1024);
+    let held = await_held(&service, &session.id, &expected).await;
+    assert_eq!(held.reading, expected);
 }
 
 #[tokio::test]

@@ -37,7 +37,7 @@ const PROFILES = [
     reasoning_effort: 'high',
     permission: 'guarded',
     credential: 'delegated',
-    size: { cpu_millis: 1000, memory_mib: 2048 },
+    size: index === 0 ? undefined : { cpu_millis: 1000, memory_mib: 2048 },
     record_tool_bodies: false,
     skills: [],
   },
@@ -61,8 +61,28 @@ const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
   conforms_to: [
     'https://spec.chrono-ai.fun/cma/1.0/conf/core',
     'https://spec.chrono-ai.fun/cma/1.0/conf/conversation',
+    'https://spec.chrono-ai.fun/cma/1.0/conf/usage',
+    'https://spec.chrono-ai.fun/cma/1.0/conf/resources',
   ],
+  agent: { size: { cpu_millis: 2000, memory_mib: 4096 } },
 }));
+
+const RESOURCE_READING = {
+  cpuMillisUsed: 100,
+  cpuMillisLimit: 2000,
+  memoryBytesUsed: 435 * 1024 ** 2,
+  memoryBytesLimit: 4096 * 1024 ** 2,
+  memoryBytesPeak: 512 * 1024 ** 2,
+  stallPermille: 0,
+  ceilingHits: 0,
+  allocationFailures: 0,
+  kills: 0,
+  receivedBytes: 18 * 1024,
+  sentBytes: Math.round(8.9 * 1024),
+  receivedBytesPerSecond: 0,
+  sentBytesPerSecond: 0,
+  intervalMs: 2000,
+};
 
 /**
  * Answer as a control plane would for a signed-in owner who may also operate.
@@ -75,7 +95,8 @@ const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
 async function stub(page) {
   await page.setRequestInterception(true);
   page.on('request', (request) => {
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
     const json = (body) =>
       request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
@@ -99,11 +120,137 @@ async function stub(page) {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
     }
     if (path === '/api/v1/environment-profiles') return void json(PROFILES);
-    if (path.endsWith('/events')) {
-      return void request.respond({ status: 200, contentType: 'text/event-stream', body: ':\n\n' });
+    if (path === '/api/v1/agui/events') {
+      const threadId = url.searchParams.get('thread_id') ?? 'sesn_alpha';
+      const frame = {
+        type: 'STATE_DELTA',
+        threadId,
+        runId: 'run_surface_metrics',
+        seq: 5,
+        delta: [
+          { op: 'replace', path: '/usage/inputTokens', value: 1800 },
+          { op: 'replace', path: '/usage/outputTokens', value: 510 },
+          { op: 'replace', path: '/usage/contextUsed', value: 42100 },
+          { op: 'replace', path: '/usage/contextWindow', value: 200000 },
+          { op: 'replace', path: '/resources', value: RESOURCE_READING },
+        ],
+      };
+      const body = `id: 5\nevent: STATE_DELTA\ndata: ${JSON.stringify(frame)}\n\n`;
+      return void request.respond({ status: 200, contentType: 'text/event-stream', body });
+    }
+    if (/\/api\/v1\/sessions\/[^/]+\/resources$/u.test(path)) {
+      return void json({ reading: null, observed_at: null, reason: 'no_reading_yet' });
     }
     return void request.continue();
   });
+}
+
+/** The compact session instrumentation remains two rows at every console width. */
+async function conversationMetricsStayInTwoRows(page) {
+  const problems = [];
+  const picked = await page.evaluate(() => {
+    const row = document.querySelector('.row-item');
+    row?.click();
+    return row !== null;
+  });
+  if (!picked) {
+    return ['metrics: no session row is available to open'];
+  }
+  await settle(300);
+  for (const width of [1440, 390]) {
+    await page.setViewport({ width, height: 900 });
+    try {
+      await ready(page, '.resources', { label: 'the live session resource readings' });
+    } catch {
+      const visible = await page.evaluate(() => document.body.innerText.slice(0, 240));
+      problems.push(
+        `metrics at ${String(width)}px: the conversation resource row did not mount (${visible})`,
+      );
+      continue;
+    }
+    try {
+      await page.waitForFunction(
+        () => document.querySelector('.resources')?.textContent?.includes('4096 MiB') ?? false,
+        { polling: 'raf', timeout: 5000 },
+      );
+    } catch {
+      problems.push(`metrics at ${String(width)}px: the bounded reading never arrived`);
+      continue;
+    }
+
+    const seen = await page.evaluate(() => {
+      const summary = document.querySelector('.conversation__usage-context');
+      const usage = summary?.querySelector('.usage');
+      const context = summary?.querySelector('.context');
+      const resources = document.querySelector('.resources');
+      const rows =
+        resources === null ? [] : [...resources.querySelectorAll(':scope > .resources__row')];
+      if (
+        !(summary instanceof HTMLElement) ||
+        !(usage instanceof HTMLElement) ||
+        !(context instanceof HTMLElement) ||
+        !(resources instanceof HTMLElement) ||
+        rows.some((row) => !(row instanceof HTMLElement))
+      ) {
+        return { missing: true };
+      }
+      const boxes = rows.map((row) => row.getBoundingClientRect());
+      const summaryBoxes = [usage, context].map((item) => item.getBoundingClientRect());
+      const sameTop = (rectangles) =>
+        rectangles.every((rectangle) => Math.abs(rectangle.top - rectangles[0].top) <= 1);
+      const noHorizontalOverlap = (rectangles) =>
+        rectangles.every(
+          (rectangle, index) => index === 0 || rectangle.left >= rectangles[index - 1].right - 1,
+        );
+      return {
+        missing: false,
+        summaryGrid: getComputedStyle(summary).display === 'grid',
+        resourcesGrid: getComputedStyle(resources).display === 'grid',
+        summarySameTop: sameTop(summaryBoxes),
+        resourcesSameTop: sameTop(boxes),
+        summaryNoOverlap: noHorizontalOverlap(summaryBoxes),
+        resourcesNoOverlap: noHorizontalOverlap(boxes),
+        rowCount: rows.length,
+        text: `${summary.textContent ?? ''} ${resources.textContent ?? ''}`,
+        horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+      };
+    });
+
+    if (seen.missing) {
+      problems.push(`metrics at ${String(width)}px: the two rows are incomplete`);
+      continue;
+    }
+    if (!seen.summaryGrid || !seen.summarySameTop || !seen.summaryNoOverlap) {
+      problems.push(`metrics at ${String(width)}px: tokens and context do not share one fixed row`);
+    }
+    if (
+      !seen.resourcesGrid ||
+      !seen.resourcesSameTop ||
+      !seen.resourcesNoOverlap ||
+      seen.rowCount !== 3
+    ) {
+      problems.push(
+        `metrics at ${String(width)}px: memory, CPU, and network do not share three columns`,
+      );
+    }
+    for (const expected of [
+      '2.3K tokens',
+      '42.1K / 200K context',
+      'Memory · 435 MiB / 4096 MiB',
+      'CPU · 100m / 2000m',
+      'Network · ↓ 18 KiB · ↑ 8.9 KiB',
+    ]) {
+      if (!seen.text.includes(expected)) {
+        problems.push(`metrics at ${String(width)}px: missing "${expected}"`);
+      }
+    }
+    if (seen.horizontal) {
+      problems.push(`metrics at ${String(width)}px: the page overflows horizontally`);
+    }
+  }
+  await page.setViewport({ width: 1440, height: 900 });
+  await settle(500);
+  return problems;
 }
 
 /** Click the first button whose visible text is exactly `text`. */
@@ -692,6 +839,60 @@ async function accountMenuReads(page) {
   return problems;
 }
 
+/** A deployment-owned size must still look like a machine specification. */
+async function profileResourcesAreDiscoverable(page) {
+  const problems = [];
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle(250);
+  if (!(await press(page, 'Environment profiles'))) {
+    return ['profile resources: no Environment profiles action'];
+  }
+  await ready(page, '.profiles__row', { label: 'an environment profile row' });
+  const summary = await page.evaluate(
+    () => document.body.textContent?.includes('Session resources: deployment default') ?? false,
+  );
+  if (!(await press(page, 'Edit'))) {
+    return ['profile resources: no Edit action'];
+  }
+  await ready(page, '.editor__resources', { label: 'the session resource controls' });
+
+  const seen = await page.evaluate((listNamesResources) => {
+    const fieldFor = (wanted) => {
+      const label = [...document.querySelectorAll('label')].find(
+        (candidate) => candidate.textContent?.trim() === wanted,
+      );
+      return label instanceof HTMLLabelElement && label.htmlFor !== ''
+        ? document.getElementById(label.htmlFor)
+        : null;
+    };
+    const group = document.querySelector('.editor__resources');
+    const cpu = fieldFor('CPU (millicores)');
+    const memory = fieldFor('Memory (MiB)');
+    const useDefault = group?.querySelector('input[type="checkbox"]');
+    return {
+      heading: group?.textContent?.includes('Session resources') ?? false,
+      cpu: cpu instanceof HTMLInputElement,
+      cpuDisabled: cpu instanceof HTMLInputElement && cpu.disabled,
+      memory: memory instanceof HTMLInputElement,
+      memoryDisabled: memory instanceof HTMLInputElement && memory.disabled,
+      defaultChecked: useDefault instanceof HTMLInputElement && useDefault.checked,
+      summary: listNamesResources,
+    };
+  }, summary);
+
+  if (!seen.summary) problems.push('profile resources: the list does not name the session size');
+  if (!seen.heading) problems.push('profile resources: the editor does not name Session resources');
+  if (!seen.cpu || !seen.memory) problems.push('profile resources: CPU or memory is absent');
+  if (!seen.cpuDisabled || !seen.memoryDisabled || !seen.defaultChecked) {
+    problems.push('profile resources: deployment-owned CPU and memory are not visibly disabled');
+  }
+  await page.keyboard.press('Escape');
+  await settle(250);
+  return problems;
+}
+
 async function main() {
   const { page, close } = await open({ port: PORT });
   try {
@@ -704,12 +905,14 @@ async function main() {
     await settle(400);
 
     const problems = [
+      ...(await conversationMetricsStayInTwoRows(page)),
       ...(await pickerReachable(page)),
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
       ...(await developerSurface(page)),
       ...(await everyMenuLands(page)),
       ...(await accountMenuReads(page)),
+      ...(await profileResourcesAreDiscoverable(page)),
     ];
 
     if (problems.length > 0) {
@@ -722,7 +925,8 @@ async function main() {
     }
     console.log(
       'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
-        'Developer fits both layouts, and every menu lands inside the window',
+        'Developer fits both layouts, session metrics keep two rows, every menu lands inside the window, ' +
+        'and profile resources remain visible',
     );
   } finally {
     await close();

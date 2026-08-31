@@ -48,7 +48,9 @@ describe('EnvironmentProfiles', () => {
     expect(await screen.findByText('build tools')).toBeInTheDocument();
     // Counts include what the platform mandates, because that is what the
     // session will actually carry.
-    expect(screen.getByText(/1 variable · 1 package · 2 skills/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Session resources: deployment default · 1 variable · 1 package · 2 skills/),
+    ).toBeInTheDocument();
   });
 
   it('creates a profile with a variable and a skill', async () => {
@@ -112,6 +114,37 @@ describe('EnvironmentProfiles', () => {
     expect(saved?.agent.reasoningEffort).toBe('minimal');
     expect(saved?.agent.permission).toBe('autonomous');
     expect(saved?.agent.model).toBe('a-specific-model');
+  });
+
+  it('saves the sandbox resources selected for the profile', async () => {
+    const user = userEvent.setup();
+    const { store } = open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'large workspace');
+    await user.click(screen.getByRole('checkbox', { name: /use deployment default/i }));
+    await user.type(screen.getByLabelText(/cpu \(millicores\)/i), '2000');
+    await user.type(screen.getByLabelText(/memory \(mib\)/i), '8192');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(async () => {
+      expect((await store.list())[0]?.agent.size).toEqual({ cpuMillis: 2000, memoryMib: 8192 });
+    });
+    expect(screen.getByText(/2000m CPU, 8192 MiB memory/i)).toBeInTheDocument();
+  });
+
+  it('refuses an incomplete custom sandbox size before saving', async () => {
+    const user = userEvent.setup();
+    const { store } = open();
+
+    await user.click(await screen.findByRole('button', { name: /new profile/i }));
+    await user.type(screen.getByLabelText(/^name$/i), 'incomplete size');
+    await user.click(screen.getByRole('checkbox', { name: /use deployment default/i }));
+    await user.type(screen.getByLabelText(/cpu \(millicores\)/i), '2000');
+    await user.click(screen.getByRole('button', { name: /save profile/i }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/memory/i);
+    expect(await store.list()).toHaveLength(0);
   });
 
   it('starts a new profile where an unqualified session would', async () => {
@@ -491,6 +524,16 @@ describe('the environment appearance', () => {
   it('stacks a variable name above its value and controls in the compact editor', () => {
     expect(css()).toMatch(
       /@media \(max-width: 29\.999rem\)[\s\S]*\.pair\s*\{[^}]*display: grid[^}]*grid-template-columns: minmax\(0, 1fr\) auto auto[^}]*\}[\s\S]*\.pair > \.field__input:first-child\s*\{[^}]*grid-column: 1 \/ -1/,
+    );
+  });
+
+  it('keeps both resource fields stable side by side and stacks them on a phone', () => {
+    const sheet = css();
+    expect(sheet).toMatch(
+      /\.editor__resource-fields\s*\{[^}]*display: grid[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
+    );
+    expect(sheet).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.editor__resource-fields\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/,
     );
   });
 });
