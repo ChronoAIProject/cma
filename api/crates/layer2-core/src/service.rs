@@ -67,6 +67,7 @@ impl SessionService {
         let SessionPorts {
             context,
             handovers,
+            chat_checkpoints,
             credentials,
             skills,
             workspaces,
@@ -100,6 +101,7 @@ impl SessionService {
             store,
             context,
             handovers,
+            chat_checkpoints,
             credentials,
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),

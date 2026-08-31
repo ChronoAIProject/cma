@@ -1,14 +1,22 @@
 //! Deployment-owned chat configuration and host lifecycle state.
 
 mod checkpoint;
+mod checkpoints;
 mod host;
 mod settings;
 mod threads;
 
-pub use checkpoint::{ChatCheckpointConversationRef, ChatCheckpointRef};
+pub use checkpoint::{
+    ChatCheckpointConversation, ChatCheckpointConversationRef, ChatCheckpointRef,
+    MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES,
+};
+pub use checkpoints::{
+    ChatCheckpointOutcome, ChatCheckpointSweep, CHAT_CHECKPOINT_INTERVAL_SECONDS,
+};
 pub use host::{
-    ChatHostFailure, ChatHostId, ChatHostListQuery, ChatHostRecord, ChatHostStatus,
-    ChatProvisioningPhase, ChatThreadSlot, ChatUnavailableCause,
+    ChatHostFailure, ChatHostId, ChatHostListQuery, ChatHostOperatorNote, ChatHostRecord,
+    ChatHostStatus, ChatProvisioningPhase, ChatThreadSlot, ChatUnavailableCause,
+    ChatWorkspaceAuthority,
 };
 pub use settings::{
     ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSettingsSnapshot,
@@ -22,3 +30,7 @@ mod host_tests;
 #[cfg(test)]
 #[path = "host_service_tests.rs"]
 mod host_service_tests;
+
+#[cfg(test)]
+#[path = "checkpoint_service_tests.rs"]
+mod checkpoint_service_tests;

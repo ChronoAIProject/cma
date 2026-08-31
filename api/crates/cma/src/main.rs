@@ -7,6 +7,7 @@
 
 mod activity;
 mod auth;
+mod chat;
 mod config;
 mod health;
 mod kernels;
@@ -754,6 +755,9 @@ async fn serve_normal_control_plane() {
     let handovers = storage
         .as_ref()
         .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>);
+    let chat_checkpoints = storage
+        .as_ref()
+        .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::ChatCheckpointStore>);
     let skill_packs = storage.map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
 
     let trigger_workspace_store: Option<Arc<crate::store::ChronoStorageTriggerWorkspaceStore>> =
@@ -901,6 +905,7 @@ async fn serve_normal_control_plane() {
         layer2_core::SessionPorts {
             context,
             handovers,
+            chat_checkpoints,
             credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
             // The same registry the profile editor picks from, asked for
             // contents rather than for names. A deployment without one still
@@ -1050,6 +1055,10 @@ async fn serve_normal_control_plane() {
     }
 
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
+
+    // Recovery-point behavior and host claims belong to the core. This binary
+    // owns only the deployment cadence that asks for one bounded pass.
+    chat::checkpoints::spawn(Arc::clone(&service));
 
     // Sessions end only when their owner says so, which leaves this as the one
     // thing that reclaims a runtime nothing refers to or finishes a session

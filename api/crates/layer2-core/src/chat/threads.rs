@@ -72,6 +72,9 @@ impl SessionService {
         if host.owner != record.session.owner {
             return Err(CoreError::Forbidden);
         }
+        if host.last_transition_claim.is_some() {
+            return Err(unavailable(ChatUnavailableCause::Provisioning));
+        }
         let retained = host.threads.iter().any(|slot| {
             slot.session_id == record.session.id
                 && slot.worktree_name == origin.worktree_name
@@ -127,6 +130,9 @@ impl SessionService {
                 ChatHostStatus::Provisioning => {
                     return Err(unavailable(ChatUnavailableCause::Provisioning));
                 }
+            }
+            if host.last_transition_claim.is_some() {
+                return Err(unavailable(ChatUnavailableCause::Provisioning));
             }
             if host.owner != caller.subject {
                 return Err(CoreError::Forbidden);

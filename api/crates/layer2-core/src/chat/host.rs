@@ -156,6 +156,59 @@ pub struct ChatHostFailure {
     pub occurred_at: String,
 }
 
+/// Exact immutable source authority installed in the host's current runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatWorkspaceAuthority {
+    pub workspace_epoch: u64,
+    pub source_revision: String,
+    pub baseline_manifest_digest: String,
+}
+
+impl ChatWorkspaceAuthority {
+    fn from_receipt(receipt: layer3_adapter::WorkspaceSourceReceipt) -> Result<Self, String> {
+        let authority = Self {
+            workspace_epoch: receipt.workspace_epoch,
+            source_revision: receipt.source_revision,
+            baseline_manifest_digest: receipt.baseline_manifest_digest,
+        };
+        authority.validate()?;
+        Ok(authority)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.workspace_epoch == 0 {
+            return Err("chat workspace epoch must be positive".into());
+        }
+        if self.source_revision.len() != 40
+            || !self
+                .source_revision
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("chat workspace source revision must be a Git SHA-1".into());
+        }
+        if self.baseline_manifest_digest.len() != 64
+            || !self
+                .baseline_manifest_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("chat workspace baseline must be a SHA-256 digest".into());
+        }
+        Ok(())
+    }
+}
+
+/// Sanitized lifecycle note retained for operator inspection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatHostOperatorNote {
+    pub code: String,
+    pub detail: String,
+    pub observed_at: String,
+}
+
 /// The complete durable aggregate for one subject's chat runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -170,9 +223,16 @@ pub struct ChatHostRecord {
     pub kernel: KernelId,
     pub runtime_id: Option<String>,
     pub runtime_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_authority: Option<ChatWorkspaceAuthority>,
     pub threads: Vec<ChatThreadSlot>,
     pub threads_created: u32,
     pub checkpoint: Option<ChatCheckpointRef>,
+    /// Monotonic workspace capture version reserved by every checkpoint attempt.
+    /// Failed attempts consume their version because Layer 4 capture identities
+    /// are immutable even when publication never reaches this record.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub checkpoint_sequence: u64,
     pub paused_at: Option<String>,
     pub revived_at: Option<String>,
     pub retired_at: Option<String>,
@@ -180,6 +240,8 @@ pub struct ChatHostRecord {
     /// Start of the current claim, retained for diagnostics and later leases.
     pub transition_started_at: Option<String>,
     pub last_failure: Option<ChatHostFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_operator_note: Option<ChatHostOperatorNote>,
     pub rotations: u32,
     pub created_at: String,
     pub updated_at: String,
@@ -205,15 +267,18 @@ impl ChatHostRecord {
             kernel,
             runtime_id: None,
             runtime_version: None,
+            workspace_authority: None,
             threads: Vec::new(),
             threads_created: 0,
             checkpoint: None,
+            checkpoint_sequence: 0,
             paused_at: None,
             revived_at: None,
             retired_at: None,
             last_transition_claim: Some(claim),
             transition_started_at: Some(now.clone()),
             last_failure: None,
+            last_operator_note: None,
             rotations: 0,
             created_at: now.clone(),
             updated_at: now,
@@ -231,6 +296,29 @@ impl ChatHostRecord {
         }
         if self.last_transition_claim.is_some() != self.transition_started_at.is_some() {
             return Err("chat host transition claim is incomplete".into());
+        }
+        if let Some(authority) = self.workspace_authority.as_ref() {
+            authority.validate()?;
+            if authority.workspace_epoch != generation_for(self).get() {
+                return Err("chat workspace authority does not match the host generation".into());
+            }
+        }
+        if let Some(checkpoint) = self.checkpoint.as_ref() {
+            checkpoint.validate()?;
+            if self.checkpoint_sequence != 0
+                && self.checkpoint_sequence < checkpoint.checkpoint_version
+            {
+                return Err("chat checkpoint sequence is behind its published version".into());
+            }
+        }
+        if let Some(note) = self.last_operator_note.as_ref() {
+            if note.code != "checkpoint_refused"
+                || note.detail.trim().is_empty()
+                || note.detail.len() > 256
+                || crate::seconds_from_rfc3339(&note.observed_at).is_none()
+            {
+                return Err("chat host operator note is malformed".into());
+            }
         }
         if self.threads.len() > usize::from(self.pinned_settings.settings.host.max_threads) {
             return Err("chat host contains more threads than its pinned limit".into());
@@ -250,6 +338,10 @@ impl ChatHostRecord {
         }
         Ok(())
     }
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// Filters attached to one bounded host listing.
@@ -652,20 +744,38 @@ impl crate::service::SessionService {
             repository_url: settings.workspace.repository_url,
             reference: settings.workspace.branch,
             directory: host.pinned_settings.workspace_directory.clone(),
+            workspace_epoch: generation_for(&host).get(),
         };
-        if let Err(error) = adapter.prepare_workspace_source(&handle, &source).await {
-            let unsupported = matches!(error, AdapterError::Unsupported(_));
-            return self
-                .fail_chat_host(
-                    &host,
-                    Some((&handle, &adapter)),
-                    ChatProvisioningPhase::WorkspaceSource,
-                    None,
-                    !unsupported,
-                    unsupported.then_some("workspace_source"),
-                )
-                .await;
-        }
+        let source_authority = match adapter.prepare_workspace_source(&handle, &source).await {
+            Ok(receipt) => match ChatWorkspaceAuthority::from_receipt(receipt) {
+                Ok(authority) if authority.workspace_epoch == source.workspace_epoch => authority,
+                Ok(_) | Err(_) => {
+                    return self
+                        .fail_chat_host(
+                            &host,
+                            Some((&handle, &adapter)),
+                            ChatProvisioningPhase::WorkspaceSource,
+                            None,
+                            false,
+                            None,
+                        )
+                        .await;
+                }
+            },
+            Err(error) => {
+                let unsupported = matches!(error, AdapterError::Unsupported(_));
+                return self
+                    .fail_chat_host(
+                        &host,
+                        Some((&handle, &adapter)),
+                        ChatProvisioningPhase::WorkspaceSource,
+                        None,
+                        !unsupported,
+                        unsupported.then_some("workspace_source"),
+                    )
+                    .await;
+            }
+        };
         let setup = match adapter
             .run_workspace_setup(&handle, &settings.setup.commands)
             .await
@@ -700,6 +810,7 @@ impl crate::service::SessionService {
 
         host.status = ChatHostStatus::Active;
         host.runtime_version = self.runtime_version.clone();
+        host.workspace_authority = Some(source_authority);
         host.last_transition_claim = None;
         host.transition_started_at = None;
         host.last_failure = None;
