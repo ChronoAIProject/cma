@@ -36,6 +36,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
+        chat_host: None,
         generation: None,
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },

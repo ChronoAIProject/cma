@@ -678,6 +678,7 @@ async fn serve_normal_control_plane() {
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
+    let chat_host_store = Arc::new(stores.chat_hosts) as Arc<dyn layer2_core::ChatHostStore>;
     let operation_store = Arc::new(stores.operations) as Arc<dyn layer2_core::OperationStore>;
     let trigger_store = Arc::new(stores.triggers);
     let ticket_store =
@@ -912,6 +913,7 @@ async fn serve_normal_control_plane() {
                 .map(|store| store as Arc<dyn layer2_core::SessionWorkspaceSource>),
             skill_packs,
             settings: Some(Arc::clone(&settings)),
+            chat_hosts: Some(chat_host_store),
         },
         Arc::clone(&environments),
         layer2_core::Deployment {

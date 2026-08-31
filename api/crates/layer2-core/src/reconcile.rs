@@ -41,7 +41,7 @@ use crate::event::{Event, EventKind};
 use crate::ids::KernelId;
 use crate::service::SessionService;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionSpec, SessionStatus};
-use crate::store::{SessionRecord, SessionScan, SkillPackState, StoreError};
+use crate::store::{PageRequest, SessionRecord, SessionScan, SkillPackState, StoreError};
 
 const RECLAIM_LEASE_TTL: Duration = Duration::from_secs(30);
 
@@ -97,6 +97,9 @@ struct RuntimeCensus {
     stopped_because: HashMap<String, layer3_adapter::RuntimeLossReason>,
     /// Runtime id to the session it says it belongs to.
     owners: HashMap<String, Option<String>>,
+    /// Runtime id to its shared chat-host metadata. These objects are excluded
+    /// from ordinary one-session ownership accounting.
+    chat_hosts: HashMap<String, String>,
     trusted: bool,
 }
 
@@ -137,6 +140,7 @@ impl SessionService {
         }
 
         let census = self.take_census().await;
+        self.reconcile_chat_hosts(&census).await;
 
         // Provider ownership is the bounded set relevant to orphan diagnostics.
         // Remove an id only after its entitled durable row is observed; a
@@ -710,6 +714,7 @@ impl SessionService {
                     let mut generations = HashMap::new();
                     let mut serving = HashSet::new();
                     let mut stopped_because = HashMap::new();
+                    let mut chat_hosts = HashMap::new();
                     for listing in runtimes {
                         generations.insert(listing.handle.0.clone(), listing.generation);
                         // A runtime this control plane did not create is not
@@ -729,6 +734,10 @@ impl SessionService {
                         if !self.may_judge(listing.created_by.as_deref()) {
                             continue;
                         }
+                        if let Some(chat_host) = listing.chat_host {
+                            chat_hosts.insert(listing.handle.0, chat_host);
+                            continue;
+                        }
                         owners.insert(listing.handle.0, listing.session);
                     }
                     RuntimeCensus {
@@ -736,6 +745,7 @@ impl SessionService {
                         generations,
                         stopped_because,
                         owners,
+                        chat_hosts,
                         trusted: true,
                     }
                 }
@@ -747,6 +757,7 @@ impl SessionService {
                         generations: HashMap::new(),
                         stopped_because: HashMap::new(),
                         owners: HashMap::new(),
+                        chat_hosts: HashMap::new(),
                         trusted: false,
                     }
                 }
@@ -754,6 +765,326 @@ impl SessionService {
             census.insert(kernel.clone(), view);
         }
         census
+    }
+
+    async fn reconcile_chat_hosts(self: &Arc<Self>, census: &HashMap<KernelId, RuntimeCensus>) {
+        let Some(store) = self.chat_hosts.clone() else {
+            return;
+        };
+        let statuses = vec![
+            crate::ChatHostStatus::Provisioning,
+            crate::ChatHostStatus::Active,
+            crate::ChatHostStatus::Pausing,
+            crate::ChatHostStatus::Paused,
+            crate::ChatHostStatus::Reviving,
+        ];
+
+        // Prove the complete bounded walk is readable before any host mutation.
+        let mut cursor = None;
+        loop {
+            let query = crate::ChatHostListQuery::new(
+                PageRequest::new(crate::store::MAX_PAGE_SIZE, cursor),
+                statuses.clone(),
+            );
+            match store.list_candidates(&query).await {
+                Ok(page) => {
+                    cursor = page.next;
+                    if cursor.is_none() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "chat host reconciliation skipped: store preflight failed");
+                    return;
+                }
+            }
+        }
+
+        let mut cursor = None;
+        loop {
+            let query = crate::ChatHostListQuery::new(
+                PageRequest::new(crate::store::MAX_PAGE_SIZE, cursor),
+                statuses.clone(),
+            );
+            let page = match store.list_candidates(&query).await {
+                Ok(page) => page,
+                Err(error) => {
+                    tracing::warn!(%error, "chat host reconciliation stopped: store scan failed");
+                    return;
+                }
+            };
+            for host in page.items {
+                self.settle_chat_host(host, census).await;
+            }
+            cursor = page.next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+    }
+
+    async fn settle_chat_host(
+        self: &Arc<Self>,
+        observed: crate::ChatHostRecord,
+        census: &HashMap<KernelId, RuntimeCensus>,
+    ) {
+        if self.chat_hosts_starting.read().await.contains(&observed.id) {
+            return;
+        }
+        let Some(view) = census.get(&observed.kernel) else {
+            return;
+        };
+        if !view.trusted {
+            return;
+        }
+        let Some(store) = self.chat_hosts.clone() else {
+            return;
+        };
+        let _owner_guard = self.chat_host_guards.lock(&observed.owner).await;
+        let mut current = match store.get(&observed.id).await {
+            Ok(Some(current)) => current,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(chat_host = %observed.id, %error, "cannot refresh chat host during reconciliation");
+                return;
+            }
+        };
+        if self.chat_hosts_starting.read().await.contains(&current.id) {
+            return;
+        }
+        let expected_generation = NonZeroU64::new(u64::from(current.rotations).saturating_add(1))
+            .expect("chat host generations are non-zero");
+        let mut candidates = view
+            .chat_hosts
+            .iter()
+            .filter(|&(runtime, host)| {
+                host == current.id.as_str()
+                    && view.serving.contains(runtime)
+                    && view.generations.get(runtime)
+                        == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                            expected_generation,
+                        ))
+            })
+            .map(|(runtime, _)| RuntimeHandle(runtime.clone()))
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| left.0.cmp(&right.0));
+        if let Some(recorded) = current.runtime_id.as_deref() {
+            if let Some(index) = candidates
+                .iter()
+                .position(|candidate| candidate.0 == recorded)
+            {
+                candidates.swap(0, index);
+            }
+        }
+
+        if current.status == crate::ChatHostStatus::Active {
+            if current.runtime_id.as_ref().is_some_and(|runtime| {
+                view.serving.contains(runtime)
+                    && view.chat_hosts.get(runtime) == Some(&current.id.0)
+                    && view.generations.get(runtime)
+                        == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                            expected_generation,
+                        ))
+            }) {
+                let authoritative = RuntimeHandle(
+                    current
+                        .runtime_id
+                        .clone()
+                        .expect("the active-runtime predicate proved an id exists"),
+                );
+                self.cleanup_duplicate_chat_runtimes(&current, &candidates, &authoritative)
+                    .await;
+                return;
+            }
+            if let Some(candidate) = candidates.first().cloned() {
+                self.cleanup_duplicate_chat_runtimes(&current, &candidates, &candidate)
+                    .await;
+                current.status = crate::ChatHostStatus::Provisioning;
+                current.runtime_id = Some(candidate.0.clone());
+                current.last_transition_claim =
+                    Some(format!("chcl_{}", uuid::Uuid::new_v4().simple()));
+                current.transition_started_at = Some(crate::clock::now_rfc3339());
+                current.updated_at = crate::clock::now_rfc3339();
+                let claimed = match store.update_if_revision(current.revision, &current).await {
+                    Ok(Some(claimed)) => claimed,
+                    _ => return,
+                };
+                self.finish_adopted_chat_host(claimed, candidate).await;
+                return;
+            }
+
+            let cleanup_pending = if let Some(runtime) = current.runtime_id.as_ref() {
+                let Some(adapter) = self.adapters.get(&current.kernel) else {
+                    return;
+                };
+                adapter
+                    .terminate_if_identity(&RuntimeIdentity {
+                        handle: RuntimeHandle(runtime.clone()),
+                        session: current.id.0.clone(),
+                        generation: Some(expected_generation),
+                    })
+                    .await
+                    .is_err()
+            } else {
+                false
+            };
+            if !cleanup_pending {
+                current.runtime_id = None;
+            }
+            let now = crate::clock::now_rfc3339();
+            current.status = crate::ChatHostStatus::Paused;
+            current.paused_at = Some(now.clone());
+            current.last_transition_claim = None;
+            current.transition_started_at = None;
+            current.last_failure = Some(crate::ChatHostFailure {
+                phase: crate::ChatProvisioningPhase::RuntimeLost,
+                command_index: None,
+                retryable: true,
+                cleanup_pending,
+                occurred_at: now.clone(),
+            });
+            current.updated_at = now;
+            let _ = store.update_if_revision(current.revision, &current).await;
+            return;
+        }
+
+        if current.status != crate::ChatHostStatus::Provisioning {
+            return;
+        }
+        if current
+            .last_failure
+            .as_ref()
+            .is_some_and(|failure| !failure.retryable)
+        {
+            return;
+        }
+
+        let chosen = current
+            .runtime_id
+            .as_ref()
+            .filter(|runtime| {
+                view.serving.contains(*runtime)
+                    && view.chat_hosts.get(*runtime) == Some(&current.id.0)
+                    && view.generations.get(*runtime)
+                        == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                            expected_generation,
+                        ))
+            })
+            .cloned()
+            .map(RuntimeHandle)
+            .or_else(|| candidates.first().cloned());
+        if let Some(authoritative) = chosen.as_ref() {
+            self.cleanup_duplicate_chat_runtimes(&current, &candidates, authoritative)
+                .await;
+        }
+        if chosen.is_none() {
+            if let Some(runtime) = current.runtime_id.clone() {
+                let Some(adapter) = self.adapters.get(&current.kernel) else {
+                    return;
+                };
+                if adapter
+                    .terminate_if_identity(&RuntimeIdentity {
+                        handle: RuntimeHandle(runtime),
+                        session: current.id.0.clone(),
+                        generation: Some(expected_generation),
+                    })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                current.runtime_id = None;
+            }
+        }
+
+        current.last_transition_claim = Some(format!("chcl_{}", uuid::Uuid::new_v4().simple()));
+        current.transition_started_at = Some(crate::clock::now_rfc3339());
+        current.updated_at = crate::clock::now_rfc3339();
+        let claimed = match store.update_if_revision(current.revision, &current).await {
+            Ok(Some(claimed)) => claimed,
+            _ => return,
+        };
+        if let Some(candidate) = chosen {
+            if claimed.runtime_id.as_deref() != Some(candidate.0.as_str()) {
+                let mut adopted = claimed;
+                adopted.runtime_id = Some(candidate.0.clone());
+                adopted.updated_at = crate::clock::now_rfc3339();
+                let adopted = match store.update_if_revision(adopted.revision, &adopted).await {
+                    Ok(Some(adopted)) => adopted,
+                    _ => return,
+                };
+                self.finish_adopted_chat_host(adopted, candidate).await;
+            } else {
+                self.finish_adopted_chat_host(claimed, candidate).await;
+            }
+        } else {
+            if !self
+                .chat_hosts_starting
+                .write()
+                .await
+                .insert(claimed.id.clone())
+            {
+                return;
+            }
+            let id = claimed.id.clone();
+            let _ = self.provision_claimed_chat_host(claimed, None).await;
+            self.chat_hosts_starting.write().await.remove(&id);
+        }
+    }
+
+    async fn cleanup_duplicate_chat_runtimes(
+        &self,
+        host: &crate::ChatHostRecord,
+        candidates: &[RuntimeHandle],
+        authoritative: &RuntimeHandle,
+    ) {
+        let Some(adapter) = self.adapters.get(&host.kernel) else {
+            return;
+        };
+        let identity_generation = Some(
+            NonZeroU64::new(u64::from(host.rotations).saturating_add(1))
+                .expect("chat host generations are non-zero"),
+        );
+        for duplicate in candidates
+            .iter()
+            .filter(|candidate| *candidate != authoritative)
+        {
+            let identity = RuntimeIdentity {
+                handle: duplicate.clone(),
+                session: host.id.0.clone(),
+                generation: identity_generation,
+            };
+            if let Err(error) = adapter.terminate_if_identity(&identity).await {
+                tracing::warn!(
+                    chat_host = %host.id,
+                    runtime = %duplicate.0,
+                    %error,
+                    "a duplicate chat runtime could not be conditionally removed"
+                );
+            }
+        }
+    }
+
+    async fn finish_adopted_chat_host(
+        self: &Arc<Self>,
+        host: crate::ChatHostRecord,
+        handle: RuntimeHandle,
+    ) {
+        if !self
+            .chat_hosts_starting
+            .write()
+            .await
+            .insert(host.id.clone())
+        {
+            return;
+        }
+        let id = host.id.clone();
+        if let Some(adapter) = self.adapters.get(&host.kernel).cloned() {
+            let _ = self
+                .finish_claimed_chat_host_runtime(host, handle, adapter)
+                .await;
+        }
+        self.chat_hosts_starting.write().await.remove(&id);
     }
 
     /// Whether a runtime carrying this creator is this control plane's to judge.

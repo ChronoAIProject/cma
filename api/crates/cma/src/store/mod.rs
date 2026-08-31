@@ -6,6 +6,7 @@
 
 pub mod activity;
 pub mod auth;
+pub mod chat;
 pub mod context;
 pub mod directory;
 mod durability;
@@ -34,6 +35,7 @@ use mongodb::Client;
 
 pub use activity::MongoActivityStore;
 pub use auth::MongoAuthStore;
+pub use chat::MongoChatHostStore;
 pub use context::ChronoStorageContextStore;
 pub use directory::MongoUserDirectoryStore;
 pub use environment::MongoEnvironmentProfileStore;
@@ -66,6 +68,8 @@ pub struct MongoStores {
     pub users: MongoUserDirectoryStore,
     /// Deployment-wide settings changed by administrators.
     pub settings: MongoPlatformSettingsStore,
+    /// One deployment-managed shared chat runtime per owner.
+    pub chat_hosts: MongoChatHostStore,
     /// One-time grants used to authenticate terminal upgrades.
     pub tickets: MongoTerminalTicketStore,
     /// Browser, OAuth, provider-token, and session-credential authority.
@@ -163,6 +167,7 @@ pub async fn connect(
         activity: MongoActivityStore::open(&client, database, activity_retention).await?,
         users: MongoUserDirectoryStore::open(&client, database).await?,
         settings: MongoPlatformSettingsStore::open(&client, database).await?,
+        chat_hosts: MongoChatHostStore::open(&client, database).await?,
         tickets: MongoTerminalTicketStore::open(&client, database).await?,
         auth: MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         operations: MongoOperationStore::open(&client, database).await?,

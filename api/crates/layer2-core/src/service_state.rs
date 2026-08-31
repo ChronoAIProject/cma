@@ -345,6 +345,12 @@ pub struct SessionService {
     pub(crate) environments: Arc<EnvironmentProfileService>,
     /// Deployment settings, always present so readers cannot skip the fallback.
     pub(crate) settings: Arc<PlatformSettingsService>,
+    /// Durable ownership of shared chat runtimes, absent on deployments that
+    /// have not composed the chat surface.
+    pub(crate) chat_hosts: Option<Arc<dyn crate::store::ChatHostStore>>,
+    /// Serializes first-host creation and lifecycle claims for one owner in
+    /// the deployment's currently single control-plane replica.
+    pub(crate) chat_host_guards: crate::limits::OwnerGuards,
     /// Serializes one owner's limit check through its record write.
     pub(crate) session_limit_guards: crate::limits::OwnerGuards,
     /// Serializes the deployment-wide reservation check through its record write.
@@ -367,6 +373,8 @@ pub struct SessionService {
     /// Detached bring-up can outlive its request while no live entry exists;
     /// this distinguishes it from work a reconciliation sweep must recover.
     pub(crate) starting: RwLock<HashSet<SessionId>>,
+    /// Chat hosts this process is currently provisioning or resuming.
+    pub(crate) chat_hosts_starting: RwLock<HashSet<crate::ChatHostId>>,
     /// Milliseconds to wait before the first provisioning retry.
     ///
     /// Held here rather than as a constant so a test can exercise the retry
@@ -404,4 +412,6 @@ pub struct SessionPorts {
     ///
     /// `None` becomes `unconfigured()`, so sessions still use shipped bounds.
     pub settings: Option<Arc<PlatformSettingsService>>,
+    /// Durable shared chat-host aggregates.
+    pub chat_hosts: Option<Arc<dyn crate::store::ChatHostStore>>,
 }
