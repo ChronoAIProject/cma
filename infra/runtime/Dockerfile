@@ -94,6 +94,7 @@ RUN apt-get update \
         libdbus-1-3 \
         ncurses-term \
         xz-utils \
+    && git --version \
     && rm -rf /var/lib/apt/lists/*
 
 # Node from upstream rather than from apt. The harness this image carries needs
