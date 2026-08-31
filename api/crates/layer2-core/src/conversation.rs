@@ -483,6 +483,7 @@ impl SessionService {
         // waits to observe whether the first made steering necessary.
         let admission = self.prompt_gates.gate(id).lock_owned().await;
         let durable = self.record(id).await?;
+        let effective = self.effective_prompt_text(&durable, &text).await?;
         let service = Arc::clone(self);
         let id = id.clone();
         let owner = caller.subject.clone();
@@ -561,7 +562,7 @@ impl SessionService {
                 .toward_runtime(
                     &id,
                     &input,
-                    ConversationInput::Prompt(vec![ContentBlock::from(text.clone())]),
+                    ConversationInput::Prompt(vec![ContentBlock::from(effective)]),
                 )
                 .await?;
             let mandatory = {
