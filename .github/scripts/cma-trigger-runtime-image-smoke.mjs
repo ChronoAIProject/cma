@@ -1567,7 +1567,7 @@ async function main() {
     assert.equal(ready.runtimeGatewayProbe.name, "runtime_gateway_probe_v2");
     assert.equal(ready.runtimeGatewayProbe.version, 2);
     assert.equal(ready.runtimeGatewayProbe.supported, true);
-    assert.deepEqual(ready.workspaceCheckpoint, { version: 4 });
+    assert.deepEqual(ready.workspaceCheckpoint, { version: 5 });
 
     campaignStage = "listener-inventory";
     const containerAddress = await inspectContainer(

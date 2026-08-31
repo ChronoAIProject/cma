@@ -806,6 +806,7 @@ fn build_trigger_session_service_defaulting_to(
             context: None,
             credentials: Some(Arc::new(TriggerCredential)),
             handovers: Some(adapter.clone()),
+            chat_checkpoints: None,
             skills: None,
             workspaces: Some(workspaces),
             skill_packs: None,
@@ -934,6 +935,7 @@ async fn install_held_workspace_checkpoint(
         quiesced_writers: 2,
         writer_state: layer3_adapter::WorkspaceWriterState::HeldForTeardown,
         writer_resume_token: Some(token.into()),
+        includes_git_metadata: false,
         archive,
     });
 }
@@ -1422,6 +1424,7 @@ async fn trigger_checkpoint_capture_is_authority_checked_and_lifecycle_fenced() 
         version: 1,
         source_revision: launch.source_sha.clone(),
         baseline_manifest_digest: workspace.baseline.digest.clone(),
+        include_git_metadata: false,
         disposition: layer3_adapter::WorkspaceCheckpointDisposition::ResumeAfterCapture,
     };
     let package = layer3_adapter::WorkspaceCheckpointPackage {
@@ -1435,6 +1438,7 @@ async fn trigger_checkpoint_capture_is_authority_checked_and_lifecycle_fenced() 
         quiesced_writers: 1,
         writer_state: layer3_adapter::WorkspaceWriterState::Resumed,
         writer_resume_token: None,
+        includes_git_metadata: false,
         archive: b"sealed checkpoint".to_vec(),
     };
     *adapter.checkpoint.lock().await = Some(package.clone());

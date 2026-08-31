@@ -67,6 +67,16 @@ pub(crate) struct FakeAdapter {
     pub(crate) rejoined: Mutex<Vec<Option<String>>>,
     /// Opaque supervisor slot selected for each conversation open.
     pub(crate) conversation_slots: Mutex<Vec<Option<String>>>,
+    /// Optional durable conversation identity selected per supervisor slot.
+    /// Empty fixtures retain the historical `conv-fixture` default.
+    pub(crate) conversation_ids: Mutex<HashMap<String, String>>,
+    /// Derive a stable unique identity from the requested slot when no map
+    /// entry exists. Opt-in so older fixtures retain `conv-fixture` exactly.
+    pub(crate) conversation_ids_from_slots: bool,
+    /// Exact opaque snapshot bytes addressable by durable conversation id.
+    pub(crate) conversation_snapshots: Mutex<HashMap<String, Vec<u8>>>,
+    /// Runtime and durable id supplied to each id-addressed capture.
+    pub(crate) conversation_snapshot_calls: Mutex<Vec<(String, String)>>,
     /// Complete options supplied to each conversation open.
     pub(crate) conversation_options: Mutex<Vec<layer3_adapter::RuntimeOptions>>,
     /// When set, enumeration fails. Models a provider that cannot be asked,
@@ -266,6 +276,10 @@ impl Default for FakeAdapter {
             conversation: Mutex::default(),
             rejoined: Mutex::default(),
             conversation_slots: Mutex::default(),
+            conversation_ids: Mutex::default(),
+            conversation_ids_from_slots: false,
+            conversation_snapshots: Mutex::default(),
+            conversation_snapshot_calls: Mutex::default(),
             conversation_options: Mutex::default(),
             credentials: Mutex::default(),
             sign_in_on_open: false,
@@ -608,7 +622,7 @@ impl KernelAdapter for FakeAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceSourceRequest,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<layer3_adapter::WorkspaceSourceReceipt, AdapterError> {
         self.workspace_sources
             .lock()
             .await
@@ -626,7 +640,11 @@ impl KernelAdapter for FakeAdapter {
                 "test workspace source preparation failed".into(),
             ));
         }
-        Ok(())
+        Ok(layer3_adapter::WorkspaceSourceReceipt {
+            workspace_epoch: request.workspace_epoch,
+            source_revision: "a".repeat(40),
+            baseline_manifest_digest: "b".repeat(64),
+        })
     }
 
     async fn add_workspace_tree(
@@ -820,7 +838,21 @@ impl KernelAdapter for FakeAdapter {
                 "the test conversation refused to open".into(),
             ));
         }
-        let (channel, held) = crate::conversation_support::FakeConversation::open(updates);
+        let configured_conversation_id = match options.conversation_slot.as_deref() {
+            Some(slot) => self.conversation_ids.lock().await.get(slot).cloned(),
+            None => None,
+        };
+        let conversation_id = configured_conversation_id
+            .or_else(|| {
+                self.conversation_ids_from_slots
+                    .then(|| options.conversation_slot.as_ref())
+                    .flatten()
+                    .map(|slot| format!("conversation-for-{slot}"))
+            })
+            .or_else(|| options.resume_conversation.clone())
+            .unwrap_or_else(|| "conv-fixture".to_string());
+        let (channel, held) =
+            crate::conversation_support::FakeConversation::open(updates, conversation_id);
         *self.conversation.lock().await = Some(held);
         Ok(channel)
     }
@@ -1008,6 +1040,29 @@ impl KernelAdapter for FakeAdapter {
             self.snapshot_resume.notified().await;
         }
         Ok(snapshot)
+    }
+
+    async fn snapshot_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        if self.refuse_snapshot {
+            return Err(AdapterError::Unsupported("cannot capture".into()));
+        }
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        self.conversation_snapshot_calls
+            .lock()
+            .await
+            .push((handle.0.clone(), conversation_id.to_string()));
+        Ok(self
+            .conversation_snapshots
+            .lock()
+            .await
+            .get(conversation_id)
+            .cloned())
     }
 
     async fn checkpoint_workspace(

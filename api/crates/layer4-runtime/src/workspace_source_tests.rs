@@ -47,6 +47,7 @@ fn fixture(name: &str) -> (PathBuf, PathBuf, WorkspaceSources, WorkspaceSourceRe
         url: requested_url,
         reference: "dev".into(),
         directory: "repository".into(),
+        workspace_epoch: 7,
     };
     (base, workspace, sources, request)
 }
@@ -63,6 +64,7 @@ fn source_and_tree_inputs_are_closed_and_path_safe() {
             url: url.into(),
             reference: "dev".into(),
             directory: "repo".into(),
+            workspace_epoch: 1,
         };
         assert!(matches!(
             request.validate(),
@@ -74,6 +76,7 @@ fn source_and_tree_inputs_are_closed_and_path_safe() {
             url: "https://example.test/repo".into(),
             reference: "dev".into(),
             directory: directory.into(),
+            workspace_epoch: 1,
         };
         assert!(matches!(
             request.validate(),
@@ -250,6 +253,7 @@ async fn public_routes_expose_the_closed_source_and_tree_contract() {
             "url": request.url,
             "reference": request.reference,
             "directory": request.directory,
+            "workspace_epoch": request.workspace_epoch,
         }))
         .send()
         .await

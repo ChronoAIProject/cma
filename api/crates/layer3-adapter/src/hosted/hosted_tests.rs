@@ -300,7 +300,7 @@ async fn checkpoint_fixture(
                 1 => {
                     write_json(
                         &mut stream,
-                        serde_json::json!({ "workspaceCheckpoint": { "version": 4 } }),
+                        serde_json::json!({ "workspaceCheckpoint": { "version": 5 } }),
                     )
                     .await
                 }
@@ -366,6 +366,7 @@ fn checkpoint_request() -> WorkspaceCheckpointRequest {
         version: 3,
         source_revision: "a".repeat(40),
         baseline_manifest_digest: "b".repeat(64),
+        include_git_metadata: false,
         disposition: crate::WorkspaceCheckpointDisposition::ResumeAfterCapture,
     }
 }
@@ -398,6 +399,7 @@ fn checkpoint_wire_with_receipt(
             "workspace_epoch": request.epoch,
             "checkpoint_version": request.version,
             "quiesced_writers": 2,
+            "includes_git_metadata": request.include_git_metadata,
             "source_revision": request.source_revision,
             "manifest_digest": manifest_digest,
             "entries": [{
@@ -418,6 +420,7 @@ fn checkpoint_wire_with_receipt(
         "workspace_epoch": request.epoch,
         "checkpoint_version": request.version,
         "source_revision": request.source_revision,
+        "includes_git_metadata": request.include_git_metadata,
         "manifest_digest": manifest_digest,
         "archive_sha256": archive_sha256,
         "entries": 1,
@@ -972,16 +975,31 @@ fn capacity() -> RuntimeCapacity {
 
 #[tokio::test]
 async fn workspace_source_proxy_preserves_the_typed_json_contract() {
-    let fixture = runtime_operation_fixture(200, Vec::new()).await;
+    let source_revision = "a".repeat(40);
+    let baseline_manifest_digest = "b".repeat(64);
+    let fixture = runtime_operation_fixture(
+        200,
+        serde_json::to_vec(&serde_json::json!({
+            "workspace_epoch": 4,
+            "source_revision": source_revision,
+            "baseline_manifest_digest": baseline_manifest_digest,
+        }))
+        .unwrap(),
+    )
+    .await;
     let request = WorkspaceSourceRequest {
         repository_url: "https://example.test/org/repository.git".into(),
         reference: "feature/chat".into(),
         directory: "repository".into(),
+        workspace_epoch: 4,
     };
-    hosted(&fixture.base_url)
+    let receipt = hosted(&fixture.base_url)
         .prepare_workspace_source(&RuntimeHandle("sbx-source".into()), &request)
         .await
         .expect("the supervisor accepted the source");
+    assert_eq!(receipt.workspace_epoch, 4);
+    assert_eq!(receipt.source_revision, "a".repeat(40));
+    assert_eq!(receipt.baseline_manifest_digest, "b".repeat(64));
 
     let requests = fixture.finish().await;
     assert!(requests[0]
@@ -1000,6 +1018,7 @@ async fn workspace_source_proxy_preserves_the_typed_json_contract() {
             "url": request.repository_url,
             "reference": request.reference,
             "directory": request.directory,
+            "workspace_epoch": request.workspace_epoch,
         })
     );
 }
@@ -1274,18 +1293,32 @@ fn checkpoint_capture_requires_v2_and_validates_the_exact_sealed_wire() {
     assert!(!readiness_supports_workspace_checkpoint(
         br#"{"workspaceCheckpoint":{"version":1}}"#,
         crate::WorkspaceCheckpointDisposition::ResumeAfterCapture,
+        false,
     ));
     assert!(readiness_supports_workspace_checkpoint(
         br#"{"workspaceCheckpoint":{"version":2}}"#,
         crate::WorkspaceCheckpointDisposition::ResumeAfterCapture,
+        false,
     ));
     assert!(!readiness_supports_workspace_checkpoint(
         br#"{"workspaceCheckpoint":{"version":3}}"#,
         crate::WorkspaceCheckpointDisposition::HoldForTeardown,
+        false,
     ));
     assert!(readiness_supports_workspace_checkpoint(
         br#"{"workspaceCheckpoint":{"version":4}}"#,
         crate::WorkspaceCheckpointDisposition::HoldForTeardown,
+        false,
+    ));
+    assert!(!readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":4}}"#,
+        crate::WorkspaceCheckpointDisposition::HoldForTeardown,
+        true,
+    ));
+    assert!(readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":5}}"#,
+        crate::WorkspaceCheckpointDisposition::HoldForTeardown,
+        true,
     ));
 
     let request = checkpoint_request();
@@ -2730,11 +2763,29 @@ fn chat_readiness_requires_source_slots_and_coherent_checkpoint_together() {
     let ready = serde_json::json!({
         "workspaceSource": { "version": 2 },
         "conversationSlots": { "max": 16 },
-        "workspaceCheckpoint": { "version": 4 },
+        "workspaceCheckpoint": { "version": 5 },
     });
     let body = serde_json::to_vec(&ready).expect("readiness serializes");
     super::require_chat_runtime_capabilities(&body, 16)
         .expect("forward-compatible versions and an exact slot maximum are accepted");
+
+    let mut legacy_source = ready.clone();
+    legacy_source["workspaceSource"]["version"] = serde_json::json!(1);
+    let error =
+        super::require_chat_runtime_capabilities(&serde_json::to_vec(&legacy_source).unwrap(), 16)
+            .expect_err("the pre-receipt source protocol cannot establish checkpoint authority");
+    assert!(
+        matches!(error, AdapterError::Unsupported(detail) if detail.contains("workspaceSource v2"))
+    );
+
+    let mut legacy_checkpoint = ready.clone();
+    legacy_checkpoint["workspaceCheckpoint"]["version"] = serde_json::json!(4);
+    let error = super::require_chat_runtime_capabilities(
+        &serde_json::to_vec(&legacy_checkpoint).unwrap(),
+        16,
+    )
+    .expect_err("a held capture without complete-Git scope cannot serve chat recovery");
+    assert!(matches!(error, AdapterError::Unsupported(detail) if detail.contains("complete-Git")));
 
     for pointer in [
         "workspaceSource",
@@ -2846,9 +2897,9 @@ async fn failed_exact_cleanup_reports_probe_and_cleanup_as_unavailable() {
 async fn every_missing_chat_capability_is_fenced_before_restore_or_prelude() {
     let full = serde_json::json!({
         "status": "ready",
-        "workspaceSource": { "version": 1 },
+        "workspaceSource": { "version": 2 },
         "conversationSlots": { "max": 3 },
-        "workspaceCheckpoint": { "version": 2 },
+        "workspaceCheckpoint": { "version": 5 },
     });
     let mut missing_source = full.clone();
     missing_source

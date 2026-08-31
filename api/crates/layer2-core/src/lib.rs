@@ -155,10 +155,12 @@ pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use chat::{
-    ChatAgentSettings, ChatCheckpointConversationRef, ChatCheckpointRef, ChatHostFailure,
-    ChatHostId, ChatHostListQuery, ChatHostRecord, ChatHostSettings, ChatHostStatus,
+    ChatAgentSettings, ChatCheckpointConversation, ChatCheckpointConversationRef,
+    ChatCheckpointOutcome, ChatCheckpointRef, ChatCheckpointSweep, ChatHostFailure, ChatHostId,
+    ChatHostListQuery, ChatHostOperatorNote, ChatHostRecord, ChatHostSettings, ChatHostStatus,
     ChatInactivity, ChatProvisioningPhase, ChatSettings, ChatSettingsSnapshot,
-    ChatSettingsViolation, ChatSetup, ChatThreadSlot, ChatUnavailableCause, ChatWorkspaceSource,
+    ChatSettingsViolation, ChatSetup, ChatThreadSlot, ChatUnavailableCause, ChatWorkspaceAuthority,
+    ChatWorkspaceSource, CHAT_CHECKPOINT_INTERVAL_SECONDS, MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES,
 };
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
@@ -225,12 +227,13 @@ pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use sponsored_model_authority::SponsoredModelAuthorityError;
 pub use store::{
-    ActivityStore, ChatOrigin, ContextStore, CredentialSource, EnvironmentProfileStore,
-    HandoverSnapshot, HandoverStore, InitialPromptDispatch, OperationClaim, OperationReservation,
-    OperationStore, Page, PageCursor, PageRequest, PendingHandover, PendingHandoverTarget,
-    SessionListQuery, SessionRecord, SessionStore, SessionSurfaceFilter, SessionWorkspaceSource,
-    SkillPack, SkillPackDigest, SkillPackState, SkillPackStore, SkillSource, StoreError,
-    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    ActivityStore, ChatCheckpointObjectReceipt, ChatCheckpointStore, ChatOrigin, ContextStore,
+    CredentialSource, EnvironmentProfileStore, HandoverSnapshot, HandoverStore,
+    InitialPromptDispatch, OperationClaim, OperationReservation, OperationStore, Page, PageCursor,
+    PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery, SessionRecord,
+    SessionStore, SessionSurfaceFilter, SessionWorkspaceSource, SkillPack, SkillPackDigest,
+    SkillPackState, SkillPackStore, SkillSource, StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
 };
 pub use store::{ChatHostStore, PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
