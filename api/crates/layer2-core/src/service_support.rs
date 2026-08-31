@@ -79,6 +79,7 @@ pub(crate) fn service_with_environments_and_settings_service(
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
+            chat_checkpoints: None,
             credentials: None,
             skills: Some(skills),
             workspaces: None,
@@ -121,6 +122,7 @@ pub(crate) fn service_over_with_context(
         crate::service::SessionPorts {
             context: Some(context),
             handovers: Some(handovers),
+            chat_checkpoints: None,
             credentials: None,
             skills: None,
             workspaces: None,
@@ -230,6 +232,7 @@ pub(crate) fn service_on_version(
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
+            chat_checkpoints: None,
             credentials: None,
             skills: None,
             workspaces: None,
@@ -350,6 +353,7 @@ pub(crate) fn service_with_credential_source(
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
+            chat_checkpoints: None,
             credentials: Some(credentials),
             skills: None,
             workspaces: None,
@@ -399,6 +403,7 @@ pub(crate) fn service_as(
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
+            chat_checkpoints: None,
             credentials: None,
             skills: None,
             workspaces: None,

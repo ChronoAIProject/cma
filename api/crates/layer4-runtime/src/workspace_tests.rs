@@ -30,6 +30,7 @@ fn fixture(entries: Vec<(&str, EntryKind, u32, &[u8])>) -> (Vec<u8>, Header) {
         workspace_epoch: 1,
         checkpoint_version: 0,
         quiesced_writers: 0,
+        includes_git_metadata: false,
         source_revision: "a".repeat(40),
         manifest_digest: "0".repeat(64),
         entries,
@@ -138,10 +139,18 @@ fn submodule_metadata_restores_as_an_inert_empty_directory_without_dereference()
         &archive_sha,
     )
     .expect("an exact inert restore reconciles");
-    let captured = prepare_capture(&target, &checkpoints, 1, 1, &header.source_revision, 0)
-        .unwrap()
-        .commit()
-        .unwrap();
+    let captured = prepare_capture(
+        &target,
+        &checkpoints,
+        1,
+        1,
+        &header.source_revision,
+        0,
+        false,
+    )
+    .unwrap()
+    .commit()
+    .unwrap();
     let (captured_header, _) = open(&captured.archive).unwrap();
     assert_eq!(
         captured_header
@@ -396,7 +405,7 @@ fn capture_excludes_runtime_control_and_credential_paths() {
     std::fs::write(workspace.join("nested/.ssh/id_rsa"), b"private-key").unwrap();
     std::fs::write(workspace.join(".env.local"), b"TOKEN=secret").unwrap();
 
-    let captured = prepare_capture(&workspace, &checkpoints, 8, 1, &"d".repeat(40), 0)
+    let captured = prepare_capture(&workspace, &checkpoints, 8, 1, &"d".repeat(40), 0, false)
         .unwrap()
         .commit()
         .unwrap();
@@ -422,6 +431,71 @@ fn capture_excludes_runtime_control_and_credential_paths() {
             .windows(secret.len())
             .any(|window| window == secret));
     }
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn complete_git_capture_preserves_clone_and_worktree_linkage_only_when_requested() {
+    let base = root("complete-git-capture");
+    let workspace = base.join("source");
+    let checkpoints = base.join("checkpoints");
+    let restored = base.join("restored");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(workspace.join("repository/.git/worktrees/chat-1")).unwrap();
+    std::fs::create_dir_all(workspace.join("worktrees/chat-1")).unwrap();
+    std::fs::write(
+        workspace.join("repository/.git/config"),
+        b"[remote \"origin\"]\nurl = https://example.test/repository\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("repository/.git/worktrees/chat-1/gitdir"),
+        b"/home/chrono/workspace/worktrees/chat-1/.git\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("worktrees/chat-1/.git"),
+        b"gitdir: /home/chrono/workspace/repository/.git/worktrees/chat-1\n",
+    )
+    .unwrap();
+    std::fs::write(workspace.join("worktrees/chat-1/work.txt"), b"dirty\n").unwrap();
+    std::fs::write(workspace.join("worktrees/chat-1/.env"), b"TOKEN=excluded").unwrap();
+
+    let captured = prepare_capture(&workspace, &checkpoints, 11, 1, &"f".repeat(40), 2, true)
+        .unwrap()
+        .commit()
+        .unwrap();
+    assert!(captured.includes_git_metadata);
+    let (header, _) = open(&captured.archive).unwrap();
+    let paths = header
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"repository/.git/config"));
+    assert!(paths.contains(&"repository/.git/worktrees/chat-1/gitdir"));
+    assert!(paths.contains(&"worktrees/chat-1/.git"));
+    assert!(paths.contains(&"worktrees/chat-1/work.txt"));
+    assert!(!paths.contains(&"worktrees/chat-1/.env"));
+    assert!(load_capture(&checkpoints, 11, 1, &"f".repeat(40), false).is_err());
+
+    restore(
+        &restored,
+        &captured.archive,
+        captured.workspace_epoch,
+        &captured.source_revision,
+        &captured.manifest_digest,
+        &captured.archive_sha256,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(restored.join("worktrees/chat-1/.git")).unwrap(),
+        b"gitdir: /home/chrono/workspace/repository/.git/worktrees/chat-1\n"
+    );
+    assert_eq!(
+        std::fs::read(restored.join("worktrees/chat-1/work.txt")).unwrap(),
+        b"dirty\n"
+    );
     std::fs::remove_dir_all(base).unwrap();
 }
 
@@ -497,7 +571,7 @@ fn capture_round_trip_preserves_the_complete_current_tree() {
     // this complete-tree capture.
     assert!(!workspace.join("deleted-from-baseline.txt").exists());
 
-    let captured = prepare_capture(&workspace, &checkpoints, 7, 1, &"a".repeat(40), 2)
+    let captured = prepare_capture(&workspace, &checkpoints, 7, 1, &"a".repeat(40), 2, false)
         .expect("capture prepares")
         .commit()
         .expect("capture commits");
@@ -550,24 +624,24 @@ fn a_checkpoint_version_is_immutable_across_ambiguous_retries() {
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::write(workspace.join("work.txt"), b"first\n").unwrap();
 
-    let first = prepare_capture(&workspace, &checkpoints, 3, 9, &"b".repeat(40), 0)
+    let first = prepare_capture(&workspace, &checkpoints, 3, 9, &"b".repeat(40), 0, false)
         .unwrap()
         .commit()
         .unwrap();
     std::fs::write(workspace.join("work.txt"), b"second\n").unwrap();
 
-    let retained = load_capture(&checkpoints, 3, 9, &"b".repeat(40))
+    let retained = load_capture(&checkpoints, 3, 9, &"b".repeat(40), false)
         .unwrap()
         .expect("committed version remains available");
     assert_eq!(retained.archive, first.archive);
-    let changed = prepare_capture(&workspace, &checkpoints, 3, 9, &"b".repeat(40), 0)
+    let changed = prepare_capture(&workspace, &checkpoints, 3, 9, &"b".repeat(40), 0, false)
         .unwrap()
         .commit();
     assert!(changed
         .unwrap_err()
         .contains("already names different workspace bytes"));
     assert_eq!(
-        load_capture(&checkpoints, 3, 9, &"b".repeat(40))
+        load_capture(&checkpoints, 3, 9, &"b".repeat(40), false)
             .unwrap()
             .unwrap()
             .archive,
@@ -590,20 +664,28 @@ fn periodic_captures_keep_two_local_retry_artifacts_and_reject_stale_versions() 
             format!("checkpoint {version}\n"),
         )
         .unwrap();
-        prepare_capture(&workspace, &checkpoints, 9, version, &"e".repeat(40), 0)
-            .unwrap()
-            .commit()
-            .unwrap();
+        prepare_capture(
+            &workspace,
+            &checkpoints,
+            9,
+            version,
+            &"e".repeat(40),
+            0,
+            false,
+        )
+        .unwrap()
+        .commit()
+        .unwrap();
     }
 
     assert!(!capture_path(&checkpoints, 9, 1).exists());
     assert!(!capture_path(&checkpoints, 9, 2).exists());
     assert!(capture_path(&checkpoints, 9, 3).exists());
     assert!(capture_path(&checkpoints, 9, 4).exists());
-    assert!(load_capture(&checkpoints, 9, 2, &"e".repeat(40))
+    assert!(load_capture(&checkpoints, 9, 2, &"e".repeat(40), false)
         .unwrap_err()
         .contains("predates"));
-    assert!(load_capture(&checkpoints, 9, 3, &"e".repeat(40))
+    assert!(load_capture(&checkpoints, 9, 3, &"e".repeat(40), false)
         .unwrap()
         .is_some());
     std::fs::remove_dir_all(base).unwrap();
@@ -618,16 +700,17 @@ fn uncommitted_or_corrupt_checkpoint_files_are_never_authoritative() {
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::write(workspace.join("work.txt"), b"complete\n").unwrap();
 
-    let prepared = prepare_capture(&workspace, &checkpoints, 4, 1, &"c".repeat(40), 0).unwrap();
-    assert!(load_capture(&checkpoints, 4, 1, &"c".repeat(40))
+    let prepared =
+        prepare_capture(&workspace, &checkpoints, 4, 1, &"c".repeat(40), 0, false).unwrap();
+    assert!(load_capture(&checkpoints, 4, 1, &"c".repeat(40), false)
         .unwrap()
         .is_none());
     drop(prepared);
-    assert!(load_capture(&checkpoints, 4, 1, &"c".repeat(40))
+    assert!(load_capture(&checkpoints, 4, 1, &"c".repeat(40), false)
         .unwrap()
         .is_none());
 
-    prepare_capture(&workspace, &checkpoints, 4, 2, &"c".repeat(40), 0)
+    prepare_capture(&workspace, &checkpoints, 4, 2, &"c".repeat(40), 0, false)
         .unwrap()
         .commit()
         .unwrap();
@@ -635,7 +718,7 @@ fn uncommitted_or_corrupt_checkpoint_files_are_never_authoritative() {
     let mut corrupt = std::fs::read(&retained).unwrap();
     *corrupt.last_mut().unwrap() ^= 0xff;
     std::fs::write(retained, corrupt).unwrap();
-    assert!(load_capture(&checkpoints, 4, 2, &"c".repeat(40)).is_err());
+    assert!(load_capture(&checkpoints, 4, 2, &"c".repeat(40), false).is_err());
     std::fs::remove_dir_all(base).unwrap();
 }
 
@@ -664,7 +747,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
     #[cfg(target_os = "linux")]
     assert_eq!(
         readiness["workspaceCheckpoint"]["version"],
-        serde_json::json!(4)
+        serde_json::json!(crate::workspace::CAPABILITY_VERSION)
     );
     #[cfg(not(target_os = "linux"))]
     assert!(readiness["workspaceCheckpoint"].is_null());
@@ -721,6 +804,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
             version: 1,
             source: "b".repeat(40),
             baseline: baseline_digest.clone(),
+            include_git_metadata: false,
             disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
         }),
     )
@@ -735,6 +819,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
             version: 1,
             source: header.source_revision.clone(),
             baseline: header.manifest_digest.clone(),
+            include_git_metadata: false,
             disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
         }),
     )
@@ -747,6 +832,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
         version: 1,
         source: header.source_revision.clone(),
         baseline: baseline_digest.clone(),
+        include_git_metadata: false,
         disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
     };
     #[cfg(not(target_os = "linux"))]
@@ -769,6 +855,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
                 version: checkpoint_params.version,
                 source: checkpoint_params.source.clone(),
                 baseline: checkpoint_params.baseline.clone(),
+                include_git_metadata: false,
                 disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
             }),
         )
@@ -846,6 +933,7 @@ async fn teardown_hold_has_no_deadline_and_only_the_exact_token_resumes() {
         version: 7,
         source: source.clone(),
         baseline: baseline.clone(),
+        include_git_metadata: false,
         disposition: crate::RuntimeWorkspaceCheckpointDisposition::HoldForTeardown,
     };
 

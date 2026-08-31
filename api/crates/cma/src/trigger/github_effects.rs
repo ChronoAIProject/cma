@@ -2549,6 +2549,7 @@ impl GithubEffectExecutor {
             version,
             source_revision: launch.source_sha.clone(),
             baseline_manifest_digest: workspace.baseline.digest.clone(),
+            include_git_metadata: false,
             disposition: layer3_adapter::WorkspaceCheckpointDisposition::ResumeAfterCapture,
         };
         let (captured, runtime_generation) =
@@ -10505,6 +10506,7 @@ pub(in crate::trigger) mod tests {
             quiesced_writers: 1,
             writer_state: layer3_adapter::WorkspaceWriterState::Resumed,
             writer_resume_token: None,
+            includes_git_metadata: false,
             archive,
         }
     }

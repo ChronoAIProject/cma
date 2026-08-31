@@ -1334,6 +1334,7 @@ fn checkpoint_package(
         quiesced_writers: 1,
         writer_state: layer3_adapter::WorkspaceWriterState::Resumed,
         writer_resume_token: None,
+        includes_git_metadata: false,
         archive,
     }
 }

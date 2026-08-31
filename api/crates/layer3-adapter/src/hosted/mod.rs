@@ -193,6 +193,8 @@ const WORKSPACE_SETUP_PATH: &str = "/runtime/workspace/setup";
 const RUNTIME_GATEWAY_PROBE_PATH: &str = "/runtime/gateway-probe";
 const WORKSPACE_VERSION: u64 = 2;
 const WORKSPACE_HOLD_VERSION: u64 = 4;
+const WORKSPACE_COMPLETE_GIT_VERSION: u64 = 5;
+const WORKSPACE_SOURCE_RECEIPT_VERSION: u64 = 2;
 const WORKSPACE_ARCHIVE_VERSION: u32 = 1;
 const MAX_WORKSPACE_FILES: usize = 100_000;
 const MAX_WORKSPACE_BYTES: usize = 2 * 1024 * 1024 * 1024;
@@ -1648,15 +1650,18 @@ impl HostedKernel {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceSourceRequest,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
         let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
         let body = serde_json::to_vec(request)
             .expect("a workspace source request containing strings is serializable");
-        self.client
+        let response = self
+            .client
             .post_json_to_sandbox_with_response(&endpoint.endpoint, WORKSPACE_SOURCE_PATH, body)
             .await
             .map_err(runtime_operation_error)?;
-        Ok(())
+        serde_json::from_slice(&response).map_err(|_| {
+            AdapterError::Rejected("runtime returned an invalid workspace source receipt".into())
+        })
     }
 
     /// Add one conversation worktree and return the runtime's canonical path.
@@ -1724,7 +1729,11 @@ impl HostedKernel {
             .get_from_sandbox(&endpoint.endpoint, READY_PATH)
             .await?
             .unwrap_or_default();
-        if !readiness_supports_workspace_checkpoint(&ready, request.disposition) {
+        if !readiness_supports_workspace_checkpoint(
+            &ready,
+            request.disposition,
+            request.include_git_metadata,
+        ) {
             return Err(AdapterError::Unsupported(
                 "this runtime image does not advertise the requested workspace checkpoint capability"
                     .into(),
@@ -1744,11 +1753,12 @@ impl HostedKernel {
             WorkspaceCheckpointDisposition::HoldForTeardown => "hold_for_teardown",
         };
         let path = format!(
-            "{WORKSPACE_CHECKPOINT_PATH}?epoch={}&version={}&source={}&baseline={}&disposition={disposition}",
+            "{WORKSPACE_CHECKPOINT_PATH}?epoch={}&version={}&source={}&baseline={}&include_git_metadata={}&disposition={disposition}",
             request.epoch,
             request.version,
             request.source_revision,
             request.baseline_manifest_digest,
+            request.include_git_metadata,
         );
         let wire = self
             .client
@@ -1811,6 +1821,7 @@ impl HostedKernel {
         if !readiness_supports_workspace_checkpoint(
             &ready,
             WorkspaceCheckpointDisposition::HoldForTeardown,
+            false,
         ) {
             return Err(AdapterError::Unsupported(
                 "this runtime image cannot resume a held workspace checkpoint".into(),
@@ -2205,10 +2216,10 @@ fn require_chat_runtime_capabilities(
     let workspace_source = value
         .pointer("/workspaceSource/version")
         .and_then(serde_json::Value::as_u64)
-        .is_some_and(|version| version >= 1);
+        .is_some_and(|version| version >= WORKSPACE_SOURCE_RECEIPT_VERSION);
     if !workspace_source {
         return Err(AdapterError::Unsupported(
-            "this runtime image does not advertise workspaceSource v1".into(),
+            "this runtime image does not advertise workspaceSource v2".into(),
         ));
     }
     let conversation_slots = value
@@ -2222,10 +2233,11 @@ fn require_chat_runtime_capabilities(
     }
     if !readiness_supports_workspace_checkpoint(
         body,
-        WorkspaceCheckpointDisposition::ResumeAfterCapture,
+        WorkspaceCheckpointDisposition::HoldForTeardown,
+        true,
     ) {
         return Err(AdapterError::Unsupported(
-            "this runtime image does not advertise workspaceCheckpoint v2".into(),
+            "this runtime image does not advertise complete-Git workspaceCheckpoint v5".into(),
         ));
     }
     Ok(())
@@ -2441,10 +2453,15 @@ fn workspace_checkpoint_version(body: &[u8]) -> Option<u64> {
 fn readiness_supports_workspace_checkpoint(
     body: &[u8],
     disposition: WorkspaceCheckpointDisposition,
+    include_git_metadata: bool,
 ) -> bool {
-    let minimum = match disposition {
-        WorkspaceCheckpointDisposition::ResumeAfterCapture => WORKSPACE_VERSION,
-        WorkspaceCheckpointDisposition::HoldForTeardown => WORKSPACE_HOLD_VERSION,
+    let minimum = if include_git_metadata {
+        WORKSPACE_COMPLETE_GIT_VERSION
+    } else {
+        match disposition {
+            WorkspaceCheckpointDisposition::ResumeAfterCapture => WORKSPACE_VERSION,
+            WorkspaceCheckpointDisposition::HoldForTeardown => WORKSPACE_HOLD_VERSION,
+        }
     };
     workspace_checkpoint_version(body).is_some_and(|version| version >= minimum)
 }
@@ -2488,6 +2505,8 @@ struct CheckpointAcknowledgement {
     entries: usize,
     bytes: u64,
     quiesced_writers: u32,
+    #[serde(default)]
+    includes_git_metadata: bool,
     writers_resumed: bool,
     #[serde(default)]
     writer_state: Option<CheckpointWriterState>,
@@ -2511,6 +2530,8 @@ struct CheckpointArchiveHeader {
     checkpoint_version: u64,
     #[serde(default)]
     quiesced_writers: u32,
+    #[serde(default)]
+    includes_git_metadata: bool,
     source_revision: String,
     manifest_digest: String,
     entries: Vec<CheckpointArchiveEntry>,
@@ -2558,6 +2579,7 @@ fn parse_workspace_checkpoint(
         || !is_hex(&acknowledgement.archive_sha256, 64)
         || acknowledgement.entries > MAX_WORKSPACE_FILES
         || acknowledgement.bytes > MAX_WORKSPACE_BYTES as u64
+        || acknowledgement.includes_git_metadata != request.include_git_metadata
         || hex(&Sha256::digest(archive)) != acknowledgement.archive_sha256
     {
         return Err(AdapterError::Rejected(
@@ -2576,6 +2598,7 @@ fn parse_workspace_checkpoint(
         || header.workspace_epoch != request.epoch
         || header.checkpoint_version != request.version
         || header.quiesced_writers != acknowledgement.quiesced_writers
+        || header.includes_git_metadata != acknowledgement.includes_git_metadata
         || !header
             .source_revision
             .eq_ignore_ascii_case(&request.source_revision)
@@ -2666,6 +2689,7 @@ fn parse_workspace_checkpoint(
         quiesced_writers: acknowledgement.quiesced_writers,
         writer_state,
         writer_resume_token,
+        includes_git_metadata: acknowledgement.includes_git_metadata,
         archive: archive.to_vec(),
     })
 }
