@@ -130,6 +130,14 @@ export function Console({
   // tabs does not carry one session's failure onto another.
   const [endings, setEndings] = useState<Record<string, string>>({});
   const [acting, setActing] = useState(false);
+  // Updated synchronously with the visual busy state. A provisioning stream
+  // can close while its owner is deliberately deleting that session; reporting
+  // that expected close before the DELETE settles produces a false error flash.
+  const actingRef = useRef(false);
+  const markActing = useCallback((next: boolean) => {
+    actingRef.current = next;
+    setActing(next);
+  }, []);
   // Built once. A store rebuilt on every render would refetch on every render,
   // because everything consuming it loads in an effect keyed on its identity.
   const [profileStore] = useState<EnvironmentProfileStore>(() => createRestProfileStore());
@@ -399,7 +407,7 @@ export function Console({
       clearSelection,
       setOpeningForId,
       setNotice,
-      setActing,
+      setActing: markActing,
       select,
       report,
       applyLifecycle,
@@ -447,7 +455,9 @@ export function Console({
         }
       },
       (message) => {
-        setNotice({ failed: message });
+        if (!actingRef.current) {
+          setNotice({ failed: message });
+        }
       },
       (stage) => {
         setStages((prev) => ({ ...prev, [id]: stage }));
