@@ -66,6 +66,11 @@ pub(crate) struct AttachParams {
     /// Absent means the terminal, which is what every link was.
     #[serde(default)]
     lanes: Option<String>,
+    /// Opaque identity of the conversation process this link drives.
+    ///
+    /// Absent retains the single compatibility slot used by older callers.
+    #[serde(default)]
+    conversation: Option<String>,
     /// How often, in milliseconds, to send a resource reading on this link.
     ///
     /// Present makes this a telemetry link and nothing else: no pty is taken,
@@ -245,7 +250,8 @@ async fn relay(
         return crate::telemetry::relay_telemetry(sink, source, state, id, interval_ms).await;
     }
     if params.conversational() {
-        crate::conversation_link::relay_conversation(sink, source, state, id).await
+        let slot = crate::SlotId::from_query(params.conversation.clone());
+        crate::conversation_link::relay_conversation(sink, source, state, id, slot).await
     } else {
         relay_terminal(sink, source, state, id, params).await
     }
