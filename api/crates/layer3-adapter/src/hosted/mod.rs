@@ -118,6 +118,7 @@ const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 /// naming it once is what keeps them in step.
 /// Historical session key, kept while old-only sandboxes remain live.
 const LEGACY_SESSION_METADATA_KEY: &str = "chrono-bot/session";
+const CHAT_HOST_METADATA_KEY: &str = "cma/chat-host";
 
 /// Read a canonical correlation value, falling back only when it is absent.
 fn correlation_value(
@@ -156,6 +157,9 @@ fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, S
     ]);
     if let Some(generation) = spec.generation {
         metadata.insert(GENERATION_METADATA_KEY.to_string(), generation.to_string());
+    }
+    if let Some(chat_host) = spec.chat_host.as_ref() {
+        metadata.insert(CHAT_HOST_METADATA_KEY.to_string(), chat_host.clone());
     }
     if let Some(reservation) = spec.reservation_token.as_ref() {
         metadata.insert(RESERVATION_METADATA_KEY.to_string(), reservation.clone());
@@ -1949,6 +1953,7 @@ impl HostedKernel {
                     SESSION_METADATA_KEY,
                     LEGACY_SESSION_METADATA_KEY,
                 ),
+                chat_host: s.metadata.get(CHAT_HOST_METADATA_KEY).cloned(),
                 generation: runtime_generation(&s.metadata),
                 created_by: correlation_value(
                     &s.metadata,

@@ -952,6 +952,7 @@ fn spec() -> RuntimeSpec {
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
+        chat_host: None,
         generation: None,
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
@@ -1719,6 +1720,7 @@ async fn a_zero_runtime_timeout_is_refused_before_a_provider_request() {
 fn provisioning_writes_both_generations_of_correlation_metadata() {
     let mut request = spec();
     request.created_by = Some("test-plane".to_string());
+    request.chat_host = Some("chho_exact".to_string());
     request.generation = std::num::NonZeroU64::new(17);
 
     assert_eq!(
@@ -1726,6 +1728,7 @@ fn provisioning_writes_both_generations_of_correlation_metadata() {
         BTreeMap::from([
             ("cma/control-plane".to_string(), "test-plane".to_string()),
             ("cma/kernel".to_string(), "test-kernel".to_string()),
+            ("cma/chat-host".to_string(), "chho_exact".to_string()),
             ("cma/runtime-generation".to_string(), "17".to_string()),
             ("cma/session".to_string(), "sesn_x".to_string()),
             (
@@ -1779,6 +1782,7 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
             "metadata": {
                 "chrono-bot/session": "sesn_x",
                 "chrono-bot/control-plane": "test-plane",
+                "cma/chat-host": "chho_exact",
                 "cma/runtime-generation": "17"
             }
         }],
@@ -1800,6 +1804,7 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session.as_deref(), Some("sesn_x"));
+    assert_eq!(listed[0].chat_host.as_deref(), Some("chho_exact"));
     assert_eq!(
         listed[0].generation,
         RuntimeGeneration::Recorded(std::num::NonZeroU64::new(17).unwrap())

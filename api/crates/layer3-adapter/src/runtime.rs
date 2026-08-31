@@ -186,6 +186,8 @@ pub struct RuntimeListing {
     pub handle: RuntimeHandle,
     /// The session it was provisioned for, when it says.
     pub session: Option<String>,
+    /// Shared chat host correlation, absent on ordinary per-session runtimes.
+    pub chat_host: Option<String>,
     /// Durable generation of the runtime within its session, when recorded.
     ///
     /// Handles are provider-owned and opaque, so a handle alone cannot prove
@@ -279,6 +281,11 @@ impl RuntimeEnvironment {
 pub struct RuntimeSpec {
     /// Identifier of the session the runtime serves, for correlation only.
     pub session_id: String,
+    /// Shared chat host owning this runtime, when it is not session-owned.
+    ///
+    /// Kept separate from `session_id` so reconciliation never mistakes one
+    /// shared provider object for an orphaned per-session runtime.
+    pub chat_host: Option<String>,
     /// Durable generation reserved for this runtime within the session.
     ///
     /// Written into provider-visible metadata. Reconciliation can therefore

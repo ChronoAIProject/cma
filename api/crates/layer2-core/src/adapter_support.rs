@@ -13,7 +13,8 @@ use layer3_adapter::{
     RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeLossReason,
     RuntimeMode, RuntimePolicyObservation, RuntimePolicyReceipt, RuntimeSpec, TerminalChannel,
     TerminalInput, TerminalInputSender, TerminalOutput, WorkspaceCheckpointPackage,
-    WorkspaceCheckpointRequest,
+    WorkspaceCheckpointRequest, WorkspaceSetupReceipt, WorkspaceSetupStep, WorkspaceSourceRequest,
+    WorkspaceTreeReceipt, WorkspaceTreeRequest,
 };
 use tokio::sync::{mpsc, Mutex, Notify, Semaphore};
 
@@ -50,6 +51,15 @@ pub(crate) struct FakeAdapter {
     /// Provider-visible generation recorded for runtimes provisioned through
     /// the generation-aware contract. Directly seeded legacy fixtures omit it.
     pub(crate) generations: Mutex<HashMap<String, std::num::NonZeroU64>>,
+    /// Provider-visible shared-chat correlation recorded at create time.
+    pub(crate) chat_hosts: Mutex<HashMap<String, String>>,
+    pub(crate) workspace_sources: Mutex<Vec<(String, WorkspaceSourceRequest)>>,
+    pub(crate) workspace_setups: Mutex<Vec<(String, Vec<String>)>>,
+    pub(crate) workspace_trees: Mutex<Vec<(String, WorkspaceTreeRequest)>>,
+    pub(crate) removed_workspace_trees: Mutex<Vec<(String, String)>>,
+    pub(crate) fail_workspace_sources: std::sync::atomic::AtomicUsize,
+    pub(crate) fail_workspace_setups: std::sync::atomic::AtomicUsize,
+    pub(crate) workspace_setup_failure_index: Mutex<Option<usize>>,
     /// What each `open_conversation` was asked to rejoin, in order.
     ///
     /// `None` for a conversation being started; a name for one being taken
@@ -220,6 +230,14 @@ impl Default for FakeAdapter {
             terminal_input_resume: Arc::new(Notify::new()),
             running: Mutex::default(),
             generations: Mutex::default(),
+            chat_hosts: Mutex::default(),
+            workspace_sources: Mutex::default(),
+            workspace_setups: Mutex::default(),
+            workspace_trees: Mutex::default(),
+            removed_workspace_trees: Mutex::default(),
+            fail_workspace_sources: std::sync::atomic::AtomicUsize::new(0),
+            fail_workspace_setups: std::sync::atomic::AtomicUsize::new(0),
+            workspace_setup_failure_index: Mutex::default(),
             refuse_list: false,
             stopped: Mutex::default(),
             stopped_because: Mutex::default(),
@@ -574,7 +592,108 @@ impl KernelAdapter for FakeAdapter {
                 .await
                 .insert(handle.clone(), generation);
         }
+        if let Some(chat_host) = spec.chat_host.as_ref() {
+            self.chat_hosts
+                .lock()
+                .await
+                .insert(handle.clone(), chat_host.clone());
+        }
         Ok(RuntimeHandle(handle))
+    }
+
+    async fn prepare_workspace_source(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceSourceRequest,
+    ) -> Result<(), AdapterError> {
+        self.workspace_sources
+            .lock()
+            .await
+            .push((handle.0.clone(), request.clone()));
+        if self
+            .fail_workspace_sources
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(AdapterError::Unavailable(
+                "test workspace source preparation failed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn add_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceTreeRequest,
+    ) -> Result<WorkspaceTreeReceipt, AdapterError> {
+        self.workspace_trees
+            .lock()
+            .await
+            .push((handle.0.clone(), request.clone()));
+        Ok(WorkspaceTreeReceipt {
+            path: format!("/workspace/{}", request.name),
+        })
+    }
+
+    async fn remove_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        name: &str,
+    ) -> Result<(), AdapterError> {
+        self.removed_workspace_trees
+            .lock()
+            .await
+            .push((handle.0.clone(), name.to_string()));
+        Ok(())
+    }
+
+    async fn run_workspace_setup(
+        &self,
+        handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<WorkspaceSetupReceipt, AdapterError> {
+        self.workspace_setups
+            .lock()
+            .await
+            .push((handle.0.clone(), commands.to_vec()));
+        if self
+            .fail_workspace_setups
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(AdapterError::Unavailable(
+                "test workspace setup transport failed".into(),
+            ));
+        }
+        let failure = *self.workspace_setup_failure_index.lock().await;
+        Ok(WorkspaceSetupReceipt {
+            steps: commands
+                .iter()
+                .enumerate()
+                .map(|(command_index, _)| WorkspaceSetupStep {
+                    command_index,
+                    exit_code: if failure == Some(command_index) {
+                        17
+                    } else {
+                        0
+                    },
+                    output_excerpt: if failure == Some(command_index) {
+                        "bounded test failure".into()
+                    } else {
+                        String::new()
+                    },
+                })
+                .collect(),
+        })
     }
 
     async fn attach_terminal(
@@ -831,6 +950,7 @@ impl KernelAdapter for FakeAdapter {
         self.terminated.lock().await.push(handle.0.clone());
         self.running.lock().await.remove(&handle.0);
         self.generations.lock().await.remove(&handle.0);
+        self.chat_hosts.lock().await.remove(&handle.0);
         Ok(())
     }
 
@@ -857,6 +977,7 @@ impl KernelAdapter for FakeAdapter {
         terminated.push(identity.handle.0.clone());
         running.remove(&identity.handle.0);
         generations.remove(&identity.handle.0);
+        self.chat_hosts.lock().await.remove(&identity.handle.0);
         Ok(())
     }
 
@@ -969,6 +1090,7 @@ impl KernelAdapter for FakeAdapter {
         let stopped = self.stopped.lock().await.clone();
         let stopped_because = self.stopped_because.lock().await.clone();
         let generations = self.generations.lock().await.clone();
+        let chat_hosts = self.chat_hosts.lock().await.clone();
         Ok(self
             .running
             .lock()
@@ -977,6 +1099,7 @@ impl KernelAdapter for FakeAdapter {
             .map(|(h, s)| RuntimeListing {
                 handle: RuntimeHandle(h.clone()),
                 session: s.clone(),
+                chat_host: chat_hosts.get(h).cloned(),
                 generation: generations
                     .get(h)
                     .copied()

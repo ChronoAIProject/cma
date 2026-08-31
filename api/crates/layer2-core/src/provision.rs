@@ -236,6 +236,7 @@ impl SessionService {
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
+                chat_host: None,
                 generation: reservation.as_ref().map(|reserved| reserved.generation),
                 reservation_token: reservation.as_ref().map(|reserved| reserved.token.clone()),
                 size: TermSize {

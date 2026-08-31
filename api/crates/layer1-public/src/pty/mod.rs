@@ -438,6 +438,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::PriceListNotAppendOnly(_) => "price_list_not_append_only",
         CoreError::SettingsConflict(_) => "settings_conflict",
         CoreError::SettingsUnavailable(_) => "settings_unavailable",
+        CoreError::ChatUnavailable(_) => "chat_unavailable",
     }
 }
 

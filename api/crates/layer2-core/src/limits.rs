@@ -39,7 +39,7 @@ pub(crate) struct OwnerGuards {
 }
 
 impl OwnerGuards {
-    async fn lock(&self, owner: &SubjectId) -> OwnedMutexGuard<()> {
+    pub(crate) async fn lock(&self, owner: &SubjectId) -> OwnedMutexGuard<()> {
         let lock = {
             let mut held = self.held.lock().await;
             held.retain(|_, lock| lock.strong_count() > 0);
