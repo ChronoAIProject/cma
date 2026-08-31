@@ -37,7 +37,7 @@ const PROFILES = [
     reasoning_effort: 'high',
     permission: 'guarded',
     credential: 'delegated',
-    size: { cpu_millis: 1000, memory_mib: 2048 },
+    size: index === 0 ? undefined : { cpu_millis: 1000, memory_mib: 2048 },
     record_tool_bodies: false,
     skills: [],
   },
@@ -692,6 +692,60 @@ async function accountMenuReads(page) {
   return problems;
 }
 
+/** A deployment-owned size must still look like a machine specification. */
+async function profileResourcesAreDiscoverable(page) {
+  const problems = [];
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle(250);
+  if (!(await press(page, 'Environment profiles'))) {
+    return ['profile resources: no Environment profiles action'];
+  }
+  await ready(page, '.profiles__row', { label: 'an environment profile row' });
+  const summary = await page.evaluate(
+    () => document.body.textContent?.includes('Session resources: deployment default') ?? false,
+  );
+  if (!(await press(page, 'Edit'))) {
+    return ['profile resources: no Edit action'];
+  }
+  await ready(page, '.editor__resources', { label: 'the session resource controls' });
+
+  const seen = await page.evaluate((listNamesResources) => {
+    const fieldFor = (wanted) => {
+      const label = [...document.querySelectorAll('label')].find(
+        (candidate) => candidate.textContent?.trim() === wanted,
+      );
+      return label instanceof HTMLLabelElement && label.htmlFor !== ''
+        ? document.getElementById(label.htmlFor)
+        : null;
+    };
+    const group = document.querySelector('.editor__resources');
+    const cpu = fieldFor('CPU (millicores)');
+    const memory = fieldFor('Memory (MiB)');
+    const useDefault = group?.querySelector('input[type="checkbox"]');
+    return {
+      heading: group?.textContent?.includes('Session resources') ?? false,
+      cpu: cpu instanceof HTMLInputElement,
+      cpuDisabled: cpu instanceof HTMLInputElement && cpu.disabled,
+      memory: memory instanceof HTMLInputElement,
+      memoryDisabled: memory instanceof HTMLInputElement && memory.disabled,
+      defaultChecked: useDefault instanceof HTMLInputElement && useDefault.checked,
+      summary: listNamesResources,
+    };
+  }, summary);
+
+  if (!seen.summary) problems.push('profile resources: the list does not name the session size');
+  if (!seen.heading) problems.push('profile resources: the editor does not name Session resources');
+  if (!seen.cpu || !seen.memory) problems.push('profile resources: CPU or memory is absent');
+  if (!seen.cpuDisabled || !seen.memoryDisabled || !seen.defaultChecked) {
+    problems.push('profile resources: deployment-owned CPU and memory are not visibly disabled');
+  }
+  await page.keyboard.press('Escape');
+  await settle(250);
+  return problems;
+}
+
 async function main() {
   const { page, close } = await open({ port: PORT });
   try {
@@ -710,6 +764,7 @@ async function main() {
       ...(await developerSurface(page)),
       ...(await everyMenuLands(page)),
       ...(await accountMenuReads(page)),
+      ...(await profileResourcesAreDiscoverable(page)),
     ];
 
     if (problems.length > 0) {
@@ -722,7 +777,7 @@ async function main() {
     }
     console.log(
       'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
-        'Developer fits both layouts, and every menu lands inside the window',
+        'Developer fits both layouts, every menu lands inside the window, and profile resources remain visible',
     );
   } finally {
     await close();
