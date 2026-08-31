@@ -810,6 +810,7 @@ fn build_trigger_session_service_defaulting_to(
             workspaces: Some(workspaces),
             skill_packs: None,
             settings: None,
+            chat_hosts: None,
         },
         environments,
         Deployment {

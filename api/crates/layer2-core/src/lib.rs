@@ -155,8 +155,10 @@ pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use chat::{
-    ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSettingsSnapshot,
-    ChatSettingsViolation, ChatSetup, ChatWorkspaceSource,
+    ChatAgentSettings, ChatCheckpointConversationRef, ChatCheckpointRef, ChatHostFailure,
+    ChatHostId, ChatHostListQuery, ChatHostRecord, ChatHostSettings, ChatHostStatus,
+    ChatInactivity, ChatProvisioningPhase, ChatSettings, ChatSettingsSnapshot,
+    ChatSettingsViolation, ChatSetup, ChatThreadSlot, ChatUnavailableCause, ChatWorkspaceSource,
 };
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
@@ -229,6 +231,6 @@ pub use store::{
     SkillPackState, SkillPackStore, SkillSource, StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
 };
-pub use store::{PlatformSettingsStore, StoredSettings};
+pub use store::{ChatHostStore, PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
 pub use trigger::*;

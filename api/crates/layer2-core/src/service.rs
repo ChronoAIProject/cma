@@ -72,6 +72,7 @@ impl SessionService {
             workspaces,
             skill_packs,
             settings,
+            chat_hosts,
         } = ports;
         let sequences = Arc::new(crate::sequence::Sequences::default());
         let event_logs = Arc::new(crate::log::EventLogs::new(
@@ -91,6 +92,7 @@ impl SessionService {
             sequences,
             event_logs,
             starting: RwLock::new(HashSet::new()),
+            chat_hosts_starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
             rotations_in_progress: RwLock::new(HashSet::new()),
             adapters,
@@ -101,6 +103,8 @@ impl SessionService {
             credentials,
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
+            chat_hosts,
+            chat_host_guards: Default::default(),
             session_limit_guards: Default::default(),
             deployment_capacity_guard: Default::default(),
             runtime_version: deployment.runtime_version,

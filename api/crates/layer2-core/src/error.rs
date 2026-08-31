@@ -202,6 +202,13 @@ pub enum CoreError {
     /// why it is not conflated with anything that means "stop".
     #[error("the platform's settings are unavailable: {0}")]
     SettingsUnavailable(String),
+
+    /// The deployment cannot currently provide the managed chat surface.
+    ///
+    /// One stable code with a typed cause lets interfaces distinguish a dark
+    /// or unsupported deployment from transient provisioning/storage failure.
+    #[error("chat unavailable: {0}")]
+    ChatUnavailable(crate::ChatUnavailableCause),
 }
 
 impl CoreError {
@@ -236,6 +243,7 @@ impl CoreError {
             Self::PriceListNotAppendOnly(_) => "price_list_not_append_only",
             Self::SettingsConflict(_) => "settings_conflict",
             Self::SettingsUnavailable(_) => "settings_unavailable",
+            Self::ChatUnavailable(_) => "chat_unavailable",
         }
     }
 }
@@ -312,6 +320,7 @@ mod tests {
             CoreError::PriceListNotAppendOnly("card rate_example changed field 'rate'".into()),
             CoreError::SettingsConflict("x".into()),
             CoreError::SettingsUnavailable("x".into()),
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::Disabled),
         ];
         // Exhaustive on purpose. Adding a variant to `CoreError` breaks this
         // match, and the fix is to add it to the list above — which is the
@@ -342,7 +351,8 @@ mod tests {
                 | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
-                | CoreError::SettingsUnavailable(_) => {}
+                | CoreError::SettingsUnavailable(_)
+                | CoreError::ChatUnavailable(_) => {}
             }
         }
         all

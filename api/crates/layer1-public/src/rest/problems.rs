@@ -231,6 +231,10 @@ impl IntoResponse for Problem {
             CoreError::SettingsUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "settings-unavailable")
             }
+            CoreError::ChatUnavailable(cause) if cause.is_transient() => {
+                (StatusCode::SERVICE_UNAVAILABLE, "chat-unavailable")
+            }
+            CoreError::ChatUnavailable(_) => (StatusCode::UNPROCESSABLE_ENTITY, "chat-unavailable"),
         };
 
         // Upstream errors can contain request URLs and transport internals. The
@@ -399,6 +403,7 @@ mod tests {
             CoreError::PriceListNotAppendOnly("card rate_example changed field 'rate'".into()),
             CoreError::SettingsConflict("x".into()),
             CoreError::SettingsUnavailable("x".into()),
+            CoreError::ChatUnavailable(layer2_core::ChatUnavailableCause::Disabled),
         ];
         for error in &all {
             match error {
@@ -426,7 +431,8 @@ mod tests {
                 | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
-                | CoreError::SettingsUnavailable(_) => {}
+                | CoreError::SettingsUnavailable(_)
+                | CoreError::ChatUnavailable(_) => {}
             }
         }
         all
@@ -473,6 +479,32 @@ mod tests {
         );
         assert!(!body.to_string().contains("registry.internal"));
         assert!(!body.to_string().contains("opaque"));
+    }
+
+    #[tokio::test]
+    async fn chat_unavailability_uses_one_code_and_status_by_retryability() {
+        let (transient_status, transient) = rendered(CoreError::ChatUnavailable(
+            layer2_core::ChatUnavailableCause::ProvisioningFailed {
+                phase: layer2_core::ChatProvisioningPhase::WorkspaceSource,
+                command_index: None,
+                retryable: true,
+            },
+        ))
+        .await;
+        let (policy_status, policy) = rendered(CoreError::ChatUnavailable(
+            layer2_core::ChatUnavailableCause::CapabilityUnsupported("snapshot".into()),
+        ))
+        .await;
+
+        assert_eq!(transient_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(policy_status, StatusCode::UNPROCESSABLE_ENTITY);
+        for body in [transient, policy] {
+            assert_eq!(body["code"], "chat_unavailable");
+            assert!(body["type"]
+                .as_str()
+                .expect("problem type")
+                .ends_with("/chat-unavailable"));
+        }
     }
 
     #[tokio::test]
