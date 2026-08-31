@@ -4,10 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProtocolError, TransportError } from '@chronoai/cma-sdk';
 import {
   ApiError,
+  createChatSession,
   followSession,
   listKernels,
+  listSessions,
   listTriggerRevisions,
   listTriggers,
+  readChatSurfaceEnabled,
   toSession,
 } from './client';
 
@@ -108,6 +111,74 @@ describe('ApiError', () => {
     expect(new ApiError(401, 'nope').isUnauthenticated).toBe(true);
     expect(new ApiError(500, 'boom').isUnauthenticated).toBe(false);
     expect(new TransportError('offline')).toBeInstanceOf(TransportError);
+  });
+});
+
+describe('the Chat surface client boundary', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function capability(custom: Record<string, unknown>): Response {
+    return new Response(JSON.stringify({ protocol: 'ag-ui', features: { custom } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  it('enables Chat only for the exact live capability declaration', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(capability({ 'cma:chat': { enabled: true } }))
+      .mockResolvedValueOnce(capability({ 'cma:chat': { enabled: false } }))
+      .mockResolvedValueOnce(capability({ 'cma:chat': { enabled: 'true' } }))
+      .mockResolvedValueOnce(capability({}))
+      .mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(readChatSurfaceEnabled()).resolves.toBe(true);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+  });
+
+  it('passes an exact surface filter through the reference SDK', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ sessions: [valid] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(listSessions('agent')).resolves.toHaveLength(1);
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/sessions?surface=agent',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('creates Chat directly with no profile, geometry, or price fields', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...valid,
+          id: 'chat-new',
+          chat: { worktree_name: 'chat-new', worktree_path: '/work/chat-new', title: null },
+        }),
+        { status: 201, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(createChatSession()).resolves.toMatchObject({
+      id: 'chat-new',
+      chat: { worktreeName: 'chat-new', worktreePath: '/work/chat-new' },
+    });
+    const request = fetch.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(request?.method).toBe('POST');
+    expect(JSON.parse(String(request?.body))).toEqual({ surface: 'chat' });
   });
 });
 

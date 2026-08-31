@@ -302,6 +302,22 @@ fn failure_cause(failure: &ChatHostFailure) -> ChatUnavailableCause {
 }
 
 impl crate::service::SessionService {
+    /// Whether the deployment currently exposes the owner-facing chat surface.
+    ///
+    /// Capability discovery fails closed: an unreadable settings revision
+    /// cannot safely be replaced by shipped defaults because that could expose
+    /// a surface the administrator disabled.
+    pub async fn chat_surface_enabled(&self) -> bool {
+        match self.settings.chat_snapshot().await {
+            Ok(Some(snapshot)) => snapshot.settings.enabled,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%error, "chat capability discovery could not read platform settings");
+                false
+            }
+        }
+    }
+
     /// Return this owner's one usable shared chat host, provisioning it once
     /// when no durable host exists.
     pub(crate) async fn ensure_chat_host(

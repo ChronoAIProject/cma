@@ -67,6 +67,42 @@ const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
   agent: { size: { cpu_millis: 2000, memory_mib: 4096 } },
 }));
 
+const CHAT_SESSIONS = [
+  {
+    id: 'chat_alpha',
+    kernel: 'codex',
+    status: 'ready',
+    cols: 120,
+    rows: 32,
+    last_seq: 4,
+    created_at: '2026-08-20T07:00:00Z',
+    conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/conversation'],
+    chat: {
+      worktree_name: 'chat-alpha',
+      worktree_path: '/work/chat-alpha',
+      title: 'Release readiness',
+      paused_notice: null,
+    },
+  },
+  {
+    id: 'chat_paused',
+    kernel: 'codex',
+    status: 'idle',
+    stop_reason: 'idle_timeout',
+    cols: 120,
+    rows: 32,
+    last_seq: 8,
+    created_at: '2026-08-20T06:30:00Z',
+    conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/conversation'],
+    chat: {
+      worktree_name: 'chat-paused',
+      worktree_path: '/work/chat-paused',
+      title: null,
+      paused_notice: 'Paused after 15 minutes without activity.',
+    },
+  },
+];
+
 const RESOURCE_READING = {
   cpuMillisUsed: 100,
   cpuMillisLimit: 2000,
@@ -116,7 +152,16 @@ async function stub(page) {
         ],
       });
     }
-    if (path === '/api/v1/sessions') return void json({ sessions: SESSIONS });
+    if (path === '/api/v1/agui/capabilities') {
+      return void json({
+        protocol: 'ag-ui',
+        features: { custom: { 'cma:chat': { enabled: true } } },
+      });
+    }
+    if (path === '/api/v1/sessions') {
+      const surface = url.searchParams.get('surface');
+      return void json({ sessions: surface === 'chat' ? CHAT_SESSIONS : SESSIONS });
+    }
     if (path === '/api/v1/kernels') {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
     }
@@ -126,7 +171,7 @@ async function stub(page) {
         revision: 4,
         settings: {
           chat: {
-            enabled: false,
+            enabled: true,
             workspace: {
               repository_url: 'https://github.com/the-omega-institute/trureturing',
               branch: 'dev',
@@ -168,6 +213,77 @@ async function stub(page) {
     }
     return void request.continue();
   });
+}
+
+/** The capability-gated collection switch replaces both the rail and its create action. */
+async function chatSurfaceSwitches(page) {
+  const problems = [];
+  const initial = await page.evaluate(() => {
+    const group = document.querySelector('.sidebar__surfaces');
+    const segments = group === null ? [] : [...group.querySelectorAll('button')];
+    return {
+      role: group?.getAttribute('role'),
+      labels: segments.map((segment) => segment.textContent?.trim()),
+      pressed: segments.map((segment) => segment.getAttribute('aria-pressed')),
+    };
+  });
+  if (initial.role !== 'group') {
+    return ['chat surface: the declared switch is not reachable as a group'];
+  }
+  if (JSON.stringify(initial.labels) !== JSON.stringify(['Chat', 'Agent'])) {
+    problems.push(`chat surface: segments are ${JSON.stringify(initial.labels)}`);
+  }
+  if (JSON.stringify(initial.pressed) !== JSON.stringify(['false', 'true'])) {
+    problems.push(`chat surface: Agent is not the initial selected segment`);
+  }
+
+  if (!(await press(page, 'Chat'))) {
+    return [...problems, 'chat surface: the Chat segment cannot be pressed'];
+  }
+  try {
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.rail__label')?.textContent?.trim() === 'Chats' &&
+        document.querySelector('.sidebar__new')?.textContent?.trim() === 'New Chat',
+      { polling: 'raf', timeout: 5000 },
+    );
+  } catch {
+    problems.push('chat surface: switching did not replace the rail and primary action');
+  }
+  await page.evaluate(() => {
+    document.querySelector('[aria-label="Paused, 1 chat"]')?.click();
+  });
+  await settle(250);
+  const chat = await page.evaluate(() => ({
+    subjects: [...document.querySelectorAll('.row-item__subject')].map((row) =>
+      row.textContent?.trim(),
+    ),
+    active: document.querySelector('[aria-label="Active, 1 chat"]') !== null,
+    paused: document.querySelector('[aria-label="Paused, 1 chat"]') !== null,
+  }));
+  if (
+    JSON.stringify(chat.subjects.sort()) !==
+    JSON.stringify(['Release readiness', 'chat-paused'].sort())
+  ) {
+    problems.push(`chat surface: row subjects are ${JSON.stringify(chat.subjects)}`);
+  }
+  if (!chat.active || !chat.paused) {
+    problems.push('chat surface: the rail is not grouped into one Active and one Paused chat');
+  }
+  if (!(await press(page, 'Agent'))) {
+    return [...problems, 'chat surface: the Agent segment cannot be pressed'];
+  }
+  try {
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.rail__label')?.textContent?.trim() === 'Sessions' &&
+        document.querySelector('.sidebar__new')?.textContent?.trim() === 'New session',
+      { polling: 'raf', timeout: 5000 },
+    );
+  } catch {
+    problems.push('chat surface: switching back did not restore Agent');
+  }
+  return problems;
 }
 
 /** The compact session instrumentation remains two rows at every console width. */
@@ -993,6 +1109,7 @@ async function main() {
 
     const problems = [
       ...(await conversationMetricsStayInTwoRows(page)),
+      ...(await chatSurfaceSwitches(page)),
       ...(await pickerReachable(page)),
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
@@ -1014,7 +1131,7 @@ async function main() {
     console.log(
       'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
         'Developer fits both layouts, session metrics keep two rows, every menu lands inside the window, ' +
-        'Chat settings are discoverable, and profile resources remain visible',
+        'the Chat surface switches rails, Chat settings are discoverable, and profile resources remain visible',
     );
   } finally {
     await close();
