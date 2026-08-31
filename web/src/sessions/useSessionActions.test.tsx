@@ -3,10 +3,12 @@ import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 import {
+  ApiError,
   changePlane,
   createSession,
   deleteSession,
   DeploymentAtCapacity,
+  readSession,
   reviveSession,
   SessionLimitReached,
   stopSession,
@@ -21,6 +23,7 @@ vi.mock('../api/client', async (importOriginal) => {
     changePlane: vi.fn(),
     createSession: vi.fn(),
     deleteSession: vi.fn(),
+    readSession: vi.fn(),
     reviveSession: vi.fn(),
     stopSession: vi.fn(),
   };
@@ -78,6 +81,7 @@ beforeEach(() => {
   vi.mocked(stopSession).mockReset().mockResolvedValue();
   vi.mocked(reviveSession).mockReset().mockResolvedValue(STARTING);
   vi.mocked(deleteSession).mockReset().mockResolvedValue();
+  vi.mocked(readSession).mockReset().mockResolvedValue(PAUSED);
   vi.mocked(changePlane)
     .mockReset()
     .mockResolvedValue({ ...PAUSED, lifecycle: 'rotating' });
@@ -162,5 +166,56 @@ describe('a revive refused at the live-session limit', () => {
     });
     expect(report).not.toHaveBeenCalled();
     expect(refreshAllowance).toHaveBeenCalledOnce();
+  });
+});
+
+describe('permanent deletion convergence', () => {
+  it('keeps a partially deleted session and refreshes it into terminated', async () => {
+    const refusal = new ApiError(503, 'cleanup is still pending');
+    const terminated: Session = {
+      ...PAUSED,
+      lifecycle: 'terminated',
+      stopReason: 'other',
+    };
+    vi.mocked(deleteSession).mockRejectedValueOnce(refusal);
+    vi.mocked(readSession).mockResolvedValueOnce(terminated);
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.removeSession(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([terminated]);
+    expect(report).toHaveBeenCalledWith(
+      refusal,
+      'Deleting the session failed.',
+      'The session is terminated and its history remains available.',
+    );
+  });
+
+  it('does not flash a delete error when an authoritative read confirms it is gone', async () => {
+    vi.mocked(deleteSession).mockRejectedValueOnce(new Error('response connection closed'));
+    vi.mocked(readSession).mockRejectedValueOnce(new ApiError(404, 'session not found'));
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.removeSession(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([]);
+    expect(result.current.activeId).toBeNull();
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('reports uncertainty without claiming a failed delete changed nothing', async () => {
+    const refusal = new Error('request failed');
+    vi.mocked(deleteSession).mockRejectedValueOnce(refusal);
+    vi.mocked(readSession).mockRejectedValueOnce(new Error('refresh failed'));
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.removeSession(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([PAUSED]);
+    expect(report).toHaveBeenCalledWith(
+      refusal,
+      'Deleting the session failed.',
+      'Its current state could not be confirmed. Refresh before trying again.',
+    );
   });
 });

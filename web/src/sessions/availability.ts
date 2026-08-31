@@ -148,11 +148,10 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         canStop: false,
         canRevive: false,
         canDelete: true,
-        // Ended sessions leave the list, because a list of everything anyone
-        // has ever run is not a list of their sessions. The exception is one
-        // that ended by failing: hiding those would answer "where did my
-        // session go" by silently removing the evidence.
-        listed: session.stopReason === 'error',
+        // Terminated has its own rail group. Hiding ordinary terminations before
+        // grouping makes that group contain only failures and makes a partial
+        // permanent-delete failure look as though the session was deleted.
+        listed: true,
         reason:
           session.stopReason === 'error'
             ? 'This session ended because it failed.'
