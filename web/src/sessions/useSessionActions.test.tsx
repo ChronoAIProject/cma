@@ -12,6 +12,7 @@ import {
   reviveSession,
   SessionLimitReached,
   stopSession,
+  terminateSession,
 } from '../api/client';
 import type { Session, SessionLifecycle } from './types';
 import { useSessionActions, type FailureNotice } from './useSessionActions';
@@ -26,6 +27,7 @@ vi.mock('../api/client', async (importOriginal) => {
     readSession: vi.fn(),
     reviveSession: vi.fn(),
     stopSession: vi.fn(),
+    terminateSession: vi.fn(),
   };
 });
 
@@ -79,6 +81,7 @@ function renderActions() {
 beforeEach(() => {
   vi.mocked(createSession).mockReset().mockResolvedValue(STARTING);
   vi.mocked(stopSession).mockReset().mockResolvedValue();
+  vi.mocked(terminateSession).mockReset().mockResolvedValue();
   vi.mocked(reviveSession).mockReset().mockResolvedValue(STARTING);
   vi.mocked(deleteSession).mockReset().mockResolvedValue();
   vi.mocked(readSession).mockReset().mockResolvedValue(PAUSED);
@@ -88,13 +91,14 @@ beforeEach(() => {
 });
 
 describe('refreshing the live-session allowance', () => {
-  it('refreshes after create, stop, revive and delete have each settled', async () => {
+  it('refreshes after create, stop, revive, terminate and delete have each settled', async () => {
     const { result, refreshAllowance } = renderActions();
     await act(() => result.current.actions.start());
     await act(() => result.current.actions.endSession(PAUSED.id));
     await act(() => result.current.actions.reviveSessionById(PAUSED.id));
+    await act(() => result.current.actions.terminateSessionById(PAUSED.id));
     await act(() => result.current.actions.removeSession(PAUSED.id));
-    expect(refreshAllowance).toHaveBeenCalledTimes(4);
+    expect(refreshAllowance).toHaveBeenCalledTimes(5);
   });
 
   it('does not refresh until a creation attempt settles', async () => {
@@ -125,6 +129,35 @@ describe('refreshing the live-session allowance', () => {
     const { result, refreshAllowance } = renderActions();
     await act(() => result.current.actions.changeSessionPlane(PAUSED.id, 'conversation'));
     expect(refreshAllowance).not.toHaveBeenCalled();
+  });
+});
+
+describe('retained termination', () => {
+  it('terminates without deleting and keeps the session selected and listed', async () => {
+    const { result } = renderActions();
+
+    await act(() => result.current.actions.terminateSessionById(PAUSED.id));
+
+    expect(terminateSession).toHaveBeenCalledWith(PAUSED.id);
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(result.current.sessions).toEqual([{ ...PAUSED, lifecycle: 'terminated' }]);
+    expect(result.current.activeId).toBe(PAUSED.id);
+    expect(result.current.focusHistory).toEqual([PAUSED.id]);
+  });
+
+  it('reports a refusal without inventing a terminated lifecycle', async () => {
+    const refusal = new ApiError(409, 'runtime cleanup was refused');
+    vi.mocked(terminateSession).mockRejectedValueOnce(refusal);
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.terminateSessionById(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([PAUSED]);
+    expect(report).toHaveBeenCalledWith(
+      refusal,
+      'Terminating the session failed.',
+      'The session remains available in its current state.',
+    );
   });
 });
 

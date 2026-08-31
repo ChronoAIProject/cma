@@ -7,7 +7,7 @@ import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
  * The promise a session owner is given, as assertions.
  *
  * A session you did not stop stays usable; one you stopped stays readable and
- * can be brought back; one that ended leaves the list. Each of those is a
+ * can be brought back; one that ended remains readable under Terminated. Each is a
  * sentence someone said about how this should behave, and each is one that a
  * plausible refactor could quietly break.
  */
@@ -78,9 +78,19 @@ describe('what a session allows', () => {
     const can = abilitiesFor(session('rotating'));
     expect(can.interactive).toBe(false);
     expect(can.canStop).toBe(false);
+    expect(can.canTerminate).toBe(false);
     expect(can.canDelete).toBe(false);
     expect(can.canRevive).toBe(false);
     expect(can.reason).toMatch(/being moved/i);
+  });
+
+  it('offers retained termination only before a session has ended', () => {
+    for (const lifecycle of ['provisioning', 'ready', 'running', 'idle'] as const) {
+      expect(abilitiesFor(session(lifecycle)).canTerminate, lifecycle).toBe(true);
+    }
+    for (const lifecycle of ['rotating', 'terminated', 'unknown'] as const) {
+      expect(abilitiesFor(session(lifecycle)).canTerminate, lifecycle).toBe(false);
+    }
   });
 
   it('lets a session that is still starting be abandoned', () => {
