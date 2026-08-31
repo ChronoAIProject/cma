@@ -112,6 +112,7 @@ async function stub(page) {
           'manage_own_environment_profiles',
           'read_all_sessions',
           'read_user_directory',
+          'configure_platform',
         ],
       });
     }
@@ -120,6 +121,30 @@ async function stub(page) {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
     }
     if (path === '/api/v1/environment-profiles') return void json(PROFILES);
+    if (path === '/api/v1/admin/settings') {
+      return void json({
+        revision: 4,
+        settings: {
+          chat: {
+            enabled: false,
+            workspace: {
+              repository_url: 'https://github.com/the-omega-institute/trureturing',
+              branch: 'dev',
+            },
+            agent: {
+              model: null,
+              reasoning_effort: 'high',
+              instructions: '',
+              record_tool_bodies: true,
+            },
+            message_prefixes: ['/codex-formalize'],
+            inactivity: { pause_after_seconds: 900 },
+            setup: { commands: [] },
+            host: { size: null, max_threads: 10 },
+          },
+        },
+      });
+    }
     if (path === '/api/v1/agui/events') {
       const threadId = url.searchParams.get('thread_id') ?? 'sesn_alpha';
       const frame = {
@@ -453,6 +478,68 @@ async function selectingLeavesOperations(page) {
   await settle();
   const stuck = await page.evaluate(() => document.querySelector('[class*="operator"]') !== null);
   return stuck ? ['operations: choosing a session left the operator panel on screen'] : [];
+}
+
+/** The capability-gated Chat editor is reachable and carries its complete section contract. */
+async function chatSettingsDiscoverable(page) {
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
+  if (!(await press(page, 'Operations'))) {
+    return ['chat settings: Operations was not offered to a configure_platform caller'];
+  }
+  await ready(page, '.operator__tabs', { label: 'the Operations view switch' });
+  const opened = await page.evaluate(() => {
+    const tab = [...document.querySelectorAll('[role="tab"]')].find(
+      (candidate) => candidate.textContent?.trim() === 'Chat',
+    );
+    tab?.click();
+    return tab !== undefined;
+  });
+  if (!opened) {
+    return ['chat settings: no Chat tab under configure_platform'];
+  }
+  await ready(page, 'form.chat-settings', { label: 'the Chat settings form' });
+
+  const expected = [
+    'Workspace',
+    'Agent',
+    'Messages',
+    'Setup',
+    'Lifetime',
+    'Host resources',
+    'Enabled',
+  ];
+  const seen = await page.evaluate(() => ({
+    sections: [...document.querySelectorAll('.chat-settings__section > h3')].map((heading) =>
+      heading.textContent?.trim(),
+    ),
+    repositoryField:
+      document.querySelector('form.chat-settings')?.textContent?.includes('Repository URL') ===
+      true,
+    fixedAccess:
+      document
+        .querySelector('form.chat-settings')
+        ?.textContent?.includes('Chat sessions run with full access (unrestricted).') === true,
+  }));
+  const problems = [];
+  if (JSON.stringify(seen.sections) !== JSON.stringify(expected)) {
+    problems.push(`chat settings: section order is ${JSON.stringify(seen.sections)}`);
+  }
+  if (!seen.repositoryField) {
+    problems.push('chat settings: the public repository field is absent');
+  }
+  if (!seen.fixedAccess) {
+    problems.push('chat settings: the fixed unrestricted-access fact is absent');
+  }
+
+  // Leave Operations so the remaining signed-in checks begin on the ordinary session surface.
+  await page.evaluate(() => {
+    document.querySelector('.row-item')?.click();
+  });
+  await settle();
+  return problems;
 }
 
 /** Wait for AppFrame's observed width and animated tracks to reach a new viewport. */
@@ -909,6 +996,7 @@ async function main() {
       ...(await pickerReachable(page)),
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
+      ...(await chatSettingsDiscoverable(page)),
       ...(await developerSurface(page)),
       ...(await everyMenuLands(page)),
       ...(await accountMenuReads(page)),
@@ -926,7 +1014,7 @@ async function main() {
     console.log(
       'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
         'Developer fits both layouts, session metrics keep two rows, every menu lands inside the window, ' +
-        'and profile resources remain visible',
+        'Chat settings are discoverable, and profile resources remain visible',
     );
   } finally {
     await close();

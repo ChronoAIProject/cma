@@ -63,12 +63,14 @@ describe('the view switch', () => {
     expect(await screen.findByText(/nothing has been recorded yet/i)).toBeInTheDocument();
   });
 
-  it('offers a configure-only caller Operations with only Settings', async () => {
+  it('offers a configure-only caller both public settings editors', async () => {
     open(['configure_platform']);
     const tabs = screen.getAllByRole('tab');
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]).toHaveTextContent('Settings');
+    expect(tabs).toHaveLength(2);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Settings', 'Chat']);
     expect(await screen.findByRole('form', { name: 'Platform settings' })).toBeInTheDocument();
+    await show(/^chat$/i);
+    expect(await screen.findByRole('form', { name: 'Chat settings' })).toBeInTheDocument();
   });
 
   it('names the selected view by more than its colour', async () => {
@@ -92,6 +94,19 @@ describe('the view switch', () => {
     await user.click(screen.getByRole('tab', { name: 'People' }));
     await user.click(screen.getByRole('tab', { name: 'Settings' }));
     expect(screen.getByLabelText(/granted-services heading/i)).toHaveValue('Unsaved heading');
+  });
+
+  it('keeps an unsaved chat draft across view switches', async () => {
+    const user = userEvent.setup();
+    open(['read_user_directory', 'configure_platform']);
+    await user.click(screen.getByRole('tab', { name: 'Chat' }));
+    const branch = await screen.findByLabelText('Branch');
+    await user.clear(branch);
+    await user.type(branch, 'unsaved-chat-branch');
+
+    await user.click(screen.getByRole('tab', { name: 'People' }));
+    await user.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(screen.getByLabelText('Branch')).toHaveValue('unsaved-chat-branch');
   });
 });
 

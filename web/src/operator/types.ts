@@ -1,3 +1,5 @@
+import type { ChatSettings, StoredChatSettings } from '@chronoai/cma-sdk';
+
 /**
  * The operator surface, as the console models it.
  *
@@ -221,6 +223,15 @@ export interface OperatorStore {
     expectedRevision: number,
     settings: PlatformSettings,
   ): Promise<StoredPlatformSettings>;
-  /** Restore shipped briefing prose without changing another setting. */
-  resetPlatformBriefing(expectedRevision: number): Promise<StoredPlatformSettings>;
+  /** Restore shipped briefing prose and remove Chat, preserving sealed and capacity policy. */
+  resetPlatformSettings(expectedRevision: number): Promise<StoredPlatformSettings>;
+  /** Read deployment-owned chat settings and their conditional-write revision. */
+  readChatSettings(): Promise<StoredChatSettings>;
+  /** Replace or remove only chat settings under the platform revision CAS. */
+  changeChatSettings(
+    expectedRevision: number,
+    settings: ChatSettings | null,
+  ): Promise<StoredChatSettings>;
 }
+
+export type { ChatSettings, StoredChatSettings };
