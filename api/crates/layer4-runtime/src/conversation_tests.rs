@@ -47,6 +47,21 @@ fn write_rollout(home: &Path, day: &str, name: &str, body: &str) -> PathBuf {
     path
 }
 
+async fn serve_runtime(
+    state: crate::AppState,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the conversation fixture binds");
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, crate::runtime_router(state))
+            .await
+            .expect("the conversation fixture serves");
+    });
+    (address, server)
+}
+
 #[test]
 fn a_session_that_never_ran_has_nothing_to_carry() {
     // Not a failure: a pod may be replaced before anyone has used it, and
@@ -101,6 +116,41 @@ fn the_newest_conversation_is_the_one_carried() {
             .expect("present"),
     );
     assert_eq!(payload, b"new");
+}
+
+#[test]
+fn a_conversation_id_selects_only_the_rollout_that_names_itself_that_way() {
+    let dir = Home::new("by-id");
+    for (name, id, turn) in [
+        ("rollout-a.jsonl", "conversation-a", 1),
+        ("rollout-b.jsonl", "conversation-b", 2),
+        ("rollout-c.jsonl", "conversation-c", 3),
+    ] {
+        write_rollout(
+            dir.path(),
+            "2026/08/14",
+            name,
+            &format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\"}}}}\n{{\"turn\":{turn}}}\n"
+            ),
+        );
+    }
+
+    let (path, payload) = carried(
+        &capture_by_id(dir.path(), SESSIONS_DIR, "conversation-b")
+            .expect("the rollout tree is readable")
+            .expect("the requested conversation exists"),
+    );
+    assert_eq!(
+        path.as_deref(),
+        Some(Path::new("2026/08/14/rollout-b.jsonl"))
+    );
+    assert!(String::from_utf8(payload).unwrap().contains("\"turn\":2"));
+    assert!(
+        capture_by_id(dir.path(), SESSIONS_DIR, "conversation-missing")
+            .expect("the rollout tree is readable")
+            .is_none()
+    );
 }
 
 #[test]
@@ -321,4 +371,135 @@ fn a_carried_conversation_still_names_itself_through_its_envelope() {
         restored.session_id.as_deref(),
         Some("019ed5ef-b5eb-7f60-96d1-8b8202fa7eff")
     );
+}
+
+#[tokio::test]
+async fn the_public_capture_route_selects_by_id_and_preserves_newest_without_one() {
+    let home = Home::new("capture-route");
+    for (name, id) in [
+        ("rollout-a.jsonl", "conversation-a"),
+        ("rollout-b.jsonl", "conversation-b"),
+        ("rollout-c.jsonl", "conversation-c"),
+    ] {
+        let path = write_rollout(
+            home.path(),
+            "2026/08/14",
+            name,
+            &format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\"}}}}\n{id}\n"),
+        );
+        if id == "conversation-c" {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+                .unwrap();
+        }
+    }
+    let mut state = crate::AppState::for_test(&[]);
+    state.home = home.path().to_path_buf();
+    state.snapshot_dir = Some(SESSIONS_DIR.into());
+    let (address, server) = serve_runtime(state).await;
+    let client = reqwest::Client::new();
+
+    let readiness: serde_json::Value = client
+        .get(format!("http://{address}/readyz"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(readiness["conversationSlots"]["max"], 16);
+
+    let selected = client
+        .get(format!("http://{address}/runtime/conversation"))
+        .query(&[("conversation", "conversation-b")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(selected.status(), axum::http::StatusCode::OK);
+    let (_, selected) = carried(&selected.bytes().await.unwrap());
+    assert!(String::from_utf8(selected)
+        .unwrap()
+        .contains("conversation-b"));
+
+    let missing = client
+        .get(format!("http://{address}/runtime/conversation"))
+        .query(&[("conversation", "missing")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), axum::http::StatusCode::NOT_FOUND);
+
+    let newest = client
+        .get(format!("http://{address}/runtime/conversation"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(newest.status(), axum::http::StatusCode::OK);
+    let (_, newest) = carried(&newest.bytes().await.unwrap());
+    assert!(String::from_utf8(newest)
+        .unwrap()
+        .contains("conversation-c"));
+    server.abort();
+
+    use axum::extract::{Query, State};
+    use axum::response::IntoResponse as _;
+    let unsupported = crate::conversation_snapshot(
+        State(crate::AppState::for_test(&[])),
+        Query(crate::ConversationSnapshotParams::default()),
+    )
+    .await
+    .into_response();
+    assert_eq!(
+        unsupported.status(),
+        axum::http::StatusCode::NOT_IMPLEMENTED
+    );
+}
+
+#[tokio::test]
+async fn several_carries_restore_before_attach_and_every_late_carry_is_refused() {
+    let home = Home::new("multi-restore-route");
+    let mut state = crate::AppState::for_test(&["/bin/cat"]);
+    state.home = home.path().to_path_buf();
+    state.snapshot_dir = Some(SESSIONS_DIR.into());
+    state.snapshot_named = true;
+    let inspected = state.clone();
+    let (address, server) = serve_runtime(state).await;
+    let client = reqwest::Client::new();
+
+    for index in 0..3 {
+        let id = format!("conversation-{index}");
+        let path = PathBuf::from(format!("2026/08/14/rollout-{index}.jsonl"));
+        let body = format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\"}}}}\n");
+        let response = client
+            .post(format!("http://{address}/runtime/conversation"))
+            .body(carry::seal(&path, body.as_bytes()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(
+            std::fs::read(home.path().join(SESSIONS_DIR).join(path)).unwrap(),
+            body.as_bytes()
+        );
+    }
+
+    let bridge = inspected
+        .conversation_bridge(crate::SlotId::named("attached"))
+        .await
+        .expect("the first slot attaches after every carry is durable");
+    let refused = client
+        .post(format!("http://{address}/runtime/conversation"))
+        .body(carry::seal(
+            Path::new("late.jsonl"),
+            b"{\"payload\":{\"id\":\"late\"}}\n",
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), axum::http::StatusCode::CONFLICT);
+    drop(bridge);
+    server.abort();
 }
