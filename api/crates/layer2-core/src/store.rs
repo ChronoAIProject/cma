@@ -95,6 +95,9 @@ pub struct SessionRecord {
     /// Kept off the public `Session`: clients receive the Launch/session link,
     /// while only the control plane may resolve the machine-owned object.
     pub trigger_origin: Option<TriggerSessionOrigin>,
+    /// Shared-host and worktree authority for a deployment-managed chat thread.
+    /// Kept private so a public session cannot authorize host lifecycle work.
+    pub chat_origin: Option<ChatOrigin>,
     /// Durable initial Trigger prompt reservation, absent on ordinary sessions.
     pub initial_prompt: Option<InitialPromptDispatch>,
     /// Unique owner of an in-progress runtime handover.
@@ -148,6 +151,7 @@ impl SessionRecord {
             runtime_id: None,
             context_ref: None,
             trigger_origin: None,
+            chat_origin: None,
             initial_prompt: None,
             rotation_claim: None,
             pending_handover: None,
@@ -183,6 +187,25 @@ impl SessionRecord {
             crate::PromptDeliveryState::Completed | crate::PromptDeliveryState::Failed
         ))
         .then_some(state)
+    }
+}
+
+/// Durable private provenance for one chat thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatOrigin {
+    pub host_id: crate::ChatHostId,
+    pub worktree_name: String,
+    pub worktree_path: String,
+}
+
+impl ChatOrigin {
+    pub fn public_projection(&self) -> crate::ChatSession {
+        crate::ChatSession {
+            worktree_name: self.worktree_name.clone(),
+            worktree_path: self.worktree_path.clone(),
+            title: None,
+            paused_notice: None,
+        }
     }
 }
 
@@ -462,12 +485,31 @@ pub struct SessionListQuery {
     pub page: PageRequest,
     /// Exact lifecycle state to retain, or every state when absent.
     pub status: Option<SessionStatus>,
+    /// Surface family to retain, or both ordinary and chat sessions when absent.
+    pub surface: Option<SessionSurfaceFilter>,
+}
+
+/// Public listing families. `Agent` is the absence of a managed surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSurfaceFilter {
+    Chat,
+    Agent,
 }
 
 impl SessionListQuery {
     /// Build one bounded session listing request.
     pub fn new(page: PageRequest, status: Option<SessionStatus>) -> Self {
-        Self { page, status }
+        Self {
+            page,
+            status,
+            surface: None,
+        }
+    }
+
+    pub fn with_surface(mut self, surface: Option<SessionSurfaceFilter>) -> Self {
+        self.surface = surface;
+        self
     }
 }
 
@@ -1157,7 +1199,7 @@ pub trait SessionStore: Send + Sync {
             .scan_for(owner)
             .await?
             .into_iter()
-            .filter(|record| record.session.wants_runtime())
+            .filter(|record| record.chat_origin.is_none() && record.session.wants_runtime())
             .count() as u32)
     }
 
@@ -1754,6 +1796,7 @@ mod tests {
 
     fn session() -> Session {
         Session {
+            chat: None,
             id: SessionId("sesn_1".into()),
             owner: SubjectId("subject-a".into()),
             kernel: KernelId::new("example-runtime"),

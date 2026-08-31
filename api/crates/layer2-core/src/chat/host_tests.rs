@@ -82,6 +82,7 @@ fn chat_unavailability_classifies_only_retryable_causes_as_transient() {
         ChatUnavailableCause::NotConfigured,
         ChatUnavailableCause::HostStoreUnavailable,
         ChatUnavailableCause::Provisioning,
+        ChatUnavailableCause::RevivePending,
         ChatUnavailableCause::ProvisioningFailed {
             phase: ChatProvisioningPhase::WorkspaceSource,
             command_index: None,

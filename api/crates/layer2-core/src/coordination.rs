@@ -363,6 +363,7 @@ mod tests {
 
     fn record() -> crate::store::SessionRecord {
         let mut record = crate::store::SessionRecord::new(Session {
+            chat: None,
             id: SessionId("sesn_coordination".into()),
             owner: SubjectId("subject-coordination".into()),
             kernel: KernelId::new("fake"),

@@ -217,19 +217,20 @@ pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
 pub use session::{
-    trigger_session_id, CallerCredential, RecoveryState, RuntimeLossCause, Session,
-    SessionCredentialAuthority, SessionSpec, SessionStatus, StopReason, TriggerSessionOrigin,
+    trigger_session_id, CallerCredential, ChatSession, RecoveryState, RuntimeLossCause, Session,
+    SessionCredentialAuthority, SessionSpec, SessionStatus, SessionSurface, StopReason,
+    TriggerSessionOrigin,
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use sponsored_model_authority::SponsoredModelAuthorityError;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, HandoverSnapshot,
-    HandoverStore, InitialPromptDispatch, OperationClaim, OperationReservation, OperationStore,
-    Page, PageCursor, PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery,
-    SessionRecord, SessionStore, SessionWorkspaceSource, SkillPack, SkillPackDigest,
-    SkillPackState, SkillPackStore, SkillSource, StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE,
-    MAX_PAGE_SIZE,
+    ActivityStore, ChatOrigin, ContextStore, CredentialSource, EnvironmentProfileStore,
+    HandoverSnapshot, HandoverStore, InitialPromptDispatch, OperationClaim, OperationReservation,
+    OperationStore, Page, PageCursor, PageRequest, PendingHandover, PendingHandoverTarget,
+    SessionListQuery, SessionRecord, SessionStore, SessionSurfaceFilter, SessionWorkspaceSource,
+    SkillPack, SkillPackDigest, SkillPackState, SkillPackStore, SkillSource, StoreError,
+    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{ChatHostStore, PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

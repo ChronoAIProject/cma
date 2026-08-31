@@ -547,7 +547,10 @@ impl TriggerSessionEffectPort for SessionServiceEffectPort {
         launch: &Launch,
         request: &layer3_adapter::WorkspaceCheckpointRequest,
     ) -> Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError> {
-        let session = launch.session.as_ref().ok_or(CoreError::InvalidState)?;
+        let session = launch
+            .session
+            .as_ref()
+            .ok_or_else(CoreError::invalid_state)?;
         self.0
             .checkpoint_trigger_workspace(
                 &session.session_id,
@@ -10736,6 +10739,7 @@ pub(in crate::trigger) mod tests {
             granted_services: Some(Vec::new()),
             granted_skills: Some(Vec::new()),
             pricing: None,
+            chat: None,
             created_at: "2026-08-27T00:00:00Z".into(),
         }
     }

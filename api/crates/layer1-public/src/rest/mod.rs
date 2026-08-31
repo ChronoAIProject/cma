@@ -186,6 +186,10 @@ impl InterfaceProfile for RestInterface {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
+    /// Deployment-managed surface. `chat` is the only managed surface.
+    #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::SessionSurface>)]
+    surface: Option<layer2_core::SessionSurface>,
     /// Declared only so it can be refused in words a caller can act on.
     ///
     /// Left to `deny_unknown_fields`, this would be an ordinary schema
@@ -226,6 +230,7 @@ pub struct CreateSessionRequest {
 /// What a create request means, once it has been checked.
 #[derive(Debug)]
 pub struct CreateSessionParts {
+    pub surface: Option<layer2_core::SessionSurface>,
     pub geometry: Option<TerminalGeometry>,
     pub environment_profile: Option<String>,
     pub quoted_rate_card: Option<String>,
@@ -261,12 +266,22 @@ impl CreateSessionRequest {
                     .to_string(),
             ));
         }
+        if self.surface == Some(layer2_core::SessionSurface::Chat)
+            && self.environment_profile.is_some()
+        {
+            return Err(CoreError::InvalidRequest(
+                "surface 'chat' cannot be combined with 'environment_profile': deployment chat \
+                 settings are the complete configuration for a chat thread"
+                    .to_string(),
+            ));
+        }
         // Geometry travels as a pair or not at all: half of it is not a size.
         let geometry = match (self.cols, self.rows) {
             (Some(c), Some(r)) => Some(TerminalGeometry::new(c, r).map_err(CoreError::from)?),
             _ => None,
         };
         Ok(CreateSessionParts {
+            surface: self.surface,
             geometry,
             environment_profile: self.environment_profile,
             quoted_rate_card: self.quoted_rate_card,
@@ -333,6 +348,9 @@ pub struct SessionView {
     #[schema(value_type = Option<openapi_shapes::StopReason>)]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
+    /// Worktree facts for a deployment-managed chat thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat: Option<ChatSessionView>,
     /// How this session's agent was configured, settled when it was created.
     ///
     /// Read from the session rather than from the profile it came from: a
@@ -388,6 +406,27 @@ pub struct SessionView {
     /// omitted rather than inviting a client to draw a free session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pricing: Option<SessionPricingView>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct ChatSessionView {
+    worktree_name: String,
+    worktree_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paused_notice: Option<String>,
+}
+
+impl From<layer2_core::ChatSession> for ChatSessionView {
+    fn from(chat: layer2_core::ChatSession) -> Self {
+        Self {
+            worktree_name: chat.worktree_name,
+            worktree_path: chat.worktree_path,
+            title: chat.title,
+            paused_notice: chat.paused_notice,
+        }
+    }
 }
 
 /// A session response that has passed through every public projection step.
@@ -539,6 +578,7 @@ impl From<Session> for SessionView {
             recovery_state: s.recovery_state,
             stop_reason: s.stop_reason,
             kernel: s.kernel.0,
+            chat: s.chat.map(ChatSessionView::from),
             agent: AgentView {
                 model: s.options.model.clone(),
                 permission: s.options.permission,
@@ -1257,6 +1297,7 @@ async fn create(
             .create_session(
                 &caller,
                 SessionSpec {
+                    surface: parts.surface,
                     environment_profile: parts
                         .environment_profile
                         .map(layer2_core::EnvironmentProfileId),
@@ -1308,6 +1349,7 @@ async fn create(
     tag = "sessions",
     params(
         ("status" = Option<String>, Query),
+        ("surface" = Option<openapi_shapes::SessionSurfaceFilter>, Query, description = "Session family: chat or agent"),
         ("limit" = Option<u32>, Query),
         ("cursor" = Option<String>, Query)
     ),

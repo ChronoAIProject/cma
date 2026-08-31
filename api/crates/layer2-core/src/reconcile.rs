@@ -165,6 +165,9 @@ impl SessionService {
                 }
             };
             for record in &records {
+                if record.chat_origin.is_some() {
+                    continue;
+                }
                 self.reconcile_terminal_skill_pack_cleanup(record).await;
                 self.discard_stale_coordinated_entry(record).await;
                 self.reclaim_cleanup_debts(record, &mut reclaimed).await;
@@ -215,6 +218,12 @@ impl SessionService {
                 }
             };
             for record in records {
+                if record.chat_origin.is_some() {
+                    if self.reconcile_chat_thread(&record).await {
+                        reclaimed.readopted_sessions += 1;
+                    }
+                    continue;
+                }
                 if !record.session.wants_runtime() {
                     continue;
                 }
@@ -233,6 +242,67 @@ impl SessionService {
             );
         }
         reclaimed
+    }
+
+    /// Reconnect a thread only to the exact active shared host. Host recovery,
+    /// pause, rotation, and loss remain exclusively owned by the host aggregate.
+    async fn reconcile_chat_thread(self: &Arc<Self>, record: &SessionRecord) -> bool {
+        if !record.session.wants_runtime()
+            || self.entries.read().await.contains_key(&record.session.id)
+        {
+            return false;
+        }
+        let Some(origin) = record.chat_origin.as_ref() else {
+            return false;
+        };
+        let Some(store) = self.chat_hosts.as_ref() else {
+            tracing::warn!(
+                session_id = %record.session.id,
+                "chat thread reconciliation deferred because host storage is unavailable"
+            );
+            return false;
+        };
+        let host = match store.get(&origin.host_id).await {
+            Ok(Some(host)) => host,
+            Ok(None) => {
+                tracing::warn!(
+                    session_id = %record.session.id,
+                    chat_host = %origin.host_id,
+                    "chat thread reconciliation deferred because its host record is absent"
+                );
+                return false;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %record.session.id,
+                    %error,
+                    "chat thread reconciliation deferred because its host could not be read"
+                );
+                return false;
+            }
+        };
+        if host.status != crate::ChatHostStatus::Active
+            || host.kernel != record.session.kernel
+            || host.runtime_id != record.runtime_id
+            || !host
+                .threads
+                .iter()
+                .any(|slot| slot.session_id == record.session.id && !slot.removed)
+        {
+            return false;
+        }
+        match self.readopt(record).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %record.session.id,
+                    chat_host = %origin.host_id,
+                    %error,
+                    "active chat thread could not be reconnected"
+                );
+                false
+            }
+        }
     }
 
     /// Replay terminal object cleanup from the durable owner row.
@@ -2276,6 +2346,7 @@ impl SessionService {
         let geometry = starting.session.geometry;
         let rotation_claim = starting.rotation_claim.clone();
         let spec = SessionSpec {
+            surface: None,
             geometry: Some(geometry),
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),
@@ -2559,6 +2630,7 @@ impl SessionService {
         let geometry = starting.session.geometry;
         let rotation_claim = starting.rotation_claim.clone();
         let spec = SessionSpec {
+            surface: None,
             geometry: Some(geometry),
             options: starting.session.options.clone(),
             environment_profile: starting.session.environment_profile.clone(),

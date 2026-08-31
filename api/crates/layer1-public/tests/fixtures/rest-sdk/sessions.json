@@ -4,6 +4,12 @@
     "status": "ready",
     "recovery_state": "normal",
     "kernel": "codex",
+    "chat": {
+      "worktree_name": "chat-3",
+      "worktree_path": "/workspace/chat-3",
+      "title": "Fixture chat",
+      "paused_notice": "Paused after inactivity"
+    },
     "agent": {
       "model": "gpt-5",
       "permission": "guarded",
