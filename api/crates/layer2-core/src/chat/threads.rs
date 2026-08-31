@@ -33,7 +33,63 @@ fn thread_failure(retryable: bool) -> CoreError {
     })
 }
 
+/// Compose the exact text delivered to a chat runtime.
+///
+/// Prefix validation belongs to deployment settings. This boundary only
+/// preserves their configured order and adds the one separating space each
+/// prefix contributes before the owner's text.
+pub(crate) fn compose_chat_message(prefixes: &[String], text: &str) -> String {
+    if prefixes.is_empty() {
+        return text.to_owned();
+    }
+
+    let mut effective = prefixes.join(" ");
+    effective.push(' ');
+    effective.push_str(text);
+    effective
+}
+
 impl SessionService {
+    /// Resolve a prompt against the immutable settings snapshot that owns its
+    /// chat thread. Ordinary sessions are deliberately an exact identity.
+    pub(crate) async fn effective_prompt_text(
+        &self,
+        record: &SessionRecord,
+        text: &str,
+    ) -> Result<String, CoreError> {
+        let Some(origin) = record.chat_origin.as_ref() else {
+            return Ok(text.to_owned());
+        };
+        let store = self
+            .chat_hosts
+            .as_ref()
+            .ok_or_else(host_store_unavailable)?;
+        let host = store
+            .get(&origin.host_id)
+            .await
+            .map_err(|_| host_store_unavailable())?
+            .ok_or_else(|| unavailable(ChatUnavailableCause::Retired))?;
+        if host.owner != record.session.owner {
+            return Err(CoreError::Forbidden);
+        }
+        let retained = host.threads.iter().any(|slot| {
+            slot.session_id == record.session.id
+                && slot.worktree_name == origin.worktree_name
+                && slot.worktree_path == origin.worktree_path
+                && !slot.removed
+        });
+        if !retained {
+            return Err(CoreError::RuntimeUnavailable(
+                "the chat host no longer contains this thread allocation".into(),
+            ));
+        }
+
+        Ok(compose_chat_message(
+            &host.pinned_settings.settings.message_prefixes,
+            text,
+        ))
+    }
+
     /// Create one conversation and worktree on the owner's shared chat host.
     pub(crate) async fn create_chat_thread(
         self: &Arc<Self>,
