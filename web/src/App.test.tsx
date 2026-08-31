@@ -146,6 +146,7 @@ let allowanceReads = 0;
 let reviveProblem: { readonly status: number; readonly body: unknown } | null = null;
 let deleteResponse: Promise<Response> | null = null;
 let deleteRequested = false;
+let terminateRequested = false;
 
 /** `count` running sessions, distinguishable by start time as the rail shows them. */
 function seedSessions(count: number): void {
@@ -183,6 +184,7 @@ beforeEach(() => {
   reviveProblem = null;
   deleteResponse = null;
   deleteRequested = false;
+  terminateRequested = false;
   FakeEventStream.outcome = 'ready';
   FakeEventStream.signIn = null;
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -237,6 +239,16 @@ beforeEach(() => {
       if (method === 'DELETE') {
         deleteRequested = true;
         return deleteResponse ?? new Response(null, { status: 204 });
+      }
+      if (path.endsWith('/terminate') && method === 'POST') {
+        terminateRequested = true;
+        const id = decodeURIComponent(path.split('/').at(-2) ?? '');
+        listing = listing.map((candidate) =>
+          candidate.id === id
+            ? { ...candidate, status: 'terminated', stop_reason: 'user_terminated' }
+            : candidate,
+        );
+        return new Response(null, { status: 204 });
       }
       if (path === '/api/v1/sessions' && method === 'POST') {
         created += 1;
@@ -851,6 +863,32 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.queryByRole('tab')).toBeNull();
     });
+  });
+
+  it('retains a terminated session in its rail group across a reload', async () => {
+    seedSessions(1);
+    const user = userEvent.setup();
+    const first = await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^terminate session/i }));
+    const confirmation = screen.getByRole('dialog', { name: 'Terminate this session?' });
+    await user.click(within(confirmation).getByRole('button', { name: /^terminate session$/i }));
+
+    await waitFor(() => {
+      expect(terminateRequested).toBe(true);
+      expect(screen.getByRole('button', { name: /^Terminated, 1 session/i })).toBeInTheDocument();
+    });
+    expect(deleteRequested).toBe(false);
+
+    first.unmount();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: /^Terminated, 1 session/i }));
+    expect(
+      within(screen.getByRole('tablist', { name: 'Terminated' })).getAllByRole('tab'),
+    ).toHaveLength(1);
   });
 
   it('restores the owner-visible session named by a canonical deep link', async () => {

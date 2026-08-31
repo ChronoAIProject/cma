@@ -151,7 +151,7 @@ function session(lifecycle: SessionLifecycle, extra: Partial<Session> = {}): Ses
 function renderActions(
   lifecycle: SessionLifecycle,
   extra: Partial<Session> = {},
-  handlers: { onDelete?: () => void } = {},
+  handlers: { onTerminate?: () => void; onDelete?: () => void } = {},
 ) {
   return render(
     <SessionActions
@@ -159,6 +159,7 @@ function renderActions(
       onReconnect={vi.fn()}
       onRevive={vi.fn()}
       onStop={vi.fn()}
+      onTerminate={handlers.onTerminate ?? vi.fn()}
       onDelete={handlers.onDelete ?? vi.fn()}
       onDetails={vi.fn()}
     />,
@@ -202,6 +203,7 @@ describe('the session header', () => {
             onReconnect={vi.fn()}
             onRevive={vi.fn()}
             onStop={vi.fn()}
+            onTerminate={vi.fn()}
             onDelete={vi.fn()}
             onDetails={vi.fn()}
           />
@@ -283,6 +285,7 @@ describe('the session header', () => {
         onReconnect={vi.fn()}
         onRevive={vi.fn()}
         onStop={onStop}
+        onTerminate={vi.fn()}
         onDelete={vi.fn()}
         onDetails={vi.fn()}
       />,
@@ -290,6 +293,22 @@ describe('the session header', () => {
     await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
     await user.click(screen.getByRole('menuitem', { name: /pause session/i }));
     expect(onStop).toHaveBeenCalled();
+  });
+
+  it('confirms retained termination and explains where the history remains', async () => {
+    const user = userEvent.setup();
+    const onTerminate = vi.fn();
+    renderActions('running', {}, { onTerminate });
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^terminate session/i }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Terminate this session?' });
+    expect(dialog).toHaveTextContent(/cannot be resumed/i);
+    expect(dialog).toHaveTextContent(/remain under Terminated until deleted/i);
+    expect(within(dialog).queryByRole('checkbox')).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: /^terminate session$/i }));
+    expect(onTerminate).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -331,6 +350,7 @@ describe('the session header', () => {
         [/^resume/i, can.canRevive],
         [/^reconnect/i, can.canReconnect],
         [/^pause session/i, can.canStop],
+        [/^terminate session/i, can.canTerminate],
         [/^delete/i, can.canDelete],
       ];
       for (const [name, may] of allowed) {
