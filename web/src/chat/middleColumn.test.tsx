@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Console } from '../Console';
 import { ConversationSurface } from './ConversationSurface';
 import {
@@ -147,5 +147,46 @@ describe('a permanent event-stream refusal', () => {
     expect(failure).toHaveTextContent(/HTTP 404/i);
     expect(failure).toHaveTextContent(/session no longer exists/i);
     expect(failure).not.toHaveTextContent(/reconnect/i);
+  });
+
+  it('does not announce a transport refusal caused by an intentional lifecycle action', async () => {
+    const session = conversationSession('sesn_ending');
+    let rejectHistory!: (cause: unknown) => void;
+    const history = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectHistory = reject;
+        }),
+    );
+    const transport: AguiTransport = {
+      open: () => () => {},
+      history,
+    };
+
+    const { rerender } = render(
+      <ConversationSurface
+        session={session}
+        capabilities={session.capabilities}
+        transport={transport}
+        suppressConnectionFailure={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(history).toHaveBeenCalled();
+    });
+
+    rerender(
+      <ConversationSurface
+        session={session}
+        capabilities={session.capabilities}
+        transport={transport}
+        suppressConnectionFailure
+      />,
+    );
+    await act(async () => {
+      rejectHistory(new ApiError(404, 'this session has just ended', 'not_found'));
+    });
+
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
