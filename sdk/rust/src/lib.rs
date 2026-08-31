@@ -43,6 +43,7 @@
 mod client;
 mod error;
 mod event;
+mod settings;
 mod stream;
 mod triggers;
 mod types;
@@ -77,6 +78,10 @@ pub use error::{Error, Result};
 pub use event::{
     AvailableCommand, ConfigOption, Event, EventKind, PlanStep, ProvisioningStage,
     RuntimeLossCause, SessionPlane, ToolBody,
+};
+pub use settings::{
+    ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSetup,
+    ChatWorkspaceSource, StoredChatSettings,
 };
 pub use stream::EventStream;
 pub use triggers::*;

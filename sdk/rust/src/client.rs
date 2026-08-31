@@ -14,10 +14,11 @@ use reqwest::{Method, Response, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::settings::SettingsEnvelope;
 use crate::{
-    ApprovalDecision, Conformance, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
-    PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session, SessionId, SessionInput,
-    SessionPageRequest, TerminalGeometry, Usage,
+    ApprovalDecision, ChatSettings, Conformance, CreateSessionRequest, Error, EventStream,
+    MAX_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session,
+    SessionId, SessionInput, SessionPageRequest, StoredChatSettings, TerminalGeometry, Usage,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -350,6 +351,38 @@ impl Client {
             })
             .await?;
         conformance.validate()
+    }
+
+    /// Read the deployment-owned chat setting and conditional-write revision.
+    pub async fn read_chat_settings(&self) -> Result<StoredChatSettings> {
+        let envelope: SettingsEnvelope = self
+            .request_json(Method::GET, &["admin", "settings"], None, StatusCode::OK)
+            .await?;
+        envelope.into_stored()
+    }
+
+    /// Replace only the chat setting under the platform settings revision CAS.
+    pub async fn change_chat_settings(
+        &self,
+        expected_revision: u64,
+        chat: Option<&ChatSettings>,
+    ) -> Result<StoredChatSettings> {
+        if let Some(chat) = chat {
+            chat.validate()?;
+        }
+        let body = serde_json::json!({
+            "expected_revision": expected_revision,
+            "chat": chat,
+        });
+        let envelope: SettingsEnvelope = self
+            .request_json(
+                Method::PATCH,
+                &["admin", "settings"],
+                Some(body),
+                StatusCode::OK,
+            )
+            .await?;
+        envelope.into_stored()
     }
 
     /// Create a session.

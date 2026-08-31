@@ -2209,6 +2209,7 @@ exists:
 {
   "revision": 12,
   "settings": {
+    "chat": null,
     "briefing": {
       "before": [
         "# Working in this session",
@@ -2249,6 +2250,7 @@ exists:
     "live_sessions": 4
   },
   "previous": {
+    "chat": null,
     "briefing": {
       "before": ["# Working in this session"],
       "reach_heading": "## Granted services",
@@ -2308,6 +2310,7 @@ Content-Type: application/json
 {
   "expected_revision": 12,
   "settings": {
+    "chat": null,
     "briefing": {
       "before": ["# Working in this session"],
       "reach_heading": "## What you can reach",
@@ -2411,6 +2414,7 @@ as `GET`. The object it replaced becomes `previous`:
 {
   "revision": 13,
   "settings": {
+    "chat": null,
     "briefing": {
       "before": [
         "# Working in this session",
@@ -2451,6 +2455,7 @@ as `GET`. The object it replaced becomes `previous`:
     "live_sessions": 5
   },
   "previous": {
+    "chat": null,
     "briefing": {
       "before": [
         "# Working in this session",
@@ -2493,15 +2498,71 @@ as `GET`. The object it replaced becomes `previous`:
 }
 ```
 
-The four settings accepted by `PATCH` have distinct replacement rules.
+The five settings accepted by `PATCH` have distinct replacement rules.
 `pricing` is accepted only inside the complete document sent to `PUT`:
 
 | Setting | PATCH rule |
 |---|---|
+| `chat` | The object replaces the complete Chat declaration. Omitted nested fields take the shipped defaults listed below. Explicit `null` removes the object and turns Chat off; omission leaves the current object unchanged. Unknown nested fields are refused. |
 | `briefing` | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose. |
 | `deployment_capacity` | The object replaces the whole declaration. `cpu_millis` and `memory_mib` are nullable non-negative `u64` totals; `null` leaves that dimension undeclared, while zero is an explicit ceiling. `assumed_session_size` is either `null` or a non-zero CPU/memory pair. The setting itself cannot be `null`. |
 | `size_bounds` | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
 | `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation. |
+
+The optional Chat declaration can be changed on its own through the same public
+route used by the dashboard and both SDKs:
+
+```http
+PATCH /api/v1/admin/settings
+Content-Type: application/json
+
+{
+  "expected_revision": 13,
+  "chat": {
+    "enabled": true,
+    "workspace": {
+      "repository_url": "https://github.com/the-omega-institute/trureturing",
+      "branch": "dev"
+    },
+    "agent": {
+      "model": null,
+      "reasoning_effort": "high",
+      "instructions": "",
+      "record_tool_bodies": true
+    },
+    "message_prefixes": ["/codex-formalize"],
+    "inactivity": { "pause_after_seconds": 900 },
+    "setup": { "commands": [] },
+    "host": { "size": null, "max_threads": 10 }
+  }
+}
+```
+
+Those values are also the nested defaults, except that `enabled` ships
+`false`. An absent or `null` Chat object means the feature is off; old settings
+documents therefore remain off rather than gaining a synthesized object. An
+empty object supplied as `chat` resolves to the complete dark default. The
+model may be `null` to use the deployment default. Thinking effort is one of
+`minimal`, `low`, `medium`, `high`, or `x_high`. An explicit host size is a
+positive `u32` pair in millicores and MiB; `null` uses the deployment default.
+
+Chat validation is byte-based where stated: `repository_url` must be a
+credential-free HTTPS URL of at most 512 UTF-8 bytes, with no query or fragment
+and a basename safe to use as one workspace directory; `branch` is 1 through
+200 UTF-8 bytes with no whitespace. There may be at most 8 message prefixes,
+each non-empty after trimming, single-line, and at most 256 UTF-8 bytes. The
+pause interval is 60 through 86400 seconds. There may be at most 16 setup
+commands, each at most 4096 UTF-8 bytes. `max_threads` is 1 through 50. A
+semantic refusal is `422 invalid_request` and names `field` and `path` without
+reflecting the submitted scalar. Permission (`unrestricted`), mode
+(`conversation`), credential (`delegated`), and the deployment's default agent
+kernel are fixed behavior and are not stored fields.
+
+To remove only Chat while preserving every other setting, send:
+
+```json
+{ "expected_revision": 14, "chat": null }
+```
 
 `cpu_pressure` and `memory_pressure` are independently editable only inside the
 complete document sent to `PUT`; `PATCH` does not accept either policy. Each
@@ -2574,9 +2635,11 @@ write routes return the 403 `not-an-operator` refusal described above when the
 caller lacks `configure_platform`, and a stale revision always returns the 409
 `settings_conflict` response without changing the stored document.
 
-Reset restores only the shipped briefing. It preserves the current size bounds
-and live-session limit, increments the revision, and records the complete
-pre-reset object as `previous`:
+Reset restores the shipped briefing and removes the optional Chat object,
+returning Chat to its absent, off state. It preserves deployment capacity,
+pressure policies, pricing history, size bounds and the live-session limit,
+increments the revision, and records the complete pre-reset object as
+`previous`:
 
 ```http
 POST /api/v1/admin/settings/reset

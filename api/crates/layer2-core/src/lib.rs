@@ -14,6 +14,7 @@ pub mod activity_service;
 pub mod authz;
 pub mod capabilities;
 mod capacity_bounds;
+pub mod chat;
 pub mod clock;
 pub mod conversation;
 mod conversation_log;
@@ -153,6 +154,10 @@ pub use activity_service::ActivityService;
 pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
+pub use chat::{
+    ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSettingsSnapshot,
+    ChatSettingsViolation, ChatSetup, ChatWorkspaceSource,
+};
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
 pub use coordination::{

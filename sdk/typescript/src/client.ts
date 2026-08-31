@@ -17,6 +17,7 @@ import * as events from './events.js';
 import * as operations from './operations.js';
 import * as resources from './resources.js';
 import * as sessions from './sessions.js';
+import * as settings from './settings.js';
 import * as sponsorships from './sponsorships.js';
 import * as triggers from './triggers.js';
 import type { SessionResourceStatus } from './resources.js';
@@ -45,6 +46,7 @@ import type {
 } from './operations.js';
 import type { KernelOffer, Session, SessionPlane } from './types.js';
 import type { Conformance } from './discovery.js';
+import type { ChatSettings, StoredChatSettings } from './settings.js';
 import type {
   SponsoredGrant,
   SponsorshipCredential,
@@ -77,6 +79,20 @@ export class Cma {
   /** Public protocol and build discovery; no configured bearer is presented. */
   readConformance(options: OperationOptions = {}): Promise<Conformance> {
     return discovery.readConformance(this.#config, options);
+  }
+
+  /** Read the deployment-owned chat setting and its write revision. */
+  readChatSettings(options: OperationOptions = {}): Promise<StoredChatSettings> {
+    return settings.readChatSettings(this.#config, options);
+  }
+
+  /** Replace only the chat setting under the platform revision CAS. */
+  changeChatSettings(
+    expectedRevision: number,
+    chat: ChatSettings | null,
+    options: OperationOptions = {},
+  ): Promise<StoredChatSettings> {
+    return settings.changeChatSettings(this.#config, expectedRevision, chat, options);
   }
 
   /** Read one public, side-effect-free README Trigger preview. */
