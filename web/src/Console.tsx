@@ -399,21 +399,27 @@ export function Console({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { start, endSession, reviveSessionById, removeSession, changeSessionPlane } =
-    useSessionActions({
-      sessions,
-      activeId: effectiveActiveId,
-      setSessions,
-      clearSelection,
-      setOpeningForId,
-      setNotice,
-      setActing: markActing,
-      select,
-      report,
-      applyLifecycle,
-      setFocusHistory,
-      refreshAllowance,
-    });
+  const {
+    start,
+    endSession,
+    terminateSessionById,
+    reviveSessionById,
+    removeSession,
+    changeSessionPlane,
+  } = useSessionActions({
+    sessions,
+    activeId: effectiveActiveId,
+    setSessions,
+    clearSelection,
+    setOpeningForId,
+    setNotice,
+    setActing: markActing,
+    select,
+    report,
+    applyLifecycle,
+    setFocusHistory,
+    refreshAllowance,
+  });
 
   /*
    * Follow whichever session is still starting. The stream is the only thing
@@ -743,6 +749,7 @@ export function Console({
                     }}
                     onRevive={() => void reviveSessionById(active.id)}
                     onStop={() => void endSession(active.id)}
+                    onTerminate={() => void terminateSessionById(active.id)}
                     onDelete={() => void removeSession(active.id)}
                     onTerminalThemeChange={() => {
                       setPaletteEpoch((n) => n + 1);
@@ -879,6 +886,7 @@ export function Console({
                  * concurrency policy silently falling back to `reject`.
                  */
                 capabilities={active.capabilities}
+                suppressConnectionFailure={acting || active.lifecycle === 'terminated'}
                 onWaitingChange={(waiting) => {
                   setWaitingId(waiting ? active.id : null);
                 }}
