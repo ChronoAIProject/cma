@@ -2141,6 +2141,11 @@ async fn taking_a_conversation_back_over_rejoins_it_rather_than_opening_another(
         &[None],
         "a session being started has no conversation to rejoin"
     );
+    assert_eq!(
+        adapter.conversation_slots.lock().await.as_slice(),
+        &[Some(id.0.clone())],
+        "the supervisor slot is the control-plane session id before ACP names the conversation"
+    );
 
     let replacement = crate::test_support::service_with_environments(
         Arc::clone(&store),
@@ -2157,6 +2162,15 @@ async fn taking_a_conversation_back_over_rejoins_it_rather_than_opening_another(
         asked.last().expect("a second open"),
         &Some("conv-fixture".to_string()),
         "the replacement must rejoin what the runtime is already running"
+    );
+    assert!(
+        adapter
+            .conversation_slots
+            .lock()
+            .await
+            .iter()
+            .all(|slot| slot.as_deref() == Some(id.0.as_str())),
+        "readoption must return to the same supervisor slot"
     );
 }
 

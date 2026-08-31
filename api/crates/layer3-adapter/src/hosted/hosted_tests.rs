@@ -8,6 +8,7 @@
 
 #![allow(clippy::items_after_test_module)]
 
+use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -477,6 +478,317 @@ async fn one_response_server(
     (format!("http://{address}"), server)
 }
 
+struct RuntimeOperationFixture {
+    base_url: String,
+    server: tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>,
+}
+
+impl RuntimeOperationFixture {
+    async fn finish(self) -> Vec<(String, Vec<u8>)> {
+        tokio::time::timeout(std::time::Duration::from_secs(2), self.server)
+            .await
+            .expect("the runtime operation fixture received both requests")
+            .expect("the runtime operation fixture did not panic")
+    }
+}
+
+async fn write_runtime_operation_response(
+    stream: &mut tokio::net::TcpStream,
+    status: u16,
+    body: &[u8],
+) {
+    let reason = match status {
+        200 => "OK",
+        204 => "No Content",
+        404 => "Not Found",
+        409 => "Conflict",
+        422 => "Unprocessable Entity",
+        501 => "Not Implemented",
+        _ => panic!("the runtime operation fixture does not name HTTP status {status}"),
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .expect("the runtime operation fixture writes headers");
+    stream
+        .write_all(body)
+        .await
+        .expect("the runtime operation fixture writes its body");
+    stream
+        .shutdown()
+        .await
+        .expect("the runtime operation fixture closes");
+}
+
+async fn runtime_operation_fixture(status: u16, body: Vec<u8>) -> RuntimeOperationFixture {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the runtime operation fixture binds");
+    let address = listener
+        .local_addr()
+        .expect("the runtime operation fixture has an address");
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        let (mut endpoint_stream, _) = listener
+            .accept()
+            .await
+            .expect("the endpoint request arrives");
+        requests.push(read_http_request(&mut endpoint_stream).await);
+        write_json(
+            &mut endpoint_stream,
+            serde_json::json!({ "endpoint": address.to_string() }),
+        )
+        .await;
+
+        let (mut operation_stream, _) = listener
+            .accept()
+            .await
+            .expect("the runtime operation arrives");
+        requests.push(read_http_request(&mut operation_stream).await);
+        write_runtime_operation_response(&mut operation_stream, status, &body).await;
+        requests
+    });
+    RuntimeOperationFixture {
+        base_url: format!("http://{address}"),
+        server,
+    }
+}
+
+#[derive(Debug)]
+struct ObservedConversation {
+    slot: String,
+    cwd: String,
+    request_uri: String,
+    credential_installs: usize,
+}
+
+struct MultiConversationFixture {
+    base_url: String,
+    close: tokio::sync::watch::Sender<bool>,
+    provider: tokio::task::JoinHandle<Vec<String>>,
+    supervisor: tokio::task::JoinHandle<Vec<ObservedConversation>>,
+}
+
+impl MultiConversationFixture {
+    async fn finish(self) -> (Vec<String>, Vec<ObservedConversation>) {
+        self.close.send_replace(true);
+        let provider = self
+            .provider
+            .await
+            .expect("the provider fixture did not panic");
+        let supervisor = self
+            .supervisor
+            .await
+            .expect("the supervisor fixture did not panic");
+        (provider, supervisor)
+    }
+}
+
+#[allow(clippy::result_large_err)]
+async fn multi_conversation_fixture() -> MultiConversationFixture {
+    let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the provider fixture binds");
+    let provider_address = provider_listener
+        .local_addr()
+        .expect("the provider fixture has an address");
+    let supervisor_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the supervisor fixture binds");
+    let supervisor_address = supervisor_listener
+        .local_addr()
+        .expect("the supervisor fixture has an address");
+
+    let provider = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for _ in 0..2 {
+            let (mut stream, _) = provider_listener
+                .accept()
+                .await
+                .expect("an endpoint request arrives");
+            let (headers, _) = read_http_request(&mut stream).await;
+            requests.push(
+                headers
+                    .lines()
+                    .next()
+                    .expect("the endpoint request has a request line")
+                    .to_string(),
+            );
+            write_json(
+                &mut stream,
+                serde_json::json!({ "endpoint": supervisor_address.to_string() }),
+            )
+            .await;
+        }
+        requests
+    });
+
+    let (close, close_rx) = tokio::sync::watch::channel(false);
+    let supervisor = tokio::spawn(async move {
+        let mut conversations = Vec::new();
+        let mut connections = Vec::new();
+        for _ in 0..2 {
+            let (socket, _) = supervisor_listener
+                .accept()
+                .await
+                .expect("a conversation socket arrives");
+            let mut close_rx = close_rx.clone();
+            connections.push(tokio::spawn(async move {
+                let (request_tx, request_rx) = tokio::sync::oneshot::channel();
+                let mut websocket = tokio_tungstenite::accept_hdr_async(
+                    socket,
+                    move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                          response| {
+                        let _ = request_tx.send(request.uri().to_string());
+                        Ok(response)
+                    },
+                )
+                .await
+                .expect("the conversation websocket upgrades");
+                let request_uri = request_rx.await.expect("the upgrade URI was recorded");
+                let request_url = url::Url::parse(&format!("ws://fixture{request_uri}"))
+                    .expect("the upgrade URI is a URL path");
+                let parameters = request_url
+                    .query_pairs()
+                    .into_owned()
+                    .collect::<BTreeMap<_, _>>();
+                assert_eq!(parameters.get("lanes").map(String::as_str), Some("conv"));
+                let slot = parameters
+                    .get(supervisor::CONVERSATION_QUERY_PARAMETER)
+                    .expect("the link names its conversation slot")
+                    .clone();
+                websocket
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "t": "ready",
+                            "wireVersion": supervisor::WIRE_VERSION,
+                            "lanes": ["ctl", "conv"],
+                            "resuming": null,
+                        })
+                        .to_string(),
+                    ))
+                    .await
+                    .expect("the supervisor declares its wire");
+
+                let mut cwd = None;
+                for _ in 0..2 {
+                    let frame = websocket
+                        .next()
+                        .await
+                        .expect("the handshake call arrives")
+                        .expect("the handshake frame is valid");
+                    let Message::Binary(bytes) = frame else {
+                        panic!("the ACP handshake is binary");
+                    };
+                    let (lane, payload) = supervisor::unframe(&bytes).expect("the call is framed");
+                    assert_eq!(lane, supervisor::LANE_CONVERSATION);
+                    let call: serde_json::Value =
+                        serde_json::from_slice(payload).expect("the call is JSON-RPC");
+                    let method = call["method"].as_str().expect("the call has a method");
+                    let result = match method {
+                        "initialize" => serde_json::json!({ "authMethods": [] }),
+                        "session/new" => {
+                            cwd = call["params"]["cwd"].as_str().map(str::to_string);
+                            serde_json::json!({ "sessionId": format!("agent-{slot}") })
+                        }
+                        other => panic!("unexpected ACP handshake call {other}"),
+                    };
+                    let answer = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": call["id"],
+                        "result": result,
+                    })
+                    .to_string();
+                    websocket
+                        .send(Message::Binary(supervisor::frame(
+                            supervisor::LANE_CONVERSATION,
+                            answer.as_bytes(),
+                        )))
+                        .await
+                        .expect("the handshake answer is sent");
+                }
+
+                let update = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": format!("agent-{slot}"),
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": { "type": "text", "text": format!("from {slot}") }
+                        }
+                    }
+                })
+                .to_string();
+                websocket
+                    .send(Message::Binary(supervisor::frame(
+                        supervisor::LANE_CONVERSATION,
+                        update.as_bytes(),
+                    )))
+                    .await
+                    .expect("the independent update is sent");
+
+                let mut credential_installs = 0;
+                loop {
+                    tokio::select! {
+                        changed = close_rx.changed() => {
+                            if changed.is_err() || *close_rx.borrow() {
+                                break;
+                            }
+                        }
+                        frame = websocket.next() => {
+                            let Some(Ok(Message::Text(text))) = frame else {
+                                break;
+                            };
+                            let control: serde_json::Value = serde_json::from_str(&text)
+                                .expect("the conversation control frame is JSON");
+                            assert_eq!(control["t"], "credential");
+                            credential_installs += 1;
+                            websocket
+                                .send(Message::Text(
+                                    serde_json::json!({
+                                        "t": "credential_result",
+                                        "operation_id": control["operation_id"],
+                                        "installed": true,
+                                    })
+                                    .to_string(),
+                                ))
+                                .await
+                                .expect("credential acknowledgement is sent");
+                        }
+                    }
+                }
+                let _ = websocket.close(None).await;
+                ObservedConversation {
+                    slot,
+                    cwd: cwd.expect("session/new carries cwd"),
+                    request_uri,
+                    credential_installs,
+                }
+            }));
+        }
+        for connection in connections {
+            conversations.push(
+                connection
+                    .await
+                    .expect("the conversation task did not panic"),
+            );
+        }
+        conversations
+    });
+
+    MultiConversationFixture {
+        base_url: format!("http://{provider_address}"),
+        close,
+        provider,
+        supervisor,
+    }
+}
+
 enum RequiredPolicyReadiness {
     Document(serde_json::Value),
     Disconnect,
@@ -634,6 +946,8 @@ fn spec() -> RuntimeSpec {
         reaches: Vec::new(),
         runtime_policy_required: false,
         sponsored_model_required: false,
+        workspace_source_required: false,
+        conversation_slots_required: None,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
@@ -653,6 +967,225 @@ fn capacity() -> RuntimeCapacity {
         cpu_millis: NonZeroU32::new(1500).expect("the test capacity is non-zero"),
         memory_mib: NonZeroU32::new(3072).expect("the test capacity is non-zero"),
     }
+}
+
+#[tokio::test]
+async fn workspace_source_proxy_preserves_the_typed_json_contract() {
+    let fixture = runtime_operation_fixture(200, Vec::new()).await;
+    let request = WorkspaceSourceRequest {
+        repository_url: "https://example.test/org/repository.git".into(),
+        reference: "feature/chat".into(),
+        directory: "repository".into(),
+    };
+    hosted(&fixture.base_url)
+        .prepare_workspace_source(&RuntimeHandle("sbx-source".into()), &request)
+        .await
+        .expect("the supervisor accepted the source");
+
+    let requests = fixture.finish().await;
+    assert!(requests[0]
+        .0
+        .starts_with("GET /v1/sandboxes/sbx-source/endpoints/9090?"));
+    assert!(requests[1]
+        .0
+        .starts_with("POST /runtime/workspace/source HTTP/1.1"));
+    assert!(requests[1]
+        .0
+        .to_ascii_lowercase()
+        .contains("content-type: application/json"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[1].1).expect("JSON request"),
+        serde_json::json!({
+            "url": request.repository_url,
+            "reference": request.reference,
+            "directory": request.directory,
+        })
+    );
+}
+
+#[tokio::test]
+async fn workspace_tree_proxy_returns_the_runtime_path_and_encodes_removal_names() {
+    let receipt = serde_json::to_vec(&serde_json::json!({
+        "path": "/home/chrono/workspace/worktrees/chat-1"
+    }))
+    .expect("receipt serializes");
+    let add_fixture = runtime_operation_fixture(200, receipt).await;
+    let request = WorkspaceTreeRequest {
+        name: "chat-1".into(),
+        base: "dev".into(),
+    };
+    let added = hosted(&add_fixture.base_url)
+        .add_workspace_tree(&RuntimeHandle("sbx-tree".into()), &request)
+        .await
+        .expect("the supervisor returned a tree path");
+    assert_eq!(added.path, "/home/chrono/workspace/worktrees/chat-1");
+    let requests = add_fixture.finish().await;
+    assert!(requests[1]
+        .0
+        .starts_with("POST /runtime/workspace/trees HTTP/1.1"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[1].1).expect("JSON request"),
+        serde_json::json!({ "name": "chat-1", "base": "dev" })
+    );
+
+    let remove_fixture = runtime_operation_fixture(204, Vec::new()).await;
+    hosted(&remove_fixture.base_url)
+        .remove_workspace_tree(
+            &RuntimeHandle("sbx-tree".into()),
+            "chat/one?cannot=alter-route",
+        )
+        .await
+        .expect("the encoded tree was removed");
+    let requests = remove_fixture.finish().await;
+    assert!(requests[1]
+        .0
+        .starts_with("DELETE /runtime/workspace/trees/chat%2Fone%3Fcannot%3Dalter-route HTTP/1.1"));
+}
+
+#[tokio::test]
+async fn workspace_setup_proxy_returns_every_bounded_step() {
+    let response = serde_json::to_vec(&serde_json::json!({
+        "steps": [
+            { "command_index": 0, "exit_code": 0, "output_excerpt": "first" },
+            { "command_index": 1, "exit_code": 7, "output_excerpt": "bounded failure" }
+        ]
+    }))
+    .expect("receipt serializes");
+    let fixture = runtime_operation_fixture(200, response).await;
+    let commands = vec!["first command".into(), "second command".into()];
+    let receipt = hosted(&fixture.base_url)
+        .run_workspace_setup(&RuntimeHandle("sbx-setup".into()), &commands)
+        .await
+        .expect("the setup receipt is readable");
+    assert_eq!(receipt.steps.len(), 2);
+    assert_eq!(receipt.steps[1].command_index, 1);
+    assert_eq!(receipt.steps[1].exit_code, 7);
+    assert_eq!(receipt.steps[1].output_excerpt, "bounded failure");
+    let requests = fixture.finish().await;
+    assert!(requests[1]
+        .0
+        .starts_with("POST /runtime/workspace/setup HTTP/1.1"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[1].1).expect("JSON request"),
+        serde_json::json!({ "commands": commands })
+    );
+}
+
+#[tokio::test]
+async fn id_addressed_snapshot_encodes_the_id_and_live_refusals_are_not_runtime_loss() {
+    let fixture = runtime_operation_fixture(200, b"captured-conversation".to_vec()).await;
+    let captured = hosted(&fixture.base_url)
+        .snapshot_conversation(
+            &RuntimeHandle("sbx-capture".into()),
+            "conv/one?other=yes&still=id",
+        )
+        .await
+        .expect("the runtime answered")
+        .expect("the conversation exists");
+    assert_eq!(captured, b"captured-conversation");
+    let requests = fixture.finish().await;
+    assert!(requests[1].0.starts_with(
+        "GET /runtime/conversation?conversation=conv%2Fone%3Fother%3Dyes%26still%3Did HTTP/1.1"
+    ));
+
+    let refused = runtime_operation_fixture(404, b"unknown conversation".to_vec()).await;
+    let error = hosted(&refused.base_url)
+        .snapshot_conversation(&RuntimeHandle("sbx-capture".into()), "missing")
+        .await
+        .expect_err("an unknown id is a supervisor refusal");
+    assert!(matches!(error, AdapterError::Rejected(_)), "got {error:?}");
+    refused.finish().await;
+}
+
+#[tokio::test]
+async fn two_named_conversations_on_one_runtime_keep_independent_links_and_updates() {
+    fn message_text(update: ConversationUpdate) -> String {
+        let update = match update {
+            ConversationUpdate::WithoutPromptEvidence(update) => *update,
+            update => update,
+        };
+        let ConversationUpdate::Said(update) = update else {
+            panic!("the fixture sent an agent message update");
+        };
+        serde_json::to_value(update).expect("the protocol update serializes")["content"]["text"]
+            .as_str()
+            .expect("the agent message has text")
+            .to_string()
+    }
+
+    let fixture = multi_conversation_fixture().await;
+    let kernel = hosted(&fixture.base_url);
+    let handle = RuntimeHandle("sbx-shared".into());
+    let (first_updates_tx, mut first_updates) = mpsc::channel(8);
+    let (second_updates_tx, mut second_updates) = mpsc::channel(8);
+    let first_binding = AcpConversationBinding::new(
+        None,
+        None,
+        false,
+        Some("/workspace/worktrees/chat-1".into()),
+        Some("sesn_chat_1".into()),
+    );
+    let second_binding = AcpConversationBinding::new(
+        None,
+        None,
+        false,
+        Some("/workspace/worktrees/chat 2".into()),
+        Some("sesn/chat?2".into()),
+    );
+
+    let (first, second) = tokio::join!(
+        kernel.open_acp_conversation(&handle, first_binding, first_updates_tx),
+        kernel.open_acp_conversation(&handle, second_binding, second_updates_tx),
+    );
+    let first = first.expect("the first slot opens");
+    let second = second.expect("the second slot opens without superseding the first");
+    assert_eq!(first.conversation_id.as_deref(), Some("agent-sesn_chat_1"));
+    assert_eq!(second.conversation_id.as_deref(), Some("agent-sesn/chat?2"));
+    assert_eq!(
+        kernel.captured_runtime_links(&handle.0).await.len(),
+        2,
+        "both slot generations remain registered"
+    );
+
+    let first_update =
+        tokio::time::timeout(std::time::Duration::from_secs(1), first_updates.recv())
+            .await
+            .expect("the first update arrives")
+            .expect("the first stream remains open");
+    let second_update =
+        tokio::time::timeout(std::time::Duration::from_secs(1), second_updates.recv())
+            .await
+            .expect("the second update arrives")
+            .expect("the second stream remains open");
+    assert_eq!(message_text(first_update), "from sesn_chat_1");
+    assert_eq!(message_text(second_update), "from sesn/chat?2");
+
+    kernel
+        .refresh_credential(
+            &handle,
+            crate::RuntimeCredential::from("one-install-for-the-shared-runtime"),
+        )
+        .await
+        .expect("any open conversation link can install the pod credential");
+
+    let (provider_requests, mut observed) = fixture.finish().await;
+    assert_eq!(provider_requests.len(), 2);
+    observed.sort_by(|left, right| left.slot.cmp(&right.slot));
+    assert_eq!(observed[0].slot, "sesn/chat?2");
+    assert_eq!(observed[0].cwd, "/workspace/worktrees/chat 2");
+    assert!(observed[0]
+        .request_uri
+        .contains("conversation=sesn%2Fchat%3F2"));
+    assert_eq!(observed[1].slot, "sesn_chat_1");
+    assert_eq!(observed[1].cwd, "/workspace/worktrees/chat-1");
+    assert_eq!(
+        observed
+            .iter()
+            .map(|conversation| conversation.credential_installs)
+            .sum::<usize>(),
+        1,
+        "the pod-scoped credential is installed on exactly one available link"
+    );
 }
 
 #[tokio::test]
@@ -1661,6 +2194,95 @@ async fn successful_raw_delete_retires_the_captured_link() {
 }
 
 #[tokio::test]
+async fn successful_raw_delete_retires_every_named_conversation_link() {
+    let (base, server) = one_response_server(200, serde_json::json!({})).await;
+    let kernel = hosted(&base);
+    let handle = RuntimeHandle("sbx-shared-delete".into());
+    let (first, _first_received) = input_link(1);
+    let (second, _second_received) = input_link(1);
+    for (slot, link) in [("sesn-1", &first), ("sesn-2", &second)] {
+        let lifecycle = kernel.conversation_link_lifecycle(&handle.0, Some(slot));
+        let (installed, installation) = oneshot::channel();
+        assert!(
+            lifecycle
+                .register(link.clone(), link.retirement(), installed)
+                .await
+        );
+        installation.await.expect("the named link was installed");
+    }
+    assert_eq!(kernel.captured_runtime_links(&handle.0).await.len(), 2);
+
+    kernel
+        .terminate(&handle)
+        .await
+        .expect("the compatibility provider accepts deletion");
+    server.await.expect("the provider fixture completes");
+
+    assert!(kernel.link_to(&handle.0).await.is_none());
+    first.wait_retired().await;
+    second.wait_retired().await;
+}
+
+#[tokio::test]
+async fn replacing_one_named_conversation_link_preserves_its_sibling() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx-shared-replace".into());
+    let first_slot = kernel.conversation_link_lifecycle(&handle.0, Some("sesn-1"));
+    let sibling_slot = kernel.conversation_link_lifecycle(&handle.0, Some("sesn-2"));
+
+    let (first, _first_received) = input_link(1);
+    let (installed, installation) = oneshot::channel();
+    assert!(
+        first_slot
+            .register(first.clone(), first.retirement(), installed)
+            .await
+    );
+    installation
+        .await
+        .expect("the first generation is installed");
+
+    let (sibling, _sibling_received) = input_link(1);
+    let (installed, installation) = oneshot::channel();
+    assert!(
+        sibling_slot
+            .register(sibling.clone(), sibling.retirement(), installed)
+            .await
+    );
+    installation
+        .await
+        .expect("the sibling generation is installed");
+
+    let (replacement, _replacement_received) = input_link(1);
+    let (installed, installation) = oneshot::channel();
+    assert!(
+        first_slot
+            .register(replacement.clone(), replacement.retirement(), installed,)
+            .await
+    );
+    installation
+        .await
+        .expect("the replacement generation is installed");
+
+    first.wait_retired().await;
+    assert!(!sibling.is_closed(), "the other slot remains usable");
+    let current = kernel.captured_runtime_links(&handle.0).await;
+    assert_eq!(current.len(), 2);
+    assert!(current
+        .iter()
+        .any(|link| link.sender.same_channel(&replacement)));
+    assert!(current
+        .iter()
+        .any(|link| link.sender.same_channel(&sibling)));
+
+    for link in current {
+        kernel.retire_captured_link(&handle.0, &link).await;
+    }
+    replacement.wait_retired().await;
+    sibling.wait_retired().await;
+    assert!(kernel.link_to(&handle.0).await.is_none());
+}
+
+#[tokio::test]
 async fn an_absent_fenced_provider_object_retires_its_stale_link() {
     let (base, server) = one_response_server(
         404,
@@ -2098,6 +2720,39 @@ fn runtime_gateway_probe_readiness_requires_the_exact_name_version_and_support_f
     }
 }
 
+#[test]
+fn chat_readiness_requires_source_slots_and_coherent_checkpoint_together() {
+    let ready = serde_json::json!({
+        "workspaceSource": { "version": 2 },
+        "conversationSlots": { "max": 16 },
+        "workspaceCheckpoint": { "version": 4 },
+    });
+    let body = serde_json::to_vec(&ready).expect("readiness serializes");
+    super::require_chat_runtime_capabilities(&body, 16)
+        .expect("forward-compatible versions and an exact slot maximum are accepted");
+
+    for pointer in [
+        "workspaceSource",
+        "conversationSlots",
+        "workspaceCheckpoint",
+    ] {
+        let mut incomplete = ready.clone();
+        incomplete
+            .as_object_mut()
+            .expect("readiness is an object")
+            .remove(pointer);
+        let body = serde_json::to_vec(&incomplete).expect("readiness serializes");
+        assert!(matches!(
+            super::require_chat_runtime_capabilities(&body, 1),
+            Err(AdapterError::Unsupported(_))
+        ));
+    }
+    assert!(matches!(
+        super::require_chat_runtime_capabilities(b"not-json", 1),
+        Err(AdapterError::Rejected(_))
+    ));
+}
+
 #[tokio::test]
 async fn required_policy_transport_failure_remains_unavailable_after_exact_cleanup() {
     let fixture = required_policy_fixture(RequiredPolicyReadiness::Disconnect, 200).await;
@@ -2180,6 +2835,68 @@ async fn failed_exact_cleanup_reports_probe_and_cleanup_as_unavailable() {
     );
     assert!(detail.contains("500"), "missing cleanup context: {detail}");
     assert_exact_policy_candidate_was_cleaned(&fixture.finish().await);
+}
+
+#[tokio::test]
+async fn every_missing_chat_capability_is_fenced_before_restore_or_prelude() {
+    let full = serde_json::json!({
+        "status": "ready",
+        "workspaceSource": { "version": 1 },
+        "conversationSlots": { "max": 3 },
+        "workspaceCheckpoint": { "version": 2 },
+    });
+    let mut missing_source = full.clone();
+    missing_source
+        .as_object_mut()
+        .expect("readiness is an object")
+        .remove("workspaceSource");
+    let mut insufficient_slots = full.clone();
+    insufficient_slots["conversationSlots"]["max"] = serde_json::json!(2);
+    let mut missing_checkpoint = full;
+    missing_checkpoint
+        .as_object_mut()
+        .expect("readiness is an object")
+        .remove("workspaceCheckpoint");
+
+    for (missing, readiness) in [
+        ("workspaceSource", missing_source),
+        ("conversationSlots", insufficient_slots),
+        ("workspaceCheckpoint", missing_checkpoint),
+    ] {
+        let fixture =
+            required_policy_fixture(RequiredPolicyReadiness::Document(readiness), 200).await;
+        let mut request = spec();
+        request.workspace_source_required = true;
+        request.conversation_slots_required = Some(3);
+        // Both operations are forbidden until after capability acceptance. The
+        // fixture accepts no such route, so reaching either also fails loudly.
+        request.restore_from = Some(b"must-not-be-sent".to_vec());
+        request.platform_briefing = "must not be installed".into();
+
+        let error = hosted(&fixture.base_url)
+            .provision(&request, BTreeMap::new())
+            .await
+            .expect_err("the incomplete image must be refused");
+        let AdapterError::Unsupported(detail) = error else {
+            panic!("missing {missing} was misclassified as {error:?}");
+        };
+        assert!(
+            detail.contains(missing),
+            "missing capability was not named: {detail}"
+        );
+        assert_exact_policy_candidate_was_cleaned(&fixture.finish().await);
+    }
+}
+
+#[tokio::test]
+async fn zero_required_conversation_slots_are_rejected_before_provider_creation() {
+    let mut request = spec();
+    request.conversation_slots_required = Some(0);
+    let error = hosted("http://127.0.0.1:1")
+        .provision(&request, BTreeMap::new())
+        .await
+        .expect_err("zero cannot describe a minimum slot capability");
+    assert!(matches!(error, AdapterError::Rejected(_)), "got {error:?}");
 }
 
 #[test]

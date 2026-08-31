@@ -25,6 +25,8 @@ fn conversation() -> RuntimeSpec {
         reaches: Vec::new(),
         runtime_policy_required: false,
         sponsored_model_required: false,
+        workspace_source_required: false,
+        conversation_slots_required: None,
         platform_briefing: String::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),
@@ -46,6 +48,19 @@ fn conversation() -> RuntimeSpec {
 #[test]
 fn the_kernel_is_named_for_diagnostics_only() {
     assert_eq!(adapter("http://p").kernel_name(), "dsh");
+}
+
+#[test]
+fn a_conversation_working_directory_passes_through_verbatim() {
+    let requested = "/workspace/worktrees/chat 3/#literal?";
+    let options = RuntimeOptions {
+        working_directory: Some(requested.into()),
+        ..RuntimeOptions::default()
+    };
+    assert_eq!(
+        adapter("http://p").conversation_working_directory(&options),
+        requested
+    );
 }
 
 #[test]
