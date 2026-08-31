@@ -144,6 +144,8 @@ let allowanceAnswer: unknown = { live: 0, exempt: false };
 let allowanceFails = false;
 let allowanceReads = 0;
 let reviveProblem: { readonly status: number; readonly body: unknown } | null = null;
+let deleteResponse: Promise<Response> | null = null;
+let deleteRequested = false;
 
 /** `count` running sessions, distinguishable by start time as the rail shows them. */
 function seedSessions(count: number): void {
@@ -179,6 +181,8 @@ beforeEach(() => {
   allowanceFails = false;
   allowanceReads = 0;
   reviveProblem = null;
+  deleteResponse = null;
+  deleteRequested = false;
   FakeEventStream.outcome = 'ready';
   FakeEventStream.signIn = null;
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -231,7 +235,8 @@ beforeEach(() => {
         return json(200, { sessions: listing });
       }
       if (method === 'DELETE') {
-        return new Response(null, { status: 204 });
+        deleteRequested = true;
+        return deleteResponse ?? new Response(null, { status: 204 });
       }
       if (path === '/api/v1/sessions' && method === 'POST') {
         created += 1;
@@ -579,9 +584,8 @@ describe('App', () => {
   });
 
   it('keeps showing a session that ended on its own', async () => {
-    // Such a session leaves the rail — a list of everything ever run is not a
-    // list of someone's sessions — but whoever had it open is still owed the
-    // last thing it said, so the terminal stays rather than becoming a wait.
+    // The record and history still exist, so it moves into the closed
+    // Terminated group while the open surface keeps showing what it last said.
     FakeEventStream.outcome = 'terminated';
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
@@ -591,6 +595,7 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.queryAllByRole('tab')).toHaveLength(0);
     });
+    expect(screen.getByRole('button', { name: 'Terminated, 1 session' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: /^Session .* on codex$/ })).toBeInTheDocument();
     expect(screen.queryByText('Attaching…')).toBeNull();
   });
@@ -807,6 +812,45 @@ describe('App', () => {
       'true',
     );
     expect(isAttached('sesn_0')).toBe(true);
+  });
+
+  it('does not flash a stream error while a provisioning session is deliberately deleted', async () => {
+    FakeEventStream.signIn = {
+      url: 'https://auth.example.test/device',
+      message: 'Sign in to continue',
+    };
+    let finishDelete!: (response: Response) => void;
+    deleteResponse = new Promise((resolve) => {
+      finishDelete = resolve;
+    });
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+    await waitFor(() => {
+      expect(streams).toHaveLength(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete/i }));
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /delete permanently/i }));
+    await waitFor(() => {
+      expect(deleteRequested).toBe(true);
+    });
+
+    act(() => {
+      streams[0]?.close(new Error('event stream closed during requested deletion'));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    finishDelete(new Response(null, { status: 204 }));
+    await waitFor(() => {
+      expect(screen.queryByRole('tab')).toBeNull();
+    });
   });
 
   it('restores the owner-visible session named by a canonical deep link', async () => {
