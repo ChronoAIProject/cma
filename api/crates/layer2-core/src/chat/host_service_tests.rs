@@ -1393,6 +1393,27 @@ async fn settings_edits_do_not_change_an_existing_pinned_host() {
 }
 
 #[tokio::test]
+async fn chat_surface_capability_follows_the_live_deployment_switch() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    assert!(fixture.service.chat_surface_enabled().await);
+
+    let mut disabled = enabled_chat();
+    disabled.enabled = false;
+    fixture
+        .settings
+        .replace(platform_with(Some(disabled)))
+        .await;
+    assert!(!fixture.service.chat_surface_enabled().await);
+
+    fixture.settings.replace(platform_with(None)).await;
+    assert!(!fixture.service.chat_surface_enabled().await);
+}
+
+#[tokio::test]
 async fn restart_reconciliation_adopts_metadata_runtime_and_replays_setup() {
     let fixture = fixture(
         platform_with(Some(enabled_chat())),

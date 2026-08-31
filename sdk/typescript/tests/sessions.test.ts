@@ -239,6 +239,45 @@ describe('the shared session fixture', () => {
     ]);
   });
 
+  it('walks one exact surface and preserves the filter in every continuation', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'chat_newer' })]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/sessions?surface=chat&cursor=older>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'chat_older' })]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    const sessions = await listSessions(config, { surface: 'chat' });
+
+    expect(sessions.map(({ id }) => id)).toEqual(['chat_newer', 'chat_older']);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/sessions?surface=chat',
+      '/api/v1/sessions?surface=chat&cursor=older',
+    ]);
+  });
+
+  it('refuses an unknown complete-walk surface before transport', async () => {
+    const fetch = vi.fn();
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    await expect(listSessions(config, { surface: 'workspace' as 'chat' })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('exposes bounded status pages whose opaque next target can be followed manually', async () => {
     const fetch = vi
       .fn()

@@ -7,8 +7,8 @@
 use super::*;
 
 /// The capability document, parsed.
-async fn served_document() -> serde_json::Value {
-    declare().await.0
+fn served_document() -> serde_json::Value {
+    document(false)
 }
 
 fn documented_capability(source: &str) -> Result<serde_json::Value, String> {
@@ -47,16 +47,28 @@ fn deleting_the_documented_capability_block_fails_loudly() {
     }
 }
 
-#[tokio::test]
-async fn the_documented_capability_is_the_served_document() {
+#[test]
+fn the_documented_capability_is_the_disabled_document() {
     let documented = documented_capability(include_str!("../../../../../docs/API_AGUI.md"))
         .expect("section 6 contains the capability JSON contract");
-    assert_eq!(documented, served_document().await);
+    assert_eq!(documented, served_document());
 }
 
-#[tokio::test]
-async fn trigger_companions_are_declared_read_only() {
-    let document = served_document().await;
+#[test]
+fn chat_availability_is_an_explicit_dynamic_capability() {
+    assert_eq!(
+        served_document()["features"]["custom"]["cma:chat"]["enabled"],
+        false
+    );
+    assert_eq!(
+        document(true)["features"]["custom"]["cma:chat"]["enabled"],
+        true
+    );
+}
+
+#[test]
+fn trigger_companions_are_declared_read_only() {
+    let document = served_document();
     let trigger = &document["features"]["custom"]["cma:trigger"];
     assert_eq!(trigger["preview"], true);
     assert_eq!(trigger["launchSnapshot"], true);
@@ -65,11 +77,11 @@ async fn trigger_companions_are_declared_read_only() {
     assert_eq!(trigger["mutations"], false);
 }
 
-#[tokio::test]
-async fn every_event_the_projection_emits_is_declared() {
+#[test]
+fn every_event_the_projection_emits_is_declared() {
     // The map is the contract a client branches on. An event emitted but not
     // declared is one a correct client is entitled to have thrown away.
-    let doc = served_document().await;
+    let doc = served_document();
     let events = doc["events"].as_object().expect("an events map");
     for emitted in [
         "RUN_STARTED",
@@ -92,12 +104,12 @@ async fn every_event_the_projection_emits_is_declared() {
     }
 }
 
-#[tokio::test]
-async fn what_is_not_emitted_is_declared_false_rather_than_omitted() {
+#[test]
+fn what_is_not_emitted_is_declared_false_rather_than_omitted() {
     // Omission reads as "this build has not heard of it", which is a different
     // claim from "this build will not send it". A client sizing its handling
     // needs the second.
-    let doc = served_document().await;
+    let doc = served_document();
     let events = doc["events"].as_object().expect("an events map");
     for absent in ["THINKING_START", "THINKING_END", "STATE_SNAPSHOT"] {
         assert_eq!(
@@ -108,37 +120,37 @@ async fn what_is_not_emitted_is_declared_false_rather_than_omitted() {
     }
 }
 
-#[tokio::test]
-async fn this_interface_never_claims_to_carry_a_terminal() {
+#[test]
+fn this_interface_never_claims_to_carry_a_terminal() {
     // There is no honest mapping from an escape sequence to a message event.
     // A client told otherwise would build a terminal on a surface that cannot
     // be one.
-    let doc = served_document().await;
+    let doc = served_document();
     assert_eq!(doc["features"]["custom"]["cma:terminal"], false);
     assert_eq!(doc["features"]["transport"]["websocket"], false);
 }
 
-#[tokio::test]
-async fn live_resource_state_is_declared_before_a_client_receives_it() {
-    let doc = served_document().await;
+#[test]
+fn live_resource_state_is_declared_before_a_client_receives_it() {
+    let doc = served_document();
     assert_eq!(doc["features"]["custom"]["cma:resources"], true);
 }
 
-#[tokio::test]
-async fn resumability_is_claimed_because_the_log_is_what_makes_it_true() {
+#[test]
+fn resumability_is_claimed_because_the_log_is_what_makes_it_true() {
     // Not the stream: a dropped connection is recovered by reading the durable
     // log from the last sequence, which is why this can be claimed at all.
-    let doc = served_document().await;
+    let doc = served_document();
     assert_eq!(doc["features"]["transport"]["resumable"], true);
     assert_eq!(doc["features"]["state"]["persistentState"], true);
 }
 
-#[tokio::test]
-async fn the_projection_is_versioned_rather_than_the_protocol() {
+#[test]
+fn the_projection_is_versioned_rather_than_the_protocol() {
     // This protocol is pre-1.0 with no version distinct from its package
     // semver, so there is nothing to claim conformance to. What is versioned
     // is CMA's own projection.
-    let doc = served_document().await;
+    let doc = served_document();
     let conforms = doc["conformsTo"].as_array().expect("a list");
     assert!(conforms
         .iter()

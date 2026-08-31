@@ -9,6 +9,7 @@ import type { Stage } from './progress';
 import { lastActivity } from './lastActivity';
 import { fullTimestamp, sortSessions, tabLabel, type SortOrder } from './sessionTime';
 import { GROUPS, groupSessions, loadCollapsed, storeCollapsed, type GroupId } from './groups';
+import type { SurfaceMode } from '../shell/surfaceMode';
 import './SessionRail.css';
 
 /**
@@ -34,6 +35,8 @@ import './SessionRail.css';
 
 interface SessionRailProps {
   readonly sessions: readonly Session[];
+  /** Which collection this rail names and groups. */
+  readonly surface?: SurfaceMode;
   readonly activeId: string | null;
   readonly order: SortOrder;
   readonly onSelect: (id: string) => void;
@@ -75,6 +78,7 @@ interface SessionRailProps {
 
 export function SessionRail({
   sessions,
+  surface = 'agent',
   activeId,
   order,
   onSelect,
@@ -99,7 +103,16 @@ export function SessionRail({
   // Sorted once, across the whole rail, then split. Sorting inside each group
   // would be three orders that can disagree with the one control that sets it.
   const ordered = sortSessions(sessions, order);
-  const grouped = groupSessions(ordered);
+  const grouped =
+    surface === 'chat'
+      ? {
+          active: ordered.filter((session) => !isPausedChat(session)),
+          paused: ordered.filter(isPausedChat),
+          terminated: [],
+        }
+      : groupSessions(ordered);
+  const groups = surface === 'chat' ? GROUPS.filter((group) => group.id !== 'terminated') : GROUPS;
+  const itemName = surface === 'chat' ? 'chat' : 'session';
 
   const toggleGroup = (id: GroupId) => {
     setCollapsed((was) => {
@@ -141,7 +154,7 @@ export function SessionRail({
   return (
     <div className="rail">
       <div className="rail__header">
-        <span className="rail__label">Sessions</span>
+        <span className="rail__label">{surface === 'chat' ? 'Chats' : 'Sessions'}</span>
         <Menu
           open={optionsOpen}
           label="View options"
@@ -188,11 +201,13 @@ export function SessionRail({
         </div>
       ) : null}
 
-      {!loading && sessions.length === 0 ? <p className="rail__empty">No sessions yet.</p> : null}
+      {!loading && sessions.length === 0 ? (
+        <p className="rail__empty">{surface === 'chat' ? 'No chats yet.' : 'No sessions yet.'}</p>
+      ) : null}
 
       {loading ? null : (
         <div className="rail__groups">
-          {GROUPS.map((group) => {
+          {groups.map((group) => {
             const inGroup = grouped[group.id];
             const shut = collapsed.has(group.id);
             return (
@@ -214,7 +229,7 @@ export function SessionRail({
                    * concatenated, which read as "Paused1".
                    */
                   aria-label={`${group.label}, ${String(inGroup.length)} ${
-                    inGroup.length === 1 ? 'session' : 'sessions'
+                    inGroup.length === 1 ? itemName : `${itemName}s`
                   }`}
                   onClick={() => {
                     toggleGroup(group.id);
@@ -244,6 +259,7 @@ export function SessionRail({
                         session.id in signingIn,
                       );
                       const actions = actionsFor?.(session) ?? [];
+                      const subject = railSubject(session, surface);
 
                       return (
                         <li className="rail__row" key={session.id}>
@@ -264,7 +280,7 @@ export function SessionRail({
                             <span className="row-item__dot">
                               {dot === undefined ? null : <StateDot state={dot} />}
                             </span>
-                            <span className="row-item__subject">{tabLabel(session.createdAt)}</span>
+                            <span className="row-item__subject">{subject}</span>
                             {/*
                              * What makes a list of times into a list of work. It never
                              * wraps: a row that grows with its longest sentence makes the
@@ -276,7 +292,7 @@ export function SessionRail({
                           {actions.length === 0 ? null : (
                             <Menu
                               open={actionsFor_ === session.id}
-                              label={`Actions for ${tabLabel(session.createdAt)}`}
+                              label={`Actions for ${subject}`}
                               align="end"
                               items={actions}
                               onSelect={(id) => {
@@ -292,7 +308,11 @@ export function SessionRail({
                                   className="row-item__more"
                                   aria-haspopup="menu"
                                   aria-expanded={actionsFor_ === session.id}
-                                  aria-label={`Actions for the session started ${tabLabel(session.createdAt)}`}
+                                  aria-label={
+                                    surface === 'chat'
+                                      ? `Actions for ${subject}`
+                                      : `Actions for the session started ${subject}`
+                                  }
                                   onClick={() => {
                                     setActionsFor((open) =>
                                       open === session.id ? null : session.id,
@@ -316,4 +336,17 @@ export function SessionRail({
       )}
     </div>
   );
+}
+
+/** Chat pause is the platform's inactivity pause, not every idle-like state. */
+export function isPausedChat(session: Session): boolean {
+  return session.lifecycle === 'idle' && session.stopReason === 'idle_timeout';
+}
+
+/** A generated chat title, with the durable worktree name as its placeholder. */
+export function railSubject(session: Session, surface: SurfaceMode): string {
+  if (surface === 'chat') {
+    return session.chat?.title ?? session.chat?.worktreeName ?? tabLabel(session.createdAt);
+  }
+  return tabLabel(session.createdAt);
 }
