@@ -39,9 +39,34 @@ use crate::pty::PtyRegistry;
 use crate::sponsored_model::SponsoredModelGate;
 use crate::upstream::{CredentialHolder, UpstreamState};
 
+const MAX_CONVERSATION_SLOTS: usize = 16;
+
+/// One independently supervised conversation process in this pod.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum SlotId {
+    /// Compatibility identity for callers that predate named slots.
+    Legacy,
+    /// Opaque control-plane identity supplied by the attach query.
+    Named(String),
+}
+
+impl SlotId {
+    pub(crate) fn from_query(value: Option<String>) -> Self {
+        value.map_or(Self::Legacy, Self::Named)
+    }
+
+    #[cfg(test)]
+    fn named(value: &str) -> Self {
+        Self::Named(value.to_string())
+    }
+}
+
 #[derive(Default)]
 struct ConversationState {
-    active: Option<std::sync::Arc<Bridge>>,
+    slots: std::collections::HashMap<SlotId, std::sync::Arc<Bridge>>,
+    /// Latches first successful start even if an ended slot is later retired
+    /// and its replacement cannot be spawned.
+    ever_started: bool,
     /// Process-session roots retained after a bridge primary exits. A bridge
     /// may leave descendants able to mutate the workspace, so replacement
     /// cannot discard their checkpoint authority until procfs proves the
@@ -74,12 +99,16 @@ impl HeldWorkspaceWriters {
 }
 
 impl ConversationState {
-    fn retire_active(&mut self) {
-        if let Some(bridge) = self.active.take() {
+    fn retire_slot(&mut self, slot: &SlotId) {
+        if let Some(bridge) = self.slots.remove(slot) {
             if let Some(root) = bridge.writer_session_root() {
                 self.retired_writer_roots.insert(root);
             }
         }
+    }
+
+    fn has_started(&self) -> bool {
+        self.ever_started
     }
 
     fn writer_session_roots(&mut self) -> Vec<i32> {
@@ -99,13 +128,11 @@ impl ConversationState {
             .iter()
             .copied()
             .collect::<Vec<_>>();
-        if let Some(root) = self
-            .active
-            .as_ref()
-            .and_then(|bridge| bridge.writer_session_root())
-        {
-            roots.push(root);
-        }
+        roots.extend(
+            self.slots
+                .values()
+                .filter_map(|bridge| bridge.writer_session_root()),
+        );
         roots
     }
 }
@@ -187,11 +214,11 @@ pub(crate) struct AppState {
     /// Read when a conversation ends badly, so the owner is told the agent
     /// could not reach its model rather than being shown an empty turn.
     pub(crate) model_fault: upstream::UpstreamFault,
-    /// The kernel's conversation bridge, once anything has asked for one.
+    /// The kernel's independently keyed conversation bridges.
     ///
     /// Started lazily, exactly as the pty is, and for the same reason: a pod
-    /// runs one session on one plane, and starting a process nothing is going
-    /// to talk to would put a kernel on the model endpoint for no reason.
+    /// runs one process plane, and starting processes nothing is going to talk
+    /// to would put kernels on the model endpoint for no reason.
     conversation: std::sync::Arc<Mutex<ConversationState>>,
     /// This pod's view of its own consumption.
     ///
@@ -250,24 +277,24 @@ impl AppState {
         }
     }
 
-    /// The kernel's conversation bridge, started if it is not already running.
+    /// One keyed conversation bridge, started if it is not already running.
     ///
-    /// Lazy for the same reason the pty is: a pod hosts one session on one
-    /// plane, and which plane is decided by what the control plane opens. A
-    /// bridge started eagerly would be a kernel process on the model endpoint
-    /// for a session that was only ever going to be a terminal.
-    async fn conversation_bridge(&self) -> std::io::Result<std::sync::Arc<Bridge>> {
+    /// Lazy for the same reason the pty is: a pod hosts only one kind of
+    /// process plane, and which plane is decided by what the control plane
+    /// opens. A bridge started eagerly would put a kernel on the model endpoint
+    /// for a pod that was only ever going to serve a terminal.
+    async fn conversation_bridge(&self, slot: SlotId) -> std::io::Result<std::sync::Arc<Bridge>> {
         let _startup = self.startup_gate.write().await;
         let mut held = self.conversation.lock().await;
-        if let Some(running) = held.active.as_ref() {
+        if let Some(running) = held.slots.get(&slot).cloned() {
             // A cached bridge whose process has gone is not a bridge. Handing
             // it back gave a conversation that accepted prompts and answered
             // none — the agent was dead and nothing said so.
             if !running.is_ended() {
-                return Ok(std::sync::Arc::clone(running));
+                return Ok(running);
             }
             tracing::warn!("the conversation bridge had ended; starting a fresh one");
-            held.retire_active();
+            held.retire_slot(&slot);
         }
         if self.registry.is_running().await {
             // One session, one plane. A pod driving a terminal and a
@@ -277,8 +304,14 @@ impl AppState {
                 "this runtime is already hosting a terminal",
             ));
         }
+        if held.slots.len() >= MAX_CONVERSATION_SLOTS {
+            return Err(std::io::Error::other(
+                "this runtime has reached its conversation slot limit",
+            ));
+        }
         let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command())?);
-        held.active = Some(std::sync::Arc::clone(&bridge));
+        held.ever_started = true;
+        held.slots.insert(slot, std::sync::Arc::clone(&bridge));
         Ok(bridge)
     }
 
@@ -294,7 +327,7 @@ impl AppState {
         tokio::sync::broadcast::Receiver<Vec<u8>>,
     )> {
         let _startup = self.startup_gate.write().await;
-        if self.conversation.lock().await.active.is_some() {
+        if self.conversation.lock().await.has_started() {
             return Err(std::io::Error::other(
                 "this runtime is already hosting a conversation",
             ));
@@ -961,7 +994,7 @@ mod conversation_writer_tests {
     async fn replacing_an_ended_bridge_retains_its_live_descendant_in_the_writer_fence() {
         let state = AppState::for_test(&["/bin/sh"]);
         let first = state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("first bridge starts");
         let first_root = first
@@ -977,7 +1010,7 @@ mod conversation_writer_tests {
             .expect("the first primary exits while its descendant remains");
 
         let replacement = state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("replacement bridge starts");
         let replacement_root = replacement
@@ -1007,6 +1040,45 @@ mod conversation_writer_tests {
 
         assert!(replacement.send(b"exit 0".to_vec()).await);
     }
+
+    #[tokio::test]
+    async fn every_concurrent_slot_and_its_descendant_is_in_the_writer_fence() {
+        let state = AppState::for_test(&["/bin/sh"]);
+        let first = state
+            .conversation_bridge(SlotId::named("writer-a"))
+            .await
+            .expect("the first slot starts");
+        let second = state
+            .conversation_bridge(SlotId::named("writer-b"))
+            .await
+            .expect("the second slot starts");
+        assert!(first.send(b"sleep 10 &".to_vec()).await);
+        assert!(second.send(b"sleep 10 &".to_vec()).await);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let roots = state.writer_session_roots().await;
+        assert_eq!(roots.len(), 2, "both slot process sessions are authority");
+        let writer_count = tokio::task::spawn_blocking(move || {
+            let mut fence = writer_fence::WriterFence::quiesce(
+                roots,
+                writer_fence::SupervisorBoundary::default(),
+            )?;
+            let count = fence.writer_count()?;
+            fence.resume()?;
+            Ok::<_, String>(count)
+        })
+        .await
+        .expect("the writer-fence task joins")
+        .expect("both slot process trees quiesce");
+        assert!(
+            writer_count >= 4,
+            "both bridges and both descendants must be fenced"
+        );
+
+        let cleanup = b"kill $(jobs -p) 2>/dev/null; exit 0".to_vec();
+        assert!(first.send(cleanup.clone()).await);
+        assert!(second.send(cleanup).await);
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1029,7 +1101,7 @@ mod process_plane_tests {
         let conversation_barrier = std::sync::Arc::clone(&barrier);
         let conversation = tokio::spawn(async move {
             conversation_barrier.wait().await;
-            conversation_state.conversation_bridge().await
+            conversation_state.conversation_bridge(SlotId::Legacy).await
         });
 
         barrier.wait().await;
@@ -1052,10 +1124,62 @@ mod process_plane_tests {
     }
 
     #[tokio::test]
+    async fn conversation_slots_reuse_their_bridge_and_enforce_the_advertised_cap() {
+        let state = AppState::for_test(&["/bin/cat"]);
+        let mut bridges = Vec::new();
+        for index in 0..MAX_CONVERSATION_SLOTS {
+            bridges.push(
+                state
+                    .conversation_bridge(SlotId::named(&format!("slot-{index}")))
+                    .await
+                    .expect("every advertised slot starts"),
+            );
+        }
+        let reused = state
+            .conversation_bridge(SlotId::named("slot-0"))
+            .await
+            .expect("an existing slot reattaches at the cap");
+        assert!(std::sync::Arc::ptr_eq(&bridges[0], &reused));
+
+        let overflow = match state
+            .conversation_bridge(SlotId::named("one-slot-too-many"))
+            .await
+        {
+            Ok(_) => panic!("a seventeenth bridge must be refused"),
+            Err(error) => error,
+        };
+        assert!(overflow.to_string().contains("slot limit"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_slot_restart_does_not_reopen_pre_start_mutations() {
+        let state = AppState::for_test(&["/usr/bin/true", "/no/such/conversation-bridge"]);
+        let ended = state
+            .conversation_bridge(SlotId::named("latched"))
+            .await
+            .expect("the first slot starts");
+        tokio::time::timeout(std::time::Duration::from_secs(2), ended.ended())
+            .await
+            .expect("the first slot ends");
+        assert!(state.switch_command("/no/such/conversation-bridge"));
+        assert!(
+            state
+                .conversation_bridge(SlotId::named("latched"))
+                .await
+                .is_err(),
+            "the replacement command is absent"
+        );
+        assert!(
+            agent_started(&state).await,
+            "first start remains latched after replacement failure"
+        );
+    }
+
+    #[tokio::test]
     async fn a_conversation_rejects_a_later_terminal() {
         let state = AppState::for_test(&["/bin/sh"]);
         let conversation = state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("the conversation starts");
 
@@ -1076,7 +1200,7 @@ mod process_plane_tests {
             .await
             .expect("the terminal starts");
 
-        let conversation = state.conversation_bridge().await;
+        let conversation = state.conversation_bridge(SlotId::Legacy).await;
         assert!(
             matches!(conversation, Err(ref error) if error.to_string().contains("terminal")),
             "the terminal plane must exclude the conversation plane"
@@ -1188,11 +1312,27 @@ fn unsupported() -> axum::response::Response {
 }
 
 /// Hand over the agent's conversation so it can be resumed elsewhere.
-async fn conversation_snapshot(State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationSnapshotParams {
+    #[serde(default)]
+    conversation: Option<String>,
+}
+
+async fn conversation_snapshot(
+    State(state): State<AppState>,
+    Query(params): Query<ConversationSnapshotParams>,
+) -> impl IntoResponse {
     let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
         return unsupported();
     };
-    match conversation::capture(&state.home, sessions_dir) {
+    let captured = match params.conversation.as_deref() {
+        Some(conversation_id) => {
+            conversation::capture_by_id(&state.home, sessions_dir, conversation_id)
+        }
+        None => conversation::capture(&state.home, sessions_dir),
+    };
+    match captured {
         Ok(Some(bytes)) => (
             axum::http::StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
@@ -1202,6 +1342,11 @@ async fn conversation_snapshot(State(state): State<AppState>) -> impl IntoRespon
         // Nothing to carry is not a failure, and must be distinguishable from
         // one: a caller that read an error as "no conversation" would replace
         // a runtime and silently drop the session's history.
+        Ok(None) if params.conversation.is_some() => (
+            axum::http::StatusCode::NOT_FOUND,
+            "the requested conversation was not found",
+        )
+            .into_response(),
         Ok(None) => axum::http::StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::error!(error = %e, "cannot capture the conversation");
@@ -1793,7 +1938,7 @@ fn workspace_source_response(
 }
 
 async fn agent_started(state: &AppState) -> bool {
-    state.registry.is_running().await || state.conversation.lock().await.active.is_some()
+    state.registry.is_running().await || state.conversation.lock().await.has_started()
 }
 
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
@@ -1815,6 +1960,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": prelude::SUPPORTED,
+        "conversationSlots": { "max": MAX_CONVERSATION_SLOTS },
         "workspaceSource": { "version": workspace_source::CAPABILITY_VERSION },
         "workspaceCheckpoint": workspace_checkpoint_readiness(),
         "githubCapability": {
@@ -2137,7 +2283,7 @@ mod runtime_prelude_router_tests {
             axum::body::Bytes::from(pack.bytes),
         ));
         assert!(matches!(poll_once(write.as_mut()), Poll::Pending));
-        let mut conversation = Box::pin(runtime.state.conversation_bridge());
+        let mut conversation = Box::pin(runtime.state.conversation_bridge(SlotId::Legacy));
         assert!(matches!(poll_once(conversation.as_mut()), Poll::Pending));
 
         drop(held);
@@ -2172,7 +2318,7 @@ mod runtime_prelude_router_tests {
         let runtime = RuntimeFixture::start("conversation-plane").await;
         runtime
             .state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("the conversation starts");
 

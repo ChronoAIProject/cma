@@ -8,6 +8,7 @@ use super::*;
 use crate::bridge::Outbound;
 use crate::conversation_link::{gap, outbound};
 use crate::lanes::{LANE_CONVERSATION, LANE_CONVERSATION_GAP};
+use crate::SlotId;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -65,6 +66,7 @@ fn params(wire: Option<u32>, lanes: Option<&str>) -> AttachParams {
         rows: Some(40),
         wire,
         lanes: lanes.map(str::to_string),
+        conversation: None,
         telemetry: None,
     }
 }
@@ -102,6 +104,17 @@ fn the_conversation_lane_is_asked_for_by_name() {
     let p = params(Some(1), Some("conv"));
     assert!(p.framed());
     assert!(p.conversational());
+    assert!(matches!(SlotId::from_query(p.conversation), SlotId::Legacy));
+}
+
+#[test]
+fn a_named_conversation_query_selects_an_opaque_slot() {
+    let mut p = params(Some(1), Some("conv"));
+    p.conversation = Some("thread/session:opaque".into());
+    assert_eq!(
+        SlotId::from_query(p.conversation),
+        SlotId::Named("thread/session:opaque".into())
+    );
 }
 
 #[test]
@@ -443,12 +456,112 @@ async fn terminal_link(address: std::net::SocketAddr, id: &str) -> ClientSocket 
         .0
 }
 
+async fn conversation_link(
+    address: std::net::SocketAddr,
+    id: &str,
+    conversation: Option<&str>,
+) -> ClientSocket {
+    let mut url = format!("ws://{address}/runtime/{id}/terminal?wire=1&lanes=conv");
+    if let Some(conversation) = conversation {
+        url.push('&');
+        url.push_str(lanes::CONVERSATION_QUERY_PARAMETER);
+        url.push('=');
+        url.push_str(conversation);
+    }
+    tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the conversation link opens")
+        .0
+}
+
 async fn next_client_message(socket: &mut ClientSocket) -> tokio_tungstenite::tungstenite::Message {
     tokio::time::timeout(Duration::from_secs(5), socket.next())
         .await
         .expect("the runtime link answers in time")
         .expect("the runtime link remains open")
         .expect("the runtime frame is readable")
+}
+
+async fn expect_ready(socket: &mut ClientSocket) {
+    let tokio_tungstenite::tungstenite::Message::Text(ready) = next_client_message(socket).await
+    else {
+        panic!("the lane declaration must be the first frame");
+    };
+    let ready: serde_json::Value = serde_json::from_str(&ready).expect("the declaration is JSON");
+    assert_eq!(ready["t"], "ready");
+    assert_eq!(ready["lanes"], serde_json::json!(["ctl", "conv"]));
+}
+
+async fn send_conversation(socket: &mut ClientSocket, payload: &[u8]) {
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_CONVERSATION, payload),
+        ))
+        .await
+        .expect("the conversation frame reaches the runtime");
+}
+
+async fn next_conversation_payload(socket: &mut ClientSocket) -> Vec<u8> {
+    let tokio_tungstenite::tungstenite::Message::Binary(bytes) = next_client_message(socket).await
+    else {
+        panic!("the bridge output must be a binary lane frame");
+    };
+    let (lane, payload) = lanes::unframe(&bytes).expect("bridge output has a lane");
+    assert_eq!(lane, LANE_CONVERSATION);
+    payload.to_vec()
+}
+
+async fn expect_conversation_close(socket: &mut ClientSocket) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match socket.next().await {
+                None
+                | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))
+                | Some(Err(_)) => break,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await
+    .expect("the ended slot closes its link");
+}
+
+#[tokio::test]
+async fn named_conversation_links_isolate_bytes_crashes_and_restarts() {
+    let state = AppState::for_test(&["/bin/sh"]);
+    let (address, server) = serve(state).await;
+    let mut first = conversation_link(address, "sbx_slots", Some("slot-a")).await;
+    let mut second = conversation_link(address, "sbx_slots", Some("slot-b")).await;
+    expect_ready(&mut first).await;
+    expect_ready(&mut second).await;
+
+    send_conversation(&mut first, b"printf 'from-a\\n'").await;
+    assert_eq!(next_conversation_payload(&mut first).await, b"from-a");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), second.next())
+            .await
+            .is_err(),
+        "slot A output crossed into slot B"
+    );
+
+    send_conversation(&mut second, b"printf 'from-b\\n'").await;
+    assert_eq!(next_conversation_payload(&mut second).await, b"from-b");
+    send_conversation(&mut first, b"exit 0").await;
+    expect_conversation_close(&mut first).await;
+
+    send_conversation(&mut second, b"printf 'still-b\\n'").await;
+    assert_eq!(next_conversation_payload(&mut second).await, b"still-b");
+
+    let mut restarted = conversation_link(address, "sbx_slots", Some("slot-a")).await;
+    expect_ready(&mut restarted).await;
+    send_conversation(&mut restarted, b"printf 'restarted-a\\n'").await;
+    assert_eq!(
+        next_conversation_payload(&mut restarted).await,
+        b"restarted-a"
+    );
+    send_conversation(&mut restarted, b"exit 0").await;
+    send_conversation(&mut second, b"exit 0").await;
+    server.abort();
 }
 
 async fn terminal_output_until_exit(socket: &mut ClientSocket) -> (Vec<u8>, serde_json::Value) {
