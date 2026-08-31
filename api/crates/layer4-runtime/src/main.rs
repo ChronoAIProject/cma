@@ -19,14 +19,15 @@ mod sponsored_model;
 mod telemetry;
 mod upstream;
 mod workspace;
+mod workspace_source;
 mod writer_fence;
 
 use std::net::SocketAddr;
 
 use axum::{
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use ring::rand::SecureRandom as _;
@@ -140,6 +141,8 @@ pub(crate) struct AppState {
     workspace_authority: std::sync::Arc<RwLock<Option<WorkspaceAuthority>>>,
     /// One capture/version fence at a time within this runtime generation.
     checkpoint_gate: std::sync::Arc<Mutex<()>>,
+    /// The one repository clone prepared for conversation worktrees.
+    workspace_source: std::sync::Arc<Mutex<workspace_source::WorkspaceSources>>,
     /// Writer and startup-admission authority retained across a successful
     /// hold-for-teardown response.
     workspace_writer_hold: std::sync::Arc<Mutex<WorkspaceWriterHoldState>>,
@@ -224,6 +227,9 @@ impl AppState {
             checkpoint_root: std::path::PathBuf::from("/home/chrono/.cma-checkpoints"),
             workspace_authority: std::sync::Arc::new(RwLock::new(None)),
             checkpoint_gate: std::sync::Arc::new(Mutex::new(())),
+            workspace_source: std::sync::Arc::new(Mutex::new(
+                workspace_source::WorkspaceSources::default(),
+            )),
             workspace_writer_hold: std::sync::Arc::new(Mutex::new(
                 WorkspaceWriterHoldState::default(),
             )),
@@ -663,6 +669,9 @@ async fn main() {
         checkpoint_root: home.join(".cma-workspace-checkpoints"),
         workspace_authority: std::sync::Arc::new(RwLock::new(None)),
         checkpoint_gate: std::sync::Arc::new(Mutex::new(())),
+        workspace_source: std::sync::Arc::new(Mutex::new(
+            workspace_source::WorkspaceSources::default(),
+        )),
         workspace_writer_hold: std::sync::Arc::new(Mutex::new(WorkspaceWriterHoldState::default())),
         startup_gate: std::sync::Arc::new(RwLock::new(())),
         writer_supervisor,
@@ -728,6 +737,18 @@ fn runtime_router(state: AppState) -> Router {
         .route(
             "/runtime/workspace/checkpoint/resume",
             post(workspace_checkpoint_resume).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/runtime/workspace/source",
+            post(workspace_source_prepare).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/runtime/workspace/trees",
+            post(workspace_tree_add).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/runtime/workspace/trees/{name}",
+            delete(workspace_tree_remove),
         )
         .with_state(state)
 }
@@ -1689,6 +1710,88 @@ fn checkpoint_response(captured: workspace::Captured) -> axum::response::Respons
     }
 }
 
+async fn workspace_source_prepare(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<workspace_source::WorkspaceSourceRequest>,
+) -> impl IntoResponse {
+    if let Err(error) = request.validate() {
+        return workspace_source_response(error);
+    }
+
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    if agent_started(&state).await {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+
+    let mut sources = state.workspace_source.lock().await;
+    match sources.prepare(&state.workspace_root, request).await {
+        Ok(()) => axum::http::StatusCode::OK.into_response(),
+        Err(error) => workspace_source_response(error),
+    }
+}
+
+async fn workspace_tree_add(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<workspace_source::WorkspaceTreeRequest>,
+) -> impl IntoResponse {
+    if let Err(error) = request.validate() {
+        return workspace_source_response(error);
+    }
+
+    // Checkpoint takes these in the same order. The write side prevents a new
+    // process from starting halfway through git's metadata mutation, while an
+    // already-running agent remains allowed to request another worktree.
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    let mut sources = state.workspace_source.lock().await;
+    match sources.add_tree(&state.workspace_root, request).await {
+        Ok(receipt) => axum::Json(receipt).into_response(),
+        Err(error) => workspace_source_response(error),
+    }
+}
+
+async fn workspace_tree_remove(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if let Err(error) = workspace_source::validate_tree_name(&name) {
+        return workspace_source_response(error);
+    }
+
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    let mut sources = state.workspace_source.lock().await;
+    match sources.remove_tree(&state.workspace_root, &name).await {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => workspace_source_response(error),
+    }
+}
+
+fn workspace_source_response(
+    error: workspace_source::WorkspaceSourceError,
+) -> axum::response::Response {
+    let status = match error {
+        workspace_source::WorkspaceSourceError::Invalid(_) => axum::http::StatusCode::BAD_REQUEST,
+        workspace_source::WorkspaceSourceError::Conflict(_) => axum::http::StatusCode::CONFLICT,
+        workspace_source::WorkspaceSourceError::NotFound => axum::http::StatusCode::NOT_FOUND,
+        workspace_source::WorkspaceSourceError::Git { .. } => {
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY
+        }
+        workspace_source::WorkspaceSourceError::Timeout(_) => {
+            axum::http::StatusCode::GATEWAY_TIMEOUT
+        }
+        workspace_source::WorkspaceSourceError::Runtime(_) => {
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    (status, error.to_string()).into_response()
+}
+
 async fn agent_started(state: &AppState) -> bool {
     state.registry.is_running().await || state.conversation.lock().await.active.is_some()
 }
@@ -1712,6 +1815,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": prelude::SUPPORTED,
+        "workspaceSource": { "version": workspace_source::CAPABILITY_VERSION },
         "workspaceCheckpoint": workspace_checkpoint_readiness(),
         "githubCapability": {
             "name": "github_capability_v2",
