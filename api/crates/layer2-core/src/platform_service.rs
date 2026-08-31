@@ -23,6 +23,12 @@ use crate::error::CoreError;
 use crate::store::{PlatformSettingsStore, StoredSettings};
 use crate::{ChatSettingsSnapshot, PlatformSettings, SessionBriefing};
 
+/// One atomic settings read used to build a new chat host.
+pub(crate) struct ChatHostPolicy {
+    pub snapshot: ChatSettingsSnapshot,
+    pub briefing: SessionBriefing,
+}
+
 /// The deployment's settings, and who may change them.
 pub struct PlatformSettingsService {
     store: Option<Arc<dyn PlatformSettingsStore>>,
@@ -97,15 +103,24 @@ impl PlatformSettingsService {
     /// defaults here could silently clone a different repository or enable a
     /// surface the administrator disabled.
     pub async fn chat_snapshot(&self) -> Result<Option<ChatSettingsSnapshot>, CoreError> {
+        Ok(self.chat_host_policy().await?.map(|policy| policy.snapshot))
+    }
+
+    /// Chat policy and deployment briefing from one fail-closed revision.
+    pub(crate) async fn chat_host_policy(&self) -> Result<Option<ChatHostPolicy>, CoreError> {
         let stored = self.current().await?;
-        stored
-            .settings
-            .chat
-            .map(|settings| {
-                ChatSettingsSnapshot::new(stored.revision, settings)
-                    .map_err(|violation| CoreError::InvalidRequest(violation.to_string()))
-            })
-            .transpose()
+        let Some(settings) = stored.settings.chat else {
+            return Ok(None);
+        };
+        let snapshot = ChatSettingsSnapshot::new(stored.revision, settings)
+            .map_err(|violation| CoreError::InvalidRequest(violation.to_string()))?;
+        if let Some(size) = snapshot.settings.host.size {
+            stored.settings.size_bounds.check(size)?;
+        }
+        Ok(Some(ChatHostPolicy {
+            snapshot,
+            briefing: stored.settings.briefing,
+        }))
     }
 
     /// Change the settings, refusing if somebody has written since `expected`.

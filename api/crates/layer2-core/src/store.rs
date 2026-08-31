@@ -2057,6 +2057,50 @@ pub struct StoredSettings {
     pub previous: Option<crate::PlatformSettings>,
 }
 
+/// Durable ownership of deployment-managed shared chat runtimes.
+///
+/// Every mutation is an optimistic replacement of one complete aggregate.
+/// Provider work is authorized only by a transition claim already present in
+/// the expected revision, so a stale worker cannot publish over its successor.
+#[async_trait::async_trait]
+pub trait ChatHostStore: Send + Sync {
+    /// Insert the deterministic owner record or return the record that won.
+    async fn create_if_absent(
+        &self,
+        candidate: &crate::ChatHostRecord,
+    ) -> Result<crate::ChatHostRecord, StoreError>;
+
+    async fn get(
+        &self,
+        id: &crate::ChatHostId,
+    ) -> Result<Option<crate::ChatHostRecord>, StoreError>;
+
+    async fn get_for_owner(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<crate::ChatHostRecord>, StoreError>;
+
+    /// Replace the complete record only while its revision is unchanged.
+    async fn update_if_revision(
+        &self,
+        expected: u64,
+        replacement: &crate::ChatHostRecord,
+    ) -> Result<Option<crate::ChatHostRecord>, StoreError>;
+
+    /// Bounded newest-first inventory for administrative reads.
+    async fn list(
+        &self,
+        query: &crate::ChatHostListQuery,
+    ) -> Result<Page<crate::ChatHostRecord>, StoreError>;
+
+    /// Bounded worker candidates. Kept distinct so a concrete store cannot
+    /// accidentally serve reconciliation with an unbounded admin scan.
+    async fn list_candidates(
+        &self,
+        query: &crate::ChatHostListQuery,
+    ) -> Result<Page<crate::ChatHostRecord>, StoreError>;
+}
+
 /// One skill, fetched and ready to be written.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SkillPack {
