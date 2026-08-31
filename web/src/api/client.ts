@@ -22,7 +22,12 @@
  * call away; this module is only the one this app happens to hold.
  */
 
-import { createClient, ProtocolError, type CreateSession } from '@chronoai/cma-sdk';
+import {
+  createClient,
+  ProtocolError,
+  type CreateSession,
+  type SessionListSurface,
+} from '@chronoai/cma-sdk';
 import type {
   DiffReview,
   CursorPage,
@@ -372,9 +377,26 @@ export function refreshPullRequestStatus(
   return bot.refreshPullRequestStatus(id, expectedRevision, options);
 }
 
-/** Sessions belonging to the signed-in subject, newest first. */
-export function listSessions(): Promise<readonly Session[]> {
-  return bot.listSessions();
+/** Sessions belonging to the signed-in subject on one exact surface, newest first. */
+export function listSessions(surface?: SessionListSurface): Promise<readonly Session[]> {
+  return bot.listSessions({ surface });
+}
+
+/** Whether this deployment explicitly exposes the owner-facing Chat surface. */
+export async function readChatSurfaceEnabled(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const capabilities = await bot.readAguiCapabilities({ signal });
+    const feature = capabilities.features.custom['cma:chat'];
+    return (
+      typeof feature === 'object' &&
+      feature !== null &&
+      !Array.isArray(feature) &&
+      (feature as Record<string, unknown>).enabled === true
+    );
+  } catch {
+    // Older deployments omit the route or declaration. Both mean disabled.
+    return false;
+  }
 }
 
 /** The signed-in subject's advisory live-session allowance. */
@@ -418,6 +440,11 @@ export function createSession(
 ): Promise<Session> {
   const options: CreateSession = { cols, rows, environmentProfile, quotedRateCard };
   return bot.createSession(options);
+}
+
+/** Provision a deployment-configured chat thread with no caller-owned choices. */
+export function createChatSession(): Promise<Session> {
+  return bot.createSession({ surface: 'chat' });
 }
 
 /** Quote a new session at the deployment's current sealed rate card. */

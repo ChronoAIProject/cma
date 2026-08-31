@@ -11,6 +11,7 @@
  */
 
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
+import * as aguiCapabilities from './agui/capabilities.js';
 import * as discovery from './discovery.js';
 import * as environment from './environment.js';
 import * as events from './events.js';
@@ -26,6 +27,7 @@ import type {
   PricingQuote,
   SessionAllowance,
   SessionPageRequest,
+  SessionListRequest,
   SessionSpend,
 } from './sessions.js';
 import type { OperationOptions, Page, PageWalkOptions } from './http.js';
@@ -79,6 +81,13 @@ export class Cma {
   /** Public protocol and build discovery; no configured bearer is presented. */
   readConformance(options: OperationOptions = {}): Promise<Conformance> {
     return discovery.readConformance(this.#config, options);
+  }
+
+  /** Deployment-level AG-UI features, including live custom surface gates. */
+  readAguiCapabilities(
+    options: OperationOptions = {},
+  ): Promise<aguiCapabilities.AguiCapabilityDocument> {
+    return aguiCapabilities.readAguiCapabilities(this.#config, options);
   }
 
   /** Read the deployment-owned chat setting and its write revision. */
@@ -510,7 +519,7 @@ export class Cma {
   }
 
   /** Sessions belonging to the authenticated subject, newest first. */
-  listSessions(options: PageWalkOptions = {}): Promise<readonly Session[]> {
+  listSessions(options: SessionListRequest = {}): Promise<readonly Session[]> {
     return sessions.listSessions(this.#config, options);
   }
 

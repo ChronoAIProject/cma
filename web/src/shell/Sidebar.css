@@ -184,6 +184,45 @@
   box-shadow: var(--focus-ring);
 }
 
+.sidebar__surfaces {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 36px;
+  margin: 0 2px 8px;
+  padding: 2px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.sidebar__surfaces button {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar__surfaces button:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.sidebar__surfaces button[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.sidebar__surfaces button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .sidebar--collapsed .sidebar__icon {
   width: 36px;
   height: 36px;

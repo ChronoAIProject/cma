@@ -80,6 +80,11 @@ export interface SessionPageRequest extends PageRequest {
   readonly surface?: SessionListSurface;
 }
 
+/** Complete bounded session walk, optionally narrowed to one surface. */
+export interface SessionListRequest extends PageWalkOptions {
+  readonly surface?: SessionListSurface;
+}
+
 /** Exact `StopReason` spellings serialized by layer2-core. */
 export const STOP_REASONS = [
   'end_turn',
@@ -394,9 +399,13 @@ export async function listSessionPage(
 /** Sessions belonging to the authenticated subject, newest first. */
 export async function listSessions(
   config: ResolvedConfig,
-  options: PageWalkOptions = {},
+  options: SessionListRequest = {},
 ): Promise<readonly Session[]> {
-  return requestPages(config, SESSION_COLLECTION, sessionList, options);
+  if (options.surface !== undefined && options.surface !== 'chat' && options.surface !== 'agent') {
+    throw new ValidationError('session list surface was not chat or agent');
+  }
+  const target = pageTarget(SESSION_COLLECTION, {}, { surface: options.surface });
+  return requestPages(config, target, sessionList, options);
 }
 
 /** The authenticated subject's current live-session allowance. */

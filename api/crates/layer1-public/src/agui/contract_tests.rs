@@ -105,7 +105,7 @@ fn fixture_events() -> Vec<project::AguiEvent> {
 }
 
 fn enabled_capability_events() -> BTreeSet<String> {
-    capabilities::document()["events"]
+    capabilities::document(false)["events"]
         .as_object()
         .expect("the capability document has an events map")
         .iter()
@@ -168,7 +168,7 @@ fn assert_or_update_fixture(name: &str, expected: &str) {
 async fn checked_in_sdk_fixtures_are_generated_from_the_server_contract() {
     let capability = format!(
         "{}\n",
-        serde_json::to_string_pretty(&capabilities::document())
+        serde_json::to_string_pretty(&capabilities::document(false))
             .expect("the capability document serializes")
     );
     let projection = projection_fixture().await;

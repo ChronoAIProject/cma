@@ -714,6 +714,7 @@ GET /api/v1/agui/capabilities
     "execution":      { "codeExecution": true, "sandboxed": true },
     "custom":         { "cma:terminal": false, "cma:usage": true,
                         "cma:resources": true,
+                        "cma:chat": { "enabled": false },
                         "cma:changePlane": false, "cma:planeChangeObserved": true,
                         "cma:liveFrames": true,
                         "cma:trigger": {
@@ -733,6 +734,11 @@ GET /api/v1/agui/capabilities
 `websocket: false` is deliberate. AG-UI here rides SSE; the terminal has its own WebSocket and is not an AG-UI transport.
 
 The `events` map is the machine-readable form of §3 and is the contract. Read it rather than assuming.
+
+`cma:chat.enabled` is the deployment's current owner-facing Chat switch, not a
+static claim about the build. It is `false` when Chat settings are absent,
+disabled, or cannot be read safely. Clients gate the Chat surface on an exact
+`true`; an older document with no `cma:chat` object is therefore disabled too.
 
 The closed `cma:trigger` object declares companion availability. A missing
 object means this deployment does not project the workflow through AG-UI; it

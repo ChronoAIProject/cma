@@ -50,6 +50,11 @@ export {
 } from './config.js';
 export { readConformance, toConformance, type Conformance } from './discovery.js';
 export {
+  readAguiCapabilities,
+  toAguiCapabilities,
+  type AguiCapabilityDocument,
+} from './agui/capabilities.js';
+export {
   ApiError,
   CapabilityRefused,
   CmaError,
@@ -180,6 +185,7 @@ export {
   type PricingQuote,
   type SessionAllowance,
   type SessionListStatus,
+  type SessionListRequest,
   type SessionListSurface,
   type SessionPageRequest,
   type SessionSpend,

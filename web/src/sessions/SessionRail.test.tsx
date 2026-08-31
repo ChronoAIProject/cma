@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionRail } from './SessionRail';
 import { lastActivity } from './lastActivity';
+import { tabLabel } from './sessionTime';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
@@ -144,6 +145,64 @@ describe('the rail row', () => {
     // height every time it reloads.
     const { container } = renderRail();
     expect(container.querySelector('.row-item__activity')).not.toBeNull();
+  });
+});
+
+describe('the Chat rail', () => {
+  const chats = [
+    session('a', 'running', {
+      chat: { worktreeName: 'chat-alpha', worktreePath: '/work/chat-alpha', title: 'Release plan' },
+    }),
+    session('b', 'idle', {
+      stopReason: 'idle_timeout',
+      chat: { worktreeName: 'chat-beta', worktreePath: '/work/chat-beta' },
+    }),
+    session('c', 'idle', {
+      stopReason: 'end_turn',
+      chat: { worktreeName: 'chat-gamma', worktreePath: '/work/chat-gamma' },
+    }),
+  ];
+
+  it('has only Active and Paused groups and reserves Paused for inactivity timeout', async () => {
+    const user = userEvent.setup();
+    renderRail({ surface: 'chat', sessions: chats });
+
+    expect(screen.getByText('Chats')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Active, 2 chats' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Paused, 1 chat' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Terminated/ })).toBeNull();
+
+    await expand(user, 'Paused');
+    expect(within(screen.getByRole('tablist', { name: 'Paused' })).getByText('chat-beta')).toBe(
+      screen.getByText('chat-beta'),
+    );
+    expect(within(screen.getByRole('tablist', { name: 'Active' })).getByText('chat-gamma')).toBe(
+      screen.getByText('chat-gamma'),
+    );
+  });
+
+  it('prefers a generated title and falls back to the worktree name', () => {
+    renderRail({ surface: 'chat', sessions: chats });
+
+    expect(screen.getByText('Release plan')).toBeInTheDocument();
+    expect(screen.getByText('chat-gamma')).toBeInTheDocument();
+    expect(screen.queryByText('chat-alpha')).toBeNull();
+  });
+
+  it('keeps Agent labels time-based for sessions that happen to carry chat metadata', () => {
+    const agent = chats[0] as Session;
+    renderRail({ surface: 'agent', sessions: [agent] });
+
+    expect(screen.getByText(tabLabel(agent.createdAt))).toBeInTheDocument();
+    expect(screen.queryByText('Release plan')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Terminated, 0 sessions' })).toBeInTheDocument();
+  });
+
+  it('names an empty Chat collection without borrowing Agent copy', () => {
+    renderRail({ surface: 'chat', sessions: [] });
+
+    expect(screen.getByText('No chats yet.')).toBeInTheDocument();
+    expect(screen.queryByText('No sessions yet.')).toBeNull();
   });
 });
 
