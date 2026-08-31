@@ -30,6 +30,7 @@ interface BoundedRowProps {
   readonly used: number | undefined;
   readonly limit: number | undefined;
   readonly format: (value: number) => string;
+  readonly formatLimit?: (value: number) => string;
   readonly measuring?: boolean;
   readonly pressure?: boolean;
 }
@@ -50,12 +51,18 @@ export function formatBytes(bytes: number): string {
 
 /** Thousandths of a core, in the vocabulary container limits use. */
 export function formatCpu(millis: number): string {
-  if (millis < 1000) {
-    return `${millis.toLocaleString('en')}m`;
+  return `${String(millis)}m`;
+}
+
+/** Memory in the same mebibyte unit used to size a session. */
+export function formatMemory(bytes: number): string {
+  if (bytes < 1024 ** 2) {
+    return formatBytes(bytes);
   }
-  const cores = millis / 1000;
-  const figure = cores.toFixed(1).replace(/\.0$/, '');
-  return `${figure} ${cores === 1 ? 'core' : 'cores'}`;
+  const mebibytes = bytes / 1024 ** 2;
+  const figure =
+    mebibytes < 100 ? mebibytes.toFixed(1).replace(/\.0$/, '') : String(Math.round(mebibytes));
+  return `${figure} MiB`;
 }
 
 function percentage(used: number, limit: number): number {
@@ -65,7 +72,15 @@ function percentage(used: number, limit: number): number {
   return Math.min(100, Math.round((used / limit) * 100));
 }
 
-function BoundedRow({ label, used, limit, format, measuring, pressure }: BoundedRowProps) {
+function BoundedRow({
+  label,
+  used,
+  limit,
+  format,
+  formatLimit = format,
+  measuring,
+  pressure,
+}: BoundedRowProps) {
   if (used === undefined) {
     return (
       <div className="resources__row">
@@ -91,7 +106,7 @@ function BoundedRow({ label, used, limit, format, measuring, pressure }: Bounded
   return (
     <div className="resources__row">
       <span className="resources__figure">
-        {shownLabel} · {format(used)} / {format(limit)}
+        {shownLabel} · {format(used)} / {formatLimit(limit)}
       </span>
       <span
         className="resources__track"
@@ -141,7 +156,7 @@ export function Resources({
         label="Memory"
         used={resources.memoryBytesUsed}
         limit={resources.memoryBytesLimit}
-        format={formatBytes}
+        format={formatMemory}
         pressure={memoryPressure !== undefined}
       />
       <BoundedRow

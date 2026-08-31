@@ -352,7 +352,10 @@ export function ConversationSurface({
               }
             />
           )}
-          <Usage granted={capabilities.usage} usage={conversation.usage} />
+          <div className="conversation__usage-context">
+            <Usage granted={capabilities.usage} usage={conversation.usage} />
+            <Context granted={capabilities.usage} usage={conversation.usage} />
+          </div>
           <Resources
             granted={capabilities.resources}
             unreported={resourcesUnreported}
@@ -360,7 +363,6 @@ export function ConversationSurface({
             cpuPressure={conversation.cpuPressure}
             memoryPressure={conversation.memoryPressure}
           />
-          <Context granted={capabilities.usage} usage={conversation.usage} />
         </div>
       </div>
     </section>

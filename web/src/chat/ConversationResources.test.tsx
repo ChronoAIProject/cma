@@ -220,8 +220,13 @@ describe('the projected state in its reading column', () => {
     }
     expect(usage.compareDocumentPosition(resources) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(pressure.compareDocumentPosition(stream) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-    expect(screen.getByText('Memory under pressure · 892 MiB / 1 GiB')).toBeInTheDocument();
+    expect(screen.getByText('Memory under pressure · 892 MiB / 1024 MiB')).toBeInTheDocument();
     expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
+    const usageContext = document.querySelector('.conversation__usage-context');
+    expect(usageContext).not.toBeNull();
+    expect(usageContext?.querySelector('.usage')).not.toBeNull();
+    expect(usageContext?.querySelector('.context')).not.toBeNull();
+    expect(resources.querySelectorAll(':scope > .resources__row')).toHaveLength(3);
   });
 
   it('clears the durable notice and returns the track to neutral on close', async () => {
@@ -337,7 +342,7 @@ describe('the projected state in its reading column', () => {
     });
 
     expect(screen.getByRole('alert')).toHaveTextContent('CPU pressure is high');
-    expect(screen.getByText('CPU under pressure · 850m / 1 core')).toBeInTheDocument();
+    expect(screen.getByText('CPU under pressure · 850m / 1000m')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Memory' })).not.toHaveAttribute(
       'data-pressure',
     );
