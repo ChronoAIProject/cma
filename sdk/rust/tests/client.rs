@@ -11,17 +11,19 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
-    ApprovalDecision, BeginConnectionRequest, Client, Conformance, CreateSessionRequest,
+    ApprovalDecision, BeginConnectionRequest, ChatAgentSettings, ChatHostSettings, ChatInactivity,
+    ChatSettings, ChatSetup, ChatWorkspaceSource, Client, Conformance, CreateSessionRequest,
     CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationAction,
     LaunchConfirmationRequest, LaunchEventKind, LaunchListRequest, LaunchProgress,
     LaunchStartRequest, LaunchState, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
     PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
-    PullRequestStatusRefreshRequest, RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy,
-    ScreenSnapshot, SelectLaunchConnectionRequest, Session, SessionId, SessionInput,
-    SessionPageRequest, SessionStatus, TerminalGeometry, TriggerConnection, TriggerConnectionState,
-    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewAvailability,
-    TriggerPreviewCost, TriggerPreviewUnavailableReason, TriggerRepositorySelection,
-    TriggerRevision, UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
+    PullRequestStatusRefreshRequest, ReasoningEffort, RecoverInitialPromptRequest,
+    ResponseMetadata, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
+    SessionId, SessionInput, SessionPageRequest, SessionSize, SessionStatus, TerminalGeometry,
+    TriggerConnection, TriggerConnectionState, TriggerContentDraft, TriggerDraft, TriggerPreview,
+    TriggerPreviewAvailability, TriggerPreviewCost, TriggerPreviewUnavailableReason,
+    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
+    UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -346,6 +348,45 @@ fn connection_authorization_response() -> String {
     .to_string()
 }
 
+fn chat_settings() -> ChatSettings {
+    ChatSettings {
+        enabled: true,
+        workspace: ChatWorkspaceSource {
+            repository_url: "https://example.test/team/repository.git".into(),
+            branch: "development".into(),
+        },
+        agent: ChatAgentSettings {
+            model: Some("reasoning-model".into()),
+            reasoning_effort: ReasoningEffort::XHigh,
+            instructions: "Read the repository guidance.".into(),
+            record_tool_bodies: false,
+        },
+        message_prefixes: vec!["/formalize".into(), "/check".into()],
+        inactivity: ChatInactivity {
+            pause_after_seconds: 1_200,
+        },
+        setup: ChatSetup {
+            commands: vec!["tool install".into(), "tool verify".into()],
+        },
+        host: ChatHostSettings {
+            size: Some(SessionSize {
+                cpu_millis: 2_000,
+                memory_mib: 4_096,
+            }),
+            max_threads: 12,
+        },
+    }
+}
+
+fn chat_settings_response() -> String {
+    serde_json::json!({
+        "revision": 7,
+        "settings": { "chat": chat_settings() },
+        "previous": { "chat": null }
+    })
+    .to_string()
+}
+
 #[test]
 fn sdk_copies_read_every_server_owned_response_fixture() {
     let conformance: Conformance =
@@ -636,6 +677,81 @@ async fn conformance_discovery_is_typed_anonymous_and_correlated() {
     assert_eq!(
         requests[0].request_id.as_deref(),
         Some("caller-conformance-488")
+    );
+}
+
+#[tokio::test]
+async fn chat_settings_read_and_patch_use_the_revisioned_public_admin_route() {
+    let body = chat_settings_response();
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &body),
+        StubResponse::json(StatusCode::OK, &body),
+    ])
+    .await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+
+    let read = client
+        .read_chat_settings()
+        .await
+        .expect("chat settings read succeeds");
+    assert_eq!(read.revision, 7);
+    assert_eq!(read.chat, Some(chat_settings()));
+    assert_eq!(read.previous_chat, None);
+
+    let changed = client
+        .change_chat_settings(6, Some(&chat_settings()))
+        .await
+        .expect("chat settings change succeeds");
+    assert_eq!(changed.chat, Some(chat_settings()));
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 2);
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, Method::GET);
+    assert_eq!(requests[0].uri.path(), "/proxy/api/v1/admin/settings");
+    assert_eq!(requests[1].method, Method::PATCH);
+    assert_eq!(requests[1].uri.path(), "/proxy/api/v1/admin/settings");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[1].body).expect("PATCH body is JSON"),
+        serde_json::json!({
+            "expected_revision": 6,
+            "chat": chat_settings(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn invalid_chat_settings_stop_before_transport_and_null_removes_the_object() {
+    let body = serde_json::json!({
+        "revision": 8,
+        "settings": { "chat": null },
+        "previous": { "chat": chat_settings() }
+    })
+    .to_string();
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &body)]).await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+
+    let mut invalid = chat_settings();
+    invalid.host.max_threads = 0;
+    assert!(
+        client
+            .change_chat_settings(7, Some(&invalid))
+            .await
+            .is_err()
+    );
+    assert!(stub.requests().await.is_empty());
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 0);
+
+    let removed = client
+        .change_chat_settings(7, None)
+        .await
+        .expect("null removes chat");
+    assert_eq!(removed.chat, None);
+    assert_eq!(removed.previous_chat, Some(chat_settings()));
+    let requests = stub.requests().await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[0].body).unwrap(),
+        serde_json::json!({ "expected_revision": 7, "chat": null })
     );
 }
 

@@ -144,6 +144,20 @@ export {
   type SessionResourceStatus,
 } from './resources.js';
 export {
+  changeChatSettings,
+  readChatSettings,
+  toChatSettings,
+  toStoredChatSettings,
+  type ChatAgentSettings,
+  type ChatHostSettings,
+  type ChatHostSize,
+  type ChatInactivity,
+  type ChatSettings,
+  type ChatSetup,
+  type ChatWorkspaceSource,
+  type StoredChatSettings,
+} from './settings.js';
+export {
   changePlane,
   createSession,
   deleteSession,
