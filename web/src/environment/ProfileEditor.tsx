@@ -12,9 +12,10 @@ import type {
   MandatoryEntries,
   PlatformService,
   ProfileDraft,
+  ProfileSessionSize,
   ProfileVariable,
 } from './types';
-import { isValidKey } from './types';
+import { isValidKey, isValidProfileSizeValue } from './types';
 import { Input } from '../ui/Input';
 
 /**
@@ -76,6 +77,12 @@ export function ProfileEditor({
   const permissionId = useId();
   const notesId = useId();
   const credentialId = useId();
+  const resourcesId = useId();
+  const cpuId = useId();
+  const memoryId = useId();
+  const [lastCustomSize, setLastCustomSize] = useState<ProfileSessionSize | undefined>(
+    draft.agent.size,
+  );
   /*
    * Which values are currently shown. A variable's value is where a user puts
    * a token, so it is masked until they deliberately reveal it — per row, and
@@ -223,6 +230,106 @@ export function ProfileEditor({
             onChange({ ...draft, agent: { ...draft.agent, credential } });
           }}
         />
+      </div>
+
+      <div className="editor__resources" role="group" aria-labelledby={resourcesId}>
+        <span className="field__label" id={resourcesId}>
+          Session resources
+        </span>
+        <label className="editor__resource-default">
+          <input
+            type="checkbox"
+            checked={draft.agent.size === undefined}
+            onChange={(event) => {
+              const useDeploymentDefault = event.target.checked;
+              if (useDeploymentDefault && draft.agent.size !== undefined) {
+                setLastCustomSize(draft.agent.size);
+              }
+              onChange({
+                ...draft,
+                agent: {
+                  ...draft.agent,
+                  size: useDeploymentDefault ? undefined : (lastCustomSize ?? emptyProfileSize()),
+                },
+              });
+            }}
+          />
+          Use deployment default
+        </label>
+        <div className="editor__resource-fields">
+          <div className="field">
+            <label className="field__label" htmlFor={cpuId}>
+              CPU (millicores)
+            </label>
+            <Input
+              id={cpuId}
+              placement="field__input"
+              type="number"
+              min="1"
+              max="4294967295"
+              step="1"
+              inputMode="numeric"
+              disabled={draft.agent.size === undefined}
+              placeholder={draft.agent.size === undefined ? 'Deployment default' : undefined}
+              aria-invalid={
+                draft.agent.size === undefined
+                  ? undefined
+                  : invalidEnteredSize(draft.agent.size.cpuMillis)
+              }
+              value={
+                draft.agent.size === undefined ? '' : sizeInputValue(draft.agent.size.cpuMillis)
+              }
+              onChange={(event) => {
+                const current = draft.agent.size;
+                if (current === undefined) {
+                  return;
+                }
+                const size: ProfileSessionSize = {
+                  cpuMillis: sizeInputNumber(event.target.value),
+                  memoryMib: current.memoryMib,
+                };
+                setLastCustomSize(size);
+                onChange({ ...draft, agent: { ...draft.agent, size } });
+              }}
+            />
+          </div>
+          <div className="field">
+            <label className="field__label" htmlFor={memoryId}>
+              Memory (MiB)
+            </label>
+            <Input
+              id={memoryId}
+              placement="field__input"
+              type="number"
+              min="1"
+              max="4294967295"
+              step="1"
+              inputMode="numeric"
+              disabled={draft.agent.size === undefined}
+              placeholder={draft.agent.size === undefined ? 'Deployment default' : undefined}
+              aria-invalid={
+                draft.agent.size === undefined
+                  ? undefined
+                  : invalidEnteredSize(draft.agent.size.memoryMib)
+              }
+              value={
+                draft.agent.size === undefined ? '' : sizeInputValue(draft.agent.size.memoryMib)
+              }
+              onChange={(event) => {
+                const current = draft.agent.size;
+                if (current === undefined) {
+                  return;
+                }
+                const size: ProfileSessionSize = {
+                  cpuMillis: current.cpuMillis,
+                  memoryMib: sizeInputNumber(event.target.value),
+                };
+                setLastCustomSize(size);
+                onChange({ ...draft, agent: { ...draft.agent, size } });
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="field">
@@ -383,6 +490,22 @@ export function ProfileEditor({
       </div>
     </>
   );
+}
+
+function emptyProfileSize(): ProfileSessionSize {
+  return { cpuMillis: Number.NaN, memoryMib: Number.NaN };
+}
+
+function sizeInputNumber(value: string): number {
+  return value === '' ? Number.NaN : Number(value);
+}
+
+function sizeInputValue(value: number): string {
+  return Number.isFinite(value) ? String(value) : '';
+}
+
+function invalidEnteredSize(value: number): true | undefined {
+  return Number.isNaN(value) || isValidProfileSizeValue(value) ? undefined : true;
 }
 
 /**
