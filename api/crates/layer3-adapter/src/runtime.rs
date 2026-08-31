@@ -438,6 +438,9 @@ pub struct WorkspaceCheckpointRequest {
     pub version: u64,
     pub source_revision: String,
     pub baseline_manifest_digest: String,
+    /// Include the prepared clone's Git administration files and worktree
+    /// pointer files. Ordinary imported workspaces leave this false.
+    pub include_git_metadata: bool,
     pub disposition: WorkspaceCheckpointDisposition,
 }
 
@@ -487,6 +490,7 @@ pub struct WorkspaceCheckpointPackage {
     pub quiesced_writers: u32,
     pub writer_state: WorkspaceWriterState,
     pub writer_resume_token: Option<String>,
+    pub includes_git_metadata: bool,
     pub archive: Vec<u8>,
 }
 
@@ -500,6 +504,17 @@ pub struct WorkspaceSourceRequest {
     pub reference: String,
     /// Single path component beneath the runtime workspace.
     pub directory: String,
+    /// Runtime-generation-scoped authority used by coherent checkpoints.
+    pub workspace_epoch: u64,
+}
+
+/// Verified immutable authority established by preparing one Git source.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceSourceReceipt {
+    pub workspace_epoch: u64,
+    pub source_revision: String,
+    pub baseline_manifest_digest: String,
 }
 
 /// One independently writable worktree to add to a prepared workspace source.

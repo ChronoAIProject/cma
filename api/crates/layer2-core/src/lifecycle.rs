@@ -1300,10 +1300,14 @@ impl SessionService {
                     )
                 })?;
             slot.removed = true;
-            if let Some(checkpoint) = host.checkpoint.as_mut() {
+            if let Some(mut checkpoint) = host.checkpoint.take() {
                 checkpoint
                     .conversations
                     .retain(|conversation| conversation.session_id != id);
+                if !checkpoint.conversations.is_empty() {
+                    checkpoint.reseal().map_err(CoreError::InvalidRequest)?;
+                    host.checkpoint = Some(checkpoint);
+                }
             }
             host.updated_at = crate::clock::now_rfc3339();
             match host_store

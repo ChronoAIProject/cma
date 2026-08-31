@@ -945,15 +945,7 @@ async fn paused_thread_delete_drops_its_restore_reference_without_provider_work(
     let mut paused = stored_host(&fixture, &caller.subject).await;
     paused.status = ChatHostStatus::Paused;
     paused.runtime_id = None;
-    paused.checkpoint = Some(ChatCheckpointRef {
-        conversations: vec![crate::ChatCheckpointConversationRef {
-            session_id: session.id.clone(),
-            object_reference: "objects/conversation".into(),
-            sha256: "d".repeat(64),
-            conversation_id: "conv-fixture".into(),
-        }],
-        ..checkpoint()
-    });
+    paused.checkpoint = Some(checkpoint_for(&session.id));
     fixture
         .hosts
         .update_if_revision(paused.revision, &paused)
@@ -979,12 +971,7 @@ async fn paused_thread_delete_drops_its_restore_reference_without_provider_work(
     let retired = stored_host(&fixture, &caller.subject).await;
     assert_eq!(retired.status, ChatHostStatus::Retired);
     assert!(retired.threads[0].removed);
-    assert!(retired
-        .checkpoint
-        .as_ref()
-        .unwrap()
-        .conversations
-        .is_empty());
+    assert_eq!(retired.checkpoint, None);
     assert!(!fixture
         .sessions
         .sessions
@@ -1505,15 +1492,35 @@ async fn reconciliation_keeps_the_recorded_runtime_and_removes_a_duplicate() {
 }
 
 fn checkpoint() -> ChatCheckpointRef {
-    ChatCheckpointRef {
-        workspace_object_reference: "objects/workspace".into(),
-        workspace_archive_sha256: "a".repeat(64),
-        workspace_manifest_digest: "b".repeat(64),
-        conversations: Vec::new(),
-        captured_at: "2026-09-01T01:00:00Z".into(),
-        checkpoint_version: 3,
-        pair_sha256: "c".repeat(64),
-    }
+    checkpoint_for(&crate::SessionId("sesn-checkpoint-fixture".into()))
+}
+
+fn checkpoint_for(session_id: &crate::SessionId) -> ChatCheckpointRef {
+    ChatCheckpointRef::seal(
+        "objects/workspace",
+        &layer3_adapter::WorkspaceCheckpointPackage {
+            epoch: 1,
+            version: 3,
+            source_revision: "d".repeat(40),
+            manifest_digest: "b".repeat(64),
+            archive_sha256: "a".repeat(64),
+            entries: Vec::new(),
+            total_bytes: 0,
+            quiesced_writers: 1,
+            writer_state: layer3_adapter::WorkspaceWriterState::Resumed,
+            writer_resume_token: None,
+            includes_git_metadata: false,
+            archive: Vec::new(),
+        },
+        vec![crate::ChatCheckpointConversation {
+            session_id: session_id.clone(),
+            object_reference: format!("sessions/{session_id}/handover.snapshot"),
+            conversation_id: "conv-fixture".into(),
+            snapshot: b"conversation checkpoint".to_vec(),
+        }],
+        "2026-09-01T01:00:00Z",
+    )
+    .unwrap()
 }
 
 #[tokio::test]

@@ -7,10 +7,11 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncReadExt as _;
 use url::Url;
 
-pub const CAPABILITY_VERSION: u32 = 1;
+pub const CAPABILITY_VERSION: u32 = 2;
 const GIT_DEADLINE: Duration = Duration::from_secs(120);
 const MAX_GIT_OUTPUT_BYTES: usize = 8 * 1024;
 
@@ -20,6 +21,7 @@ pub struct WorkspaceSourceRequest {
     pub url: String,
     pub reference: String,
     pub directory: String,
+    pub workspace_epoch: u64,
 }
 
 impl WorkspaceSourceRequest {
@@ -42,9 +44,21 @@ impl WorkspaceSourceRequest {
         {
             return Err(invalid_url());
         }
+        if self.workspace_epoch == 0 {
+            return Err(WorkspaceSourceError::Invalid(
+                "workspace_epoch must be positive",
+            ));
+        }
         validate_safe_segment(&self.directory)?;
         validate_git_selector("reference", &self.reference)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorkspaceSourceReceipt {
+    pub workspace_epoch: u64,
+    pub source_revision: String,
+    pub baseline_manifest_digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -103,6 +117,7 @@ struct PreparedSource {
     request: WorkspaceSourceRequest,
     repository: PathBuf,
     trees: BTreeMap<String, PathBuf>,
+    receipt: WorkspaceSourceReceipt,
 }
 
 #[derive(Debug, Default)]
@@ -116,7 +131,7 @@ impl WorkspaceSources {
         &mut self,
         workspace_root: &Path,
         request: WorkspaceSourceRequest,
-    ) -> Result<(), WorkspaceSourceError> {
+    ) -> Result<WorkspaceSourceReceipt, WorkspaceSourceError> {
         request.validate()?;
         std::fs::create_dir_all(workspace_root)
             .map_err(|error| WorkspaceSourceError::Runtime(error.to_string()))?;
@@ -144,14 +159,26 @@ impl WorkspaceSources {
                 ));
             }
             Ok(_) if self.prepared.is_none() => {
+                let receipt = self
+                    .git
+                    .source_receipt(workspace_root, &repository, &request)
+                    .await?;
                 self.prepared = Some(PreparedSource {
                     request,
                     repository,
                     trees: BTreeMap::new(),
+                    receipt: receipt.clone(),
                 });
-                return Ok(());
+                return Ok(receipt);
             }
-            Ok(_) => return Ok(()),
+            Ok(_) => {
+                return Ok(self
+                    .prepared
+                    .as_ref()
+                    .expect("a checked prepared source exists")
+                    .receipt
+                    .clone())
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(WorkspaceSourceError::Runtime(error.to_string())),
         }
@@ -172,12 +199,17 @@ impl WorkspaceSources {
                 stderr: output.stderr,
             });
         }
+        let receipt = self
+            .git
+            .source_receipt(workspace_root, &repository, &request)
+            .await?;
         self.prepared = Some(PreparedSource {
             request,
             repository,
             trees: BTreeMap::new(),
+            receipt: receipt.clone(),
         });
-        Ok(())
+        Ok(receipt)
     }
 
     pub async fn add_tree(
@@ -364,6 +396,60 @@ struct GitOutput {
 }
 
 impl GitRunner {
+    async fn source_receipt(
+        &self,
+        workspace_root: &Path,
+        repository: &Path,
+        request: &WorkspaceSourceRequest,
+    ) -> Result<WorkspaceSourceReceipt, WorkspaceSourceError> {
+        let commit = self
+            .run(
+                workspace_root,
+                &[
+                    OsString::from("-C"),
+                    repository.as_os_str().to_owned(),
+                    OsString::from("rev-parse"),
+                    OsString::from("--verify"),
+                    OsString::from("HEAD^{commit}"),
+                ],
+                "resolve source commit",
+            )
+            .await?;
+        let tree = self
+            .run(
+                workspace_root,
+                &[
+                    OsString::from("-C"),
+                    repository.as_os_str().to_owned(),
+                    OsString::from("rev-parse"),
+                    OsString::from("--verify"),
+                    OsString::from("HEAD^{tree}"),
+                ],
+                "resolve source tree",
+            )
+            .await?;
+        let source_revision = commit.stdout.trim();
+        let tree_id = tree.stdout.trim();
+        if !commit.success
+            || !tree.success
+            || !is_object_id(source_revision)
+            || !is_object_id(tree_id)
+        {
+            return Err(WorkspaceSourceError::Conflict(
+                "the prepared source has no exact Git commit and tree",
+            ));
+        }
+        let mut baseline = Sha256::new();
+        baseline.update(b"cma-chat-git-baseline-v1\0");
+        baseline.update(source_revision.as_bytes());
+        baseline.update(tree_id.as_bytes());
+        Ok(WorkspaceSourceReceipt {
+            workspace_epoch: request.workspace_epoch,
+            source_revision: source_revision.to_ascii_lowercase(),
+            baseline_manifest_digest: hex(&baseline.finalize()),
+        })
+    }
+
     async fn is_same_clone(
         &self,
         workspace_root: &Path,
@@ -454,6 +540,20 @@ impl GitRunner {
             stderr: output_excerpt(&stderr),
         })
     }
+}
+
+fn is_object_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const CHARS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(CHARS[usize::from(byte >> 4)]));
+        out.push(char::from(CHARS[usize::from(byte & 0x0f)]));
+    }
+    out
 }
 
 async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> std::io::Result<Vec<u8>> {

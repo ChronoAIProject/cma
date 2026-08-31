@@ -1786,6 +1786,59 @@ pub trait HandoverStore: Send + Sync {
     async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
+/// Verified result of staging one logical generation at a stable chat key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatCheckpointObjectReceipt {
+    pub object_reference: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+/// Stable object custody for complete chat-host recovery points.
+///
+/// A stable physical key may carry the currently committed generation plus one
+/// staged replacement. Reads select by digest, so a crash before host CAS leaves
+/// the previous checkpoint usable. Pruning is deliberately post-commit.
+#[async_trait::async_trait]
+pub trait ChatCheckpointStore: Send + Sync {
+    async fn stage_conversation(
+        &self,
+        id: &SessionId,
+        retain_sha256: Option<&str>,
+        snapshot: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError>;
+
+    async fn read_conversation(
+        &self,
+        id: &SessionId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
+
+    async fn prune_conversation(&self, id: &SessionId, keep_sha256: &str)
+        -> Result<(), StoreError>;
+
+    async fn stage_workspace(
+        &self,
+        host: &crate::ChatHostId,
+        retain_sha256: Option<&str>,
+        archive: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError>;
+
+    async fn read_workspace(
+        &self,
+        host: &crate::ChatHostId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
+
+    async fn prune_workspace(
+        &self,
+        host: &crate::ChatHostId,
+        keep_sha256: &str,
+    ) -> Result<(), StoreError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

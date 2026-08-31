@@ -38,8 +38,8 @@ pub use runtime::{
     TermSize, TerminalChannel, TerminalInput, TerminalOutput, WorkspaceCheckpointDisposition,
     WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
     WorkspaceEntryPackage, WorkspacePackage, WorkspaceSetupReceipt, WorkspaceSetupStep,
-    WorkspaceSourceRequest, WorkspaceTreeReceipt, WorkspaceTreeRequest, WorkspaceWriterState,
-    RUNTIME_GATEWAY_PROBE_VERSION, SPONSORED_MODEL_RESOURCE,
+    WorkspaceSourceReceipt, WorkspaceSourceRequest, WorkspaceTreeReceipt, WorkspaceTreeRequest,
+    WorkspaceWriterState, RUNTIME_GATEWAY_PROBE_VERSION, SPONSORED_MODEL_RESOURCE,
     SPONSORED_MODEL_RUNTIME_AUTHORITY_VERSION,
 };
 pub use terminal_input::TerminalInputSender;
@@ -258,7 +258,7 @@ pub trait KernelAdapter: Send + Sync {
         &self,
         _handle: &RuntimeHandle,
         _request: &WorkspaceSourceRequest,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<WorkspaceSourceReceipt, AdapterError> {
         Err(AdapterError::Unsupported(
             "this runtime cannot prepare a workspace source".to_string(),
         ))
@@ -579,6 +579,7 @@ mod tests {
             repository_url: "https://example.test/repository.git".into(),
             reference: "main".into(),
             directory: "repository".into(),
+            workspace_epoch: 1,
         };
         let tree = WorkspaceTreeRequest {
             name: "chat-1".into(),

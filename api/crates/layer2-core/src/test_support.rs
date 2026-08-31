@@ -2215,6 +2215,7 @@ pub(crate) fn service_over(
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
+            chat_checkpoints: None,
             credentials: None,
             skills: None,
             workspaces: None,
@@ -2276,6 +2277,7 @@ pub(crate) fn service_over_with_environments(
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
+            chat_checkpoints: None,
             credentials: None,
             skills: None,
             workspaces: None,

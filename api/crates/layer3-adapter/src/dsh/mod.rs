@@ -188,7 +188,7 @@ impl KernelAdapter for DshAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::WorkspaceSourceRequest,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
         self.hosted.prepare_workspace_source(handle, request).await
     }
 

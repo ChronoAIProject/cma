@@ -1545,6 +1545,8 @@ struct WorkspaceCheckpointParams {
     source: String,
     baseline: String,
     #[serde(default)]
+    include_git_metadata: bool,
+    #[serde(default)]
     disposition: RuntimeWorkspaceCheckpointDisposition,
 }
 
@@ -1614,7 +1616,15 @@ async fn workspace_checkpoint(
     let retained = tokio::task::spawn_blocking({
         let checkpoint_root = checkpoint_root.clone();
         let source = source.clone();
-        move || workspace::load_capture(&checkpoint_root, params.epoch, params.version, &source)
+        move || {
+            workspace::load_capture(
+                &checkpoint_root,
+                params.epoch,
+                params.version,
+                &source,
+                params.include_git_metadata,
+            )
+        }
     })
     .await;
     match retained {
@@ -1662,6 +1672,7 @@ async fn workspace_checkpoint(
             params.version,
             &source,
             writers.writer_count()?,
+            params.include_git_metadata,
         )?;
         match disposition {
             RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture => {
@@ -1875,7 +1886,14 @@ async fn workspace_source_prepare(
 
     let mut sources = state.workspace_source.lock().await;
     match sources.prepare(&state.workspace_root, request).await {
-        Ok(()) => axum::http::StatusCode::OK.into_response(),
+        Ok(receipt) => {
+            *state.workspace_authority.write().await = Some(WorkspaceAuthority {
+                epoch: receipt.workspace_epoch,
+                source_revision: receipt.source_revision.clone(),
+                baseline_manifest_digest: receipt.baseline_manifest_digest.clone(),
+            });
+            axum::Json(receipt).into_response()
+        }
         Err(error) => workspace_source_response(error),
     }
 }

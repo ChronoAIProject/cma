@@ -10,7 +10,10 @@ use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{KernelId, SessionId};
 use crate::platform_service::PlatformSettingsService;
 use crate::session::Session;
-use crate::store::{ContextStore, CredentialSource, HandoverStore, SessionStore, SkillPackStore};
+use crate::store::{
+    ChatCheckpointStore, ContextStore, CredentialSource, HandoverStore, SessionStore,
+    SkillPackStore,
+};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
@@ -301,6 +304,8 @@ pub struct SessionService {
     pub(crate) context: Option<Arc<dyn ContextStore>>,
     /// Where claim-bound compatibility handover snapshots are kept.
     pub(crate) handovers: Option<Arc<dyn HandoverStore>>,
+    /// Where complete chat-host recovery objects are retained by digest.
+    pub(crate) chat_checkpoints: Option<Arc<dyn ChatCheckpointStore>>,
     /// Where to get an owner's credential when the owner is not here to give one.
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
     /// Where this session's skills are fetched from, when anything can.
@@ -400,6 +405,8 @@ pub struct SessionPorts {
     pub context: Option<Arc<dyn ContextStore>>,
     /// Where compatibility handover snapshots are durably staged.
     pub handovers: Option<Arc<dyn HandoverStore>>,
+    /// Where chat workspace and conversation checkpoint generations are staged.
+    pub chat_checkpoints: Option<Arc<dyn ChatCheckpointStore>>,
     /// Where a session's own credential is minted.
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.
