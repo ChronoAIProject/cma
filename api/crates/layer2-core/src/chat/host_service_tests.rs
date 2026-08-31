@@ -3,10 +3,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use layer3_adapter::{KernelAdapter, KernelCapabilities, RuntimePermission};
+use layer3_adapter::{
+    ContentBlock, ConversationInput, KernelAdapter, KernelCapabilities, RuntimePermission,
+};
 use tokio::sync::Mutex;
 
 use super::*;
+use crate::conversation_support::until_sent;
 use crate::store::{
     ChatHostStore, Page, PageCursor, PageRequest, PlatformSettingsStore, SessionStore, StoreError,
 };
@@ -328,6 +331,146 @@ fn operator() -> crate::Caller {
         SubjectId("chat-operator".into()),
         Authorization::from_capabilities([Capability::ControlAnySession]),
     )
+}
+
+fn prompt_text(input: &ConversationInput) -> Option<&str> {
+    let ConversationInput::Prompt(content) = input else {
+        return None;
+    };
+    match content.as_slice() {
+        [ContentBlock::Text(text)] => Some(text.text.as_str()),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn chat_prompt_composition_reaches_runtime_without_rewriting_owner_history() {
+    let default_prefixes = ChatSettings::default().message_prefixes;
+    let default_expected = super::threads::compose_chat_message(&default_prefixes, "original");
+    let cases = [
+        ("default", default_prefixes, "original", default_expected),
+        (
+            "multiple-multiline",
+            vec!["a".into(), "b".into()],
+            "first\nsecond",
+            "a b first\nsecond".into(),
+        ),
+        ("empty", Vec::new(), "unchanged", "unchanged".into()),
+    ];
+
+    for (name, prefixes, original, expected) in cases {
+        let mut chat = enabled_chat();
+        chat.message_prefixes = prefixes;
+        let fixture = fixture(
+            platform_with(Some(chat)),
+            chat_capabilities(),
+            Baseline::default(),
+        );
+        let caller = user(&format!("owner-prefix-{name}"));
+        let session = fixture
+            .service
+            .create_session(&caller, chat_spec())
+            .await
+            .expect("the chat thread is created");
+
+        fixture
+            .service
+            .send_prompt(&caller, &session.id, original.into())
+            .await
+            .expect("the chat prompt is delivered");
+
+        let sent = until_sent(&fixture.adapter, |input| {
+            prompt_text(input) == Some(expected.as_str())
+        })
+        .await;
+        assert_eq!(
+            sent.iter().filter_map(prompt_text).collect::<Vec<_>>(),
+            [expected.as_str()],
+            "the {name} case delivers exactly the effective text"
+        );
+        let history = fixture
+            .service
+            .events_since(&caller, &session.id, None)
+            .await
+            .expect("chat history is readable");
+        assert_eq!(
+            history
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    crate::EventKind::OwnerMessage { content } => Some(content.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [original],
+            "the {name} case retains the owner's exact text"
+        );
+    }
+}
+
+#[tokio::test]
+async fn chat_prompt_and_steer_keep_the_thread_hosts_pinned_prefix() {
+    let mut chat = enabled_chat();
+    chat.message_prefixes = vec!["pinned".into(), "prefix".into()];
+    let mut capabilities = chat_capabilities();
+    capabilities.steer = true;
+    let fixture = fixture(platform_with(Some(chat)), capabilities, Baseline::default());
+    let caller = user("owner-pinned-prefix");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .expect("the chat thread is created");
+
+    let mut changed = enabled_chat();
+    changed.message_prefixes = vec!["later".into()];
+    fixture.settings.replace(platform_with(Some(changed))).await;
+
+    fixture
+        .service
+        .send_prompt(&caller, &session.id, "initial text".into())
+        .await
+        .expect("the first chat prompt is delivered");
+    fixture
+        .service
+        .send_prompt(&caller, &session.id, "steer text".into())
+        .await
+        .expect("the mid-turn steer is delivered");
+
+    let sent = until_sent(&fixture.adapter, |input| {
+        prompt_text(input) == Some("pinned prefix steer text")
+    })
+    .await;
+    assert_eq!(
+        sent.iter().filter_map(prompt_text).collect::<Vec<_>>(),
+        ["pinned prefix initial text", "pinned prefix steer text"]
+    );
+    let history = fixture
+        .service
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("chat history is readable");
+    assert_eq!(
+        history
+            .iter()
+            .filter_map(|event| match &event.kind {
+                crate::EventKind::OwnerMessage { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["initial text", "steer text"]
+    );
+}
+
+#[test]
+fn composing_chat_messages_keeps_exact_spacing_and_empty_text() {
+    assert_eq!(
+        super::threads::compose_chat_message(&["a".into(), "b".into()], ""),
+        "a b "
+    );
+    assert_eq!(
+        super::threads::compose_chat_message(&[], "first\nsecond"),
+        "first\nsecond"
+    );
 }
 
 #[tokio::test]
