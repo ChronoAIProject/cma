@@ -15,8 +15,9 @@ use std::{
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     store::{
-        Page, PageCursor, PendingHandover, SessionListQuery, SessionRecord, SessionStore,
-        SkillPack, SkillPackDigest, SkillPackState, StoreError,
+        ChatThreadTitle, ChatTitleClaim, ChatTitleClaimMode, ChatTitleClaimRequest,
+        ChatTitleTranscript, Page, PageCursor, PageRequest, PendingHandover, SessionListQuery,
+        SessionRecord, SessionStore, SkillPack, SkillPackDigest, SkillPackState, StoreError,
     },
     ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
     ConversationOpeningLeaseRequest, ConversationWriteAuthority, Event, EventKind, Rate,
@@ -25,10 +26,10 @@ use layer2_core::{
     SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionPricing,
     SessionStatus, StopReason, StoredEvent, SubjectId,
 };
-use mongodb::bson::{doc, Binary, Bson, Document};
+use mongodb::bson::{doc, Binary, Bson, DateTime, Document};
 use mongodb::options::{
-    Hint, IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, UpdateOptions,
-    ValidationAction, ValidationLevel, WriteConcern,
+    Hint, IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, ReturnDocument,
+    UpdateOptions, ValidationAction, ValidationLevel, WriteConcern,
 };
 use mongodb::results::{CollectionSpecification, CollectionType};
 use mongodb::{Client, Collection, Database, IndexModel};
@@ -99,6 +100,7 @@ const OWNER_SESSION_PAGE_INDEX: &str = "owner_1_created_at_-1__id_-1";
 const OWNER_STATUS_SESSION_PAGE_INDEX: &str = "owner_1_status_1_created_at_-1__id_-1";
 const ALL_SESSION_PAGE_INDEX: &str = "created_at_-1__id_-1";
 const STATUS_SESSION_PAGE_INDEX: &str = "status_1_created_at_-1__id_-1";
+const CHAT_TITLE_EVENT_INDEX: &str = "session_id_1_kind.type_1_seq_1";
 
 /// A granted skill as it is stored.
 ///
@@ -291,6 +293,9 @@ struct SessionDoc {
     /// Internal shared-host provenance. Public chat facts are derived on read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chat_origin: Option<layer2_core::ChatOrigin>,
+    /// Independent, durable authority for the one title-generation attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat_title_work: Option<ChatTitleWorkDoc>,
     /// Internal initial-prompt outbox. Absent on ordinary and legacy sessions.
     #[serde(default)]
     initial_prompt: Option<layer2_core::InitialPromptDispatch>,
@@ -361,6 +366,23 @@ struct SessionDoc {
     /// Absent records predate durable coordination and begin at generation zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     coordination: Option<CoordinationDoc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChatTitleWorkDoc {
+    attempted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lease: Option<ChatTitleLeaseDoc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completed_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChatTitleLeaseDoc {
+    holder: String,
+    token: String,
+    generate: bool,
+    expires_at: DateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -723,6 +745,10 @@ impl MongoSessionStore {
         store
             .verify_non_session_collection_contracts(Some(&collection_ids))
             .await?;
+        // This release introduces one compatible query index. Established
+        // databases receive only that index automatically; every older
+        // required index remains fail-closed if an operator removed it.
+        store.ensure_chat_title_event_index().await?;
         store.verify_required_indexes().await?;
         store
             .ensure_session_write_protocol(
@@ -2847,6 +2873,22 @@ impl MongoSessionStore {
         Ok(())
     }
 
+    async fn ensure_chat_title_event_index(&self) -> Result<(), StoreError> {
+        let required = required_indexes()
+            .into_iter()
+            .find(|required| required.name == CHAT_TITLE_EVENT_INDEX)
+            .expect("the chat-title event index is required");
+        self.events
+            .create_index(required_index_model(&required))
+            .await
+            .map_err(|_| {
+                StoreError::Unavailable(
+                    "create chat-title event index: database index write failed".into(),
+                )
+            })?;
+        Ok(())
+    }
+
     async fn install_protocol_validators(&self) -> Result<(), StoreError> {
         for (collection, validator) in [
             (SESSIONS, session_protocol_validator()),
@@ -3578,6 +3620,12 @@ fn required_indexes() -> Vec<RequiredIndex> {
             name: "session_id_1_seq_1",
             keys: doc! { "session_id": 1, "seq": 1 },
             unique: true,
+        },
+        RequiredIndex {
+            collection: EVENTS,
+            name: CHAT_TITLE_EVENT_INDEX,
+            keys: doc! { "session_id": 1, "kind.type": 1, "seq": 1 },
+            unique: false,
         },
         RequiredIndex {
             collection: WRITES,
@@ -5868,6 +5916,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         context_ref: r.context_ref.clone(),
         trigger_origin: r.trigger_origin.clone(),
         chat_origin: r.chat_origin.clone(),
+        chat_title_work: None,
         initial_prompt: r.initial_prompt.clone(),
         rotation_claim: r.rotation_claim.clone(),
         pending_handover: r.pending_handover.clone(),
@@ -6190,6 +6239,162 @@ fn from_list_doc(mut d: SessionDoc) -> Result<SessionRecord, StoreError> {
         record.skill_packs = SkillPackState::StagedSummary;
     }
     Ok(record)
+}
+
+fn chat_title_event_content(
+    document: Option<&Document>,
+    expected_kind: &str,
+) -> Result<Option<String>, StoreError> {
+    let Some(document) = document else {
+        return Ok(None);
+    };
+    let kind = document.get_document("kind").map_err(|_| {
+        StoreError::Malformed("chat title transcript event kind must be an object".into())
+    })?;
+    if kind.get_str("type").ok() != Some(expected_kind) {
+        return Err(StoreError::Malformed(
+            "chat title transcript event kind does not match its query".into(),
+        ));
+    }
+    kind.get_str("content")
+        .map(str::to_owned)
+        .map(Some)
+        .map_err(|_| {
+            StoreError::Malformed("chat title transcript event content must be a string".into())
+        })
+}
+
+fn validate_chat_title_claim_request(request: &ChatTitleClaimRequest) -> Result<(), StoreError> {
+    if request.holder().is_empty() || request.token().is_empty() || request.ttl().is_zero() {
+        return Err(StoreError::Malformed(
+            "chat title claim holder, token, and TTL must be non-empty".into(),
+        ));
+    }
+    i64::try_from(request.ttl().as_millis()).map_err(|_| {
+        StoreError::Malformed("chat title claim TTL cannot be represented by MongoDB".into())
+    })?;
+    Ok(())
+}
+
+fn chat_title_claim_filter(request: &ChatTitleClaimRequest) -> Document {
+    let mut filter = current_session_protocol_filter();
+    filter.insert("_id", request.session_id().0.clone());
+    filter.insert("chat_origin", doc! { "$exists": true });
+    filter.insert(
+        "$and",
+        vec![
+            doc! {
+                "$or": [
+                    { "chat_origin.title": { "$exists": false } },
+                    { "chat_origin.title": Bson::Null },
+                ]
+            },
+            doc! {
+                "$or": [
+                    { "chat_title_work.attempted": { "$exists": false } },
+                    { "chat_title_work.attempted": false },
+                    {
+                        "chat_title_work.attempted": true,
+                        "chat_title_work.completed_token": { "$exists": false },
+                        "$expr": {
+                            "$lte": [
+                                {
+                                    "$ifNull": [
+                                        "$chat_title_work.lease.expires_at",
+                                        DateTime::from_millis(0),
+                                    ]
+                                },
+                                "$$NOW",
+                            ]
+                        },
+                    },
+                ]
+            },
+        ],
+    );
+    filter
+}
+
+fn chat_title_claim_update(request: &ChatTitleClaimRequest) -> Result<Vec<Document>, StoreError> {
+    let ttl_millis = i64::try_from(request.ttl().as_millis()).map_err(|_| {
+        StoreError::Malformed("chat title claim TTL cannot be represented by MongoDB".into())
+    })?;
+    Ok(vec![doc! {
+        "$set": {
+            "chat_title_work.attempted": true,
+            "chat_title_work.lease": {
+                "holder": request.holder(),
+                "token": request.token(),
+                "generate": {
+                    "$ne": [
+                        { "$ifNull": ["$chat_title_work.attempted", false] },
+                        true,
+                    ]
+                },
+                "expires_at": {
+                    "$dateAdd": {
+                        "startDate": "$$NOW",
+                        "unit": "millisecond",
+                        "amount": ttl_millis,
+                    }
+                },
+            },
+            "revision": { "$add": ["$revision", 1_i64] },
+        }
+    }])
+}
+
+fn chat_title_claim_from_document(
+    request: &ChatTitleClaimRequest,
+    document: &Document,
+) -> Result<ChatTitleClaim, StoreError> {
+    let generate = document
+        .get_document("chat_title_work")
+        .and_then(|work| work.get_document("lease"))
+        .and_then(|lease| lease.get_bool("generate"))
+        .map_err(|_| {
+            StoreError::Malformed("chat title claim response is missing its mode".into())
+        })?;
+    Ok(ChatTitleClaim::acquired(
+        request.clone(),
+        if generate {
+            ChatTitleClaimMode::Generate
+        } else {
+            ChatTitleClaimMode::FallbackOnly
+        },
+    ))
+}
+
+fn chat_title_completion_filter(claim: &ChatTitleClaim) -> Document {
+    let mut filter = current_session_protocol_filter();
+    filter.insert("_id", claim.session_id().0.clone());
+    filter.insert("chat_title_work.lease.holder", claim.holder());
+    filter.insert("chat_title_work.lease.token", claim.token());
+    filter.insert(
+        "$or",
+        vec![
+            doc! { "chat_origin.title": { "$exists": false } },
+            doc! { "chat_origin.title": Bson::Null },
+        ],
+    );
+    filter
+}
+
+fn chat_title_completion_update(claim: &ChatTitleClaim, title: &ChatThreadTitle) -> Document {
+    doc! {
+        "$set": {
+            "chat_origin.title": title.as_str(),
+            "chat_title_work.completed_token": claim.token(),
+        },
+        "$unset": { "chat_title_work.lease": "" },
+        "$inc": { "revision": 1_i64 },
+    }
+}
+
+fn preserve_chat_title_work(existing: &SessionDoc, replacement: &mut SessionDoc) {
+    replacement
+        .chat_title_work
+        .clone_from(&existing.chat_title_work);
 }
 
 #[async_trait::async_trait]
@@ -6585,6 +6790,119 @@ impl SessionStore for MongoSessionStore {
         self.query(doc! {}, query).await
     }
 
+    async fn chat_title_candidates(
+        &self,
+        page: PageRequest,
+    ) -> Result<Page<SessionId>, StoreError> {
+        let raw = self
+            .query(
+                doc! {},
+                &SessionListQuery::new(page, None)
+                    .with_surface(Some(layer2_core::SessionSurfaceFilter::Chat)),
+            )
+            .await?;
+        let mut candidates = Vec::new();
+        for record in raw.items {
+            if record
+                .chat_origin
+                .as_ref()
+                .is_some_and(|origin| origin.title.is_none())
+                && self
+                    .first_chat_title_event(&record.session.id, "turn_completed")
+                    .await?
+                    .is_some()
+            {
+                candidates.push(record.session.id);
+            }
+        }
+        Ok(Page {
+            items: candidates,
+            next: raw.next,
+        })
+    }
+
+    async fn chat_title_transcript(
+        &self,
+        id: &SessionId,
+    ) -> Result<ChatTitleTranscript, StoreError> {
+        let (owner, assistant, completed) = tokio::try_join!(
+            self.first_chat_title_event(id, "owner_message"),
+            self.first_chat_title_event(id, "message_committed"),
+            self.first_chat_title_event(id, "turn_completed"),
+        )?;
+        Ok(ChatTitleTranscript {
+            owner_message: chat_title_event_content(owner.as_ref(), "owner_message")?,
+            assistant_message: chat_title_event_content(assistant.as_ref(), "message_committed")?,
+            turn_completed: completed.is_some(),
+        })
+    }
+
+    async fn acquire_chat_title_claim(
+        &self,
+        request: &ChatTitleClaimRequest,
+    ) -> Result<Option<ChatTitleClaim>, StoreError> {
+        validate_chat_title_claim_request(request)?;
+        if self
+            .first_chat_title_event(request.session_id(), "turn_completed")
+            .await?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        if let Some(claim) = self.current_chat_title_claim(request).await? {
+            return Ok(Some(claim));
+        }
+
+        let updated = self
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one_and_update(
+                chat_title_claim_filter(request),
+                chat_title_claim_update(request)?,
+            )
+            .return_document(ReturnDocument::After)
+            .projection(doc! { "_id": 0, "chat_title_work.lease.generate": 1 })
+            .await;
+        match updated {
+            Ok(Some(document)) => chat_title_claim_from_document(request, &document).map(Some),
+            Ok(None) => Ok(None),
+            Err(_) => match self.current_chat_title_claim(request).await? {
+                Some(claim) => Ok(Some(claim)),
+                None => Err(StoreError::Unavailable(
+                    "acquire chat title claim: database write failed".into(),
+                )),
+            },
+        }
+    }
+
+    async fn complete_chat_title(
+        &self,
+        claim: &ChatTitleClaim,
+        title: &ChatThreadTitle,
+    ) -> Result<bool, StoreError> {
+        let result = self
+            .sessions
+            .clone_with_type::<Document>()
+            .update_one(
+                chat_title_completion_filter(claim),
+                chat_title_completion_update(claim, title),
+            )
+            .await;
+        match result {
+            Ok(result) if result.matched_count == 1 => Ok(true),
+            Ok(_) => self.chat_title_completion_exists(claim).await,
+            Err(_) => {
+                if self.chat_title_completion_exists(claim).await? {
+                    Ok(true)
+                } else {
+                    Err(StoreError::Unavailable(
+                        "complete chat title: database write failed".into(),
+                    ))
+                }
+            }
+        }
+    }
+
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
         self.transactional_delete(id).await
     }
@@ -6879,6 +7197,7 @@ impl MongoSessionStore {
                         next_stored_revision(actual).map_err(mongodb::error::Error::custom)?;
                     let mut durable = transaction.record.clone();
                     if let Some(existing) = existing.as_ref() {
+                        preserve_chat_title_work(existing, &mut durable);
                         let mut coordination = existing
                             .coordination
                             .clone()
@@ -7260,6 +7579,84 @@ impl MongoSessionStore {
             .await
             .map_err(|e| StoreError::Unavailable(format!("read event tail: {e}")))?;
         stored_event_tail(found)
+    }
+
+    async fn first_chat_title_event(
+        &self,
+        id: &SessionId,
+        kind: &'static str,
+    ) -> Result<Option<Document>, StoreError> {
+        self.events
+            .find_one(doc! { "session_id": &id.0, "kind.type": kind })
+            .sort(doc! { "seq": 1 })
+            .projection(doc! { "_id": 0, "kind.type": 1, "kind.content": 1 })
+            .hint(Hint::Name(CHAT_TITLE_EVENT_INDEX.to_owned()))
+            .await
+            .map_err(|_| {
+                StoreError::Unavailable(
+                    "read chat title transcript event: database read failed".into(),
+                )
+            })
+    }
+
+    async fn current_chat_title_claim(
+        &self,
+        request: &ChatTitleClaimRequest,
+    ) -> Result<Option<ChatTitleClaim>, StoreError> {
+        let mut filter = current_session_protocol_filter();
+        filter.insert("_id", request.session_id().0.clone());
+        filter.insert("chat_title_work.lease.holder", request.holder());
+        filter.insert("chat_title_work.lease.token", request.token());
+        filter.insert(
+            "$and",
+            vec![
+                doc! {
+                    "$or": [
+                        { "chat_origin.title": { "$exists": false } },
+                        { "chat_origin.title": Bson::Null },
+                    ]
+                },
+                doc! {
+                    "$expr": {
+                        "$gt": ["$chat_title_work.lease.expires_at", "$$NOW"]
+                    }
+                },
+            ],
+        );
+        let found = self
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(filter)
+            .projection(doc! { "_id": 0, "chat_title_work.lease.generate": 1 })
+            .await
+            .map_err(|_| {
+                StoreError::Unavailable("read chat title claim: database read failed".into())
+            })?;
+        found
+            .as_ref()
+            .map(|document| chat_title_claim_from_document(request, document))
+            .transpose()
+    }
+
+    async fn chat_title_completion_exists(
+        &self,
+        claim: &ChatTitleClaim,
+    ) -> Result<bool, StoreError> {
+        let mut filter = current_session_protocol_filter();
+        filter.insert("_id", claim.session_id().0.clone());
+        filter.insert("chat_origin.title", doc! { "$type": "string" });
+        filter.insert("chat_title_work.completed_token", claim.token());
+        self.sessions
+            .clone_with_type::<Document>()
+            .find_one(filter)
+            .projection(doc! { "_id": 1 })
+            .await
+            .map(|found| found.is_some())
+            .map_err(|_| {
+                StoreError::Unavailable(
+                    "resolve chat title completion: database read failed".into(),
+                )
+            })
     }
 
     async fn query(
