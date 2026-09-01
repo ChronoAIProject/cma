@@ -212,6 +212,28 @@
   gap: 4px 12px;
 }
 
+.chat-host__failure-summary {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.chat-host__failure-output {
+  flex: 1 0 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 144px;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-state-error-secondary);
+  border-radius: 6px;
+}
+
 .record__actions {
   display: flex;
   flex: none;

@@ -1298,6 +1298,7 @@ impl SessionService {
             current.last_failure = Some(crate::ChatHostFailure {
                 phase: crate::ChatProvisioningPhase::RuntimeLost,
                 command_index: None,
+                output_excerpt: None,
                 retryable: true,
                 cleanup_pending,
                 occurred_at: now.clone(),

@@ -297,6 +297,29 @@ describe('shared chat hosts', () => {
     expect(within(row).getByText(HOST.id)).toHaveClass('record__identifier');
   });
 
+  it('shows the typed setup index and the complete bounded operator excerpt', async () => {
+    const failed = {
+      ...HOST,
+      status: 'provisioning' as const,
+      lastFailure: {
+        phase: 'workspace_setup' as const,
+        commandIndex: 1,
+        outputExcerpt: 'download failed\nretry later',
+        retryable: true,
+        cleanupPending: false,
+        occurredAt: Date.now(),
+      },
+    };
+    open(['read_all_sessions'], { chatHosts: [failed] });
+    await show(/^chat hosts$/i);
+    const row = (await screen.findByText('subject-chat-owner')).closest('li') as HTMLElement;
+
+    expect(within(row).getByText('failure workspace_setup, command index 1')).toBeVisible();
+    expect(within(row).getByLabelText(`Setup failure output for ${HOST.id}`)).toHaveTextContent(
+      'download failed retry later',
+    );
+  });
+
   it('asks inline before retirement, then rereads the host row', async () => {
     const onRetireHost = vi.fn();
     open(ALL, { chatHosts: [HOST], onRetireHost });

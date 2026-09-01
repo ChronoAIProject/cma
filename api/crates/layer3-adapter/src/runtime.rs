@@ -531,6 +531,8 @@ pub struct WorkspaceTreeReceipt {
 }
 
 /// Bounded result of one administrator-owned workspace setup command.
+pub const MAX_WORKSPACE_SETUP_OUTPUT_BYTES: usize = 32 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceSetupStep {
     pub command_index: usize,
@@ -542,6 +544,46 @@ pub struct WorkspaceSetupStep {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceSetupReceipt {
     pub steps: Vec<WorkspaceSetupStep>,
+    #[serde(default)]
+    pub failing_index: Option<usize>,
+}
+
+impl WorkspaceSetupReceipt {
+    /// Refuse receipts that could conceal skipped, reordered, or unbounded
+    /// execution before the orchestration layer persists their evidence.
+    pub fn validate(&self, command_count: usize) -> Result<(), &'static str> {
+        if self.steps.len() > command_count {
+            return Err("workspace setup returned more steps than commands");
+        }
+        for (expected, step) in self.steps.iter().enumerate() {
+            if step.command_index != expected {
+                return Err("workspace setup steps are not in command order");
+            }
+            if step.output_excerpt.len() > MAX_WORKSPACE_SETUP_OUTPUT_BYTES {
+                return Err("workspace setup output exceeds its byte bound");
+            }
+        }
+        match self.failing_index {
+            None if self.steps.len() == command_count
+                && self.steps.iter().all(|step| step.exit_code == 0) =>
+            {
+                Ok(())
+            }
+            Some(index)
+                if index < command_count
+                    && self.steps.len() == index + 1
+                    && self.steps[..index].iter().all(|step| step.exit_code == 0)
+                    && self.steps[index].exit_code != 0 =>
+            {
+                Ok(())
+            }
+            _ => Err("workspace setup failure metadata is inconsistent"),
+        }
+    }
+
+    pub fn failed_step(&self) -> Option<&WorkspaceSetupStep> {
+        self.failing_index.and_then(|index| self.steps.get(index))
+    }
 }
 
 /// What a runtime should be told about how to behave.

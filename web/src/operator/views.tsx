@@ -397,6 +397,26 @@ export function ChatHostsView({
                 {host.runtimeVersion === undefined ? null : (
                   <span>runtime {host.runtimeVersion}</span>
                 )}
+                {host.lastFailure === undefined ? null : (
+                  <>
+                    <span className="chat-host__failure-summary">
+                      failure {host.lastFailure.phase}
+                      {host.lastFailure.commandIndex === undefined
+                        ? ''
+                        : `, command index ${String(host.lastFailure.commandIndex)}`}
+                    </span>
+                    {host.lastFailure.outputExcerpt === undefined ? null : (
+                      <pre
+                        className="chat-host__failure-output"
+                        aria-label={`Setup failure output for ${host.id}`}
+                      >
+                        {host.lastFailure.outputExcerpt === ''
+                          ? 'No output captured.'
+                          : host.lastFailure.outputExcerpt}
+                      </pre>
+                    )}
+                  </>
+                )}
               </>
             }
             actions={

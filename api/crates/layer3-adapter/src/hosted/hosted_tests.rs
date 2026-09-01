@@ -1068,7 +1068,8 @@ async fn workspace_setup_proxy_returns_every_bounded_step() {
         "steps": [
             { "command_index": 0, "exit_code": 0, "output_excerpt": "first" },
             { "command_index": 1, "exit_code": 7, "output_excerpt": "bounded failure" }
-        ]
+        ],
+        "failing_index": 1
     }))
     .expect("receipt serializes");
     let fixture = runtime_operation_fixture(200, response).await;
@@ -1081,6 +1082,7 @@ async fn workspace_setup_proxy_returns_every_bounded_step() {
     assert_eq!(receipt.steps[1].command_index, 1);
     assert_eq!(receipt.steps[1].exit_code, 7);
     assert_eq!(receipt.steps[1].output_excerpt, "bounded failure");
+    assert_eq!(receipt.failing_index, Some(1));
     let requests = fixture.finish().await;
     assert!(requests[1]
         .0
@@ -1089,6 +1091,42 @@ async fn workspace_setup_proxy_returns_every_bounded_step() {
         serde_json::from_slice::<serde_json::Value>(&requests[1].1).expect("JSON request"),
         serde_json::json!({ "commands": commands })
     );
+}
+
+#[tokio::test]
+async fn workspace_setup_proxy_refuses_inconsistent_or_unbounded_receipts() {
+    for response in [
+        serde_json::json!({
+            "steps": [
+                { "command_index": 0, "exit_code": 7, "output_excerpt": "failed" },
+                { "command_index": 1, "exit_code": 0, "output_excerpt": "must not run" }
+            ],
+            "failing_index": 0
+        }),
+        serde_json::json!({
+            "steps": [{
+                "command_index": 0,
+                "exit_code": 7,
+                "output_excerpt": "x".repeat(32 * 1024 + 1)
+            }],
+            "failing_index": 0
+        }),
+    ] {
+        let fixture = runtime_operation_fixture(
+            200,
+            serde_json::to_vec(&response).expect("malformed fixture serializes"),
+        )
+        .await;
+        let error = hosted(&fixture.base_url)
+            .run_workspace_setup(
+                &RuntimeHandle("sbx-invalid-setup".into()),
+                &["first".into(), "second".into()],
+            )
+            .await
+            .expect_err("the malformed setup receipt is refused");
+        assert!(matches!(error, AdapterError::Rejected(_)));
+        fixture.finish().await;
+    }
 }
 
 #[tokio::test]
