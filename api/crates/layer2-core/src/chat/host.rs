@@ -107,6 +107,9 @@ pub struct ChatPromptAdmission {
     pub session_id: SessionId,
     pub payload: String,
     pub payload_sha256: String,
+    /// Linear-turn authority retained for interfaces that prohibit forks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) linear_prompt: Option<crate::conversation::LinearPromptContext>,
     pub admitted_at: String,
     pub state: ChatPromptDeliveryState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -119,6 +122,9 @@ pub struct ChatPromptAdmission {
     pub failure_provisioning_phase: Option<ChatProvisioningPhase>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub failure_retryable: bool,
+    /// Whether prompt delivery proved that another linear turn won first.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) linear_conflict: bool,
 }
 
 impl ChatPromptAdmission {
@@ -130,6 +136,7 @@ impl ChatPromptAdmission {
             session_id,
             payload,
             payload_sha256,
+            linear_prompt: None,
             admitted_at: now,
             state: ChatPromptDeliveryState::Queued,
             dispatch_fenced_at: None,
@@ -137,6 +144,7 @@ impl ChatPromptAdmission {
             failure_phase: None,
             failure_provisioning_phase: None,
             failure_retryable: false,
+            linear_conflict: false,
         }
     }
 
@@ -152,6 +160,9 @@ impl ChatPromptAdmission {
         }
         if self.payload_sha256 != hex_sha256(self.payload.as_bytes()) {
             return Err("chat prompt admission payload digest does not match".into());
+        }
+        if let Some(context) = self.linear_prompt.as_ref() {
+            context.validate()?;
         }
         if crate::seconds_from_rfc3339(&self.admitted_at).is_none() {
             return Err("chat prompt admission timestamp is malformed".into());
@@ -176,7 +187,8 @@ impl ChatPromptAdmission {
             ChatPromptDeliveryState::Delivered
                 if self.failure_phase.is_some()
                     || self.failure_provisioning_phase.is_some()
-                    || self.failure_retryable =>
+                    || self.failure_retryable
+                    || self.linear_conflict =>
             {
                 return Err("delivered chat prompt retains a failure phase".into());
             }
@@ -186,11 +198,20 @@ impl ChatPromptAdmission {
             ChatPromptDeliveryState::RecoveryRequired if self.turn_started.is_some() => {
                 return Err("failed chat prompt retains a delivered turn boundary".into());
             }
+            ChatPromptDeliveryState::RecoveryRequired
+                if self.linear_conflict
+                    && (self.failure_phase != Some(ChatRevivePhase::PromptDelivery)
+                        || self.failure_provisioning_phase.is_some()
+                        || self.failure_retryable) =>
+            {
+                return Err("linear conflict carries an inconsistent recovery outcome".into());
+            }
             ChatPromptDeliveryState::Queued | ChatPromptDeliveryState::DispatchFenced
                 if self.turn_started.is_some()
                     || self.failure_phase.is_some()
                     || self.failure_provisioning_phase.is_some()
-                    || self.failure_retryable =>
+                    || self.failure_retryable
+                    || self.linear_conflict =>
             {
                 return Err("undelivered chat prompt carries a terminal outcome".into());
             }
