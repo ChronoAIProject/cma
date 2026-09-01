@@ -60,6 +60,8 @@ pub(crate) struct FakeAdapter {
     pub(crate) fail_workspace_sources: std::sync::atomic::AtomicUsize,
     pub(crate) fail_workspace_setups: std::sync::atomic::AtomicUsize,
     pub(crate) workspace_setup_failure_index: Mutex<Option<usize>>,
+    /// Cross-operation chronology for chat workspace orchestration tests.
+    pub(crate) chat_workspace_events: Mutex<Vec<&'static str>>,
     /// What each `open_conversation` was asked to rejoin, in order.
     ///
     /// `None` for a conversation being started; a name for one being taken
@@ -266,6 +268,7 @@ impl Default for FakeAdapter {
             fail_workspace_sources: std::sync::atomic::AtomicUsize::new(0),
             fail_workspace_setups: std::sync::atomic::AtomicUsize::new(0),
             workspace_setup_failure_index: Mutex::default(),
+            chat_workspace_events: Mutex::default(),
             refuse_list: false,
             stopped: Mutex::default(),
             stopped_because: Mutex::default(),
@@ -642,6 +645,13 @@ impl KernelAdapter for FakeAdapter {
                 .await
                 .insert(handle.clone(), chat_host.clone());
         }
+        drop(running);
+        if spec.workspace.is_some() {
+            self.chat_workspace_events
+                .lock()
+                .await
+                .push("workspace_restore");
+        }
         Ok(RuntimeHandle(handle))
     }
 
@@ -667,6 +677,10 @@ impl KernelAdapter for FakeAdapter {
                 "test workspace source preparation failed".into(),
             ));
         }
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("workspace_source");
         Ok(layer3_adapter::WorkspaceSourceReceipt {
             workspace_epoch: request.workspace_epoch,
             source_revision: "a".repeat(40),
@@ -709,6 +723,10 @@ impl KernelAdapter for FakeAdapter {
             .lock()
             .await
             .push((handle.0.clone(), commands.to_vec()));
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("workspace_setup");
         if self
             .fail_workspace_setups
             .fetch_update(
@@ -727,6 +745,7 @@ impl KernelAdapter for FakeAdapter {
             steps: commands
                 .iter()
                 .enumerate()
+                .take(failure.map_or(commands.len(), |index| index.saturating_add(1)))
                 .map(|(command_index, _)| WorkspaceSetupStep {
                     command_index,
                     exit_code: if failure == Some(command_index) {
@@ -741,6 +760,7 @@ impl KernelAdapter for FakeAdapter {
                     },
                 })
                 .collect(),
+            failing_index: failure,
         })
     }
 
@@ -901,6 +921,10 @@ impl KernelAdapter for FakeAdapter {
                 .insert(slot.clone(), Arc::clone(&held.received));
         }
         *self.conversation.lock().await = Some(held);
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("conversation_open");
         Ok(channel)
     }
 
@@ -1170,6 +1194,10 @@ impl KernelAdapter for FakeAdapter {
             conversation_slot.to_string(),
             conversation_id.clone(),
         ));
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("conversation_snapshot_restore");
         Ok(())
     }
 

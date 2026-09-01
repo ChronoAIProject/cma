@@ -120,6 +120,8 @@ pub struct ChatPromptAdmission {
     pub failure_phase: Option<ChatRevivePhase>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_provisioning_phase: Option<ChatProvisioningPhase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_command_index: Option<usize>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub failure_retryable: bool,
     /// Whether prompt delivery proved that another linear turn won first.
@@ -143,6 +145,7 @@ impl ChatPromptAdmission {
             turn_started: None,
             failure_phase: None,
             failure_provisioning_phase: None,
+            failure_command_index: None,
             failure_retryable: false,
             linear_conflict: false,
         }
@@ -187,6 +190,7 @@ impl ChatPromptAdmission {
             ChatPromptDeliveryState::Delivered
                 if self.failure_phase.is_some()
                     || self.failure_provisioning_phase.is_some()
+                    || self.failure_command_index.is_some()
                     || self.failure_retryable
                     || self.linear_conflict =>
             {
@@ -202,6 +206,7 @@ impl ChatPromptAdmission {
                 if self.linear_conflict
                     && (self.failure_phase != Some(ChatRevivePhase::PromptDelivery)
                         || self.failure_provisioning_phase.is_some()
+                        || self.failure_command_index.is_some()
                         || self.failure_retryable) =>
             {
                 return Err("linear conflict carries an inconsistent recovery outcome".into());
@@ -210,12 +215,18 @@ impl ChatPromptAdmission {
                 if self.turn_started.is_some()
                     || self.failure_phase.is_some()
                     || self.failure_provisioning_phase.is_some()
+                    || self.failure_command_index.is_some()
                     || self.failure_retryable
                     || self.linear_conflict =>
             {
                 return Err("undelivered chat prompt carries a terminal outcome".into());
             }
             _ => {}
+        }
+        if self.failure_command_index.is_some()
+            && self.failure_provisioning_phase != Some(ChatProvisioningPhase::WorkspaceSetup)
+        {
+            return Err("chat prompt setup failure index has no setup phase".into());
         }
         Ok(())
     }
@@ -333,6 +344,8 @@ impl std::fmt::Display for ChatUnavailableCause {
 pub struct ChatHostFailure {
     pub phase: ChatProvisioningPhase,
     pub command_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_excerpt: Option<String>,
     pub retryable: bool,
     pub cleanup_pending: bool,
     pub occurred_at: String,
@@ -504,6 +517,20 @@ impl ChatHostRecord {
         }
         if let Some(authority) = self.workspace_authority.as_ref() {
             authority.validate()?;
+        }
+        if let Some(failure) = self.last_failure.as_ref() {
+            if crate::seconds_from_rfc3339(&failure.occurred_at).is_none()
+                || failure.output_excerpt.as_ref().is_some_and(|excerpt| {
+                    excerpt.len() > layer3_adapter::MAX_WORKSPACE_SETUP_OUTPUT_BYTES
+                })
+                || (failure.command_index.is_some()
+                    && failure.phase != ChatProvisioningPhase::WorkspaceSetup)
+                || (failure.output_excerpt.is_some()
+                    && (failure.phase != ChatProvisioningPhase::WorkspaceSetup
+                        || failure.command_index.is_none()))
+            {
+                return Err("chat host failure is malformed".into());
+            }
         }
         if self.runtime_generation != 0 && self.runtime_generation <= u64::from(self.rotations) {
             return Err("chat runtime generation does not cover its rotations".into());
@@ -1130,13 +1157,25 @@ impl crate::service::SessionService {
                     .await;
             }
         };
-        if let Some(failed) = setup.steps.iter().find(|step| step.exit_code != 0) {
+        if setup.validate(settings.setup.commands.len()).is_err() {
             return self
                 .fail_chat_host(
                     &host,
                     Some((&handle, &adapter)),
                     ChatProvisioningPhase::WorkspaceSetup,
-                    Some(failed.command_index),
+                    None,
+                    false,
+                    None,
+                )
+                .await;
+        }
+        if let Some(failed) = setup.failed_step() {
+            return self
+                .fail_chat_host(
+                    &host,
+                    Some((&handle, &adapter)),
+                    ChatProvisioningPhase::WorkspaceSetup,
+                    Some(failed),
                     true,
                     None,
                 )
@@ -1208,7 +1247,7 @@ impl crate::service::SessionService {
         observed: &ChatHostRecord,
         runtime: Option<(&RuntimeHandle, &Arc<dyn layer3_adapter::KernelAdapter>)>,
         phase: ChatProvisioningPhase,
-        command_index: Option<usize>,
+        setup_failure: Option<&layer3_adapter::WorkspaceSetupStep>,
         retryable: bool,
         unsupported_capability: Option<&str>,
     ) -> Result<ChatHostRecord, CoreError> {
@@ -1224,7 +1263,8 @@ impl crate::service::SessionService {
         };
         let failure = ChatHostFailure {
             phase,
-            command_index,
+            command_index: setup_failure.map(|step| step.command_index),
+            output_excerpt: setup_failure.map(|step| step.output_excerpt.clone()),
             retryable,
             cleanup_pending,
             occurred_at: crate::clock::now_rfc3339(),
@@ -1497,6 +1537,7 @@ impl crate::service::SessionService {
                 ChatProvisioningPhase::Credential
             },
             command_index: None,
+            output_excerpt: None,
             retryable: true,
             cleanup_pending: runtime_cleanup_pending,
             occurred_at: crate::clock::now_rfc3339(),

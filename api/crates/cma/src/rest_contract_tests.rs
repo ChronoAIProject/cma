@@ -26,19 +26,20 @@ use layer1_public::{
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
-    ChatCheckpointObjectReceipt, ChatCheckpointRef, ChatCheckpointStore, ChatHostId,
-    ChatHostListQuery, ChatHostRecord, ChatHostStatus, ChatHostStore, ChatOrigin, ChatSettings,
-    ChatSettingsSnapshot, ChatThreadSlot, ConversationLink, ConversationOpeningLease,
-    ConversationOpeningLeaseRequest, ConversationWriteAuthority, CredentialSource,
-    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
-    EnvironmentProfileStore, Event, EventKind, HandoverSnapshot, HandoverStore, KernelId,
-    OperationClaim, OperationReservation, OperationStore, Page, PageCursor, PageRequest,
-    PlatformSettings, PlatformSettingsService, PlatformSettingsStore, RecoveryState,
-    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
-    ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
-    SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, SessionSurfaceFilter,
-    SkillCatalog, SkillId, SkillPack, SkillPackStore, SkillSource, StoreError, StoredEvent,
-    StoredSettings, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
+    ChatCheckpointObjectReceipt, ChatCheckpointRef, ChatCheckpointStore, ChatHostFailure,
+    ChatHostId, ChatHostListQuery, ChatHostRecord, ChatHostStatus, ChatHostStore, ChatOrigin,
+    ChatProvisioningPhase, ChatSettings, ChatSettingsSnapshot, ChatThreadSlot, ConversationLink,
+    ConversationOpeningLease, ConversationOpeningLeaseRequest, ConversationWriteAuthority,
+    CredentialSource, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
+    EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind, HandoverSnapshot,
+    HandoverStore, KernelId, OperationClaim, OperationReservation, OperationStore, Page,
+    PageCursor, PageRequest, PlatformSettings, PlatformSettingsService, PlatformSettingsStore,
+    RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot,
+    ServiceCatalog, ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode,
+    SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore,
+    SessionSurfaceFilter, SkillCatalog, SkillId, SkillPack, SkillPackStore, SkillSource,
+    StoreError, StoredEvent, StoredSettings, SubjectId, TerminalGeometry, UserDirectory,
+    UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeIdentity, RuntimeMode,
@@ -1696,6 +1697,7 @@ impl KernelAdapter for TestKernel {
                     output_excerpt: String::new(),
                 })
                 .collect(),
+            failing_index: None,
         })
     }
 
@@ -5059,6 +5061,7 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             "checkpoint_captured_at",
             "created_at",
             "id",
+            "last_failure",
             "owner",
             "paused_at",
             "revived_at",
@@ -5066,6 +5069,24 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             "settings_revision",
             "status",
             "thread_count",
+        ])
+    );
+    let failure_properties = document["components"]["schemas"]["AdminChatHostFailureView"]
+        ["properties"]
+        .as_object()
+        .expect("chat-host failures have a concrete bounded schema");
+    assert_eq!(
+        failure_properties
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "cleanup_pending",
+            "command_index",
+            "occurred_at",
+            "output_excerpt",
+            "phase",
+            "retryable",
         ])
     );
 
@@ -6132,6 +6153,19 @@ async fn admin_chat_hosts_page_redacts_authority_and_uses_standard_pagination() 
     let TestSurface {
         app, chat_hosts, ..
     } = test_surface(true);
+    let mut failed = chat_host_record(
+        3,
+        SubjectId("host-owner-three".into()),
+        ChatHostStatus::Provisioning,
+    );
+    failed.last_failure = Some(ChatHostFailure {
+        phase: ChatProvisioningPhase::WorkspaceSetup,
+        command_index: Some(1),
+        output_excerpt: Some("bounded setup failure".into()),
+        retryable: true,
+        cleanup_pending: false,
+        occurred_at: "2026-09-01T00:01:00Z".into(),
+    });
     seed_chat_hosts(
         &chat_hosts,
         [
@@ -6145,11 +6179,7 @@ async fn admin_chat_hosts_page_redacts_authority_and_uses_standard_pagination() 
                 SubjectId("host-owner-two".into()),
                 ChatHostStatus::Paused,
             ),
-            chat_host_record(
-                3,
-                SubjectId("host-owner-three".into()),
-                ChatHostStatus::Retired,
-            ),
+            failed,
         ],
     )
     .await;
@@ -6157,7 +6187,7 @@ async fn admin_chat_hosts_page_redacts_authority_and_uses_standard_pagination() 
     let (first, headers) = get_collection(&app, "/api/v1/admin/chat/hosts?limit=2").await;
     assert_eq!(first.len(), 2);
     assert_eq!(first[0]["owner"], "host-owner-three");
-    assert_eq!(first[0]["status"], "retired");
+    assert_eq!(first[0]["status"], "provisioning");
     assert_eq!(first[0]["thread_count"], 1);
     assert_eq!(first[0]["runtime_version"], "runtime-v2");
     assert_eq!(first[0]["paused_at"], "2026-09-01T00:00:20Z");
@@ -6165,6 +6195,12 @@ async fn admin_chat_hosts_page_redacts_authority_and_uses_standard_pagination() 
     assert_eq!(first[0]["checkpoint_captured_at"], "2026-09-01T00:00:30Z");
     assert_eq!(first[0]["settings_revision"], 17);
     assert_eq!(first[0]["created_at"], "2026-09-01T00:00:03Z");
+    assert_eq!(first[0]["last_failure"]["phase"], "workspace_setup");
+    assert_eq!(first[0]["last_failure"]["command_index"], 1);
+    assert_eq!(
+        first[0]["last_failure"]["output_excerpt"],
+        "bounded setup failure"
+    );
     assert_eq!(
         first[0]
             .as_object()
@@ -6176,6 +6212,7 @@ async fn admin_chat_hosts_page_redacts_authority_and_uses_standard_pagination() 
             "checkpoint_captured_at",
             "created_at",
             "id",
+            "last_failure",
             "owner",
             "paused_at",
             "revived_at",

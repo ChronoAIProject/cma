@@ -127,6 +127,46 @@ pub struct WorkspaceSources {
 }
 
 impl WorkspaceSources {
+    /// Resolve the main repository prepared by clone or recovered from a
+    /// complete-Git workspace restore. Linked worktrees carry a `.git` file;
+    /// only the one main clone carries the directory accepted here.
+    pub fn setup_directory(&self, workspace_root: &Path) -> Result<PathBuf, WorkspaceSourceError> {
+        if let Some(prepared) = self.prepared.as_ref() {
+            if is_main_repository(&prepared.repository)? {
+                return Ok(prepared.repository.clone());
+            }
+            return Err(WorkspaceSourceError::Conflict(
+                "the prepared workspace repository is no longer available",
+            ));
+        }
+
+        let entries = match std::fs::read_dir(workspace_root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(WorkspaceSourceError::Conflict(
+                    "a workspace source has not been prepared or restored",
+                ));
+            }
+            Err(error) => return Err(WorkspaceSourceError::Runtime(error.to_string())),
+        };
+        let mut repository = None;
+        for entry in entries {
+            let entry = entry.map_err(|error| WorkspaceSourceError::Runtime(error.to_string()))?;
+            let path = entry.path();
+            if !is_main_repository(&path)? {
+                continue;
+            }
+            if repository.replace(path).is_some() {
+                return Err(WorkspaceSourceError::Conflict(
+                    "the restored workspace contains multiple repository roots",
+                ));
+            }
+        }
+        repository.ok_or(WorkspaceSourceError::Conflict(
+            "a workspace source has not been prepared or restored",
+        ))
+    }
+
     pub async fn prepare(
         &mut self,
         workspace_root: &Path,
@@ -336,6 +376,23 @@ impl WorkspaceSources {
             },
         }
     }
+}
+
+fn is_main_repository(path: &Path) -> Result<bool, WorkspaceSourceError> {
+    let repository = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(WorkspaceSourceError::Runtime(error.to_string())),
+    };
+    if repository.file_type().is_symlink() || !repository.is_dir() {
+        return Ok(false);
+    }
+    let git = match std::fs::symlink_metadata(path.join(".git")) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(WorkspaceSourceError::Runtime(error.to_string())),
+    };
+    Ok(!git.file_type().is_symlink() && git.is_dir())
 }
 
 pub fn validate_tree_name(value: &str) -> Result<(), WorkspaceSourceError> {

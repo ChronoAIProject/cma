@@ -77,6 +77,44 @@ fn aggregate_validation_rejects_mismatched_identity_and_duplicate_slots() {
 }
 
 #[test]
+fn aggregate_accepts_legacy_failures_but_rejects_unbounded_or_mistyped_setup_output() {
+    let legacy: ChatHostFailure = serde_json::from_value(serde_json::json!({
+        "phase": "workspace_setup",
+        "command_index": 0,
+        "retryable": true,
+        "cleanup_pending": false,
+        "occurred_at": "2026-09-01T00:01:00Z"
+    }))
+    .expect("pre-excerpt host failures remain readable");
+    assert_eq!(legacy.output_excerpt, None);
+
+    let mut record = host("owner-failure-bound");
+    record.last_failure = Some(ChatHostFailure {
+        phase: ChatProvisioningPhase::WorkspaceSetup,
+        command_index: Some(0),
+        output_excerpt: Some("x".repeat(layer3_adapter::MAX_WORKSPACE_SETUP_OUTPUT_BYTES)),
+        retryable: true,
+        cleanup_pending: false,
+        occurred_at: "2026-09-01T00:01:00Z".into(),
+    });
+    record.validate().expect("the exact output bound is valid");
+
+    record.last_failure.as_mut().unwrap().output_excerpt =
+        Some("x".repeat(layer3_adapter::MAX_WORKSPACE_SETUP_OUTPUT_BYTES + 1));
+    assert_eq!(
+        record.validate().unwrap_err(),
+        "chat host failure is malformed"
+    );
+    let failure = record.last_failure.as_mut().unwrap();
+    failure.output_excerpt = Some("bounded".into());
+    failure.phase = ChatProvisioningPhase::Runtime;
+    assert_eq!(
+        record.validate().unwrap_err(),
+        "chat host failure is malformed"
+    );
+}
+
+#[test]
 fn chat_unavailability_classifies_only_retryable_causes_as_transient() {
     for cause in [
         ChatUnavailableCause::NotConfigured,

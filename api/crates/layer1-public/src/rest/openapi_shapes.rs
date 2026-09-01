@@ -255,6 +255,18 @@ pub(super) enum ChatHostStatus {
     Retired,
 }
 
+/// Bounded phase vocabulary for one retained shared-host failure.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ChatProvisioningPhase {
+    Runtime,
+    WorkspaceSource,
+    WorkspaceSetup,
+    Credential,
+    Cleanup,
+    RuntimeLost,
+}
+
 /// How an activity came out.
 #[derive(serde::Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

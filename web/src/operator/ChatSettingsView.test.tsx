@@ -35,9 +35,12 @@ describe('the chat settings document', () => {
     expect(screen.getByText('Chat sessions run with full access (unrestricted).')).toBeVisible();
     expect(
       screen.getByText(
-        'Run inside the workspace after it is prepared, and again after every revive. Commands run as the sandbox user; write them idempotent.',
+        'Run inside the prepared repository and again after every revive. Commands run as uid 10001 without root access. Keep them idempotent and prefer workspace-local installation so toolchains survive pause checkpoints.',
       ),
     ).toBeVisible();
+    expect(screen.getByText('Lean fixture').nextElementSibling).toHaveTextContent(
+      '[ -x .toolchain/bin/lake ] || (curl -sSf https://elan.lean-lang.org/elan-init.sh | ELAN_HOME=$PWD/.toolchain sh -s -- -y --default-toolchain "$(cat lean-toolchain)")',
+    );
   });
 
   it('round-trips every editable field through the operator store in one CAS write', async () => {

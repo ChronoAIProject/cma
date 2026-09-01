@@ -191,6 +191,29 @@
   font-family: var(--ds-font-family-code);
 }
 
+.chat-settings__fixture {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.chat-settings__fixture code {
+  max-width: 100%;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+}
+
 .chat-settings__ordered {
   width: 100%;
 }

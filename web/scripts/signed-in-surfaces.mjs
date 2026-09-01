@@ -145,13 +145,32 @@ const CHAT_ALPHA_ITEMS = {
   has_more: false,
 };
 
+const BOUNDED_SETUP_FAILURE_OUTPUT = [
+  'toolchain installation failed',
+  ...Array.from(
+    { length: 400 },
+    (_, index) => `diagnostic line ${String(index + 1).padStart(3, '0')}`,
+  ),
+  'final setup diagnostic',
+].join('\n');
+
 const CHAT_HOSTS = [
   {
     id: 'chho_0123456789abcdef0123456789abcdef',
     owner: 'subject-chat-owner',
-    status: 'active',
+    status: 'paused',
     thread_count: 3,
     runtime_version: 'runtime-v2',
+    paused_at: '2026-09-01T01:00:00Z',
+    checkpoint_captured_at: '2026-09-01T00:59:58Z',
+    last_failure: {
+      phase: 'workspace_setup',
+      command_index: 1,
+      output_excerpt: BOUNDED_SETUP_FAILURE_OUTPUT,
+      retryable: true,
+      cleanup_pending: false,
+      occurred_at: '2026-09-01T01:00:01Z',
+    },
     settings_revision: 17,
     created_at: '2026-08-31T23:00:00Z',
   },
@@ -978,6 +997,7 @@ async function chatHostInventoryFits(page) {
       const actions = row?.querySelector('.record__actions');
       const tabs = document.querySelector('.operator__tabs');
       const confirm = row?.querySelector('.confirm');
+      const failure = row?.querySelector('.chat-host__failure-output');
       if (row === null || text === null || actions === null || tabs === null) {
         return { missing: true };
       }
@@ -985,6 +1005,7 @@ async function chatHostInventoryFits(page) {
       const textBox = text.getBoundingClientRect();
       const actionBox = actions.getBoundingClientRect();
       const confirmBox = confirm?.getBoundingClientRect();
+      const failureBox = failure?.getBoundingClientRect();
       return {
         missing: false,
         columns: getComputedStyle(row).gridTemplateColumns,
@@ -995,6 +1016,15 @@ async function chatHostInventoryFits(page) {
         confirmationOffscreen:
           confirmBox !== undefined &&
           (confirmBox.left < rowBox.left - 1 || confirmBox.right > rowBox.right + 1),
+        failureBounded:
+          failureBox !== undefined &&
+          failureBox.height <= 145 &&
+          failureBox.left >= rowBox.left - 1 &&
+          failureBox.right <= rowBox.right + 1,
+        failureScrollable:
+          failure !== null &&
+          getComputedStyle(failure).overflowY === 'auto' &&
+          failure.scrollHeight > failure.clientHeight,
         tabsScrollable:
           getComputedStyle(tabs).overflowX === 'auto' && tabs.scrollWidth > tabs.clientWidth,
         text: row.textContent ?? '',
@@ -1006,6 +1036,13 @@ async function chatHostInventoryFits(page) {
     }
     if (!seen.text.includes('subject-chat-owner') || !seen.text.includes('3 threads')) {
       problems.push(`chat hosts at ${String(width)}px: required row facts are absent`);
+    }
+    if (
+      !seen.text.includes('failure workspace_setup, command index 1') ||
+      !seen.failureBounded ||
+      !seen.failureScrollable
+    ) {
+      problems.push(`chat hosts at ${String(width)}px: setup failure evidence is not bounded`);
     }
     if (seen.horizontal || seen.rowOffscreen || seen.confirmationOffscreen) {
       problems.push(`chat hosts at ${String(width)}px: the inventory widens the viewport`);

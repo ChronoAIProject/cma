@@ -1867,6 +1867,16 @@ async fn chat_host_inventory_decodes_projection_and_route_bound_pages() {
         host.checkpoint_captured_at.as_deref(),
         Some("2026-09-01T00:45:00Z")
     );
+    let failure = host
+        .last_failure
+        .as_ref()
+        .expect("the bounded setup failure is projected");
+    assert_eq!(failure.phase, cma_sdk::ChatHostFailurePhase::WorkspaceSetup);
+    assert_eq!(failure.command_index, Some(1));
+    assert_eq!(
+        failure.output_excerpt.as_deref(),
+        Some("bounded setup failure")
+    );
     assert_eq!(host.settings_revision, 17);
     assert_eq!(host.created_at, "2026-08-31T23:00:00Z");
 
@@ -2012,6 +2022,15 @@ async fn malformed_chat_host_projection_is_a_protocol_failure() {
     let stub = Stub::start([StubResponse::json(StatusCode::OK, &malformed)]).await;
     let (client, _) = stub_client(&stub, 1);
 
+    assert!(matches!(
+        client.list_chat_hosts().await,
+        Err(Error::Protocol { .. })
+    ));
+
+    let malformed_failure =
+        CHAT_HOSTS.replace("\"phase\": \"workspace_setup\"", "\"phase\": \"runtime\"");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &malformed_failure)]).await;
+    let (client, _) = stub_client(&stub, 1);
     assert!(matches!(
         client.list_chat_hosts().await,
         Err(Error::Protocol { .. })
