@@ -99,7 +99,7 @@ const CHAT_SESSIONS = [
       worktree_name: 'chat-paused',
       worktree_path: '/work/chat-paused',
       title: null,
-      paused_notice: 'Paused after 15 minutes without activity.',
+      paused_notice: 'Your current chat session has been idle for 15min and has been auto-paused.',
     },
   },
 ];
@@ -480,6 +480,77 @@ async function chatSurfaceSwitches(page) {
     await page.setViewport({ width: 1440, height: 900 });
     await settle(250);
   }
+
+  const pausedSelected = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.row-item')].find((candidate) =>
+      candidate.textContent?.includes('chat-paused'),
+    );
+    row?.click();
+    return row !== undefined;
+  });
+  if (!pausedSelected) {
+    problems.push('chat surface: the paused chat row cannot be opened');
+  } else {
+    try {
+      await page.waitForFunction(
+        () => {
+          const surface = document.querySelector('.chat-surface[data-surface="chat"]');
+          const field = surface?.querySelector('textarea[aria-label="Message"]');
+          return (
+            surface?.textContent?.includes(
+              'Your current chat session has been idle for 15min and has been auto-paused.',
+            ) === true &&
+            field?.getAttribute('placeholder') ===
+              'Send a message to continue with your previous chat session.'
+          );
+        },
+        { polling: 'raf', timeout: 5000 },
+      );
+    } catch {
+      problems.push('chat surface: paused notice and composer copy did not render');
+    }
+
+    const pausedView = await page.evaluate(() => {
+      const surface = document.querySelector('.chat-surface[data-surface="chat"]');
+      const notice = surface?.querySelector('.chat-surface__pause[role="status"]');
+      const field = surface?.querySelector('textarea[aria-label="Message"]');
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const box = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return (
+          box.width > 0 &&
+          box.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden'
+        );
+      };
+      return {
+        notice: notice?.textContent?.trim() ?? '',
+        noticeVisible: visible(notice),
+        placeholder: field?.getAttribute('placeholder') ?? '',
+        fieldVisible: visible(field),
+        fieldEnabled: field instanceof HTMLTextAreaElement && !field.disabled,
+      };
+    });
+    if (
+      pausedView.notice !==
+        'Your current chat session has been idle for 15min and has been auto-paused.' ||
+      !pausedView.noticeVisible
+    ) {
+      problems.push(`chat surface: paused notice is not visibly exact (${pausedView.notice})`);
+    }
+    if (
+      pausedView.placeholder !== 'Send a message to continue with your previous chat session.' ||
+      !pausedView.fieldVisible ||
+      !pausedView.fieldEnabled
+    ) {
+      problems.push(
+        `chat surface: paused composer is not visibly enabled with exact copy (${pausedView.placeholder})`,
+      );
+    }
+  }
+
   if (!(await press(page, 'Agent'))) {
     return [...problems, 'chat surface: the Agent segment cannot be pressed'];
   }
