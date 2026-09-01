@@ -181,6 +181,55 @@ describe('the Chat rail', () => {
     );
   });
 
+  it('moves the same refreshed chat from Paused to Active after revival', async () => {
+    const user = userEvent.setup();
+    const paused = session('b', 'idle', {
+      stopReason: 'idle_timeout',
+      chat: { worktreeName: 'chat-beta', worktreePath: '/work/chat-beta' },
+    });
+    const onSelect = vi.fn();
+    const onReorder = vi.fn();
+    const onArrange = vi.fn();
+    const view = render(
+      <SessionRail
+        surface="chat"
+        sessions={[paused]}
+        activeId="b"
+        order="newest"
+        arrangement="list"
+        onSelect={onSelect}
+        onReorder={onReorder}
+        onArrange={onArrange}
+      />,
+    );
+    await expand(user, 'Paused');
+    expect(within(screen.getByRole('tablist', { name: 'Paused' })).getByText('chat-beta')).toBe(
+      screen.getByText('chat-beta'),
+    );
+
+    const active = session('b', 'running', {
+      chat: { worktreeName: 'chat-beta', worktreePath: '/work/chat-beta' },
+    });
+    view.rerender(
+      <SessionRail
+        surface="chat"
+        sessions={[active]}
+        activeId="b"
+        order="newest"
+        arrangement="list"
+        onSelect={onSelect}
+        onReorder={onReorder}
+        onArrange={onArrange}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Active, 1 chat' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Paused, 0 chats' })).toBeInTheDocument();
+    expect(within(screen.getByRole('tablist', { name: 'Active' })).getByText('chat-beta')).toBe(
+      screen.getByText('chat-beta'),
+    );
+  });
+
   it('prefers a generated title and falls back to the worktree name', () => {
     renderRail({ surface: 'chat', sessions: chats });
 

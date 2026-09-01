@@ -107,6 +107,7 @@ function page(
 function response(
   status: ResponsesResponse['status'],
   output = 'Everything is ready.',
+  extra: Partial<ResponsesResponse> = {},
 ): ResponsesResponse {
   return {
     id: 'resp_chat_test_1',
@@ -143,6 +144,7 @@ function response(
     truncation: 'disabled',
     usage: null,
     metadata: {},
+    ...extra,
   };
 }
 
@@ -208,6 +210,10 @@ class InterruptedConnection implements ChatResponsesConnection {
 
 function createdEvent(current: ResponsesResponse): ResponsesStreamEvent {
   return { type: 'response.created', sequence_number: 0, response: current };
+}
+
+function inProgressEvent(current: ResponsesResponse): ResponsesStreamEvent {
+  return { type: 'response.in_progress', sequence_number: 1, response: current };
 }
 
 function reasoningEvent(delta: string): ResponsesStreamEvent {
@@ -628,6 +634,235 @@ describe('the reduced Chat surface', () => {
     await waitFor(() => expect(screen.getByText('keep running')).toBeInTheDocument());
     liveView.unmount();
     expect(live.cancelled).toBe(true);
+  });
+
+  it('keeps paused history visible and accepts a revive only when its created stream progresses', async () => {
+    const user = userEvent.setup();
+    const notice = 'Your current chat session has been idle for 47min and has been auto-paused.';
+    const paused = session({
+      lifecycle: 'idle',
+      stopReason: 'idle_timeout',
+      chat: {
+        worktreeName: 'chat-1',
+        worktreePath: '/home/chrono/project/worktrees/chat-1',
+        title: 'Release readiness',
+        pausedNotice: notice,
+      },
+    });
+    const connection = new ControlledConnection();
+    let currentItems = historyItems();
+    const listItems = vi.fn().mockImplementation(() => Promise.resolve(page(currentItems)));
+    const createTurn = vi.fn().mockResolvedValue(connection);
+    const view = render(
+      <ChatSurface session={paused} listItems={listItems} createTurn={createTurn} />,
+    );
+
+    expect(await screen.findByText('Everything is ready.')).toBeInTheDocument();
+    expect(screen.getByText('Check the release.')).toBeInTheDocument();
+    const pauseStatus = screen.getByRole('status', { name: '' });
+    expect(pauseStatus).toHaveTextContent(notice);
+    expect(pauseStatus.textContent).toBe(notice);
+    const field = screen.getByRole('textbox', { name: 'Message' });
+    expect(field).toHaveAttribute(
+      'placeholder',
+      'Send a message to continue with your previous chat session.',
+    );
+    expect(field).toBeEnabled();
+
+    await user.type(field, 'Continue the release check');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(createTurn).toHaveBeenCalledOnce());
+    expect(createTurn).toHaveBeenCalledWith(
+      {
+        conversation: CHAT_ID,
+        input: 'Continue the release check',
+        previous_response_id: 'resp_chat_test_1',
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(field).toHaveValue('Continue the release check');
+    expect(
+      within(screen.getByRole('log', { name: 'Conversation' })).queryByText(
+        'Continue the release check',
+      ),
+    ).toBeNull();
+
+    const inProgress = response('in_progress', '', {
+      id: 'resp_chat_test_4',
+      previous_response_id: 'resp_chat_test_1',
+    });
+    await act(async () => {
+      connection.advance(createdEvent(inProgress), {
+        outputText: '',
+        reasoningText: '',
+        toolActivities: [],
+        response: inProgress,
+      });
+    });
+    expect(screen.getByText('Starting…')).toHaveClass('startup__stage');
+    expect(screen.queryByText('Working')).toBeNull();
+    expect(field).toHaveValue('Continue the release check');
+    expect(field).toBeEnabled();
+    expect(screen.getByText('Everything is ready.')).toBeInTheDocument();
+
+    await act(async () => {
+      connection.advance(inProgressEvent(inProgress), {
+        outputText: '',
+        reasoningText: '',
+        toolActivities: [],
+        response: inProgress,
+      });
+    });
+    await waitFor(() => expect(field).toHaveValue(''));
+    expect(screen.queryByText('Starting…')).toBeNull();
+    expect(screen.getByText('Continue the release check')).toBeInTheDocument();
+
+    await act(async () => {
+      connection.advance(outputEvent('Restored answer'), {
+        outputText: 'Restored answer',
+        reasoningText: '',
+        toolActivities: [],
+        response: inProgress,
+      });
+    });
+    expect(screen.getByText('Restored answer')).toBeInTheDocument();
+
+    currentItems = [
+      message('msg_chat_test_4', 'assistant', 'Restored answer'),
+      message('msg_chat_test_5', 'user', 'Continue the release check'),
+      ...historyItems(),
+    ];
+    const complete = response('completed', 'Restored answer', {
+      id: 'resp_chat_test_4',
+      previous_response_id: 'resp_chat_test_1',
+    });
+    await act(async () => {
+      connection.advance(
+        { type: 'response.completed', sequence_number: 4, response: complete },
+        {
+          outputText: 'Restored answer',
+          reasoningText: '',
+          toolActivities: [],
+          response: complete,
+          terminal: complete,
+        },
+      );
+    });
+    await waitFor(() => expect(listItems).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByText('Continue the release check')).toHaveLength(1);
+    expect(screen.getAllByText('Restored answer')).toHaveLength(1);
+
+    view.rerender(
+      <ChatSurface session={session()} listItems={listItems} createTurn={createTurn} />,
+    );
+    expect(screen.queryByText(notice)).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute(
+      'placeholder',
+      'Say what you want done',
+    );
+  });
+
+  it('shows a provisioning timeout with its code and preserves the failed revive draft exactly', async () => {
+    const paused = session({
+      lifecycle: 'idle',
+      stopReason: 'idle_timeout',
+      chat: {
+        worktreeName: 'chat-1',
+        worktreePath: '/home/chrono/project/worktrees/chat-1',
+        title: 'Release readiness',
+        pausedNotice: 'Your current chat session has been idle for 15min and has been auto-paused.',
+      },
+    });
+    const timedOutConnection = new ControlledConnection();
+    const retryConnection = new ControlledConnection();
+    const listItems = vi.fn().mockResolvedValue(page(historyItems()));
+    const createTurn = vi
+      .fn()
+      .mockResolvedValueOnce(timedOutConnection)
+      .mockResolvedValueOnce(retryConnection);
+    const view = render(
+      <ChatSurface session={paused} listItems={listItems} createTurn={createTurn} />,
+    );
+    const field = await screen.findByRole('textbox', { name: 'Message' });
+    const draft = '  Keep this exact.\nSecond line  ';
+    fireEvent.change(field, { target: { value: draft } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(createTurn).toHaveBeenCalledOnce());
+
+    const timedOut = response('failed', '', {
+      id: 'resp_chat_test_0',
+      error: {
+        code: 'provisioning_timeout',
+        message: 'The conversation did not become reachable before the readiness deadline.',
+      },
+    });
+    await act(async () => {
+      timedOutConnection.advance(
+        { type: 'response.failed', sequence_number: 0, response: timedOut },
+        {
+          outputText: '',
+          reasoningText: '',
+          toolActivities: [],
+          response: timedOut,
+          terminal: timedOut,
+        },
+      );
+    });
+
+    const failure = await waitFor(() => {
+      const element = view.container.querySelector('.failure');
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    expect(failure).toHaveTextContent(
+      'The conversation did not become reachable before the readiness deadline.',
+    );
+    expect(failure).toHaveTextContent('provisioning_timeout');
+    expect(field).toHaveValue(draft);
+    expect(field).toBeEnabled();
+    expect(
+      within(screen.getByRole('log', { name: 'Conversation' })).queryByText(
+        'Keep this exact. Second line',
+      ),
+    ).toBeNull();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(createTurn).toHaveBeenCalledTimes(2));
+    expect(createTurn).toHaveBeenLastCalledWith(
+      {
+        conversation: CHAT_ID,
+        input: 'Keep this exact.\nSecond line',
+        previous_response_id: 'resp_chat_test_1',
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(field).toHaveValue(draft);
+  });
+
+  it('does not apply paused affordances to another idle stop reason', async () => {
+    const notice = 'This sentence must not be inferred from metadata alone.';
+    render(
+      <ChatSurface
+        session={session({
+          lifecycle: 'idle',
+          stopReason: 'end_turn',
+          chat: {
+            worktreeName: 'chat-1',
+            worktreePath: '/home/chrono/project/worktrees/chat-1',
+            pausedNotice: notice,
+          },
+        })}
+        listItems={vi.fn().mockResolvedValue(page(historyItems()))}
+      />,
+    );
+
+    expect(await screen.findByText('Everything is ready.')).toBeInTheDocument();
+    expect(screen.queryByText(notice)).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'This session is paused. Resume it to carry on.',
+    );
   });
 
   it('keeps an approval in the input seat and rejects a non-chat session', async () => {

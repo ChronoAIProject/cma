@@ -5,6 +5,25 @@
   margin: 12px var(--page-gutter) 0;
 }
 
+/* The server-owned pause sentence stays above the scrolling durable record. */
+.chat-surface__pause-seat {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  padding: 12px var(--page-gutter) 0;
+}
+
+.chat-surface__pause {
+  width: 100%;
+  max-width: var(--read-column);
+  margin: 0;
+}
+
+/* Reuse the provisioning stage line at the restored turn's stream position. */
+.chat-surface__starting {
+  align-self: center;
+}
+
 /* No instrumentation rows follow the composer, so the foot needs no reserved gap. */
 .chat-surface__foot {
   padding-top: 8px;

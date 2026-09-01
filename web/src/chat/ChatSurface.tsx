@@ -23,12 +23,16 @@ import { Composer } from './Composer';
 import { MessageStream, type MessageStreamEntry, type ThinkingStreamEntry } from './MessageStream';
 import type { ThinkingActivity } from './Thinking';
 import { planeStateFor } from './planeState';
+import { StartupStage } from '../sessions/StartupProgress';
 import './ConversationSurface.css';
 import './ChatSurface.css';
 
 const HISTORY_PAGE_SIZE = 100;
 const HISTORY_MAX_PAGES = 100;
 const HISTORY_MAX_ITEMS = HISTORY_PAGE_SIZE * HISTORY_MAX_PAGES;
+
+export const PAUSED_CHAT_PLACEHOLDER =
+  'Send a message to continue with your previous chat session.';
 
 /** The public surface used from the SDK connection and by controlled stream doubles. */
 export interface ChatResponsesConnection extends AsyncIterable<ResponsesStreamEvent> {
@@ -64,12 +68,49 @@ interface LocalTurn {
   readonly reasoningText: string;
   readonly activities: readonly ThinkingActivity[];
   readonly terminal?: ResponsesResponse;
+  /** False until a paused response has progressed beyond `response.created`. */
+  readonly userVisible?: boolean;
+  /** The revive stream has been created but has not begun the restored turn. */
+  readonly starting?: boolean;
   /** Durable items cover this turn; retain only presentation that items cannot encode. */
   readonly durable?: boolean;
 }
 
 interface HistorySnapshot {
   readonly predecessor: string | null;
+}
+
+interface ReviveGate {
+  readonly promise: Promise<boolean>;
+  readonly settled: boolean;
+  settle(accepted: boolean): void;
+}
+
+function createReviveGate(): ReviveGate {
+  let resolve!: (accepted: boolean) => void;
+  let settled = false;
+  const promise = new Promise<boolean>((accept) => {
+    resolve = accept;
+  });
+  return {
+    promise,
+    get settled() {
+      return settled;
+    },
+    settle(accepted) {
+      if (settled) return;
+      settled = true;
+      resolve(accepted);
+    },
+  };
+}
+
+function isPausedChat(session: Session): boolean {
+  return session.lifecycle === 'idle' && session.stopReason === 'idle_timeout';
+}
+
+function isProvisioningTimeout(response: ResponsesResponse): boolean {
+  return response.status === 'failed' && response.error?.code === 'provisioning_timeout';
 }
 
 /**
@@ -255,7 +296,8 @@ function localEntries(turn: LocalTurn | undefined, after: number): readonly Mess
   if (turn === undefined) return [];
   const entries: MessageStreamEntry[] = [];
   let sequence = after;
-  if (turn.durable !== true) {
+  const userVisible = turn.userVisible !== false;
+  if (turn.durable !== true && userVisible) {
     sequence += 1;
     entries.push({
       kind: 'message',
@@ -268,7 +310,7 @@ function localEntries(turn: LocalTurn | undefined, after: number): readonly Mess
   }
   if (turn.terminal === undefined) return entries;
 
-  if (turn.durable !== true && turn.activities.length > 0) {
+  if (turn.durable !== true && userVisible && turn.activities.length > 0) {
     sequence += 1;
     entries.push({
       kind: 'thinking',
@@ -278,7 +320,7 @@ function localEntries(turn: LocalTurn | undefined, after: number): readonly Mess
       seq: sequence,
     } satisfies ThinkingStreamEntry);
   }
-  if (turn.durable !== true && turn.outputText !== '') {
+  if (turn.durable !== true && userVisible && turn.outputText !== '') {
     sequence += 1;
     entries.push({
       kind: 'message',
@@ -329,6 +371,8 @@ function ChatSurfaceThread({
   readResponse = readResponsesResponse,
   approval,
 }: ChatSurfaceProps) {
+  const paused = isPausedChat(session);
+  const pausedNotice = session.chat?.pausedNotice;
   const [history, setHistory] = useState<readonly ResponsesConversationItem[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [predecessor, setPredecessor] = useState<string | null | undefined>(undefined);
@@ -391,17 +435,33 @@ function ChatSurfaceThread({
       connection: ChatResponsesConnection,
       token: number,
       controller: AbortController,
+      reviveGate?: ReviveGate,
     ): Promise<void> => {
       let streamFailure: unknown;
       try {
         for await (const event of connection) {
-          void event;
-          setTurn((current) =>
-            current?.token === token ? stateIntoTurn(current, connection.state) : current,
-          );
+          const gatePending = reviveGate !== undefined && !reviveGate.settled;
+          const timeout = event.type === 'response.failed' && isProvisioningTimeout(event.response);
+          if (gatePending && event.type !== 'response.created') {
+            reviveGate.settle(!timeout);
+          }
+          setTurn((current) => {
+            if (current?.token !== token) return current;
+            const next = stateIntoTurn(current, connection.state);
+            if (!gatePending) return next;
+            if (event.type === 'response.created') {
+              return { ...next, userVisible: false, starting: true };
+            }
+            return { ...next, userVisible: !timeout, starting: false };
+          });
         }
       } catch (cause) {
-        if (controller.signal.aborted || cause instanceof RequestAborted) return;
+        if (controller.signal.aborted || cause instanceof RequestAborted) {
+          reviveGate?.settle(false);
+          if (activeConnection.current === connection) activeConnection.current = null;
+          if (activeTurnController.current === controller) activeTurnController.current = null;
+          return;
+        }
         streamFailure = cause;
       }
 
@@ -427,20 +487,25 @@ function ChatSurfaceThread({
           throw new ProtocolError('the Responses stream ended without a terminal response');
         }
 
+        const gatePending = reviveGate !== undefined && !reviveGate.settled;
+        const timeout = isProvisioningTimeout(terminal);
+        if (gatePending) reviveGate.settle(!timeout);
+
         const durableOutput = responseOutputText(terminal);
         const terminalState: ResponsesConnectionState = {
           ...connection.state,
           outputText: durableOutput === '' ? connection.state.outputText : durableOutput,
           terminal,
         };
-        setPredecessor(terminal.id);
+        if (!timeout) setPredecessor(terminal.id);
         setTurnFailure(undefined);
         setTurn((current) => {
           if (current?.token !== token) return current;
-          return stateIntoTurn(current, terminalState);
+          const next = stateIntoTurn(current, terminalState);
+          return gatePending ? { ...next, userVisible: !timeout, starting: false } : next;
         });
         const snapshot = await refreshHistory(controller.signal);
-        if (snapshot?.predecessor === terminal.id) {
+        if (!timeout && snapshot?.predecessor === terminal.id) {
           setTurn((current) => {
             if (current?.token !== token) return current;
             return terminal.status === 'completed' ? undefined : { ...current, durable: true };
@@ -453,6 +518,12 @@ function ChatSurfaceThread({
         // has committed rather than removing the request from the transcript.
         await refreshHistory(controller.signal);
       } finally {
+        if (reviveGate !== undefined && !reviveGate.settled) {
+          reviveGate.settle(false);
+          setTurn((current) =>
+            current?.token === token ? { ...current, starting: false } : current,
+          );
+        }
         if (activeConnection.current === connection) activeConnection.current = null;
         if (activeTurnController.current === controller) activeTurnController.current = null;
       }
@@ -475,6 +546,7 @@ function ChatSurfaceThread({
       const controller = new AbortController();
       activeTurnController.current = controller;
       const token = ++turnToken.current;
+      const reviveGate = paused ? createReviveGate() : undefined;
       const request: CreateResponseRequest = {
         conversation: session.id,
         input: text,
@@ -493,9 +565,10 @@ function ChatSurfaceThread({
           outputText: '',
           reasoningText: '',
           activities: [],
+          ...(reviveGate === undefined ? {} : { userVisible: false, starting: false }),
         });
-        void consume(connection, token, controller);
-        return true;
+        void consume(connection, token, controller, reviveGate);
+        return reviveGate === undefined ? true : await reviveGate.promise;
       } catch (cause) {
         if (!controller.signal.aborted && !(cause instanceof RequestAborted)) {
           setTurnFailure(`This message was not sent: ${errorMessage(cause)}`);
@@ -506,7 +579,17 @@ function ChatSurfaceThread({
         setAdmitting(false);
       }
     },
-    [admitting, consume, createTurn, historyLoaded, predecessor, refreshHistory, session.id, turn],
+    [
+      admitting,
+      consume,
+      createTurn,
+      historyLoaded,
+      paused,
+      predecessor,
+      refreshHistory,
+      session.id,
+      turn,
+    ],
   );
 
   const durableEntries = useMemo(() => projectChatHistory(history), [history]);
@@ -515,6 +598,7 @@ function ChatSurfaceThread({
     [durableEntries, turn],
   );
   const turnInFlight = turn !== undefined && turn.terminal === undefined;
+  const revivePending = turnInFlight && turn.userVisible === false;
   const liveThinking =
     turnInFlight && (turn.reasoningText !== '' || turn.activities.length > 0)
       ? { text: turn.reasoningText, activities: turn.activities, live: true }
@@ -527,7 +611,7 @@ function ChatSurfaceThread({
     ? (historyFailure ?? 'Loading this chat history.')
     : predecessor === undefined
       ? "This chat's latest response could not be identified."
-      : state.interactive
+      : state.interactive || paused
         ? undefined
         : state.reason;
   const capabilities: SessionCapabilities = {
@@ -543,6 +627,14 @@ function ChatSurfaceThread({
       aria-label="Chat conversation"
       data-surface="chat"
     >
+      {paused && pausedNotice !== undefined ? (
+        <div className="chat-surface__pause-seat">
+          <p className="notice chat-surface__pause" role="status">
+            {pausedNotice}
+          </p>
+        </div>
+      ) : null}
+
       {failure === undefined ? null : (
         <div className="notice notice--fail chat-surface__failure" role="alert">
           <span className="notice__detail">{failure}</span>
@@ -551,11 +643,18 @@ function ChatSurfaceThread({
 
       <MessageStream
         entries={entries}
-        turnInFlight={turnInFlight}
+        turnInFlight={turnInFlight && !revivePending}
         live={liveMessage}
         reasoning={liveThinking}
         linkLive={historyLoaded}
         openingHint={false}
+        footer={
+          turn?.starting === true ? (
+            <div className="chat-surface__starting">
+              <StartupStage stage={null} />
+            </div>
+          ) : undefined
+        }
       />
 
       <div className="conversation__foot chat-surface__foot">
@@ -564,7 +663,8 @@ function ChatSurfaceThread({
             <Composer
               capabilities={capabilities}
               commandsEnabled={false}
-              turnInFlight={turnInFlight}
+              turnInFlight={turnInFlight && !revivePending}
+              placeholder={paused ? PAUSED_CHAT_PLACEHOLDER : undefined}
               refusedReason={refusedReason}
               busy={admitting}
               onSend={send}
