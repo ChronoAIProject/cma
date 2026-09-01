@@ -19,7 +19,7 @@ The control plane never executes agent code. Bot pods never serve public traffic
 
 **Consumers.** CMA (ChronoAI Managed Agent) is a backend service. Its clients are other products' frontends and backends (NyxID Chat, FKST Chat). CMA's own `web/` frontend is an operational dashboard, the terminal surface, and the **reference client for the priority-1 public interface**. It is not the primary interaction path.
 
-**The chat surface may call no route a third-party client could not call.** It exists because everything it does is already in AG-UI. The moment it needs something AG-UI lacks, the answer is to add it to AG-UI, never to add it here.
+**The chat surface may call no route a third-party client could not call; its conversation wire is the Responses interface, and everything else it does is public REST/AG-UI.** The moment it needs something those public interfaces lack, the answer is to add it to the appropriate public interface, never to add a private route for the first-party client.
 
 That is a stricter rule than the one it replaces, not a relaxation. "Features must not be built there that belong in the API" asked whether a feature *belonged* in the API, which is a judgement somebody makes; this asks whether the API *already projects it*, which is checkable. And the reason for having a first-party client at all is that `acp-kernel`'s stated exit criterion is that a product frontend can build a chat interface on the public interfaces — a claim nobody had tested. A client held to the same constraints as a third party is the only thing that keeps it honest; a client permitted one private route would prove nothing about the one somebody else has to build.
 
@@ -124,15 +124,16 @@ api/crates/
 
 ### Layer 1 — public interfaces (control plane pod)
 
-Five interface types, in priority order. Each exposes semantic operations expressed in that protocol's own idiom:
+Six interface types, in priority order. Each exposes semantic operations expressed in that protocol's own idiom:
 
 | Priority | Interface | Client | Directory |
 |---|---|---|---|
 | 1 | **AG-UI** | frontend clients | `layer1-public/src/agui/` |
-| 2 | **REST** | backend server clients | `layer1-public/src/rest/` |
-| 3 | **PTY** | CLI-like streaming clients | `layer1-public/src/pty/` |
-| 4 | **MCP** | agent clients | `layer1-public/src/mcp/` |
-| 5 | **A2A** | agent clients | `layer1-public/src/a2a/` |
+| 2 | **Responses** (standard OpenAI Responses API) | frontend chat clients | `layer1-public/src/responses/` |
+| 3 | **REST** | backend server clients | `layer1-public/src/rest/` |
+| 4 | **PTY** | CLI-like streaming clients | `layer1-public/src/pty/` |
+| 5 | **MCP** | agent clients | `layer1-public/src/mcp/` |
+| 6 | **A2A** | agent clients | `layer1-public/src/a2a/` |
 
 Each interface is a **projection** of the same underlying core session model. Interfaces may expose a *subset* of core operations where the protocol cannot express one — but they must never invent an operation that does not exist in Layer 2, and they must never carry business logic.
 
