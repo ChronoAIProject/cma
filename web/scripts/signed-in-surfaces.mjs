@@ -77,6 +77,7 @@ const CHAT_SESSIONS = [
     last_seq: 4,
     created_at: '2026-08-20T07:00:00Z',
     conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/conversation'],
+    creator: { display_name: 'Ada Lovelace' },
     chat: {
       worktree_name: 'chat-alpha',
       worktree_path: '/work/chat-alpha',
@@ -102,6 +103,47 @@ const CHAT_SESSIONS = [
     },
   },
 ];
+
+const CHAT_ALPHA_ITEMS = {
+  object: 'list',
+  data: [
+    {
+      id: 'msg_chat_alpha_1',
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text: 'The release checks passed.',
+          annotations: [],
+          logprobs: [],
+        },
+      ],
+    },
+    {
+      id: 'tool_chat_alpha_3',
+      type: 'cma_chat.tool_activity',
+      call_id: 'call-release-checks',
+      kind: 'shell',
+      target: 'npm test',
+      status: 'completed',
+      duration_ms: 1450,
+      arguments: { text: '{"cwd":"/work/chat-alpha"}', truncated: false },
+      result: { text: 'All checks passed', truncated: false },
+    },
+    {
+      id: 'msg_chat_alpha_2',
+      type: 'message',
+      status: 'completed',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'Check release readiness.' }],
+    },
+  ],
+  first_id: 'msg_chat_alpha_1',
+  last_id: 'msg_chat_alpha_2',
+  has_more: false,
+};
 
 const CHAT_HOSTS = [
   {
@@ -186,6 +228,18 @@ async function stub(page) {
     if (path === '/api/v1/sessions') {
       const surface = url.searchParams.get('surface');
       return void json({ sessions: surface === 'chat' ? CHAT_SESSIONS : SESSIONS });
+    }
+    if (path === '/api/v1/conversations/chat_alpha/items') {
+      return void json(CHAT_ALPHA_ITEMS);
+    }
+    if (path === '/api/v1/conversations/chat_paused/items') {
+      return void json({
+        object: 'list',
+        data: [],
+        first_id: null,
+        last_id: null,
+        has_more: false,
+      });
     }
     if (path === '/api/v1/kernels') {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
@@ -295,6 +349,136 @@ async function chatSurfaceSwitches(page) {
   }
   if (!chat.active || !chat.paused) {
     problems.push('chat surface: the rail is not grouped into one Active and one Paused chat');
+  }
+
+  const selected = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.row-item')].find((candidate) =>
+      candidate.textContent?.includes('Release readiness'),
+    );
+    row?.click();
+    return row !== undefined;
+  });
+  if (!selected) {
+    problems.push('chat surface: the durable chat row cannot be opened');
+  } else {
+    try {
+      await ready(page, '.chat-surface[data-surface="chat"]', {
+        label: 'the Responses-backed Chat conversation',
+      });
+      await page.waitForFunction(
+        () =>
+          document.querySelector('.chat-surface')?.textContent?.includes('release checks passed'),
+        { polling: 'raf', timeout: 5000 },
+      );
+    } catch {
+      problems.push('chat surface: durable Responses history did not render');
+    }
+
+    await page.setViewport({ width: 1440, height: 900 });
+    await settle(250);
+    if (!(await press(page, 'Details'))) {
+      problems.push('chat surface: Details is not reachable from the header');
+    } else {
+      await settle(250);
+      const details = await page.evaluate(() => {
+        const drawer = document.querySelector('.drawer--chat');
+        const frame = document.querySelector('.frame');
+        return {
+          open: frame?.hasAttribute('data-details-collapsed') === false,
+          sections:
+            drawer === null
+              ? []
+              : [...drawer.querySelectorAll('.facts__title')].map((title) =>
+                  title.textContent?.trim(),
+                ),
+          text: drawer?.textContent ?? '',
+          pathControl:
+            drawer?.querySelector('[aria-label="Copy local path /work/chat-alpha"]') !== null,
+        };
+      });
+      if (!details.open) problems.push('chat surface: Details did not open the drawer column');
+      if (JSON.stringify(details.sections) !== JSON.stringify(['Worktree'])) {
+        problems.push(`chat surface: drawer sections are ${JSON.stringify(details.sections)}`);
+      }
+      for (const expected of [
+        'ready',
+        'Started',
+        'Ada Lovelace',
+        'Release readiness',
+        'chat-alpha',
+        '/work/chat-alpha',
+      ]) {
+        if (!details.text.includes(expected)) {
+          problems.push(`chat surface: drawer is missing "${expected}"`);
+        }
+      }
+      for (const omitted of [
+        'Agent',
+        'Skills',
+        'Reaches',
+        'Trigger repository',
+        'Runtime',
+        'Identifier',
+      ]) {
+        if (details.text.includes(omitted)) {
+          problems.push(`chat surface: drawer exposes omitted "${omitted}" facts`);
+        }
+      }
+      if (!details.pathControl) {
+        problems.push('chat surface: the local worktree path is not copyable');
+      }
+      await press(page, 'Details');
+      await settle(250);
+    }
+
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: width === 390 ? 844 : 900 });
+      await settle(250);
+      const reduced = await page.evaluate(() => {
+        const surface = document.querySelector('.chat-surface[data-surface="chat"]');
+        const actions = [...document.querySelectorAll('.sessionheader .actions button')].map(
+          (button) => button.textContent?.trim(),
+        );
+        const box = surface?.getBoundingClientRect();
+        return {
+          mounted: surface !== null,
+          visible: box !== undefined && box.width > 0 && box.height > 0,
+          actions,
+          text: surface?.textContent ?? '',
+          hiddenRows:
+            surface?.querySelector(
+              '.usage, .context, .resources, .resources__pressure, .stage, .stage__mode, .turn--tool, .commandmenu',
+            ) !== null,
+          thinking: surface?.querySelector('.thinking') !== null,
+          finalMessage:
+            surface
+              ?.querySelector('.turn[data-role="assistant"]')
+              ?.textContent?.includes('The release checks passed.') ?? false,
+          horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+        };
+      });
+      if (!reduced.mounted || !reduced.visible) {
+        problems.push(`chat surface at ${String(width)}px: the conversation is not visible`);
+      }
+      if (JSON.stringify(reduced.actions) !== JSON.stringify(['Details'])) {
+        problems.push(
+          `chat surface at ${String(width)}px: header actions are ${JSON.stringify(reduced.actions)}`,
+        );
+      }
+      if (reduced.hiddenRows || /\b(?:Usage|Context|Resources)\b/u.test(reduced.text)) {
+        problems.push(`chat surface at ${String(width)}px: Agent instrumentation remains in Chat`);
+      }
+      if (!reduced.thinking || !reduced.finalMessage) {
+        problems.push(
+          `chat surface at ${String(width)}px: the Thinking fold or final message is absent`,
+        );
+      }
+      if (reduced.horizontal) {
+        problems.push(`chat surface at ${String(width)}px: the page overflows horizontally`);
+      }
+    }
+    await page.setViewport({ width: 1440, height: 900 });
+    await settle(250);
   }
   if (!(await press(page, 'Agent'))) {
     return [...problems, 'chat surface: the Agent segment cannot be pressed'];
@@ -1253,7 +1437,8 @@ async function main() {
     console.log(
       'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
         'Developer fits both layouts, session metrics keep two rows, every menu lands inside the window, ' +
-        'the Chat surface switches rails, Chat settings and host inventory are reachable, and profile resources remain visible',
+        'the Chat surface switches rails and stays reduced at desktop and phone widths, ' +
+        'Chat settings and host inventory are reachable, and profile resources remain visible',
     );
   } finally {
     await close();
