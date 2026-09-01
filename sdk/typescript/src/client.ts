@@ -18,6 +18,7 @@ import * as environment from './environment.js';
 import * as events from './events.js';
 import * as operations from './operations.js';
 import * as resources from './resources.js';
+import * as responses from './responses.js';
 import * as sessions from './sessions.js';
 import * as settings from './settings.js';
 import * as sponsorships from './sponsorships.js';
@@ -89,6 +90,41 @@ export class Cma {
     options: OperationOptions = {},
   ): Promise<aguiCapabilities.AguiCapabilityDocument> {
     return aguiCapabilities.readAguiCapabilities(this.#config, options);
+  }
+
+  /** Create a deployment-managed chat conversation through the Responses API. */
+  createConversation(options: OperationOptions = {}): Promise<responses.ResponsesConversation> {
+    return responses.createConversation(this.#config, options);
+  }
+
+  /** Read one caller-owned Responses conversation. */
+  readConversation(
+    id: string,
+    options: OperationOptions = {},
+  ): Promise<responses.ResponsesConversation> {
+    return responses.readConversation(this.#config, id, options);
+  }
+
+  /** Read one newest-first page of durable Responses conversation items. */
+  listConversationItems(
+    id: string,
+    page: responses.ConversationItemsRequest = {},
+    options: OperationOptions = {},
+  ): Promise<responses.ResponsesConversationItemList> {
+    return responses.listConversationItems(this.#config, id, page, options);
+  }
+
+  /** Retrieve one durable Responses response. */
+  readResponse(id: string, options: OperationOptions = {}): Promise<responses.ResponsesResponse> {
+    return responses.readResponse(this.#config, id, options);
+  }
+
+  /** Admit one chat turn and open its folding Responses stream. */
+  createResponse(
+    request: responses.CreateResponseRequest,
+    options: OperationOptions = {},
+  ): Promise<responses.ResponsesConnection> {
+    return responses.createResponse(this.#config, request, options);
   }
 
   /** Read the deployment-owned chat setting and its write revision. */

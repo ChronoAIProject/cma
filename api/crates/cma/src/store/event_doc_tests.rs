@@ -111,6 +111,9 @@ fn every_current_variant_survives_the_round_trip() {
         EventKind::OwnerMessage {
             content: "hello back".into(),
         },
+        EventKind::TurnMetadata {
+            metadata: [("request".into(), "contract".into())].into(),
+        },
         EventKind::ToolCallStarted {
             call_id: "call-1".into(),
             title: "read a file".into(),

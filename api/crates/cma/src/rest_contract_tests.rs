@@ -26,23 +26,25 @@ use layer1_public::{
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
-    ChatCheckpointRef, ChatHostId, ChatHostListQuery, ChatHostRecord, ChatHostStatus,
-    ChatHostStore, ChatOrigin, ChatSettings, ChatSettingsSnapshot, ChatThreadSlot,
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind,
-    HandoverSnapshot, HandoverStore, KernelId, OperationClaim, OperationReservation,
-    OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
+    ChatCheckpointObjectReceipt, ChatCheckpointRef, ChatCheckpointStore, ChatHostId,
+    ChatHostListQuery, ChatHostRecord, ChatHostStatus, ChatHostStore, ChatOrigin, ChatSettings,
+    ChatSettingsSnapshot, ChatThreadSlot, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, CredentialSource,
+    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
+    EnvironmentProfileStore, Event, EventKind, HandoverSnapshot, HandoverStore, KernelId,
+    OperationClaim, OperationReservation, OperationStore, Page, PageCursor, PageRequest,
+    PlatformSettings, PlatformSettingsService, PlatformSettingsStore, RecoveryState,
     RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
     ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
     SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, SessionSurfaceFilter,
     SkillCatalog, SkillId, SkillPack, SkillPackStore, SkillSource, StoreError, StoredEvent,
-    SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
+    StoredSettings, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
-    AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
-    TerminalChannel,
+    AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeIdentity, RuntimeMode,
+    RuntimeSpec, TerminalChannel,
 };
+use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tower::ServiceExt;
 
@@ -352,6 +354,162 @@ impl ChatHostStore for MemoryChatHosts {
     ) -> Result<Page<ChatHostRecord>, StoreError> {
         self.list(query).await
     }
+}
+
+#[derive(Default)]
+struct MemoryChatCheckpoints {
+    objects: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+}
+
+impl MemoryChatCheckpoints {
+    async fn stage(
+        &self,
+        object_reference: String,
+        payload: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError> {
+        if payload.is_empty() {
+            return Err(StoreError::Malformed(
+                "a chat checkpoint object must not be empty".into(),
+            ));
+        }
+        let sha256 = checkpoint_digest(&payload);
+        self.objects
+            .lock()
+            .await
+            .entry(object_reference.clone())
+            .or_default()
+            .insert(sha256.clone(), payload.clone());
+        Ok(ChatCheckpointObjectReceipt {
+            object_reference,
+            sha256,
+            bytes: u64::try_from(payload.len()).unwrap(),
+        })
+    }
+
+    async fn read(&self, object_reference: &str, sha256: &str) -> Option<Vec<u8>> {
+        self.objects
+            .lock()
+            .await
+            .get(object_reference)
+            .and_then(|generations| generations.get(sha256))
+            .cloned()
+    }
+
+    async fn prune(&self, object_reference: String, keep_sha256: &str) -> Result<(), StoreError> {
+        let mut objects = self.objects.lock().await;
+        let generations = objects
+            .get_mut(&object_reference)
+            .ok_or_else(|| StoreError::Unavailable("checkpoint object is missing".into()))?;
+        let retained = generations
+            .get(keep_sha256)
+            .cloned()
+            .ok_or_else(|| StoreError::Unavailable("checkpoint generation is missing".into()))?;
+        generations.clear();
+        generations.insert(keep_sha256.to_string(), retained);
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl ChatCheckpointStore for MemoryChatCheckpoints {
+    async fn stage_conversation(
+        &self,
+        id: &SessionId,
+        _retain_sha256: Option<&str>,
+        snapshot: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError> {
+        self.stage(format!("sessions/{id}/handover.snapshot"), snapshot)
+            .await
+    }
+
+    async fn read_conversation(
+        &self,
+        id: &SessionId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        if object_reference != format!("sessions/{id}/handover.snapshot") {
+            return Err(StoreError::Malformed(
+                "conversation checkpoint belongs to another session".into(),
+            ));
+        }
+        Ok(self.read(object_reference, sha256).await)
+    }
+
+    async fn prune_conversation(
+        &self,
+        id: &SessionId,
+        keep_sha256: &str,
+    ) -> Result<(), StoreError> {
+        self.prune(format!("sessions/{id}/handover.snapshot"), keep_sha256)
+            .await
+    }
+
+    async fn stage_workspace(
+        &self,
+        host: &ChatHostId,
+        _retain_sha256: Option<&str>,
+        archive: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError> {
+        self.stage(format!("chat-hosts/{host}/checkpoint-v1"), archive)
+            .await
+    }
+
+    async fn read_workspace(
+        &self,
+        host: &ChatHostId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        if object_reference != format!("chat-hosts/{host}/checkpoint-v1") {
+            return Err(StoreError::Malformed(
+                "workspace checkpoint belongs to another host".into(),
+            ));
+        }
+        Ok(self.read(object_reference, sha256).await)
+    }
+
+    async fn prune_workspace(
+        &self,
+        host: &ChatHostId,
+        keep_sha256: &str,
+    ) -> Result<(), StoreError> {
+        self.prune(format!("chat-hosts/{host}/checkpoint-v1"), keep_sha256)
+            .await
+    }
+}
+
+fn checkpoint_digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn checkpoint_hash_text(digest: &mut Sha256, value: &str) {
+    digest.update(u64::try_from(value.len()).unwrap().to_be_bytes());
+    digest.update(value.as_bytes());
+}
+
+fn checkpoint_manifest_digest(
+    source_revision: &str,
+    entries: &[layer3_adapter::WorkspaceEntryPackage],
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"cma-workspace-manifest-v1\0");
+    digest.update(b"complete-git-workspace-v1\0");
+    checkpoint_hash_text(&mut digest, source_revision);
+    digest.update(u64::try_from(entries.len()).unwrap().to_be_bytes());
+    for entry in entries {
+        checkpoint_hash_text(&mut digest, &entry.path);
+        digest.update([match entry.kind {
+            layer3_adapter::WorkspaceEntryKind::Regular => 1,
+            layer3_adapter::WorkspaceEntryKind::Symlink => 2,
+        }]);
+        digest.update(entry.mode.to_be_bytes());
+        digest.update(entry.size.to_be_bytes());
+        checkpoint_hash_text(&mut digest, &entry.content_sha256);
+        digest.update([0]);
+        digest.update([0]);
+    }
+    format!("{:x}", digest.finalize())
 }
 
 impl MemorySessions {
@@ -1240,9 +1398,15 @@ impl ScreenModel for EmptyScreen {
     }
 }
 
+struct TestConversation {
+    identity: RuntimeIdentity,
+    updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
+}
+
 #[derive(Default)]
 struct TestKernel {
-    conversation_updates: Mutex<Option<mpsc::Sender<layer3_adapter::ConversationUpdate>>>,
+    conversation_updates: Mutex<Option<TestConversation>>,
+    runtime_identities: Mutex<HashMap<String, RuntimeIdentity>>,
     resource_samples: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
     stored_handovers: Mutex<HashMap<String, HandoverSnapshot>>,
     provision_pause: Mutex<Option<Arc<StorePause>>>,
@@ -1251,6 +1415,15 @@ struct TestKernel {
 }
 
 impl TestKernel {
+    async fn conversation_updates(&self) -> mpsc::Sender<layer3_adapter::ConversationUpdate> {
+        self.conversation_updates
+            .lock()
+            .await
+            .as_ref()
+            .map(|conversation| conversation.updates.clone())
+            .expect("the conversation fixture is connected")
+    }
+
     async fn pause_next_provision(&self) -> Arc<StorePause> {
         let pause = Arc::new(StorePause::new());
         assert!(
@@ -1265,12 +1438,7 @@ impl TestKernel {
     }
 
     async fn emit_message_chunk(&self, text: &str) {
-        let updates = self
-            .conversation_updates
-            .lock()
-            .await
-            .clone()
-            .expect("the conversation fixture is connected");
+        let updates = self.conversation_updates().await;
         updates
             .send(layer3_adapter::ConversationUpdate::Said(
                 layer3_adapter::SessionUpdate::AgentMessageChunk(
@@ -1281,13 +1449,20 @@ impl TestKernel {
             .expect("the conversation fixture is listening");
     }
 
-    async fn emit_available_commands(&self) {
-        let updates = self
-            .conversation_updates
-            .lock()
+    async fn emit_reasoning_chunk(&self, text: &str) {
+        let updates = self.conversation_updates().await;
+        updates
+            .send(layer3_adapter::ConversationUpdate::Said(
+                layer3_adapter::SessionUpdate::AgentThoughtChunk(
+                    layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(text)),
+                ),
+            ))
             .await
-            .clone()
-            .expect("the conversation fixture is connected");
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_available_commands(&self) {
+        let updates = self.conversation_updates().await;
         updates
             .send(layer3_adapter::ConversationUpdate::Said(
                 layer3_adapter::SessionUpdate::AvailableCommandsUpdate(
@@ -1301,12 +1476,7 @@ impl TestKernel {
     }
 
     async fn emit_permission_request(&self, request_id: &str) {
-        let updates = self
-            .conversation_updates
-            .lock()
-            .await
-            .clone()
-            .expect("the conversation fixture is connected");
+        let updates = self.conversation_updates().await;
         updates
             .send(layer3_adapter::ConversationUpdate::Asked(
                 layer3_adapter::PermissionRequest {
@@ -1332,15 +1502,26 @@ impl TestKernel {
     }
 
     async fn emit_turn_ended(&self) {
-        let updates = self
-            .conversation_updates
-            .lock()
-            .await
-            .clone()
-            .expect("the conversation fixture is connected");
+        let updates = self.conversation_updates().await;
         updates
             .send(layer3_adapter::ConversationUpdate::TurnEnded(
                 layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_turn_ended_with_usage(&self, input_tokens: u64, output_tokens: u64) {
+        let updates = self.conversation_updates().await;
+        updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn).usage(
+                    layer3_adapter::TurnUsage::new(
+                        input_tokens.saturating_add(output_tokens),
+                        input_tokens,
+                        output_tokens,
+                    ),
+                ),
             ))
             .await
             .expect("the conversation fixture is listening");
@@ -1409,12 +1590,21 @@ impl KernelAdapter for TestKernel {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        self.provisions.fetch_add(1, Ordering::SeqCst);
+        let provision = self.provisions.fetch_add(1, Ordering::SeqCst) + 1;
         let pause = self.provision_pause.lock().await.take();
         if let Some(pause) = pause {
             pause.hold_after_snapshot().await;
         }
-        Ok(RuntimeHandle(format!("runtime-{}", spec.session_id)))
+        let handle = RuntimeHandle(format!("runtime-{provision}-{}", spec.session_id));
+        self.runtime_identities.lock().await.insert(
+            handle.0.clone(),
+            RuntimeIdentity {
+                handle: handle.clone(),
+                session: spec.session_id.clone(),
+                generation: spec.generation,
+            },
+        );
+        Ok(handle)
     }
 
     async fn attach_terminal(
@@ -1437,11 +1627,25 @@ impl KernelAdapter for TestKernel {
 
     async fn open_conversation(
         &self,
-        _handle: &RuntimeHandle,
-        _options: &layer3_adapter::RuntimeOptions,
+        handle: &RuntimeHandle,
+        options: &layer3_adapter::RuntimeOptions,
         updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
     ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
-        *self.conversation_updates.lock().await = Some(updates);
+        let identity = {
+            let mut identities = self.runtime_identities.lock().await;
+            identities
+                .entry(handle.0.clone())
+                .or_insert_with(|| RuntimeIdentity {
+                    handle: handle.clone(),
+                    session: options
+                        .conversation_slot
+                        .clone()
+                        .unwrap_or_else(|| "unscoped-test-conversation".into()),
+                    generation: None,
+                })
+                .clone()
+        };
+        *self.conversation_updates.lock().await = Some(TestConversation { identity, updates });
         let received = Arc::clone(&self.conversation_inputs);
         Ok(layer3_adapter::ConversationChannel {
             input: layer3_adapter::ConversationInputSender::spawn(8, move |_input| {
@@ -1453,6 +1657,108 @@ impl KernelAdapter for TestKernel {
             }),
             conversation_id: Some("rest-contract-conversation".into()),
         })
+    }
+
+    async fn prepare_workspace_source(
+        &self,
+        _handle: &RuntimeHandle,
+        request: &layer3_adapter::WorkspaceSourceRequest,
+    ) -> Result<layer3_adapter::WorkspaceSourceReceipt, AdapterError> {
+        Ok(layer3_adapter::WorkspaceSourceReceipt {
+            workspace_epoch: request.workspace_epoch,
+            source_revision: "a".repeat(40),
+            baseline_manifest_digest: "b".repeat(64),
+        })
+    }
+
+    async fn add_workspace_tree(
+        &self,
+        _handle: &RuntimeHandle,
+        request: &layer3_adapter::WorkspaceTreeRequest,
+    ) -> Result<layer3_adapter::WorkspaceTreeReceipt, AdapterError> {
+        Ok(layer3_adapter::WorkspaceTreeReceipt {
+            path: format!("/workspace/{}", request.name),
+        })
+    }
+
+    async fn run_workspace_setup(
+        &self,
+        _handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<layer3_adapter::WorkspaceSetupReceipt, AdapterError> {
+        Ok(layer3_adapter::WorkspaceSetupReceipt {
+            steps: commands
+                .iter()
+                .enumerate()
+                .map(|(command_index, _)| layer3_adapter::WorkspaceSetupStep {
+                    command_index,
+                    exit_code: 0,
+                    output_excerpt: String::new(),
+                })
+                .collect(),
+        })
+    }
+
+    async fn snapshot_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        Ok(Some(format!("snapshot-for-{conversation_id}").into_bytes()))
+    }
+
+    async fn restore_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+        _conversation_slot: &str,
+        snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        if snapshot.is_empty() {
+            return Err(AdapterError::Rejected(
+                "a restored conversation snapshot must not be empty".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn checkpoint_workspace(
+        &self,
+        _handle: &RuntimeHandle,
+        request: &layer3_adapter::WorkspaceCheckpointRequest,
+    ) -> Result<layer3_adapter::WorkspaceCheckpointPackage, AdapterError> {
+        let content = b"ref: refs/heads/dev\n";
+        let entries = vec![layer3_adapter::WorkspaceEntryPackage {
+            path: ".git/HEAD".into(),
+            kind: layer3_adapter::WorkspaceEntryKind::Regular,
+            mode: 0o100644,
+            size: u64::try_from(content.len()).unwrap(),
+            content_sha256: checkpoint_digest(content),
+            provider_object_id: None,
+            symlink_target: None,
+        }];
+        let archive = b"Responses contract complete workspace".to_vec();
+        Ok(layer3_adapter::WorkspaceCheckpointPackage {
+            epoch: request.epoch,
+            version: request.version,
+            source_revision: request.source_revision.clone(),
+            manifest_digest: checkpoint_manifest_digest(&request.source_revision, &entries),
+            archive_sha256: checkpoint_digest(&archive),
+            total_bytes: entries.iter().map(|entry| entry.size).sum(),
+            entries,
+            quiesced_writers: 1,
+            writer_state: layer3_adapter::WorkspaceWriterState::HeldForTeardown,
+            writer_resume_token: Some(format!("resume-{}", request.version)),
+            includes_git_metadata: request.include_git_metadata,
+            archive,
+        })
+    }
+
+    async fn resume_workspace_writers(
+        &self,
+        _handle: &RuntimeHandle,
+        _resume_token: &str,
+    ) -> Result<(), AdapterError> {
+        Ok(())
     }
 
     async fn refresh_credential(
@@ -1486,9 +1792,136 @@ impl KernelAdapter for TestKernel {
         ))
     }
 
-    async fn terminate(&self, _handle: &RuntimeHandle) -> Result<(), AdapterError> {
+    async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
+        self.runtime_identities.lock().await.remove(&handle.0);
+        let mut conversation = self.conversation_updates.lock().await;
+        if conversation
+            .as_ref()
+            .is_some_and(|conversation| conversation.identity.handle == *handle)
+        {
+            *conversation = None;
+        }
         Ok(())
     }
+
+    async fn terminate_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), AdapterError> {
+        {
+            let mut identities = self.runtime_identities.lock().await;
+            match identities.get(&identity.handle.0) {
+                None => return Ok(()),
+                Some(current) if current == identity => {
+                    identities.remove(&identity.handle.0);
+                }
+                Some(_) => {
+                    return Err(AdapterError::Rejected(
+                        "the runtime handle belongs to another session or generation".into(),
+                    ))
+                }
+            }
+        }
+        let mut conversation = self.conversation_updates.lock().await;
+        if conversation
+            .as_ref()
+            .is_some_and(|conversation| conversation.identity == *identity)
+        {
+            *conversation = None;
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn stale_test_runtime_teardown_preserves_the_successor_conversation() {
+    let kernel = TestKernel::default();
+    let options = layer3_adapter::RuntimeOptions {
+        conversation_slot: Some("identity-safe-conversation".into()),
+        ..Default::default()
+    };
+
+    let stale_handle = RuntimeHandle("runtime-stale-handle".into());
+    let (stale_updates, _stale_received) = mpsc::channel(1);
+    kernel
+        .open_conversation(&stale_handle, &options, stale_updates)
+        .await
+        .expect("the stale conversation opens");
+    let live_handle = RuntimeHandle("runtime-live-after-handle".into());
+    let (live_updates, mut live_received) = mpsc::channel(1);
+    kernel
+        .open_conversation(&live_handle, &options, live_updates)
+        .await
+        .expect("the successor conversation opens");
+
+    kernel
+        .terminate(&stale_handle)
+        .await
+        .expect("stale handle cleanup is idempotent");
+    kernel
+        .emit_message_chunk("after stale handle cleanup")
+        .await;
+    assert!(matches!(
+        live_received.recv().await,
+        Some(layer3_adapter::ConversationUpdate::Said(
+            layer3_adapter::SessionUpdate::AgentMessageChunk(_)
+        ))
+    ));
+
+    let stale_identity_handle = RuntimeHandle("runtime-stale-identity".into());
+    let (stale_identity_updates, _stale_identity_received) = mpsc::channel(1);
+    kernel
+        .open_conversation(&stale_identity_handle, &options, stale_identity_updates)
+        .await
+        .expect("the stale identity conversation opens");
+    let stale_identity = kernel
+        .runtime_identities
+        .lock()
+        .await
+        .get(&stale_identity_handle.0)
+        .cloned()
+        .expect("the fixture records its provider identity");
+    let successor_handle = RuntimeHandle("runtime-live-after-identity".into());
+    let (successor_updates, mut successor_received) = mpsc::channel(2);
+    kernel
+        .open_conversation(&successor_handle, &options, successor_updates)
+        .await
+        .expect("the identity successor conversation opens");
+
+    kernel
+        .terminate_if_identity(&stale_identity)
+        .await
+        .expect("stale identity cleanup is idempotent");
+    kernel
+        .emit_message_chunk("after stale identity cleanup")
+        .await;
+    assert!(matches!(
+        successor_received.recv().await,
+        Some(layer3_adapter::ConversationUpdate::Said(
+            layer3_adapter::SessionUpdate::AgentMessageChunk(_)
+        ))
+    ));
+
+    let successor_identity = kernel
+        .runtime_identities
+        .lock()
+        .await
+        .get(&successor_handle.0)
+        .cloned()
+        .expect("the successor identity remains current");
+    let wrong_identity = RuntimeIdentity {
+        session: "another-session".into(),
+        ..successor_identity.clone()
+    };
+    assert!(matches!(
+        kernel.terminate_if_identity(&wrong_identity).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    kernel.emit_message_chunk("after rejected cleanup").await;
+    assert!(successor_received.recv().await.is_some());
+
+    kernel
+        .terminate_if_identity(&successor_identity)
+        .await
+        .expect("the exact current identity is terminated");
+    assert!(successor_received.recv().await.is_none());
 }
 
 struct TestSurface {
@@ -1522,11 +1955,109 @@ fn test_surface(authenticated: bool) -> TestSurface {
     )
 }
 
+struct FixedPlatformSettings(StoredSettings);
+
+#[async_trait::async_trait]
+impl PlatformSettingsStore for FixedPlatformSettings {
+    async fn load(&self) -> Result<Option<StoredSettings>, StoreError> {
+        Ok(Some(self.0.clone()))
+    }
+
+    async fn save_if_unchanged(
+        &self,
+        _expected: u64,
+        _settings: &PlatformSettings,
+    ) -> Result<Option<StoredSettings>, StoreError> {
+        Err(StoreError::Unavailable(
+            "the Responses contract settings are immutable".into(),
+        ))
+    }
+}
+
+struct FixedCredentialSource;
+
+#[async_trait::async_trait]
+impl CredentialSource for FixedCredentialSource {
+    async fn exact_services_available(
+        &self,
+        _subject: &SubjectId,
+        _services: &[ServiceId],
+    ) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+
+    async fn credential_for(
+        &self,
+        _session: &SessionId,
+        _subject: &SubjectId,
+        _services: &[ServiceId],
+        _caller_credential: Option<&layer2_core::CallerCredential>,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(Some(TEST_DELEGATED_CREDENTIAL.into()))
+    }
+
+    async fn release(&self, _session: &SessionId) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+fn chat_test_surface(authenticated: bool) -> TestSurface {
+    let mut chat = ChatSettings {
+        enabled: true,
+        message_prefixes: Vec::new(),
+        ..ChatSettings::default()
+    };
+    chat.agent.model = Some("chat-model-fixture".into());
+    let settings = Arc::new(PlatformSettingsService::new(Arc::new(
+        FixedPlatformSettings(StoredSettings {
+            settings: PlatformSettings {
+                chat: Some(chat),
+                ..PlatformSettings::default()
+            },
+            revision: 1,
+            previous: None,
+        }),
+    )));
+    let checkpoints = Arc::new(MemoryChatCheckpoints::default());
+    test_surface_with_authorization_and_settings(
+        authenticated,
+        Authorization::from_capabilities([
+            Capability::CreateSession,
+            Capability::UseOwnSessions,
+            Capability::TerminateOwnSession,
+            Capability::ReadAllSessions,
+            Capability::ManageOwnEnvironmentProfiles,
+            Capability::ReadUserDirectory,
+            Capability::ReadActivityLog,
+            Capability::ConfigurePlatform,
+            Capability::ControlAnySession,
+        ]),
+        settings,
+        Some(Arc::new(FixedCredentialSource)),
+        Some(checkpoints as Arc<dyn ChatCheckpointStore>),
+    )
+}
+
 fn test_surface_with_authorization(
     authenticated: bool,
     authorization: Authorization,
 ) -> TestSurface {
-    let settings = Arc::new(PlatformSettingsService::unconfigured());
+    test_surface_with_authorization_and_settings(
+        authenticated,
+        authorization,
+        Arc::new(PlatformSettingsService::unconfigured()),
+        None,
+        None,
+    )
+}
+
+fn test_surface_with_authorization_and_settings(
+    authenticated: bool,
+    authorization: Authorization,
+    settings: Arc<PlatformSettingsService>,
+    credentials: Option<Arc<dyn CredentialSource>>,
+    chat_checkpoints: Option<Arc<dyn ChatCheckpointStore>>,
+) -> TestSurface {
     let catalogue = Arc::new(TestCatalogue::default());
     let profiles = Arc::new(MemoryProfiles::default());
     let environments = EnvironmentProfileService::new(
@@ -1561,6 +2092,8 @@ fn test_surface_with_authorization(
         Arc::clone(&store) as Arc<dyn SessionStore>,
         SessionPorts {
             handovers: Some(handovers),
+            chat_checkpoints,
+            credentials,
             skills: Some(Arc::new(TestSkills)),
             skill_packs: Some(Arc::new(MemorySkillPacks::default())),
             settings: Some(Arc::clone(&settings)),
@@ -1699,6 +2232,20 @@ async fn assert_json(response: Response<Body>, status: StatusCode) -> serde_json
             .expect("JSON responses are bounded"),
     )
     .expect("the response is JSON")
+}
+
+async fn assert_status(response: Response<Body>, status: StatusCode) -> Response<Body> {
+    let actual = response.status();
+    if actual != status {
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("error responses are bounded");
+        panic!(
+            "unexpected response status: expected {status}, got {actual}; body: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    response
 }
 
 async fn assert_problem(response: Response<Body>, status: StatusCode) -> serde_json::Value {
@@ -1953,11 +2500,18 @@ async fn create_ready_conversation_session(
         .await
         .expect("the conversation session is accepted");
     wait_until_ready(sessions, caller, &session.id).await;
+    sessions
+        .await_conversable(caller, &session.id, Duration::from_secs(1))
+        .await
+        .expect("the ready conversation publishes its input sender");
     session.id
 }
 
 #[path = "agui_auth_contract_tests.rs"]
 mod agui_auth_contract_tests;
+
+#[path = "responses_contract_tests.rs"]
+mod responses_contract_tests;
 
 async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
     next_agui_frame_and_wire(body).await.0
@@ -2209,7 +2763,7 @@ fn assert_unnamed_skills(view: &serde_json::Value) {
     );
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_tail() {
     let TestSurface {
         app,
@@ -2276,7 +2830,7 @@ async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_t
     assert_agui_ids(&followed, &id.0, &id);
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn followed_live_and_resource_frames_use_the_session_id_for_both_contexts() {
     let TestSurface {
         app,
@@ -2347,7 +2901,7 @@ async fn followed_live_and_resource_frames_use_the_session_id_for_both_contexts(
     assert_agui_ids(&resources, &id.0, &id);
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_prompt_run_starts_at_its_own_boundary_after_a_racing_runtime_event() {
     let TestSurface {
         app,
@@ -2395,7 +2949,7 @@ async fn a_prompt_run_starts_at_its_own_boundary_after_a_racing_runtime_event() 
     pause.release();
 
     let response = response.await.expect("the run task completes");
-    assert_eq!(response.status(), StatusCode::OK);
+    let response = assert_status(response, StatusCode::OK).await;
     let mut body = response.into_body().into_data_stream();
     let (first, wire) = next_agui_frame_and_wire(&mut body).await;
     assert_eq!(first["type"], "RUN_STARTED");
@@ -2413,7 +2967,7 @@ async fn a_prompt_run_starts_at_its_own_boundary_after_a_racing_runtime_event() 
     );
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_prompt_run_uses_its_committed_boundary_after_cross_replica_resequencing() {
     let TestSurface {
         app,
@@ -2521,7 +3075,7 @@ async fn a_prompt_run_uses_its_committed_boundary_after_cross_replica_resequenci
     ));
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_prompt_run_starts_before_every_frame_and_finishes_after_the_user_echo() {
     let TestSurface {
         app,
@@ -2589,7 +3143,7 @@ async fn a_prompt_run_starts_before_every_frame_and_finishes_after_the_user_echo
     );
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_resume_run_starts_unnumbered_and_still_finishes() {
     let TestSurface {
         app,
@@ -2906,7 +3460,7 @@ async fn assert_server_defaulted_run_id(explicit_null: bool) {
         ))
         .await
         .expect("router answers");
-    assert_eq!(response.status(), StatusCode::OK);
+    let response = assert_status(response, StatusCode::OK).await;
     let mut body = response.into_body().into_data_stream();
 
     let first = next_agui_frame(&mut body).await;
@@ -2934,12 +3488,12 @@ async fn assert_server_defaulted_run_id(explicit_null: bool) {
     }
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn an_omitted_run_id_is_generated_once_and_echoed_on_every_run_frame() {
     assert_server_defaulted_run_id(false).await;
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_null_run_id_uses_the_same_server_default_as_an_omitted_id() {
     assert_server_defaulted_run_id(true).await;
 }
@@ -3006,7 +3560,7 @@ async fn an_empty_or_whitespace_run_id_is_a_typed_client_refusal() {
     }
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_once() {
     let TestSurface {
         app,
@@ -3117,7 +3671,7 @@ async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_
     assert_eq!(store.state.lock().await.records.len(), 1);
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn dropping_the_request_during_creation_does_not_cancel_prompt_admission() {
     let TestSurface {
         app,
@@ -3304,7 +3858,7 @@ async fn chat_and_environment_profile_are_refused_before_rest_or_agui_creation()
     assert!(store.state.lock().await.records.is_empty());
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn an_explicit_agui_run_id_replays_one_admission_and_refuses_changed_input() {
     let TestSurface {
         app,
@@ -3363,7 +3917,7 @@ async fn an_explicit_agui_run_id_replays_one_admission_and_refuses_changed_input
     assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn an_explicit_mid_turn_capability_refusal_is_replayable() {
     let TestSurface {
         app,
@@ -3496,7 +4050,7 @@ async fn an_explicit_rotating_run_replays_until_a_fresh_run_id_is_used() {
     .await;
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn omitted_and_null_run_ids_remain_distinct_admissions_on_retry() {
     let TestSurface {
         app,
@@ -3572,7 +4126,7 @@ async fn a_malformed_fresh_agui_run_creates_nothing() {
     assert_eq!(kernel.provisions.load(Ordering::SeqCst), 0);
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_duplicate_pending_agui_run_returns_a_typed_conflict() {
     let TestSurface { app, kernel, .. } = test_surface(true);
     let pause = kernel.pause_next_provision().await;
@@ -4341,6 +4895,12 @@ async fn conformance_remains_public() {
             .is_some_and(|classes| !classes.is_empty()),
         "public conformance document must name at least one class: {body}"
     );
+    assert!(
+        body["conformsTo"].as_array().is_some_and(|classes| classes
+            .iter()
+            .any(|class| class == "https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat")),
+        "public conformance must declare the served Responses chat profile: {body}"
+    );
     assert_eq!(
         body["version"],
         option_env!("CHRONO_BUILD").unwrap_or("development")
@@ -4397,6 +4957,12 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         "/api/v1/sessions/{id}/screen",
         "/api/v1/sessions/{id}/transcript",
         "/api/v1/sessions/{id}/events",
+        "/api/v1/conversations",
+        "/api/v1/conversations/{id}",
+        "/api/v1/conversations/{id}/items",
+        "/api/v1/responses",
+        "/api/v1/responses/{response_id}",
+        "/api/v1/responses/{response_id}/cancel",
         "/api/v1/conformance",
         "/api/v1/kernels",
         "/api/v1/environment-profiles",
@@ -4442,6 +5008,44 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         paths["/api/v1/admin/chat/hosts/{id}/retire"]["post"]["responses"]["200"]["content"]
             ["application/json"]["schema"]["$ref"],
         "#/components/schemas/AdminChatHostView"
+    );
+
+    let response_resource = &paths["/api/v1/responses/{response_id}"];
+    assert!(
+        response_resource["get"].is_object() && response_resource["delete"].is_object(),
+        "response resources must advertise retrieval and the explicit deletion refusal: {response_resource}"
+    );
+    let response_cancel = &paths["/api/v1/responses/{response_id}/cancel"];
+    assert!(
+        response_cancel["post"].is_object(),
+        "response cancellation must be an explicit typed refusal: {response_cancel}"
+    );
+    for operation in [&response_resource["delete"], &response_cancel["post"]] {
+        assert_eq!(
+            operation["responses"]["422"]["content"]["application/problem+json"]["schema"]["$ref"],
+            "#/components/schemas/ProblemDocument",
+            "absent destructive Responses operations must advertise a typed problem: {operation}"
+        );
+    }
+    let response_stream = &paths["/api/v1/responses"]["post"]["responses"]["200"]["content"];
+    assert!(
+        response_stream["text/event-stream"].is_object(),
+        "response creation must advertise its SSE representation: {response_stream}"
+    );
+    assert_eq!(
+        paths["/api/v1/conversations"]["post"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/Conversation"
+    );
+    assert_eq!(
+        response_resource["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+            ["$ref"],
+        "#/components/schemas/ResponseObject"
+    );
+    assert_eq!(
+        paths["/api/v1/conversations/{id}/items"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ConversationItemList"
     );
     let host_properties = document["components"]["schemas"]["AdminChatHostView"]["properties"]
         .as_object()
@@ -4655,6 +5259,24 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
     let schemas = document["components"]["schemas"]
         .as_object()
         .expect("component schemas are an object");
+
+    for schema in [
+        "Conversation",
+        "ConversationItemList",
+        "MessageItem",
+        "ToolActivityItem",
+        "CreateResponseRequestSchema",
+        "ResponseObject",
+        "ResponseUsage",
+    ] {
+        assert!(
+            schemas
+                .get(schema)
+                .and_then(|schema| schema["properties"].as_object())
+                .is_some_and(|properties| !properties.is_empty()),
+            "Responses schema {schema} must be a concrete local component"
+        );
+    }
 
     fn assert_exact_schema_properties(
         schemas: &serde_json::Map<String, serde_json::Value>,
@@ -5095,7 +5717,7 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             );
         }
     }
-    assert_eq!(operations, 47, "every REST operation must be documented");
+    assert_eq!(operations, 54, "every REST operation must be documented");
 }
 
 #[tokio::test]

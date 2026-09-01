@@ -27,7 +27,7 @@
 //! sets differ between runtimes and grow without warning, and a session must
 //! not fail because a kernel invented a category.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::{sync::Arc, time::Duration};
 
 use layer3_adapter::{
@@ -45,6 +45,76 @@ use crate::log::{append_batch, append_conversation_with, drop_undelivered};
 use crate::service::{store_failed, SessionService};
 use crate::session::SessionStatus;
 use crate::store::{SessionRecord, StoreError};
+
+/// Maximum number of caller metadata pairs retained beside one prompt turn.
+pub const MAX_TURN_METADATA_PAIRS: usize = 16;
+/// Maximum Unicode scalar count accepted for one turn metadata key.
+pub const MAX_TURN_METADATA_KEY_CHARS: usize = 64;
+/// Maximum Unicode scalar count accepted for one turn metadata value.
+pub const MAX_TURN_METADATA_VALUE_CHARS: usize = 512;
+
+/// Fixed race-time refusal returned when a caller's linear conversation view
+/// is no longer current.
+pub const CONVERSATION_ADVANCED_DETAIL: &str =
+    "the conversation advanced beyond the expected previous turn";
+
+/// Durable, protocol-neutral context for an interface that admits only a new
+/// turn at the current end of a conversation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct LinearPromptContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_previous_turn: Option<u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) metadata: BTreeMap<String, String>,
+}
+
+impl LinearPromptContext {
+    fn new(
+        expected_previous_turn: Option<u64>,
+        metadata: BTreeMap<String, String>,
+    ) -> Result<Self, CoreError> {
+        validate_turn_metadata(&metadata)?;
+        Ok(Self {
+            expected_previous_turn,
+            metadata,
+        })
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        validate_turn_metadata(&self.metadata).map_err(|error| error.to_string())
+    }
+}
+
+fn validate_turn_metadata(metadata: &BTreeMap<String, String>) -> Result<(), CoreError> {
+    if metadata.len() > MAX_TURN_METADATA_PAIRS {
+        return Err(CoreError::InvalidRequest(format!(
+            "turn metadata accepts at most {MAX_TURN_METADATA_PAIRS} pairs"
+        )));
+    }
+    if metadata
+        .keys()
+        .any(|key| key.chars().count() > MAX_TURN_METADATA_KEY_CHARS)
+    {
+        return Err(CoreError::InvalidRequest(format!(
+            "turn metadata keys accept at most {MAX_TURN_METADATA_KEY_CHARS} characters"
+        )));
+    }
+    if metadata
+        .values()
+        .any(|value| value.chars().count() > MAX_TURN_METADATA_VALUE_CHARS)
+    {
+        return Err(CoreError::InvalidRequest(format!(
+            "turn metadata values accept at most {MAX_TURN_METADATA_VALUE_CHARS} characters"
+        )));
+    }
+    Ok(())
+}
+
+fn conversation_advanced() -> CoreError {
+    CoreError::InvalidState {
+        detail: Some(CONVERSATION_ADVANCED_DETAIL.into()),
+    }
+}
 
 /// What a session has used, as its runtime reports it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -441,6 +511,35 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<u64, CoreError> {
+        self.send_prompt_with_context(caller, id, text, None).await
+    }
+
+    /// Open a new prompt turn only at the caller's expected conversation end.
+    ///
+    /// Unlike [`Self::send_prompt`], this path never steers an in-flight turn.
+    /// The expectation is revalidated while holding distributed interaction
+    /// authority immediately before runtime delivery, so two replicas cannot
+    /// both extend the same response branch.
+    pub async fn send_linear_prompt(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        text: String,
+        expected_previous_turn: Option<u64>,
+        metadata: BTreeMap<String, String>,
+    ) -> Result<u64, CoreError> {
+        let context = LinearPromptContext::new(expected_previous_turn, metadata)?;
+        self.send_prompt_with_context(caller, id, text, Some(context))
+            .await
+    }
+
+    async fn send_prompt_with_context(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        text: String,
+        linear: Option<LinearPromptContext>,
+    ) -> Result<u64, CoreError> {
         caller
             .authorization
             .require(AuthorizationCapability::UseOwnSessions)?;
@@ -494,7 +593,7 @@ impl SessionService {
                 }
                 crate::ChatHostStatus::Paused | crate::ChatHostStatus::Reviving => {
                     return self
-                        .send_prompt_to_paused_chat(&caller.subject, id, text)
+                        .send_prompt_to_paused_chat(&caller.subject, id, text, linear)
                         .await;
                 }
                 crate::ChatHostStatus::Provisioning => {
@@ -535,7 +634,7 @@ impl SessionService {
                     }) =>
                 {
                     return self
-                        .send_prompt_to_paused_chat(&caller.subject, id, text)
+                        .send_prompt_to_paused_chat(&caller.subject, id, text, linear)
                         .await;
                 }
                 crate::ChatHostStatus::Active
@@ -547,21 +646,23 @@ impl SessionService {
                                 == crate::session::RecoveryState::Recovering) =>
                 {
                     return self
-                        .send_prompt_to_paused_chat(&caller.subject, id, text)
+                        .send_prompt_to_paused_chat(&caller.subject, id, text, linear)
                         .await;
                 }
                 crate::ChatHostStatus::Active => {}
             }
         }
-        self.send_live_prompt(&caller.subject, id, text).await
+        self.send_live_prompt_with_context(&caller.subject, id, text, linear)
+            .await
     }
 
     /// Deliver one prompt after any host-level durable admission has settled.
-    pub(crate) async fn send_live_prompt(
+    pub(crate) async fn send_live_prompt_with_context(
         self: &Arc<Self>,
         owner: &crate::SubjectId,
         id: &SessionId,
         text: String,
+        linear: Option<LinearPromptContext>,
     ) -> Result<u64, CoreError> {
         let record = self.record(id).await?;
         if !record.session.is_owned_by(owner) {
@@ -575,6 +676,11 @@ impl SessionService {
         }
         if record.is_effectively_rotating() {
             return Err(CoreError::SessionRotating);
+        }
+        if linear.is_some() && record.session.status == SessionStatus::Running {
+            return Err(CoreError::InvalidState {
+                detail: Some("a linear prompt cannot steer an in-flight turn".into()),
+            });
         }
         if record.session.status == SessionStatus::Running
             && !record.session.capabilities.unrecorded()
@@ -646,6 +752,11 @@ impl SessionService {
                     .session
                     .capabilities
                     .require(Capability::Conversation)?;
+                if linear.is_some() && entry.session.status == SessionStatus::Running {
+                    return Err(CoreError::InvalidState {
+                        detail: Some("a linear prompt cannot steer an in-flight turn".into()),
+                    });
+                }
                 if entry.session.status == SessionStatus::Running {
                     entry.session.capabilities.require(Capability::Steer)?;
                 }
@@ -675,6 +786,13 @@ impl SessionService {
                 )
             };
 
+            if let Some(context) = linear.as_ref() {
+                let latest = service.latest_turn_started_unscoped(&id).await?;
+                if latest != context.expected_previous_turn {
+                    return Err(conversation_advanced());
+                }
+            }
+
             // A successful receipt makes the complete prompt boundary mandatory
             // finalization. Do not recheck an expiring interaction deadline
             // between delivery and enqueueing this state.
@@ -699,23 +817,32 @@ impl SessionService {
                             "the delivered prompt's runtime generation is no longer live".into(),
                         )
                     })?;
-                append_batch(
-                    entry,
-                    [
-                        EventKind::TurnStarted,
-                        EventKind::OwnerMessage { content: text },
-                    ],
-                )
+                let mut events = vec![
+                    EventKind::TurnStarted,
+                    EventKind::OwnerMessage { content: text },
+                ];
+                if let Some(context) = linear {
+                    events.push(EventKind::TurnMetadata {
+                        metadata: context.metadata,
+                    });
+                }
+                let event_count = events.len() as u64;
+                (append_batch(entry, events), event_count)
             };
             // Keep immediate runtime updates behind both receipt phases. The
             // mandatory history has no lifecycle ownership and can rebase over
             // a handover; the exact optional proposal below cannot.
+            let (mandatory, event_count) = mandatory;
             let record = mandatory.committed().await.map_err(store_failed)?;
-            let turn_started = record.session.last_seq.checked_sub(1).ok_or_else(|| {
-                CoreError::RuntimeUnavailable(
-                    "session store: committed prompt boundary had no valid sequence".into(),
-                )
-            })?;
+            let turn_started = record
+                .session
+                .last_seq
+                .checked_sub(event_count.saturating_sub(1))
+                .ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "session store: committed prompt boundary had no valid sequence".into(),
+                    )
+                })?;
             // `TurnStarted` resets approval identity during durable replay. Do
             // the same locally only after that boundary is committed, and only
             // on the exact conversation entry that delivered this prompt.
@@ -754,6 +881,14 @@ impl SessionService {
             Ok(turn_started)
         })
         .await
+    }
+
+    async fn latest_turn_started_unscoped(&self, id: &SessionId) -> Result<Option<u64>, CoreError> {
+        let events = self.store.events_since(id, 0).await.map_err(store_failed)?;
+        Ok(events.into_iter().rev().find_map(|event| match event.kind {
+            crate::StoredEventKind::Known(EventKind::TurnStarted) => Some(event.seq),
+            _ => None,
+        }))
     }
 
     /// Abandon the turn in flight, leaving the conversation open.

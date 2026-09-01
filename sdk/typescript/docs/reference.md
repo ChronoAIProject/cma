@@ -35,7 +35,8 @@ void consume;
 Two package entry points are public:
 
 - `@chronoai/cma-sdk` is the production client, types, errors, event parser, AG-UI
-  connection, secret-free sponsorship projections, and conversation fold.
+  connection, Responses stream fold, secret-free sponsorship projections, and
+  conversation fold.
 - `@chronoai/cma-sdk/testing` contains deterministic builders, mock transports, and
   transcripts for consumer tests. It is not imported by the production entry point.
 

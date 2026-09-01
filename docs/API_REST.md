@@ -4,7 +4,7 @@
 
 REST is the **superset interface**: it projects all ten core operations and is the reference realisation of the core session model. Every other interface is a projection of the same model; where a question about semantics is ambiguous elsewhere, this document is the answer.
 
-See [API_Overview.md](./API_Overview.md) for the core operation set, session lifecycle, and event model.
+See [API_Overview.md](./API_Overview.md) for the core operation set, session lifecycle, and event model. The stateful streaming chat projection is specified separately in [API_Responses.md](./API_Responses.md); it shares this interface's authentication, problem, request-limit, and rate-limit rules.
 
 ---
 
@@ -62,8 +62,8 @@ The configured rate is also the maximum burst:
 |---|---:|---|
 | Pre-authentication admission, per client network | 6,000 per minute | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` |
 | `GET` or `HEAD` on `/livez` and `/ready`, per client network | 120 per minute | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` |
-| Provision or rotate: `POST /sessions`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive`, `POST /launches/{id}/start` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
-| Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
+| Provision or rotate: `POST /sessions`, `POST /api/v1/conversations`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive`, `POST /launches/{id}/start` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
+| Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer`, `POST /api/v1/responses` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
 | Every other admitted request | 600 per minute | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` |
 
 Every non-preflight, non-health request first consumes the cheap network

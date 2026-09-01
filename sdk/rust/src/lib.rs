@@ -43,6 +43,7 @@
 mod client;
 mod error;
 mod event;
+mod responses;
 mod settings;
 mod stream;
 mod triggers;
@@ -78,6 +79,14 @@ pub use error::{Error, Result};
 pub use event::{
     AvailableCommand, ConfigOption, Event, EventKind, PlanStep, ProvisioningStage,
     RuntimeLossCause, SessionPlane, ToolBody,
+};
+pub use responses::{
+    ConversationItemsRequest, ConversationMessageContent, ConversationMessageItem,
+    CreateResponseRequest, ResponseError, ResponseInput, ResponseInputContent,
+    ResponseInputMessage, ResponseInputText, ResponseInputTokenDetails, ResponseOutputMessage,
+    ResponseOutputText, ResponseOutputTokenDetails, ResponseStatus, ResponseToolActivity,
+    ResponseToolBody, ResponseUsage, ResponsesConversation, ResponsesConversationItem,
+    ResponsesConversationItemList, ResponsesEvent, ResponsesResponse, ResponsesStream,
 };
 pub use settings::{
     ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSetup,

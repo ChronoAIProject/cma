@@ -13,18 +13,19 @@ use axum::routing::any;
 use cma_sdk::{
     ApprovalDecision, BeginConnectionRequest, ChatAgentSettings, ChatHostId, ChatHostPageRequest,
     ChatHostSettings, ChatHostStatus, ChatInactivity, ChatSettings, ChatSetup, ChatWorkspaceSource,
-    Client, Conformance, CreateSessionRequest, CreateTriggerRequest, DiffReview, Error, Event,
-    EventKind, Launch, LaunchConfirmationAction, LaunchConfirmationRequest, LaunchEventKind,
-    LaunchListRequest, LaunchProgress, LaunchStartRequest, LaunchState, MAX_PAGE_SIZE,
-    PageWalkLimits, PublishTriggerRequest, PullRequestConfirmRequest, PullRequestDraft,
-    PullRequestOperation, PullRequestReviewRequest, PullRequestStatusRefreshRequest,
-    ReasoningEffort, RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy, ScreenSnapshot,
-    SelectLaunchConnectionRequest, Session, SessionId, SessionInput, SessionPageRequest,
-    SessionSize, SessionStatus, SessionSurface, SessionSurfaceFilter, TerminalGeometry,
-    TriggerConnection, TriggerConnectionState, TriggerContentDraft, TriggerDraft, TriggerPreview,
-    TriggerPreviewAvailability, TriggerPreviewCost, TriggerPreviewUnavailableReason,
-    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
-    UpdateTriggerRequest, Usage,
+    Client, Conformance, ConversationItemsRequest, CreateResponseRequest, CreateSessionRequest,
+    CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationAction,
+    LaunchConfirmationRequest, LaunchEventKind, LaunchListRequest, LaunchProgress,
+    LaunchStartRequest, LaunchState, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
+    PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
+    PullRequestStatusRefreshRequest, ReasoningEffort, RecoverInitialPromptRequest,
+    ResponseMetadata, ResponsesConversation, ResponsesConversationItemList, ResponsesEvent,
+    ResponsesResponse, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
+    SessionId, SessionInput, SessionPageRequest, SessionSize, SessionStatus, SessionSurface,
+    SessionSurfaceFilter, TerminalGeometry, TriggerConnection, TriggerConnectionState,
+    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewAvailability,
+    TriggerPreviewCost, TriggerPreviewUnavailableReason, TriggerRepositorySelection,
+    TriggerRevision, UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -52,6 +53,15 @@ const PULL_REQUEST_CONFIRM_REQUEST: &str =
     include_str!("fixtures/pull_request_confirm_request.json");
 const PULL_REQUEST_STATUS_REFRESH_REQUEST: &str =
     include_str!("fixtures/pull_request_status_refresh_request.json");
+const RESPONSES_CONVERSATION: &str = include_str!(
+    "../../../api/crates/layer1-public/tests/fixtures/responses-sdk/conversation.json"
+);
+const RESPONSES_ITEMS: &str =
+    include_str!("../../../api/crates/layer1-public/tests/fixtures/responses-sdk/items.json");
+const RESPONSES_RESPONSE: &str =
+    include_str!("../../../api/crates/layer1-public/tests/fixtures/responses-sdk/response.json");
+const RESPONSES_STREAM: &str =
+    include_str!("../../../api/crates/layer1-public/tests/fixtures/responses-sdk/projection.sse");
 const CONFORMANCE: &str = r#"{
   "conformsTo": ["https://spec.chrono-ai.fun/cma/1.0/conf/rest-core"],
   "version": "development",
@@ -104,6 +114,16 @@ impl StubResponse {
             content_type: Some("text/event-stream; charset=utf-8"),
             headers: Vec::new(),
             body,
+            delay: Duration::ZERO,
+        }
+    }
+
+    fn responses_sse(body: &str) -> Self {
+        Self {
+            status: StatusCode::OK,
+            content_type: Some("text/event-stream; charset=utf-8"),
+            headers: Vec::new(),
+            body: body.to_owned(),
             delay: Duration::ZERO,
         }
     }
@@ -2469,4 +2489,177 @@ async fn unknown_event_variants_cross_the_live_stream_intact() {
     };
     assert_eq!(event_type, "future_event");
     assert_eq!(payload["nested"]["answer"], 42);
+}
+
+#[test]
+fn server_owned_responses_fixtures_match_the_public_rust_shapes() {
+    let conversation: ResponsesConversation =
+        serde_json::from_str(RESPONSES_CONVERSATION).expect("conversation fixture decodes");
+    assert_eq!(
+        serde_json::to_value(conversation).expect("conversation encodes"),
+        fixture(RESPONSES_CONVERSATION)
+    );
+
+    let items: ResponsesConversationItemList =
+        serde_json::from_str(RESPONSES_ITEMS).expect("item fixture decodes");
+    assert_eq!(items.data.len(), 3);
+    assert_eq!(
+        serde_json::to_value(items).expect("items encode"),
+        fixture(RESPONSES_ITEMS)
+    );
+
+    let response: ResponsesResponse =
+        serde_json::from_str(RESPONSES_RESPONSE).expect("response fixture decodes");
+    assert_eq!(response.model, "chat-model-fixture");
+    assert_eq!(
+        serde_json::to_value(response).expect("response encodes"),
+        fixture(RESPONSES_RESPONSE)
+    );
+
+    let mut sequence = 0;
+    for data in RESPONSES_STREAM
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+    {
+        let event: ResponsesEvent = serde_json::from_str(data).expect("stream fixture decodes");
+        assert_eq!(event.sequence_number(), sequence);
+        assert_eq!(
+            serde_json::to_value(event).expect("event encodes"),
+            serde_json::from_str::<serde_json::Value>(data).expect("event fixture is JSON")
+        );
+        sequence += 1;
+    }
+    assert_eq!(sequence, 16);
+
+    for status in ["completed", "failed", "incomplete"] {
+        let mut response = fixture(RESPONSES_RESPONSE);
+        response["status"] = status.into();
+        response["error"] = if status == "failed" {
+            serde_json::json!({ "code": "fixture_failure", "message": "fixture failed" })
+        } else {
+            serde_json::Value::Null
+        };
+        response["incomplete_details"] = if status == "incomplete" {
+            serde_json::json!({ "reason": "max_output_tokens" })
+        } else {
+            serde_json::Value::Null
+        };
+        let event: ResponsesEvent = serde_json::from_value(serde_json::json!({
+            "type": format!("response.{status}"),
+            "sequence_number": 0,
+            "response": response,
+        }))
+        .expect("every terminal response event decodes");
+        assert!(event.is_terminal());
+    }
+}
+
+#[tokio::test]
+async fn responses_resource_methods_and_stream_use_the_server_owned_contract() {
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, RESPONSES_CONVERSATION),
+        StubResponse::json(StatusCode::OK, RESPONSES_CONVERSATION),
+        StubResponse::json(StatusCode::OK, RESPONSES_ITEMS),
+        StubResponse::json(StatusCode::OK, RESPONSES_RESPONSE),
+        StubResponse::responses_sse(RESPONSES_STREAM),
+    ])
+    .await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+    let conversation_id = SessionId::new("sesn_fixture").expect("fixture id is valid");
+
+    assert_eq!(
+        client
+            .create_conversation()
+            .await
+            .expect("conversation creates")
+            .id,
+        conversation_id
+    );
+    client
+        .read_conversation(&conversation_id)
+        .await
+        .expect("conversation reads");
+    let items = client
+        .list_conversation_items(
+            &conversation_id,
+            ConversationItemsRequest {
+                after: Some("msg_sesn_fixture_1".into()),
+                limit: Some(7),
+            },
+        )
+        .await
+        .expect("conversation items read");
+    assert_eq!(items.data.len(), 3);
+    assert_eq!(
+        client
+            .read_response("resp_sesn_fixture_1")
+            .await
+            .expect("response reads")
+            .model,
+        "chat-model-fixture"
+    );
+
+    let mut request =
+        CreateResponseRequest::text(conversation_id, "Open the contract").expect("valid request");
+    request.model = Some("caller-model-is-ignored".into());
+    let mut stream = client
+        .create_response(request)
+        .await
+        .expect("response stream opens");
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event.expect("response event is valid"));
+    }
+    assert_eq!(events.len(), 16);
+    assert!(events.last().is_some_and(ResponsesEvent::is_terminal));
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 5);
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 5);
+    let paths = requests
+        .iter()
+        .map(|request| request.uri.path_and_query().unwrap().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            "/proxy/api/v1/conversations",
+            "/proxy/api/v1/conversations/sesn_fixture",
+            "/proxy/api/v1/conversations/sesn_fixture/items?after=msg_sesn_fixture_1&limit=7",
+            "/proxy/api/v1/responses/resp_sesn_fixture_1",
+            "/proxy/api/v1/responses",
+        ]
+    );
+    assert_eq!(requests[0].method, Method::POST);
+    let response_body: serde_json::Value =
+        serde_json::from_slice(&requests[4].body).expect("response request is JSON");
+    assert_eq!(response_body["stream"], true);
+    assert_eq!(response_body["model"], "caller-model-is-ignored");
+    assert!(!paths.iter().any(|path| path.ends_with("/cancel")));
+}
+
+#[tokio::test]
+async fn responses_stream_rejects_sequence_gaps_without_reposting_the_turn() {
+    let corrupted = RESPONSES_STREAM.replacen("\"sequence_number\":1", "\"sequence_number\":2", 1);
+    let stub = Stub::start([StubResponse::responses_sse(&corrupted)]).await;
+    let (client, _) = stub_client(&stub, 4);
+    let request = CreateResponseRequest::text(
+        SessionId::new("sesn_fixture").expect("fixture id is valid"),
+        "continue",
+    )
+    .expect("request is valid");
+    let mut stream = client
+        .create_response(request)
+        .await
+        .expect("handshake succeeds");
+    assert!(stream.next().await.unwrap().is_ok());
+    assert!(matches!(
+        stream.next().await,
+        Some(Err(Error::Protocol { ref message })) if message.contains("expected sequence 1")
+    ));
+    assert_eq!(
+        stub.requests().await.len(),
+        1,
+        "response POST is never replayed"
+    );
 }

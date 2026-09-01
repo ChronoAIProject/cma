@@ -90,6 +90,7 @@ const CONFORMS_TO: &[&str] = &[
     "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
     "https://spec.chrono-ai.fun/cma/1.0/conf/usage",
     "https://spec.chrono-ai.fun/cma/1.0/conf/trigger",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat",
 ];
 
 const BUILD_SHA: &str = match option_env!("CHRONO_BUILD_SHA") {
@@ -1150,7 +1151,8 @@ pub fn router(state: SessionsState) -> Router {
 pub fn complete_router(state: SessionsState, admin: Arc<admin::AdminState>) -> Router {
     let environments = Arc::clone(&state.environments);
     let triggers = state.triggers.clone();
-    let mut documented = documented_router(state)
+    let mut documented = documented_router(state.clone())
+        .merge(crate::responses::documented_router(state))
         .merge(environments::documented_router(environments))
         .merge(admin::documented_router(admin));
     if let Some(triggers) = triggers {
