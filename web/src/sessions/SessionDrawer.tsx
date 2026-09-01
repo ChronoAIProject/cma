@@ -73,13 +73,97 @@ interface SessionDrawerProps {
   readonly navigate?: AppRouter['navigate'];
 }
 
-export function SessionDrawer({
+export function SessionDrawer(props: SessionDrawerProps) {
+  return props.session.chat === undefined ? (
+    <AgentSessionDrawer {...props} />
+  ) : (
+    <ChatSessionDrawer session={props.session} chat={props.session.chat} onClose={props.onClose} />
+  );
+}
+
+/** The two-band Chat drawer: state and title, then the worktree facts. */
+function ChatSessionDrawer({
   session,
+  chat,
   onClose,
-  ending,
-  readSpend,
-  navigate,
-}: SessionDrawerProps) {
+}: Pick<SessionDrawerProps, 'session' | 'onClose'> & {
+  readonly chat: NonNullable<Session['chat']>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const tone = toneFor(session.lifecycle);
+  const dot = stateDotFor(tone);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => {
+      setCopied(false);
+    }, 2000);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [copied]);
+
+  const copyPath = () => {
+    void navigator.clipboard
+      ?.writeText(chat.worktreePath)
+      .then(() => {
+        setCopied(true);
+      })
+      .catch(() => {
+        // The complete path remains selectable if clipboard access is refused.
+      });
+  };
+
+  return (
+    <aside className="drawer drawer--chat" aria-label="Chat details">
+      <button
+        type="button"
+        className="drawer__close"
+        aria-label="Close chat details"
+        onClick={onClose}
+      >
+        <IconCloseOutline16 size={14} />
+      </button>
+
+      <div className="drawer__body">
+        <header className="drawer__band" data-tone={tone}>
+          <p className="drawer__state">
+            {dot === undefined ? null : <StateDot state={dot} placement="drawer__dot" />}
+            <span className="drawer__statename">
+              {labelFor(session.lifecycle, session.reportedStatus)}
+            </span>
+          </p>
+          <p className="drawer__started">Started {fullTimestamp(session.createdAt)}</p>
+          {session.creator === undefined ? null : (
+            <p className="drawer__creator">
+              <CreatorFace creator={session.creator} />
+              <span>{session.creator.displayName ?? 'Not named'}</span>
+            </p>
+          )}
+          <p className="drawer__chattitle">{chat.title ?? chat.worktreeName}</p>
+        </header>
+
+        <Section title="Worktree">
+          <Facts>
+            <Fact label="Name">{chat.worktreeName}</Fact>
+            <Fact label="Local path">
+              <button
+                type="button"
+                className="drawer__path"
+                aria-label={`Copy local path ${chat.worktreePath}`}
+                onClick={copyPath}
+              >
+                <code className="drawer__mono">{chat.worktreePath}</code>
+                <span className="drawer__pathhint">{copied ? 'Copied' : 'Copy'}</span>
+              </button>
+            </Fact>
+          </Facts>
+        </Section>
+      </div>
+    </aside>
+  );
+}
+
+function AgentSessionDrawer({ session, onClose, ending, readSpend, navigate }: SessionDrawerProps) {
   const can = abilitiesFor(session);
   const [copied, setCopied] = useState(false);
   const [spendRead, setSpendRead] = useState<{

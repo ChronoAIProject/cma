@@ -90,6 +90,44 @@ describe('the command bar', () => {
     expect(row?.textContent).toContain('Running');
   });
 
+  it('follows Chat for creation, labels, and arrangements', () => {
+    renderBar({
+      surface: 'chat',
+      sessions: [
+        {
+          ...SESSION,
+          chat: {
+            worktreeName: 'chat-command',
+            worktreePath: '/work/chat-command',
+            title: 'Investigate queue latency',
+          },
+        },
+      ],
+    });
+    const labels = screen.getAllByRole('option').map((option) => option.textContent ?? '');
+
+    expect(labels).toContain('New Chat');
+    expect(labels.some((label) => label.startsWith('Investigate queue latency'))).toBe(true);
+    expect(labels).toContain('Arrange chats as a list');
+    expect(labels).toContain('Arrange chats on the canvas');
+    expect(labels.some((label) => label.includes('New session'))).toBe(false);
+    expect(labels.some((label) => label.startsWith('Session '))).toBe(false);
+  });
+
+  it('uses the worktree name while a chat has no generated title', () => {
+    renderBar({
+      surface: 'chat',
+      sessions: [
+        {
+          ...SESSION,
+          chat: { worktreeName: 'chat-command', worktreePath: '/work/chat-command' },
+        },
+      ],
+    });
+
+    expect(screen.getByRole('option', { name: /chat-command/ })).toBeInTheDocument();
+  });
+
   it('omits the canvas when the window has no room for it', () => {
     // §16 offers the canvas at 60rem and above; the bar lists nothing it
     // cannot do, so below that the entry is absent rather than disabled.

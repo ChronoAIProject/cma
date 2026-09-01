@@ -84,11 +84,13 @@ fn creation_parameters_are_read_only_where_a_thread_could_be_new() {
         "threadId": "sesn_new", "runId": "run_1",
         "messages": [{ "role": "user", "content": "go" }],
         "forwardedProps": { "kernel": "dsh", "environmentProfile": "envp_1",
+                            "surface": "chat",
                             "somethingThisBuildHasNeverHeardOf": true }
     }));
     let props = request.forwarded_props.expect("present");
     assert_eq!(props.kernel.as_deref(), Some("dsh"));
     assert_eq!(props.environment_profile.as_deref(), Some("envp_1"));
+    assert_eq!(props.surface, Some(layer2_core::SessionSurface::Chat));
 }
 
 #[test]

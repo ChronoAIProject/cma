@@ -48,7 +48,7 @@ use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use super::admission::{RunFailure, StoredFailure, StoredProblem};
 use super::project::project;
 use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
-use super::thread_alias::session_for_run;
+use super::thread_alias::{session_for_run, CreationParameters};
 use super::turn_admission::{self, RunAction, StreamPlan};
 use super::KEEPALIVE_INTERVAL;
 
@@ -124,6 +124,8 @@ struct ForwardedProps {
     kernel: Option<String>,
     #[serde(rename = "environmentProfile", default)]
     environment_profile: Option<String>,
+    #[serde(default)]
+    surface: Option<layer2_core::SessionSurface>,
 }
 
 /// Open a run: prompt or resume, then stream until the turn ends.
@@ -205,15 +207,30 @@ async fn prepare_run(
     action: RunAction,
 ) -> Result<PreparedRun, RunFailure> {
     let requested = SessionId(body.thread_id.clone());
+    let environment_profile = body
+        .forwarded_props
+        .as_ref()
+        .and_then(|props| props.environment_profile.clone());
+    let surface = body
+        .forwarded_props
+        .as_ref()
+        .and_then(|props| props.surface);
+    if surface == Some(layer2_core::SessionSurface::Chat) && environment_profile.is_some() {
+        return Err(CoreError::InvalidRequest(
+            "forwardedProps.surface chat cannot be combined with environmentProfile".into(),
+        )
+        .into());
+    }
     let session = session_for_run(
         Arc::clone(&service),
         operations.clone(),
         caller.clone(),
         requested,
-        credential,
-        body.forwarded_props
-            .as_ref()
-            .and_then(|props| props.environment_profile.clone()),
+        CreationParameters {
+            credential,
+            environment_profile,
+            surface,
+        },
         action.is_resume(),
     )
     .await?;

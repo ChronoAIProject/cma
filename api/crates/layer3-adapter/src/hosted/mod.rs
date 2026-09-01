@@ -49,7 +49,8 @@ use crate::{
     RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeReservationIdentity, RuntimeSpec,
     SkillPackage, TerminalInput, TerminalInputSender, WorkspaceCheckpointDisposition,
     WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
-    WorkspaceEntryPackage, WorkspacePackage, WorkspaceWriterState,
+    WorkspaceEntryPackage, WorkspacePackage, WorkspaceSetupReceipt, WorkspaceSourceRequest,
+    WorkspaceTreeReceipt, WorkspaceTreeRequest, WorkspaceWriterState,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -72,6 +73,8 @@ pub(crate) struct AcpConversationBinding {
     mode: Option<String>,
     resume_conversation: Option<String>,
     own_credential: bool,
+    working_directory: Option<String>,
+    conversation_slot: Option<String>,
 }
 
 impl AcpConversationBinding {
@@ -80,11 +83,15 @@ impl AcpConversationBinding {
         mode: Option<String>,
         resume_conversation: Option<String>,
         own_credential: bool,
+        working_directory: Option<String>,
+        conversation_slot: Option<String>,
     ) -> Self {
         Self {
             mode,
             resume_conversation,
             own_credential,
+            working_directory,
+            conversation_slot,
         }
     }
 
@@ -111,6 +118,7 @@ const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 /// naming it once is what keeps them in step.
 /// Historical session key, kept while old-only sandboxes remain live.
 const LEGACY_SESSION_METADATA_KEY: &str = "chrono-bot/session";
+const CHAT_HOST_METADATA_KEY: &str = "cma/chat-host";
 
 /// Read a canonical correlation value, falling back only when it is absent.
 fn correlation_value(
@@ -150,6 +158,9 @@ fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, S
     if let Some(generation) = spec.generation {
         metadata.insert(GENERATION_METADATA_KEY.to_string(), generation.to_string());
     }
+    if let Some(chat_host) = spec.chat_host.as_ref() {
+        metadata.insert(CHAT_HOST_METADATA_KEY.to_string(), chat_host.clone());
+    }
     if let Some(reservation) = spec.reservation_token.as_ref() {
         metadata.insert(RESERVATION_METADATA_KEY.to_string(), reservation.clone());
     }
@@ -176,9 +187,14 @@ const PRELUDE_COMPONENT_LIMIT: usize = 255;
 const WORKSPACE_PATH: &str = "/runtime/workspace";
 const WORKSPACE_CHECKPOINT_PATH: &str = "/runtime/workspace/checkpoint";
 const WORKSPACE_CHECKPOINT_RESUME_PATH: &str = "/runtime/workspace/checkpoint/resume";
+const WORKSPACE_SOURCE_PATH: &str = "/runtime/workspace/source";
+const WORKSPACE_TREES_PATH: &str = "/runtime/workspace/trees";
+const WORKSPACE_SETUP_PATH: &str = "/runtime/workspace/setup";
 const RUNTIME_GATEWAY_PROBE_PATH: &str = "/runtime/gateway-probe";
 const WORKSPACE_VERSION: u64 = 2;
 const WORKSPACE_HOLD_VERSION: u64 = 4;
+const WORKSPACE_COMPLETE_GIT_VERSION: u64 = 5;
+const WORKSPACE_SOURCE_RECEIPT_VERSION: u64 = 2;
 const WORKSPACE_ARCHIVE_VERSION: u32 = 1;
 const MAX_WORKSPACE_FILES: usize = 100_000;
 const MAX_WORKSPACE_BYTES: usize = 2 * 1024 * 1024 * 1024;
@@ -382,6 +398,31 @@ impl From<SandboxError> for AdapterError {
             SandboxError::Unsupported(detail) => AdapterError::Unsupported(detail),
             other => AdapterError::Unavailable(other.to_string()),
         }
+    }
+}
+
+/// Classify a response from a live supervisor rather than a provider lookup.
+///
+/// A 404 from the provider means the sandbox is gone; a 404 from a route on a
+/// supervisor we reached means that supervisor answered and refused. Keeping
+/// those contexts separate prevents an invalid tree name or unknown capture id
+/// from triggering runtime-loss recovery.
+fn runtime_operation_error(error: SandboxError) -> AdapterError {
+    match error {
+        SandboxError::Unreachable(detail) => AdapterError::Unavailable(detail),
+        SandboxError::Rejected {
+            status: 501,
+            detail,
+        }
+        | SandboxError::Unsupported(detail) => AdapterError::Unsupported(detail),
+        SandboxError::Rejected { status, detail } => {
+            AdapterError::Rejected(format!("{status}: {detail}"))
+        }
+        SandboxError::Malformed(detail) => AdapterError::Rejected(detail),
+        SandboxError::IdentityMismatch(detail) => AdapterError::Rejected(detail),
+        SandboxError::Incomplete { pages, page_size } => AdapterError::Rejected(format!(
+            "sandbox listing did not end after {pages} pages of {page_size}"
+        )),
     }
 }
 
@@ -840,11 +881,40 @@ impl SponsoredModelAuthorityWaiters {
 #[derive(Clone)]
 pub(crate) struct LinkLifecycle {
     runtime: String,
+    registry_key: String,
     links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, RegisteredLink>>>,
     switch_waiters: SwitchWaiters,
     credential_waiters: CredentialWaiters,
     runtime_policy_waiters: RuntimePolicyWaiters,
     sponsored_model_authority_waiters: SponsoredModelAuthorityWaiters,
+}
+
+fn link_key_belongs_to(key: &str, runtime: &str) -> bool {
+    key == runtime
+        || key
+            .strip_prefix(runtime)
+            .is_some_and(|suffix| suffix.starts_with('\0'))
+}
+
+fn registered_link_key(
+    links: &BTreeMap<String, RegisteredLink>,
+    runtime: &str,
+    link: &TerminalInputSender,
+) -> Option<String> {
+    links.iter().find_map(|(key, current)| {
+        (link_key_belongs_to(key, runtime) && current.sender.same_channel(link))
+            .then(|| key.clone())
+    })
+}
+
+fn runtime_control_link<'a>(
+    links: &'a BTreeMap<String, RegisteredLink>,
+    runtime: &str,
+) -> Option<&'a RegisteredLink> {
+    links
+        .iter()
+        .find(|(key, link)| link_key_belongs_to(key, runtime) && !link.sender.is_closed())
+        .map(|(_, link)| link)
 }
 
 impl LinkLifecycle {
@@ -862,18 +932,18 @@ impl LinkLifecycle {
         let previous = {
             let mut links = self.links.lock().await;
             if links
-                .get(&self.runtime)
+                .get(&self.registry_key)
                 .is_some_and(|current| current.sender.same_channel(&link))
             {
                 if link.is_closed() {
-                    links.remove(&self.runtime);
+                    links.remove(&self.registry_key);
                     let _ = installed.send(());
                     return false;
                 }
                 let _ = installed.send(());
                 return true;
             }
-            let previous = links.insert(self.runtime.clone(), registration);
+            let previous = links.insert(self.registry_key.clone(), registration);
             // There is no await between insertion and opening this barrier. If
             // the caller is canceled before insertion, dropping `installed`
             // tells the already-running supervisor there is nothing to forget.
@@ -907,10 +977,10 @@ impl LinkLifecycle {
 
         let mut links = self.links.lock().await;
         let is_current = links
-            .get(&self.runtime)
+            .get(&self.registry_key)
             .is_some_and(|current| current.sender.same_channel(&link));
         if is_current && link.is_closed() {
-            links.remove(&self.runtime);
+            links.remove(&self.registry_key);
             return false;
         }
         is_current
@@ -919,11 +989,8 @@ impl LinkLifecycle {
     /// Forget this generation without disturbing a successor already present.
     pub(crate) async fn forget(&self, link: &TerminalInputSender) {
         let mut links = self.links.lock().await;
-        if links
-            .get(&self.runtime)
-            .is_some_and(|current| current.sender.same_channel(link))
-        {
-            links.remove(&self.runtime);
+        if let Some(key) = registered_link_key(&links, &self.runtime, link) {
+            links.remove(&key);
         }
         drop(links);
         // A successor may be in the map while this generation still owns the
@@ -943,10 +1010,13 @@ impl LinkLifecycle {
     pub(crate) async fn forget_if_whole_retired(&self, link: &TerminalInputSender) {
         let removed = {
             let mut links = self.links.lock().await;
-            let can_forget = links.get(&self.runtime).is_some_and(|current| {
-                current.sender.same_channel(link) && current.retired.is_retired()
+            let key = links.iter().find_map(|(key, current)| {
+                (link_key_belongs_to(key, &self.runtime)
+                    && current.sender.same_channel(link)
+                    && current.retired.is_retired())
+                .then(|| key.clone())
             });
-            can_forget.then(|| links.remove(&self.runtime)).flatten()
+            key.and_then(|key| links.remove(&key))
         };
         if removed.is_some() {
             self.switch_waiters.forget(&self.runtime, link).await;
@@ -970,11 +1040,8 @@ impl LinkLifecycle {
     }
 
     pub(crate) async fn is_current(&self, link: &TerminalInputSender) -> bool {
-        self.links
-            .lock()
-            .await
-            .get(&self.runtime)
-            .is_some_and(|current| current.sender.same_channel(link) && !link.is_closed())
+        let links = self.links.lock().await;
+        registered_link_key(&links, &self.runtime, link).is_some() && !link.is_closed()
     }
 
     /// Settle a credential request only on the link generation that carried it.
@@ -1149,7 +1216,11 @@ impl HostedKernel {
             binding.evidence_contract(),
             ConversationEvidenceContract::AcpV1
         );
-        let (stream, url) = self.connect(handle, Some("conv")).await?;
+        let (stream, url) = self
+            .connect_conversation(handle, binding.conversation_slot.as_deref())
+            .await?;
+        let lifecycle =
+            self.conversation_link_lifecycle(&handle.0, binding.conversation_slot.as_deref());
         tracing::info!(
             sandbox = %handle.0,
             kernel = self.kernel,
@@ -1158,10 +1229,12 @@ impl HostedKernel {
         );
         let (conversation, control) = acp::Bridge::open(
             stream,
-            self.workspace().to_string(),
+            binding
+                .working_directory
+                .unwrap_or_else(|| self.workspace().to_string()),
             binding.mode,
             binding.resume_conversation,
-            Some(self.link_lifecycle(&handle.0)),
+            Some(lifecycle),
             binding.own_credential,
             updates,
         )
@@ -1188,6 +1261,11 @@ impl HostedKernel {
         if spec.timeout_seconds == Some(0) {
             return Err(AdapterError::Rejected(
                 "runtime timeout must be positive".into(),
+            ));
+        }
+        if spec.conversation_slots_required == Some(0) {
+            return Err(AdapterError::Rejected(
+                "required conversation slot count must be positive".into(),
             ));
         }
         // Build and validate the exact bytes before provider creation. Skill
@@ -1224,21 +1302,33 @@ impl HostedKernel {
             "sandbox provisioned"
         );
         let sandbox = self.await_running(&sandbox.id).await?;
-        let policy_delete_target = if spec.runtime_policy_required {
+        let chat_capabilities_required =
+            spec.workspace_source_required || spec.conversation_slots_required.is_some();
+        let capability_delete_target = if spec.runtime_policy_required || chat_capabilities_required
+        {
             self.client.capture_delete_target(&sandbox.id).await?
         } else {
             None
         };
 
-        if spec.runtime_policy_required {
+        if spec.runtime_policy_required || chat_capabilities_required {
             let capability_result = async {
-                if !self.supports_runtime_policy(&sandbox.id).await?
-                    || !self.supports_runtime_gateway_probe(&sandbox.id).await?
+                if spec.runtime_policy_required
+                    && (!self.supports_runtime_policy(&sandbox.id).await?
+                        || !self.supports_runtime_gateway_probe(&sandbox.id).await?)
                 {
                     return Err(AdapterError::Unsupported(
                         "this runtime image does not advertise github_capability_v2 and runtime_gateway_probe_v2"
                             .into(),
                     ));
+                }
+                if chat_capabilities_required {
+                    let endpoint = self.client.endpoint(&sandbox.id, SUPERVISOR_PORT).await?;
+                    let (_, readiness) = self.runtime_readiness(&endpoint.endpoint).await?;
+                    require_chat_runtime_capabilities(
+                        &readiness,
+                        spec.conversation_slots_required.unwrap_or(1),
+                    )?;
                 }
                 Ok(())
             }
@@ -1248,7 +1338,7 @@ impl HostedKernel {
                 // No failed readiness candidate is left behind. The target was
                 // captured before probing, so cleanup cannot drift onto a
                 // later provider object that happens to reuse the same handle.
-                if let Some(target) = policy_delete_target {
+                if let Some(target) = capability_delete_target {
                     if let Err(cleanup_error) = self.client.delete_captured(target).await {
                         tracing::error!(
                             sandbox = %sandbox.id,
@@ -1257,7 +1347,7 @@ impl HostedKernel {
                             "failed readiness candidate could not be reclaimed"
                         );
                         return Err(AdapterError::Unavailable(format!(
-                            "runtime {} failed required Trigger readiness ({probe_error}); exact candidate cleanup also failed: {cleanup_error}",
+                            "runtime {} failed required capability readiness ({probe_error}); exact candidate cleanup also failed: {cleanup_error}",
                             sandbox.id,
                         )));
                     }
@@ -1555,6 +1645,82 @@ impl HostedKernel {
         Ok(())
     }
 
+    /// Prepare one Git source before this runtime starts any agent process.
+    pub async fn prepare_workspace_source(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceSourceRequest,
+    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let body = serde_json::to_vec(request)
+            .expect("a workspace source request containing strings is serializable");
+        let response = self
+            .client
+            .post_json_to_sandbox_with_response(&endpoint.endpoint, WORKSPACE_SOURCE_PATH, body)
+            .await
+            .map_err(runtime_operation_error)?;
+        serde_json::from_slice(&response).map_err(|_| {
+            AdapterError::Rejected("runtime returned an invalid workspace source receipt".into())
+        })
+    }
+
+    /// Add one conversation worktree and return the runtime's canonical path.
+    pub async fn add_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceTreeRequest,
+    ) -> Result<WorkspaceTreeReceipt, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let body = serde_json::to_vec(request)
+            .expect("a workspace tree request containing strings is serializable");
+        let response = self
+            .client
+            .post_json_to_sandbox_with_response(&endpoint.endpoint, WORKSPACE_TREES_PATH, body)
+            .await
+            .map_err(runtime_operation_error)?;
+        serde_json::from_slice(&response).map_err(|_| {
+            AdapterError::Rejected("runtime returned an invalid workspace tree receipt".into())
+        })
+    }
+
+    /// Remove one exact named conversation worktree.
+    pub async fn remove_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        name: &str,
+    ) -> Result<(), AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let name = url::form_urlencoded::byte_serialize(name.as_bytes()).collect::<String>();
+        let path = format!("{WORKSPACE_TREES_PATH}/{name}");
+        self.client
+            .delete_from_sandbox(&endpoint.endpoint, &path)
+            .await
+            .map_err(runtime_operation_error)
+    }
+
+    /// Run administrator-owned setup through the supervisor's bounded runner.
+    pub async fn run_workspace_setup(
+        &self,
+        handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<WorkspaceSetupReceipt, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let body = serde_json::to_vec(&WorkspaceSetupRequest { commands })
+            .expect("a workspace setup request containing strings is serializable");
+        let response = self
+            .client
+            .post_json_to_sandbox_with_response(&endpoint.endpoint, WORKSPACE_SETUP_PATH, body)
+            .await
+            .map_err(runtime_operation_error)?;
+        let receipt: WorkspaceSetupReceipt = serde_json::from_slice(&response).map_err(|_| {
+            AdapterError::Rejected("runtime returned an invalid workspace setup receipt".into())
+        })?;
+        receipt.validate(commands.len()).map_err(|_| {
+            AdapterError::Rejected("runtime returned an invalid workspace setup receipt".into())
+        })?;
+        Ok(receipt)
+    }
+
     /// Ask the shared Layer 4 supervisor for one coherent, resumable capture.
     pub async fn checkpoint_workspace(
         &self,
@@ -1567,7 +1733,11 @@ impl HostedKernel {
             .get_from_sandbox(&endpoint.endpoint, READY_PATH)
             .await?
             .unwrap_or_default();
-        if !readiness_supports_workspace_checkpoint(&ready, request.disposition) {
+        if !readiness_supports_workspace_checkpoint(
+            &ready,
+            request.disposition,
+            request.include_git_metadata,
+        ) {
             return Err(AdapterError::Unsupported(
                 "this runtime image does not advertise the requested workspace checkpoint capability"
                     .into(),
@@ -1587,11 +1757,12 @@ impl HostedKernel {
             WorkspaceCheckpointDisposition::HoldForTeardown => "hold_for_teardown",
         };
         let path = format!(
-            "{WORKSPACE_CHECKPOINT_PATH}?epoch={}&version={}&source={}&baseline={}&disposition={disposition}",
+            "{WORKSPACE_CHECKPOINT_PATH}?epoch={}&version={}&source={}&baseline={}&include_git_metadata={}&disposition={disposition}",
             request.epoch,
             request.version,
             request.source_revision,
             request.baseline_manifest_digest,
+            request.include_git_metadata,
         );
         let wire = self
             .client
@@ -1654,6 +1825,7 @@ impl HostedKernel {
         if !readiness_supports_workspace_checkpoint(
             &ready,
             WorkspaceCheckpointDisposition::HoldForTeardown,
+            false,
         ) {
             return Err(AdapterError::Unsupported(
                 "this runtime image cannot resume a held workspace checkpoint".into(),
@@ -1761,6 +1933,52 @@ impl HostedKernel {
         Ok(captured)
     }
 
+    /// Capture one exact agent conversation from a multi-conversation runtime.
+    pub async fn snapshot_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let conversation_id =
+            url::form_urlencoded::byte_serialize(conversation_id.as_bytes()).collect::<String>();
+        let path = format!(
+            "{CONVERSATION_PATH}?{}={conversation_id}",
+            crate::supervisor::CONVERSATION_QUERY_PARAMETER
+        );
+        self.client
+            .get_from_sandbox(&endpoint.endpoint, &path)
+            .await
+            .map_err(runtime_operation_error)
+    }
+
+    /// Restore one captured conversation into an exact supervisor slot.
+    pub async fn restore_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_slot: &str,
+        snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let conversation_slot =
+            url::form_urlencoded::byte_serialize(conversation_slot.as_bytes()).collect::<String>();
+        let path = format!(
+            "{CONVERSATION_PATH}?{}={conversation_slot}",
+            crate::supervisor::CONVERSATION_QUERY_PARAMETER
+        );
+        self.client
+            .post_to_sandbox(&endpoint.endpoint, &path, snapshot.to_vec())
+            .await
+            .map_err(runtime_operation_error)?;
+        tracing::info!(
+            sandbox = %handle.0,
+            slot = %conversation_slot,
+            bytes = snapshot.len(),
+            "restored a conversation into its runtime slot"
+        );
+        Ok(())
+    }
+
     /// Every sandbox this provider is running, with what each was created for.
     pub async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         let sandboxes = self
@@ -1777,6 +1995,7 @@ impl HostedKernel {
                     SESSION_METADATA_KEY,
                     LEGACY_SESSION_METADATA_KEY,
                 ),
+                chat_host: s.metadata.get(CHAT_HOST_METADATA_KEY).cloned(),
                 generation: runtime_generation(&s.metadata),
                 created_by: correlation_value(
                     &s.metadata,
@@ -1800,7 +2019,7 @@ impl HostedKernel {
     pub async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
         // Remember the generation that is already stale if the provider says
         // this handle is absent. This snapshot is never authority to delete.
-        let absent_link = self.links.lock().await.get(&handle.0).cloned();
+        let absent_links = self.captured_runtime_links(&handle.0).await;
 
         // Provider authority precedes the link snapshot used by deletion. A
         // link can take indefinitely to retire, and a provider object that
@@ -1809,15 +2028,15 @@ impl HostedKernel {
         // UID/resourceVersion; the compatibility fallback explicitly relies on
         // handles not being reused during one lifecycle operation.
         let Some(target) = self.client.capture_delete_target(&handle.0).await? else {
-            if let Some(absent_link) = absent_link.as_ref() {
+            for absent_link in &absent_links {
                 self.retire_captured_link(&handle.0, absent_link).await;
             }
             tracing::info!(sandbox = %handle.0, "sandbox already absent");
             return Ok(());
         };
-        let captured = self.links.lock().await.get(&handle.0).cloned();
+        let captured = self.captured_runtime_links(&handle.0).await;
         self.client.delete_captured(target).await?;
-        if let Some(captured) = captured.as_ref() {
+        for captured in &captured {
             self.retire_captured_link(&handle.0, captured).await;
         }
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
@@ -1829,9 +2048,9 @@ impl HostedKernel {
         &self,
         identity: &RuntimeIdentity,
     ) -> Result<(), AdapterError> {
-        let captured = self.links.lock().await.get(&identity.handle.0).cloned();
+        let captured = self.captured_runtime_links(&identity.handle.0).await;
         self.client.delete_if_identity(identity).await?;
-        if let Some(captured) = captured.as_ref() {
+        for captured in &captured {
             self.retire_captured_link(&identity.handle.0, captured)
                 .await;
         }
@@ -1847,14 +2066,22 @@ impl HostedKernel {
     async fn retire_captured_link(&self, handle: &str, captured: &RegisteredLink) {
         let removed = {
             let mut links = self.links.lock().await;
-            let is_same = links
-                .get(handle)
-                .is_some_and(|current| current.sender.same_channel(&captured.sender));
-            is_same.then(|| links.remove(handle)).flatten()
+            let key = registered_link_key(&links, handle, &captured.sender);
+            key.and_then(|key| links.remove(&key))
         };
         if let Some(link) = removed {
             self.retire_removed_link(handle, link).await;
         }
+    }
+
+    async fn captured_runtime_links(&self, handle: &str) -> Vec<RegisteredLink> {
+        self.links
+            .lock()
+            .await
+            .iter()
+            .filter(|(key, _)| link_key_belongs_to(key, handle))
+            .map(|(_, link)| link.clone())
+            .collect()
     }
 
     async fn retire_removed_link(&self, handle: &str, link: RegisteredLink) {
@@ -1925,11 +2152,8 @@ impl HostedKernel {
     /// The link to a runtime, if one is open.
     #[cfg(test)]
     pub(crate) async fn link_to(&self, handle: &str) -> Option<TerminalInputSender> {
-        self.links
-            .lock()
-            .await
-            .get(handle)
-            .map(|registered| registered.sender.clone())
+        let links = self.links.lock().await;
+        runtime_control_link(&links, handle).map(|registered| registered.sender.clone())
     }
 
     /// The registry a link's inbound task answers into.
@@ -1945,8 +2169,26 @@ impl HostedKernel {
 
     /// Registration and cleanup shared by both halves of a runtime link.
     pub(crate) fn link_lifecycle(&self, handle: &str) -> LinkLifecycle {
+        self.link_lifecycle_with_key(handle, handle.to_string())
+    }
+
+    /// Registration identity for one independently supervised conversation.
+    pub(crate) fn conversation_link_lifecycle(
+        &self,
+        handle: &str,
+        conversation_slot: Option<&str>,
+    ) -> LinkLifecycle {
+        let key = conversation_slot.map_or_else(
+            || handle.to_string(),
+            |slot| format!("{handle}\0conversation\0{slot}"),
+        );
+        self.link_lifecycle_with_key(handle, key)
+    }
+
+    fn link_lifecycle_with_key(&self, handle: &str, registry_key: String) -> LinkLifecycle {
         LinkLifecycle {
             runtime: handle.to_string(),
+            registry_key,
             links: std::sync::Arc::clone(&self.links),
             switch_waiters: self.switch_waiters.clone(),
             credential_waiters: self.credential_waiters.clone(),
@@ -1993,6 +2235,43 @@ fn readiness_supports_runtime_policy(body: &[u8]) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn require_chat_runtime_capabilities(
+    body: &[u8],
+    conversation_slots_required: u8,
+) -> Result<(), AdapterError> {
+    let value: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        AdapterError::Rejected("runtime returned unreadable capability readiness".into())
+    })?;
+    let workspace_source = value
+        .pointer("/workspaceSource/version")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|version| version >= WORKSPACE_SOURCE_RECEIPT_VERSION);
+    if !workspace_source {
+        return Err(AdapterError::Unsupported(
+            "this runtime image does not advertise workspaceSource v2".into(),
+        ));
+    }
+    let conversation_slots = value
+        .pointer("/conversationSlots/max")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|maximum| maximum >= u64::from(conversation_slots_required));
+    if !conversation_slots {
+        return Err(AdapterError::Unsupported(format!(
+            "this runtime image does not advertise conversationSlots.max >= {conversation_slots_required}"
+        )));
+    }
+    if !readiness_supports_workspace_checkpoint(
+        body,
+        WorkspaceCheckpointDisposition::HoldForTeardown,
+        true,
+    ) {
+        return Err(AdapterError::Unsupported(
+            "this runtime image does not advertise complete-Git workspaceCheckpoint v5".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
@@ -2205,10 +2484,15 @@ fn workspace_checkpoint_version(body: &[u8]) -> Option<u64> {
 fn readiness_supports_workspace_checkpoint(
     body: &[u8],
     disposition: WorkspaceCheckpointDisposition,
+    include_git_metadata: bool,
 ) -> bool {
-    let minimum = match disposition {
-        WorkspaceCheckpointDisposition::ResumeAfterCapture => WORKSPACE_VERSION,
-        WorkspaceCheckpointDisposition::HoldForTeardown => WORKSPACE_HOLD_VERSION,
+    let minimum = if include_git_metadata {
+        WORKSPACE_COMPLETE_GIT_VERSION
+    } else {
+        match disposition {
+            WorkspaceCheckpointDisposition::ResumeAfterCapture => WORKSPACE_VERSION,
+            WorkspaceCheckpointDisposition::HoldForTeardown => WORKSPACE_HOLD_VERSION,
+        }
     };
     workspace_checkpoint_version(body).is_some_and(|version| version >= minimum)
 }
@@ -2223,6 +2507,11 @@ struct WorkspaceWriterResumeRequest<'a> {
 struct WorkspaceWriterResumeReceipt {
     resume_token: String,
     writers_resumed: bool,
+}
+
+#[derive(serde::Serialize)]
+struct WorkspaceSetupRequest<'a> {
+    commands: &'a [String],
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -2247,6 +2536,8 @@ struct CheckpointAcknowledgement {
     entries: usize,
     bytes: u64,
     quiesced_writers: u32,
+    #[serde(default)]
+    includes_git_metadata: bool,
     writers_resumed: bool,
     #[serde(default)]
     writer_state: Option<CheckpointWriterState>,
@@ -2270,6 +2561,8 @@ struct CheckpointArchiveHeader {
     checkpoint_version: u64,
     #[serde(default)]
     quiesced_writers: u32,
+    #[serde(default)]
+    includes_git_metadata: bool,
     source_revision: String,
     manifest_digest: String,
     entries: Vec<CheckpointArchiveEntry>,
@@ -2317,6 +2610,7 @@ fn parse_workspace_checkpoint(
         || !is_hex(&acknowledgement.archive_sha256, 64)
         || acknowledgement.entries > MAX_WORKSPACE_FILES
         || acknowledgement.bytes > MAX_WORKSPACE_BYTES as u64
+        || acknowledgement.includes_git_metadata != request.include_git_metadata
         || hex(&Sha256::digest(archive)) != acknowledgement.archive_sha256
     {
         return Err(AdapterError::Rejected(
@@ -2335,6 +2629,7 @@ fn parse_workspace_checkpoint(
         || header.workspace_epoch != request.epoch
         || header.checkpoint_version != request.version
         || header.quiesced_writers != acknowledgement.quiesced_writers
+        || header.includes_git_metadata != acknowledgement.includes_git_metadata
         || !header
             .source_revision
             .eq_ignore_ascii_case(&request.source_revision)
@@ -2425,6 +2720,7 @@ fn parse_workspace_checkpoint(
         quiesced_writers: acknowledgement.quiesced_writers,
         writer_state,
         writer_resume_token,
+        includes_git_metadata: acknowledgement.includes_git_metadata,
         archive: archive.to_vec(),
     })
 }

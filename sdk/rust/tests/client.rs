@@ -11,14 +11,18 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
-    ApprovalDecision, BeginConnectionRequest, Client, Conformance, CreateSessionRequest,
+    ApprovalDecision, BeginConnectionRequest, ChatAgentSettings, ChatHostId, ChatHostPageRequest,
+    ChatHostSettings, ChatHostStatus, ChatInactivity, ChatSettings, ChatSetup, ChatWorkspaceSource,
+    Client, Conformance, ConversationItemsRequest, CreateResponseRequest, CreateSessionRequest,
     CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationAction,
     LaunchConfirmationRequest, LaunchEventKind, LaunchListRequest, LaunchProgress,
     LaunchStartRequest, LaunchState, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
     PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
-    PullRequestStatusRefreshRequest, RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy,
-    ScreenSnapshot, SelectLaunchConnectionRequest, Session, SessionId, SessionInput,
-    SessionPageRequest, SessionStatus, TerminalGeometry, TriggerConnection, TriggerConnectionState,
+    PullRequestStatusRefreshRequest, ReasoningEffort, RecoverInitialPromptRequest,
+    ResponseMetadata, ResponsesConversation, ResponsesConversationItemList, ResponsesEvent,
+    ResponsesResponse, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
+    SessionId, SessionInput, SessionPageRequest, SessionSize, SessionStatus, SessionSurface,
+    SessionSurfaceFilter, TerminalGeometry, TriggerConnection, TriggerConnectionState,
     TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewAvailability,
     TriggerPreviewCost, TriggerPreviewUnavailableReason, TriggerRepositorySelection,
     TriggerRevision, UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
@@ -27,6 +31,7 @@ use tokio::sync::Mutex;
 
 const SESSION: &str = include_str!("fixtures/session.json");
 const SESSIONS: &str = include_str!("fixtures/sessions.json");
+const CHAT_HOSTS: &str = include_str!("fixtures/chat_hosts.json");
 const CREATE_REQUEST: &str = include_str!("fixtures/create_session_request.json");
 const INPUT_TEXT_REQUEST: &str = include_str!("fixtures/input_text_request.json");
 const INPUT_BYTES_REQUEST: &str = include_str!("fixtures/input_bytes_request.json");
@@ -48,6 +53,15 @@ const PULL_REQUEST_CONFIRM_REQUEST: &str =
     include_str!("fixtures/pull_request_confirm_request.json");
 const PULL_REQUEST_STATUS_REFRESH_REQUEST: &str =
     include_str!("fixtures/pull_request_status_refresh_request.json");
+const RESPONSES_CONVERSATION: &str = include_str!(
+    "../../../api/crates/layer1-public/tests/fixtures/responses-sdk/conversation.json"
+);
+const RESPONSES_ITEMS: &str =
+    include_str!("../../../api/crates/layer1-public/tests/fixtures/responses-sdk/items.json");
+const RESPONSES_RESPONSE: &str =
+    include_str!("../../../api/crates/layer1-public/tests/fixtures/responses-sdk/response.json");
+const RESPONSES_STREAM: &str =
+    include_str!("../../../api/crates/layer1-public/tests/fixtures/responses-sdk/projection.sse");
 const CONFORMANCE: &str = r#"{
   "conformsTo": ["https://spec.chrono-ai.fun/cma/1.0/conf/rest-core"],
   "version": "development",
@@ -100,6 +114,16 @@ impl StubResponse {
             content_type: Some("text/event-stream; charset=utf-8"),
             headers: Vec::new(),
             body,
+            delay: Duration::ZERO,
+        }
+    }
+
+    fn responses_sse(body: &str) -> Self {
+        Self {
+            status: StatusCode::OK,
+            content_type: Some("text/event-stream; charset=utf-8"),
+            headers: Vec::new(),
+            body: body.to_owned(),
             delay: Duration::ZERO,
         }
     }
@@ -346,6 +370,45 @@ fn connection_authorization_response() -> String {
     .to_string()
 }
 
+fn chat_settings() -> ChatSettings {
+    ChatSettings {
+        enabled: true,
+        workspace: ChatWorkspaceSource {
+            repository_url: "https://example.test/team/repository.git".into(),
+            branch: "development".into(),
+        },
+        agent: ChatAgentSettings {
+            model: Some("reasoning-model".into()),
+            reasoning_effort: ReasoningEffort::XHigh,
+            instructions: "Read the repository guidance.".into(),
+            record_tool_bodies: false,
+        },
+        message_prefixes: vec!["/formalize".into(), "/check".into()],
+        inactivity: ChatInactivity {
+            pause_after_seconds: 1_200,
+        },
+        setup: ChatSetup {
+            commands: vec!["tool install".into(), "tool verify".into()],
+        },
+        host: ChatHostSettings {
+            size: Some(SessionSize {
+                cpu_millis: 2_000,
+                memory_mib: 4_096,
+            }),
+            max_threads: 12,
+        },
+    }
+}
+
+fn chat_settings_response() -> String {
+    serde_json::json!({
+        "revision": 7,
+        "settings": { "chat": chat_settings() },
+        "previous": { "chat": null }
+    })
+    .to_string()
+}
+
 #[test]
 fn sdk_copies_read_every_server_owned_response_fixture() {
     let conformance: Conformance =
@@ -353,6 +416,16 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(conformance.version, "development");
     let session: Session = serde_json::from_str(SESSION).expect("session fixture is typed");
     assert_eq!(session.id.as_str(), "sesn_fixture");
+    let chat = session
+        .chat
+        .expect("fixture carries the shared chat projection");
+    assert_eq!(chat.worktree_name, "chat-3");
+    assert_eq!(chat.worktree_path, "/workspace/chat-3");
+    assert_eq!(chat.title.as_deref(), Some("Fixture chat"));
+    assert_eq!(
+        chat.paused_notice.as_deref(),
+        Some("Paused after inactivity")
+    );
     let sessions: Vec<Session> = serde_json::from_str(SESSIONS).expect("list fixture is typed");
     assert_eq!(sessions.len(), 1);
     let event: Event = serde_json::from_str(EVENT).expect("event fixture is typed");
@@ -636,6 +709,81 @@ async fn conformance_discovery_is_typed_anonymous_and_correlated() {
     assert_eq!(
         requests[0].request_id.as_deref(),
         Some("caller-conformance-488")
+    );
+}
+
+#[tokio::test]
+async fn chat_settings_read_and_patch_use_the_revisioned_public_admin_route() {
+    let body = chat_settings_response();
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &body),
+        StubResponse::json(StatusCode::OK, &body),
+    ])
+    .await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+
+    let read = client
+        .read_chat_settings()
+        .await
+        .expect("chat settings read succeeds");
+    assert_eq!(read.revision, 7);
+    assert_eq!(read.chat, Some(chat_settings()));
+    assert_eq!(read.previous_chat, None);
+
+    let changed = client
+        .change_chat_settings(6, Some(&chat_settings()))
+        .await
+        .expect("chat settings change succeeds");
+    assert_eq!(changed.chat, Some(chat_settings()));
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 2);
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, Method::GET);
+    assert_eq!(requests[0].uri.path(), "/proxy/api/v1/admin/settings");
+    assert_eq!(requests[1].method, Method::PATCH);
+    assert_eq!(requests[1].uri.path(), "/proxy/api/v1/admin/settings");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[1].body).expect("PATCH body is JSON"),
+        serde_json::json!({
+            "expected_revision": 6,
+            "chat": chat_settings(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn invalid_chat_settings_stop_before_transport_and_null_removes_the_object() {
+    let body = serde_json::json!({
+        "revision": 8,
+        "settings": { "chat": null },
+        "previous": { "chat": chat_settings() }
+    })
+    .to_string();
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &body)]).await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+
+    let mut invalid = chat_settings();
+    invalid.host.max_threads = 0;
+    assert!(
+        client
+            .change_chat_settings(7, Some(&invalid))
+            .await
+            .is_err()
+    );
+    assert!(stub.requests().await.is_empty());
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 0);
+
+    let removed = client
+        .change_chat_settings(7, None)
+        .await
+        .expect("null removes chat");
+    assert_eq!(removed.chat, None);
+    assert_eq!(removed.previous_chat, Some(chat_settings()));
+    let requests = stub.requests().await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[0].body).unwrap(),
+        serde_json::json!({ "expected_revision": 7, "chat": null })
     );
 }
 
@@ -1437,6 +1585,7 @@ async fn every_required_operation_uses_the_server_fixture_shape() {
 
     client
         .create_session(CreateSessionRequest {
+            surface: None,
             geometry: Some(TerminalGeometry::new(120, 40).expect("valid geometry")),
             environment_profile: Some("envp_fixture".into()),
             quoted_rate_card: Some("rate_fixture".into()),
@@ -1525,6 +1674,48 @@ async fn every_required_operation_uses_the_server_fixture_shape() {
 }
 
 #[tokio::test]
+async fn chat_creation_serializes_the_closed_surface_value() {
+    let stub = Stub::start([StubResponse::json(StatusCode::CREATED, SESSION)]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let session = client
+        .create_session(CreateSessionRequest {
+            surface: Some(SessionSurface::Chat),
+            ..CreateSessionRequest::default()
+        })
+        .await
+        .expect("chat create succeeds");
+    assert_eq!(
+        session.chat.expect("chat projection").worktree_name,
+        "chat-3"
+    );
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[0].body).expect("request is JSON"),
+        serde_json::json!({ "surface": "chat" })
+    );
+}
+
+#[tokio::test]
+async fn malformed_chat_projection_is_a_protocol_failure() {
+    let mut malformed = fixture(SESSION);
+    malformed["chat"]["worktree_path"] = serde_json::Value::String(String::new());
+    let body = malformed.to_string();
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &body)]).await;
+    let (client, _) = stub_client(&stub, 1);
+    let id = SessionId::new("sesn_fixture").expect("fixture id is valid");
+
+    let error = client
+        .read_session(&id)
+        .await
+        .expect_err("an empty worktree path is not a usable chat projection");
+    assert!(matches!(error, Error::Protocol { .. }));
+    assert!(error.to_string().contains("worktree path"));
+}
+
+#[tokio::test]
 async fn list_sessions_finds_next_after_unrelated_link_header_fields() {
     let older = SESSIONS.replace("sesn_fixture", "sesn_older");
     let stub = Stub::start([
@@ -1585,7 +1776,7 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
     let stub = Stub::start([
         StubResponse::json(StatusCode::OK, SESSIONS).header(
             "link",
-            "</api/v1/sessions?status=running&limit=1&cursor=opaque-next>; rel=\"next\"",
+            "</api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque-next>; rel=\"next\"",
         ),
         StubResponse::json(StatusCode::OK, &older),
     ])
@@ -1594,6 +1785,8 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
     let request = SessionPageRequest::new()
         .with_status(SessionStatus::Running)
         .expect("a first-page status filter is accepted")
+        .with_surface(SessionSurfaceFilter::Chat)
+        .expect("a first-page surface filter is accepted")
         .with_limit(1)
         .expect("one is within the page bound")
         .with_cursor("opaque start")
@@ -1610,6 +1803,11 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
             .with_status(SessionStatus::Ready)
             .is_err()
     );
+    assert!(
+        SessionPageRequest::continuing(next.clone())
+            .with_surface(SessionSurfaceFilter::Agent)
+            .is_err()
+    );
     let last = client
         .list_session_page(SessionPageRequest::continuing(next))
         .await
@@ -1624,10 +1822,219 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
             .map(|request| request.uri.to_string())
             .collect::<Vec<_>>(),
         [
-            "/proxy/api/v1/sessions?status=running&limit=1&cursor=opaque+start",
-            "/proxy/api/v1/sessions?status=running&limit=1&cursor=opaque-next",
+            "/proxy/api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque+start",
+            "/proxy/api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque-next",
         ]
     );
+}
+
+#[tokio::test]
+async fn chat_host_inventory_decodes_projection_and_route_bound_pages() {
+    let retired = CHAT_HOSTS
+        .replace(
+            "chho_0123456789abcdef0123456789abcdef",
+            "chho_fedcba9876543210fedcba9876543210",
+        )
+        .replace("\"status\": \"active\"", "\"status\": \"retired\"");
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+            "link",
+            "</api/v1/admin/chat/hosts?limit=1&cursor=opaque-next>; rel=\"next\"",
+        ),
+        StubResponse::json(StatusCode::OK, &retired),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+    let request = ChatHostPageRequest::new()
+        .with_limit(1)
+        .expect("one is within the page bound")
+        .with_cursor("opaque start")
+        .expect("an opaque cursor is accepted");
+
+    let first = client
+        .list_chat_host_page(request)
+        .await
+        .expect("first host page lists");
+    let host = &first.items[0];
+    assert_eq!(host.id.as_str(), "chho_0123456789abcdef0123456789abcdef");
+    assert_eq!(host.owner, "subject-owner");
+    assert_eq!(host.status, ChatHostStatus::Active);
+    assert_eq!(host.thread_count, 3);
+    assert_eq!(host.runtime_version.as_deref(), Some("runtime-v2"));
+    assert_eq!(host.paused_at.as_deref(), Some("2026-09-01T01:00:00Z"));
+    assert_eq!(host.revived_at.as_deref(), Some("2026-09-01T02:00:00Z"));
+    assert_eq!(
+        host.checkpoint_captured_at.as_deref(),
+        Some("2026-09-01T00:45:00Z")
+    );
+    let failure = host
+        .last_failure
+        .as_ref()
+        .expect("the bounded setup failure is projected");
+    assert_eq!(failure.phase, cma_sdk::ChatHostFailurePhase::WorkspaceSetup);
+    assert_eq!(failure.command_index, Some(1));
+    assert_eq!(
+        failure.output_excerpt.as_deref(),
+        Some("bounded setup failure")
+    );
+    assert_eq!(host.settings_revision, 17);
+    assert_eq!(host.created_at, "2026-08-31T23:00:00Z");
+
+    let next = first.next.expect("first host page continues");
+    assert!(
+        ChatHostPageRequest::continuing(next.clone())
+            .with_limit(2)
+            .is_err()
+    );
+    assert!(
+        ChatHostPageRequest::continuing(next.clone())
+            .with_cursor("replacement")
+            .is_err()
+    );
+    let last = client
+        .list_chat_host_page(ChatHostPageRequest::continuing(next))
+        .await
+        .expect("manual host continuation lists");
+    assert_eq!(last.items[0].status, ChatHostStatus::Retired);
+    assert!(last.next.is_none());
+
+    assert_eq!(
+        stub.requests()
+            .await
+            .iter()
+            .map(|request| request.uri.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "/proxy/api/v1/admin/chat/hosts?limit=1&cursor=opaque+start",
+            "/proxy/api/v1/admin/chat/hosts?limit=1&cursor=opaque-next",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_chat_hosts_walks_pages_with_finite_boundaries() {
+    let older = CHAT_HOSTS.replace(
+        "chho_0123456789abcdef0123456789abcdef",
+        "chho_fedcba9876543210fedcba9876543210",
+    );
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+            "link",
+            "</api/v1/admin/chat/hosts?limit=50&cursor=older>; rel=\"next\"",
+        ),
+        StubResponse::json(StatusCode::OK, &older),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let hosts = client
+        .list_chat_hosts()
+        .await
+        .expect("both host pages list");
+    assert_eq!(hosts.len(), 2);
+    assert_eq!(
+        stub.requests()
+            .await
+            .iter()
+            .map(|request| request.uri.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "/proxy/api/v1/admin/chat/hosts",
+            "/proxy/api/v1/admin/chat/hosts?limit=50&cursor=older",
+        ]
+    );
+
+    let bounded = Stub::start([StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+        "link",
+        "</api/v1/admin/chat/hosts?cursor=more>; rel=\"next\"",
+    )])
+    .await;
+    let (bounded_client, _) = stub_client(&bounded, 1);
+    assert!(matches!(
+        bounded_client
+            .list_chat_hosts_with_limits(PageWalkLimits::new(1, 10).expect("valid limits"))
+            .await,
+        Err(Error::Protocol { .. })
+    ));
+}
+
+#[tokio::test]
+async fn chat_host_inventory_refuses_cross_collection_continuations() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+        "link",
+        "</api/v1/sessions?cursor=wrong-collection>; rel=\"next\"",
+    )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_chat_hosts().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn retire_chat_host_posts_and_accepts_idempotent_http_ok() {
+    let retired = CHAT_HOSTS.replace("\"status\": \"active\"", "\"status\": \"retired\"");
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &retired[1..retired.len() - 2]),
+        StubResponse::json(StatusCode::OK, &retired[1..retired.len() - 2]),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+    let id =
+        ChatHostId::new("chho_0123456789abcdef0123456789abcdef").expect("fixture host id is valid");
+
+    assert_eq!(
+        client
+            .retire_chat_host(&id)
+            .await
+            .expect("active host retires")
+            .status,
+        ChatHostStatus::Retired
+    );
+    assert_eq!(
+        client
+            .retire_chat_host(&id)
+            .await
+            .expect("retired host is an idempotent success")
+            .status,
+        ChatHostStatus::Retired
+    );
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.method == Method::POST)
+    );
+    assert!(requests.iter().all(|request| {
+        request.uri.path()
+            == "/proxy/api/v1/admin/chat/hosts/chho_0123456789abcdef0123456789abcdef/retire"
+    }));
+    assert!(requests.iter().all(|request| request.body.is_empty()));
+}
+
+#[tokio::test]
+async fn malformed_chat_host_projection_is_a_protocol_failure() {
+    let malformed = CHAT_HOSTS.replace("\"status\": \"active\"", "\"status\": \"future\"");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &malformed)]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_chat_hosts().await,
+        Err(Error::Protocol { .. })
+    ));
+
+    let malformed_failure =
+        CHAT_HOSTS.replace("\"phase\": \"workspace_setup\"", "\"phase\": \"runtime\"");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &malformed_failure)]).await;
+    let (client, _) = stub_client(&stub, 1);
+    assert!(matches!(
+        client.list_chat_hosts().await,
+        Err(Error::Protocol { .. })
+    ));
 }
 
 #[test]
@@ -1639,6 +2046,14 @@ fn bounded_page_and_walk_options_reject_invalid_edges() {
             .is_err()
     );
     assert!(SessionPageRequest::new().with_cursor("").is_err());
+    assert!(ChatHostPageRequest::new().with_limit(0).is_err());
+    assert!(
+        ChatHostPageRequest::new()
+            .with_limit(MAX_PAGE_SIZE + 1)
+            .is_err()
+    );
+    assert!(ChatHostPageRequest::new().with_cursor("").is_err());
+    assert!(ChatHostId::new("session-shaped").is_err());
     assert!(PageWalkLimits::new(0, 1).is_err());
     assert!(PageWalkLimits::new(1, 0).is_err());
 }
@@ -2093,4 +2508,177 @@ async fn unknown_event_variants_cross_the_live_stream_intact() {
     };
     assert_eq!(event_type, "future_event");
     assert_eq!(payload["nested"]["answer"], 42);
+}
+
+#[test]
+fn server_owned_responses_fixtures_match_the_public_rust_shapes() {
+    let conversation: ResponsesConversation =
+        serde_json::from_str(RESPONSES_CONVERSATION).expect("conversation fixture decodes");
+    assert_eq!(
+        serde_json::to_value(conversation).expect("conversation encodes"),
+        fixture(RESPONSES_CONVERSATION)
+    );
+
+    let items: ResponsesConversationItemList =
+        serde_json::from_str(RESPONSES_ITEMS).expect("item fixture decodes");
+    assert_eq!(items.data.len(), 3);
+    assert_eq!(
+        serde_json::to_value(items).expect("items encode"),
+        fixture(RESPONSES_ITEMS)
+    );
+
+    let response: ResponsesResponse =
+        serde_json::from_str(RESPONSES_RESPONSE).expect("response fixture decodes");
+    assert_eq!(response.model, "chat-model-fixture");
+    assert_eq!(
+        serde_json::to_value(response).expect("response encodes"),
+        fixture(RESPONSES_RESPONSE)
+    );
+
+    let mut sequence = 0;
+    for data in RESPONSES_STREAM
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+    {
+        let event: ResponsesEvent = serde_json::from_str(data).expect("stream fixture decodes");
+        assert_eq!(event.sequence_number(), sequence);
+        assert_eq!(
+            serde_json::to_value(event).expect("event encodes"),
+            serde_json::from_str::<serde_json::Value>(data).expect("event fixture is JSON")
+        );
+        sequence += 1;
+    }
+    assert_eq!(sequence, 16);
+
+    for status in ["completed", "failed", "incomplete"] {
+        let mut response = fixture(RESPONSES_RESPONSE);
+        response["status"] = status.into();
+        response["error"] = if status == "failed" {
+            serde_json::json!({ "code": "fixture_failure", "message": "fixture failed" })
+        } else {
+            serde_json::Value::Null
+        };
+        response["incomplete_details"] = if status == "incomplete" {
+            serde_json::json!({ "reason": "max_output_tokens" })
+        } else {
+            serde_json::Value::Null
+        };
+        let event: ResponsesEvent = serde_json::from_value(serde_json::json!({
+            "type": format!("response.{status}"),
+            "sequence_number": 0,
+            "response": response,
+        }))
+        .expect("every terminal response event decodes");
+        assert!(event.is_terminal());
+    }
+}
+
+#[tokio::test]
+async fn responses_resource_methods_and_stream_use_the_server_owned_contract() {
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, RESPONSES_CONVERSATION),
+        StubResponse::json(StatusCode::OK, RESPONSES_CONVERSATION),
+        StubResponse::json(StatusCode::OK, RESPONSES_ITEMS),
+        StubResponse::json(StatusCode::OK, RESPONSES_RESPONSE),
+        StubResponse::responses_sse(RESPONSES_STREAM),
+    ])
+    .await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+    let conversation_id = SessionId::new("sesn_fixture").expect("fixture id is valid");
+
+    assert_eq!(
+        client
+            .create_conversation()
+            .await
+            .expect("conversation creates")
+            .id,
+        conversation_id
+    );
+    client
+        .read_conversation(&conversation_id)
+        .await
+        .expect("conversation reads");
+    let items = client
+        .list_conversation_items(
+            &conversation_id,
+            ConversationItemsRequest {
+                after: Some("msg_sesn_fixture_1".into()),
+                limit: Some(7),
+            },
+        )
+        .await
+        .expect("conversation items read");
+    assert_eq!(items.data.len(), 3);
+    assert_eq!(
+        client
+            .read_response("resp_sesn_fixture_1")
+            .await
+            .expect("response reads")
+            .model,
+        "chat-model-fixture"
+    );
+
+    let mut request =
+        CreateResponseRequest::text(conversation_id, "Open the contract").expect("valid request");
+    request.model = Some("caller-model-is-ignored".into());
+    let mut stream = client
+        .create_response(request)
+        .await
+        .expect("response stream opens");
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event.expect("response event is valid"));
+    }
+    assert_eq!(events.len(), 16);
+    assert!(events.last().is_some_and(ResponsesEvent::is_terminal));
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 5);
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 5);
+    let paths = requests
+        .iter()
+        .map(|request| request.uri.path_and_query().unwrap().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            "/proxy/api/v1/conversations",
+            "/proxy/api/v1/conversations/sesn_fixture",
+            "/proxy/api/v1/conversations/sesn_fixture/items?after=msg_sesn_fixture_1&limit=7",
+            "/proxy/api/v1/responses/resp_sesn_fixture_1",
+            "/proxy/api/v1/responses",
+        ]
+    );
+    assert_eq!(requests[0].method, Method::POST);
+    let response_body: serde_json::Value =
+        serde_json::from_slice(&requests[4].body).expect("response request is JSON");
+    assert_eq!(response_body["stream"], true);
+    assert_eq!(response_body["model"], "caller-model-is-ignored");
+    assert!(!paths.iter().any(|path| path.ends_with("/cancel")));
+}
+
+#[tokio::test]
+async fn responses_stream_rejects_sequence_gaps_without_reposting_the_turn() {
+    let corrupted = RESPONSES_STREAM.replacen("\"sequence_number\":1", "\"sequence_number\":2", 1);
+    let stub = Stub::start([StubResponse::responses_sse(&corrupted)]).await;
+    let (client, _) = stub_client(&stub, 4);
+    let request = CreateResponseRequest::text(
+        SessionId::new("sesn_fixture").expect("fixture id is valid"),
+        "continue",
+    )
+    .expect("request is valid");
+    let mut stream = client
+        .create_response(request)
+        .await
+        .expect("handshake succeeds");
+    assert!(stream.next().await.unwrap().is_ok());
+    assert!(matches!(
+        stream.next().await,
+        Some(Err(Error::Protocol { ref message })) if message.contains("expected sequence 1")
+    ));
+    assert_eq!(
+        stub.requests().await.len(),
+        1,
+        "response POST is never replayed"
+    );
 }

@@ -10,7 +10,10 @@ use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{KernelId, SessionId};
 use crate::platform_service::PlatformSettingsService;
 use crate::session::Session;
-use crate::store::{ContextStore, CredentialSource, HandoverStore, SessionStore, SkillPackStore};
+use crate::store::{
+    ChatCheckpointStore, ContextStore, CredentialSource, HandoverStore, SessionStore,
+    SkillPackStore,
+};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
@@ -46,6 +49,8 @@ pub(crate) struct SessionEntry {
     pub(crate) session: Session,
     /// Internal Trigger provenance retained across live-entry flushes.
     pub(crate) trigger_origin: Option<crate::session::TriggerSessionOrigin>,
+    /// Shared-host provenance retained across live-entry status commits.
+    pub(crate) chat_origin: Option<crate::store::ChatOrigin>,
     /// Durable Trigger prompt outbox state mirrored into the live entry.
     pub(crate) initial_prompt: Option<crate::store::InitialPromptDispatch>,
     /// This session's durable FIFO, kept alive while its runtime is live.
@@ -301,6 +306,8 @@ pub struct SessionService {
     pub(crate) context: Option<Arc<dyn ContextStore>>,
     /// Where claim-bound compatibility handover snapshots are kept.
     pub(crate) handovers: Option<Arc<dyn HandoverStore>>,
+    /// Where complete chat-host recovery objects are retained by digest.
+    pub(crate) chat_checkpoints: Option<Arc<dyn ChatCheckpointStore>>,
     /// Where to get an owner's credential when the owner is not here to give one.
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
     /// Where this session's skills are fetched from, when anything can.
@@ -345,6 +352,12 @@ pub struct SessionService {
     pub(crate) environments: Arc<EnvironmentProfileService>,
     /// Deployment settings, always present so readers cannot skip the fallback.
     pub(crate) settings: Arc<PlatformSettingsService>,
+    /// Durable ownership of shared chat runtimes, absent on deployments that
+    /// have not composed the chat surface.
+    pub(crate) chat_hosts: Option<Arc<dyn crate::store::ChatHostStore>>,
+    /// Serializes first-host creation and lifecycle claims for one owner in
+    /// the deployment's currently single control-plane replica.
+    pub(crate) chat_host_guards: crate::limits::OwnerGuards,
     /// Serializes one owner's limit check through its record write.
     pub(crate) session_limit_guards: crate::limits::OwnerGuards,
     /// Serializes the deployment-wide reservation check through its record write.
@@ -367,6 +380,8 @@ pub struct SessionService {
     /// Detached bring-up can outlive its request while no live entry exists;
     /// this distinguishes it from work a reconciliation sweep must recover.
     pub(crate) starting: RwLock<HashSet<SessionId>>,
+    /// Chat hosts this process is currently provisioning or resuming.
+    pub(crate) chat_hosts_starting: RwLock<HashSet<crate::ChatHostId>>,
     /// Milliseconds to wait before the first provisioning retry.
     ///
     /// Held here rather than as a constant so a test can exercise the retry
@@ -392,6 +407,8 @@ pub struct SessionPorts {
     pub context: Option<Arc<dyn ContextStore>>,
     /// Where compatibility handover snapshots are durably staged.
     pub handovers: Option<Arc<dyn HandoverStore>>,
+    /// Where chat workspace and conversation checkpoint generations are staged.
+    pub chat_checkpoints: Option<Arc<dyn ChatCheckpointStore>>,
     /// Where a session's own credential is minted.
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.
@@ -404,4 +421,6 @@ pub struct SessionPorts {
     ///
     /// `None` becomes `unconfigured()`, so sessions still use shipped bounds.
     pub settings: Option<Arc<PlatformSettingsService>>,
+    /// Durable shared chat-host aggregates.
+    pub chat_hosts: Option<Arc<dyn crate::store::ChatHostStore>>,
 }

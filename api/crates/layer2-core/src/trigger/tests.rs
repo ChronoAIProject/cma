@@ -524,6 +524,7 @@ fn prompt_delivery_progress_is_identity_bound_monotonic_and_evented() {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -906,6 +907,7 @@ fn a_long_initial_turn_uses_its_session_deadline_not_the_generic_poll_budget() {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -1196,6 +1198,7 @@ fn recovery_required_prompt_launch() -> Launch {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -2619,6 +2622,7 @@ fn leased_prompt_launch_for_connection_revocation() -> Launch {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -5469,6 +5473,7 @@ fn initial_prompt_lifecycle_waits_spend_neither_execute_nor_reconciliation_budge
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),

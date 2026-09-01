@@ -83,6 +83,13 @@ pub struct SessionBriefing {
 /// ignored. The struct grows; nothing here is a map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlatformSettings {
+    /// Chat policy, absent until an administrator explicitly configures it.
+    ///
+    /// Absence is deliberately stronger than `enabled: false`: old stored
+    /// documents remain dark without Serde manufacturing an object that an
+    /// operator never reviewed.
+    #[serde(default)]
+    pub chat: Option<crate::ChatSettings>,
     #[serde(default)]
     pub briefing: SessionBriefing,
     /// The total reservation this deployment is prepared to promise.
@@ -152,6 +159,7 @@ impl PlatformSettings {
     /// where its audit name must be chosen.
     pub fn changed_from(&self, previous: &Self) -> Vec<&'static str> {
         let Self {
+            chat,
             briefing,
             deployment_capacity,
             cpu_pressure,
@@ -161,6 +169,7 @@ impl PlatformSettings {
             live_sessions,
         } = self;
         let Self {
+            chat: previous_chat,
             briefing: previous_briefing,
             deployment_capacity: previous_deployment_capacity,
             cpu_pressure: previous_cpu_pressure,
@@ -170,6 +179,9 @@ impl PlatformSettings {
             live_sessions: previous_live_sessions,
         } = previous;
         let mut changed = Vec::new();
+        if chat != previous_chat {
+            changed.push("chat");
+        }
         if briefing != previous_briefing {
             changed.push("briefing");
         }

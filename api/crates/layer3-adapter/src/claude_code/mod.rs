@@ -76,6 +76,8 @@ impl ClaudeCodeAdapter {
             options.resume_conversation.clone(),
             // This kernel refuses own-account sessions during provisioning.
             false,
+            options.working_directory.clone(),
+            options.conversation_slot.clone(),
         )
     }
 }
@@ -167,6 +169,48 @@ impl KernelAdapter for ClaudeCodeAdapter {
     ) -> Result<ConversationChannel, AdapterError> {
         self.hosted
             .open_acp_conversation(handle, self.conversation_binding(options), updates)
+            .await
+    }
+
+    async fn prepare_workspace_source(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceSourceRequest,
+    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
+        self.hosted.prepare_workspace_source(handle, request).await
+    }
+
+    async fn add_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceTreeRequest,
+    ) -> Result<crate::WorkspaceTreeReceipt, AdapterError> {
+        self.hosted.add_workspace_tree(handle, request).await
+    }
+
+    async fn remove_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        name: &str,
+    ) -> Result<(), AdapterError> {
+        self.hosted.remove_workspace_tree(handle, name).await
+    }
+
+    async fn run_workspace_setup(
+        &self,
+        handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<crate::WorkspaceSetupReceipt, AdapterError> {
+        self.hosted.run_workspace_setup(handle, commands).await
+    }
+
+    async fn snapshot_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        self.hosted
+            .snapshot_conversation(handle, conversation_id)
             .await
     }
 

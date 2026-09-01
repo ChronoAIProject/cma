@@ -5,9 +5,9 @@ import type { PersonLabel } from './directory';
  * The record list from docs/Web_Style.md §15, and the way a person is drawn
  * in one.
  *
- * Shared by all four views rather than reimplemented per view, because §15
- * states the row shape once — leading timestamp, primary label, secondary
- * metadata beneath — and four copies of it are how one of them ends up with a
+ * Shared by all five record-list views rather than reimplemented per view,
+ * because §15 states the row shape once — leading timestamp, primary label,
+ * secondary metadata beneath — and five copies of it are how one ends up with a
  * hover highlight nobody asked for.
  *
  * A list is deliberately not a table. Rows here are read one at a time, and a
@@ -50,11 +50,13 @@ interface RecordRowProps {
 
 export function RecordRow({ at, primary, meta, actions }: RecordRowProps) {
   return (
-    <li className="record__row">
-      {at === undefined ? null : <span className="record__at">{at}</span>}
+    <li className="record__row operator__record-row">
+      {at === undefined ? null : <span className="record__at operator__record-at">{at}</span>}
       <div className="record__text">
         <div className="record__primary">{primary}</div>
-        {meta === undefined ? null : <div className="record__meta">{meta}</div>}
+        {meta === undefined ? null : (
+          <div className="record__meta operator__record-meta">{meta}</div>
+        )}
       </div>
       {actions === undefined ? null : <div className="record__actions">{actions}</div>}
     </li>

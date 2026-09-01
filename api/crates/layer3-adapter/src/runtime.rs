@@ -186,6 +186,8 @@ pub struct RuntimeListing {
     pub handle: RuntimeHandle,
     /// The session it was provisioned for, when it says.
     pub session: Option<String>,
+    /// Shared chat host correlation, absent on ordinary per-session runtimes.
+    pub chat_host: Option<String>,
     /// Durable generation of the runtime within its session, when recorded.
     ///
     /// Handles are provider-owned and opaque, so a handle alone cannot prove
@@ -279,6 +281,11 @@ impl RuntimeEnvironment {
 pub struct RuntimeSpec {
     /// Identifier of the session the runtime serves, for correlation only.
     pub session_id: String,
+    /// Shared chat host owning this runtime, when it is not session-owned.
+    ///
+    /// Kept separate from `session_id` so reconciliation never mistakes one
+    /// shared provider object for an orphaned per-session runtime.
+    pub chat_host: Option<String>,
     /// Durable generation reserved for this runtime within the session.
     ///
     /// Written into provider-visible metadata. Reconciliation can therefore
@@ -395,6 +402,17 @@ pub struct RuntimeSpec {
     /// contributor-owned service access, while this flag prevents the model
     /// proxy from using that contributor authority for sponsored spend.
     pub sponsored_model_required: bool,
+    /// Whether this runtime must support preparing a Git-backed workspace
+    /// source before any agent process starts.
+    pub workspace_source_required: bool,
+    /// Minimum number of independently supervised conversation processes the
+    /// runtime must support, or `None` when the caller needs only the legacy
+    /// single-conversation shape.
+    ///
+    /// A runtime asked for named conversation slots must also advertise the
+    /// coherent workspace checkpoint capability. Shared chat hosts cannot be
+    /// paused safely if their several writers cannot be fenced as one unit.
+    pub conversation_slots_required: Option<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -420,6 +438,9 @@ pub struct WorkspaceCheckpointRequest {
     pub version: u64,
     pub source_revision: String,
     pub baseline_manifest_digest: String,
+    /// Include the prepared clone's Git administration files and worktree
+    /// pointer files. Ordinary imported workspaces leave this false.
+    pub include_git_metadata: bool,
     pub disposition: WorkspaceCheckpointDisposition,
 }
 
@@ -469,7 +490,100 @@ pub struct WorkspaceCheckpointPackage {
     pub quiesced_writers: u32,
     pub writer_state: WorkspaceWriterState,
     pub writer_resume_token: Option<String>,
+    pub includes_git_metadata: bool,
     pub archive: Vec<u8>,
+}
+
+/// A Git repository the runtime should materialize beneath its workspace.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSourceRequest {
+    /// Credential-free HTTPS repository URL.
+    #[serde(rename = "url")]
+    pub repository_url: String,
+    /// Branch, tag, or other Git selector to clone.
+    pub reference: String,
+    /// Single path component beneath the runtime workspace.
+    pub directory: String,
+    /// Runtime-generation-scoped authority used by coherent checkpoints.
+    pub workspace_epoch: u64,
+}
+
+/// Verified immutable authority established by preparing one Git source.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceSourceReceipt {
+    pub workspace_epoch: u64,
+    pub source_revision: String,
+    pub baseline_manifest_digest: String,
+}
+
+/// One independently writable worktree to add to a prepared workspace source.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceTreeRequest {
+    pub name: String,
+    pub base: String,
+}
+
+/// The runtime-resolved path of an added workspace tree.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceTreeReceipt {
+    pub path: String,
+}
+
+/// Bounded result of one administrator-owned workspace setup command.
+pub const MAX_WORKSPACE_SETUP_OUTPUT_BYTES: usize = 32 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSetupStep {
+    pub command_index: usize,
+    pub exit_code: i32,
+    pub output_excerpt: String,
+}
+
+/// Results returned in execution order for a workspace setup sequence.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSetupReceipt {
+    pub steps: Vec<WorkspaceSetupStep>,
+    #[serde(default)]
+    pub failing_index: Option<usize>,
+}
+
+impl WorkspaceSetupReceipt {
+    /// Refuse receipts that could conceal skipped, reordered, or unbounded
+    /// execution before the orchestration layer persists their evidence.
+    pub fn validate(&self, command_count: usize) -> Result<(), &'static str> {
+        if self.steps.len() > command_count {
+            return Err("workspace setup returned more steps than commands");
+        }
+        for (expected, step) in self.steps.iter().enumerate() {
+            if step.command_index != expected {
+                return Err("workspace setup steps are not in command order");
+            }
+            if step.output_excerpt.len() > MAX_WORKSPACE_SETUP_OUTPUT_BYTES {
+                return Err("workspace setup output exceeds its byte bound");
+            }
+        }
+        match self.failing_index {
+            None if self.steps.len() == command_count
+                && self.steps.iter().all(|step| step.exit_code == 0) =>
+            {
+                Ok(())
+            }
+            Some(index)
+                if index < command_count
+                    && self.steps.len() == index + 1
+                    && self.steps[..index].iter().all(|step| step.exit_code == 0)
+                    && self.steps[index].exit_code != 0 =>
+            {
+                Ok(())
+            }
+            _ => Err("workspace setup failure metadata is inconsistent"),
+        }
+    }
+
+    pub fn failed_step(&self) -> Option<&WorkspaceSetupStep> {
+        self.failing_index.and_then(|index| self.steps.get(index))
+    }
 }
 
 /// What a runtime should be told about how to behave.
@@ -501,6 +615,17 @@ pub struct RuntimeOptions {
     /// The adapter maps this provider-neutral requirement into its own named
     /// mode. It never means unrestricted filesystem or network access.
     pub restricted_service_gateway: bool,
+    /// Directory supplied verbatim to the hosted conversation protocol.
+    ///
+    /// `None` preserves the adapter's deployment-wide workspace default.
+    pub working_directory: Option<String>,
+    /// Opaque supervisor slot identity for this conversation.
+    ///
+    /// This is the control plane's session id, not the agent protocol's
+    /// conversation id in `resume_conversation`. It is needed before a new ACP
+    /// session has a protocol id and keeps several bridges in one runtime
+    /// independent. `None` retains the legacy unnamed slot.
+    pub conversation_slot: Option<String>,
     /// A conversation to rejoin rather than begin.
     ///
     /// Set when a control plane is taking back over a runtime that kept

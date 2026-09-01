@@ -43,6 +43,8 @@
 mod client;
 mod error;
 mod event;
+mod responses;
+mod settings;
 mod stream;
 mod triggers;
 mod types;
@@ -78,12 +80,25 @@ pub use event::{
     AvailableCommand, ConfigOption, Event, EventKind, PlanStep, ProvisioningStage,
     RuntimeLossCause, SessionPlane, ToolBody,
 };
+pub use responses::{
+    ConversationItemsRequest, ConversationMessageContent, ConversationMessageItem,
+    CreateResponseRequest, ResponseError, ResponseInput, ResponseInputContent,
+    ResponseInputMessage, ResponseInputText, ResponseInputTokenDetails, ResponseOutputMessage,
+    ResponseOutputText, ResponseOutputTokenDetails, ResponseStatus, ResponseToolActivity,
+    ResponseToolBody, ResponseUsage, ResponsesConversation, ResponsesConversationItem,
+    ResponsesConversationItemList, ResponsesEvent, ResponsesResponse, ResponsesStream,
+};
+pub use settings::{
+    ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSetup,
+    ChatWorkspaceSource, StoredChatSettings,
+};
 pub use stream::EventStream;
 pub use triggers::*;
 pub use types::{
-    Agent, ApprovalDecision, Conformance, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE,
-    MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach,
-    ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput,
-    SessionPageRequest, SessionPricing, SessionSize, SessionStatus, Skill, StopReason,
-    TerminalGeometry, Usage,
+    Agent, ApprovalDecision, ChatHost, ChatHostFailure, ChatHostFailurePhase, ChatHostId,
+    ChatHostPageRequest, ChatHostStatus, ChatSession, Conformance, CreateSessionRequest,
+    CredentialMode, MAX_PAGE_SIZE, MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits,
+    PermissionMode, PublicIdentity, Reach, ReasoningEffort, RecoveryState, ScreenSnapshot, Session,
+    SessionId, SessionInput, SessionPageRequest, SessionPricing, SessionSize, SessionStatus,
+    SessionSurface, SessionSurfaceFilter, Skill, StopReason, TerminalGeometry, Usage,
 };

@@ -14,10 +14,12 @@ use reqwest::{Method, Response, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::settings::SettingsEnvelope;
 use crate::{
-    ApprovalDecision, Conformance, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
+    ApprovalDecision, ChatHost, ChatHostId, ChatHostPageRequest, ChatSettings, Conformance,
+    CreateResponseRequest, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
     PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session, SessionId, SessionInput,
-    SessionPageRequest, TerminalGeometry, Usage,
+    SessionPageRequest, SessionSurface, StoredChatSettings, TerminalGeometry, Usage,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -352,10 +354,44 @@ impl Client {
         conformance.validate()
     }
 
+    /// Read the deployment-owned chat setting and conditional-write revision.
+    pub async fn read_chat_settings(&self) -> Result<StoredChatSettings> {
+        let envelope: SettingsEnvelope = self
+            .request_json(Method::GET, &["admin", "settings"], None, StatusCode::OK)
+            .await?;
+        envelope.into_stored()
+    }
+
+    /// Replace only the chat setting under the platform settings revision CAS.
+    pub async fn change_chat_settings(
+        &self,
+        expected_revision: u64,
+        chat: Option<&ChatSettings>,
+    ) -> Result<StoredChatSettings> {
+        if let Some(chat) = chat {
+            chat.validate()?;
+        }
+        let body = serde_json::json!({
+            "expected_revision": expected_revision,
+            "chat": chat,
+        });
+        let envelope: SettingsEnvelope = self
+            .request_json(
+                Method::PATCH,
+                &["admin", "settings"],
+                Some(body),
+                StatusCode::OK,
+            )
+            .await?;
+        envelope.into_stored()
+    }
+
     /// Create a session.
     pub async fn create_session(&self, request: CreateSessionRequest) -> Result<Session> {
         #[derive(Serialize)]
         struct WireRequest<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            surface: Option<SessionSurface>,
             #[serde(skip_serializing_if = "Option::is_none")]
             cols: Option<u16>,
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,6 +407,7 @@ impl Client {
             .map(|geometry| geometry.validate("create request"))
             .transpose()?;
         let body = serde_json::to_value(WireRequest {
+            surface: request.surface,
             cols: geometry.map(|value| value.cols),
             rows: geometry.map(|value| value.rows),
             environment_profile: request.environment_profile.as_deref(),
@@ -389,10 +426,17 @@ impl Client {
             Some(continuation) => self.session_page_url(continuation.as_str())?,
             None => {
                 let mut url = self.endpoint(&["sessions"])?;
-                if page.status().is_some() || page.limit().is_some() || page.cursor().is_some() {
+                if page.status().is_some()
+                    || page.surface().is_some()
+                    || page.limit().is_some()
+                    || page.cursor().is_some()
+                {
                     let mut query = url.query_pairs_mut();
                     if let Some(status) = page.status() {
                         query.append_pair("status", status.query_value());
+                    }
+                    if let Some(surface) = page.surface() {
+                        query.append_pair("surface", surface.query_value());
                     }
                     if let Some(limit) = page.limit() {
                         query.append_pair("limit", &limit.to_string());
@@ -464,6 +508,110 @@ impl Client {
             request = SessionPageRequest::continuing(next);
         }
         Err(Error::protocol("pagination exhausted its page boundary"))
+    }
+
+    /// Read one bounded, newest-first administrative chat-host page.
+    pub async fn list_chat_host_page(&self, page: ChatHostPageRequest) -> Result<Page<ChatHost>> {
+        const COLLECTION: &[&str] = &["admin", "chat", "hosts"];
+        const COLLECTION_PATH: &str = "/api/v1/admin/chat/hosts";
+
+        let url = match page.continuation() {
+            Some(continuation) => self.collection_page_url(
+                continuation.as_str(),
+                COLLECTION,
+                COLLECTION_PATH,
+                "chat host",
+            )?,
+            None => {
+                let mut url = self.endpoint(COLLECTION)?;
+                if page.limit().is_some() || page.cursor().is_some() {
+                    let mut query = url.query_pairs_mut();
+                    if let Some(limit) = page.limit() {
+                        query.append_pair("limit", &limit.to_string());
+                    }
+                    if let Some(cursor) = page.cursor() {
+                        query.append_pair("cursor", cursor);
+                    }
+                }
+                url
+            }
+        };
+        let request = RequestSpec::new(Method::GET, url, None, false);
+        let (items, next): (Vec<ChatHost>, Option<String>) = self
+            .execute(request, |response| async move {
+                decode_json_page(response, StatusCode::OK).await
+            })
+            .await?;
+        if items.len() > usize::from(MAX_PAGE_SIZE) {
+            return Err(Error::protocol(format!(
+                "chat host page exceeded the {MAX_PAGE_SIZE}-item server boundary"
+            )));
+        }
+        let items = items
+            .into_iter()
+            .map(ChatHost::validate)
+            .collect::<Result<Vec<_>>>()?;
+        let next = match next {
+            Some(target) => {
+                self.collection_page_url(&target, COLLECTION, COLLECTION_PATH, "chat host")?;
+                Some(PageContinuation::new(target))
+            }
+            None => None,
+        };
+        Ok(Page { items, next })
+    }
+
+    /// List every chat host visible to an administrator.
+    pub async fn list_chat_hosts(&self) -> Result<Vec<ChatHost>> {
+        self.list_chat_hosts_with_limits(PageWalkLimits::default())
+            .await
+    }
+
+    /// List every visible chat host within explicit page and retained-item ceilings.
+    pub async fn list_chat_hosts_with_limits(
+        &self,
+        limits: PageWalkLimits,
+    ) -> Result<Vec<ChatHost>> {
+        let mut request = ChatHostPageRequest::new();
+        let mut visited = HashSet::new();
+        let mut hosts = Vec::new();
+        for page_number in 1..=limits.max_pages() {
+            let page = self.list_chat_host_page(request).await?;
+            if page.items.len() > limits.max_items().saturating_sub(hosts.len()) {
+                return Err(Error::protocol(format!(
+                    "pagination exceeded its {}-item boundary",
+                    limits.max_items()
+                )));
+            }
+            hosts.extend(page.items);
+            let Some(next) = page.next else {
+                return Ok(hosts);
+            };
+            if page_number == limits.max_pages() {
+                return Err(Error::protocol(format!(
+                    "pagination exceeded its {}-page boundary",
+                    limits.max_pages()
+                )));
+            }
+            if !visited.insert(next.as_str().to_owned()) {
+                return Err(Error::protocol("pagination repeated a continuation link"));
+            }
+            request = ChatHostPageRequest::continuing(next);
+        }
+        Err(Error::protocol("pagination exhausted its page boundary"))
+    }
+
+    /// Retire one active or paused chat host, idempotently.
+    pub async fn retire_chat_host(&self, host_id: &ChatHostId) -> Result<ChatHost> {
+        let host: ChatHost = self
+            .request_json(
+                Method::POST,
+                &["admin", "chat", "hosts", host_id.as_str(), "retire"],
+                None,
+                StatusCode::OK,
+            )
+            .await?;
+        host.validate()
     }
 
     /// Read one session.
@@ -733,6 +881,46 @@ impl Client {
         .await
     }
 
+    pub(crate) async fn connect_response(
+        &self,
+        response_request: &CreateResponseRequest,
+    ) -> Result<Response> {
+        let mut request = RequestSpec::new(
+            Method::POST,
+            self.endpoint(&["responses"])?,
+            Some(response_request.wire_body()?),
+            true,
+        );
+        request.request_id = self.request_id_header()?;
+        let response = self.send_once(&request).await?;
+        self.observe_response(&response)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(decode_problem(response).await);
+        }
+        if status != StatusCode::OK {
+            return Err(Error::protocol(format!(
+                "Responses stream returned unexpected success status {}",
+                status.as_u16()
+            )));
+        }
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        if !content_type
+            .split(';')
+            .next()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"))
+        {
+            return Err(Error::protocol(format!(
+                "Responses stream returned content type '{content_type}'"
+            )));
+        }
+        Ok(response)
+    }
+
     pub(crate) fn retry_policy_ref(&self) -> &RetryPolicy {
         &self.inner.retry_policy
     }
@@ -752,6 +940,16 @@ impl Client {
     }
 
     fn session_page_url(&self, target: &str) -> Result<Url> {
+        self.collection_page_url(target, &["sessions"], "/api/v1/sessions", "session")
+    }
+
+    fn collection_page_url(
+        &self,
+        target: &str,
+        endpoint: &[&str],
+        collection_path: &str,
+        collection_name: &str,
+    ) -> Result<Url> {
         if !target.starts_with('/') || target.starts_with("//") {
             return Err(Error::protocol(
                 "pagination next link left the control plane",
@@ -759,12 +957,12 @@ impl Client {
         }
         let parsed = Url::parse(&format!("http://pagination.invalid{target}"))
             .map_err(|_| Error::protocol("pagination next link was not a valid URI"))?;
-        if parsed.path() != "/api/v1/sessions" || parsed.fragment().is_some() {
-            return Err(Error::protocol(
-                "pagination next link left the session collection",
-            ));
+        if parsed.path() != collection_path || parsed.fragment().is_some() {
+            return Err(Error::protocol(format!(
+                "pagination next link left the {collection_name} collection"
+            )));
         }
-        let mut url = self.endpoint(&["sessions"])?;
+        let mut url = self.endpoint(endpoint)?;
         url.set_query(parsed.query());
         Ok(url)
     }

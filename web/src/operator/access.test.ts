@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Capability } from '../auth/types';
-import { canControlAnySession, canOperate, controlsFor, viewsFor } from './access';
-import type { AdminSession } from './types';
+import { canControlAnySession, canOperate, controlsFor, retirementFor, viewsFor } from './access';
+import type { AdminSession, ChatHost } from './types';
 
 /**
  * Who is offered what.
@@ -39,18 +39,24 @@ describe('who is offered the panel', () => {
     expect(viewsFor(['read_user_directory']).map((v) => v.id)).toEqual(['people']);
     expect(viewsFor(['read_activity_log']).map((v) => v.id)).toEqual(['activity']);
     expect(viewsFor(['read_runtime_inventory']).map((v) => v.id)).toEqual(['namespace']);
-    expect(viewsFor(['read_all_sessions']).map((v) => v.id)).toEqual(['sessions']);
-    expect(viewsFor(['configure_platform']).map((v) => v.id)).toEqual(['settings']);
+    expect(viewsFor(['read_all_sessions']).map((v) => v.id)).toEqual(['sessions', 'chat_hosts']);
+    expect(viewsFor(['configure_platform']).map((v) => v.id)).toEqual([
+      'settings',
+      'chat_settings',
+    ]);
   });
 
-  it('offers Operations with only the platform configuration view', () => {
+  it('offers both configuration views from the one server capability', () => {
     expect(canOperate(['configure_platform'])).toBe(true);
-    expect(viewsFor(['configure_platform']).map((view) => view.label)).toEqual(['Settings']);
+    expect(viewsFor(['configure_platform']).map((view) => view.label)).toEqual([
+      'Settings',
+      'Chat',
+    ]);
   });
 
   it('offers the views in a fixed order however the capabilities arrived', () => {
     const ordered = viewsFor(['read_all_sessions', 'read_user_directory']).map((v) => v.id);
-    expect(ordered).toEqual(['people', 'sessions']);
+    expect(ordered).toEqual(['people', 'sessions', 'chat_hosts']);
   });
 
   it('does not offer the panel for the power to act alone', () => {
@@ -71,6 +77,33 @@ describe('who is offered the panel', () => {
     ];
     expect(canOperate(watcher)).toBe(true);
     expect(canControlAnySession(watcher)).toBe(false);
+  });
+});
+
+describe('what may be done to a chat host', () => {
+  function host(status: ChatHost['status']): ChatHost {
+    return {
+      id: 'chho_fixture',
+      owner: 'subject-a',
+      status,
+      threadCount: 2,
+      settingsRevision: 7,
+      createdAt: 0,
+    };
+  }
+
+  it('separates host inventory from retirement authority', () => {
+    expect(retirementFor(host('active'), ['read_all_sessions'])).toMatchObject({
+      canRetire: false,
+      reason: expect.stringMatching(/watch/i),
+    });
+    expect(retirementFor(host('active'), ['control_any_session'])).toEqual({ canRetire: true });
+    expect(retirementFor(host('paused'), ['control_any_session'])).toEqual({ canRetire: true });
+  });
+
+  it('does not offer retirement in transitional or retired states', () => {
+    expect(retirementFor(host('reviving'), ['control_any_session']).canRetire).toBe(false);
+    expect(retirementFor(host('retired'), ['control_any_session']).reason).toMatch(/already/i);
   });
 });
 

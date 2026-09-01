@@ -215,6 +215,7 @@ fn session_with_grants(id: &str, granted_skills: Vec<GrantedSkill>) -> Session {
         granted_services: None,
         granted_skills: Some(granted_skills),
         pricing: None,
+        chat: None,
         created_at: "2026-08-24T00:00:00Z".into(),
     }
 }

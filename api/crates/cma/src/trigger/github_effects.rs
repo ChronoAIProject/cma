@@ -547,7 +547,10 @@ impl TriggerSessionEffectPort for SessionServiceEffectPort {
         launch: &Launch,
         request: &layer3_adapter::WorkspaceCheckpointRequest,
     ) -> Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError> {
-        let session = launch.session.as_ref().ok_or(CoreError::InvalidState)?;
+        let session = launch
+            .session
+            .as_ref()
+            .ok_or_else(CoreError::invalid_state)?;
         self.0
             .checkpoint_trigger_workspace(
                 &session.session_id,
@@ -2546,6 +2549,7 @@ impl GithubEffectExecutor {
             version,
             source_revision: launch.source_sha.clone(),
             baseline_manifest_digest: workspace.baseline.digest.clone(),
+            include_git_metadata: false,
             disposition: layer3_adapter::WorkspaceCheckpointDisposition::ResumeAfterCapture,
         };
         let (captured, runtime_generation) =
@@ -10502,6 +10506,7 @@ pub(in crate::trigger) mod tests {
             quiesced_writers: 1,
             writer_state: layer3_adapter::WorkspaceWriterState::Resumed,
             writer_resume_token: None,
+            includes_git_metadata: false,
             archive,
         }
     }
@@ -10736,6 +10741,7 @@ pub(in crate::trigger) mod tests {
             granted_services: Some(Vec::new()),
             granted_skills: Some(Vec::new()),
             pricing: None,
+            chat: None,
             created_at: "2026-08-27T00:00:00Z".into(),
         }
     }

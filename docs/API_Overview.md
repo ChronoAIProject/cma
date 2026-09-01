@@ -1,22 +1,23 @@
 # API Overview
 
-CMA (ChronoAI Managed Agent) serves three public interfaces today: AG-UI, REST, and PTY. MCP and A2A are designed but not built; their documented entry points refuse with `501 Not Implemented` instead of presenting a missing route as a deployment failure. Every served interface and future design is a **projection** of one core session model — never a separate product with its own semantics.
+CMA (ChronoAI Managed Agent) serves four public interfaces: AG-UI, Responses, REST, and PTY. MCP and A2A are designed but not built; their documented entry points refuse with `501 Not Implemented` instead of presenting a missing route as a deployment failure. Every served interface and future design is a **projection** of one core session model — never a separate product with its own semantics.
 
-This document defines the shared vocabulary. The five interface documents describe three served protocols and two future designs:
+This document defines the shared vocabulary. The six interface documents describe four served protocols and two future designs:
 
 | Priority | Interface | Client | Document |
 |---|---|---|---|
 | 1 | AG-UI | frontend clients | [API_AGUI.md](./API_AGUI.md) |
-| 2 | REST | backend server clients | [API_REST.md](./API_REST.md) |
-| 3 | PTY | CLI-like streaming clients | [API_PTY.md](./API_PTY.md) |
-| 4 | MCP — designed, not yet served | agent clients | [API_MCP.md](./API_MCP.md) |
-| 5 | A2A — designed, not yet served | agent clients | [API_A2A.md](./API_A2A.md) |
+| 2 | Responses (standard OpenAI Responses API) | frontend chat clients | [API_Responses.md](./API_Responses.md) |
+| 3 | REST | backend server clients | [API_REST.md](./API_REST.md) |
+| 4 | PTY | CLI-like streaming clients | [API_PTY.md](./API_PTY.md) |
+| 5 | MCP — designed, not yet served | agent clients | [API_MCP.md](./API_MCP.md) |
+| 6 | A2A — designed, not yet served | agent clients | [API_A2A.md](./API_A2A.md) |
 
 ---
 
 ## 1. The core operation set
 
-Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
+Ten semantic operations. Layer 2 owns them; Layer 1 projects them.
 
 | Operation | Meaning |
 |---|---|
@@ -35,22 +36,27 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 
 ### Which interface projects which operation
 
-| Operation | AG-UI | REST | PTY | MCP[^designed-only] | A2A[^designed-only] |
-|---|:---:|:---:|:---:|:---:|:---:|
-| `create_session` | ● implicit | ● | — | ● implicit | ● implicit |
-| `send_input` | ● | ● | ● | ● | ● |
-| `stream_events` | ● | ● | ● | — | ● |
-| `resolve_approval` | ● | ● | ● at the TUI | ● | ● |
-| `interrupt` | ● | ● | ● | — | ● |
-| `steer` | ● | ● | — | — | — |
-| `resize_terminal` | — | ● | ● | — | — |
-| `screen_snapshot` | — | ● | ● | — | — |
-| `get_usage` | ● | ● | — | — | ● |
-| `change_plane` | ○ observed | ● | ○ observed | — | — |
+| Operation | AG-UI | Responses | REST | PTY | MCP[^designed-only] | A2A[^designed-only] |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| `create_session` | ● implicit | ● via conversations | ● | — | ● implicit | ● implicit |
+| `send_input` | ● | ● | ● | ● | ● | ● |
+| `stream_events` | ● | ● | ● | ● | — | ● |
+| `resolve_approval` | ● | — | ● | ● at the TUI | ● | ● |
+| `interrupt` | ● | — | ● | ● | — | ● |
+| `steer` | ● | — | ● | — | — | — |
+| `resize_terminal` | — | — | ● | ● | — | — |
+| `screen_snapshot` | — | — | ● | ● | — | — |
+| `get_usage` | ● | ● on response | ● | — | — | ● |
+| `change_plane` | ○ observed | — | ● | ○ observed | — | — |
 
 ● projected · ○ observed but not initiated · — absent
 
 [^designed-only]: MCP and A2A are designed, not yet served. Their documented endpoints refuse with `501` until the interfaces are implemented.
+
+The Responses interface serves conversation sessions created for the chat surface in v1. Its
+declared subset is closed: operations absent from the Responses column refuse by name rather than
+being accepted and dropped. The field-level accepted, ignored, and refused policy is fixed in
+[API_Responses.md](./API_Responses.md).
 
 **`change_plane` is administration, not conversation.** AG-UI and PTY are told when it happens — a state delta carrying both planes and the snapshot moment, and a typed close frame naming where the session went — and neither offers a way to ask for it. That is a declared subset under rule 3, not an omission: a protocol whose vocabulary is runs and messages has no honest shape for "stop being a terminal", and a terminal that could talk itself out of existence would be a control with nothing left to draw its answer on. REST serves it, as the superset facade serves everything.
 
@@ -70,13 +76,13 @@ Trigger and Launch resources form a control-plane workflow around a session;
 they do not turn a Launch identifier into a session identifier or add hidden
 session operations. Their public projection is fixed as follows:
 
-| Capability | AG-UI | REST/SDK | PTY | MCP | A2A |
-|---|---|---|---|---|---|
-| Anonymous Trigger preview | Read-only `cma:trigger` companion | Public read | Absent | Absent | Absent |
-| Launch, repository, and pull-request snapshot | Owner-only `cma:trigger` companion | Owner read | Absent | Absent | Absent |
-| Launch progress replay | Owner-only cursor replay | Owner cursor replay | Absent | Absent | Absent |
-| Diff review and artifact read | Owner-only `cma:trigger` companion | Owner read | Absent | Absent | Absent |
-| Draft, Start, cancel, retry, publish, pull-request confirmation/status refresh, and finish | Absent | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
+| Capability | AG-UI | Responses | REST/SDK | PTY | MCP | A2A |
+|---|---|---|---|---|---|---|
+| Anonymous Trigger preview | Read-only `cma:trigger` companion | Absent | Public read | Absent | Absent | Absent |
+| Launch, repository, and pull-request snapshot | Owner-only `cma:trigger` companion | Absent | Owner read | Absent | Absent | Absent |
+| Launch progress replay | Owner-only cursor replay | Absent | Owner cursor replay | Absent | Absent | Absent |
+| Diff review and artifact read | Owner-only `cma:trigger` companion | Absent | Owner read | Absent | Absent | Absent |
+| Draft, Start, cancel, retry, publish, pull-request confirmation/status refresh, and finish | Absent | Absent | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
 
 AG-UI declares its closed read-only subset under `features.custom["cma:trigger"]`.
 The companion resources do not use `threadId` or `runId`: those fields continue
@@ -196,21 +202,22 @@ There is no separate approvals resource. Approvals ride the event stream, so the
 
 ## 5. Capability declaration
 
-No specification defines a named conformance profile for agent services. CMA therefore defines its own. The three served interfaces publish it through each protocol's **native** mechanism; the A2A and MCP rows record future declaration mechanisms and are not live discovery surfaces:
+No specification defines a named conformance profile for agent services. CMA therefore defines its own. The four served interfaces publish it through each protocol's **native** mechanism; the A2A and MCP rows record future declaration mechanisms and are not live discovery surfaces:
 
 | Interface | Declaration surface |
 |---|---|
-| REST | `GET /conformance` returning `conformsTo[]` of class URIs |
 | AG-UI | `GET /agui/capabilities`, plus `AgentCapabilities` on the SDK object |
-| A2A (designed, not yet served) | Future Agent Card `capabilities`, with CMA-specific operations in one extension |
-| MCP (designed, not yet served) | Future `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
+| Responses | `GET /api/v1/conformance`, with the Responses interface profile and operation list |
+| REST | `GET /api/v1/conformance` returning `conformsTo[]` of class URIs |
 | PTY | the `ready` control frame |
+| MCP (designed, not yet served) | Future `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
+| A2A (designed, not yet served) | Future Agent Card `capabilities`, with CMA-specific operations in one extension |
 
 The same class URIs appear in every served declaration surface, and the future interfaces must use them when implemented, so the vocabulary stays consistent. If a standard later emerges, a new major contract version may adopt it without changing this version's identifiers in place.
 
-The classes:
+The capability classes, plus the Responses interface-profile class:
 
-| Class | A session holds it when |
+| Class | It is declared when |
 |---|---|
 | `…/conf/core` | always — every session has a lifecycle, a log and a status |
 | `…/conf/conversation` | its kernel holds a structured conversation and it was created for one |
@@ -219,6 +226,11 @@ The classes:
 | `…/conf/interrupt` | its kernel can abandon a turn without ending the session |
 | `…/conf/usage` | its kernel reports what it has spent |
 | `…/conf/approvals` · `…/conf/events-replay` | the service does, for every session |
+| `…/conf/responses-chat` | the Responses interface serves its declared v1 chat subset |
+
+`https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat` is an interface-profile claim, not an
+additional capability silently granted to a session. It joins the frozen 1.0 conformance namespace;
+clients tolerate unknown future classes, but this identifier's spelling and meaning do not move.
 
 **Two claims, and they are not the same.** What an *interface* declares is what it could project for some session — the vocabulary a client must be ready for. What a *session* carries is its granted set, decided when it was created from what its kernel can actually do, and reported on the session itself. It changes only where its owner asks for `change_plane`, and that change is recorded rather than quiet. A service that renders terminals still cannot render one for a session that has none.
 
@@ -230,9 +242,9 @@ A capability is declared only where it has been demonstrated against the kernel 
 
 ---
 
-## 6. Rules for all five interface designs
+## 6. Rules for all six interface designs
 
-These rules govern the three served implementations and are obligations for future MCP and A2A implementations.
+These rules govern the four served implementations and are obligations for future MCP and A2A implementations.
 
 1. **One core.** Every implemented interface calls Layer 2 and only Layer 2. No interface talks to a kernel adapter.
 2. **No business logic in Layer 1.** An interface translates; it does not decide.

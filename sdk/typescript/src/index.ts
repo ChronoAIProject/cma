@@ -40,6 +40,20 @@
 
 export { Cma, createClient } from './client.js';
 export {
+  CHAT_HOST_FAILURE_PHASES,
+  CHAT_HOST_STATUSES,
+  listChatHosts,
+  listChatHostsPage,
+  retireChatHost,
+  toChatHost,
+  type ChatHost,
+  type ChatHostFailure,
+  type ChatHostFailurePhase,
+  type ChatHostListRequest,
+  type ChatHostPageRequest,
+  type ChatHostStatus,
+} from './chat-hosts.js';
+export {
   resolveConfig,
   type ClientConfig,
   type Credential,
@@ -49,6 +63,11 @@ export {
   type ResponseObserver,
 } from './config.js';
 export { readConformance, toConformance, type Conformance } from './discovery.js';
+export {
+  readAguiCapabilities,
+  toAguiCapabilities,
+  type AguiCapabilityDocument,
+} from './agui/capabilities.js';
 export {
   ApiError,
   CapabilityRefused,
@@ -144,6 +163,58 @@ export {
   type SessionResourceStatus,
 } from './resources.js';
 export {
+  ResponsesConnection,
+  createConversation,
+  createResponse,
+  listConversationItems,
+  parseResponsesEventStream,
+  readConversation,
+  readResponse,
+  toConversation,
+  toConversationItemList,
+  toResponse,
+  toResponseStreamEvent,
+  type ConversationItemsRequest,
+  type ConversationMessageContent,
+  type ConversationMessageItem,
+  type CreateResponseRequest,
+  type ResponseError,
+  type ResponseInputMessage,
+  type ResponseLifecycleEvent,
+  type ResponseOutputMessage,
+  type ResponseOutputText,
+  type ResponseOutputTextDeltaEvent,
+  type ResponseOutputTextDoneEvent,
+  type ResponseReasoningDeltaEvent,
+  type ResponseReasoningDoneEvent,
+  type ResponsesConnectionState,
+  type ResponsesConversation,
+  type ResponsesConversationItem,
+  type ResponsesConversationItemList,
+  type ResponsesResponse,
+  type ResponsesStreamEvent,
+  type ResponseStatus,
+  type ResponseStructuralEvent,
+  type ResponseToolActivity,
+  type ResponseToolActivityEvent,
+  type ResponseToolBody,
+  type ResponseUsage,
+} from './responses.js';
+export {
+  changeChatSettings,
+  readChatSettings,
+  toChatSettings,
+  toStoredChatSettings,
+  type ChatAgentSettings,
+  type ChatHostSettings,
+  type ChatHostSize,
+  type ChatInactivity,
+  type ChatSettings,
+  type ChatSetup,
+  type ChatWorkspaceSource,
+  type StoredChatSettings,
+} from './settings.js';
+export {
   changePlane,
   createSession,
   deleteSession,
@@ -166,6 +237,8 @@ export {
   type PricingQuote,
   type SessionAllowance,
   type SessionListStatus,
+  type SessionListRequest,
+  type SessionListSurface,
   type SessionPageRequest,
   type SessionSpend,
   type UnpricedQuote,
@@ -314,6 +387,7 @@ export {
   type TriggerWorkflowChangePolicy,
 } from './triggers.js';
 export type {
+  ChatSession,
   CredentialMode,
   Kernel,
   KernelOffer,
@@ -324,6 +398,7 @@ export type {
   SessionCreator,
   SessionLifecycle,
   SessionPlane,
+  SessionSurface,
   SessionSize,
   SessionService,
   SessionSkill,

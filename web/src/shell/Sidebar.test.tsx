@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Sidebar } from './Sidebar';
@@ -21,11 +21,14 @@ function renderSidebar(props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
     onToggleCollapsed: vi.fn(),
     onCreate: vi.fn(),
     onSearch: vi.fn(),
+    onSurfaceChange: vi.fn(),
   };
   render(
     <Sidebar
       collapsed={false}
       creation={{ canCreate: true }}
+      surface="agent"
+      chatAvailable={false}
       account={<button type="button">Account</button>}
       {...handlers}
       {...props}
@@ -70,6 +73,39 @@ describe('the sidebar', () => {
     await user.click(screen.getByRole('button', { name: /find a session/i }));
     expect(handlers.onSearch).toHaveBeenCalledOnce();
     expect(handlers.onToggleCollapsed).not.toHaveBeenCalled();
+  });
+
+  it('leaves the Agent create zone unchanged when Chat is not declared', () => {
+    renderSidebar({ chatAvailable: false });
+
+    expect(screen.queryByRole('group', { name: 'Session surface' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'New session' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New Chat' })).toBeNull();
+  });
+
+  it('offers the declared surfaces in Chat then Agent order and reports the selection', () => {
+    renderSidebar({ chatAvailable: true, surface: 'agent' });
+    const switcher = screen.getByRole('group', { name: 'Session surface' });
+    const segments = within(switcher).getAllByRole('button');
+
+    expect(segments.map((segment) => segment.textContent)).toEqual(['Chat', 'Agent']);
+    expect(segments[0]).toHaveAttribute('aria-pressed', 'false');
+    expect(segments[1]).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('switches surfaces and makes both create shortcuts follow Chat', async () => {
+    const user = userEvent.setup();
+    const handlers = renderSidebar({ chatAvailable: true, surface: 'chat' });
+
+    expect(screen.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'New Chat' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Agent' }));
+    expect(handlers.onSurfaceChange).toHaveBeenCalledWith('agent');
+
+    await user.click(screen.getByRole('button', { name: 'CMA' }));
+    await user.click(screen.getByRole('button', { name: 'New Chat' }));
+    expect(handlers.onCreate).toHaveBeenCalledTimes(2);
   });
 });
 

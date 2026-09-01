@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionDrawer } from './SessionDrawer';
 import { SessionHeader } from './SessionHeader';
-import { SessionActions } from './SessionActions';
+import { ChatSessionActions, SessionActions } from './SessionActions';
 import { abilitiesFor } from './availability';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
@@ -183,6 +183,34 @@ function renderDrawer(
 }
 
 describe('the session header', () => {
+  it('reduces a Chat header to its title, state, and Details action', async () => {
+    const user = userEvent.setup();
+    const onDetails = vi.fn();
+    const chat = session('running', {
+      chat: {
+        worktreeName: 'chat-1',
+        worktreePath: '/work/chat-1',
+        title: 'Release readiness',
+      },
+    });
+    const { container } = render(
+      <SessionHeader
+        session={chat}
+        actions={<ChatSessionActions onDetails={onDetails} detailsOpen />}
+      />,
+    );
+
+    expect(container.querySelector('.sessionheader')).toHaveAttribute('data-surface', 'chat');
+    expect(container.querySelector('.sessionheader__crumb')).toHaveTextContent('Release readiness');
+    expect(container.querySelector('.sessionheader__kernel')).toBeNull();
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAccessibleName('Details');
+    expect(buttons[0]).toHaveAttribute('aria-expanded', 'true');
+    await user.click(buttons[0] as HTMLButtonElement);
+    expect(onDetails).toHaveBeenCalledOnce();
+  });
+
   it('carries one lifecycle key, one details key, and the overflow menu', () => {
     /*
      * §12 and §7: a header carrying four equally weighted keys makes the
@@ -394,6 +422,53 @@ describe('the header does not clip what it opens', () => {
 });
 
 describe('the details drawer', () => {
+  it('draws exactly the two Chat bands and never reads Agent-only facts', async () => {
+    const user = userEvent.setup();
+    const readSpend = vi.fn();
+    const { container } = renderDrawer(
+      'running',
+      {
+        creator: { displayName: 'Ada Lovelace' },
+        chat: {
+          worktreeName: 'chat-1',
+          worktreePath: '/work/chat-1',
+          title: 'Release readiness',
+        },
+        agent: { skills: [{ id: 'irrelevant-agent-skill' }] },
+        reach: [{ id: 'irrelevant-service', mandated: true }],
+      },
+      readSpend,
+    );
+
+    const drawer = screen.getByRole('complementary', { name: 'Chat details' });
+    expect(drawer).toHaveTextContent('running');
+    expect(drawer).toHaveTextContent('Started');
+    expect(drawer).toHaveTextContent('Ada Lovelace');
+    expect(drawer).toHaveTextContent('Release readiness');
+    expect(
+      [...container.querySelectorAll('.facts__title')].map((title) => title.textContent),
+    ).toEqual(['Worktree']);
+    expect(within(drawer).getByText('Name').closest('.facts__fact')).toHaveTextContent('chat-1');
+    const path = within(drawer).getByRole('button', { name: 'Copy local path /work/chat-1' });
+    expect(path).toHaveTextContent('/work/chat-1');
+    await user.click(path);
+    expect(await navigator.clipboard.readText()).toBe('/work/chat-1');
+    for (const omitted of [
+      'Agent',
+      'Skills',
+      'Reaches',
+      'Trigger repository',
+      'Runtime',
+      'Identifier',
+      'irrelevant-agent-skill',
+      'irrelevant-service',
+    ]) {
+      expect(within(drawer).queryByText(omitted)).toBeNull();
+    }
+    expect(readSpend).not.toHaveBeenCalled();
+    expect(listLaunchPage).not.toHaveBeenCalled();
+  });
+
   it('gates a delete behind an acknowledgement rather than a second press', async () => {
     /*
      * §7. The safeguard is the tick, not a colour: a red key is one a person
