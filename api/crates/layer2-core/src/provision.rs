@@ -926,6 +926,7 @@ impl SessionService {
         let entry = SessionEntry {
             session: seeded,
             trigger_origin: durable.trigger_origin.clone(),
+            chat_origin: durable.chat_origin.clone(),
             initial_prompt: durable.initial_prompt.clone(),
             event_log,
             // Evidence means the adapter acknowledged this exact value, not

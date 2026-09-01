@@ -312,7 +312,7 @@ impl ChatHostRecord {
             }
         }
         if let Some(note) = self.last_operator_note.as_ref() {
-            if note.code != "checkpoint_refused"
+            if !matches!(note.code.as_str(), "checkpoint_refused" | "pause_refused")
                 || note.detail.trim().is_empty()
                 || note.detail.len() > 256
                 || crate::seconds_from_rfc3339(&note.observed_at).is_none()
@@ -380,7 +380,7 @@ fn host_store_unavailable() -> CoreError {
     chat_unavailable(ChatUnavailableCause::HostStoreUnavailable)
 }
 
-fn generation_for(host: &ChatHostRecord) -> NonZeroU64 {
+pub(super) fn generation_for(host: &ChatHostRecord) -> NonZeroU64 {
     NonZeroU64::new(u64::from(host.rotations).saturating_add(1))
         .expect("a chat host generation is always non-zero")
 }
