@@ -1,8 +1,10 @@
 import {
   ApiError,
   changeChatSettings as changeSdkChatSettings,
+  listChatHosts as listSdkChatHosts,
   ProtocolError,
   readChatSettings as readSdkChatSettings,
+  retireChatHost as retireSdkChatHost,
   request,
   requestPages,
   resolveConfig,
@@ -426,12 +428,20 @@ export function createRestOperatorStore(): OperatorStore {
       );
     },
 
+    async chatHosts() {
+      return listSdkChatHosts(config);
+    },
+
     async stopSession(id: string): Promise<void> {
       await call(`${BASE}/sessions/${encodeURIComponent(id)}/stop`, { method: 'POST' });
     },
 
     async terminateSession(id: string): Promise<void> {
       await call(`${BASE}/sessions/${encodeURIComponent(id)}/terminate`, { method: 'POST' });
+    },
+
+    async retireChatHost(id: string): Promise<void> {
+      await retireSdkChatHost(config, id);
     },
 
     async readPlatformSettings(): Promise<StoredPlatformSettings> {

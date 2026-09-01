@@ -11,12 +11,16 @@ use crate::event::{Event, EventKind, StoredEventKind};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::{ChatHostStore, Page, PageRequest, SessionRecord, StoreError};
 use crate::{
-    ChatCheckpointRef, ChatHostId, ChatHostListQuery, ChatHostOperatorNote, ChatHostRecord,
-    ChatHostStatus, CoreError,
+    Caller, Capability, ChatCheckpointRef, ChatHostId, ChatHostListQuery, ChatHostOperatorNote,
+    ChatHostRecord, ChatHostStatus, CoreError,
 };
 
 /// A refused capture is not retried on every one-minute scheduler heartbeat.
 pub const CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS: u64 = 5 * 60;
+
+const CHAT_RETIREMENT_CLAIM_PREFIX: &str = "chrt_";
+const CHAT_ADMIN_RETIREMENT_DETAIL: &str =
+    "Administrative chat-host retirement revoked this thread.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatPauseOutcome {
@@ -284,6 +288,444 @@ impl crate::SessionService {
         drop(owner_guard);
         drop(input_fences);
         Ok(ChatPauseOutcome::Complete(capture.reference))
+    }
+
+    /// Retire one shared host without discarding its thread histories or its
+    /// last verified checkpoint objects.
+    pub async fn retire_chat_host(
+        &self,
+        caller: &Caller,
+        host_id: &ChatHostId,
+    ) -> Result<ChatHostRecord, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ControlAnySession)?;
+        let hosts = self
+            .chat_hosts
+            .clone()
+            .ok_or_else(pause_host_store_unavailable)?;
+
+        loop {
+            let mut host = hosts
+                .get(host_id)
+                .await
+                .map_err(|_| pause_host_store_unavailable())?
+                .ok_or(CoreError::SessionNotFound)?;
+            if host.status == ChatHostStatus::Retired {
+                return Ok(host);
+            }
+            if host
+                .last_transition_claim
+                .as_deref()
+                .is_some_and(|claim| claim.starts_with(CHAT_RETIREMENT_CLAIM_PREFIX))
+            {
+                self.resume_chat_retirement_claim(host_id).await?;
+                continue;
+            }
+            if host.last_transition_claim.is_some()
+                || !matches!(host.status, ChatHostStatus::Active | ChatHostStatus::Paused)
+            {
+                return Err(CoreError::InvalidState {
+                    detail: Some("chat host retirement requires an active or paused host".into()),
+                });
+            }
+
+            let now = crate::clock::now_rfc3339();
+            host.last_transition_claim = Some(format!(
+                "{CHAT_RETIREMENT_CLAIM_PREFIX}{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            host.transition_started_at = Some(now.clone());
+            if host.status == ChatHostStatus::Active {
+                let version = next_checkpoint_version(&host).ok_or_else(|| {
+                    CoreError::InvalidRequest("chat checkpoint version is exhausted".into())
+                })?;
+                if host.runtime_id.is_none() || host.threads.iter().all(|thread| thread.removed) {
+                    return Err(CoreError::InvalidState {
+                        detail: Some(
+                            "an active chat host requires a runtime and retained thread before retirement"
+                                .into(),
+                        ),
+                    });
+                }
+                host.status = ChatHostStatus::Pausing;
+                host.checkpoint_sequence = version;
+            }
+            host.updated_at = now;
+            if hosts
+                .update_if_revision(host.revision, &host)
+                .await
+                .map_err(|_| pause_host_store_unavailable())?
+                .is_none()
+            {
+                continue;
+            }
+            self.resume_chat_retirement_claim(host_id).await?;
+        }
+    }
+
+    /// Resume the exact administrative retirement claim after either an HTTP
+    /// retry or a control-plane replacement.
+    pub(crate) async fn resume_chat_retirement_claim(
+        &self,
+        host_id: &ChatHostId,
+    ) -> Result<bool, CoreError> {
+        let hosts = self
+            .chat_hosts
+            .clone()
+            .ok_or_else(pause_host_store_unavailable)?;
+        let Some(observed) = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| pause_host_store_unavailable())?
+            .filter(|host| {
+                matches!(
+                    host.status,
+                    ChatHostStatus::Pausing | ChatHostStatus::Paused
+                ) && host
+                    .last_transition_claim
+                    .as_deref()
+                    .is_some_and(|claim| claim.starts_with(CHAT_RETIREMENT_CLAIM_PREFIX))
+            })
+        else {
+            return Ok(false);
+        };
+        let claim = observed
+            .last_transition_claim
+            .clone()
+            .expect("the retirement predicate proved a claim");
+        let session_ids = live_session_ids(&observed);
+        let mut input_fences = Vec::with_capacity(session_ids.len());
+        for session_id in &session_ids {
+            input_fences.push(self.input_gates.gate(session_id).write_owned().await);
+        }
+        let owner_guard = self.chat_host_guards.lock(&observed.owner).await;
+        let Some(current) = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| pause_host_store_unavailable())?
+            .filter(|current| {
+                matches!(
+                    current.status,
+                    ChatHostStatus::Pausing | ChatHostStatus::Paused
+                ) && current.last_transition_claim.as_deref() == Some(claim.as_str())
+                    && current.owner == observed.owner
+                    && live_session_ids(current) == session_ids
+            })
+        else {
+            return Ok(false);
+        };
+
+        if current.runtime_id.is_none() {
+            if current.status != ChatHostStatus::Paused {
+                return Err(CoreError::RuntimeUnavailable(
+                    "an uncaptured retirement claim lost its chat runtime".into(),
+                ));
+            }
+            let records = self.retirement_thread_records(&current).await?;
+            for record in records {
+                self.revoke_chat_thread_for_retirement(record).await?;
+            }
+            self.finish_chat_retirement(&hosts, &current, &claim, None)
+                .await?;
+            drop(owner_guard);
+            drop(input_fences);
+            return Ok(true);
+        }
+
+        let records = self.chat_thread_records(&current).await?;
+        let captured_at = current.transition_started_at.clone().ok_or_else(|| {
+            CoreError::RuntimeUnavailable("chat retirement claim has no start time".into())
+        })?;
+        let capture = match self
+            .capture_claimed_chat_checkpoint(
+                &current,
+                &records,
+                current.checkpoint_sequence,
+                &captured_at,
+            )
+            .await
+        {
+            Ok(capture) => capture,
+            Err(ChatCaptureRefusal {
+                detail,
+                writers_reopened,
+            }) => {
+                if writers_reopened {
+                    self.settle_chat_pause_claim(
+                        &hosts,
+                        host_id,
+                        &claim,
+                        &captured_at,
+                        true,
+                        Some(detail),
+                    )
+                    .await?;
+                }
+                return Err(CoreError::RuntimeRefused(detail.into()));
+            }
+        };
+        if current.status == ChatHostStatus::Paused
+            && current.checkpoint.as_ref() != Some(&capture.reference)
+        {
+            let _ = capture.resume_writers().await;
+            return Err(CoreError::RuntimeUnavailable(
+                "the replayed retirement checkpoint changed its durable reference".into(),
+            ));
+        }
+
+        for record in records {
+            if let Err(error) = self.revoke_chat_thread_for_retirement(record).await {
+                let _ = capture.resume_writers().await;
+                return Err(error);
+            }
+        }
+        let published = if current.status == ChatHostStatus::Paused {
+            current
+        } else {
+            self.publish_chat_pause(&hosts, &current, &claim, &capture.reference, &captured_at)
+                .await?
+                .ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "the retirement checkpoint could not be durably published".into(),
+                    )
+                })?
+        };
+        // Retirement is a retention boundary: unlike an ordinary lifecycle
+        // checkpoint, it must not prune any earlier workspace or conversation
+        // generation while replacing the host's published reference.
+        capture
+            .adapter
+            .terminate_if_identity(&RuntimeIdentity {
+                handle: capture.runtime.clone(),
+                session: published.id.0.clone(),
+                generation: Some(generation_for(&published)),
+            })
+            .await
+            .map_err(|_| {
+                CoreError::RuntimeUnavailable(
+                    "the verified chat runtime could not be fenced-deleted for retirement".into(),
+                )
+            })?;
+        {
+            let mut entries = self.entries.write().await;
+            for session_id in &session_ids {
+                entries.remove(session_id);
+            }
+        }
+        self.finish_chat_retirement(&hosts, &published, &claim, Some(&capture.reference))
+            .await?;
+        drop(owner_guard);
+        drop(input_fences);
+        Ok(true)
+    }
+
+    /// Finish a retirement whose checkpoint publication is durable and whose
+    /// exact runtime absence was established by reconciliation.
+    pub(crate) async fn finish_torn_down_chat_retirement(
+        &self,
+        host_id: &ChatHostId,
+    ) -> Result<bool, CoreError> {
+        let hosts = self
+            .chat_hosts
+            .clone()
+            .ok_or_else(pause_host_store_unavailable)?;
+        let Some(observed) = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| pause_host_store_unavailable())?
+            .filter(|host| {
+                host.status == ChatHostStatus::Paused
+                    && host
+                        .last_transition_claim
+                        .as_deref()
+                        .is_some_and(|claim| claim.starts_with(CHAT_RETIREMENT_CLAIM_PREFIX))
+                    && host.checkpoint.as_ref().is_some_and(|checkpoint| {
+                        checkpoint.checkpoint_version == host.checkpoint_sequence
+                    })
+            })
+        else {
+            return Ok(false);
+        };
+        let claim = observed
+            .last_transition_claim
+            .clone()
+            .expect("the torn-down retirement predicate proved a claim");
+        let session_ids = live_session_ids(&observed);
+        let mut input_fences = Vec::with_capacity(session_ids.len());
+        for session_id in &session_ids {
+            input_fences.push(self.input_gates.gate(session_id).write_owned().await);
+        }
+        let owner_guard = self.chat_host_guards.lock(&observed.owner).await;
+        let current = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| pause_host_store_unavailable())?
+            .filter(|current| {
+                current.status == ChatHostStatus::Paused
+                    && current.last_transition_claim.as_deref() == Some(claim.as_str())
+                    && current.checkpoint == observed.checkpoint
+                    && live_session_ids(current) == session_ids
+            })
+            .ok_or_else(|| {
+                CoreError::RuntimeUnavailable(
+                    "the chat retirement claim changed after runtime teardown".into(),
+                )
+            })?;
+        let records = self.retirement_thread_records(&current).await?;
+        for record in records {
+            self.revoke_chat_thread_for_retirement(record).await?;
+        }
+        {
+            let mut entries = self.entries.write().await;
+            for session_id in &session_ids {
+                entries.remove(session_id);
+            }
+        }
+        let checkpoint = current
+            .checkpoint
+            .clone()
+            .expect("the torn-down retirement predicate proved a checkpoint");
+        self.finish_chat_retirement(&hosts, &current, &claim, Some(&checkpoint))
+            .await?;
+        drop(owner_guard);
+        drop(input_fences);
+        Ok(true)
+    }
+
+    async fn retirement_thread_records(
+        &self,
+        host: &ChatHostRecord,
+    ) -> Result<Vec<SessionRecord>, CoreError> {
+        let mut records = Vec::new();
+        for slot in host.threads.iter().filter(|slot| !slot.removed) {
+            let record = self
+                .store
+                .get(&slot.session_id)
+                .await
+                .map_err(pause_session_store_error)?
+                .ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "a retained chat host slot has no durable session".into(),
+                    )
+                })?;
+            let matches = record.session.owner == host.owner
+                && record.session.kernel == host.kernel
+                && record.chat_origin.as_ref().is_some_and(|origin| {
+                    origin.host_id == host.id
+                        && origin.worktree_name == slot.worktree_name
+                        && origin.worktree_path == slot.worktree_path
+                });
+            if !matches {
+                return Err(CoreError::RuntimeUnavailable(
+                    "a retained chat thread no longer matches its host authority".into(),
+                ));
+            }
+            records.push(record);
+        }
+        records.sort_by(|left, right| left.session.id.as_str().cmp(right.session.id.as_str()));
+        Ok(records)
+    }
+
+    async fn revoke_chat_thread_for_retirement(
+        &self,
+        mut record: SessionRecord,
+    ) -> Result<(), CoreError> {
+        if record.session.status == SessionStatus::Terminated
+            && record.session.stop_reason == Some(StopReason::Revoked)
+            && record.session.recovery_state == RecoveryState::Retired
+        {
+            self.entries.write().await.remove(&record.session.id);
+            return Ok(());
+        }
+        let origin = record.chat_origin.as_mut().ok_or_else(|| {
+            CoreError::RuntimeUnavailable("a chat thread lost its host provenance".into())
+        })?;
+        origin.paused_notice = None;
+        record.session.chat = Some(origin.public_projection());
+        record.session.status = SessionStatus::Terminated;
+        record.session.recovery_state = RecoveryState::Retired;
+        record.session.stop_reason = Some(StopReason::Revoked);
+        let id = record.session.id.clone();
+        self.persist_durably(
+            &mut record,
+            vec![Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Terminated,
+                    stop_reason: Some(StopReason::Revoked),
+                    detail: Some(CHAT_ADMIN_RETIREMENT_DETAIL.into()),
+                    capability: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .map_err(pause_session_store_error)?;
+        self.entries.write().await.remove(&id);
+        Ok(())
+    }
+
+    async fn finish_chat_retirement(
+        &self,
+        hosts: &Arc<dyn ChatHostStore>,
+        observed: &ChatHostRecord,
+        claim: &str,
+        checkpoint: Option<&ChatCheckpointRef>,
+    ) -> Result<ChatHostRecord, CoreError> {
+        if let Some(credentials) = self.credentials.as_ref() {
+            credentials
+                .release(&observed.id.credential_session_id())
+                .await
+                .map_err(|_| {
+                    CoreError::RuntimeUnavailable(
+                        "chat host credential custody could not be retired".into(),
+                    )
+                })?;
+        }
+        loop {
+            let current = hosts
+                .get(&observed.id)
+                .await
+                .map_err(|_| pause_host_store_unavailable())?
+                .ok_or(CoreError::SessionNotFound)?;
+            if current.status == ChatHostStatus::Retired {
+                return Ok(current);
+            }
+            if current.last_transition_claim.as_deref() != Some(claim)
+                || checkpoint.is_some_and(|checkpoint| {
+                    current.status != ChatHostStatus::Paused
+                        || current.checkpoint.as_ref() != Some(checkpoint)
+                })
+            {
+                return Err(CoreError::RuntimeUnavailable(
+                    "the chat retirement claim changed before publication".into(),
+                ));
+            }
+            let now = crate::clock::now_rfc3339();
+            let mut retired = current.clone();
+            retired.status = ChatHostStatus::Retired;
+            retired.runtime_id = None;
+            retired.retired_at = Some(now.clone());
+            retired.last_transition_claim = None;
+            retired.transition_started_at = None;
+            retired.last_failure = None;
+            retired.last_operator_note = None;
+            retired.revive_cause = None;
+            retired.revive_phase = None;
+            retired.revive_failed_threads.clear();
+            retired.prompt_admissions.clear();
+            retired.updated_at = now;
+            match hosts
+                .update_if_revision(current.revision, &retired)
+                .await
+                .map_err(|_| pause_host_store_unavailable())?
+            {
+                Some(committed) => return Ok(committed),
+                None => continue,
+            }
+        }
     }
 
     /// Resume an inactivity-pause claim after a control-plane replacement.

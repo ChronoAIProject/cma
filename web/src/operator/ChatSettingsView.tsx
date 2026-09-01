@@ -264,7 +264,7 @@ export function ChatSettingsView({ store }: ChatSettingsViewProps) {
         <div className="notice notice--quiet chat-settings__notice" role="alert">
           <div>
             <strong className="notice__title">Settings changed elsewhere</strong>
-            <p className="notice__detail">
+            <p className="notice__detail chat-settings__notice-detail">
               Chat settings changed after this draft was opened. Your draft is unchanged. Revision{' '}
               {String(stored.revision)} is current.
             </p>

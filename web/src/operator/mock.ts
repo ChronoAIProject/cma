@@ -3,6 +3,7 @@ import type {
   ActivityEntry,
   ActivityQuery,
   AdminSession,
+  ChatHost,
   PlatformSettings,
   SessionBriefing,
   StoredPlatformSettings,
@@ -34,6 +35,7 @@ export interface MockOperatorOptions {
   readonly people?: readonly Person[];
   readonly activity?: readonly ActivityEntry[];
   readonly sessions?: readonly AdminSession[];
+  readonly chatHosts?: readonly ChatHost[];
   readonly inventory?: RuntimeInventory;
   readonly platformSettings?: StoredPlatformSettings;
   readonly chatSettings?: StoredChatSettings;
@@ -44,6 +46,7 @@ export interface MockOperatorOptions {
   /** Told which session was stopped, and which was ended. */
   readonly onStop?: (id: string) => void;
   readonly onTerminate?: (id: string) => void;
+  readonly onRetireHost?: (id: string) => void;
   readonly onSettingsChange?: (settings: PlatformSettings) => void;
   readonly onChatSettingsChange?: (settings: ChatSettings | null) => void;
   readonly onBriefingReset?: () => void;
@@ -163,6 +166,7 @@ function copyStored(stored: StoredPlatformSettings): StoredPlatformSettings {
 
 export function createMockOperatorStore(options: MockOperatorOptions = {}): OperatorStore {
   const sessions = [...(options.sessions ?? [])];
+  const chatHosts = [...(options.chatHosts ?? [])];
   const initialPlatform = copyStored(options.platformSettings ?? MOCK_PLATFORM_SETTINGS);
   const initialChat = copyStoredChat(options.chatSettings ?? MOCK_CHAT_SETTINGS);
   const settingsRevision =
@@ -213,6 +217,11 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
       return [...sessions];
     },
 
+    async chatHosts() {
+      guard();
+      return chatHosts.map((host) => ({ ...host }));
+    },
+
     async stopSession(id: string) {
       guard();
       // Mirrors the control plane: stopping releases the runtime and leaves the
@@ -225,6 +234,17 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
       guard();
       moveTo(id, 'terminated');
       options.onTerminate?.(id);
+    },
+
+    async retireChatHost(id: string) {
+      guard();
+      const index = chatHosts.findIndex((host) => host.id === id);
+      const existing = chatHosts[index];
+      if (existing === undefined) {
+        throw new Error('That chat host no longer exists.');
+      }
+      chatHosts[index] = { ...existing, status: 'retired' };
+      options.onRetireHost?.(id);
     },
 
     async readPlatformSettings() {
