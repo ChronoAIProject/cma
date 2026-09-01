@@ -48,16 +48,19 @@ export function SessionHeader({ session, waiting = false, actions }: SessionHead
   }
 
   const dot = stateDotFor(toneFor(session.lifecycle));
+  const chat = session.chat;
   return (
-    <div className="sessionheader">
-      <span className="sessionheader__crumb">{tabLabel(session.createdAt)}</span>
+    <div className="sessionheader" data-surface={chat === undefined ? 'agent' : 'chat'}>
+      <span className="sessionheader__crumb">
+        {chat === undefined ? tabLabel(session.createdAt) : (chat.title ?? chat.worktreeName)}
+      </span>
       {/*
         Which agent is answering, said once. It used to ride an eyebrow above
         every agent turn, where it repeated identically down the whole column
         and took a line of the reading measure each time. It is a fact about
         the session, so it belongs with the session.
       */}
-      <span className="sessionheader__kernel">{session.kernel}</span>
+      {chat === undefined ? <span className="sessionheader__kernel">{session.kernel}</span> : null}
 
       {/* The state as a dot and a word — colour is never the only signal. */}
       {waiting ? (

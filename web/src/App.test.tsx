@@ -278,6 +278,39 @@ beforeEach(() => {
         // Empty unless a test seeded a fleet, which is the fresh-owner case.
         return json(200, { sessions });
       }
+      const chatItems = /^\/api\/v1\/conversations\/([^/]+)\/items$/.exec(path);
+      if (chatItems?.[1] !== undefined && method === 'GET') {
+        const id = decodeURIComponent(chatItems[1]);
+        return json(200, {
+          object: 'list',
+          data: [
+            {
+              id: `msg_${id}_1`,
+              type: 'message',
+              status: 'completed',
+              role: 'assistant',
+              content: [
+                {
+                  type: 'output_text',
+                  text: `Durable answer for ${id}`,
+                  annotations: [],
+                  logprobs: [],
+                },
+              ],
+            },
+            {
+              id: `msg_${id}_2`,
+              type: 'message',
+              status: 'completed',
+              role: 'user',
+              content: [{ type: 'input_text', text: `Durable question for ${id}` }],
+            },
+          ],
+          first_id: `msg_${id}_1`,
+          last_id: `msg_${id}_2`,
+          has_more: false,
+        });
+      }
       if (method === 'DELETE') {
         deleteRequested = true;
         return deleteResponse ?? new Response(null, { status: 204 });
@@ -470,7 +503,7 @@ describe('App', () => {
     expect(sessionListSurfaces).toEqual(['agent', 'chat']);
     expect(screen.getByRole('button', { name: 'Agent' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getAllByRole('tab')).toHaveLength(1);
-    expect(screen.queryByText('Architecture review')).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Architecture review/ })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Chat' }));
 
@@ -479,7 +512,14 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New Chat' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Active, 1 chat' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Paused, 1 chat' })).toBeInTheDocument();
-    expect(screen.getByText('Architecture review')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Architecture review/ })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Chat conversation' })).toHaveAttribute(
+      'data-surface',
+      'chat',
+    );
+    expect(await screen.findByText('Durable answer for chat-active')).toBeInTheDocument();
+    expect(document.querySelector('.conversation__usage-context')).toBeNull();
+    expect(document.querySelector('.resources')).toBeNull();
     expect(screen.queryByText(/14 Aug 11:00/)).toBeNull();
     expect(window.localStorage.getItem('cma:surface-mode')).toBe('chat');
   });
@@ -501,7 +541,8 @@ describe('App', () => {
     await waitForConsole();
 
     expect(screen.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('Restored chat')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Restored chat/ })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Chat conversation' })).toBeInTheDocument();
     expect(screen.queryByText(/14 Aug 11:00/)).toBeNull();
   });
 
@@ -529,7 +570,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'New Chat' }));
 
     await waitFor(() => {
-      expect(screen.getByText('chat-1')).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /chat-1/ })).toBeInTheDocument();
     });
     expect(creationBodies).toEqual([{ surface: 'chat' }]);
     expect(screen.queryByRole('dialog')).toBeNull();

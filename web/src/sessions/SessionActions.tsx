@@ -75,6 +75,23 @@ interface SessionActionsProps {
   readonly signingIn?: boolean;
 }
 
+/** Chat lifecycle belongs to the platform, so its header exposes Details alone. */
+export function ChatSessionActions({
+  onDetails,
+  detailsOpen = false,
+}: {
+  readonly onDetails: () => void;
+  readonly detailsOpen?: boolean;
+}) {
+  return (
+    <div className="actions">
+      <Button size="sm" onClick={onDetails} aria-expanded={detailsOpen}>
+        Details
+      </Button>
+    </div>
+  );
+}
+
 export function SessionActions({
   session,
   signingIn = false,

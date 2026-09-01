@@ -55,6 +55,8 @@ interface ComposerProps {
    * stale list replayed from the log offering commands that no longer exist.
    */
   readonly availableCommands?: readonly AvailableCommand[];
+  /** Chat has no command vocabulary; a slash remains ordinary message text. */
+  readonly commandsEnabled?: boolean;
   readonly onInterrupt: () => void;
   readonly busy?: boolean;
 }
@@ -73,6 +75,7 @@ export function Composer({
   refusedReason,
   onSend,
   availableCommands,
+  commandsEnabled = true,
   onInterrupt,
   busy = false,
 }: ComposerProps) {
@@ -89,7 +92,8 @@ export function Composer({
    */
   const slash = /^\/(\S*)$/.exec(text);
   const [dismissed, setDismissed] = useState(false);
-  const commandQuery = slash === null || dismissed ? undefined : (slash[1] ?? '');
+  const commandQuery =
+    !commandsEnabled || slash === null || dismissed ? undefined : (slash[1] ?? '');
 
   /*
    * Grow the field with what is in it, to §18.4's six lines and no further.

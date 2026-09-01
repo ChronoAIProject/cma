@@ -1,0 +1,11 @@
+/* The Responses-backed reduction of the shared conversation surface, §13. */
+
+.chat-surface__failure {
+  flex: none;
+  margin: 12px var(--page-gutter) 0;
+}
+
+/* No instrumentation rows follow the composer, so the foot needs no reserved gap. */
+.chat-surface__foot {
+  padding-top: 8px;
+}
