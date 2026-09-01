@@ -17,9 +17,9 @@ use serde::de::DeserializeOwned;
 use crate::settings::SettingsEnvelope;
 use crate::{
     ApprovalDecision, ChatHost, ChatHostId, ChatHostPageRequest, ChatSettings, Conformance,
-    CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page, PageContinuation,
-    PageWalkLimits, Result, ScreenSnapshot, Session, SessionId, SessionInput, SessionPageRequest,
-    SessionSurface, StoredChatSettings, TerminalGeometry, Usage,
+    CreateResponseRequest, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
+    PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session, SessionId, SessionInput,
+    SessionPageRequest, SessionSurface, StoredChatSettings, TerminalGeometry, Usage,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -879,6 +879,46 @@ impl Client {
             Ok(response)
         })
         .await
+    }
+
+    pub(crate) async fn connect_response(
+        &self,
+        response_request: &CreateResponseRequest,
+    ) -> Result<Response> {
+        let mut request = RequestSpec::new(
+            Method::POST,
+            self.endpoint(&["responses"])?,
+            Some(response_request.wire_body()?),
+            true,
+        );
+        request.request_id = self.request_id_header()?;
+        let response = self.send_once(&request).await?;
+        self.observe_response(&response)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(decode_problem(response).await);
+        }
+        if status != StatusCode::OK {
+            return Err(Error::protocol(format!(
+                "Responses stream returned unexpected success status {}",
+                status.as_u16()
+            )));
+        }
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        if !content_type
+            .split(';')
+            .next()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"))
+        {
+            return Err(Error::protocol(format!(
+                "Responses stream returned content type '{content_type}'"
+            )));
+        }
+        Ok(response)
     }
 
     pub(crate) fn retry_policy_ref(&self) -> &RetryPolicy {

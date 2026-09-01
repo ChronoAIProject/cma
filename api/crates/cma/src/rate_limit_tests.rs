@@ -56,6 +56,14 @@ fn test_routes() -> Router {
             post(|| async { StatusCode::NO_CONTENT }),
         )
         .route(
+            "/api/v1/conversations",
+            post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/api/v1/responses",
+            post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
             "/api/v1/sessions/{id}",
             get(|| async { StatusCode::NO_CONTENT }),
         )
@@ -359,6 +367,7 @@ async fn private_gateway_network_admission_rejects_with_private_headers() {
 async fn every_provisioning_and_prompt_route_uses_its_strict_semantic_tier() {
     for path in [
         "/api/v1/sessions",
+        "/api/v1/conversations",
         "/api/v1/agui/run",
         "/api/v1/sessions/sesn_rate/plane",
         "/api/v1/sessions/sesn_rate/revive",
@@ -378,6 +387,7 @@ async fn every_provisioning_and_prompt_route_uses_its_strict_semantic_tier() {
     }
 
     for path in [
+        "/api/v1/responses",
         "/api/v1/sessions/sesn_rate/input",
         "/api/v1/sessions/sesn_rate/steer",
     ] {

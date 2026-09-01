@@ -317,6 +317,7 @@ fn request_tier(request: &Request) -> RequestTier {
         return RequestTier::Default;
     }
     if path == "/api/v1/sessions"
+        || path == "/api/v1/conversations"
         || path == "/api/v1/agui/run"
         || is_session_operation(path, "plane")
         || is_session_operation(path, "revive")
@@ -324,7 +325,10 @@ fn request_tier(request: &Request) -> RequestTier {
     {
         return RequestTier::Create;
     }
-    if is_session_operation(path, "input") || is_session_operation(path, "steer") {
+    if path == "/api/v1/responses"
+        || is_session_operation(path, "input")
+        || is_session_operation(path, "steer")
+    {
         return RequestTier::Input;
     }
     RequestTier::Default

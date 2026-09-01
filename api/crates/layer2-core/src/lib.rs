@@ -166,7 +166,11 @@ pub use chat::{
     MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES, MAX_CHAT_PROMPT_ADMISSIONS, MAX_CHAT_PROMPT_BYTES,
 };
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
-pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
+pub use conversation::{
+    ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage,
+    CONVERSATION_ADVANCED_DETAIL, MAX_TURN_METADATA_KEY_CHARS, MAX_TURN_METADATA_PAIRS,
+    MAX_TURN_METADATA_VALUE_CHARS,
+};
 pub use coordination::{
     ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
     ConversationOpeningLeaseRequest, ConversationWriteAuthority, RuntimeAuthority,
@@ -188,7 +192,7 @@ pub use environment::{
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
-pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
+pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind, ToolBody};
 pub use ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 pub use inventory::{
     ProviderInventory, ProviderRuntimeGeneration, ProviderView, RuntimeAuthorityComparison,

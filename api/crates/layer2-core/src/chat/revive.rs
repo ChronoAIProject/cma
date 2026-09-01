@@ -1039,6 +1039,7 @@ impl crate::SessionService {
         owner: &SubjectId,
         session_id: &SessionId,
         payload: String,
+        linear: Option<crate::conversation::LinearPromptContext>,
     ) -> Result<u64, CoreError> {
         if payload.len() > MAX_CHAT_PROMPT_BYTES {
             return Err(CoreError::InvalidRequest(format!(
@@ -1155,12 +1156,13 @@ impl crate::SessionService {
                         CoreError::InvalidRequest("chat prompt sequence exhausted".into())
                     })?;
                 let now = crate::clock::now_rfc3339();
-                let admission = ChatPromptAdmission::new(
+                let mut admission = ChatPromptAdmission::new(
                     session_id.clone(),
                     payload.clone(),
                     sequence,
                     now.clone(),
                 );
+                admission.linear_prompt = linear.clone();
                 let admission_id = admission.id.clone();
                 host.prompt_admission_sequence = sequence;
                 host.prompt_admissions.push(admission);
@@ -1220,6 +1222,11 @@ impl crate::SessionService {
                     });
                 }
                 ChatPromptDeliveryState::RecoveryRequired => {
+                    if admission.linear_conflict {
+                        return Err(CoreError::InvalidState {
+                            detail: Some(crate::CONVERSATION_ADVANCED_DETAIL.into()),
+                        });
+                    }
                     if let Some(phase) = admission.failure_provisioning_phase {
                         return Err(CoreError::ChatUnavailable(
                             ChatUnavailableCause::ProvisioningFailed {
@@ -2033,10 +2040,11 @@ impl crate::SessionService {
                     ChatUnavailableCause::RevivePending,
                 ))?;
             let outcome = self
-                .send_live_prompt(
+                .send_live_prompt_with_context(
                     &host.owner,
                     &admission.session_id,
                     admission.payload.clone(),
+                    admission.linear_prompt.clone(),
                 )
                 .await;
             loop {
@@ -2066,6 +2074,14 @@ impl crate::SessionService {
                     Err(_) => {
                         current_admission.state = ChatPromptDeliveryState::RecoveryRequired;
                         current_admission.failure_phase = Some(ChatRevivePhase::PromptDelivery);
+                        current_admission.linear_conflict =
+                            outcome.as_ref().err().is_some_and(|error| {
+                                matches!(
+                                    error,
+                                    CoreError::InvalidState { detail: Some(detail) }
+                                        if detail == crate::CONVERSATION_ADVANCED_DETAIL
+                                )
+                            });
                         current_admission.failure_retryable = outcome
                             .as_ref()
                             .err()
