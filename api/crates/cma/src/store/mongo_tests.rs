@@ -178,6 +178,9 @@ fn private_chat_origin_round_trips_and_derives_the_public_projection() {
         host_id: ChatHostId("chho_round_trip".into()),
         worktree_name: "chat-7".into(),
         worktree_path: "/workspace/chat-7".into(),
+        paused_notice: Some(
+            "Your current chat session has been idle for 15min and has been auto-paused.".into(),
+        ),
     };
     expected.chat_origin = Some(origin.clone());
     expected.session.chat = Some(origin.public_projection());
@@ -193,6 +196,44 @@ fn private_chat_origin_round_trips_and_derives_the_public_projection() {
     let read = from_doc(stored).expect("chat origin can be read");
     assert_eq!(read.chat_origin, Some(origin.clone()));
     assert_eq!(read.session.chat, Some(origin.public_projection()));
+}
+
+#[test]
+fn a_legacy_chat_origin_without_a_paused_notice_reads_as_unpaused() {
+    let mut expected = record_with(None);
+    let origin = ChatOrigin {
+        host_id: ChatHostId("chho_legacy_notice".into()),
+        worktree_name: "chat-2".into(),
+        worktree_path: "/workspace/chat-2".into(),
+        paused_notice: Some("this field did not exist on the legacy writer".into()),
+    };
+    expected.chat_origin = Some(origin.clone());
+    expected.session.chat = Some(origin.public_projection());
+    let stored = to_doc(&expected).expect("chat origin can be stored");
+    let mut document =
+        mongodb::bson::serialize_to_document(&stored).expect("stored doc serializes");
+    assert!(document
+        .get_document_mut("chat_origin")
+        .expect("private chat origin is nested")
+        .remove("paused_notice")
+        .is_some());
+    let legacy: SessionDoc =
+        mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
+
+    let read = from_doc(legacy).expect("legacy record decodes");
+    assert_eq!(
+        read.chat_origin
+            .as_ref()
+            .and_then(|origin| origin.paused_notice.as_deref()),
+        None
+    );
+    assert_eq!(
+        read.session
+            .chat
+            .as_ref()
+            .and_then(|chat| chat.paused_notice.as_deref()),
+        None
+    );
 }
 
 #[test]

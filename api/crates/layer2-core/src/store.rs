@@ -196,6 +196,9 @@ pub struct ChatOrigin {
     pub host_id: crate::ChatHostId,
     pub worktree_name: String,
     pub worktree_path: String,
+    /// Server-composed lifecycle notice retained while the shared host is paused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_notice: Option<String>,
 }
 
 impl ChatOrigin {
@@ -204,7 +207,7 @@ impl ChatOrigin {
             worktree_name: self.worktree_name.clone(),
             worktree_path: self.worktree_path.clone(),
             title: None,
-            paused_notice: None,
+            paused_notice: self.paused_notice.clone(),
         }
     }
 }
@@ -1322,6 +1325,22 @@ pub trait SessionStore: Send + Sync {
             .map(|event| event.seq)
             .max()
             .unwrap_or(0))
+    }
+
+    /// The newest durable event, when the session has any history.
+    ///
+    /// Implementations should override this with an indexed descending read.
+    /// The default remains correct for simple and compatibility stores.
+    async fn newest_event(&self, id: &SessionId) -> Result<Option<StoredEvent>, StoreError> {
+        let tail = self.event_tail(id).await?;
+        if tail == 0 {
+            return Ok(None);
+        }
+        Ok(self
+            .events_since(id, tail.saturating_sub(1))
+            .await?
+            .into_iter()
+            .max_by_key(|event| event.seq))
     }
 
     /// Events after a cursor, in sequence order.

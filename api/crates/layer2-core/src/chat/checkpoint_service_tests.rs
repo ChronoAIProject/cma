@@ -30,10 +30,10 @@ const CAPTURE_AT: &str = "2026-09-01T02:00:00Z";
 const FIVE_MINUTES_LATER: &str = "2026-09-01T02:05:00Z";
 
 #[derive(Default)]
-struct MemoryChatHosts {
-    records: Mutex<HashMap<String, ChatHostRecord>>,
+pub(super) struct MemoryChatHosts {
+    pub(super) records: Mutex<HashMap<String, ChatHostRecord>>,
     creates: AtomicUsize,
-    fail_updates: AtomicUsize,
+    pub(super) fail_updates: AtomicUsize,
 }
 
 impl MemoryChatHosts {
@@ -150,7 +150,7 @@ impl ChatHostStore for MemoryChatHosts {
 }
 
 #[derive(Default)]
-struct MemoryCheckpoints {
+pub(super) struct MemoryCheckpoints {
     objects: Mutex<HashMap<String, BTreeMap<String, Vec<u8>>>>,
     stages: Mutex<Vec<(String, Option<String>, String)>>,
     prunes: Mutex<Vec<(String, String)>>,
@@ -354,14 +354,14 @@ impl PlatformSettingsStore for FixedSettings {
     }
 }
 
-struct CheckpointFixture {
-    service: Arc<SessionService>,
-    adapter: Arc<FakeAdapter>,
-    hosts: Arc<MemoryChatHosts>,
-    sessions: Arc<FakeStore>,
-    checkpoints: Arc<MemoryCheckpoints>,
-    caller: crate::Caller,
-    threads: Vec<Session>,
+pub(super) struct CheckpointFixture {
+    pub(super) service: Arc<SessionService>,
+    pub(super) adapter: Arc<FakeAdapter>,
+    pub(super) hosts: Arc<MemoryChatHosts>,
+    pub(super) sessions: Arc<FakeStore>,
+    pub(super) checkpoints: Arc<MemoryCheckpoints>,
+    pub(super) caller: crate::Caller,
+    pub(super) threads: Vec<Session>,
 }
 
 fn enabled_settings() -> Arc<PlatformSettingsService> {
@@ -385,7 +385,7 @@ fn enabled_settings() -> Arc<PlatformSettingsService> {
     ))))
 }
 
-fn build_service(
+pub(super) fn build_service(
     adapter: Arc<FakeAdapter>,
     hosts: Arc<MemoryChatHosts>,
     sessions: Arc<FakeStore>,
@@ -436,7 +436,7 @@ fn chat_spec() -> SessionSpec {
     }
 }
 
-async fn fixture(owner: &str, thread_count: usize) -> CheckpointFixture {
+pub(super) async fn fixture(owner: &str, thread_count: usize) -> CheckpointFixture {
     let adapter = Arc::new(FakeAdapter {
         capabilities: KernelCapabilities {
             conversation: true,
@@ -480,7 +480,7 @@ async fn fixture(owner: &str, thread_count: usize) -> CheckpointFixture {
     }
 }
 
-async fn host(fixture: &CheckpointFixture) -> ChatHostRecord {
+pub(super) async fn host(fixture: &CheckpointFixture) -> ChatHostRecord {
     fixture
         .hosts
         .get_for_owner(&fixture.caller.subject)
@@ -568,7 +568,7 @@ fn package(host: &ChatHostRecord, version: u64, marker: &str) -> WorkspaceCheckp
     }
 }
 
-async fn use_package(fixture: &CheckpointFixture, version: u64, marker: &str) {
+pub(super) async fn use_package(fixture: &CheckpointFixture, version: u64, marker: &str) {
     *fixture.adapter.checkpoint.lock().await = Some(package(&host(fixture).await, version, marker));
 }
 

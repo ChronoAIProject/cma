@@ -49,6 +49,8 @@ pub(crate) struct SessionEntry {
     pub(crate) session: Session,
     /// Internal Trigger provenance retained across live-entry flushes.
     pub(crate) trigger_origin: Option<crate::session::TriggerSessionOrigin>,
+    /// Shared-host provenance retained across live-entry status commits.
+    pub(crate) chat_origin: Option<crate::store::ChatOrigin>,
     /// Durable Trigger prompt outbox state mirrored into the live entry.
     pub(crate) initial_prompt: Option<crate::store::InitialPromptDispatch>,
     /// This session's durable FIFO, kept alive while its runtime is live.

@@ -158,9 +158,10 @@ pub use chat::{
     ChatAgentSettings, ChatCheckpointConversation, ChatCheckpointConversationRef,
     ChatCheckpointOutcome, ChatCheckpointRef, ChatCheckpointSweep, ChatHostFailure, ChatHostId,
     ChatHostListQuery, ChatHostOperatorNote, ChatHostRecord, ChatHostSettings, ChatHostStatus,
-    ChatInactivity, ChatProvisioningPhase, ChatSettings, ChatSettingsSnapshot,
+    ChatInactivity, ChatPauseOutcome, ChatProvisioningPhase, ChatSettings, ChatSettingsSnapshot,
     ChatSettingsViolation, ChatSetup, ChatThreadSlot, ChatUnavailableCause, ChatWorkspaceAuthority,
-    ChatWorkspaceSource, CHAT_CHECKPOINT_INTERVAL_SECONDS, MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES,
+    ChatWorkspaceSource, CHAT_CHECKPOINT_INTERVAL_SECONDS, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS,
+    MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES,
 };
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};

@@ -3,6 +3,7 @@
 mod checkpoint;
 mod checkpoints;
 mod host;
+mod inactivity;
 mod settings;
 mod threads;
 
@@ -18,6 +19,7 @@ pub use host::{
     ChatHostStatus, ChatProvisioningPhase, ChatThreadSlot, ChatUnavailableCause,
     ChatWorkspaceAuthority,
 };
+pub use inactivity::{ChatPauseOutcome, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS};
 pub use settings::{
     ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSettingsSnapshot,
     ChatSettingsViolation, ChatSetup, ChatWorkspaceSource,
@@ -34,3 +36,7 @@ mod host_service_tests;
 #[cfg(test)]
 #[path = "checkpoint_service_tests.rs"]
 mod checkpoint_service_tests;
+
+#[cfg(test)]
+#[path = "inactivity_service_tests.rs"]
+mod inactivity_service_tests;

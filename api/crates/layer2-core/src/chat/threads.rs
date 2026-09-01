@@ -218,6 +218,7 @@ impl SessionService {
             host_id: host.id.clone(),
             worktree_name: worktree_name.clone(),
             worktree_path: receipt.path,
+            paused_notice: None,
         };
         let chat = origin.public_projection();
         let settings = &host.pinned_settings.settings.agent;
