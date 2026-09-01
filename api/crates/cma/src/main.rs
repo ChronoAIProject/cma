@@ -1059,6 +1059,7 @@ async fn serve_normal_control_plane() {
     // Recovery-point behavior and host claims belong to the core. This binary
     // owns only the deployment cadence that asks for one bounded pass.
     chat::checkpoints::spawn(Arc::clone(&service));
+    chat::sweeper::spawn(Arc::clone(&service));
 
     // Sessions end only when their owner says so, which leaves this as the one
     // thing that reclaims a runtime nothing refers to or finishes a session

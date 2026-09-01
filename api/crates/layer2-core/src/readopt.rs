@@ -1002,6 +1002,7 @@ impl SessionService {
         let entry = SessionEntry {
             session: adopted,
             trigger_origin: current.trigger_origin.clone(),
+            chat_origin: current.chat_origin.clone(),
             initial_prompt: current.initial_prompt.clone(),
             event_log,
             subject_credential: None,
