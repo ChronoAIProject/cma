@@ -2194,11 +2194,11 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 
 | Permission | Capability | What it opens |
 |---|---|---|
-| `cma:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
+| `cma:admin:sessions` | read every session and shared chat host | `GET /api/v1/admin/sessions`, `GET /api/v1/admin/chat/hosts` |
 | `cma:admin:users` | read the user directory | `GET /api/v1/admin/users` |
 | `cma:admin:activity` | read the activity log and redacted Trigger support | `GET /api/v1/admin/activity`, `GET /api/v1/admin/triggers/support` |
 | `cma:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
-| `cma:admin:control` | stop or terminate any session and authorize read-only Trigger effect reconciliation | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate`, `POST /api/v1/admin/triggers/launches/{launch_id}/reconcile` |
+| `cma:admin:control` | stop or terminate any session, retire a shared chat host, and authorize read-only Trigger effect reconciliation | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate`, `POST /api/v1/admin/chat/hosts/{id}/retire`, `POST /api/v1/admin/triggers/launches/{launch_id}/reconcile` |
 | `cma:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
@@ -2215,11 +2215,85 @@ and opaque `cursor` parameters as the caller-owned session list. It defaults to
 `Link` only when another page exists. Unknown parameters are refused with
 `400 invalid_query`.
 
-**No read is unbounded.** The admin session collection uses cursor pages as
-described above. `GET /api/v1/admin/users` and `GET /api/v1/admin/activity`
-both take `limit`, both clamp it, and both default to 100.
+`GET /api/v1/admin/chat/hosts` uses the same bounded array-and-`Link`
+contract with `limit` and a route-bound opaque `cursor`. It has no status
+filter. A cursor issued for sessions or any other collection is invalid here,
+and a host cursor is invalid on those collections.
 
-**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists. That `404` is byte-for-byte the one a session that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
+**No read is unbounded.** The admin session and chat-host collections use cursor
+pages as described above. `GET /api/v1/admin/users` and
+`GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default
+to 100.
+
+**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. Identifier-bearing session and chat-host controls keep the session surface's `404`, because a refusal must not confirm the target exists. That `404` is byte-for-byte the one a target that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
+
+### Chat-host inventory and retirement
+
+```http
+GET  /api/v1/admin/chat/hosts?limit=50&cursor=<opaque>
+POST /api/v1/admin/chat/hosts/{id}/retire
+```
+
+Inventory requires `cma:admin:sessions`, exposed to clients as
+`read_all_sessions`. It is newest first, defaults to 50 rows, clamps every
+request to 1 through 200 rows, and emits a standard `Link: <...>; rel="next"`
+only when another page exists. Its `200` body remains a JSON array:
+
+```json
+[
+  {
+    "id": "chho_0123456789abcdef0123456789abcdef",
+    "owner": "76fe9d91",
+    "status": "paused",
+    "thread_count": 3,
+    "runtime_version": "2026.09.1",
+    "paused_at": "2026-09-01T01:00:00Z",
+    "revived_at": "2026-09-01T00:30:00Z",
+    "checkpoint_captured_at": "2026-09-01T00:59:58Z",
+    "settings_revision": 17,
+    "created_at": "2026-08-31T23:00:00Z"
+  }
+]
+```
+
+`status` is one of `provisioning`, `active`, `pausing`, `paused`, `reviving`,
+or `retired`. Optional lifecycle times and `runtime_version` are omitted when
+absent. `thread_count` counts retained, non-removed threads. The projection does
+not expose provider runtime authority, transition claims, setup or prompt
+content, checkpoint object references or digests, credentials, or the pinned
+settings body.
+
+Retirement requires `cma:admin:control`, exposed as `control_any_session`, and
+is valid for active and paused hosts. It returns the resulting host projection
+with `200 OK`. Repeating it for a retired host is a no-op with the same `200`;
+no `Idempotency-Key` is required. Another non-retired lifecycle state returns
+`409 invalid_state` rather than racing its transition.
+
+For an active host, the service fences new input, captures every retained
+conversation and the workspace, verifies the sealed checkpoint bytes, and only
+then performs identity-fenced runtime deletion. A failed capture or verification
+does not authorize deletion. For a paused host, no new capture is needed. In
+both cases, retained threads become `terminated` with `stop_reason: "revoked"`
+and this durable status detail:
+
+```text
+Administrative chat-host retirement revoked this thread.
+```
+
+Retirement does not delete checkpoint objects or thread event histories. Old
+thread reads remain available under their existing session ids. The owner's
+next New Chat creates a fresh, higher-generation host incarnation under the
+then-current settings and does not reuse the retired incarnation's thread set.
+
+Both inventory and retirement are activity-classified as `chat_host_list` and
+`chat_host_retire`; retirement targets the host id and attributes the operator
+subject. No prompt, message, checkpoint reference, or settings body is recorded.
+
+The TypeScript SDK exposes `listChatHostsPage`, `listChatHosts`, and
+`retireChatHost` (also as configured-client methods). The Rust SDK exposes
+`Client::list_chat_host_page`, `Client::list_chat_hosts`,
+`Client::list_chat_hosts_with_limits`, and `Client::retire_chat_host`. Both SDKs
+validate the closed lifecycle and bind continuations to this exact collection.
 
 ### Platform settings
 

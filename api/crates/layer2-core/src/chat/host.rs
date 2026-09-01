@@ -11,10 +11,10 @@ use layer3_adapter::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::store::{PageRequest, MAX_PAGE_SIZE};
+use crate::store::{Page, PageRequest, MAX_PAGE_SIZE};
 use crate::{
-    ChatCheckpointRef, ChatSettingsSnapshot, CoreError, CredentialDeliveryTarget, KernelId,
-    SessionId, SubjectId,
+    Caller, Capability, ChatCheckpointRef, ChatSettingsSnapshot, CoreError,
+    CredentialDeliveryTarget, KernelId, SessionId, SubjectId,
 };
 
 const CHAT_HOST_NAMESPACE: uuid::Uuid =
@@ -685,6 +685,70 @@ impl crate::service::SessionService {
         }
     }
 
+    /// Read one bounded, newest-first page of deployment-managed chat hosts.
+    pub async fn list_chat_hosts(
+        &self,
+        caller: &Caller,
+        query: &ChatHostListQuery,
+    ) -> Result<Page<ChatHostRecord>, CoreError> {
+        caller.authorization.require(Capability::ReadAllSessions)?;
+        self.chat_hosts
+            .as_ref()
+            .ok_or_else(host_store_unavailable)?
+            .list(query)
+            .await
+            .map_err(|_| host_store_unavailable())
+    }
+
+    async fn fresh_chat_host_candidate(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<ChatHostRecord, CoreError> {
+        let policy = self
+            .settings
+            .chat_host_policy()
+            .await?
+            .ok_or_else(|| chat_unavailable(ChatUnavailableCause::NotConfigured))?;
+        if !policy.snapshot.settings.enabled {
+            return Err(chat_unavailable(ChatUnavailableCause::Disabled));
+        }
+
+        let kernel = self.environments.default_agent().kernel.clone();
+        let adapter = self.adapters.get(&kernel).ok_or_else(|| {
+            chat_unavailable(ChatUnavailableCause::CapabilityUnsupported(
+                "configured chat kernel".into(),
+            ))
+        })?;
+        let capabilities = adapter.capabilities();
+        if !capabilities.conversation {
+            return Err(chat_unavailable(
+                ChatUnavailableCause::CapabilityUnsupported("conversation".into()),
+            ));
+        }
+        if !capabilities.snapshot {
+            return Err(chat_unavailable(
+                ChatUnavailableCause::CapabilityUnsupported("snapshot".into()),
+            ));
+        }
+
+        let now = crate::clock::now_rfc3339();
+        let service_names = self
+            .environments
+            .baseline()
+            .services()
+            .iter()
+            .map(|service| service.0.clone())
+            .collect::<Vec<_>>();
+        Ok(ChatHostRecord::new(
+            owner.clone(),
+            policy.snapshot,
+            policy.briefing.render(&service_names),
+            kernel,
+            now,
+            format!("chcl_{}", uuid::Uuid::new_v4().simple()),
+        ))
+    }
+
     /// Return this owner's one usable shared chat host, provisioning it once
     /// when no durable host exists.
     pub(crate) async fn ensure_chat_host(
@@ -702,7 +766,24 @@ impl crate::service::SessionService {
         let host = match existing {
             Some(host) if host.status == ChatHostStatus::Active => return Ok(host),
             Some(host) if host.status == ChatHostStatus::Retired => {
-                return Err(chat_unavailable(ChatUnavailableCause::Retired));
+                let next_generation =
+                    generation_for(&host).get().checked_add(1).ok_or_else(|| {
+                        CoreError::InvalidRequest("chat runtime generation exhausted".into())
+                    })?;
+                let checkpoint_sequence = host.checkpoint_sequence.max(
+                    host.checkpoint
+                        .as_ref()
+                        .map_or(0, |checkpoint| checkpoint.checkpoint_version),
+                );
+                let mut candidate = self.fresh_chat_host_candidate(owner).await?;
+                candidate.runtime_generation = next_generation;
+                candidate.checkpoint_sequence = checkpoint_sequence;
+                candidate.revision = host.revision;
+                store
+                    .update_if_revision(host.revision, &candidate)
+                    .await
+                    .map_err(|_| host_store_unavailable())?
+                    .ok_or_else(|| chat_unavailable(ChatUnavailableCause::Provisioning))?
             }
             Some(host)
                 if matches!(
@@ -739,49 +820,7 @@ impl crate::service::SessionService {
                 return Err(chat_unavailable(ChatUnavailableCause::Provisioning));
             }
             None => {
-                let policy = self
-                    .settings
-                    .chat_host_policy()
-                    .await?
-                    .ok_or_else(|| chat_unavailable(ChatUnavailableCause::NotConfigured))?;
-                if !policy.snapshot.settings.enabled {
-                    return Err(chat_unavailable(ChatUnavailableCause::Disabled));
-                }
-
-                let kernel = self.environments.default_agent().kernel.clone();
-                let adapter = self.adapters.get(&kernel).ok_or_else(|| {
-                    chat_unavailable(ChatUnavailableCause::CapabilityUnsupported(
-                        "configured chat kernel".into(),
-                    ))
-                })?;
-                let capabilities = adapter.capabilities();
-                if !capabilities.conversation {
-                    return Err(chat_unavailable(
-                        ChatUnavailableCause::CapabilityUnsupported("conversation".into()),
-                    ));
-                }
-                if !capabilities.snapshot {
-                    return Err(chat_unavailable(
-                        ChatUnavailableCause::CapabilityUnsupported("snapshot".into()),
-                    ));
-                }
-
-                let now = crate::clock::now_rfc3339();
-                let service_names = self
-                    .environments
-                    .baseline()
-                    .services()
-                    .iter()
-                    .map(|service| service.0.clone())
-                    .collect::<Vec<_>>();
-                let candidate = ChatHostRecord::new(
-                    owner.clone(),
-                    policy.snapshot,
-                    policy.briefing.render(&service_names),
-                    kernel,
-                    now,
-                    format!("chcl_{}", uuid::Uuid::new_v4().simple()),
-                );
+                let candidate = self.fresh_chat_host_candidate(owner).await?;
                 let host = store
                     .create_if_absent(&candidate)
                     .await

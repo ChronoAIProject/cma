@@ -26,17 +26,18 @@ use layer1_public::{
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
-    ChatHostId, ChatOrigin, ConversationLink, ConversationOpeningLease,
-    ConversationOpeningLeaseRequest, ConversationWriteAuthority, EnvironmentProfile,
-    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
-    EnvironmentProfileStore, Event, EventKind, HandoverSnapshot, HandoverStore, KernelId,
-    OperationClaim, OperationReservation, OperationStore, Page, PageCursor, PageRequest,
-    PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
-    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionLease, SessionListQuery,
-    SessionMode, SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus,
-    SessionStore, SessionSurfaceFilter, SkillCatalog, SkillId, SkillPack, SkillPackStore,
-    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
-    UserDirectoryStore, MAX_PAGE_SIZE,
+    ChatCheckpointRef, ChatHostId, ChatHostListQuery, ChatHostRecord, ChatHostStatus,
+    ChatHostStore, ChatOrigin, ChatSettings, ChatSettingsSnapshot, ChatThreadSlot,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, EnvironmentProfile, EnvironmentProfileId,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind,
+    HandoverSnapshot, HandoverStore, KernelId, OperationClaim, OperationReservation,
+    OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
+    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
+    ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
+    SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, SessionSurfaceFilter,
+    SkillCatalog, SkillId, SkillPack, SkillPackStore, SkillSource, StoreError, StoredEvent,
+    SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -260,6 +261,97 @@ struct MemorySessions {
     sequence_taken_errors: AtomicUsize,
     record_read_pause: Mutex<Option<(usize, Arc<StorePause>)>>,
     event_commit_pause: Mutex<Option<Arc<StorePause>>>,
+}
+
+#[derive(Default)]
+struct MemoryChatHosts {
+    records: Mutex<HashMap<String, ChatHostRecord>>,
+}
+
+#[async_trait::async_trait]
+impl ChatHostStore for MemoryChatHosts {
+    async fn create_if_absent(
+        &self,
+        candidate: &ChatHostRecord,
+    ) -> Result<ChatHostRecord, StoreError> {
+        let mut records = self.records.lock().await;
+        if let Some(existing) = records.get(candidate.id.as_str()) {
+            return Ok(existing.clone());
+        }
+        let mut stored = candidate.clone();
+        stored.revision = 1;
+        records.insert(stored.id.0.clone(), stored.clone());
+        Ok(stored)
+    }
+
+    async fn get(&self, id: &ChatHostId) -> Result<Option<ChatHostRecord>, StoreError> {
+        Ok(self.records.lock().await.get(id.as_str()).cloned())
+    }
+
+    async fn get_for_owner(&self, owner: &SubjectId) -> Result<Option<ChatHostRecord>, StoreError> {
+        Ok(self
+            .records
+            .lock()
+            .await
+            .values()
+            .find(|host| &host.owner == owner)
+            .cloned())
+    }
+
+    async fn update_if_revision(
+        &self,
+        expected: u64,
+        replacement: &ChatHostRecord,
+    ) -> Result<Option<ChatHostRecord>, StoreError> {
+        let mut records = self.records.lock().await;
+        let Some(current) = records.get(replacement.id.as_str()) else {
+            return Ok(None);
+        };
+        if current.revision != expected {
+            return Ok(None);
+        }
+        let mut stored = replacement.clone();
+        stored.revision = expected.saturating_add(1);
+        records.insert(stored.id.0.clone(), stored.clone());
+        Ok(Some(stored))
+    }
+
+    async fn list(&self, query: &ChatHostListQuery) -> Result<Page<ChatHostRecord>, StoreError> {
+        let mut hosts = self
+            .records
+            .lock()
+            .await
+            .values()
+            .filter(|host| query.statuses.is_empty() || query.statuses.contains(&host.status))
+            .filter(|host| {
+                query.page.cursor().is_none_or(|cursor| {
+                    host.created_at < cursor.created_at
+                        || (host.created_at == cursor.created_at && host.id.0 < cursor.id)
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        hosts.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.0.cmp(&left.id.0))
+        });
+        let has_more = hosts.len() > query.page.limit() as usize;
+        hosts.truncate(query.page.limit() as usize);
+        let next = has_more.then(|| {
+            let last = hosts.last().expect("a continuing host page has a row");
+            PageCursor::new(&last.created_at, &last.id.0)
+        });
+        Ok(Page { items: hosts, next })
+    }
+
+    async fn list_candidates(
+        &self,
+        query: &ChatHostListQuery,
+    ) -> Result<Page<ChatHostRecord>, StoreError> {
+        self.list(query).await
+    }
 }
 
 impl MemorySessions {
@@ -1409,10 +1501,31 @@ struct TestSurface {
     profiles: Arc<MemoryProfiles>,
     catalogue: Arc<TestCatalogue>,
     directory: Arc<TestDirectory>,
+    chat_hosts: Arc<MemoryChatHosts>,
     caller: Caller,
 }
 
 fn test_surface(authenticated: bool) -> TestSurface {
+    test_surface_with_authorization(
+        authenticated,
+        Authorization::from_capabilities([
+            Capability::CreateSession,
+            Capability::UseOwnSessions,
+            Capability::TerminateOwnSession,
+            Capability::ReadAllSessions,
+            Capability::ManageOwnEnvironmentProfiles,
+            Capability::ReadUserDirectory,
+            Capability::ReadActivityLog,
+            Capability::ConfigurePlatform,
+            Capability::ControlAnySession,
+        ]),
+    )
+}
+
+fn test_surface_with_authorization(
+    authenticated: bool,
+    authorization: Authorization,
+) -> TestSurface {
     let settings = Arc::new(PlatformSettingsService::unconfigured());
     let catalogue = Arc::new(TestCatalogue::default());
     let profiles = Arc::new(MemoryProfiles::default());
@@ -1440,6 +1553,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     );
     let factory: ScreenFactory = Arc::new(|geometry| Box::new(EmptyScreen(geometry)));
     let store = Arc::new(MemorySessions::default());
+    let chat_hosts = Arc::new(MemoryChatHosts::default());
     let operations = Arc::new(MemoryOperations::default());
     let sessions = SessionService::new(
         adapters,
@@ -1450,6 +1564,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
             skills: Some(Arc::new(TestSkills)),
             skill_packs: Some(Arc::new(MemorySkillPacks::default())),
             settings: Some(Arc::clone(&settings)),
+            chat_hosts: Some(Arc::clone(&chat_hosts) as Arc<dyn ChatHostStore>),
             ..Default::default()
         },
         Arc::clone(&environments),
@@ -1458,20 +1573,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     let directory = Arc::new(TestDirectory::default());
     let users = UserDirectory::new(Arc::clone(&directory) as Arc<dyn UserDirectoryStore>);
     let activity = ActivityService::new(Arc::new(NoActivity));
-    let caller = Caller::new(
-        SubjectId("subject-contract".into()),
-        Authorization::from_capabilities([
-            Capability::CreateSession,
-            Capability::UseOwnSessions,
-            Capability::TerminateOwnSession,
-            Capability::ReadAllSessions,
-            Capability::ManageOwnEnvironmentProfiles,
-            Capability::ReadUserDirectory,
-            Capability::ReadActivityLog,
-            Capability::ConfigurePlatform,
-            Capability::ControlAnySession,
-        ]),
-    );
+    let caller = Caller::new(SubjectId("subject-contract".into()), authorization);
     let tickets = TerminalTickets::in_memory();
     let public_state = layer1_public::rest::SessionsState {
         sessions: Arc::clone(&sessions),
@@ -1520,6 +1622,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         profiles,
         catalogue,
         directory,
+        chat_hosts,
         caller,
     }
 }
@@ -1737,6 +1840,81 @@ fn chat_session_record(sequence: usize, owner: &SubjectId) -> SessionRecord {
     record.session.chat = Some(origin.public_projection());
     record.chat_origin = Some(origin);
     record
+}
+
+fn chat_host_record(sequence: usize, owner: SubjectId, status: ChatHostStatus) -> ChatHostRecord {
+    let created_at = format!("2026-09-01T00:00:{sequence:02}Z");
+    ChatHostRecord {
+        id: ChatHostId::for_owner(&owner),
+        owner,
+        status,
+        pinned_settings: ChatSettingsSnapshot::new(
+            17,
+            ChatSettings {
+                enabled: true,
+                ..ChatSettings::default()
+            },
+        )
+        .expect("the host fixture settings are valid"),
+        platform_briefing: "internal deployment briefing".into(),
+        kernel: KernelId::new("test"),
+        runtime_id: (status != ChatHostStatus::Retired)
+            .then(|| "internal-runtime-authority".into()),
+        runtime_version: Some("runtime-v2".into()),
+        runtime_generation: 4,
+        workspace_authority: None,
+        threads: vec![
+            ChatThreadSlot {
+                session_id: SessionId(format!("sesn_host_{sequence}_live")),
+                worktree_name: format!("chat-{sequence}-live"),
+                worktree_path: format!("/workspace/chat-{sequence}-live"),
+                created_at: created_at.clone(),
+                removed: false,
+            },
+            ChatThreadSlot {
+                session_id: SessionId(format!("sesn_host_{sequence}_removed")),
+                worktree_name: format!("chat-{sequence}-removed"),
+                worktree_path: format!("/workspace/chat-{sequence}-removed"),
+                created_at: created_at.clone(),
+                removed: true,
+            },
+        ],
+        threads_created: 2,
+        checkpoint: Some(ChatCheckpointRef {
+            workspace_object_reference: "internal/workspace-object".into(),
+            workspace_archive_sha256: "a".repeat(64),
+            workspace_manifest_digest: "b".repeat(64),
+            conversations: Vec::new(),
+            captured_at: "2026-09-01T00:00:30Z".into(),
+            checkpoint_version: 3,
+            pair_sha256: "c".repeat(64),
+        }),
+        checkpoint_sequence: 3,
+        paused_at: Some("2026-09-01T00:00:20Z".into()),
+        revived_at: Some("2026-09-01T00:00:25Z".into()),
+        rotated_at: None,
+        retired_at: (status == ChatHostStatus::Retired).then(|| "2026-09-01T00:00:40Z".into()),
+        last_transition_claim: None,
+        transition_started_at: None,
+        last_failure: None,
+        last_operator_note: None,
+        revive_cause: None,
+        revive_phase: None,
+        revive_failed_threads: Vec::new(),
+        prompt_admission_sequence: 0,
+        prompt_admissions: Vec::new(),
+        rotations: 2,
+        created_at: created_at.clone(),
+        updated_at: created_at,
+        revision: 1,
+    }
+}
+
+async fn seed_chat_hosts(store: &MemoryChatHosts, hosts: impl IntoIterator<Item = ChatHostRecord>) {
+    let mut records = store.records.lock().await;
+    for host in hosts {
+        records.insert(host.id.0.clone(), host);
+    }
 }
 
 async fn seed_sessions(
@@ -4234,6 +4412,8 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         "/api/v1/admin/sessions",
         "/api/v1/admin/sessions/{id}/stop",
         "/api/v1/admin/sessions/{id}/terminate",
+        "/api/v1/admin/chat/hosts",
+        "/api/v1/admin/chat/hosts/{id}/retire",
         "/api/v1/admin/settings",
         "/api/v1/admin/settings/reset",
     ]
@@ -4245,6 +4425,44 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>(),
         expected
+    );
+
+    let host_list = &paths["/api/v1/admin/chat/hosts"]["get"];
+    let host_parameters = host_list["parameters"]
+        .as_array()
+        .expect("chat-host inventory declares bounded page parameters");
+    assert_eq!(
+        host_parameters
+            .iter()
+            .map(|parameter| parameter["name"].as_str().expect("parameter has a name"))
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["X-Request-Id", "cursor", "limit"])
+    );
+    assert_eq!(
+        paths["/api/v1/admin/chat/hosts/{id}/retire"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/AdminChatHostView"
+    );
+    let host_properties = document["components"]["schemas"]["AdminChatHostView"]["properties"]
+        .as_object()
+        .expect("chat-host projection has a concrete schema");
+    assert_eq!(
+        host_properties
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "checkpoint_captured_at",
+            "created_at",
+            "id",
+            "owner",
+            "paused_at",
+            "revived_at",
+            "runtime_version",
+            "settings_revision",
+            "status",
+            "thread_count",
+        ])
     );
 
     let event_parameters = paths["/api/v1/sessions/{id}/events"]["get"]["parameters"]
@@ -4877,7 +5095,7 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             );
         }
     }
-    assert_eq!(operations, 45, "every REST operation must be documented");
+    assert_eq!(operations, 47, "every REST operation must be documented");
 }
 
 #[tokio::test]
@@ -5285,6 +5503,150 @@ async fn session_surface_filter_is_exact_and_survives_its_continuation() {
         .expect("router answers");
     let problem = assert_problem(response, StatusCode::BAD_REQUEST).await;
     assert_eq!(problem["code"], "invalid_query");
+}
+
+#[tokio::test]
+async fn admin_chat_hosts_page_redacts_authority_and_uses_standard_pagination() {
+    let TestSurface {
+        app, chat_hosts, ..
+    } = test_surface(true);
+    seed_chat_hosts(
+        &chat_hosts,
+        [
+            chat_host_record(
+                1,
+                SubjectId("host-owner-one".into()),
+                ChatHostStatus::Active,
+            ),
+            chat_host_record(
+                2,
+                SubjectId("host-owner-two".into()),
+                ChatHostStatus::Paused,
+            ),
+            chat_host_record(
+                3,
+                SubjectId("host-owner-three".into()),
+                ChatHostStatus::Retired,
+            ),
+        ],
+    )
+    .await;
+
+    let (first, headers) = get_collection(&app, "/api/v1/admin/chat/hosts?limit=2").await;
+    assert_eq!(first.len(), 2);
+    assert_eq!(first[0]["owner"], "host-owner-three");
+    assert_eq!(first[0]["status"], "retired");
+    assert_eq!(first[0]["thread_count"], 1);
+    assert_eq!(first[0]["runtime_version"], "runtime-v2");
+    assert_eq!(first[0]["paused_at"], "2026-09-01T00:00:20Z");
+    assert_eq!(first[0]["revived_at"], "2026-09-01T00:00:25Z");
+    assert_eq!(first[0]["checkpoint_captured_at"], "2026-09-01T00:00:30Z");
+    assert_eq!(first[0]["settings_revision"], 17);
+    assert_eq!(first[0]["created_at"], "2026-09-01T00:00:03Z");
+    assert_eq!(
+        first[0]
+            .as_object()
+            .expect("host row is an object")
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "checkpoint_captured_at",
+            "created_at",
+            "id",
+            "owner",
+            "paused_at",
+            "revived_at",
+            "runtime_version",
+            "settings_revision",
+            "status",
+            "thread_count",
+        ]),
+        "lifecycle authority or checkpoint object references escaped"
+    );
+
+    let next = next_link(&headers).expect("the third host needs a continuation");
+    assert!(next.starts_with("/api/v1/admin/chat/hosts?limit=2&cursor="));
+    let (last, headers) = get_collection(&app, &next).await;
+    assert_eq!(last.len(), 1);
+    assert_eq!(last[0]["owner"], "host-owner-one");
+    assert!(next_link(&headers).is_none());
+}
+
+#[tokio::test]
+async fn admin_chat_host_routes_enforce_distinct_operator_capabilities() {
+    let reader_refused = test_surface_with_authorization(
+        true,
+        Authorization::from_capabilities([Capability::ControlAnySession]),
+    );
+    let response = reader_refused
+        .app
+        .oneshot(
+            Request::get("/api/v1/admin/chat/hosts")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let problem = assert_problem(response, StatusCode::FORBIDDEN).await;
+    assert_eq!(problem["code"], "forbidden");
+
+    let controller_refused = test_surface_with_authorization(
+        true,
+        Authorization::from_capabilities([Capability::ReadAllSessions]),
+    );
+    let owner = SubjectId("known-host-owner".into());
+    let host = chat_host_record(1, owner, ChatHostStatus::Retired);
+    let id = host.id.0.clone();
+    seed_chat_hosts(&controller_refused.chat_hosts, [host]).await;
+    let response = controller_refused
+        .app
+        .oneshot(
+            Request::post(format!("/api/v1/admin/chat/hosts/{id}/retire"))
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn retiring_an_already_retired_chat_host_is_idempotent_http_ok() {
+    let TestSurface {
+        app, chat_hosts, ..
+    } = test_surface(true);
+    let host = chat_host_record(
+        1,
+        SubjectId("retired-host-owner".into()),
+        ChatHostStatus::Retired,
+    );
+    let id = host.id.0.clone();
+    seed_chat_hosts(&chat_hosts, [host]).await;
+    let uri = format!("/api/v1/admin/chat/hosts/{id}/retire");
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::post(&uri)
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let first = assert_json(first, StatusCode::OK).await;
+    let repeated = app
+        .oneshot(
+            Request::post(&uri)
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let repeated = assert_json(repeated, StatusCode::OK).await;
+    assert_eq!(repeated, first);
+    assert_eq!(first["id"], id);
+    assert_eq!(first["status"], "retired");
 }
 
 #[tokio::test]

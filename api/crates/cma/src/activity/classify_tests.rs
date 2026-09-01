@@ -107,6 +107,17 @@ fn the_operator_surface_is_classified_too() {
         c.target,
         Some(ActivityTarget::Session(SessionId("sesn_1".into())))
     );
+
+    let list = classified(Method::GET, "/api/v1/admin/chat/hosts");
+    assert_eq!(list.action, Action::ChatHostList);
+    assert!(list.target.is_none());
+    let retire = classified(Method::POST, "/api/v1/admin/chat/hosts/chho_example/retire");
+    assert_eq!(retire.action, Action::ChatHostRetire);
+    assert_eq!(
+        retire.target,
+        Some(ActivityTarget::ChatHost(ChatHostId("chho_example".into())))
+    );
+    assert!(!retire.reads_body);
 }
 
 #[test]

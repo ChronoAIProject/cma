@@ -11,24 +11,26 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
-    ApprovalDecision, BeginConnectionRequest, ChatAgentSettings, ChatHostSettings, ChatInactivity,
-    ChatSettings, ChatSetup, ChatWorkspaceSource, Client, Conformance, CreateSessionRequest,
-    CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationAction,
-    LaunchConfirmationRequest, LaunchEventKind, LaunchListRequest, LaunchProgress,
-    LaunchStartRequest, LaunchState, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
-    PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
-    PullRequestStatusRefreshRequest, ReasoningEffort, RecoverInitialPromptRequest,
-    ResponseMetadata, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
-    SessionId, SessionInput, SessionPageRequest, SessionSize, SessionStatus, SessionSurface,
-    SessionSurfaceFilter, TerminalGeometry, TriggerConnection, TriggerConnectionState,
-    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewAvailability,
-    TriggerPreviewCost, TriggerPreviewUnavailableReason, TriggerRepositorySelection,
-    TriggerRevision, UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
+    ApprovalDecision, BeginConnectionRequest, ChatAgentSettings, ChatHostId, ChatHostPageRequest,
+    ChatHostSettings, ChatHostStatus, ChatInactivity, ChatSettings, ChatSetup, ChatWorkspaceSource,
+    Client, Conformance, CreateSessionRequest, CreateTriggerRequest, DiffReview, Error, Event,
+    EventKind, Launch, LaunchConfirmationAction, LaunchConfirmationRequest, LaunchEventKind,
+    LaunchListRequest, LaunchProgress, LaunchStartRequest, LaunchState, MAX_PAGE_SIZE,
+    PageWalkLimits, PublishTriggerRequest, PullRequestConfirmRequest, PullRequestDraft,
+    PullRequestOperation, PullRequestReviewRequest, PullRequestStatusRefreshRequest,
+    ReasoningEffort, RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy, ScreenSnapshot,
+    SelectLaunchConnectionRequest, Session, SessionId, SessionInput, SessionPageRequest,
+    SessionSize, SessionStatus, SessionSurface, SessionSurfaceFilter, TerminalGeometry,
+    TriggerConnection, TriggerConnectionState, TriggerContentDraft, TriggerDraft, TriggerPreview,
+    TriggerPreviewAvailability, TriggerPreviewCost, TriggerPreviewUnavailableReason,
+    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
+    UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
 const SESSION: &str = include_str!("fixtures/session.json");
 const SESSIONS: &str = include_str!("fixtures/sessions.json");
+const CHAT_HOSTS: &str = include_str!("fixtures/chat_hosts.json");
 const CREATE_REQUEST: &str = include_str!("fixtures/create_session_request.json");
 const INPUT_TEXT_REQUEST: &str = include_str!("fixtures/input_text_request.json");
 const INPUT_BYTES_REQUEST: &str = include_str!("fixtures/input_bytes_request.json");
@@ -1806,6 +1808,196 @@ async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
     );
 }
 
+#[tokio::test]
+async fn chat_host_inventory_decodes_projection_and_route_bound_pages() {
+    let retired = CHAT_HOSTS
+        .replace(
+            "chho_0123456789abcdef0123456789abcdef",
+            "chho_fedcba9876543210fedcba9876543210",
+        )
+        .replace("\"status\": \"active\"", "\"status\": \"retired\"");
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+            "link",
+            "</api/v1/admin/chat/hosts?limit=1&cursor=opaque-next>; rel=\"next\"",
+        ),
+        StubResponse::json(StatusCode::OK, &retired),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+    let request = ChatHostPageRequest::new()
+        .with_limit(1)
+        .expect("one is within the page bound")
+        .with_cursor("opaque start")
+        .expect("an opaque cursor is accepted");
+
+    let first = client
+        .list_chat_host_page(request)
+        .await
+        .expect("first host page lists");
+    let host = &first.items[0];
+    assert_eq!(host.id.as_str(), "chho_0123456789abcdef0123456789abcdef");
+    assert_eq!(host.owner, "subject-owner");
+    assert_eq!(host.status, ChatHostStatus::Active);
+    assert_eq!(host.thread_count, 3);
+    assert_eq!(host.runtime_version.as_deref(), Some("runtime-v2"));
+    assert_eq!(host.paused_at.as_deref(), Some("2026-09-01T01:00:00Z"));
+    assert_eq!(host.revived_at.as_deref(), Some("2026-09-01T02:00:00Z"));
+    assert_eq!(
+        host.checkpoint_captured_at.as_deref(),
+        Some("2026-09-01T00:45:00Z")
+    );
+    assert_eq!(host.settings_revision, 17);
+    assert_eq!(host.created_at, "2026-08-31T23:00:00Z");
+
+    let next = first.next.expect("first host page continues");
+    assert!(
+        ChatHostPageRequest::continuing(next.clone())
+            .with_limit(2)
+            .is_err()
+    );
+    assert!(
+        ChatHostPageRequest::continuing(next.clone())
+            .with_cursor("replacement")
+            .is_err()
+    );
+    let last = client
+        .list_chat_host_page(ChatHostPageRequest::continuing(next))
+        .await
+        .expect("manual host continuation lists");
+    assert_eq!(last.items[0].status, ChatHostStatus::Retired);
+    assert!(last.next.is_none());
+
+    assert_eq!(
+        stub.requests()
+            .await
+            .iter()
+            .map(|request| request.uri.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "/proxy/api/v1/admin/chat/hosts?limit=1&cursor=opaque+start",
+            "/proxy/api/v1/admin/chat/hosts?limit=1&cursor=opaque-next",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_chat_hosts_walks_pages_with_finite_boundaries() {
+    let older = CHAT_HOSTS.replace(
+        "chho_0123456789abcdef0123456789abcdef",
+        "chho_fedcba9876543210fedcba9876543210",
+    );
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+            "link",
+            "</api/v1/admin/chat/hosts?limit=50&cursor=older>; rel=\"next\"",
+        ),
+        StubResponse::json(StatusCode::OK, &older),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let hosts = client
+        .list_chat_hosts()
+        .await
+        .expect("both host pages list");
+    assert_eq!(hosts.len(), 2);
+    assert_eq!(
+        stub.requests()
+            .await
+            .iter()
+            .map(|request| request.uri.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "/proxy/api/v1/admin/chat/hosts",
+            "/proxy/api/v1/admin/chat/hosts?limit=50&cursor=older",
+        ]
+    );
+
+    let bounded = Stub::start([StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+        "link",
+        "</api/v1/admin/chat/hosts?cursor=more>; rel=\"next\"",
+    )])
+    .await;
+    let (bounded_client, _) = stub_client(&bounded, 1);
+    assert!(matches!(
+        bounded_client
+            .list_chat_hosts_with_limits(PageWalkLimits::new(1, 10).expect("valid limits"))
+            .await,
+        Err(Error::Protocol { .. })
+    ));
+}
+
+#[tokio::test]
+async fn chat_host_inventory_refuses_cross_collection_continuations() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, CHAT_HOSTS).header(
+        "link",
+        "</api/v1/sessions?cursor=wrong-collection>; rel=\"next\"",
+    )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_chat_hosts().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn retire_chat_host_posts_and_accepts_idempotent_http_ok() {
+    let retired = CHAT_HOSTS.replace("\"status\": \"active\"", "\"status\": \"retired\"");
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &retired[1..retired.len() - 2]),
+        StubResponse::json(StatusCode::OK, &retired[1..retired.len() - 2]),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+    let id =
+        ChatHostId::new("chho_0123456789abcdef0123456789abcdef").expect("fixture host id is valid");
+
+    assert_eq!(
+        client
+            .retire_chat_host(&id)
+            .await
+            .expect("active host retires")
+            .status,
+        ChatHostStatus::Retired
+    );
+    assert_eq!(
+        client
+            .retire_chat_host(&id)
+            .await
+            .expect("retired host is an idempotent success")
+            .status,
+        ChatHostStatus::Retired
+    );
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.method == Method::POST)
+    );
+    assert!(requests.iter().all(|request| {
+        request.uri.path()
+            == "/proxy/api/v1/admin/chat/hosts/chho_0123456789abcdef0123456789abcdef/retire"
+    }));
+    assert!(requests.iter().all(|request| request.body.is_empty()));
+}
+
+#[tokio::test]
+async fn malformed_chat_host_projection_is_a_protocol_failure() {
+    let malformed = CHAT_HOSTS.replace("\"status\": \"active\"", "\"status\": \"future\"");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &malformed)]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_chat_hosts().await,
+        Err(Error::Protocol { .. })
+    ));
+}
+
 #[test]
 fn bounded_page_and_walk_options_reject_invalid_edges() {
     assert!(SessionPageRequest::new().with_limit(0).is_err());
@@ -1815,6 +2007,14 @@ fn bounded_page_and_walk_options_reject_invalid_edges() {
             .is_err()
     );
     assert!(SessionPageRequest::new().with_cursor("").is_err());
+    assert!(ChatHostPageRequest::new().with_limit(0).is_err());
+    assert!(
+        ChatHostPageRequest::new()
+            .with_limit(MAX_PAGE_SIZE + 1)
+            .is_err()
+    );
+    assert!(ChatHostPageRequest::new().with_cursor("").is_err());
+    assert!(ChatHostId::new("session-shaped").is_err());
     assert!(PageWalkLimits::new(0, 1).is_err());
     assert!(PageWalkLimits::new(1, 0).is_err());
 }

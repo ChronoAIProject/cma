@@ -13,6 +13,7 @@ use cma_sdk::{Client, CreateSessionRequest, TerminalGeometry};
 
 async fn inspect(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     let request = CreateSessionRequest {
+        surface: None,
         geometry: Some(TerminalGeometry::new(120, 32)?),
         environment_profile: Some(String::from("profile_backend")),
         quoted_rate_card: None,

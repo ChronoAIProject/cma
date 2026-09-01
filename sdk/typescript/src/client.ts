@@ -12,6 +12,7 @@
 
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
 import * as aguiCapabilities from './agui/capabilities.js';
+import * as chatHosts from './chat-hosts.js';
 import * as discovery from './discovery.js';
 import * as environment from './environment.js';
 import * as events from './events.js';
@@ -93,6 +94,26 @@ export class Cma {
   /** Read the deployment-owned chat setting and its write revision. */
   readChatSettings(options: OperationOptions = {}): Promise<StoredChatSettings> {
     return settings.readChatSettings(this.#config, options);
+  }
+
+  /** Read one bounded page of deployment-managed chat hosts. */
+  listChatHostsPage(
+    page: chatHosts.ChatHostPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<chatHosts.ChatHost>> {
+    return chatHosts.listChatHostsPage(this.#config, page, options);
+  }
+
+  /** List every deployment-managed chat host within explicit walk ceilings. */
+  listChatHosts(
+    options: chatHosts.ChatHostListRequest = {},
+  ): Promise<readonly chatHosts.ChatHost[]> {
+    return chatHosts.listChatHosts(this.#config, options);
+  }
+
+  /** Retire one active or paused chat host. */
+  retireChatHost(id: string, options: OperationOptions = {}): Promise<chatHosts.ChatHost> {
+    return chatHosts.retireChatHost(this.#config, id, options);
   }
 
   /** Replace only the chat setting under the platform revision CAS. */
