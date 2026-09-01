@@ -1118,6 +1118,26 @@ async fn id_addressed_snapshot_encodes_the_id_and_live_refusals_are_not_runtime_
 }
 
 #[tokio::test]
+async fn named_slot_restore_encodes_the_slot_and_preserves_opaque_bytes() {
+    let fixture = runtime_operation_fixture(204, Vec::new()).await;
+    let snapshot = b"opaque\0conversation\xffbytes";
+    hosted(&fixture.base_url)
+        .restore_conversation(
+            &RuntimeHandle("sbx-restore".into()),
+            "thread/one?other=yes&still=slot",
+            snapshot,
+        )
+        .await
+        .expect("the runtime accepts the named restore");
+
+    let requests = fixture.finish().await;
+    assert!(requests[1].0.starts_with(
+        "POST /runtime/conversation?conversation=thread%2Fone%3Fother%3Dyes%26still%3Dslot HTTP/1.1"
+    ));
+    assert_eq!(requests[1].1, snapshot);
+}
+
+#[tokio::test]
 async fn two_named_conversations_on_one_runtime_keep_independent_links_and_updates() {
     fn message_text(update: ConversationUpdate) -> String {
         let update = match update {

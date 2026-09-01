@@ -453,6 +453,120 @@ impl SessionService {
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
+        if let Some(origin) = record.chat_origin.as_ref() {
+            let hosts = self.chat_hosts.as_ref().ok_or({
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+            })?;
+            let host = hosts
+                .get(&origin.host_id)
+                .await
+                .map_err(|_| {
+                    CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+                })?
+                .ok_or(CoreError::ChatUnavailable(
+                    crate::ChatUnavailableCause::Retired,
+                ))?;
+            if host.owner != caller.subject
+                || !host.threads.iter().any(|slot| {
+                    slot.session_id == *id
+                        && slot.worktree_name == origin.worktree_name
+                        && slot.worktree_path == origin.worktree_path
+                        && !slot.removed
+                })
+            {
+                return Err(CoreError::Forbidden);
+            }
+            match host.status {
+                crate::ChatHostStatus::Pausing
+                    if host.revive_cause == Some(crate::ChatReviveCause::ImageDrift) =>
+                {
+                    return Err(CoreError::SessionRotating);
+                }
+                crate::ChatHostStatus::Pausing => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::RevivePending,
+                    ));
+                }
+                crate::ChatHostStatus::Paused if host.last_transition_claim.is_some() => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::RevivePending,
+                    ));
+                }
+                crate::ChatHostStatus::Paused | crate::ChatHostStatus::Reviving => {
+                    return self
+                        .send_prompt_to_paused_chat(&caller.subject, id, text)
+                        .await;
+                }
+                crate::ChatHostStatus::Provisioning => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::Provisioning,
+                    ));
+                }
+                crate::ChatHostStatus::Retired => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::Retired,
+                    ));
+                }
+                crate::ChatHostStatus::Active
+                    if host
+                        .revive_failed_threads
+                        .iter()
+                        .any(|failure| failure.session_id == *id) =>
+                {
+                    let failure = host
+                        .revive_failed_threads
+                        .iter()
+                        .find(|failure| failure.session_id == *id)
+                        .expect("the active-host guard found this thread's restore failure");
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::RestoreFailed {
+                            phase: failure.phase,
+                            retryable: failure.retryable,
+                        },
+                    ));
+                }
+                crate::ChatHostStatus::Active
+                    if host.prompt_admissions.iter().any(|admission| {
+                        matches!(
+                            admission.state,
+                            crate::ChatPromptDeliveryState::Queued
+                                | crate::ChatPromptDeliveryState::DispatchFenced
+                        )
+                    }) =>
+                {
+                    return self
+                        .send_prompt_to_paused_chat(&caller.subject, id, text)
+                        .await;
+                }
+                crate::ChatHostStatus::Active
+                    if (record.session.status == SessionStatus::Idle
+                        && record.session.stop_reason
+                            == Some(crate::session::StopReason::IdleTimeout))
+                        || (record.session.status == SessionStatus::Provisioning
+                            && record.session.recovery_state
+                                == crate::session::RecoveryState::Recovering) =>
+                {
+                    return self
+                        .send_prompt_to_paused_chat(&caller.subject, id, text)
+                        .await;
+                }
+                crate::ChatHostStatus::Active => {}
+            }
+        }
+        self.send_live_prompt(&caller.subject, id, text).await
+    }
+
+    /// Deliver one prompt after any host-level durable admission has settled.
+    pub(crate) async fn send_live_prompt(
+        self: &Arc<Self>,
+        owner: &crate::SubjectId,
+        id: &SessionId,
+        text: String,
+    ) -> Result<u64, CoreError> {
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(owner) {
+            return Err(CoreError::Forbidden);
+        }
         if let Some(state) = record.reserved_initial_prompt_state() {
             return Err(CoreError::InitialPromptReserved(state));
         }
@@ -475,7 +589,13 @@ impl SessionService {
         // Readopt before taking the update-ordering gate. Opening a conversation
         // can itself report sign-in and command updates, and those must remain
         // foldable while lifecycle recovery runs.
-        self.conversation_input(caller, id, Capability::Conversation)
+        let caller = Caller {
+            subject: owner.clone(),
+            authorization: crate::Authorization::from_capabilities([
+                AuthorizationCapability::UseOwnSessions,
+            ]),
+        };
+        self.conversation_input(&caller, id, Capability::Conversation)
             .await?;
         // Serialize this process's prompts before acquiring distributed
         // interaction authority. This gate participates in no lifecycle path;
@@ -486,7 +606,7 @@ impl SessionService {
         let effective = self.effective_prompt_text(&durable, &text).await?;
         let service = Arc::clone(self);
         let id = id.clone();
-        let owner = caller.subject.clone();
+        let owner = owner.clone();
         self.run_runtime_interaction_at(&durable, move |authority| async move {
             // Compatibility stores have no durable exclusion, so retain the
             // established lifecycle-before-input order. A coordinated lease

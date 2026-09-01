@@ -1948,6 +1948,33 @@ impl HostedKernel {
             .map_err(runtime_operation_error)
     }
 
+    /// Restore one captured conversation into an exact supervisor slot.
+    pub async fn restore_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_slot: &str,
+        snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let conversation_slot =
+            url::form_urlencoded::byte_serialize(conversation_slot.as_bytes()).collect::<String>();
+        let path = format!(
+            "{CONVERSATION_PATH}?{}={conversation_slot}",
+            crate::supervisor::CONVERSATION_QUERY_PARAMETER
+        );
+        self.client
+            .post_to_sandbox(&endpoint.endpoint, &path, snapshot.to_vec())
+            .await
+            .map_err(runtime_operation_error)?;
+        tracing::info!(
+            sandbox = %handle.0,
+            slot = %conversation_slot,
+            bytes = snapshot.len(),
+            "restored a conversation into its runtime slot"
+        );
+        Ok(())
+    }
+
     /// Every sandbox this provider is running, with what each was created for.
     pub async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
         let sandboxes = self

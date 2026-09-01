@@ -44,6 +44,7 @@ use crate::session::{RecoveryState, RuntimeLossCause, SessionSpec, SessionStatus
 use crate::store::{PageRequest, SessionRecord, SessionScan, SkillPackState, StoreError};
 
 const RECLAIM_LEASE_TTL: Duration = Duration::from_secs(30);
+const CHAT_DISPATCH_FENCE_TIMEOUT_SECONDS: u64 = 10 * 60;
 
 /// What a sweep did, for logging and for tests.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -910,6 +911,226 @@ impl SessionService {
         let Some(store) = self.chat_hosts.clone() else {
             return;
         };
+        let observed_generation = crate::chat::generation_for(&observed);
+        let observed_runtime_is_serving = observed.runtime_id.as_ref().is_some_and(|runtime| {
+            view.serving.contains(runtime)
+                && view.chat_hosts.get(runtime) == Some(&observed.id.0)
+                && view.generations.get(runtime)
+                    == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                        observed_generation,
+                    ))
+        });
+        if observed.status == crate::ChatHostStatus::Active
+            && observed_runtime_is_serving
+            && self.runtime_version.is_some()
+            && observed.runtime_version != self.runtime_version
+        {
+            if self
+                .chat_hosts_starting
+                .write()
+                .await
+                .insert(observed.id.clone())
+            {
+                let id = observed.id.clone();
+                if let Err(error) = self.rotate_chat_host_on_image_drift(&id).await {
+                    tracing::warn!(chat_host = %id, %error, "chat image rotation remains pending");
+                }
+                self.chat_hosts_starting.write().await.remove(&id);
+            }
+            return;
+        }
+        if observed.status == crate::ChatHostStatus::Pausing
+            && observed.revive_cause == Some(crate::ChatReviveCause::ImageDrift)
+        {
+            if self
+                .chat_hosts_starting
+                .write()
+                .await
+                .insert(observed.id.clone())
+            {
+                let id = observed.id.clone();
+                let old_runtime_is_serving = observed.runtime_id.as_ref().is_some_and(|runtime| {
+                    view.serving.contains(runtime)
+                        && view.chat_hosts.get(runtime) == Some(&observed.id.0)
+                        && view.generations.get(runtime)
+                            == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                                observed_generation,
+                            ))
+                });
+                let outcome = if old_runtime_is_serving {
+                    self.resume_chat_image_rotation(&id).await
+                } else if observed.checkpoint.as_ref().is_some_and(|checkpoint| {
+                    checkpoint.checkpoint_version == observed.checkpoint_sequence
+                }) {
+                    self.finish_torn_down_chat_image_rotation(&id).await
+                } else {
+                    Err(crate::CoreError::RuntimeUnavailable(
+                        "chat image rotation lost its runtime before publishing the held checkpoint"
+                            .into(),
+                    ))
+                };
+                if let Err(error) = outcome {
+                    tracing::warn!(chat_host = %id, %error, "chat image-rotation claim remains pending");
+                }
+                self.chat_hosts_starting.write().await.remove(&id);
+            }
+            return;
+        }
+        if matches!(
+            observed.status,
+            crate::ChatHostStatus::Pausing | crate::ChatHostStatus::Paused
+        ) && observed.revive_cause.is_none()
+            && observed.last_transition_claim.is_some()
+        {
+            if self
+                .chat_hosts_starting
+                .write()
+                .await
+                .insert(observed.id.clone())
+            {
+                let id = observed.id.clone();
+                let old_runtime_is_serving = observed.runtime_id.as_ref().is_some_and(|runtime| {
+                    view.serving.contains(runtime)
+                        && view.chat_hosts.get(runtime) == Some(&observed.id.0)
+                        && view.generations.get(runtime)
+                            == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                                observed_generation,
+                            ))
+                });
+                let exact_checkpoint_is_published = observed.status
+                    == crate::ChatHostStatus::Paused
+                    && observed.checkpoint.as_ref().is_some_and(|checkpoint| {
+                        checkpoint.checkpoint_version == observed.checkpoint_sequence
+                    });
+                let outcome = if old_runtime_is_serving {
+                    self.resume_chat_pause_claim(&id).await
+                } else if exact_checkpoint_is_published {
+                    self.finish_torn_down_chat_pause(&id).await
+                } else {
+                    let lost_runtime = observed.runtime_id.as_deref().unwrap_or_default();
+                    let cause = observed
+                        .runtime_id
+                        .as_ref()
+                        .and_then(|runtime| view.stopped_because.get(runtime))
+                        .cloned()
+                        .map(RuntimeLossCause::from);
+                    self.recover_interrupted_chat_pause(&id, lost_runtime, cause)
+                        .await
+                };
+                if let Err(error) = outcome {
+                    tracing::warn!(chat_host = %id, %error, "chat inactivity-pause claim remains pending");
+                }
+                self.chat_hosts_starting.write().await.remove(&id);
+            }
+            return;
+        }
+        let matching_chat_runtime_exists = view.chat_hosts.iter().any(|(runtime, host)| {
+            host == observed.id.as_str()
+                && view.serving.contains(runtime)
+                && view.generations.get(runtime)
+                    == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                        observed_generation,
+                    ))
+        });
+        if observed.status == crate::ChatHostStatus::Active
+            && !matching_chat_runtime_exists
+            && observed
+                .runtime_id
+                .as_ref()
+                .is_some_and(|runtime| !view.serving.contains(runtime))
+        {
+            if self
+                .chat_hosts_starting
+                .write()
+                .await
+                .insert(observed.id.clone())
+            {
+                let id = observed.id.clone();
+                let runtime = observed
+                    .runtime_id
+                    .clone()
+                    .expect("the lost-runtime predicate proved a handle exists");
+                let cause = view
+                    .stopped_because
+                    .get(&runtime)
+                    .cloned()
+                    .map(RuntimeLossCause::from);
+                if let Err(error) = self.recover_lost_chat_host(&id, &runtime, cause).await {
+                    tracing::warn!(chat_host = %id, %error, "chat runtime-loss recovery remains pending");
+                }
+                self.chat_hosts_starting.write().await.remove(&id);
+            }
+            return;
+        }
+        if observed.status == crate::ChatHostStatus::Reviving {
+            let _owner_guard = self.chat_host_guards.lock(&observed.owner).await;
+            let mut current = match store.get(&observed.id).await {
+                Ok(Some(current))
+                    if current.status == crate::ChatHostStatus::Reviving
+                        && crate::chat::generation_for(&current) == observed_generation
+                        && current.last_transition_claim == observed.last_transition_claim =>
+                {
+                    current
+                }
+                _ => return,
+            };
+            let mut candidates = view
+                .chat_hosts
+                .iter()
+                .filter(|&(runtime, host)| {
+                    host == current.id.as_str()
+                        && view.serving.contains(runtime)
+                        && view.generations.get(runtime)
+                            == Some(&layer3_adapter::RuntimeGeneration::Recorded(
+                                observed_generation,
+                            ))
+                })
+                .map(|(runtime, _)| RuntimeHandle(runtime.clone()))
+                .collect::<Vec<_>>();
+            candidates.sort_by(|left, right| left.0.cmp(&right.0));
+            if let Some(recorded) = current.runtime_id.as_deref() {
+                if let Some(index) = candidates
+                    .iter()
+                    .position(|candidate| candidate.0 == recorded)
+                {
+                    candidates.swap(0, index);
+                }
+            }
+            let chosen = candidates.first().cloned();
+            if let Some(authoritative) = chosen.as_ref() {
+                self.cleanup_duplicate_chat_runtimes(&current, &candidates, authoritative)
+                    .await;
+            }
+            if current.runtime_id.as_deref()
+                != chosen.as_ref().map(|candidate| candidate.0.as_str())
+            {
+                if let Some(stale) = current.runtime_id.as_ref() {
+                    let Some(adapter) = self.adapters.get(&current.kernel) else {
+                        return;
+                    };
+                    if adapter
+                        .terminate_if_identity(&RuntimeIdentity {
+                            handle: RuntimeHandle(stale.clone()),
+                            session: current.id.0.clone(),
+                            generation: Some(crate::chat::generation_for(&current)),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                current.runtime_id = chosen.as_ref().map(|candidate| candidate.0.clone());
+            }
+            settle_expired_chat_dispatch_fences(&mut current);
+            current.updated_at = crate::clock::now_rfc3339();
+            let settled = match store.update_if_revision(current.revision, &current).await {
+                Ok(Some(settled)) => settled,
+                _ => return,
+            };
+            self.spawn_chat_revival(settled.id);
+            return;
+        }
         let _owner_guard = self.chat_host_guards.lock(&observed.owner).await;
         let mut current = match store.get(&observed.id).await {
             Ok(Some(current)) => current,
@@ -922,8 +1143,7 @@ impl SessionService {
         if self.chat_hosts_starting.read().await.contains(&current.id) {
             return;
         }
-        let expected_generation = NonZeroU64::new(u64::from(current.rotations).saturating_add(1))
-            .expect("chat host generations are non-zero");
+        let expected_generation = crate::chat::generation_for(&current);
         let mut candidates = view
             .chat_hosts
             .iter()
@@ -956,6 +1176,14 @@ impl SessionService {
                             expected_generation,
                         ))
             }) {
+                let dispatches_settled = settle_expired_chat_dispatch_fences(&mut current);
+                if dispatches_settled {
+                    current.updated_at = crate::clock::now_rfc3339();
+                    current = match store.update_if_revision(current.revision, &current).await {
+                        Ok(Some(current)) => current,
+                        _ => return,
+                    };
+                }
                 let authoritative = RuntimeHandle(
                     current
                         .runtime_id
@@ -964,6 +1192,17 @@ impl SessionService {
                 );
                 self.cleanup_duplicate_chat_runtimes(&current, &candidates, &authoritative)
                     .await;
+                let dispatch_is_fenced = current.prompt_admissions.iter().any(|admission| {
+                    admission.state == crate::ChatPromptDeliveryState::DispatchFenced
+                });
+                if !dispatch_is_fenced
+                    && current
+                        .prompt_admissions
+                        .iter()
+                        .any(|admission| admission.state == crate::ChatPromptDeliveryState::Queued)
+                {
+                    self.spawn_chat_revival(current.id.clone());
+                }
                 return;
             }
             if let Some(candidate) = candidates.first().cloned() {
@@ -1111,10 +1350,7 @@ impl SessionService {
         let Some(adapter) = self.adapters.get(&host.kernel) else {
             return;
         };
-        let identity_generation = Some(
-            NonZeroU64::new(u64::from(host.rotations).saturating_add(1))
-                .expect("chat host generations are non-zero"),
-        );
+        let identity_generation = Some(crate::chat::generation_for(host));
         for duplicate in candidates
             .iter()
             .filter(|candidate| *candidate != authoritative)
@@ -2665,4 +2901,29 @@ impl SessionService {
         });
         reclaimed.reprovisioned_sessions += 1;
     }
+}
+
+fn settle_expired_chat_dispatch_fences(host: &mut crate::ChatHostRecord) -> bool {
+    let now = crate::seconds_from_rfc3339(&crate::clock::now_rfc3339()).unwrap_or(u64::MAX);
+    let mut changed = false;
+    for admission in &mut host.prompt_admissions {
+        if admission.state != crate::ChatPromptDeliveryState::DispatchFenced {
+            continue;
+        }
+        let expired = admission
+            .dispatch_fenced_at
+            .as_deref()
+            .and_then(crate::seconds_from_rfc3339)
+            .is_none_or(|fenced_at| {
+                now >= fenced_at.saturating_add(CHAT_DISPATCH_FENCE_TIMEOUT_SECONDS)
+            });
+        if expired {
+            admission.state = crate::ChatPromptDeliveryState::RecoveryRequired;
+            admission.failure_phase = Some(crate::ChatRevivePhase::PromptDelivery);
+            admission.failure_provisioning_phase = None;
+            admission.failure_retryable = false;
+            changed = true;
+        }
+    }
+    changed
 }

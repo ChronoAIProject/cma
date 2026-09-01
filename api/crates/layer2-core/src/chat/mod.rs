@@ -4,8 +4,11 @@ mod checkpoint;
 mod checkpoints;
 mod host;
 mod inactivity;
+mod revive;
 mod settings;
 mod threads;
+
+pub(crate) use host::generation_for;
 
 pub use checkpoint::{
     ChatCheckpointConversation, ChatCheckpointConversationRef, ChatCheckpointRef,
@@ -16,8 +19,10 @@ pub use checkpoints::{
 };
 pub use host::{
     ChatHostFailure, ChatHostId, ChatHostListQuery, ChatHostOperatorNote, ChatHostRecord,
-    ChatHostStatus, ChatProvisioningPhase, ChatThreadSlot, ChatUnavailableCause,
-    ChatWorkspaceAuthority,
+    ChatHostStatus, ChatPromptAdmission, ChatPromptDeliveryState, ChatProvisioningPhase,
+    ChatReviveCause, ChatRevivePhase, ChatThreadRestoreFailure, ChatThreadSlot,
+    ChatUnavailableCause, ChatWorkspaceAuthority, MAX_CHAT_PROMPT_ADMISSIONS,
+    MAX_CHAT_PROMPT_BYTES,
 };
 pub use inactivity::{ChatPauseOutcome, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS};
 pub use settings::{
@@ -40,3 +45,7 @@ mod checkpoint_service_tests;
 #[cfg(test)]
 #[path = "inactivity_service_tests.rs"]
 mod inactivity_service_tests;
+
+#[cfg(test)]
+#[path = "revive_service_tests.rs"]
+mod revive_service_tests;

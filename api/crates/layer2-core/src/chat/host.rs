@@ -9,6 +9,7 @@ use layer3_adapter::{
     RuntimePermission, RuntimeSpec, TermSize, WorkspaceSourceRequest,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::store::{PageRequest, MAX_PAGE_SIZE};
 use crate::{
@@ -18,6 +19,11 @@ use crate::{
 
 const CHAT_HOST_NAMESPACE: uuid::Uuid =
     uuid::Uuid::from_u128(0x1fb7_66ee_28df_5e10_a833_2697_9a23_f36d);
+
+/// Upper bounds keep the owner aggregate comfortably below MongoDB's document
+/// limit even when every retained prompt is at its maximum size.
+pub const MAX_CHAT_PROMPT_ADMISSIONS: usize = 64;
+pub const MAX_CHAT_PROMPT_BYTES: usize = 96 * 1024;
 
 /// Stable identity of the one chat host assigned to a subject.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -60,6 +66,150 @@ pub enum ChatHostStatus {
     Retired,
 }
 
+/// Why a replacement shared runtime is being created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatReviveCause {
+    OwnerMessage,
+    ImageDrift,
+    RuntimeLost,
+}
+
+/// Durable progress through a restart-resumable host revival.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatRevivePhase {
+    CheckpointVerification,
+    RuntimeProvisioning,
+    ConversationRestore,
+    WorkspaceSetup,
+    ThreadRestore,
+    PromptDelivery,
+    RecoveryRequired,
+}
+
+/// Conservative delivery state for one prompt accepted while a host is down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatPromptDeliveryState {
+    Queued,
+    DispatchFenced,
+    Delivered,
+    RecoveryRequired,
+}
+
+/// One owner prompt durably admitted before replacement provisioning begins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatPromptAdmission {
+    pub id: String,
+    pub sequence: u64,
+    pub session_id: SessionId,
+    pub payload: String,
+    pub payload_sha256: String,
+    pub admitted_at: String,
+    pub state: ChatPromptDeliveryState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_fenced_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_started: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_phase: Option<ChatRevivePhase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_provisioning_phase: Option<ChatProvisioningPhase>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub failure_retryable: bool,
+}
+
+impl ChatPromptAdmission {
+    pub(crate) fn new(session_id: SessionId, payload: String, sequence: u64, now: String) -> Self {
+        let payload_sha256 = hex_sha256(payload.as_bytes());
+        Self {
+            id: format!("chpr_{}", uuid::Uuid::new_v4().simple()),
+            sequence,
+            session_id,
+            payload,
+            payload_sha256,
+            admitted_at: now,
+            state: ChatPromptDeliveryState::Queued,
+            dispatch_fenced_at: None,
+            turn_started: None,
+            failure_phase: None,
+            failure_provisioning_phase: None,
+            failure_retryable: false,
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.id.starts_with("chpr_") || self.id.len() != 37 {
+            return Err("chat prompt admission identity is malformed".into());
+        }
+        if self.sequence == 0 {
+            return Err("chat prompt admission sequence must be positive".into());
+        }
+        if self.payload.len() > MAX_CHAT_PROMPT_BYTES {
+            return Err("chat prompt admission payload is outside its byte bound".into());
+        }
+        if self.payload_sha256 != hex_sha256(self.payload.as_bytes()) {
+            return Err("chat prompt admission payload digest does not match".into());
+        }
+        if crate::seconds_from_rfc3339(&self.admitted_at).is_none() {
+            return Err("chat prompt admission timestamp is malformed".into());
+        }
+        if self
+            .dispatch_fenced_at
+            .as_deref()
+            .is_some_and(|value| crate::seconds_from_rfc3339(value).is_none())
+        {
+            return Err("chat prompt dispatch fence timestamp is malformed".into());
+        }
+        match self.state {
+            ChatPromptDeliveryState::Queued if self.dispatch_fenced_at.is_some() => {
+                return Err("queued chat prompt retains a dispatch fence".into());
+            }
+            ChatPromptDeliveryState::DispatchFenced if self.dispatch_fenced_at.is_none() => {
+                return Err("fenced chat prompt has no dispatch timestamp".into());
+            }
+            ChatPromptDeliveryState::Delivered if self.turn_started.is_none() => {
+                return Err("delivered chat prompt has no durable turn boundary".into());
+            }
+            ChatPromptDeliveryState::Delivered
+                if self.failure_phase.is_some()
+                    || self.failure_provisioning_phase.is_some()
+                    || self.failure_retryable =>
+            {
+                return Err("delivered chat prompt retains a failure phase".into());
+            }
+            ChatPromptDeliveryState::RecoveryRequired if self.failure_phase.is_none() => {
+                return Err("failed chat prompt has no typed recovery phase".into());
+            }
+            ChatPromptDeliveryState::RecoveryRequired if self.turn_started.is_some() => {
+                return Err("failed chat prompt retains a delivered turn boundary".into());
+            }
+            ChatPromptDeliveryState::Queued | ChatPromptDeliveryState::DispatchFenced
+                if self.turn_started.is_some()
+                    || self.failure_phase.is_some()
+                    || self.failure_provisioning_phase.is_some()
+                    || self.failure_retryable =>
+            {
+                return Err("undelivered chat prompt carries a terminal outcome".into());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// A restore refusal scoped to one thread rather than its healthy siblings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatThreadRestoreFailure {
+    pub session_id: SessionId,
+    pub phase: ChatRevivePhase,
+    pub retryable: bool,
+    pub occurred_at: String,
+}
+
 /// One session/worktree allocation retained for the lifetime of its host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -93,6 +243,10 @@ pub enum ChatUnavailableCause {
     RevivePending,
     Retired,
     CapabilityUnsupported(String),
+    RestoreFailed {
+        phase: ChatRevivePhase,
+        retryable: bool,
+    },
     ProvisioningFailed {
         phase: ChatProvisioningPhase,
         command_index: Option<usize>,
@@ -110,6 +264,10 @@ impl ChatUnavailableCause {
                 | Self::HostStoreUnavailable
                 | Self::Provisioning
                 | Self::RevivePending
+                | Self::RestoreFailed {
+                    retryable: true,
+                    ..
+                }
                 | Self::ProvisioningFailed {
                     retryable: true,
                     ..
@@ -129,6 +287,9 @@ impl std::fmt::Display for ChatUnavailableCause {
             Self::Retired => formatter.write_str("the chat host is retired"),
             Self::CapabilityUnsupported(capability) => {
                 write!(formatter, "the chat runtime does not support {capability}")
+            }
+            Self::RestoreFailed { phase, .. } => {
+                write!(formatter, "chat restoration failed during {phase:?}")
             }
             Self::ProvisioningFailed {
                 phase,
@@ -223,6 +384,10 @@ pub struct ChatHostRecord {
     pub kernel: KernelId,
     pub runtime_id: Option<String>,
     pub runtime_version: Option<String>,
+    /// Provider fencing generation. Independent from image-rotation accounting
+    /// and from the workspace epoch sealed inside a checkpoint archive.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub runtime_generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_authority: Option<ChatWorkspaceAuthority>,
     pub threads: Vec<ChatThreadSlot>,
@@ -235,6 +400,8 @@ pub struct ChatHostRecord {
     pub checkpoint_sequence: u64,
     pub paused_at: Option<String>,
     pub revived_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_at: Option<String>,
     pub retired_at: Option<String>,
     pub last_transition_claim: Option<String>,
     /// Start of the current claim, retained for diagnostics and later leases.
@@ -242,6 +409,16 @@ pub struct ChatHostRecord {
     pub last_failure: Option<ChatHostFailure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_operator_note: Option<ChatHostOperatorNote>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revive_cause: Option<ChatReviveCause>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revive_phase: Option<ChatRevivePhase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revive_failed_threads: Vec<ChatThreadRestoreFailure>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub prompt_admission_sequence: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompt_admissions: Vec<ChatPromptAdmission>,
     pub rotations: u32,
     pub created_at: String,
     pub updated_at: String,
@@ -267,6 +444,7 @@ impl ChatHostRecord {
             kernel,
             runtime_id: None,
             runtime_version: None,
+            runtime_generation: 1,
             workspace_authority: None,
             threads: Vec::new(),
             threads_created: 0,
@@ -274,11 +452,17 @@ impl ChatHostRecord {
             checkpoint_sequence: 0,
             paused_at: None,
             revived_at: None,
+            rotated_at: None,
             retired_at: None,
             last_transition_claim: Some(claim),
             transition_started_at: Some(now.clone()),
             last_failure: None,
             last_operator_note: None,
+            revive_cause: None,
+            revive_phase: None,
+            revive_failed_threads: Vec::new(),
+            prompt_admission_sequence: 0,
+            prompt_admissions: Vec::new(),
             rotations: 0,
             created_at: now.clone(),
             updated_at: now,
@@ -299,9 +483,9 @@ impl ChatHostRecord {
         }
         if let Some(authority) = self.workspace_authority.as_ref() {
             authority.validate()?;
-            if authority.workspace_epoch != generation_for(self).get() {
-                return Err("chat workspace authority does not match the host generation".into());
-            }
+        }
+        if self.runtime_generation != 0 && self.runtime_generation <= u64::from(self.rotations) {
+            return Err("chat runtime generation does not cover its rotations".into());
         }
         if let Some(checkpoint) = self.checkpoint.as_ref() {
             checkpoint.validate()?;
@@ -312,8 +496,10 @@ impl ChatHostRecord {
             }
         }
         if let Some(note) = self.last_operator_note.as_ref() {
-            if !matches!(note.code.as_str(), "checkpoint_refused" | "pause_refused")
-                || note.detail.trim().is_empty()
+            if !matches!(
+                note.code.as_str(),
+                "checkpoint_refused" | "pause_refused" | "revive_refused" | "recovery_required"
+            ) || note.detail.trim().is_empty()
                 || note.detail.len() > 256
                 || crate::seconds_from_rfc3339(&note.observed_at).is_none()
             {
@@ -336,12 +522,86 @@ impl ChatHostRecord {
                 return Err("chat host repeats a worktree slot".into());
             }
         }
+        if self.prompt_admissions.len() > MAX_CHAT_PROMPT_ADMISSIONS {
+            return Err("chat host retains too many prompt admissions".into());
+        }
+        let retained_sessions = self
+            .threads
+            .iter()
+            .filter(|thread| !thread.removed)
+            .map(|thread| thread.session_id.as_str())
+            .collect::<HashSet<_>>();
+        let mut admission_ids = HashSet::with_capacity(self.prompt_admissions.len());
+        let mut previous_sequence = 0;
+        for admission in &self.prompt_admissions {
+            admission.validate()?;
+            if !retained_sessions.contains(admission.session_id.as_str()) {
+                return Err("chat prompt admission names a non-retained thread".into());
+            }
+            if !admission_ids.insert(admission.id.as_str()) {
+                return Err("chat host repeats a prompt admission identity".into());
+            }
+            if admission.sequence <= previous_sequence
+                || admission.sequence > self.prompt_admission_sequence
+            {
+                return Err("chat prompt admissions are not in durable sequence order".into());
+            }
+            previous_sequence = admission.sequence;
+        }
+        if self.prompt_admissions.is_empty() && self.prompt_admission_sequence == 0 {
+            // Initial state.
+        } else if self.prompt_admission_sequence == 0 {
+            return Err("chat prompt admission counter is behind retained admissions".into());
+        }
+        let mut failed_sessions = HashSet::with_capacity(self.revive_failed_threads.len());
+        for failure in &self.revive_failed_threads {
+            if !retained_sessions.contains(failure.session_id.as_str())
+                || !failed_sessions.insert(failure.session_id.as_str())
+                || crate::seconds_from_rfc3339(&failure.occurred_at).is_none()
+            {
+                return Err("chat thread restore failure is malformed".into());
+            }
+        }
         Ok(())
     }
 }
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[cfg(test)]
+mod prompt_admission_tests {
+    use super::*;
+
+    #[test]
+    fn contradictory_terminal_prompt_outcomes_are_rejected() {
+        let mut failed = ChatPromptAdmission::new(
+            SessionId::generate(),
+            "retained payload".into(),
+            1,
+            "2026-09-01T00:00:00Z".into(),
+        );
+        failed.state = ChatPromptDeliveryState::RecoveryRequired;
+        failed.failure_phase = Some(ChatRevivePhase::PromptDelivery);
+        failed.turn_started = Some(7);
+        assert_eq!(
+            failed.validate().unwrap_err(),
+            "failed chat prompt retains a delivered turn boundary"
+        );
+
+        let mut delivered = failed;
+        delivered.state = ChatPromptDeliveryState::Delivered;
+        delivered.turn_started = Some(7);
+        assert_eq!(
+            delivered.validate().unwrap_err(),
+            "delivered chat prompt retains a failure phase"
+        );
+    }
 }
 
 /// Filters attached to one bounded host listing.
@@ -380,9 +640,24 @@ fn host_store_unavailable() -> CoreError {
     chat_unavailable(ChatUnavailableCause::HostStoreUnavailable)
 }
 
-pub(super) fn generation_for(host: &ChatHostRecord) -> NonZeroU64 {
-    NonZeroU64::new(u64::from(host.rotations).saturating_add(1))
-        .expect("a chat host generation is always non-zero")
+pub(crate) fn generation_for(host: &ChatHostRecord) -> NonZeroU64 {
+    NonZeroU64::new(if host.runtime_generation == 0 {
+        u64::from(host.rotations).saturating_add(1)
+    } else {
+        host.runtime_generation
+    })
+    .expect("a chat host generation is always non-zero")
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 fn failure_cause(failure: &ChatHostFailure) -> ChatUnavailableCause {
@@ -935,7 +1210,10 @@ impl crate::service::SessionService {
             .await
             .map_err(|_| host_store_unavailable())?
             .ok_or_else(|| chat_unavailable(ChatUnavailableCause::Provisioning))?;
-        if host.status != ChatHostStatus::Active {
+        if !matches!(
+            host.status,
+            ChatHostStatus::Active | ChatHostStatus::Reviving
+        ) {
             return Err(chat_unavailable(ChatUnavailableCause::Provisioning));
         }
         let runtime_id = host
@@ -988,9 +1266,11 @@ impl crate::service::SessionService {
             .await
             .map_err(|_| host_store_unavailable())?;
         if !current.as_ref().is_some_and(|current| {
-            current.revision == host.revision
-                && current.status == ChatHostStatus::Active
-                && current.runtime_id.as_deref() == Some(runtime_id.as_str())
+            matches!(
+                current.status,
+                ChatHostStatus::Active | ChatHostStatus::Reviving
+            ) && current.runtime_id.as_deref() == Some(runtime_id.as_str())
+                && generation_for(current) == generation_for(&host)
         }) {
             return Err(chat_unavailable(ChatUnavailableCause::Provisioning));
         }
@@ -1032,8 +1312,10 @@ impl crate::service::SessionService {
             .await
             .map_err(|_| host_store_unavailable())?;
         if !current.as_ref().is_some_and(|current| {
-            current.status == ChatHostStatus::Active
-                && current.runtime_id.as_deref() == Some(runtime_id.as_str())
+            matches!(
+                current.status,
+                ChatHostStatus::Active | ChatHostStatus::Reviving
+            ) && current.runtime_id.as_deref() == Some(runtime_id.as_str())
                 && generation_for(current) == generation_for(&host)
         }) {
             return Err(chat_unavailable(ChatUnavailableCause::Provisioning));

@@ -25,10 +25,11 @@ use serde::{Deserialize, Serialize};
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::capabilities::SessionCapabilities;
 use crate::coordination::{
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
-    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
-    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
+    ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, RuntimeAuthority,
+    RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
+    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest,
 };
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
@@ -1298,6 +1299,44 @@ pub trait SessionStore: Send + Sync {
         _events: &[Event],
     ) -> Result<u64, StoreError> {
         Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically move one chat thread onto its host's replacement runtime.
+    ///
+    /// The exact old status/runtime authority and chat-host provenance are
+    /// predicates. A coordinated implementation must update its separate
+    /// runtime authority and fence conversation/interaction writers in the
+    /// same transaction, without creating provider cleanup debt. Stores with
+    /// no coordination metadata fall back to their revision-checked ordinary
+    /// commit after validating the durable record boundary.
+    async fn commit_chat_runtime_transition_idempotent(
+        &self,
+        write_id: &str,
+        transition: &ChatRuntimeTransition,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        transition.validate_for(record)?;
+        let current =
+            self.get(&record.session.id)
+                .await?
+                .ok_or_else(|| StoreError::SessionDeleted {
+                    id: record.session.id.clone(),
+                })?;
+        if current.revision != record.revision
+            || current
+                .chat_origin
+                .as_ref()
+                .is_none_or(|origin| origin.host_id != transition.host_id)
+            || SessionBoundary::for_record(&current, transition.previous.authority.generation)
+                != transition.previous
+        {
+            return Err(StoreError::SessionAuthorityChanged {
+                id: record.session.id.clone(),
+            });
+        }
+        self.commit_session_idempotent(write_id, record, events)
+            .await
     }
 
     /// Atomically create a session and its initial events.
