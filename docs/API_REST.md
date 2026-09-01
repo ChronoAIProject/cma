@@ -1,6 +1,6 @@
 # REST Interface
 
-**Priority 2 — for backend server clients.**
+**Priority 3 — for backend server clients.**
 
 REST is the **superset interface**: it projects all ten core operations and is the reference realisation of the core session model. Every other interface is a projection of the same model; where a question about semantics is ambiguous elsewhere, this document is the answer.
 
