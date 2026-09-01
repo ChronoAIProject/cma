@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentContent } from './AgentContent';
 import { CopyKey } from './CopyKey';
-import { Thinking } from './Thinking';
+import { Thinking, type ThinkingActivity } from './Thinking';
 import { ToolCall } from './ToolCall';
 import { formatTokens } from './Usage';
 import type { ConfigOption, Entry, MessageEntry, PlanStep, ToolCallEntry } from '@chronoai/cma-sdk';
@@ -31,8 +31,21 @@ import { StateDot } from '../ui/StateDot';
  * scroll back down on its own; a quiet control says how far behind they are.
  */
 
+/** A per-turn Thinking fold placed in the same ordered stream as durable messages. */
+export interface ThinkingStreamEntry {
+  readonly kind: 'thinking';
+  readonly id: string;
+  readonly text?: string;
+  readonly activities: readonly ThinkingActivity[];
+  readonly live: boolean;
+  readonly seq: number;
+}
+
+/** The shared stream accepts the ordinary AG-UI model and Chat's folded turn work. */
+export type MessageStreamEntry = Entry | ThinkingStreamEntry;
+
 interface MessageStreamProps {
-  readonly entries: readonly Entry[];
+  readonly entries: readonly MessageStreamEntry[];
   /**
    * Open a tool call in the details column.
    *
@@ -77,7 +90,11 @@ interface MessageStreamProps {
    * can never work is not one currently unavailable applies here too, and an
    * empty band would suggest a kernel was thinking silently.
    */
-  readonly reasoning?: { readonly text: string };
+  readonly reasoning?: {
+    readonly text: string;
+    readonly activities?: readonly ThinkingActivity[];
+    readonly live?: boolean;
+  };
   /**
    * The agent's plan, when it set one — drawn as a stage rather than as prose.
    *
@@ -89,6 +106,8 @@ interface MessageStreamProps {
   readonly mode?: string;
   /** The settings the kernel says are settable, when it reported them. */
   readonly configOptions?: readonly ConfigOption[];
+  /** Chat keeps the welcome line but has no slash-command hint. */
+  readonly openingHint?: boolean;
   /** The actions the owner may invoke right now — liveness, not history. */
   /** Rendered at the foot of the stream — the approval card, when there is one. */
   readonly footer?: React.ReactNode;
@@ -110,6 +129,7 @@ export function MessageStream({
   plan,
   mode,
   configOptions,
+  openingHint = true,
 }: MessageStreamProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
@@ -241,10 +261,12 @@ export function MessageStream({
           {entries.length === 0 && plan === undefined && linkLive ? (
             <div className="stream__opening">
               <p className="stream__openingtitle">Ready when you are.</p>
-              <p className="stream__openinghint">
-                Say what you want done, and this session will get to work. Press{' '}
-                <kbd className="stream__key">/</kbd> for what it can do.
-              </p>
+              {openingHint ? (
+                <p className="stream__openinghint">
+                  Say what you want done, and this session will get to work. Press{' '}
+                  <kbd className="stream__key">/</kbd> for what it can do.
+                </p>
+              ) : null}
             </div>
           ) : null}
           {entries.map((entry) => (
@@ -278,7 +300,13 @@ export function MessageStream({
               ))}
             </ul>
           )}
-          {reasoning === undefined ? null : <Thinking text={reasoning.text} />}
+          {reasoning === undefined ? null : (
+            <Thinking
+              text={reasoning.text}
+              activities={reasoning.activities}
+              live={reasoning.live}
+            />
+          )}
           {live === undefined ? null : (
             /*
              * The in-flight message. Same shape, same ink, same everything as
@@ -377,7 +405,7 @@ function StreamEntry({
   onInspect,
   inspectingId,
 }: {
-  entry: Entry;
+  entry: MessageStreamEntry;
   turnInFlight: boolean;
   /** §18.13: the caret claims the agent is typing, so it stops when we cannot hear it. */
   linkLive: boolean;
@@ -537,6 +565,9 @@ function StreamEntry({
           <ToolCall call={entry} onInspect={onInspect} inspecting={entry.id === inspectingId} />
         </div>
       );
+
+    case 'thinking':
+      return <Thinking text={entry.text} activities={entry.activities} live={entry.live} />;
 
     default: {
       const exhaustive: never = entry;

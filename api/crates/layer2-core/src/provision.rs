@@ -147,6 +147,7 @@ impl SessionService {
         // runtime, so this is needed twice and computing it twice would be two
         // places for the translation to drift.
         let mut options = runtime_options(&spec.options);
+        options.conversation_slot = Some(id.0.clone());
         /*
          * Read from the session rather than from the profile, exactly as the
          * credential's own scope is: a session keeps what it was granted when
@@ -235,6 +236,7 @@ impl SessionService {
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
+                chat_host: None,
                 generation: reservation.as_ref().map(|reserved| reserved.generation),
                 reservation_token: reservation.as_ref().map(|reserved| reserved.token.clone()),
                 size: TermSize {
@@ -261,6 +263,8 @@ impl SessionService {
                 reaches,
                 runtime_policy_required,
                 sponsored_model_required,
+                workspace_source_required: false,
+                conversation_slots_required: None,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })
@@ -922,6 +926,7 @@ impl SessionService {
         let entry = SessionEntry {
             session: seeded,
             trigger_origin: durable.trigger_origin.clone(),
+            chat_origin: durable.chat_origin.clone(),
             initial_prompt: durable.initial_prompt.clone(),
             event_log,
             // Evidence means the adapter acknowledged this exact value, not

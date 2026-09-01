@@ -19,8 +19,9 @@ pub(crate) async fn relay_conversation(
     mut source: futures_util::stream::SplitStream<WebSocket>,
     state: AppState,
     id: String,
+    slot: crate::SlotId,
 ) -> std::io::Result<()> {
-    let bridge = state.conversation_bridge().await?;
+    let bridge = state.conversation_bridge(slot).await?;
 
     // Subscribed before the backlog is taken, so a frame produced between the
     // two is delivered live rather than falling between them.

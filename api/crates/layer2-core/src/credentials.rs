@@ -562,7 +562,7 @@ impl SessionService {
     }
 
     /// What this session's recorded grant says its credential may reach.
-    async fn services_for_record(
+    pub(crate) async fn services_for_record(
         &self,
         record: &crate::store::SessionRecord,
     ) -> Vec<crate::environment::ServiceId> {
@@ -655,7 +655,11 @@ impl SessionService {
             let entries = self.entries.read().await;
             entries
                 .values()
-                .filter(|e| e.subject_credential.is_none() && !e.session.status.is_terminal())
+                .filter(|e| {
+                    e.session.chat.is_none()
+                        && e.subject_credential.is_none()
+                        && !e.session.status.is_terminal()
+                })
                 .map(|e| (e.session.id.clone(), e.session.owner.clone()))
                 .collect()
         };
@@ -701,7 +705,11 @@ impl SessionService {
             let entries = self.entries.read().await;
             entries
                 .values()
-                .filter(|e| e.session.is_owned_by(subject) && !e.session.status.is_terminal())
+                .filter(|e| {
+                    e.session.chat.is_none()
+                        && e.session.is_owned_by(subject)
+                        && !e.session.status.is_terminal()
+                })
                 .map(|e| e.session.id.clone())
                 .collect()
         };

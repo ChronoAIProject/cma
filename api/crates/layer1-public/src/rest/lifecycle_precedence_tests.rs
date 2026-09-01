@@ -231,6 +231,7 @@ fn session(status: SessionStatus, capabilities: SessionCapabilities) -> SessionR
         granted_services: Some(Vec::new()),
         granted_skills: Some(Vec::new()),
         pricing: None,
+        chat: None,
         created_at: "2026-08-27T00:00:00Z".into(),
     })
 }

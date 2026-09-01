@@ -6,6 +6,7 @@ use axum::{Extension, Json, Router};
 use utoipa::{openapi, PartialSchema, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use super::openapi_shapes::SessionSurfaceFilter;
 use super::{ProblemDocument, SERVICE_VERSION};
 use super::{REQUEST_ID_LENGTH, REQUEST_ID_PATTERN};
 
@@ -63,6 +64,10 @@ fn finish_document(document: &mut openapi::OpenApi) {
     components.schemas.insert(
         ProblemDocument::name().to_string(),
         ProblemDocument::schema(),
+    );
+    components.schemas.insert(
+        SessionSurfaceFilter::name().to_string(),
+        SessionSurfaceFilter::schema(),
     );
     components.add_security_scheme(
         "bearerAuth",

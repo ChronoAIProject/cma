@@ -2537,6 +2537,7 @@ mod tests {
             quiesced_writers: 1,
             writer_state: layer3_adapter::WorkspaceWriterState::HeldForTeardown,
             writer_resume_token: Some("resume-pair-1".into()),
+            includes_git_metadata: false,
             archive,
         };
         (

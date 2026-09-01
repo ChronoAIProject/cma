@@ -55,6 +55,9 @@ pub const LANE_TELEMETRY: u8 = 0x04;
 /// anything is opened, the way a prelude is (`hosted/mod.rs:438-451`).
 pub const LANE_NAME_TELEMETRY: &str = "tel";
 
+/// Query parameter naming one independently supervised conversation slot.
+pub const CONVERSATION_QUERY_PARAMETER: &str = "conversation";
+
 /// What a pod says about itself the moment a link opens.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Ready {
@@ -236,6 +239,7 @@ mod tests {
         assert_eq!(LANE_CONVERSATION_GAP, 0x03);
         assert_eq!(LANE_TELEMETRY, 0x04);
         assert_eq!(LANE_NAME_TELEMETRY, "tel");
+        assert_eq!(CONVERSATION_QUERY_PARAMETER, "conversation");
         assert_eq!(WIRE_VERSION, 1);
     }
 

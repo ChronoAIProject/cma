@@ -19,6 +19,7 @@ fn id() -> SessionId {
 
 fn record(runtime_id: &str) -> SessionRecord {
     let mut record = SessionRecord::new(Session {
+        chat: None,
         id: id(),
         owner: SubjectId("subject-conversation-coordination".into()),
         kernel: KernelId::new("fake"),

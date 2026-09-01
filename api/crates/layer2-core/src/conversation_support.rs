@@ -39,7 +39,10 @@ impl FakeConversation {
     /// The sender comes from the core, exactly as it does for a real kernel:
     /// the core is already folding when it calls, so a fake that made its own
     /// would not be able to reproduce anything reported during the open.
-    pub(crate) fn open(updates: mpsc::Sender<ConversationUpdate>) -> (ConversationChannel, Self) {
+    pub(crate) fn open(
+        updates: mpsc::Sender<ConversationUpdate>,
+        conversation_id: String,
+    ) -> (ConversationChannel, Self) {
         let received = std::sync::Arc::new(Mutex::new(Vec::new()));
 
         let recorder = std::sync::Arc::clone(&received);
@@ -53,7 +56,7 @@ impl FakeConversation {
 
         (
             ConversationChannel {
-                conversation_id: Some("conv-fixture".to_string()),
+                conversation_id: Some(conversation_id),
                 input,
             },
             Self { updates, received },

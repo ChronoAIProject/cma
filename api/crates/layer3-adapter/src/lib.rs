@@ -37,7 +37,9 @@ pub use runtime::{
     SponsoredModelAuthorityReceipt, SponsoredModelGatewayOrigin, SponsoredModelRuntimeAuthority,
     TermSize, TerminalChannel, TerminalInput, TerminalOutput, WorkspaceCheckpointDisposition,
     WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
-    WorkspaceEntryPackage, WorkspacePackage, WorkspaceWriterState, RUNTIME_GATEWAY_PROBE_VERSION,
+    WorkspaceEntryPackage, WorkspacePackage, WorkspaceSetupReceipt, WorkspaceSetupStep,
+    WorkspaceSourceReceipt, WorkspaceSourceRequest, WorkspaceTreeReceipt, WorkspaceTreeRequest,
+    WorkspaceWriterState, MAX_WORKSPACE_SETUP_OUTPUT_BYTES, RUNTIME_GATEWAY_PROBE_VERSION,
     SPONSORED_MODEL_RESOURCE, SPONSORED_MODEL_RUNTIME_AUTHORITY_VERSION,
 };
 pub use terminal_input::TerminalInputSender;
@@ -249,6 +251,52 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
+    /// Prepare the immutable Git source from which conversation worktrees are
+    /// created. The hosted supervisor owns the Git mechanics; an adapter only
+    /// transports this kernel-neutral request.
+    async fn prepare_workspace_source(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &WorkspaceSourceRequest,
+    ) -> Result<WorkspaceSourceReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot prepare a workspace source".to_string(),
+        ))
+    }
+
+    /// Add one independently writable tree to a prepared workspace source.
+    async fn add_workspace_tree(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &WorkspaceTreeRequest,
+    ) -> Result<WorkspaceTreeReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot add a workspace tree".to_string(),
+        ))
+    }
+
+    /// Remove one named workspace tree.
+    async fn remove_workspace_tree(
+        &self,
+        _handle: &RuntimeHandle,
+        _name: &str,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot remove a workspace tree".to_string(),
+        ))
+    }
+
+    /// Run deployment-owned setup commands before any conversation opens.
+    async fn run_workspace_setup(
+        &self,
+        _handle: &RuntimeHandle,
+        _commands: &[String],
+    ) -> Result<WorkspaceSetupReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot run workspace setup".to_string(),
+        ))
+    }
+
     /// Replace the credential the runtime presents when calling out.
     ///
     /// Required of every kernel, because every kernel calls out on somebody's
@@ -389,6 +437,35 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
+    /// Capture one exact conversation from a runtime that hosts several.
+    async fn snapshot_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+        _conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot capture a conversation by id".to_string(),
+        ))
+    }
+
+    /// Restore one captured conversation into an exact supervisor slot.
+    ///
+    /// Unlike `RuntimeSpec::restore_from`, this may be called repeatedly before
+    /// the replacement runtime opens any conversation. The supervisor binds
+    /// the identifier contained in each opaque snapshot to `conversation_slot`,
+    /// so opening that slot can load the right history without treating it as
+    /// a conversation that is already live in the new process.
+    async fn restore_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+        _conversation_slot: &str,
+        _snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot restore a conversation into a named slot".to_string(),
+        ))
+    }
+
     /// Quiesce every supported workspace writer, seal one complete checkpoint,
     /// resume the same writers, and return the exact retained artifact.
     ///
@@ -516,6 +593,16 @@ mod tests {
         // forever, or tear down a live session whose only fault is being one.
         let bare = BareKernel;
         let handle = RuntimeHandle("bare-1".into());
+        let source = WorkspaceSourceRequest {
+            repository_url: "https://example.test/repository.git".into(),
+            reference: "main".into(),
+            directory: "repository".into(),
+            workspace_epoch: 1,
+        };
+        let tree = WorkspaceTreeRequest {
+            name: "chat-1".into(),
+            base: "main".into(),
+        };
         for error in [
             bare.attach_terminal(&handle)
                 .await
@@ -523,7 +610,25 @@ mod tests {
             bare.open_conversation(&handle, &RuntimeOptions::default(), mpsc::channel(1).0)
                 .await
                 .expect_err("no conversation"),
+            bare.prepare_workspace_source(&handle, &source)
+                .await
+                .expect_err("cannot prepare a workspace source"),
+            bare.add_workspace_tree(&handle, &tree)
+                .await
+                .expect_err("cannot add a workspace tree"),
+            bare.remove_workspace_tree(&handle, "chat-1")
+                .await
+                .expect_err("cannot remove a workspace tree"),
+            bare.run_workspace_setup(&handle, &["true".into()])
+                .await
+                .expect_err("cannot run workspace setup"),
             bare.snapshot(&handle).await.expect_err("no snapshot"),
+            bare.snapshot_conversation(&handle, "conv-1")
+                .await
+                .expect_err("no id-addressed snapshot"),
+            bare.restore_conversation(&handle, "slot-1", b"snapshot")
+                .await
+                .expect_err("no named-slot restore"),
             bare.list_runtimes().await.expect_err("cannot enumerate"),
             bare.watch_resources(&handle, mpsc::channel(1).0)
                 .await

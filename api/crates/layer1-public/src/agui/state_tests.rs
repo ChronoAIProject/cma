@@ -51,6 +51,9 @@ fn every_durable_kind() -> Vec<EventKind> {
         EventKind::OwnerMessage {
             content: "owner input".into(),
         },
+        EventKind::TurnMetadata {
+            metadata: [("responses-only".into(), "not AG-UI state".into())].into(),
+        },
         EventKind::ToolCallStarted {
             call_id: "call_state_contract".into(),
             title: "read a file".into(),
@@ -156,6 +159,7 @@ fn every_durable_kind() -> Vec<EventKind> {
             | EventKind::ConversationOpened { .. }
             | EventKind::MessageCommitted { .. }
             | EventKind::OwnerMessage { .. }
+            | EventKind::TurnMetadata { .. }
             | EventKind::ToolCallStarted { .. }
             | EventKind::ToolCallUpdated { .. }
             | EventKind::UsageReported { .. }
