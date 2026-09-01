@@ -941,9 +941,9 @@ impl crate::SessionService {
                     ChatUnavailableCause::RevivePending,
                 ));
             }
-            ChatHostStatus::Retired => {
-                return Err(CoreError::ChatUnavailable(ChatUnavailableCause::Retired));
-            }
+            // A retired aggregate is deliberately reincarnated by
+            // `ensure_chat_host` under current deployment settings.
+            ChatHostStatus::Retired => return Ok(()),
             ChatHostStatus::Paused if observed.last_transition_claim.is_some() => {
                 return Err(CoreError::ChatUnavailable(
                     ChatUnavailableCause::RevivePending,

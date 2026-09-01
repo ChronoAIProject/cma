@@ -93,6 +93,20 @@ export interface AdminSession {
   readonly runtimeVersion?: string;
 }
 
+/** One deployment-managed shared chat runtime in the operator inventory. */
+export interface ChatHost {
+  readonly id: string;
+  readonly owner: string;
+  readonly status: 'provisioning' | 'active' | 'pausing' | 'paused' | 'reviving' | 'retired';
+  readonly threadCount: number;
+  readonly runtimeVersion?: string;
+  readonly pausedAt?: number;
+  readonly revivedAt?: number;
+  readonly checkpointCapturedAt?: number;
+  readonly settingsRevision: number;
+  readonly createdAt: number;
+}
+
 /** One runtime in service. */
 export interface RuntimeEntry {
   /** The provider's own identifier for it. Opaque; never parsed. */
@@ -212,10 +226,14 @@ export interface OperatorStore {
   runtimes(): Promise<RuntimeInventory>;
   /** Every session, whoever owns it. */
   sessions(): Promise<readonly AdminSession[]>;
+  /** Every deployment-managed shared chat host, newest first. */
+  chatHosts(): Promise<readonly ChatHost[]>;
   /** Release a session's runtime, keeping the session. */
   stopSession(id: string): Promise<void>;
   /** End a session. */
   terminateSession(id: string): Promise<void>;
+  /** Retire a shared chat host without deleting its retained histories. */
+  retireChatHost(id: string): Promise<void>;
   /** Read deployment-wide settings and their conditional-write revision. */
   readPlatformSettings(): Promise<StoredPlatformSettings>;
   /** Replace all settings, provided nobody has written the named revision. */

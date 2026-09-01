@@ -3,20 +3,27 @@ import type { Capability } from '../auth/types';
 import type { ActivityFilter } from './activity';
 import { namesFrom } from './directory';
 import { viewsFor, type OperatorViewId } from './access';
-import { ActivityView, NamespaceView, PeopleView, SessionsView } from './views';
+import { ActivityView, ChatHostsView, NamespaceView, PeopleView, SessionsView } from './views';
 import { ChatSettingsView } from './ChatSettingsView';
 import { PlatformSettingsView } from './PlatformSettingsView';
-import type { ActivityEntry, AdminSession, OperatorStore, Person, RuntimeInventory } from './types';
+import type {
+  ActivityEntry,
+  AdminSession,
+  ChatHost,
+  OperatorStore,
+  Person,
+  RuntimeInventory,
+} from './types';
 import './OperatorPage.css';
 
 /**
  * Running the service — docs/Web_Style.md §14.
  *
- * Six views nobody but an operator can use: who is using it, what it has been
+ * Seven views nobody but an operator can use: who is using it, what it has been
  * asked to do, what is running, acting on a session, and deployment policy.
  *
  * **A page, not a dialog.** It is the one surface that shows many rows at
- * once, and a 560px dialog was why its rows truncated. As a page its five
+ * once, and a 560px dialog was why its rows truncated. As a page its seven
  * views have somewhere to live without stacking chrome inside a modal: they
  * are a tablist in the page's second band, beneath the head band every column
  * shares.
@@ -53,6 +60,8 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
   const [error, setError] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [hostBusy, setHostBusy] = useState(false);
+  const [confirmingHost, setConfirmingHost] = useState<string | null>(null);
   const [filter, setFilter] = useState<ActivityFilter>({});
 
   /*
@@ -70,6 +79,7 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
   const [activity, setActivity] = useState<Loaded<readonly ActivityEntry[]>>({ kind: 'loading' });
   const [inventory, setInventory] = useState<Loaded<RuntimeInventory>>({ kind: 'loading' });
   const [sessions, setSessions] = useState<Loaded<readonly AdminSession[]>>({ kind: 'loading' });
+  const [chatHosts, setChatHosts] = useState<Loaded<readonly ChatHost[]>>({ kind: 'loading' });
 
   /**
    * Report a failure in the operator's own terms.
@@ -158,6 +168,22 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
     reloadSessions();
   }, [active, reloadSessions, sessions.kind]);
 
+  const reloadChatHosts = useCallback(() => {
+    store
+      .chatHosts()
+      .then((value) => {
+        setChatHosts({ kind: 'ready', value });
+      })
+      .catch(failed);
+  }, [failed, store]);
+
+  useEffect(() => {
+    if (active !== 'chat_hosts' || chatHosts.kind === 'ready') {
+      return;
+    }
+    reloadChatHosts();
+  }, [active, chatHosts.kind, reloadChatHosts]);
+
   /** Run a control, then reread rather than guessing at the new state. */
   const act = useCallback(
     (run: () => Promise<void>) => {
@@ -176,6 +202,24 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
     [failed, reloadSessions],
   );
 
+  const retireHost = useCallback(
+    (id: string) => {
+      setHostBusy(true);
+      setError(undefined);
+      store
+        .retireChatHost(id)
+        .then(() => {
+          setConfirmingHost(null);
+          reloadChatHosts();
+        })
+        .catch(failed)
+        .finally(() => {
+          setHostBusy(false);
+        });
+    },
+    [failed, reloadChatHosts, store],
+  );
+
   return (
     <section className="operator" aria-label="Operations">
       {/*
@@ -191,11 +235,11 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
       <div className="operator__intro">
         <h1 className="operator__title">Operations</h1>
         <p className="operator__description">
-          Service activity, running work, session controls, and deployment policy.
+          Service activity, running work, host and session controls, and deployment policy.
         </p>
       </div>
 
-      {/* The six views, as an underlined tablist - section 19. */}
+      {/* The seven views, as an underlined tablist - section 19. */}
       <div className="operator__tabs" role="tablist" aria-label="Operator views">
         {views.map((view) => (
           <button
@@ -280,6 +324,21 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
               onTerminate={(id) => {
                 act(() => store.terminateSession(id));
               }}
+            />
+          )
+        ) : null}
+
+        {active === 'chat_hosts' ? (
+          chatHosts.kind === 'loading' ? (
+            <Waiting />
+          ) : (
+            <ChatHostsView
+              hosts={chatHosts.value}
+              capabilities={capabilities}
+              confirming={confirmingHost}
+              busy={hostBusy}
+              onConfirm={setConfirmingHost}
+              onRetire={retireHost}
             />
           )
         ) : null}

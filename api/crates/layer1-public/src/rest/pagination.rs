@@ -7,8 +7,8 @@
 use axum::http::{header, HeaderMap, HeaderValue};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use layer2_core::{
-    seconds_from_rfc3339, PageCursor, PageRequest, SessionListQuery, SessionStatus,
-    SessionSurfaceFilter, TriggerValidationError, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    seconds_from_rfc3339, ChatHostListQuery, PageCursor, PageRequest, SessionListQuery,
+    SessionStatus, SessionSurfaceFilter, TriggerValidationError, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 use serde::{de, Deserialize, Deserializer, Serialize};
 
@@ -85,6 +85,37 @@ impl AdminSessionPageParams {
     }
 }
 
+/// Query accepted by the operator chat-host collection.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdminChatHostPageParams {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_admin_chat_host_cursor")]
+    cursor: Option<PageCursor>,
+}
+
+impl AdminChatHostPageParams {
+    pub(crate) fn store_query(&self) -> ChatHostListQuery {
+        ChatHostListQuery::new(
+            PageRequest::new(bounded_limit(self.limit), self.cursor.clone()),
+            Vec::new(),
+        )
+    }
+
+    pub(crate) fn next_headers(&self, path: &str, next: Option<&PageCursor>) -> HeaderMap {
+        let Some(next) = next else {
+            return HeaderMap::new();
+        };
+        let query = serde_urlencoded::to_string(NextQuery {
+            limit: bounded_limit(self.limit),
+            cursor: encode_cursor(CursorCollection::AdminChatHosts, next),
+        })
+        .expect("the fixed admin chat-host page query serializes");
+        link_headers(path, &query)
+    }
+}
+
 #[derive(Serialize)]
 struct SessionNextQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,6 +171,7 @@ fn bounded_limit(requested: Option<u32>) -> u32 {
 enum CursorCollection {
     Sessions,
     AdminSessions,
+    AdminChatHosts,
     EnvironmentProfiles,
     SponsorshipCredentials,
     SponsorshipPolicies,
@@ -262,6 +294,15 @@ where
     deserialize_cursor(deserializer, CursorCollection::AdminSessions)
 }
 
+fn deserialize_admin_chat_host_cursor<'de, D>(
+    deserializer: D,
+) -> Result<Option<PageCursor>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_cursor(deserializer, CursorCollection::AdminChatHosts)
+}
+
 fn deserialize_profile_cursor<'de, D>(deserializer: D) -> Result<Option<PageCursor>, D::Error>
 where
     D: Deserializer<'de>,
@@ -368,6 +409,18 @@ mod tests {
         );
         assert!(serde_urlencoded::from_str::<PageParams>(&query).is_err());
         assert!(serde_urlencoded::from_str::<AdminSessionPageParams>(&query).is_err());
+        assert!(serde_urlencoded::from_str::<AdminChatHostPageParams>(&query).is_err());
+
+        let host_cursor = PageCursor::new("2026-09-01T10:11:12Z", "chho_1");
+        let host_query = format!(
+            "cursor={}",
+            encode_cursor(CursorCollection::AdminChatHosts, &host_cursor)
+        );
+        let decoded: AdminChatHostPageParams =
+            serde_urlencoded::from_str(&host_query).expect("host cursor parses on its route");
+        assert_eq!(decoded.cursor, Some(host_cursor));
+        assert!(serde_urlencoded::from_str::<SessionPageParams>(&host_query).is_err());
+        assert!(serde_urlencoded::from_str::<AdminSessionPageParams>(&host_query).is_err());
     }
 
     #[test]

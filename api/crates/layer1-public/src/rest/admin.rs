@@ -29,10 +29,10 @@ use axum::{
 };
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AuthorizeEffectReconciliationCommand, Caller,
-    CoreError, DirectoryQuery, LaunchEffectKind, OperationStore, PlatformSettingsService,
-    ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId,
-    TriggerService, TriggerServiceError, TriggerSupportLookup, TriggerSupportSnapshot,
-    UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
+    ChatHostId, ChatHostRecord, CoreError, DirectoryQuery, LaunchEffectKind, OperationStore,
+    PlatformSettingsService, ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId,
+    SessionService, SubjectId, TriggerService, TriggerServiceError, TriggerSupportLookup,
+    TriggerSupportSnapshot, UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -42,7 +42,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
 use crate::rest::openapi_shapes;
-use crate::rest::pagination::AdminSessionPageParams;
+use crate::rest::pagination::{AdminChatHostPageParams, AdminSessionPageParams};
 use crate::rest::trigger_openapi_shapes as trigger_schema;
 use crate::rest::{
     idempotency, problem_document, problem_response, BodyProblem, Problem, QueryProblem,
@@ -266,6 +266,47 @@ impl AdminSessionView {
             last_seq: s.last_seq,
             created_at: s.created_at,
             runtime_version: s.runtime_version,
+        }
+    }
+}
+
+/// One deployment-managed shared chat host, stripped of checkpoint object
+/// references, prompt payloads, and other lifecycle-internal authority.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminChatHostView {
+    id: String,
+    owner: String,
+    #[schema(value_type = openapi_shapes::ChatHostStatus)]
+    status: layer2_core::ChatHostStatus,
+    thread_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paused_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revived_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkpoint_captured_at: Option<String>,
+    settings_revision: u64,
+    created_at: String,
+}
+
+impl From<ChatHostRecord> for AdminChatHostView {
+    fn from(host: ChatHostRecord) -> Self {
+        Self {
+            id: host.id.0,
+            owner: host.owner.0,
+            status: host.status,
+            thread_count: host.threads.iter().filter(|thread| !thread.removed).count(),
+            runtime_version: host.runtime_version,
+            paused_at: host.paused_at,
+            revived_at: host.revived_at,
+            checkpoint_captured_at: host
+                .checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.captured_at.clone()),
+            settings_revision: host.pinned_settings.settings_revision,
+            created_at: host.created_at,
         }
     }
 }
@@ -614,7 +655,7 @@ fn enum_code(value: impl Serialize) -> String {
 /// unit, and a route added outside that segment would escape whatever protects
 /// it without anything noticing.
 #[cfg(test)]
-const OPERATOR_ROUTES: [&str; 10] = [
+const OPERATOR_ROUTES: [&str; 12] = [
     "/api/v1/admin/users",
     "/api/v1/admin/activity",
     "/api/v1/admin/triggers/support",
@@ -626,6 +667,8 @@ const OPERATOR_ROUTES: [&str; 10] = [
     // session should be doing it somewhere a gateway can see.
     "/api/v1/admin/sessions/{id}/stop",
     "/api/v1/admin/sessions/{id}/terminate",
+    "/api/v1/admin/chat/hosts",
+    "/api/v1/admin/chat/hosts/{id}/retire",
     "/api/v1/admin/settings",
     "/api/v1/admin/settings/reset",
 ];
@@ -646,6 +689,8 @@ pub(super) fn documented_router(state: Arc<AdminState>) -> OpenApiRouter {
         .routes(routes!(sessions))
         .routes(routes!(stop))
         .routes(routes!(terminate))
+        .routes(routes!(chat_hosts))
+        .routes(routes!(retire_chat_host))
         .with_state(state)
         .merge(settings)
 }
@@ -908,6 +953,60 @@ async fn sessions(
                 .collect(),
         ),
     ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/chat/hosts",
+    tag = "administration",
+    params(("limit" = Option<u32>, Query), ("cursor" = Option<String>, Query)),
+    responses((status = 200, description = "Deployment chat-host page", body = [AdminChatHostView]))
+)]
+async fn chat_hosts(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    params: Result<Query<AdminChatHostPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<(axum::http::HeaderMap, Json<Vec<AdminChatHostView>>), AdminRequestFailure> {
+    let Query(params) = params?;
+    let hosts = state
+        .sessions
+        .list_chat_hosts(&caller, &params.store_query())
+        .await?;
+    let headers = params.next_headers("/api/v1/admin/chat/hosts", hosts.next.as_ref());
+    Ok((
+        headers,
+        Json(
+            hosts
+                .items
+                .into_iter()
+                .map(AdminChatHostView::from)
+                .collect(),
+        ),
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/chat/hosts/{id}/retire",
+    tag = "administration",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Chat host retired by an operator", body = AdminChatHostView))
+)]
+async fn retire_chat_host(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Response, Problem> {
+    let host = state
+        .sessions
+        .retire_chat_host(&caller, &ChatHostId(id))
+        .await?;
+    let owner = host.owner.clone();
+    let mut response = Json(AdminChatHostView::from(host)).into_response();
+    if caller.is_acting_for_another(&owner) {
+        response.extensions_mut().insert(ActedUpon(owner));
+    }
+    Ok(response)
 }
 
 /// End somebody's session.

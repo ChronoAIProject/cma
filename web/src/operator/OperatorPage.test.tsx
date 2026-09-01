@@ -75,9 +75,10 @@ describe('the view switch', () => {
 
   it('names the selected view by more than its colour', async () => {
     open(['read_user_directory', 'read_all_sessions']);
-    const [people, sessions] = screen.getAllByRole('tab');
+    const [people, sessions, hosts] = screen.getAllByRole('tab');
     expect(people).toHaveAttribute('aria-selected', 'true');
     expect(sessions).toHaveAttribute('aria-selected', 'false');
+    expect(hosts).toHaveAttribute('aria-selected', 'false');
 
     await userEvent.click(sessions as HTMLElement);
     expect(sessions).toHaveAttribute('aria-selected', 'true');
@@ -274,6 +275,78 @@ describe('acting on somebody else’s session', () => {
   });
 });
 
+describe('shared chat hosts', () => {
+  const HOST = {
+    id: 'chho_0123456789abcdef0123456789abcdef',
+    owner: 'subject-chat-owner',
+    status: 'active' as const,
+    threadCount: 3,
+    runtimeVersion: 'runtime-v2',
+    settingsRevision: 17,
+    createdAt: Date.now() - 2 * 60 * 60 * 1000,
+  };
+
+  it('shows the compact owner, status, threads, and age row', async () => {
+    open(['read_all_sessions'], { chatHosts: [HOST] });
+    await show(/^chat hosts$/i);
+    const row = (await screen.findByText('subject-chat-owner')).closest('li') as HTMLElement;
+
+    expect(within(row).getByText('active')).toBeInTheDocument();
+    expect(within(row).getByText('3 threads')).toBeInTheDocument();
+    expect(within(row).getByText('2 hr old')).toBeInTheDocument();
+    expect(within(row).getByText(HOST.id)).toHaveClass('record__identifier');
+  });
+
+  it('asks inline before retirement, then rereads the host row', async () => {
+    const onRetireHost = vi.fn();
+    open(ALL, { chatHosts: [HOST], onRetireHost });
+    await show(/^chat hosts$/i);
+    const row = (await screen.findByText('subject-chat-owner')).closest('li') as HTMLElement;
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Retire' }));
+    expect(onRetireHost).not.toHaveBeenCalled();
+    expect(within(row).getByText(/retire this chat host\?/i)).toBeInTheDocument();
+    await userEvent.click(within(row).getByRole('button', { name: 'Retire' }));
+
+    await waitFor(() => {
+      expect(onRetireHost).toHaveBeenCalledWith(HOST.id);
+      expect(within(row).getByText('retired')).toBeInTheDocument();
+    });
+    expect(within(row).getByRole('button', { name: 'Retire' })).toBeDisabled();
+  });
+
+  it('keeps retirement visible but unavailable to an inventory-only caller', async () => {
+    open(['read_all_sessions'], { chatHosts: [HOST] });
+    await show(/^chat hosts$/i);
+    const row = (await screen.findByText('subject-chat-owner')).closest('li') as HTMLElement;
+    const retire = within(row).getByRole('button', { name: 'Retire' });
+
+    expect(retire).toBeDisabled();
+    expect(retire).toHaveAttribute('title', expect.stringMatching(/watch .* not act/i));
+    expect(within(row).getByText(/watch .* not act/i)).toHaveClass('control-reason');
+  });
+
+  it('keeps host confirmation independent from session confirmation', async () => {
+    const session = {
+      id: HOST.id,
+      owner: 'session-owner',
+      ownerLabel: 'Session owner',
+      status: 'ready',
+      kernel: 'example-runtime',
+    };
+    open(ALL, { chatHosts: [HOST], sessions: [session] });
+    await show(/^chat hosts$/i);
+    const hostRow = (await screen.findByText('subject-chat-owner')).closest('li') as HTMLElement;
+    await userEvent.click(within(hostRow).getByRole('button', { name: 'Retire' }));
+
+    await show(/^sessions$/i);
+    const sessionRow = (await screen.findByText('Session owner')).closest('li') as HTMLElement;
+    expect(within(sessionRow).queryByText(/end this session\?/i)).not.toBeInTheDocument();
+    await userEvent.click(within(sessionRow).getByRole('button', { name: 'End' }));
+    expect(within(sessionRow).getByText(/end this session\?/i)).toBeInTheDocument();
+  });
+});
+
 describe('when the control plane cannot be reached', () => {
   it('says so rather than drawing an empty list', async () => {
     open(['read_user_directory'], { failWith: 'the control plane is unreachable' });
@@ -309,6 +382,17 @@ describe('the operations appearance', () => {
     );
     expect(sheet).toMatch(
       /\.operator__filter select:focus-visible\s*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)[^}]*box-shadow: var\(--dsw-ring-accent-soft\)/,
+    );
+  });
+
+  it('keeps seven tabs scrollable and stacks record controls on narrow screens', () => {
+    const sheet = css();
+    expect(sheet).toMatch(/\.operator__tabs\s*\{[^}]*overflow-x: auto/);
+    expect(sheet).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.operator__record-row\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/,
+    );
+    expect(sheet).toMatch(
+      /\.operator \.record__actions\s*\{[^}]*flex-wrap: wrap[^}]*justify-content: flex-start/,
     );
   });
 });

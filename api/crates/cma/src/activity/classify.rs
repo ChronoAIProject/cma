@@ -17,8 +17,9 @@
 
 use axum::http::Method;
 use layer2_core::{
-    ActivityAction as Action, ActivityDetail, ActivityTarget, DetailKey, EnvironmentProfileId,
-    LaunchEffectKind, LaunchId, PublicTriggerId, SessionId, TriggerId, TriggerRevisionId,
+    ActivityAction as Action, ActivityDetail, ActivityTarget, ChatHostId, DetailKey,
+    EnvironmentProfileId, LaunchEffectKind, LaunchId, PublicTriggerId, SessionId, TriggerId,
+    TriggerRevisionId,
 };
 use serde::Deserialize;
 
@@ -66,6 +67,7 @@ impl Classified {
 pub fn classify(method: &Method, path: &str) -> Option<Classified> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     let session = |id: &str| ActivityTarget::Session(SessionId(id.to_string()));
+    let chat_host = |id: &str| ActivityTarget::ChatHost(ChatHostId(id.to_string()));
     let profile =
         |id: &str| ActivityTarget::EnvironmentProfile(EnvironmentProfileId(id.to_string()));
     let trigger = |id: &str| ActivityTarget::Trigger(TriggerId(id.to_string()));
@@ -245,6 +247,12 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         }
         ["api", "v1", "admin", "runtimes"] => Some(Classified::new(Action::RuntimeInventoryRead)),
         ["api", "v1", "admin", "sessions"] => Some(Classified::new(Action::SessionList)),
+        ["api", "v1", "admin", "chat", "hosts"] if method == Method::GET => {
+            Some(Classified::new(Action::ChatHostList))
+        }
+        ["api", "v1", "admin", "chat", "hosts", id, "retire"] if method == Method::POST => {
+            Some(Classified::new(Action::ChatHostRetire).on(chat_host(id)))
+        }
         ["api", "v1", "admin", "settings"] => match *method {
             Method::GET => Some(Classified::new(Action::PlatformSettingsRead)),
             Method::PUT | Method::PATCH => Some(Classified::new(Action::PlatformSettingsWrite)),

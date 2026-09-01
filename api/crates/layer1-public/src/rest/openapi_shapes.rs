@@ -143,6 +143,8 @@ pub(super) enum ActivityAction {
     SessionPlaneChange,
     SessionApprovalResolve,
     SessionUsageRead,
+    ChatHostList,
+    ChatHostRetire,
     EnvironmentProfileCreate,
     EnvironmentProfileRead,
     EnvironmentProfileList,
@@ -202,6 +204,10 @@ pub(super) enum ActivityAction {
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct SessionId(String);
 
+/// Identifier of a deployment-managed chat host.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatHostId(String);
+
 /// Identifier of a reusable environment profile.
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct EnvironmentProfileId(String);
@@ -227,6 +233,7 @@ pub(super) struct LaunchId(String);
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub(super) enum ActivityTarget {
     Session(SessionId),
+    ChatHost(ChatHostId),
     EnvironmentProfile(EnvironmentProfileId),
     Subject(SubjectId),
     Trigger(TriggerId),
@@ -234,6 +241,18 @@ pub(super) enum ActivityTarget {
     PublicTrigger(PublicTriggerId),
     Launch(LaunchId),
     TriggerConnection(String),
+}
+
+/// Lifecycle of a deployment-managed chat host.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ChatHostStatus {
+    Provisioning,
+    Active,
+    Pausing,
+    Paused,
+    Reviving,
+    Retired,
 }
 
 /// How an activity came out.
@@ -598,6 +617,8 @@ mod tests {
             core::ActivityAction::SessionPlaneChange => ActivityAction::SessionPlaneChange,
             core::ActivityAction::SessionApprovalResolve => ActivityAction::SessionApprovalResolve,
             core::ActivityAction::SessionUsageRead => ActivityAction::SessionUsageRead,
+            core::ActivityAction::ChatHostList => ActivityAction::ChatHostList,
+            core::ActivityAction::ChatHostRetire => ActivityAction::ChatHostRetire,
             core::ActivityAction::EnvironmentProfileCreate => ActivityAction::EnvironmentProfileCreate,
             core::ActivityAction::EnvironmentProfileRead => ActivityAction::EnvironmentProfileRead,
             core::ActivityAction::EnvironmentProfileList => ActivityAction::EnvironmentProfileList,
@@ -671,6 +692,7 @@ mod tests {
         fn exhaustive(value: core::ActivityTarget) {
             match value {
                 core::ActivityTarget::Session(_) => {}
+                core::ActivityTarget::ChatHost(_) => {}
                 core::ActivityTarget::EnvironmentProfile(_) => {}
                 core::ActivityTarget::Subject(_) => {}
                 core::ActivityTarget::Trigger(_) => {}
@@ -685,6 +707,10 @@ mod tests {
             (
                 core::ActivityTarget::Session(core::SessionId("sesn_schema".into())),
                 ActivityTarget::Session(SessionId("sesn_schema".into())),
+            ),
+            (
+                core::ActivityTarget::ChatHost(core::ChatHostId("chho_schema".into())),
+                ActivityTarget::ChatHost(ChatHostId("chho_schema".into())),
             ),
             (
                 core::ActivityTarget::EnvironmentProfile(core::EnvironmentProfileId(

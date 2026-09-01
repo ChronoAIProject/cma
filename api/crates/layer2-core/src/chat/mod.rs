@@ -49,3 +49,7 @@ mod inactivity_service_tests;
 #[cfg(test)]
 #[path = "revive_service_tests.rs"]
 mod revive_service_tests;
+
+#[cfg(test)]
+#[path = "retirement_service_tests.rs"]
+mod retirement_service_tests;
