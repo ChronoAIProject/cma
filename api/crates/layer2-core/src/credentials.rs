@@ -562,7 +562,7 @@ impl SessionService {
     }
 
     /// What this session's recorded grant says its credential may reach.
-    async fn services_for_record(
+    pub(crate) async fn services_for_record(
         &self,
         record: &crate::store::SessionRecord,
     ) -> Vec<crate::environment::ServiceId> {

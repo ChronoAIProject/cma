@@ -6,8 +6,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
+use futures_util::StreamExt as _;
 use layer2_core::store::{Page, PageCursor, PageRequest};
-use layer2_core::{ChatHostId, ChatPauseOutcome, CoreError, SessionService};
+use layer2_core::{
+    ChatHostId, ChatPauseOutcome, ChatTitleGenerator, ChatTitleOutcome, CoreError, SessionId,
+    SessionService,
+};
 use tokio::time::MissedTickBehavior;
 
 const PAUSE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
@@ -15,6 +19,8 @@ const PAUSE_PAGE_SIZE: u32 = 200;
 const PAUSE_MAX_PAGES_PER_PASS: usize = 8;
 const ROTATION_PAGE_SIZE: u32 = 200;
 const ROTATION_MAX_PAGES_PER_PASS: usize = 8;
+const TITLE_PAGE_SIZE: u32 = 16;
+const TITLE_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct PausePassStats {
@@ -39,6 +45,18 @@ struct RotationPassStats {
     elapsed_milliseconds: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TitlePassStats {
+    pages: usize,
+    candidates: usize,
+    generated: usize,
+    fallbacks: usize,
+    skipped: usize,
+    errors: usize,
+    page_budget_exhausted: bool,
+    elapsed_milliseconds: u64,
+}
+
 #[async_trait]
 trait PauseBackend: Send + Sync {
     async fn candidates(&self, now: &str, page: PageRequest)
@@ -52,6 +70,13 @@ trait RotationBackend: Send + Sync {
     async fn candidates(&self, page: PageRequest) -> Result<Page<ChatHostId>, CoreError>;
 
     async fn rotate(&self, id: &ChatHostId) -> Result<bool, CoreError>;
+}
+
+#[async_trait]
+trait TitleBackend: Send + Sync {
+    async fn candidates(&self, page: PageRequest) -> Result<Page<SessionId>, CoreError>;
+
+    async fn generate(&self, id: &SessionId) -> Result<ChatTitleOutcome, CoreError>;
 }
 
 #[async_trait]
@@ -73,6 +98,11 @@ impl PauseBackend for SessionService {
 
 struct SessionRotationBackend(Arc<SessionService>);
 
+struct SessionTitleBackend {
+    service: Arc<SessionService>,
+    generator: Option<Arc<dyn ChatTitleGenerator>>,
+}
+
 #[async_trait]
 impl RotationBackend for SessionRotationBackend {
     async fn candidates(&self, page: PageRequest) -> Result<Page<ChatHostId>, CoreError> {
@@ -87,6 +117,19 @@ impl RotationBackend for SessionRotationBackend {
     }
 }
 
+#[async_trait]
+impl TitleBackend for SessionTitleBackend {
+    async fn candidates(&self, page: PageRequest) -> Result<Page<SessionId>, CoreError> {
+        self.service.chat_title_candidates(page).await
+    }
+
+    async fn generate(&self, id: &SessionId) -> Result<ChatTitleOutcome, CoreError> {
+        self.service
+            .generate_chat_title(id, self.generator.as_deref())
+            .await
+    }
+}
+
 struct ChatPauseSweeper {
     backend: Arc<dyn PauseBackend>,
     page_size: u32,
@@ -98,6 +141,13 @@ struct ChatRotationSweeper {
     backend: Arc<dyn RotationBackend>,
     page_size: u32,
     max_pages: usize,
+    resume_cursor: Mutex<Option<PageCursor>>,
+}
+
+struct ChatTitleSweeper {
+    backend: Arc<dyn TitleBackend>,
+    page_size: u32,
+    concurrency: usize,
     resume_cursor: Mutex<Option<PageCursor>>,
 }
 
@@ -259,6 +309,86 @@ impl ChatRotationSweeper {
     }
 }
 
+impl ChatTitleSweeper {
+    fn production(
+        service: Arc<SessionService>,
+        generator: Option<Arc<dyn ChatTitleGenerator>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            backend: Arc::new(SessionTitleBackend { service, generator }),
+            page_size: TITLE_PAGE_SIZE,
+            concurrency: TITLE_CONCURRENCY,
+            resume_cursor: Mutex::new(None),
+        })
+    }
+
+    async fn run_pass(&self) -> TitlePassStats {
+        let started = Instant::now();
+        let mut stats = TitlePassStats::default();
+        let cursor = self
+            .resume_cursor
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let page = match self
+            .backend
+            .candidates(PageRequest::new(self.page_size, cursor.clone()))
+            .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                stats.errors = 1;
+                stats.elapsed_milliseconds =
+                    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                tracing::warn!(%error, "chat title candidate page could not be read");
+                log_title_pass(stats);
+                return stats;
+            }
+        };
+        stats.pages = 1;
+        stats.candidates = page.items.len();
+
+        let outcomes = futures_util::stream::iter(page.items.into_iter().map(|id| {
+            let backend = Arc::clone(&self.backend);
+            async move {
+                let outcome = backend.generate(&id).await;
+                (id, outcome)
+            }
+        }))
+        .buffer_unordered(self.concurrency)
+        .collect::<Vec<_>>()
+        .await;
+        for (id, outcome) in outcomes {
+            match outcome {
+                Ok(ChatTitleOutcome::Generated) => stats.generated += 1,
+                Ok(ChatTitleOutcome::Fallback) => stats.fallbacks += 1,
+                Ok(ChatTitleOutcome::Skipped) => stats.skipped += 1,
+                Err(error) => {
+                    stats.errors += 1;
+                    tracing::warn!(session_id = %id, %error, "chat title candidate failed");
+                }
+            }
+        }
+
+        let next = match page.next {
+            Some(next) if cursor.as_ref() == Some(&next) => {
+                stats.errors += 1;
+                tracing::error!("chat title sweep stopped a repeated page cursor");
+                None
+            }
+            next => next,
+        };
+        stats.page_budget_exhausted = next.is_some();
+        *self
+            .resume_cursor
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = next;
+        stats.elapsed_milliseconds = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        log_title_pass(stats);
+        stats
+    }
+}
+
 fn log_pass(stats: PausePassStats) {
     let actionable =
         stats.paused > 0 || stats.refused > 0 || stats.errors > 0 || stats.page_budget_exhausted;
@@ -310,14 +440,47 @@ fn log_rotation_pass(stats: RotationPassStats) {
     }
 }
 
-/// Run inactivity maintenance until the process exits.
-pub(crate) fn spawn(service: Arc<SessionService>) {
+fn log_title_pass(stats: TitlePassStats) {
+    let actionable = stats.generated > 0
+        || stats.fallbacks > 0
+        || stats.errors > 0
+        || stats.page_budget_exhausted;
+    tracing::info!(
+        event_name = "cma_chat_title_pass",
+        pages = stats.pages,
+        candidates = stats.candidates,
+        generated = stats.generated,
+        fallbacks = stats.fallbacks,
+        skipped = stats.skipped,
+        errors = stats.errors,
+        page_budget_exhausted = stats.page_budget_exhausted,
+        elapsed_milliseconds = stats.elapsed_milliseconds,
+        actionable,
+        "chat title sweep settled"
+    );
+    if stats.errors > 0 || stats.page_budget_exhausted {
+        tracing::warn!(
+            event_name = "cma_chat_title_alert_candidate",
+            errors = stats.errors,
+            page_budget_exhausted = stats.page_budget_exhausted,
+            "chat title maintenance needs operator attention"
+        );
+    }
+}
+
+/// Run chat maintenance until the process exits.
+pub(crate) fn spawn(
+    service: Arc<SessionService>,
+    title_generator: Option<Arc<dyn ChatTitleGenerator>>,
+) {
     let pause_sweeper = ChatPauseSweeper::production(Arc::clone(&service));
+    let title_sweeper = ChatTitleSweeper::production(Arc::clone(&service), title_generator);
     let rotation_sweeper = ChatRotationSweeper::production(service);
     tokio::spawn(run_on_cadence(PAUSE_SWEEP_INTERVAL, move || {
         let pause_sweeper = Arc::clone(&pause_sweeper);
+        let title_sweeper = Arc::clone(&title_sweeper);
         async move {
-            pause_sweeper.run_pass().await;
+            tokio::join!(pause_sweeper.run_pass(), title_sweeper.run_pass());
         }
     }));
     tokio::spawn(run_on_cadence(PAUSE_SWEEP_INTERVAL, move || {
@@ -332,6 +495,8 @@ pub(crate) fn spawn(service: Arc<SessionService>) {
         pause_max_pages = PAUSE_MAX_PAGES_PER_PASS,
         rotation_page_size = ROTATION_PAGE_SIZE,
         rotation_max_pages = ROTATION_MAX_PAGES_PER_PASS,
+        title_page_size = TITLE_PAGE_SIZE,
+        title_concurrency = TITLE_CONCURRENCY,
         "chat lifecycle cadence started"
     );
 }
@@ -367,6 +532,12 @@ mod tests {
         pages: AsyncMutex<VecDeque<Page<ChatHostId>>>,
         calls: AsyncMutex<Vec<Option<PageCursor>>>,
         outcomes: AsyncMutex<VecDeque<Result<bool, CoreError>>>,
+    }
+
+    struct FakeTitleBackend {
+        pages: AsyncMutex<VecDeque<Page<SessionId>>>,
+        calls: AsyncMutex<Vec<Option<PageCursor>>>,
+        outcomes: AsyncMutex<VecDeque<Result<ChatTitleOutcome, CoreError>>>,
     }
 
     #[async_trait]
@@ -407,6 +578,26 @@ mod tests {
                 .await
                 .pop_front()
                 .ok_or_else(|| CoreError::RuntimeUnavailable("no fake rotation outcome".into()))?
+        }
+    }
+
+    #[async_trait]
+    impl TitleBackend for FakeTitleBackend {
+        async fn candidates(&self, page: PageRequest) -> Result<Page<SessionId>, CoreError> {
+            self.calls.lock().await.push(page.cursor().cloned());
+            self.pages
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| CoreError::RuntimeUnavailable("no fake title page".into()))
+        }
+
+        async fn generate(&self, _id: &SessionId) -> Result<ChatTitleOutcome, CoreError> {
+            self.outcomes
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| CoreError::RuntimeUnavailable("no fake title outcome".into()))?
         }
     }
 
@@ -530,6 +721,79 @@ mod tests {
         assert_eq!(*backend.calls.lock().await, [None, Some(next)]);
     }
 
+    #[tokio::test]
+    async fn title_pass_is_one_bounded_page_and_types_every_content_free_outcome() {
+        let next = cursor("sesn_title_next");
+        let backend = Arc::new(FakeTitleBackend {
+            pages: AsyncMutex::new(VecDeque::from([Page {
+                items: ["generated", "fallback", "skipped", "failed"]
+                    .into_iter()
+                    .map(|suffix| SessionId(format!("sesn_{suffix}")))
+                    .collect(),
+                next: Some(next.clone()),
+            }])),
+            calls: AsyncMutex::new(Vec::new()),
+            outcomes: AsyncMutex::new(VecDeque::from([
+                Ok(ChatTitleOutcome::Generated),
+                Ok(ChatTitleOutcome::Fallback),
+                Ok(ChatTitleOutcome::Skipped),
+                Err(CoreError::RuntimeUnavailable("title call failed".into())),
+            ])),
+        });
+        let sweeper = ChatTitleSweeper {
+            backend: backend.clone(),
+            page_size: 4,
+            concurrency: 2,
+            resume_cursor: Mutex::new(None),
+        };
+
+        let stats = sweeper.run_pass().await;
+
+        assert_eq!(stats.pages, 1);
+        assert_eq!(stats.candidates, 4);
+        assert_eq!(stats.generated, 1);
+        assert_eq!(stats.fallbacks, 1);
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(stats.errors, 1);
+        assert!(stats.page_budget_exhausted);
+        assert_eq!(*backend.calls.lock().await, [None]);
+        assert_eq!(
+            *sweeper.resume_cursor.lock().unwrap(),
+            Some(next),
+            "the raw-page cursor is retained even when candidate outcomes differ"
+        );
+    }
+
+    #[tokio::test]
+    async fn title_pass_resumes_through_an_empty_raw_page_then_wraps() {
+        let next = cursor("sesn_title_resume");
+        let backend = Arc::new(FakeTitleBackend {
+            pages: AsyncMutex::new(VecDeque::from([
+                Page {
+                    items: Vec::new(),
+                    next: Some(next.clone()),
+                },
+                Page {
+                    items: Vec::new(),
+                    next: None,
+                },
+            ])),
+            calls: AsyncMutex::new(Vec::new()),
+            outcomes: AsyncMutex::new(VecDeque::new()),
+        });
+        let sweeper = ChatTitleSweeper {
+            backend: backend.clone(),
+            page_size: 1,
+            concurrency: 1,
+            resume_cursor: Mutex::new(None),
+        };
+
+        assert!(sweeper.run_pass().await.page_budget_exhausted);
+        assert!(!sweeper.run_pass().await.page_budget_exhausted);
+        assert_eq!(*backend.calls.lock().await, [None, Some(next)]);
+        assert_eq!(*sweeper.resume_cursor.lock().unwrap(), None);
+    }
+
     #[test]
     fn cadence_and_page_bounds_are_fixed() {
         assert_eq!(PAUSE_SWEEP_INTERVAL, Duration::from_secs(60));
@@ -537,6 +801,8 @@ mod tests {
         assert_eq!(PAUSE_MAX_PAGES_PER_PASS, 8);
         assert_eq!(ROTATION_PAGE_SIZE, 200);
         assert_eq!(ROTATION_MAX_PAGES_PER_PASS, 8);
+        assert_eq!(TITLE_PAGE_SIZE, 16);
+        assert_eq!(TITLE_CONCURRENCY, 8);
     }
 
     #[tokio::test(start_paused = true)]
