@@ -110,6 +110,17 @@ pub enum EventKind {
         /// What the owner sent, verbatim.
         content: String,
     },
+    /// Opaque caller metadata attached to the turn that just began.
+    ///
+    /// Kept beside the owner's message rather than inside it: conversation
+    /// projections can show the message without exposing transport metadata,
+    /// while an interface that owns response resources can reconstruct the
+    /// exact response after a control-plane restart. Keys and values are
+    /// bounded before this event is accepted by [`crate::SessionService`].
+    TurnMetadata {
+        /// Caller-supplied string pairs, in deterministic key order.
+        metadata: std::collections::BTreeMap<String, String>,
+    },
     /// The agent began using a tool.
     ToolCallStarted {
         /// Correlates with every later update to the same call.
@@ -484,6 +495,7 @@ const KNOWN_TAGS: &[&str] = &[
     "conversation_opened",
     "message_committed",
     "owner_message",
+    "turn_metadata",
     "tool_call_started",
     "tool_call_updated",
     "usage_reported",

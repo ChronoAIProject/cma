@@ -217,6 +217,25 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
             Some(Classified::new(Action::SessionApprovalResolve).on(session(id)))
         }
 
+        ["api", "v1", "conversations"] if method == Method::POST => {
+            Some(Classified::new(Action::SessionCreate))
+        }
+        ["api", "v1", "conversations", id] if method == Method::GET => {
+            Some(Classified::new(Action::SessionRead).on(session(id)))
+        }
+        ["api", "v1", "conversations", id, "items"] if method == Method::GET => {
+            Some(Classified::new(Action::SessionEventsRead).on(session(id)))
+        }
+        ["api", "v1", "responses"] if method == Method::POST => {
+            // The body contains the owner's prompt and is deliberately never
+            // buffered into cross-session activity state.
+            Some(Classified::new(Action::SessionInput))
+        }
+        ["api", "v1", "responses", response] if method == Method::GET => {
+            response_session_id(response)
+                .map(|id| Classified::new(Action::SessionRead).on(session(id)))
+        }
+
         ["api", "v1", "environment-profiles"] => match *method {
             Method::GET => Some(Classified::new(Action::EnvironmentProfileList)),
             Method::POST => Some(Classified::new(Action::EnvironmentProfileCreate).with_body()),
@@ -266,6 +285,12 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
 
         _ => None,
     }
+}
+
+fn response_session_id(response: &str) -> Option<&str> {
+    let response = response.strip_prefix("resp_")?;
+    let (session, turn) = response.rsplit_once('_')?;
+    (session.starts_with("sesn_") && turn.parse::<u64>().is_ok()).then_some(session)
 }
 
 /// The operations addressed as a verb under one session.

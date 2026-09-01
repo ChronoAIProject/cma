@@ -46,6 +46,7 @@ use layer1_public::{
     agui::AguiInterface,
     mcp::McpInterface,
     pty::PtyInterface,
+    responses::ResponsesInterface,
     rest::{HttpProblem, RestInterface},
     InterfaceProfile,
 };
@@ -70,7 +71,7 @@ const PROCESS_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
-    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
 );
 
 type TriggerProviderPorts = (
@@ -140,6 +141,7 @@ impl TriggerCompositionReadiness {
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
         Box::new(AguiInterface),
+        Box::new(ResponsesInterface),
         Box::new(RestInterface),
         Box::new(PtyInterface),
         Box::new(McpInterface),
@@ -153,8 +155,8 @@ fn interface_is_served(interface: &dyn InterfaceProfile) -> bool {
 
 /// Compose the REST surface before protocol-specific and browser routes join it.
 ///
-/// The three Layer 1 routers have different state, so the binary is where they
-/// meet. Applying the method fallback after all three are merged covers every
+/// The Layer 1 routers have different state, so the binary is where they meet.
+/// Applying the method fallback after all of them are merged covers every
 /// declared REST path without giving any child router a conflicting fallback.
 /// The wildcard is path-scoped so `/auth/*` keeps the browser flow's own
 /// vocabulary.

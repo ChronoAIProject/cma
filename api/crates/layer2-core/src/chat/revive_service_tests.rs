@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -616,6 +617,7 @@ async fn active_host_admission_survives_the_preexisting_queue_draining() {
             &fixture.caller.subject,
             &target,
             "admit after the observed queue drained".into(),
+            None,
         )
         .await
         .expect("the stale queue observation does not reject a valid admission");
@@ -1754,4 +1756,91 @@ async fn new_chat_creation_revives_a_paused_host_before_allocating_its_worktree(
     );
     assert_eq!(created.status, SessionStatus::Ready);
     assert_eq!(created.runtime_version.as_deref(), Some("runtime-chat-v1"));
+}
+
+#[tokio::test]
+async fn paused_chat_retains_linear_metadata_through_revival_and_delivery() {
+    let fixture = fixture("revive-linear-metadata", 1).await;
+    pause(&fixture, "linear-metadata-workspace").await;
+    let target = fixture.threads[0].id.clone();
+    let metadata = BTreeMap::from([("request".into(), "response-create".into())]);
+
+    let turn = fixture
+        .service
+        .send_linear_prompt(
+            &fixture.caller,
+            &target,
+            "continue linearly".into(),
+            None,
+            metadata.clone(),
+        )
+        .await
+        .expect("the paused linear prompt revives and reaches the runtime");
+
+    let active = host(&fixture).await;
+    let admission = active.prompt_admissions.last().unwrap();
+    assert_eq!(admission.state, ChatPromptDeliveryState::Delivered);
+    assert_eq!(admission.turn_started, Some(turn));
+    let context = admission
+        .linear_prompt
+        .as_ref()
+        .expect("the durable admission retains linear authority");
+    assert_eq!(context.expected_previous_turn, None);
+    assert_eq!(context.metadata, metadata);
+
+    let events = fixture.sessions.events.lock().await;
+    let turn_index = events
+        .iter()
+        .position(|event| {
+            event.session_id == target
+                && event.seq == turn
+                && matches!(event.kind, StoredEventKind::Known(EventKind::TurnStarted))
+        })
+        .expect("the delivered turn boundary is durable");
+    assert!(matches!(
+        &events[turn_index + 2].kind,
+        StoredEventKind::Known(EventKind::TurnMetadata { metadata: retained })
+            if retained == &context.metadata
+    ));
+}
+
+#[tokio::test]
+async fn paused_chat_returns_the_exact_linear_conflict_without_delivering_a_fork() {
+    let fixture = fixture("revive-linear-conflict", 1).await;
+    pause(&fixture, "linear-conflict-workspace").await;
+    let target = fixture.threads[0].id.clone();
+
+    let error = fixture
+        .service
+        .send_linear_prompt(
+            &fixture.caller,
+            &target,
+            "must not fork".into(),
+            Some(999),
+            BTreeMap::new(),
+        )
+        .await
+        .expect_err("the stale predecessor is enforced after revival");
+    assert_eq!(
+        error,
+        CoreError::InvalidState {
+            detail: Some(crate::CONVERSATION_ADVANCED_DETAIL.into())
+        }
+    );
+
+    let active = host(&fixture).await;
+    let admission = active.prompt_admissions.last().unwrap();
+    assert_eq!(admission.state, ChatPromptDeliveryState::RecoveryRequired);
+    assert_eq!(
+        admission.failure_phase,
+        Some(ChatRevivePhase::PromptDelivery)
+    );
+    assert!(admission.linear_conflict);
+    assert!(!admission.failure_retryable);
+    let received = fixture.adapter.conversation_inputs.lock().await;
+    let inputs = received.get(target.as_str()).unwrap().lock().await;
+    assert!(
+        inputs.iter().all(|input| prompt_text(input).is_none()),
+        "the stale linear prompt must not reach the restored conversation"
+    );
 }
