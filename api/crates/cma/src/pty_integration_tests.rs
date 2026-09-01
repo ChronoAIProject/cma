@@ -679,6 +679,7 @@ impl KernelAdapter for WireAdapter {
             .map(|(handle, session)| RuntimeListing {
                 handle: RuntimeHandle(handle.clone()),
                 session: Some(session.clone()),
+                chat_host: None,
                 generation: layer3_adapter::RuntimeGeneration::Legacy,
                 created_by: None,
                 serving: true,
@@ -770,6 +771,7 @@ impl Fixture {
                     runtime_credential: None,
                     requested_mode: None,
                     quoted_rate_card: None,
+                    surface: None,
                 },
             )
             .await

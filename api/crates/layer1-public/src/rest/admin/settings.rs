@@ -10,22 +10,24 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{FromRequest, Request, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
 use layer2_core::{
-    CapacityBounds, CoreError, DeploymentCapacity, PlatformSettings, PlatformSettingsService,
-    SessionBriefing, StoredSettings,
+    CapacityBounds, ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSetup,
+    ChatWorkspaceSource, CoreError, DeploymentCapacity, PlatformSettings, PlatformSettingsService,
+    SessionBriefing, SessionSize, StoredSettings,
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::AdminProblem;
 use crate::auth::{AuthenticatedCaller, SettingsTouched};
 use crate::rest::openapi_shapes;
-use crate::rest::ConfidentialBodyProblem;
+use crate::rest::{problem_document, problem_response, ConfidentialBodyProblem};
 
 /// The two exact paths owned by this module remain in the parent surface's
 /// route list, so its invariant test still covers everything a gateway must
@@ -132,6 +134,190 @@ struct BoundsRequest {
     max_memory_mib: NonZeroU32,
 }
 
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(default, deny_unknown_fields)]
+struct ChatWorkspaceRequest {
+    #[schema(max_length = 512)]
+    repository_url: String,
+    #[schema(min_length = 1, max_length = 200)]
+    branch: String,
+}
+
+impl Default for ChatWorkspaceRequest {
+    fn default() -> Self {
+        let value = ChatWorkspaceSource::default();
+        Self {
+            repository_url: value.repository_url,
+            branch: value.branch,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(default, deny_unknown_fields)]
+struct ChatAgentRequest {
+    model: Option<String>,
+    #[schema(value_type = String, example = "high")]
+    reasoning_effort: layer2_core::ReasoningEffort,
+    instructions: String,
+    record_tool_bodies: bool,
+}
+
+impl Default for ChatAgentRequest {
+    fn default() -> Self {
+        let value = ChatAgentSettings::default();
+        Self {
+            model: value.model,
+            reasoning_effort: value.reasoning_effort,
+            instructions: value.instructions,
+            record_tool_bodies: value.record_tool_bodies,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct ChatSizeRequest {
+    #[schema(minimum = 1)]
+    cpu_millis: u32,
+    #[schema(minimum = 1)]
+    memory_mib: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(default, deny_unknown_fields)]
+struct ChatInactivityRequest {
+    #[schema(minimum = 60, maximum = 86400)]
+    pause_after_seconds: u32,
+}
+
+impl Default for ChatInactivityRequest {
+    fn default() -> Self {
+        Self {
+            pause_after_seconds: ChatInactivity::default().pause_after_seconds,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
+#[serde(default, deny_unknown_fields)]
+struct ChatSetupRequest {
+    #[schema(max_items = 16)]
+    commands: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(default, deny_unknown_fields)]
+struct ChatHostRequest {
+    size: Option<ChatSizeRequest>,
+    #[schema(minimum = 1, maximum = 50)]
+    max_threads: u8,
+}
+
+impl Default for ChatHostRequest {
+    fn default() -> Self {
+        Self {
+            size: None,
+            max_threads: ChatHostSettings::default().max_threads,
+        }
+    }
+}
+
+/// A complete replacement for the optional chat setting. Omitted nested
+/// fields use the shipped defaults; unknown fields are refused.
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(default, deny_unknown_fields)]
+struct ChatSettingsRequest {
+    enabled: bool,
+    workspace: ChatWorkspaceRequest,
+    agent: ChatAgentRequest,
+    #[schema(max_items = 8)]
+    message_prefixes: Vec<String>,
+    inactivity: ChatInactivityRequest,
+    setup: ChatSetupRequest,
+    host: ChatHostRequest,
+}
+
+impl Default for ChatSettingsRequest {
+    fn default() -> Self {
+        let value = ChatSettings::default();
+        Self {
+            enabled: value.enabled,
+            workspace: ChatWorkspaceRequest::default(),
+            agent: ChatAgentRequest::default(),
+            message_prefixes: value.message_prefixes,
+            inactivity: ChatInactivityRequest::default(),
+            setup: ChatSetupRequest::default(),
+            host: ChatHostRequest::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SettingsValidation {
+    field: String,
+    path: String,
+    detail: &'static str,
+}
+
+impl SettingsValidation {
+    fn new(field: impl Into<String>, path: impl Into<String>, detail: &'static str) -> Self {
+        Self {
+            field: field.into(),
+            path: path.into(),
+            detail,
+        }
+    }
+}
+
+impl TryFrom<ChatSettingsRequest> for ChatSettings {
+    type Error = SettingsValidation;
+
+    fn try_from(value: ChatSettingsRequest) -> Result<Self, Self::Error> {
+        let size = value
+            .host
+            .size
+            .map(|size| {
+                SessionSize::new(size.cpu_millis, size.memory_mib).map_err(|_| {
+                    SettingsValidation::new(
+                        "size",
+                        "chat.host.size",
+                        "CPU and memory must both be positive",
+                    )
+                })
+            })
+            .transpose()?;
+        let settings = ChatSettings {
+            enabled: value.enabled,
+            workspace: ChatWorkspaceSource {
+                repository_url: value.workspace.repository_url,
+                branch: value.workspace.branch,
+            },
+            agent: ChatAgentSettings {
+                model: value.agent.model,
+                reasoning_effort: value.agent.reasoning_effort,
+                instructions: value.agent.instructions,
+                record_tool_bodies: value.agent.record_tool_bodies,
+            },
+            message_prefixes: value.message_prefixes,
+            inactivity: ChatInactivity {
+                pause_after_seconds: value.inactivity.pause_after_seconds,
+            },
+            setup: ChatSetup {
+                commands: value.setup.commands,
+            },
+            host: ChatHostSettings {
+                size,
+                max_threads: value.host.max_threads,
+            },
+        };
+        settings.validate().map_err(|violation| {
+            SettingsValidation::new(violation.field(), violation.path(), violation.detail())
+        })?;
+        Ok(settings)
+    }
+}
+
 impl From<BoundsRequest> for CapacityBounds {
     fn from(value: BoundsRequest) -> Self {
         Self {
@@ -163,6 +349,9 @@ struct ChangeRequest {
     #[serde(default)]
     #[schema(required = false, value_type = Option<u32>, minimum = 1)]
     live_sessions: PatchField<NonZeroU32>,
+    #[serde(default)]
+    #[schema(required = false, value_type = Option<ChatSettingsRequest>)]
+    chat: PatchField<ChatSettingsRequest>,
 }
 
 /// A conditional replacement of the complete settings document.
@@ -171,21 +360,26 @@ struct ChangeRequest {
 struct ReplaceRequest {
     expected_revision: u64,
     #[schema(value_type = openapi_shapes::PlatformSettings)]
-    settings: PlatformSettings,
+    settings: serde_json::Value,
 }
 
 impl ChangeRequest {
-    fn apply(self, mut settings: PlatformSettings) -> Result<(u64, PlatformSettings), CoreError> {
+    fn apply(
+        self,
+        mut settings: PlatformSettings,
+    ) -> Result<(u64, PlatformSettings), SettingsFailure> {
         if matches!(&self.briefing, PatchField::Missing)
             && matches!(&self.deployment_capacity, PatchField::Missing)
             && matches!(&self.size_bounds, PatchField::Missing)
             && matches!(&self.live_sessions, PatchField::Missing)
+            && matches!(&self.chat, PatchField::Missing)
         {
             return Err(CoreError::InvalidRequest(
                 "a settings change must name at least one of 'briefing', \
-                 'deployment_capacity', 'size_bounds', or 'live_sessions'"
+                 'deployment_capacity', 'size_bounds', 'live_sessions', or 'chat'"
                     .into(),
-            ));
+            )
+            .into());
         }
 
         match self.briefing {
@@ -194,7 +388,8 @@ impl ChangeRequest {
                 return Err(CoreError::InvalidRequest(
                     "'briefing' cannot be null; use the reset operation to restore shipped prose"
                         .into(),
-                ));
+                )
+                .into());
             }
             PatchField::Value(briefing) => settings.briefing = briefing.into(),
         }
@@ -203,7 +398,8 @@ impl ChangeRequest {
             PatchField::Null => {
                 return Err(CoreError::InvalidRequest(
                     "'deployment_capacity' cannot be null; send its three nullable fields".into(),
-                ));
+                )
+                .into());
             }
             PatchField::Value(capacity) => settings.deployment_capacity = capacity,
         }
@@ -212,7 +408,8 @@ impl ChangeRequest {
             PatchField::Null => {
                 return Err(CoreError::InvalidRequest(
                     "'size_bounds' cannot be null; send all four non-zero bounds".into(),
-                ));
+                )
+                .into());
             }
             PatchField::Value(bounds) => settings.size_bounds = bounds.into(),
         }
@@ -221,11 +418,40 @@ impl ChangeRequest {
             PatchField::Null => settings.live_sessions = None,
             PatchField::Value(limit) => settings.live_sessions = Some(limit),
         }
+        match self.chat {
+            PatchField::Missing => {}
+            PatchField::Null => settings.chat = None,
+            PatchField::Value(chat) => {
+                settings.chat = Some(chat.try_into().map_err(SettingsFailure::Validation)?)
+            }
+        }
         Ok((self.expected_revision, settings))
     }
 }
 
-/// A conditional request to restore only the briefing.
+impl ReplaceRequest {
+    fn into_settings(mut self) -> Result<(u64, PlatformSettings), SettingsFailure> {
+        let object = self
+            .settings
+            .as_object_mut()
+            .ok_or(SettingsFailure::InvalidSchema)?;
+        let chat = object.remove("chat");
+        let mut settings: PlatformSettings =
+            serde_json::from_value(self.settings).map_err(|_| SettingsFailure::InvalidSchema)?;
+        settings.chat = match chat {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                serde_json::from_value::<ChatSettingsRequest>(value)
+                    .map_err(|_| SettingsFailure::InvalidSchema)?
+                    .try_into()
+                    .map_err(SettingsFailure::Validation)?,
+            ),
+        };
+        Ok((self.expected_revision, settings))
+    }
+}
+
+/// A conditional request to restore the resettable settings.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct ResetRequest {
@@ -235,7 +461,114 @@ struct ResetRequest {
 /// A settings request can fail while being decoded or after reaching the core.
 enum SettingsFailure {
     Body(ConfidentialBodyProblem),
+    InvalidSchema,
+    Validation(SettingsValidation),
     Refused(AdminProblem),
+}
+
+/// A confidential settings body decoded in two passes so unknown chat fields
+/// can be named without ever reflecting the value stored beneath them.
+struct SettingsJson<T>(T);
+
+impl<S, T> FromRequest<S> for SettingsJson<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned,
+{
+    type Rejection = SettingsFailure;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let Json(value) = Json::<serde_json::Value>::from_request(request, state)
+            .await
+            .map_err(SettingsFailure::from)?;
+        if let Some(validation) = unknown_chat_field(&value) {
+            return Err(SettingsFailure::Validation(validation));
+        }
+        serde_json::from_value(value)
+            .map(Self)
+            .map_err(|_| SettingsFailure::InvalidSchema)
+    }
+}
+
+fn unknown_chat_field(value: &serde_json::Value) -> Option<SettingsValidation> {
+    let (chat, path) = if let Some(chat) = value.get("chat") {
+        (chat, "chat")
+    } else {
+        (value.get("settings")?.get("chat")?, "settings.chat")
+    };
+    let chat = chat.as_object()?;
+    unknown_key(
+        chat,
+        &[
+            "enabled",
+            "workspace",
+            "agent",
+            "message_prefixes",
+            "inactivity",
+            "setup",
+            "host",
+        ],
+        path,
+    )
+    .or_else(|| nested_unknown(chat, "workspace", &["repository_url", "branch"], path))
+    .or_else(|| {
+        nested_unknown(
+            chat,
+            "agent",
+            &[
+                "model",
+                "reasoning_effort",
+                "instructions",
+                "record_tool_bodies",
+            ],
+            path,
+        )
+    })
+    .or_else(|| nested_unknown(chat, "inactivity", &["pause_after_seconds"], path))
+    .or_else(|| nested_unknown(chat, "setup", &["commands"], path))
+    .or_else(|| nested_unknown(chat, "host", &["size", "max_threads"], path))
+    .or_else(|| {
+        chat.get("host")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|host| host.get("size"))
+            .and_then(serde_json::Value::as_object)
+            .and_then(|size| {
+                unknown_key(
+                    size,
+                    &["cpu_millis", "memory_mib"],
+                    &format!("{path}.host.size"),
+                )
+            })
+    })
+}
+
+fn nested_unknown(
+    parent: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    allowed: &[&str],
+    path: &str,
+) -> Option<SettingsValidation> {
+    parent
+        .get(key)
+        .and_then(serde_json::Value::as_object)
+        .and_then(|object| unknown_key(object, allowed, &format!("{path}.{key}")))
+}
+
+fn unknown_key(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+    path: &str,
+) -> Option<SettingsValidation> {
+    object
+        .keys()
+        .find(|key| !allowed.contains(&key.as_str()))
+        .map(|key| {
+            SettingsValidation::new(
+                key,
+                format!("{path}.{key}"),
+                "is not a recognized chat settings field",
+            )
+        })
 }
 
 impl From<axum::extract::rejection::JsonRejection> for SettingsFailure {
@@ -254,9 +587,25 @@ impl IntoResponse for SettingsFailure {
     fn into_response(self) -> Response {
         match self {
             Self::Body(problem) => problem.into_response(),
+            Self::InvalidSchema => validation_response(None),
+            Self::Validation(validation) => validation_response(Some(validation)),
             Self::Refused(problem) => problem.into_response(),
         }
     }
+}
+
+fn validation_response(validation: Option<SettingsValidation>) -> Response {
+    let status = StatusCode::UNPROCESSABLE_ENTITY;
+    let detail = validation.as_ref().map_or(
+        "The JSON body does not match this operation's request schema.",
+        |v| v.detail,
+    );
+    let mut body = problem_document(status, "invalid-request", detail, "invalid_request");
+    if let (Some(validation), Some(object)) = (validation, body.as_object_mut()) {
+        object.insert("field".into(), validation.field.into());
+        object.insert("path".into(), validation.path.into());
+    }
+    problem_response(status, body)
 }
 
 #[utoipa::path(
@@ -282,9 +631,8 @@ async fn read(
 async fn change(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<ChangeRequest>, axum::extract::rejection::JsonRejection>,
+    SettingsJson(body): SettingsJson<ChangeRequest>,
 ) -> Result<Response, SettingsFailure> {
-    let Json(body) = body?;
     let current = service.read(&caller).await?;
     let previous = current.settings.clone();
     let (expected, replacement) = body.apply(current.settings)?;
@@ -302,13 +650,11 @@ async fn change(
 async fn replace(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<ReplaceRequest>, axum::extract::rejection::JsonRejection>,
+    SettingsJson(body): SettingsJson<ReplaceRequest>,
 ) -> Result<Response, SettingsFailure> {
-    let Json(body) = body?;
     let previous = service.read(&caller).await?.settings;
-    let stored = service
-        .write(&caller, body.expected_revision, body.settings)
-        .await?;
+    let (expected_revision, settings) = body.into_settings()?;
+    let stored = service.write(&caller, expected_revision, settings).await?;
     Ok(changed_response(stored, &previous))
 }
 
@@ -317,17 +663,16 @@ async fn replace(
     path = "/api/v1/admin/settings/reset",
     tag = "administration",
     request_body = ResetRequest,
-    responses((status = 200, description = "Settings with shipped briefing restored", body = SettingsView))
+    responses((status = 200, description = "Settings with shipped briefing restored and Chat removed", body = SettingsView))
 )]
 async fn reset(
     State(service): State<Arc<PlatformSettingsService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<ResetRequest>, axum::extract::rejection::JsonRejection>,
+    SettingsJson(body): SettingsJson<ResetRequest>,
 ) -> Result<Response, SettingsFailure> {
-    let Json(body) = body?;
     let previous = service.read(&caller).await?.settings;
     let stored = service
-        .reset_briefing(&caller, body.expected_revision)
+        .reset_settings(&caller, body.expected_revision)
         .await?;
     Ok(changed_response(stored, &previous))
 }

@@ -1456,7 +1456,7 @@ async fn answering_an_approval_reaches_the_runtime_and_the_record() {
         svc.resolve_approval(&alice, &id, "req-1".into(), ApprovalDecision::Allow)
             .await
             .err(),
-        Some(crate::error::CoreError::InvalidState),
+        Some(crate::error::CoreError::invalid_state()),
         "an answered approval cannot be resolved a second time"
     );
 }
@@ -1471,7 +1471,7 @@ async fn answering_something_nothing_is_waiting_for_is_refused() {
         svc.resolve_approval(&alice, &id, "never-asked".into(), ApprovalDecision::Allow)
             .await
             .err(),
-        Some(crate::error::CoreError::InvalidState)
+        Some(crate::error::CoreError::invalid_state())
     );
 }
 
@@ -1604,7 +1604,7 @@ async fn an_invalid_approval_batch_sends_and_mutates_nothing() {
 
     assert_eq!(
         svc.resolve_approvals(&alice, &id, &[]).await,
-        Err(CoreError::InvalidState)
+        Err(CoreError::invalid_state())
     );
     assert_eq!(
         svc.resolve_approvals(
@@ -1616,7 +1616,7 @@ async fn an_invalid_approval_batch_sends_and_mutates_nothing() {
             ],
         )
         .await,
-        Err(CoreError::InvalidState),
+        Err(CoreError::invalid_state()),
         "duplicate IDs are rejected before delivery"
     );
     assert_eq!(
@@ -1629,7 +1629,7 @@ async fn an_invalid_approval_batch_sends_and_mutates_nothing() {
             ],
         )
         .await,
-        Err(CoreError::InvalidState),
+        Err(CoreError::invalid_state()),
         "a stale later ID cannot consume the valid prefix"
     );
 

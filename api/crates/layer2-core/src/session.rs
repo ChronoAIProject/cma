@@ -532,9 +532,33 @@ impl std::fmt::Debug for CallerCredential {
     }
 }
 
+/// A deployment-managed surface selected at session creation.
+///
+/// Ordinary agent sessions remain the absence case so records and clients
+/// written before surfaces existed retain their exact meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSurface {
+    Chat,
+}
+
+/// Public, host-authority-free facts about one chat thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatSession {
+    pub worktree_name: String,
+    pub worktree_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_notice: Option<String>,
+}
+
 /// What a caller asks for when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSpec {
+    /// Deployment-managed surface, or an ordinary agent session when absent.
+    #[serde(default)]
+    pub surface: Option<SessionSurface>,
     /// How the agent should behave, chosen at creation and fixed for the
     /// session's life.
     ///
@@ -610,6 +634,10 @@ pub struct Session {
     /// under them.
     #[serde(default)]
     pub options: AgentOptions,
+    /// Chat-thread facts safe to expose publicly. The host identifier remains
+    /// private durable control-plane state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<ChatSession>,
     /// Stable identifier.
     pub id: SessionId,
     /// The principal that owns it. Every operation is scoped to this subject.
@@ -801,6 +829,7 @@ mod tests {
     #[test]
     fn only_an_approval_wait_makes_an_idle_session_keep_its_runtime() {
         let mut session = Session {
+            chat: None,
             id: SessionId::generate(),
             owner: SubjectId("subject-a".into()),
             kernel: KernelId::new("example-runtime"),
@@ -841,6 +870,7 @@ mod tests {
     fn ownership_is_exact_match_only() {
         let owner = SubjectId("subject-a".into());
         let session = Session {
+            chat: None,
             id: SessionId::generate(),
             owner: owner.clone(),
             kernel: KernelId::new("example-runtime"),

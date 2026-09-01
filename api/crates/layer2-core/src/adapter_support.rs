@@ -13,7 +13,8 @@ use layer3_adapter::{
     RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeLossReason,
     RuntimeMode, RuntimePolicyObservation, RuntimePolicyReceipt, RuntimeSpec, TerminalChannel,
     TerminalInput, TerminalInputSender, TerminalOutput, WorkspaceCheckpointPackage,
-    WorkspaceCheckpointRequest,
+    WorkspaceCheckpointRequest, WorkspaceSetupReceipt, WorkspaceSetupStep, WorkspaceSourceRequest,
+    WorkspaceTreeReceipt, WorkspaceTreeRequest,
 };
 use tokio::sync::{mpsc, Mutex, Notify, Semaphore};
 
@@ -50,11 +51,42 @@ pub(crate) struct FakeAdapter {
     /// Provider-visible generation recorded for runtimes provisioned through
     /// the generation-aware contract. Directly seeded legacy fixtures omit it.
     pub(crate) generations: Mutex<HashMap<String, std::num::NonZeroU64>>,
+    /// Provider-visible shared-chat correlation recorded at create time.
+    pub(crate) chat_hosts: Mutex<HashMap<String, String>>,
+    pub(crate) workspace_sources: Mutex<Vec<(String, WorkspaceSourceRequest)>>,
+    pub(crate) workspace_setups: Mutex<Vec<(String, Vec<String>)>>,
+    pub(crate) workspace_trees: Mutex<Vec<(String, WorkspaceTreeRequest)>>,
+    pub(crate) removed_workspace_trees: Mutex<Vec<(String, String)>>,
+    pub(crate) fail_workspace_sources: std::sync::atomic::AtomicUsize,
+    pub(crate) fail_workspace_setups: std::sync::atomic::AtomicUsize,
+    pub(crate) workspace_setup_failure_index: Mutex<Option<usize>>,
+    /// Cross-operation chronology for chat workspace orchestration tests.
+    pub(crate) chat_workspace_events: Mutex<Vec<&'static str>>,
     /// What each `open_conversation` was asked to rejoin, in order.
     ///
     /// `None` for a conversation being started; a name for one being taken
     /// back over.
     pub(crate) rejoined: Mutex<Vec<Option<String>>>,
+    /// Opaque supervisor slot selected for each conversation open.
+    pub(crate) conversation_slots: Mutex<Vec<Option<String>>>,
+    /// Optional durable conversation identity selected per supervisor slot.
+    /// Empty fixtures retain the historical `conv-fixture` default.
+    pub(crate) conversation_ids: Mutex<HashMap<String, String>>,
+    /// Derive a stable unique identity from the requested slot when no map
+    /// entry exists. Opt-in so older fixtures retain `conv-fixture` exactly.
+    pub(crate) conversation_ids_from_slots: bool,
+    /// Exact opaque snapshot bytes addressable by durable conversation id.
+    pub(crate) conversation_snapshots: Mutex<HashMap<String, Vec<u8>>>,
+    /// Runtime and durable id supplied to each id-addressed capture.
+    pub(crate) conversation_snapshot_calls: Mutex<Vec<(String, String)>>,
+    /// Runtime, supervisor slot, and resolved durable id for each restore.
+    pub(crate) conversation_restores: Mutex<Vec<(String, String, String)>>,
+    /// Exact slots whose restore should fail without affecting siblings.
+    pub(crate) fail_conversation_restores: Mutex<std::collections::HashSet<String>>,
+    /// Make the replacement disappear on its next conversation restore.
+    pub(crate) lose_runtime_on_conversation_restore: std::sync::atomic::AtomicBool,
+    /// Complete options supplied to each conversation open.
+    pub(crate) conversation_options: Mutex<Vec<layer3_adapter::RuntimeOptions>>,
     /// When set, enumeration fails. Models a provider that cannot be asked,
     /// which must never be read as a provider running nothing.
     pub(crate) refuse_list: bool,
@@ -124,11 +156,16 @@ pub(crate) struct FakeAdapter {
     /// Held so a test can be the kernel: push an update or a request down, and
     /// read back what the core sent up.
     pub(crate) conversation: Mutex<Option<crate::conversation_support::FakeConversation>>,
+    /// Inputs received by each named supervisor slot across a shared runtime.
+    pub(crate) conversation_inputs:
+        Mutex<HashMap<String, Arc<Mutex<Vec<layer3_adapter::ConversationInput>>>>>,
     /// Credentials this runtime was handed, in order.
     ///
     /// The credential no longer travels as terminal input, so the only place
     /// its delivery is observable is the adapter that was asked to deliver it.
     pub(crate) credentials: Mutex<Vec<String>>,
+    /// Refuse host credential installation after a restored conversation opens.
+    pub(crate) refuse_credential_refresh: std::sync::atomic::AtomicBool,
     /// When set, the kernel asks its owner to sign in from inside the open.
     ///
     /// Which is what a real one does on an own-account profile, and is the
@@ -143,6 +180,11 @@ pub(crate) struct FakeAdapter {
     pub(crate) opening_updates: Mutex<Vec<layer3_adapter::ConversationUpdate>>,
     /// Refuse the conversation after emitting `opening_updates`.
     pub(crate) refuse_conversation_open: std::sync::atomic::AtomicBool,
+    /// Exact supervisor slots whose conversation open should fail without
+    /// affecting sibling slots on the same shared runtime.
+    pub(crate) fail_conversation_opens: Mutex<std::collections::HashSet<String>>,
+    /// Make the replacement disappear on its next conversation open.
+    pub(crate) lose_runtime_on_conversation_open: std::sync::atomic::AtomicBool,
     /// A permission request emitted before `open_conversation` returns.
     ///
     /// Used to model a blocked request replayed on the replacement link while
@@ -218,6 +260,15 @@ impl Default for FakeAdapter {
             terminal_input_resume: Arc::new(Notify::new()),
             running: Mutex::default(),
             generations: Mutex::default(),
+            chat_hosts: Mutex::default(),
+            workspace_sources: Mutex::default(),
+            workspace_setups: Mutex::default(),
+            workspace_trees: Mutex::default(),
+            removed_workspace_trees: Mutex::default(),
+            fail_workspace_sources: std::sync::atomic::AtomicUsize::new(0),
+            fail_workspace_setups: std::sync::atomic::AtomicUsize::new(0),
+            workspace_setup_failure_index: Mutex::default(),
+            chat_workspace_events: Mutex::default(),
             refuse_list: false,
             stopped: Mutex::default(),
             stopped_because: Mutex::default(),
@@ -242,11 +293,24 @@ impl Default for FakeAdapter {
             snapshot_resume: Notify::new(),
             refuse_snapshot: false,
             conversation: Mutex::default(),
+            conversation_inputs: Mutex::default(),
             rejoined: Mutex::default(),
+            conversation_slots: Mutex::default(),
+            conversation_ids: Mutex::default(),
+            conversation_ids_from_slots: false,
+            conversation_snapshots: Mutex::default(),
+            conversation_snapshot_calls: Mutex::default(),
+            conversation_restores: Mutex::default(),
+            fail_conversation_restores: Mutex::default(),
+            lose_runtime_on_conversation_restore: std::sync::atomic::AtomicBool::new(false),
+            conversation_options: Mutex::default(),
             credentials: Mutex::default(),
+            refuse_credential_refresh: std::sync::atomic::AtomicBool::new(false),
             sign_in_on_open: false,
             opening_updates: Mutex::default(),
             refuse_conversation_open: std::sync::atomic::AtomicBool::new(false),
+            fail_conversation_opens: Mutex::default(),
+            lose_runtime_on_conversation_open: std::sync::atomic::AtomicBool::new(false),
             permission_on_open: Mutex::default(),
             hold_conversation_open: std::sync::atomic::AtomicBool::new(false),
             conversation_open_started: Semaphore::new(0),
@@ -378,6 +442,10 @@ impl FakeAdapter {
     /// is replaced underneath a sandbox.
     pub(crate) async fn lose(&self, handle: &str) {
         self.running.lock().await.remove(handle);
+        self.generations.lock().await.remove(handle);
+        self.chat_hosts.lock().await.remove(handle);
+        self.stopped.lock().await.remove(handle);
+        self.stopped_because.lock().await.remove(handle);
     }
 
     /// The sandbox stops serving but is still listed.
@@ -571,7 +639,129 @@ impl KernelAdapter for FakeAdapter {
                 .await
                 .insert(handle.clone(), generation);
         }
+        if let Some(chat_host) = spec.chat_host.as_ref() {
+            self.chat_hosts
+                .lock()
+                .await
+                .insert(handle.clone(), chat_host.clone());
+        }
+        drop(running);
+        if spec.workspace.is_some() {
+            self.chat_workspace_events
+                .lock()
+                .await
+                .push("workspace_restore");
+        }
         Ok(RuntimeHandle(handle))
+    }
+
+    async fn prepare_workspace_source(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceSourceRequest,
+    ) -> Result<layer3_adapter::WorkspaceSourceReceipt, AdapterError> {
+        self.workspace_sources
+            .lock()
+            .await
+            .push((handle.0.clone(), request.clone()));
+        if self
+            .fail_workspace_sources
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(AdapterError::Unavailable(
+                "test workspace source preparation failed".into(),
+            ));
+        }
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("workspace_source");
+        Ok(layer3_adapter::WorkspaceSourceReceipt {
+            workspace_epoch: request.workspace_epoch,
+            source_revision: "a".repeat(40),
+            baseline_manifest_digest: "b".repeat(64),
+        })
+    }
+
+    async fn add_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceTreeRequest,
+    ) -> Result<WorkspaceTreeReceipt, AdapterError> {
+        self.workspace_trees
+            .lock()
+            .await
+            .push((handle.0.clone(), request.clone()));
+        Ok(WorkspaceTreeReceipt {
+            path: format!("/workspace/{}", request.name),
+        })
+    }
+
+    async fn remove_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        name: &str,
+    ) -> Result<(), AdapterError> {
+        self.removed_workspace_trees
+            .lock()
+            .await
+            .push((handle.0.clone(), name.to_string()));
+        Ok(())
+    }
+
+    async fn run_workspace_setup(
+        &self,
+        handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<WorkspaceSetupReceipt, AdapterError> {
+        self.workspace_setups
+            .lock()
+            .await
+            .push((handle.0.clone(), commands.to_vec()));
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("workspace_setup");
+        if self
+            .fail_workspace_setups
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(AdapterError::Unavailable(
+                "test workspace setup transport failed".into(),
+            ));
+        }
+        let failure = *self.workspace_setup_failure_index.lock().await;
+        Ok(WorkspaceSetupReceipt {
+            steps: commands
+                .iter()
+                .enumerate()
+                .take(failure.map_or(commands.len(), |index| index.saturating_add(1)))
+                .map(|(command_index, _)| WorkspaceSetupStep {
+                    command_index,
+                    exit_code: if failure == Some(command_index) {
+                        17
+                    } else {
+                        0
+                    },
+                    output_excerpt: if failure == Some(command_index) {
+                        "bounded test failure".into()
+                    } else {
+                        String::new()
+                    },
+                })
+                .collect(),
+            failing_index: failure,
+        })
     }
 
     async fn attach_terminal(
@@ -617,10 +807,19 @@ impl KernelAdapter for FakeAdapter {
 
     async fn open_conversation(
         &self,
-        _handle: &RuntimeHandle,
+        handle: &RuntimeHandle,
         options: &layer3_adapter::RuntimeOptions,
         updates: tokio::sync::mpsc::Sender<layer3_adapter::ConversationUpdate>,
     ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
+        if self
+            .lose_runtime_on_conversation_open
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.lose(&handle.0).await;
+            return Err(AdapterError::Unavailable(
+                "the replacement disappeared while opening a conversation".into(),
+            ));
+        }
         if !self.capabilities.conversation {
             return Err(AdapterError::Unsupported(
                 "this kernel does not hold a conversation".into(),
@@ -633,6 +832,11 @@ impl KernelAdapter for FakeAdapter {
             .lock()
             .await
             .push(options.resume_conversation.clone());
+        self.conversation_slots
+            .lock()
+            .await
+            .push(options.conversation_slot.clone());
+        self.conversation_options.lock().await.push(options.clone());
         if self
             .hold_conversation_open
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -682,16 +886,45 @@ impl KernelAdapter for FakeAdapter {
             // returned and readoption advances to installation.
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+        let refuse_slot = match options.conversation_slot.as_ref() {
+            Some(slot) => self.fail_conversation_opens.lock().await.contains(slot),
+            None => false,
+        };
         if self
             .refuse_conversation_open
             .load(std::sync::atomic::Ordering::SeqCst)
+            || refuse_slot
         {
             return Err(AdapterError::Rejected(
                 "the test conversation refused to open".into(),
             ));
         }
-        let (channel, held) = crate::conversation_support::FakeConversation::open(updates);
+        let configured_conversation_id = match options.conversation_slot.as_deref() {
+            Some(slot) => self.conversation_ids.lock().await.get(slot).cloned(),
+            None => None,
+        };
+        let conversation_id = configured_conversation_id
+            .or_else(|| {
+                self.conversation_ids_from_slots
+                    .then(|| options.conversation_slot.as_ref())
+                    .flatten()
+                    .map(|slot| format!("conversation-for-{slot}"))
+            })
+            .or_else(|| options.resume_conversation.clone())
+            .unwrap_or_else(|| "conv-fixture".to_string());
+        let (channel, held) =
+            crate::conversation_support::FakeConversation::open(updates, conversation_id);
+        if let Some(slot) = options.conversation_slot.as_ref() {
+            self.conversation_inputs
+                .lock()
+                .await
+                .insert(slot.clone(), Arc::clone(&held.received));
+        }
         *self.conversation.lock().await = Some(held);
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("conversation_open");
         Ok(channel)
     }
 
@@ -700,6 +933,14 @@ impl KernelAdapter for FakeAdapter {
         handle: &RuntimeHandle,
         credential: &layer3_adapter::RuntimeCredential,
     ) -> Result<(), AdapterError> {
+        if self
+            .refuse_credential_refresh
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(AdapterError::Rejected(
+                "the test runtime refused its credential".into(),
+            ));
+        }
         if !self.running.lock().await.contains_key(&handle.0) {
             return Err(AdapterError::Unavailable("no such runtime".into()));
         }
@@ -824,6 +1065,7 @@ impl KernelAdapter for FakeAdapter {
         self.terminated.lock().await.push(handle.0.clone());
         self.running.lock().await.remove(&handle.0);
         self.generations.lock().await.remove(&handle.0);
+        self.chat_hosts.lock().await.remove(&handle.0);
         Ok(())
     }
 
@@ -850,6 +1092,7 @@ impl KernelAdapter for FakeAdapter {
         terminated.push(identity.handle.0.clone());
         running.remove(&identity.handle.0);
         generations.remove(&identity.handle.0);
+        self.chat_hosts.lock().await.remove(&identity.handle.0);
         Ok(())
     }
 
@@ -876,6 +1119,86 @@ impl KernelAdapter for FakeAdapter {
             self.snapshot_resume.notified().await;
         }
         Ok(snapshot)
+    }
+
+    async fn snapshot_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        if self.refuse_snapshot {
+            return Err(AdapterError::Unsupported("cannot capture".into()));
+        }
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        self.conversation_snapshot_calls
+            .lock()
+            .await
+            .push((handle.0.clone(), conversation_id.to_string()));
+        Ok(self
+            .conversation_snapshots
+            .lock()
+            .await
+            .get(conversation_id)
+            .cloned())
+    }
+
+    async fn restore_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_slot: &str,
+        snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        if self
+            .lose_runtime_on_conversation_restore
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.lose(&handle.0).await;
+            return Err(AdapterError::Unavailable(
+                "the replacement disappeared during conversation restore".into(),
+            ));
+        }
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        if self
+            .fail_conversation_restores
+            .lock()
+            .await
+            .contains(conversation_slot)
+        {
+            return Err(AdapterError::Rejected(
+                "the test conversation snapshot was refused".into(),
+            ));
+        }
+        let matching = self
+            .conversation_snapshots
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, bytes)| bytes.as_slice() == snapshot)
+            .map(|(conversation_id, _)| conversation_id.clone())
+            .collect::<Vec<_>>();
+        let [conversation_id] = matching.as_slice() else {
+            return Err(AdapterError::Rejected(
+                "the test conversation snapshot has no unique identity".into(),
+            ));
+        };
+        self.conversation_ids
+            .lock()
+            .await
+            .insert(conversation_slot.to_string(), conversation_id.clone());
+        self.conversation_restores.lock().await.push((
+            handle.0.clone(),
+            conversation_slot.to_string(),
+            conversation_id.clone(),
+        ));
+        self.chat_workspace_events
+            .lock()
+            .await
+            .push("conversation_snapshot_restore");
+        Ok(())
     }
 
     async fn checkpoint_workspace(
@@ -962,6 +1285,7 @@ impl KernelAdapter for FakeAdapter {
         let stopped = self.stopped.lock().await.clone();
         let stopped_because = self.stopped_because.lock().await.clone();
         let generations = self.generations.lock().await.clone();
+        let chat_hosts = self.chat_hosts.lock().await.clone();
         Ok(self
             .running
             .lock()
@@ -970,6 +1294,7 @@ impl KernelAdapter for FakeAdapter {
             .map(|(h, s)| RuntimeListing {
                 handle: RuntimeHandle(h.clone()),
                 session: s.clone(),
+                chat_host: chat_hosts.get(h).cloned(),
                 generation: generations
                     .get(h)
                     .copied()

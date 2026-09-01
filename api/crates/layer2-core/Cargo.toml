@@ -15,6 +15,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 unicode-normalization = { workspace = true }
+url = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
 

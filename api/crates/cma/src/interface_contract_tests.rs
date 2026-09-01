@@ -23,7 +23,7 @@ fn only_implemented_interfaces_are_reported_as_served() {
         .filter(|interface| interface_is_served(interface.as_ref()))
         .map(|interface| interface.interface_id())
         .collect();
-    assert_eq!(served, ["agui", "rest", "pty"]);
+    assert_eq!(served, ["agui", "responses", "rest", "pty"]);
 
     let declared_only: Vec<_> = interfaces()
         .into_iter()
@@ -94,17 +94,17 @@ fn declaration_only_documentation_stays_honest() {
         );
     }
 
-    assert!(API_OVERVIEW_DOCUMENTATION.contains("serves three public interfaces today"));
+    assert!(API_OVERVIEW_DOCUMENTATION.contains("serves four public interfaces"));
     assert!(API_OVERVIEW_DOCUMENTATION.contains("MCP and A2A are designed but not built"));
     assert!(!API_OVERVIEW_DOCUMENTATION.contains("exposes five public interfaces"));
 
     let mcp_priority_row = API_OVERVIEW_DOCUMENTATION
         .lines()
-        .find(|line| line.starts_with("| 4 | MCP"))
+        .find(|line| line.starts_with("| 5 | MCP"))
         .expect("the overview retains the MCP priority row");
     let a2a_priority_row = API_OVERVIEW_DOCUMENTATION
         .lines()
-        .find(|line| line.starts_with("| 5 | A2A"))
+        .find(|line| line.starts_with("| 6 | A2A"))
         .expect("the overview retains the A2A priority row");
     assert!(mcp_priority_row.contains("designed, not yet served"));
     assert!(a2a_priority_row.contains("designed, not yet served"));

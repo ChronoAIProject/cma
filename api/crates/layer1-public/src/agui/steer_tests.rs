@@ -221,6 +221,7 @@ fn app_for(status: SessionStatus, rotation_claim: Option<&str>, conversation: bo
         granted_services: Some(Vec::new()),
         granted_skills: Some(Vec::new()),
         pricing: None,
+        chat: None,
         created_at: "2026-08-26T00:00:00Z".into(),
     });
     record.rotation_claim = rotation_claim.map(str::to_string);

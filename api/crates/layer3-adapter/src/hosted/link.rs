@@ -255,6 +255,26 @@ impl HostedKernel {
         self.connect_with(handle, &extra).await
     }
 
+    /// Open one named conversation lane, encoding the opaque slot as a query
+    /// value rather than allowing it to alter the provider URL.
+    pub(crate) async fn connect_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_slot: Option<&str>,
+    ) -> Result<(Link, String), AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let mut url = url::Url::parse(&self.link_url(&endpoint.endpoint, &handle.0))
+            .map_err(|error| AdapterError::Unavailable(format!("bad runtime url: {error}")))?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("lanes", "conv");
+            if let Some(slot) = conversation_slot {
+                query.append_pair(supervisor::CONVERSATION_QUERY_PARAMETER, slot);
+            }
+        }
+        self.connect_url(url.into()).await
+    }
+
     pub(crate) async fn connect_with(
         &self,
         handle: &RuntimeHandle,
@@ -273,6 +293,10 @@ impl HostedKernel {
     ) -> Result<(Link, String), AdapterError> {
         let mut url = self.link_url(endpoint, &handle.0);
         url.push_str(extra_query);
+        self.connect_url(url).await
+    }
+
+    async fn connect_url(&self, url: String) -> Result<(Link, String), AdapterError> {
         let mut request = url
             .as_str()
             .into_client_request()
@@ -494,7 +518,7 @@ impl HostedKernel {
         // point, and even an immediate result cannot outrun its waiter.
         let link_and_answer = {
             let links = self.links.lock().await;
-            match links.get(&handle.0) {
+            match super::runtime_control_link(&links, &handle.0) {
                 Some(link) => {
                     let link = link.sender.clone();
                     let answer = self
@@ -570,7 +594,7 @@ impl HostedKernel {
         let operation_id = uuid::Uuid::new_v4().simple().to_string();
         let link_and_answer = {
             let links = self.links.lock().await;
-            match links.get(&handle.0) {
+            match super::runtime_control_link(&links, &handle.0) {
                 Some(link) => {
                     let link = link.sender.clone();
                     let answer = self
@@ -644,7 +668,7 @@ impl HostedKernel {
         let operation_id = uuid::Uuid::new_v4().simple().to_string();
         let link_and_answer = {
             let links = self.links.lock().await;
-            match links.get(&handle.0) {
+            match super::runtime_control_link(&links, &handle.0) {
                 Some(link) => {
                     let link = link.sender.clone();
                     let answer = self
@@ -716,7 +740,7 @@ impl HostedKernel {
         // between the two and overwrite its successor's waiter.
         let link_and_answer = {
             let links = self.links.lock().await;
-            match links.get(&handle.0) {
+            match super::runtime_control_link(&links, &handle.0) {
                 Some(link) => {
                     let link = link.sender.clone();
                     let answer = self.switch_waiters.expect(&handle.0, &link).await;

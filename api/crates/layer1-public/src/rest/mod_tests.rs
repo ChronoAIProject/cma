@@ -56,6 +56,12 @@ fn caller_request_ids_are_only_canonical_uuid_text() {
 
 fn sdk_session_view() -> SessionView {
     SessionView {
+        chat: Some(ChatSessionView {
+            worktree_name: "chat-3".into(),
+            worktree_path: "/workspace/chat-3".into(),
+            title: Some("Fixture chat".into()),
+            paused_notice: Some("Paused after inactivity".into()),
+        }),
         id: "sesn_fixture".into(),
         status: layer2_core::SessionStatus::Ready,
         recovery_state: layer2_core::RecoveryState::Normal,
@@ -444,6 +450,42 @@ fn a_named_kernel_is_refused_and_told_where_to_put_it() {
 }
 
 #[test]
+fn chat_creation_refuses_an_environment_profile_at_the_checked_boundary() {
+    let request: CreateSessionRequest =
+        serde_json::from_str(r#"{"surface":"chat","environment_profile":"envp_not_allowed"}"#)
+            .expect("the closed surface value parses");
+
+    let refusal = request
+        .into_parts()
+        .expect_err("chat settings replace environment profiles");
+    assert_eq!(refusal.code(), "invalid_request");
+    let detail = refusal.to_string();
+    assert!(
+        detail.contains("chat"),
+        "the refusal names the surface: {detail}"
+    );
+    assert!(
+        detail.contains("environment_profile"),
+        "the refusal names the conflicting field: {detail}"
+    );
+}
+
+#[test]
+fn session_surface_is_a_closed_wire_enum() {
+    let error = serde_json::from_str::<CreateSessionRequest>(r#"{"surface":"workspace"}"#)
+        .expect_err("an unknown surface must not be ignored")
+        .to_string();
+    assert!(
+        error.contains("workspace"),
+        "the unknown value is named: {error}"
+    );
+    assert!(
+        error.contains("chat"),
+        "the accepted value is named: {error}"
+    );
+}
+
+#[test]
 fn a_request_without_a_kernel_passes_through_checked() {
     // The other half. A gate that refuses everything is not a gate, and the
     // geometry has to survive the trip.
@@ -570,6 +612,7 @@ fn a_view_carries_geometry_as_plain_integers() {
         granted_services: None,
         granted_skills: None,
         pricing: None,
+        chat: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let view: SessionView = s.into();
@@ -610,6 +653,7 @@ fn a_view_projects_the_pinned_price_without_rounding() {
             micros_per_hour: 45_000,
             quoted_at: "2026-08-23T05:00:00Z".into(),
         }),
+        chat: None,
         created_at: "2026-08-23T05:00:01Z".into(),
     };
 
@@ -665,6 +709,7 @@ fn a_view_carries_the_agent_configuration_a_client_draws() {
             version: Some("0.5".into()),
         }]),
         pricing: None,
+        chat: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let json = serde_json::to_value(SessionView::from(s)).expect("serializes");
@@ -714,6 +759,7 @@ fn a_session_with_no_recorded_skills_carries_no_skills_field() {
         granted_services: None,
         granted_skills: None,
         pricing: None,
+        chat: None,
         created_at: "2026-08-12T00:00:00Z".into(),
     };
     let unrecorded = serde_json::to_value(SessionView::from(s.clone())).expect("serializes");
@@ -829,6 +875,7 @@ mod reach {
             rotated_at: None,
             capabilities: Default::default(),
             granted_services: granted,
+            chat: None,
             created_at: "2026-08-12T00:00:00Z".into(),
         }
     }

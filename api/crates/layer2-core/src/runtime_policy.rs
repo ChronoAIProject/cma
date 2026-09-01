@@ -73,7 +73,7 @@ impl SessionService {
             CoreError::RuntimeUnavailable("the session has no live runtime entry".into())
         })?;
         if entry.trigger_origin.is_none() {
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
         entry
             .runtime
@@ -100,7 +100,7 @@ impl SessionService {
                 CoreError::RuntimeUnavailable("the session has no live runtime entry".into())
             })?;
             if entry.trigger_origin.is_none() {
-                return Err(CoreError::InvalidState);
+                return Err(CoreError::invalid_state());
             }
             let runtime = entry.runtime.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("the session has no current runtime".into())
@@ -149,7 +149,7 @@ impl SessionService {
                 CoreError::RuntimeUnavailable("the session has no live runtime entry".into())
             })?;
             if entry.trigger_origin.is_none() {
-                return Err(CoreError::InvalidState);
+                return Err(CoreError::invalid_state());
             }
             let runtime = entry.runtime.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("the session has no current runtime".into())

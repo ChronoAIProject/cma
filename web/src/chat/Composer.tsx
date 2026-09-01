@@ -29,6 +29,8 @@ import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 interface ComposerProps {
   readonly capabilities: SessionCapabilities;
   readonly turnInFlight: boolean;
+  /** Surface-specific invitation; Agent keeps the established default. */
+  readonly placeholder?: string;
   /** Why the session cannot take input at all, when it cannot (§11). */
   readonly refusedReason?: string;
   /**
@@ -55,6 +57,8 @@ interface ComposerProps {
    * stale list replayed from the log offering commands that no longer exist.
    */
   readonly availableCommands?: readonly AvailableCommand[];
+  /** Chat has no command vocabulary; a slash remains ordinary message text. */
+  readonly commandsEnabled?: boolean;
   readonly onInterrupt: () => void;
   readonly busy?: boolean;
 }
@@ -70,9 +74,11 @@ const POLICY_SAYS: Record<ConcurrentInput, string> = {
 export function Composer({
   capabilities,
   turnInFlight,
+  placeholder = 'Say what you want done',
   refusedReason,
   onSend,
   availableCommands,
+  commandsEnabled = true,
   onInterrupt,
   busy = false,
 }: ComposerProps) {
@@ -89,7 +95,8 @@ export function Composer({
    */
   const slash = /^\/(\S*)$/.exec(text);
   const [dismissed, setDismissed] = useState(false);
-  const commandQuery = slash === null || dismissed ? undefined : (slash[1] ?? '');
+  const commandQuery =
+    !commandsEnabled || slash === null || dismissed ? undefined : (slash[1] ?? '');
 
   /*
    * Grow the field with what is in it, to §18.4's six lines and no further.
@@ -244,7 +251,7 @@ export function Composer({
           ref={fieldRef}
           rows={1}
           value={text}
-          placeholder="Say what you want done"
+          placeholder={placeholder}
           onChange={(event) => {
             setText(event.target.value);
             // A draft that stops being a command re-arms the menu, so pressing

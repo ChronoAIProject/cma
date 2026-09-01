@@ -7,6 +7,7 @@
 
 mod activity;
 mod auth;
+mod chat;
 mod config;
 mod health;
 mod kernels;
@@ -45,6 +46,7 @@ use layer1_public::{
     agui::AguiInterface,
     mcp::McpInterface,
     pty::PtyInterface,
+    responses::ResponsesInterface,
     rest::{HttpProblem, RestInterface},
     InterfaceProfile,
 };
@@ -69,7 +71,7 @@ const PROCESS_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
-    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
 );
 
 type TriggerProviderPorts = (
@@ -139,6 +141,7 @@ impl TriggerCompositionReadiness {
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
         Box::new(AguiInterface),
+        Box::new(ResponsesInterface),
         Box::new(RestInterface),
         Box::new(PtyInterface),
         Box::new(McpInterface),
@@ -152,8 +155,8 @@ fn interface_is_served(interface: &dyn InterfaceProfile) -> bool {
 
 /// Compose the REST surface before protocol-specific and browser routes join it.
 ///
-/// The three Layer 1 routers have different state, so the binary is where they
-/// meet. Applying the method fallback after all three are merged covers every
+/// The Layer 1 routers have different state, so the binary is where they meet.
+/// Applying the method fallback after all of them are merged covers every
 /// declared REST path without giving any child router a conflicting fallback.
 /// The wildcard is path-scoped so `/auth/*` keeps the browser flow's own
 /// vocabulary.
@@ -678,6 +681,7 @@ async fn serve_normal_control_plane() {
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
+    let chat_host_store = Arc::new(stores.chat_hosts) as Arc<dyn layer2_core::ChatHostStore>;
     let operation_store = Arc::new(stores.operations) as Arc<dyn layer2_core::OperationStore>;
     let trigger_store = Arc::new(stores.triggers);
     let ticket_store =
@@ -753,6 +757,9 @@ async fn serve_normal_control_plane() {
     let handovers = storage
         .as_ref()
         .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>);
+    let chat_checkpoints = storage
+        .as_ref()
+        .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::ChatCheckpointStore>);
     let skill_packs = storage.map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
 
     let trigger_workspace_store: Option<Arc<crate::store::ChronoStorageTriggerWorkspaceStore>> =
@@ -900,6 +907,7 @@ async fn serve_normal_control_plane() {
         layer2_core::SessionPorts {
             context,
             handovers,
+            chat_checkpoints,
             credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
             // The same registry the profile editor picks from, asked for
             // contents rather than for names. A deployment without one still
@@ -912,6 +920,7 @@ async fn serve_normal_control_plane() {
                 .map(|store| store as Arc<dyn layer2_core::SessionWorkspaceSource>),
             skill_packs,
             settings: Some(Arc::clone(&settings)),
+            chat_hosts: Some(chat_host_store),
         },
         Arc::clone(&environments),
         layer2_core::Deployment {
@@ -1048,6 +1057,21 @@ async fn serve_normal_control_plane() {
     }
 
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
+
+    // Recovery-point behavior and host claims belong to the core. This binary
+    // owns only the deployment cadence that asks for one bounded pass.
+    chat::checkpoints::spawn(Arc::clone(&service));
+    let chat_title_generator = chat::titles::HttpChatTitleGenerator::new(
+        &config.upstream_base_url,
+        &config.upstream_model,
+    )
+    .map(|generator| Arc::new(generator) as Arc<dyn layer2_core::ChatTitleGenerator>);
+    if chat_title_generator.is_none() {
+        tracing::warn!(
+            "chat title model adapter is unavailable; deterministic title fallback remains active"
+        );
+    }
+    chat::sweeper::spawn(Arc::clone(&service), chat_title_generator);
 
     // Sessions end only when their owner says so, which leaves this as the one
     // thing that reclaims a runtime nothing refers to or finishes a session

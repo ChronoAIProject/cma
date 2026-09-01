@@ -104,6 +104,10 @@ pub enum ActivityAction {
     SessionApprovalResolve,
     /// A session's accumulated usage was read.
     SessionUsageRead,
+    /// Deployment-managed chat hosts were listed.
+    ChatHostList,
+    /// One deployment-managed chat host was retired.
+    ChatHostRetire,
     /// A reusable environment bundle was created.
     EnvironmentProfileCreate,
     /// One bundle was read.
@@ -237,6 +241,8 @@ impl ActivityAction {
 pub enum ActivityTarget {
     /// One session, by identifier.
     Session(SessionId),
+    /// One deployment-managed chat host, by identifier.
+    ChatHost(crate::ChatHostId),
     /// One reusable environment bundle, by identifier.
     EnvironmentProfile(EnvironmentProfileId),
     /// One subject, when the action concerns a person rather than a resource.
@@ -258,6 +264,7 @@ impl ActivityTarget {
     pub fn id(&self) -> &str {
         match self {
             Self::Session(id) => id.as_str(),
+            Self::ChatHost(id) => id.as_str(),
             Self::EnvironmentProfile(id) => id.as_str(),
             Self::Subject(id) => id.as_str(),
             Self::Trigger(id) => id.0.as_str(),

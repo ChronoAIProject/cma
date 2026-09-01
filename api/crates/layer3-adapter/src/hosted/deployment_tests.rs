@@ -12,10 +12,13 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
         reaches: Vec::new(),
         runtime_policy_required: false,
         sponsored_model_required: false,
+        workspace_source_required: false,
+        conversation_slots_required: None,
         platform_briefing: String::new(),
         created_by: None,
         environment,
         session_id: "sesn_x".into(),
+        chat_host: None,
         generation: None,
         reservation_token: None,
         size: TermSize {

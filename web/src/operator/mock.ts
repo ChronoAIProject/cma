@@ -3,12 +3,15 @@ import type {
   ActivityEntry,
   ActivityQuery,
   AdminSession,
+  ChatHost,
   PlatformSettings,
   SessionBriefing,
   StoredPlatformSettings,
   OperatorStore,
   Person,
   RuntimeInventory,
+  ChatSettings,
+  StoredChatSettings,
 } from './types';
 
 /**
@@ -32,16 +35,20 @@ export interface MockOperatorOptions {
   readonly people?: readonly Person[];
   readonly activity?: readonly ActivityEntry[];
   readonly sessions?: readonly AdminSession[];
+  readonly chatHosts?: readonly ChatHost[];
   readonly inventory?: RuntimeInventory;
   readonly platformSettings?: StoredPlatformSettings;
-  /** Briefing restored by reset. Defaults to the mock's shipped briefing. */
+  readonly chatSettings?: StoredChatSettings;
+  /** Briefing restored when reset also removes Chat. Defaults to the shipped fixture. */
   readonly shippedBriefing?: SessionBriefing;
   /** Force every call to fail, so error paths can be exercised. */
   readonly failWith?: string;
   /** Told which session was stopped, and which was ended. */
   readonly onStop?: (id: string) => void;
   readonly onTerminate?: (id: string) => void;
+  readonly onRetireHost?: (id: string) => void;
   readonly onSettingsChange?: (settings: PlatformSettings) => void;
+  readonly onChatSettingsChange?: (settings: ChatSettings | null) => void;
   readonly onBriefingReset?: () => void;
 }
 
@@ -81,6 +88,55 @@ export const MOCK_PLATFORM_SETTINGS: StoredPlatformSettings = {
   },
 };
 
+export const MOCK_CHAT_SETTINGS: StoredChatSettings = {
+  revision: 0,
+  chat: {
+    enabled: false,
+    workspace: {
+      repositoryUrl: 'https://github.com/the-omega-institute/trureturing',
+      branch: 'dev',
+    },
+    agent: {
+      model: null,
+      reasoningEffort: 'high',
+      instructions: '',
+      recordToolBodies: true,
+    },
+    messagePrefixes: ['/codex-formalize'],
+    inactivity: { pauseAfterSeconds: 900 },
+    setup: { commands: [] },
+    host: { size: null, maxThreads: 10 },
+  },
+};
+
+function copyChat(settings: ChatSettings): ChatSettings {
+  return {
+    ...settings,
+    workspace: { ...settings.workspace },
+    agent: { ...settings.agent },
+    messagePrefixes: [...settings.messagePrefixes],
+    inactivity: { ...settings.inactivity },
+    setup: { commands: [...settings.setup.commands] },
+    host: {
+      ...settings.host,
+      size: settings.host.size === null ? null : { ...settings.host.size },
+    },
+  };
+}
+
+function copyStoredChat(stored: StoredChatSettings): StoredChatSettings {
+  return {
+    revision: stored.revision,
+    chat: stored.chat === null ? null : copyChat(stored.chat),
+    previousChat:
+      stored.previousChat === undefined
+        ? undefined
+        : stored.previousChat === null
+          ? null
+          : copyChat(stored.previousChat),
+  };
+}
+
 function copyBriefing(briefing: SessionBriefing): SessionBriefing {
   return { ...briefing, before: [...briefing.before], after: [...briefing.after] };
 }
@@ -110,7 +166,13 @@ function copyStored(stored: StoredPlatformSettings): StoredPlatformSettings {
 
 export function createMockOperatorStore(options: MockOperatorOptions = {}): OperatorStore {
   const sessions = [...(options.sessions ?? [])];
-  let platform = copyStored(options.platformSettings ?? MOCK_PLATFORM_SETTINGS);
+  const chatHosts = [...(options.chatHosts ?? [])];
+  const initialPlatform = copyStored(options.platformSettings ?? MOCK_PLATFORM_SETTINGS);
+  const initialChat = copyStoredChat(options.chatSettings ?? MOCK_CHAT_SETTINGS);
+  const settingsRevision =
+    options.platformSettings !== undefined ? initialPlatform.revision : initialChat.revision;
+  let platform = { ...initialPlatform, revision: settingsRevision };
+  let chat = { ...initialChat, revision: settingsRevision };
   const shippedBriefing = copyBriefing(
     options.shippedBriefing ?? MOCK_PLATFORM_SETTINGS.settings.briefing,
   );
@@ -155,6 +217,11 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
       return [...sessions];
     },
 
+    async chatHosts() {
+      guard();
+      return chatHosts.map((host) => ({ ...host }));
+    },
+
     async stopSession(id: string) {
       guard();
       // Mirrors the control plane: stopping releases the runtime and leaves the
@@ -169,6 +236,17 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
       options.onTerminate?.(id);
     },
 
+    async retireChatHost(id: string) {
+      guard();
+      const index = chatHosts.findIndex((host) => host.id === id);
+      const existing = chatHosts[index];
+      if (existing === undefined) {
+        throw new Error('That chat host no longer exists.');
+      }
+      chatHosts[index] = { ...existing, status: 'retired' };
+      options.onRetireHost?.(id);
+    },
+
     async readPlatformSettings() {
       guard();
       return copyStored(platform);
@@ -180,31 +258,69 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
         throw new PlatformSettingsConflict('Platform settings changed after they were read.');
       }
       const previous = copySettings(platform.settings);
+      const previousChat = chat.chat === null ? null : copyChat(chat.chat);
+      const revision = platform.revision + 1;
       platform = {
-        revision: platform.revision + 1,
+        revision,
         settings: copySettings(settings),
         previous,
+      };
+      chat = {
+        revision,
+        chat: chat.chat === null ? null : copyChat(chat.chat),
+        previousChat,
       };
       options.onSettingsChange?.(copySettings(settings));
       return copyStored(platform);
     },
 
-    async resetPlatformBriefing(expectedRevision: number) {
+    async resetPlatformSettings(expectedRevision: number) {
       guard();
       if (expectedRevision !== platform.revision) {
         throw new PlatformSettingsConflict('Platform settings changed after they were read.');
       }
       const previous = copySettings(platform.settings);
+      const previousChat = chat.chat === null ? null : copyChat(chat.chat);
+      const revision = platform.revision + 1;
       platform = {
-        revision: platform.revision + 1,
+        revision,
         settings: {
           ...copySettings(platform.settings),
           briefing: copyBriefing(shippedBriefing),
         },
         previous,
       };
+      chat = { revision, chat: null, previousChat };
       options.onBriefingReset?.();
+      options.onChatSettingsChange?.(null);
       return copyStored(platform);
+    },
+
+    async readChatSettings() {
+      guard();
+      return copyStoredChat(chat);
+    },
+
+    async changeChatSettings(expectedRevision: number, settings: ChatSettings | null) {
+      guard();
+      if (expectedRevision !== chat.revision) {
+        throw new PlatformSettingsConflict('Chat settings changed after they were read.');
+      }
+      const previousChat = chat.chat === null ? null : copyChat(chat.chat);
+      const previous = copySettings(platform.settings);
+      const revision = chat.revision + 1;
+      chat = {
+        revision,
+        chat: settings === null ? null : copyChat(settings),
+        previousChat,
+      };
+      platform = {
+        revision,
+        settings: copySettings(platform.settings),
+        previous,
+      };
+      options.onChatSettingsChange?.(settings === null ? null : copyChat(settings));
+      return copyStoredChat(chat);
     },
   };
 }

@@ -11,7 +11,7 @@ use unicode_normalization::UnicodeNormalization as _;
 
 pub const VERSION: u32 = 1;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub const CAPABILITY_VERSION: u32 = 4;
+pub const CAPABILITY_VERSION: u32 = 5;
 pub const MAX_FILES: usize = 100_000;
 pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 1_024;
@@ -37,6 +37,8 @@ struct Header {
     checkpoint_version: u64,
     #[serde(default)]
     quiesced_writers: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    includes_git_metadata: bool,
     source_revision: String,
     manifest_digest: String,
     entries: Vec<Entry>,
@@ -73,6 +75,7 @@ pub struct Captured {
     pub entries: usize,
     pub bytes: u64,
     pub quiesced_writers: u32,
+    pub includes_git_metadata: bool,
     pub archive: Vec<u8>,
 }
 
@@ -87,6 +90,8 @@ struct CaptureAcknowledgement<'a> {
     entries: usize,
     bytes: u64,
     quiesced_writers: u32,
+    #[serde(skip_serializing_if = "is_false")]
+    includes_git_metadata: bool,
     writers_resumed: bool,
     writer_state: &'static str,
     writer_resume_token: Option<&'a str>,
@@ -118,6 +123,7 @@ impl Captured {
             entries: self.entries,
             bytes: self.bytes,
             quiesced_writers: self.quiesced_writers,
+            includes_git_metadata: self.includes_git_metadata,
             writers_resumed,
             writer_state,
             writer_resume_token,
@@ -163,6 +169,10 @@ impl PreparedCapture {
                     .as_ref()
                     .expect("prepared capture exists")
                     .source_revision,
+                self.captured
+                    .as_ref()
+                    .expect("prepared capture exists")
+                    .includes_git_metadata,
             )?;
             if retained.archive_sha256
                 != self
@@ -216,6 +226,7 @@ pub fn load_capture(
     epoch: u64,
     version: u64,
     source_revision: &str,
+    includes_git_metadata: bool,
 ) -> Result<Option<Captured>, String> {
     validate_capture_request(epoch, version, source_revision)?;
     let path = capture_path(checkpoint_root, epoch, version);
@@ -227,7 +238,14 @@ pub fn load_capture(
         }
         return Ok(None);
     }
-    load_capture_path(&path, epoch, version, source_revision).map(Some)
+    load_capture_path(
+        &path,
+        epoch,
+        version,
+        source_revision,
+        includes_git_metadata,
+    )
+    .map(Some)
 }
 
 /// Walk a quiescent tree, seal it deterministically, verify it, and flush a
@@ -240,6 +258,7 @@ pub fn prepare_capture(
     version: u64,
     source_revision: &str,
     quiesced_writers: u32,
+    includes_git_metadata: bool,
 ) -> Result<PreparedCapture, String> {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -248,7 +267,12 @@ pub fn prepare_capture(
         return Err("workspace root is not a directory".into());
     }
     let mut paths = Vec::new();
-    collect_capture_paths(workspace_root, workspace_root, &mut paths)?;
+    collect_capture_paths(
+        workspace_root,
+        workspace_root,
+        &mut paths,
+        includes_git_metadata,
+    )?;
     if paths.len() > MAX_FILES {
         return Err("workspace contains too many files".into());
     }
@@ -309,6 +333,7 @@ pub fn prepare_capture(
         workspace_epoch: epoch,
         checkpoint_version: version,
         quiesced_writers,
+        includes_git_metadata,
         source_revision: source_revision.to_ascii_lowercase(),
         manifest_digest: "0".repeat(64),
         entries,
@@ -441,6 +466,7 @@ fn load_capture_path(
     epoch: u64,
     version: u64,
     source_revision: &str,
+    includes_git_metadata: bool,
 ) -> Result<Captured, String> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("inspect retained workspace checkpoint: {error}"))?;
@@ -450,6 +476,9 @@ fn load_capture_path(
     let archive = std::fs::read(path)
         .map_err(|error| format!("read retained workspace checkpoint: {error}"))?;
     let header = validate_archive(&archive, epoch, version, source_revision)?;
+    if header.includes_git_metadata != includes_git_metadata {
+        return Err("retained workspace checkpoint has a different capture scope".into());
+    }
     Ok(captured_from(header, archive))
 }
 
@@ -486,6 +515,7 @@ fn captured_from(header: Header, archive: Vec<u8>) -> Captured {
         entries: header.entries.len(),
         bytes: header.entries.iter().map(|entry| entry.size).sum(),
         quiesced_writers: header.quiesced_writers,
+        includes_git_metadata: header.includes_git_metadata,
         archive,
     }
 }
@@ -494,6 +524,7 @@ fn collect_capture_paths(
     root: &Path,
     directory: &Path,
     paths: &mut Vec<String>,
+    includes_git_metadata: bool,
 ) -> Result<(), String> {
     for item in std::fs::read_dir(directory)
         .map_err(|error| format!("inspect workspace directory: {error}"))?
@@ -506,7 +537,7 @@ fn collect_capture_paths(
             .to_str()
             .ok_or_else(|| "workspace path is not UTF-8".to_string())?
             .to_string();
-        if excluded_capture_path(&relative) {
+        if excluded_capture_path(&relative, includes_git_metadata) {
             continue;
         }
         validate_path(&relative)?;
@@ -514,7 +545,7 @@ fn collect_capture_paths(
             .map_err(|error| format!("inspect workspace entry {relative}: {error}"))?
             .file_type();
         if kind.is_dir() {
-            collect_capture_paths(root, &path, paths)?;
+            collect_capture_paths(root, &path, paths, includes_git_metadata)?;
         } else if kind.is_file() || kind.is_symlink() {
             paths.push(relative);
         } else {
@@ -648,6 +679,9 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
     let mut previous_path: Option<&str> = None;
     let mut expected_offset = 0_u64;
     for entry in &header.entries {
+        if excluded_capture_path(&entry.path, header.includes_git_metadata) {
+            return Err("workspace archive contains a path outside its capture scope".into());
+        }
         let alias = workspace_path_alias(&entry.path)?;
         if previous_path.is_some_and(|previous| {
             previous >= entry.path.as_str()
@@ -898,6 +932,9 @@ fn entry_bytes<'a>(entry: &Entry, payload: &'a [u8]) -> Result<&'a [u8], String>
 fn manifest_digest(header: &Header, payload: &[u8]) -> Result<String, String> {
     let mut digest = Sha256::new();
     digest.update(b"cma-workspace-manifest-v1\0");
+    if header.includes_git_metadata {
+        digest.update(b"complete-git-workspace-v1\0");
+    }
     hash_text(&mut digest, &header.source_revision)?;
     digest.update(
         u64::try_from(header.entries.len())
@@ -979,7 +1016,7 @@ fn workspace_path_alias(path: &str) -> Result<String, String> {
                 .any(|character| matches!(character, '/' | '\\' | ':'))
             || alias.ends_with('.')
             || alias.ends_with(' ')
-            || excluded_capture_segment(&alias)
+            || excluded_capture_segment(&alias, true)
             || reserved_device_segment(&alias)
         {
             return Err("workspace archive contains a non-canonical path".into());
@@ -1010,19 +1047,19 @@ fn reserved_device_segment(segment: &str) -> bool {
             .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
 }
 
-fn excluded_capture_path(path: &str) -> bool {
-    path.split('/').any(excluded_capture_segment)
+fn excluded_capture_path(path: &str, includes_git_metadata: bool) -> bool {
+    path.split('/')
+        .any(|segment| excluded_capture_segment(segment, includes_git_metadata))
 }
 
 /// Files owned by the runtime or conventionally used as credential material
 /// are outside the repository durability boundary. Matching every path segment
 /// also prevents a nested tool directory from becoming checkpoint content.
-fn excluded_capture_segment(segment: &str) -> bool {
+fn excluded_capture_segment(segment: &str, includes_git_metadata: bool) -> bool {
     let lower = segment.to_ascii_lowercase();
     matches!(
         lower.as_str(),
-        ".git"
-            | ".cma"
+        ".cma"
             | ".chrono"
             | ".codex"
             | ".claude"
@@ -1037,10 +1074,15 @@ fn excluded_capture_segment(segment: &str) -> bool {
             | "credentials.json"
             | "id_rsa"
             | "id_ed25519"
-    ) || lower == ".env"
+    ) || (!includes_git_metadata && lower == ".git")
+        || lower == ".env"
         || lower.starts_with(".env.")
         || lower.starts_with(".cma-")
         || lower.starts_with(".chrono-")
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn validate_symlink(path: &str, target: &str) -> Result<(), String> {
