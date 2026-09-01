@@ -161,9 +161,12 @@ pub use chat::{
     ChatInactivity, ChatPauseOutcome, ChatPromptAdmission, ChatPromptDeliveryState,
     ChatProvisioningPhase, ChatReviveCause, ChatRevivePhase, ChatSettings, ChatSettingsSnapshot,
     ChatSettingsViolation, ChatSetup, ChatThreadRestoreFailure, ChatThreadSlot,
+    ChatTitleGenerationError, ChatTitleGenerationRequest, ChatTitleGenerator, ChatTitleOutcome,
     ChatUnavailableCause, ChatWorkspaceAuthority, ChatWorkspaceSource,
     CHAT_CHECKPOINT_INTERVAL_SECONDS, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS,
-    MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES, MAX_CHAT_PROMPT_ADMISSIONS, MAX_CHAT_PROMPT_BYTES,
+    CHAT_TITLE_CALL_TIMEOUT_SECONDS, CHAT_TITLE_FALLBACK_CHARACTERS, CHAT_TITLE_INPUT_BYTES,
+    CHAT_TITLE_MAX_CHARACTERS, CHAT_TITLE_SYSTEM_PROMPT, MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES,
+    MAX_CHAT_PROMPT_ADMISSIONS, MAX_CHAT_PROMPT_BYTES,
 };
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{

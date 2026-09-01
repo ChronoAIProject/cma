@@ -25,7 +25,10 @@ use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{ScreenFactory, SessionService};
 use crate::session::SessionSpec;
-use crate::store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError};
+use crate::store::{
+    ChatThreadTitle, ChatTitleClaim, ChatTitleClaimMode, ChatTitleClaimRequest, Page, PageCursor,
+    SessionListQuery, SessionRecord, SessionStore, StoreError,
+};
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 use crate::Reserved;
 
@@ -42,6 +45,8 @@ pub(crate) struct FakeStore {
     pub(crate) events: Mutex<Vec<StoredEvent>>,
     /// Durable runtime authority, leases, and reservations shared by replicas.
     coordination: Mutex<HashMap<String, FakeCoordination>>,
+    /// Independent durable title-attempt state shared by restarted replicas.
+    chat_title_work: Mutex<HashMap<String, FakeChatTitleWork>>,
     /// Durable receipts for whole record/event transactions, including empty batches.
     write_receipts: Mutex<HashMap<String, (SessionId, u64)>>,
     /// Recoverable skill bytes shared by restarted environment-aware fixtures.
@@ -77,6 +82,8 @@ pub(crate) struct FakeStore {
     lose_runtime_switch_responses: std::sync::atomic::AtomicUsize,
     /// Successful lease advances whose response is lost after the commit.
     lose_runtime_advance_responses: std::sync::atomic::AtomicUsize,
+    /// One committed title completion whose response is lost to its caller.
+    lose_next_chat_title_completion_response: std::sync::atomic::AtomicBool,
     /// Hold one provider-operation release after its caller reaches the store.
     pause_next_session_lease_release: std::sync::atomic::AtomicBool,
     session_lease_release_entered: tokio::sync::Notify,
@@ -107,6 +114,21 @@ struct FakeCandidate {
 #[derive(Debug, Clone)]
 struct FakeConversationOpening {
     lease: ConversationOpeningLease,
+    expires_at: tokio::time::Instant,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FakeChatTitleWork {
+    attempted: bool,
+    lease: Option<FakeChatTitleLease>,
+    completed_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct FakeChatTitleLease {
+    holder: String,
+    token: String,
+    generate: bool,
     expires_at: tokio::time::Instant,
 }
 
@@ -200,11 +222,35 @@ impl FakeStore {
             .lock()
             .await
             .insert(record.session.id.0.clone(), record.clone());
+        self.chat_title_work
+            .lock()
+            .await
+            .remove(&record.session.id.0);
         self.coordination.lock().await.insert(
             record.session.id.0.clone(),
             FakeCoordination::legacy(record),
         );
         Ok(())
+    }
+
+    /// Expire title authority without advancing the test runtime's clock.
+    pub(crate) async fn expire_chat_title_claim(&self, id: &SessionId) {
+        let _transaction = self.transaction.lock().await;
+        let mut work = self.chat_title_work.lock().await;
+        let lease = work
+            .get_mut(&id.0)
+            .and_then(|state| state.lease.as_mut())
+            .expect("the chat title claim is active");
+        lease.expires_at = tokio::time::Instant::now();
+    }
+
+    pub(crate) fn lose_next_chat_title_completion_response(&self) {
+        assert!(
+            !self
+                .lose_next_chat_title_completion_response
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a chat title completion response loss is already armed"
+        );
     }
 
     /// The exact lease currently held by a fixture session, if any.
@@ -1941,6 +1987,142 @@ impl SessionStore for FakeStore {
         ))
     }
 
+    async fn acquire_chat_title_claim(
+        &self,
+        request: &ChatTitleClaimRequest,
+    ) -> Result<Option<ChatTitleClaim>, StoreError> {
+        self.guard().await?;
+        if request.holder().is_empty() || request.token().is_empty() || request.ttl().is_zero() {
+            return Err(StoreError::Malformed(
+                "chat title claim holder, token, and TTL must be non-empty".into(),
+            ));
+        }
+        let _transaction = self.transaction.lock().await;
+        let turn_completed = self.events.lock().await.iter().any(|event| {
+            event.session_id == *request.session_id()
+                && matches!(
+                    &event.kind,
+                    crate::event::StoredEventKind::Known(EventKind::TurnCompleted)
+                )
+        });
+        if !turn_completed {
+            return Ok(None);
+        }
+
+        let mut sessions = self.sessions.lock().await;
+        let Some(record) = sessions.get_mut(&request.session_id().0) else {
+            return Ok(None);
+        };
+        if record
+            .chat_origin
+            .as_ref()
+            .is_none_or(|origin| origin.title.is_some())
+        {
+            return Ok(None);
+        }
+
+        let now = tokio::time::Instant::now();
+        let expires_at = now
+            .checked_add(request.ttl())
+            .ok_or_else(|| StoreError::Malformed("chat title claim expiry overflow".into()))?;
+        let mut all_work = self.chat_title_work.lock().await;
+        let work = all_work.entry(request.session_id().0.clone()).or_default();
+        if work.completed_token.is_some() {
+            return Ok(None);
+        }
+        if let Some(lease) = work.lease.as_ref() {
+            if lease.expires_at > now {
+                if lease.holder == request.holder() && lease.token == request.token() {
+                    return Ok(Some(ChatTitleClaim::acquired(
+                        request.clone(),
+                        if lease.generate {
+                            ChatTitleClaimMode::Generate
+                        } else {
+                            ChatTitleClaimMode::FallbackOnly
+                        },
+                    )));
+                }
+                return Ok(None);
+            }
+        }
+
+        let generate = !work.attempted;
+        work.attempted = true;
+        work.lease = Some(FakeChatTitleLease {
+            holder: request.holder().to_owned(),
+            token: request.token().to_owned(),
+            generate,
+            expires_at,
+        });
+        record.revision = record
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        Ok(Some(ChatTitleClaim::acquired(
+            request.clone(),
+            if generate {
+                ChatTitleClaimMode::Generate
+            } else {
+                ChatTitleClaimMode::FallbackOnly
+            },
+        )))
+    }
+
+    async fn complete_chat_title(
+        &self,
+        claim: &ChatTitleClaim,
+        title: &ChatThreadTitle,
+    ) -> Result<bool, StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let mut sessions = self.sessions.lock().await;
+        let Some(record) = sessions.get_mut(&claim.session_id().0) else {
+            return Ok(false);
+        };
+        let mut all_work = self.chat_title_work.lock().await;
+        let Some(work) = all_work.get_mut(&claim.session_id().0) else {
+            return Ok(false);
+        };
+        if record
+            .chat_origin
+            .as_ref()
+            .and_then(|origin| origin.title.as_ref())
+            .is_some()
+        {
+            return Ok(work.completed_token.as_deref() == Some(claim.token()));
+        }
+        let exact_lease = work
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.holder == claim.holder() && lease.token == claim.token());
+        if !exact_lease {
+            return Ok(false);
+        }
+
+        let origin = record
+            .chat_origin
+            .as_mut()
+            .expect("a claimed title belongs to a chat session");
+        origin.title = Some(title.as_str().to_owned());
+        record.session.chat = Some(origin.public_projection());
+        record.revision = record
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        work.lease = None;
+        work.completed_token = Some(claim.token().to_owned());
+
+        if self
+            .lose_next_chat_title_completion_response
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(StoreError::Unavailable(
+                "chat title completion response was lost".into(),
+            ));
+        }
+        Ok(true)
+    }
+
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
@@ -1983,6 +2165,7 @@ impl SessionStore for FakeStore {
         drop(sessions);
         self.events.lock().await.retain(|e| &e.session_id != id);
         coordination.remove(&id.0);
+        self.chat_title_work.lock().await.remove(&id.0);
         self.write_receipts
             .lock()
             .await
@@ -2003,18 +2186,28 @@ impl SessionStore for FakeStore {
         Self::validate_ordinary_event_batch(events)?;
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
+        let mut sessions = self.sessions.lock().await;
         let recorded_tail = match events.first() {
-            Some(first) => self
-                .sessions
-                .lock()
-                .await
-                .get(&first.session_id.0)
-                .map_or(0, |record| record.session.last_seq),
+            Some(first) => {
+                sessions
+                    .get(&first.session_id.0)
+                    .ok_or_else(|| StoreError::SessionDeleted {
+                        id: first.session_id.clone(),
+                    })?
+                    .session
+                    .last_seq
+            }
             None => 0,
         };
         let mut held = self.events.lock().await;
         Self::validate_append(&held, events, recorded_tail)?;
         held.extend(events.iter().cloned().map(StoredEvent::from));
+        if let Some(last) = events.last() {
+            let record = sessions
+                .get_mut(&last.session_id.0)
+                .expect("the transaction keeps the checked session present");
+            record.session.last_seq = last.seq;
+        }
         Ok(())
     }
 
@@ -2520,6 +2713,7 @@ mod runtime_started_store_tests {
             host_id: host_id.clone(),
             worktree_name: "chat-1".into(),
             worktree_path: "/workspace/worktrees/chat-1".into(),
+            title: None,
             paused_notice: Some("paused".into()),
         });
         (record, host_id)

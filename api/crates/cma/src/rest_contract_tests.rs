@@ -2384,6 +2384,7 @@ fn chat_session_record(sequence: usize, owner: &SubjectId) -> SessionRecord {
         host_id: ChatHostId::for_owner(owner),
         worktree_name: format!("chat-{sequence}"),
         worktree_path: format!("/workspace/chat-{sequence}"),
+        title: None,
         paused_notice: None,
     };
     record.session.chat = Some(origin.public_projection());

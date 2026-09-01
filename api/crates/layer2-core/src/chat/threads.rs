@@ -220,6 +220,7 @@ impl SessionService {
             host_id: host.id.clone(),
             worktree_name: worktree_name.clone(),
             worktree_path: receipt.path,
+            title: None,
             paused_notice: None,
         };
         let chat = origin.public_projection();
