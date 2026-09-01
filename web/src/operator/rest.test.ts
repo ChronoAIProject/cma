@@ -65,6 +65,14 @@ const CHAT_HOST_WIRE = {
   paused_at: '2026-09-01T01:00:00Z',
   revived_at: '2026-09-01T02:00:00Z',
   checkpoint_captured_at: '2026-09-01T00:45:00Z',
+  last_failure: {
+    phase: 'workspace_setup',
+    command_index: 1,
+    output_excerpt: 'bounded setup failure',
+    retryable: true,
+    cleanup_pending: false,
+    occurred_at: '2026-09-01T02:05:00Z',
+  },
   settings_revision: 17,
   created_at: '2026-08-31T23:00:00Z',
 };
@@ -450,6 +458,11 @@ describe('talking to the control plane', () => {
       status: 'active',
       threadCount: 3,
       settingsRevision: 17,
+      lastFailure: {
+        phase: 'workspace_setup',
+        commandIndex: 1,
+        outputExcerpt: 'bounded setup failure',
+      },
       createdAt: Date.parse(CHAT_HOST_WIRE.created_at),
     });
     await store.retireChatHost(CHAT_HOST_WIRE.id);

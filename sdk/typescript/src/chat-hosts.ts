@@ -27,6 +27,28 @@ export const CHAT_HOST_STATUSES = [
 
 export type ChatHostStatus = (typeof CHAT_HOST_STATUSES)[number];
 
+/** Typed phase vocabulary for one retained shared-host failure. */
+export const CHAT_HOST_FAILURE_PHASES = [
+  'runtime',
+  'workspace_source',
+  'workspace_setup',
+  'credential',
+  'cleanup',
+  'runtime_lost',
+] as const;
+
+export type ChatHostFailurePhase = (typeof CHAT_HOST_FAILURE_PHASES)[number];
+
+/** Bounded operator evidence for the host's most recent failure. */
+export interface ChatHostFailure {
+  readonly phase: ChatHostFailurePhase;
+  readonly commandIndex?: number;
+  readonly outputExcerpt?: string;
+  readonly retryable: boolean;
+  readonly cleanupPending: boolean;
+  readonly occurredAt: number;
+}
+
 /** Redacted operator projection of one shared chat runtime. */
 export interface ChatHost {
   readonly id: string;
@@ -37,6 +59,7 @@ export interface ChatHost {
   readonly pausedAt?: number;
   readonly revivedAt?: number;
   readonly checkpointCapturedAt?: number;
+  readonly lastFailure?: ChatHostFailure;
   readonly settingsRevision: number;
   readonly createdAt: number;
 }
@@ -67,11 +90,48 @@ export function toChatHost(raw: unknown): ChatHost {
       host.checkpoint_captured_at,
       `chat host ${id} checkpoint time`,
     ),
+    lastFailure: optionalFailure(host.last_failure, id),
     settingsRevision: nonNegativeInteger(
       host.settings_revision,
       `chat host ${id} settings revision`,
     ),
     createdAt: requiredInstant(host.created_at, `chat host ${id} creation time`),
+  };
+}
+
+function optionalFailure(value: unknown, hostId: string): ChatHostFailure | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ProtocolError(`chat host ${hostId} failure was not an object`);
+  }
+  const failure = value as Record<string, unknown>;
+  const phase = requiredText(failure.phase, `chat host ${hostId} failure phase`);
+  if (!CHAT_HOST_FAILURE_PHASES.includes(phase as ChatHostFailurePhase)) {
+    throw new ProtocolError(`chat host ${hostId} carried an unknown failure phase`);
+  }
+  const commandIndex = optionalNonNegativeInteger(
+    failure.command_index,
+    `chat host ${hostId} failure command index`,
+  );
+  const outputExcerpt = optionalOutput(failure.output_excerpt, hostId);
+  if (
+    (commandIndex !== undefined && phase !== 'workspace_setup') ||
+    (outputExcerpt !== undefined && (phase !== 'workspace_setup' || commandIndex === undefined))
+  ) {
+    throw new ProtocolError(`chat host ${hostId} carried inconsistent setup failure evidence`);
+  }
+  return {
+    phase: phase as ChatHostFailurePhase,
+    commandIndex,
+    outputExcerpt,
+    retryable: requiredBoolean(failure.retryable, `chat host ${hostId} failure retryability`),
+    cleanupPending: requiredBoolean(
+      failure.cleanup_pending,
+      `chat host ${hostId} failure cleanup state`,
+    ),
+    occurredAt: requiredInstant(failure.occurred_at, `chat host ${hostId} failure time`),
   };
 }
 
@@ -134,6 +194,30 @@ function optionalText(value: unknown, field: string): string | undefined {
 function nonNegativeInteger(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new ProtocolError(`${field} was not a non-negative safe integer`);
+  }
+  return value;
+}
+
+function optionalNonNegativeInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return nonNegativeInteger(value, field);
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new ProtocolError(`${field} was not boolean`);
+  }
+  return value;
+}
+
+function optionalOutput(value: unknown, hostId: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== 'string' || new TextEncoder().encode(value).byteLength > 32 * 1024) {
+    throw new ProtocolError(`chat host ${hostId} failure output exceeded its byte bound`);
   }
   return value;
 }

@@ -2250,6 +2250,14 @@ only when another page exists. Its `200` body remains a JSON array:
     "paused_at": "2026-09-01T01:00:00Z",
     "revived_at": "2026-09-01T00:30:00Z",
     "checkpoint_captured_at": "2026-09-01T00:59:58Z",
+    "last_failure": {
+      "phase": "workspace_setup",
+      "command_index": 1,
+      "output_excerpt": "error: toolchain download failed\n",
+      "retryable": true,
+      "cleanup_pending": false,
+      "occurred_at": "2026-09-01T01:00:01Z"
+    },
     "settings_revision": 17,
     "created_at": "2026-08-31T23:00:00Z"
   }
@@ -2257,11 +2265,14 @@ only when another page exists. Its `200` body remains a JSON array:
 ```
 
 `status` is one of `provisioning`, `active`, `pausing`, `paused`, `reviving`,
-or `retired`. Optional lifecycle times and `runtime_version` are omitted when
-absent. `thread_count` counts retained, non-removed threads. The projection does
-not expose provider runtime authority, transition claims, setup or prompt
-content, checkpoint object references or digests, credentials, or the pinned
-settings body.
+or `retired`. Optional lifecycle times, `runtime_version`, and `last_failure`
+are omitted when absent. A failure phase is one of `runtime`,
+`workspace_source`, `workspace_setup`, `credential`, `cleanup`, or
+`runtime_lost`. Setup failures may carry the zero-based `command_index` and the
+combined output tail, already bounded to 32 KiB. `thread_count` counts retained,
+non-removed threads. The projection does not expose provider runtime authority,
+transition claims, configured setup command text, prompt content, checkpoint
+object references or digests, credentials, or the pinned settings body.
 
 Retirement requires `cma:admin:control`, exposed as `control_any_session`, and
 is valid for active and paused hosts. It returns the resulting host projection
@@ -2666,6 +2677,24 @@ semantic refusal is `422 invalid_request` and names `field` and `path` without
 reflecting the submitted scalar. Permission (`unrestricted`), mode
 (`conversation`), credential (`delegated`), and the deployment's default agent
 kernel are fixed behavior and are not stored fields.
+
+Setup commands run sequentially after the repository clone and again after a
+revived workspace is restored, before any conversation process opens. Each is
+executed by `/bin/bash -c` in the prepared repository as runtime uid 10001,
+which has no root authority. Commands therefore must use user-space installs,
+must be idempotent, and should prefer paths under the repository so installed
+toolchains ride the pause checkpoint. The Lean fixture command is exactly:
+
+```sh
+[ -x .toolchain/bin/lake ] || (curl -sSf https://elan.lean-lang.org/elan-init.sh | ELAN_HOME=$PWD/.toolchain sh -s -- -y --default-toolchain "$(cat lean-toolchain)")
+```
+
+The supervisor gives each command 600 seconds, stops at the first nonzero exit,
+and retains only one combined stdout/stderr tail of at most 32 KiB. A setup call
+is serialized with startup and is refused once any conversation has opened in
+that runtime incarnation. A failing index and its bounded excerpt are retained
+on the host for operators; neither configured command text nor output is copied
+to activity.
 
 To remove only Chat while preserving every other setting, send:
 

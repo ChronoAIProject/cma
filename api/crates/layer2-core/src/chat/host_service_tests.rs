@@ -1275,7 +1275,7 @@ async fn failed_exact_cleanup_retains_runtime_authority_for_reconciliation() {
 }
 
 #[tokio::test]
-async fn nonzero_setup_preserves_only_the_failing_command_index_and_cleans_runtime() {
+async fn nonzero_setup_persists_the_bounded_failure_evidence_and_cleans_runtime() {
     let fixture = fixture(
         platform_with(Some(enabled_chat())),
         chat_capabilities(),
@@ -1299,6 +1299,10 @@ async fn nonzero_setup_preserves_only_the_failing_command_index_and_cleans_runti
     let host = stored_host(&fixture, &owner).await;
     let failure = host.last_failure.unwrap();
     assert_eq!(failure.command_index, Some(1));
+    assert_eq!(
+        failure.output_excerpt.as_deref(),
+        Some("bounded test failure")
+    );
     assert!(host.runtime_id.is_none());
     assert!(fixture.adapter.running.lock().await.is_empty());
 }
@@ -1347,6 +1351,12 @@ async fn runtime_spec_carries_pinned_chat_policy_and_deployment_baseline() {
     let sources = fixture.adapter.workspace_sources.lock().await;
     assert_eq!(sources[0].1.repository_url, chat.workspace.repository_url);
     assert_eq!(sources[0].1.reference, chat.workspace.branch);
+    drop(sources);
+    assert_eq!(
+        *fixture.adapter.chat_workspace_events.lock().await,
+        ["workspace_source", "workspace_setup"],
+        "initial provisioning must run setup only after the repository clone"
+    );
 }
 
 #[tokio::test]

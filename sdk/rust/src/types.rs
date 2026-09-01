@@ -580,6 +580,43 @@ pub enum ChatHostStatus {
     Retired,
 }
 
+/// Phase of one sanitized failure retained for chat-host operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatHostFailurePhase {
+    /// Provider runtime creation or readiness failed.
+    Runtime,
+    /// The configured repository could not be prepared.
+    WorkspaceSource,
+    /// An administrator-owned setup command or its transport failed.
+    WorkspaceSetup,
+    /// The owner's delegated credential could not be installed.
+    Credential,
+    /// A failed host transition still needs runtime cleanup.
+    Cleanup,
+    /// The recorded runtime stopped serving unexpectedly.
+    RuntimeLost,
+}
+
+/// Bounded operator evidence for the host's most recent failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatHostFailure {
+    /// Typed lifecycle phase that failed.
+    pub phase: ChatHostFailurePhase,
+    /// Zero-based setup command index, when a command returned nonzero.
+    #[serde(default)]
+    pub command_index: Option<usize>,
+    /// Combined stdout/stderr tail, bounded by the runtime to 32 KiB.
+    #[serde(default)]
+    pub output_excerpt: Option<String>,
+    /// Whether retrying the host transition may succeed without policy changes.
+    pub retryable: bool,
+    /// Whether the failed transition still owns a runtime that needs removal.
+    pub cleanup_pending: bool,
+    /// Time this failure was durably recorded, in RFC 3339 form.
+    pub occurred_at: String,
+}
+
 /// Redacted administrative projection of one shared chat host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatHost {
@@ -603,6 +640,9 @@ pub struct ChatHost {
     /// Time of the retained verified checkpoint, in RFC 3339 form.
     #[serde(default)]
     pub checkpoint_captured_at: Option<String>,
+    /// Most recent sanitized host failure, when one is retained.
+    #[serde(default)]
+    pub last_failure: Option<ChatHostFailure>,
     /// Platform-settings revision pinned when this host generation was created.
     pub settings_revision: u64,
     /// Host-generation creation time, in RFC 3339 form.
@@ -639,6 +679,22 @@ impl ChatHost {
         if self.created_at.trim().is_empty() {
             return Err(Error::protocol(
                 "a chat host response contains an empty creation timestamp",
+            ));
+        }
+        if let Some(failure) = self.last_failure.as_ref()
+            && (failure.occurred_at.trim().is_empty()
+                || failure
+                    .output_excerpt
+                    .as_ref()
+                    .is_some_and(|excerpt| excerpt.len() > 32 * 1024)
+                || (failure.command_index.is_some()
+                    && failure.phase != ChatHostFailurePhase::WorkspaceSetup)
+                || (failure.output_excerpt.is_some()
+                    && (failure.phase != ChatHostFailurePhase::WorkspaceSetup
+                        || failure.command_index.is_none())))
+        {
+            return Err(Error::protocol(
+                "a chat host response contains a malformed failure",
             ));
         }
         Ok(self)

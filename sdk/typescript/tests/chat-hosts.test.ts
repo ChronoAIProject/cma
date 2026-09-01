@@ -15,6 +15,14 @@ const HOST = {
   paused_at: '2026-09-01T01:00:00Z',
   revived_at: '2026-09-01T02:00:00Z',
   checkpoint_captured_at: '2026-09-01T00:45:00Z',
+  last_failure: {
+    phase: 'workspace_setup',
+    command_index: 1,
+    output_excerpt: 'bounded setup failure',
+    retryable: true,
+    cleanup_pending: false,
+    occurred_at: '2026-09-01T02:05:00Z',
+  },
   settings_revision: 17,
   created_at: '2026-08-31T23:00:00Z',
 } as const;
@@ -40,6 +48,14 @@ describe('chat host wire shape', () => {
       pausedAt: Date.parse(HOST.paused_at),
       revivedAt: Date.parse(HOST.revived_at),
       checkpointCapturedAt: Date.parse(HOST.checkpoint_captured_at),
+      lastFailure: {
+        phase: 'workspace_setup',
+        commandIndex: 1,
+        outputExcerpt: 'bounded setup failure',
+        retryable: true,
+        cleanupPending: false,
+        occurredAt: Date.parse(HOST.last_failure.occurred_at),
+      },
       settingsRevision: 17,
       createdAt: Date.parse(HOST.created_at),
     });
@@ -49,6 +65,12 @@ describe('chat host wire shape', () => {
     expect(() => toChatHost({ ...HOST, status: 'future' })).toThrow(ProtocolError);
     expect(() => toChatHost({ ...HOST, thread_count: -1 })).toThrow(ProtocolError);
     expect(() => toChatHost({ ...HOST, created_at: 'not-a-time' })).toThrow(ProtocolError);
+    expect(() =>
+      toChatHost({
+        ...HOST,
+        last_failure: { ...HOST.last_failure, phase: 'runtime' },
+      }),
+    ).toThrow(ProtocolError);
   });
 });
 

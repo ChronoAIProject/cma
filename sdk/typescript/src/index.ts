@@ -40,12 +40,15 @@
 
 export { Cma, createClient } from './client.js';
 export {
+  CHAT_HOST_FAILURE_PHASES,
   CHAT_HOST_STATUSES,
   listChatHosts,
   listChatHostsPage,
   retireChatHost,
   toChatHost,
   type ChatHost,
+  type ChatHostFailure,
+  type ChatHostFailurePhase,
   type ChatHostListRequest,
   type ChatHostPageRequest,
   type ChatHostStatus,

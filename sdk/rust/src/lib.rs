@@ -95,10 +95,10 @@ pub use settings::{
 pub use stream::EventStream;
 pub use triggers::*;
 pub use types::{
-    Agent, ApprovalDecision, ChatHost, ChatHostId, ChatHostPageRequest, ChatHostStatus,
-    ChatSession, Conformance, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE, MIN_PAGE_SIZE,
-    Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach, ReasoningEffort,
-    RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput, SessionPageRequest,
-    SessionPricing, SessionSize, SessionStatus, SessionSurface, SessionSurfaceFilter, Skill,
-    StopReason, TerminalGeometry, Usage,
+    Agent, ApprovalDecision, ChatHost, ChatHostFailure, ChatHostFailurePhase, ChatHostId,
+    ChatHostPageRequest, ChatHostStatus, ChatSession, Conformance, CreateSessionRequest,
+    CredentialMode, MAX_PAGE_SIZE, MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits,
+    PermissionMode, PublicIdentity, Reach, ReasoningEffort, RecoveryState, ScreenSnapshot, Session,
+    SessionId, SessionInput, SessionPageRequest, SessionPricing, SessionSize, SessionStatus,
+    SessionSurface, SessionSurfaceFilter, Skill, StopReason, TerminalGeometry, Usage,
 };

@@ -1,4 +1,8 @@
-import type { ChatSettings, StoredChatSettings } from '@chronoai/cma-sdk';
+import type {
+  ChatHostFailure as SdkChatHostFailure,
+  ChatSettings,
+  StoredChatSettings,
+} from '@chronoai/cma-sdk';
 
 /**
  * The operator surface, as the console models it.
@@ -94,6 +98,8 @@ export interface AdminSession {
 }
 
 /** One deployment-managed shared chat runtime in the operator inventory. */
+export type ChatHostFailure = SdkChatHostFailure;
+
 export interface ChatHost {
   readonly id: string;
   readonly owner: string;
@@ -103,6 +109,7 @@ export interface ChatHost {
   readonly pausedAt?: number;
   readonly revivedAt?: number;
   readonly checkpointCapturedAt?: number;
+  readonly lastFailure?: ChatHostFailure;
   readonly settingsRevision: number;
   readonly createdAt: number;
 }
