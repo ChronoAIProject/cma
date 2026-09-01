@@ -29,6 +29,8 @@ import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 interface ComposerProps {
   readonly capabilities: SessionCapabilities;
   readonly turnInFlight: boolean;
+  /** Surface-specific invitation; Agent keeps the established default. */
+  readonly placeholder?: string;
   /** Why the session cannot take input at all, when it cannot (§11). */
   readonly refusedReason?: string;
   /**
@@ -72,6 +74,7 @@ const POLICY_SAYS: Record<ConcurrentInput, string> = {
 export function Composer({
   capabilities,
   turnInFlight,
+  placeholder = 'Say what you want done',
   refusedReason,
   onSend,
   availableCommands,
@@ -248,7 +251,7 @@ export function Composer({
           ref={fieldRef}
           rows={1}
           value={text}
-          placeholder="Say what you want done"
+          placeholder={placeholder}
           onChange={(event) => {
             setText(event.target.value);
             // A draft that stops being a command re-arms the menu, so pressing
