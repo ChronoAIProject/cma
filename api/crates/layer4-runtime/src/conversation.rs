@@ -100,6 +100,15 @@ pub struct Restored {
     pub session_id: Option<String>,
 }
 
+/// Read the identifier from a carried conversation without writing it.
+///
+/// Runtime admission uses this before restore so a named slot conflict cannot
+/// leave an unowned rollout on disk after returning `409 Conflict`.
+pub fn carried_conversation_id(carried: &[u8]) -> Option<String> {
+    let (_, bytes) = carry::open(carried);
+    conversation_id_of(bytes)
+}
+
 /// Lay a captured conversation down where the agent will find it.
 pub fn restore(
     home: &Path,

@@ -623,8 +623,19 @@ impl SessionService {
                     .map(|origin| origin.worktree_path.clone());
                 options.conversation_slot = Some(id.0.clone());
                 options.resume_conversation = conversation_id.clone();
+                // A replacement shared-chat runtime has the snapshot on disk
+                // but no live agent process. Its slot declaration supplies the
+                // restored id so the handshake performs `session/load` at the
+                // original worktree; setting `resume_conversation` here would
+                // incorrectly take the same-process rejoin branch.
+                let restored_chat_slot = record.chat_origin.is_some()
+                    && record.session.status == SessionStatus::Provisioning
+                    && conversation_id.is_some();
+                if restored_chat_slot {
+                    options.resume_conversation = None;
+                }
                 options.restricted_service_gateway = record.trigger_origin.is_some();
-                if options.resume_conversation.is_none() {
+                if options.resume_conversation.is_none() && !restored_chat_slot {
                     tracing::warn!(
                         session_id = %id,
                         "this session's conversation was never named; the runtime will be asked for a new one"

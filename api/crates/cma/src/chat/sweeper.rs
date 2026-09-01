@@ -1,4 +1,4 @@
-//! One-minute scheduling for shared-host inactivity pauses.
+//! One-minute scheduling for shared-host image rotation and inactivity pauses.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -13,6 +13,8 @@ use tokio::time::MissedTickBehavior;
 const PAUSE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const PAUSE_PAGE_SIZE: u32 = 200;
 const PAUSE_MAX_PAGES_PER_PASS: usize = 8;
+const ROTATION_PAGE_SIZE: u32 = 200;
+const ROTATION_MAX_PAGES_PER_PASS: usize = 8;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct PausePassStats {
@@ -26,12 +28,30 @@ struct PausePassStats {
     elapsed_milliseconds: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RotationPassStats {
+    pages: usize,
+    candidates: usize,
+    rotated: usize,
+    skipped: usize,
+    errors: usize,
+    page_budget_exhausted: bool,
+    elapsed_milliseconds: u64,
+}
+
 #[async_trait]
 trait PauseBackend: Send + Sync {
     async fn candidates(&self, now: &str, page: PageRequest)
         -> Result<Page<ChatHostId>, CoreError>;
 
     async fn pause(&self, id: &ChatHostId, now: &str) -> Result<ChatPauseOutcome, CoreError>;
+}
+
+#[async_trait]
+trait RotationBackend: Send + Sync {
+    async fn candidates(&self, page: PageRequest) -> Result<Page<ChatHostId>, CoreError>;
+
+    async fn rotate(&self, id: &ChatHostId) -> Result<bool, CoreError>;
 }
 
 #[async_trait]
@@ -51,8 +71,31 @@ impl PauseBackend for SessionService {
     }
 }
 
+struct SessionRotationBackend(Arc<SessionService>);
+
+#[async_trait]
+impl RotationBackend for SessionRotationBackend {
+    async fn candidates(&self, page: PageRequest) -> Result<Page<ChatHostId>, CoreError> {
+        self.0
+            .chat_rotation_candidates(page)
+            .await
+            .map(|page| page.map(|host| host.id))
+    }
+
+    async fn rotate(&self, id: &ChatHostId) -> Result<bool, CoreError> {
+        self.0.rotate_chat_host_on_image_drift(id).await
+    }
+}
+
 struct ChatPauseSweeper {
     backend: Arc<dyn PauseBackend>,
+    page_size: u32,
+    max_pages: usize,
+    resume_cursor: Mutex<Option<PageCursor>>,
+}
+
+struct ChatRotationSweeper {
+    backend: Arc<dyn RotationBackend>,
     page_size: u32,
     max_pages: usize,
     resume_cursor: Mutex<Option<PageCursor>>,
@@ -141,6 +184,81 @@ impl ChatPauseSweeper {
     }
 }
 
+impl ChatRotationSweeper {
+    fn production(service: Arc<SessionService>) -> Arc<Self> {
+        Arc::new(Self {
+            backend: Arc::new(SessionRotationBackend(service)),
+            page_size: ROTATION_PAGE_SIZE,
+            max_pages: ROTATION_MAX_PAGES_PER_PASS,
+            resume_cursor: Mutex::new(None),
+        })
+    }
+
+    async fn run_pass(&self) -> RotationPassStats {
+        let started = Instant::now();
+        let mut stats = RotationPassStats::default();
+        let mut cursor = self
+            .resume_cursor
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let mut next_pass_cursor = cursor.clone();
+        let mut seen = HashSet::new();
+
+        for page_index in 0..self.max_pages {
+            let page = match self
+                .backend
+                .candidates(PageRequest::new(self.page_size, cursor.clone()))
+                .await
+            {
+                Ok(page) => page,
+                Err(error) => {
+                    stats.errors += 1;
+                    tracing::warn!(%error, "chat rotation candidate page could not be read");
+                    break;
+                }
+            };
+            stats.pages += 1;
+            stats.candidates += page.items.len();
+            for host_id in page.items {
+                match self.backend.rotate(&host_id).await {
+                    Ok(true) => stats.rotated += 1,
+                    Ok(false) => stats.skipped += 1,
+                    Err(error) => {
+                        stats.errors += 1;
+                        tracing::warn!(chat_host = %host_id, %error, "chat image rotation failed");
+                    }
+                }
+            }
+
+            let Some(next) = page.next else {
+                next_pass_cursor = None;
+                break;
+            };
+            if !seen.insert(next.clone()) {
+                stats.errors += 1;
+                next_pass_cursor = None;
+                tracing::error!("chat rotation sweep stopped a repeated page cursor");
+                break;
+            }
+            next_pass_cursor = Some(next.clone());
+            if page_index + 1 == self.max_pages {
+                stats.page_budget_exhausted = true;
+                break;
+            }
+            cursor = Some(next);
+        }
+
+        *self
+            .resume_cursor
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = next_pass_cursor;
+        stats.elapsed_milliseconds = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        log_rotation_pass(stats);
+        stats
+    }
+}
+
 fn log_pass(stats: PausePassStats) {
     let actionable =
         stats.paused > 0 || stats.refused > 0 || stats.errors > 0 || stats.page_budget_exhausted;
@@ -168,20 +286,53 @@ fn log_pass(stats: PausePassStats) {
     }
 }
 
+fn log_rotation_pass(stats: RotationPassStats) {
+    let actionable = stats.rotated > 0 || stats.errors > 0 || stats.page_budget_exhausted;
+    tracing::info!(
+        event_name = "cma_chat_rotation_pass",
+        pages = stats.pages,
+        candidates = stats.candidates,
+        rotated = stats.rotated,
+        skipped = stats.skipped,
+        errors = stats.errors,
+        page_budget_exhausted = stats.page_budget_exhausted,
+        elapsed_milliseconds = stats.elapsed_milliseconds,
+        actionable,
+        "chat image-rotation sweep settled"
+    );
+    if stats.errors > 0 || stats.page_budget_exhausted {
+        tracing::warn!(
+            event_name = "cma_chat_rotation_alert_candidate",
+            errors = stats.errors,
+            page_budget_exhausted = stats.page_budget_exhausted,
+            "chat image-rotation maintenance needs operator attention"
+        );
+    }
+}
+
 /// Run inactivity maintenance until the process exits.
 pub(crate) fn spawn(service: Arc<SessionService>) {
-    let sweeper = ChatPauseSweeper::production(service);
+    let pause_sweeper = ChatPauseSweeper::production(Arc::clone(&service));
+    let rotation_sweeper = ChatRotationSweeper::production(service);
     tokio::spawn(run_on_cadence(PAUSE_SWEEP_INTERVAL, move || {
-        let sweeper = Arc::clone(&sweeper);
+        let pause_sweeper = Arc::clone(&pause_sweeper);
         async move {
-            sweeper.run_pass().await;
+            pause_sweeper.run_pass().await;
+        }
+    }));
+    tokio::spawn(run_on_cadence(PAUSE_SWEEP_INTERVAL, move || {
+        let rotation_sweeper = Arc::clone(&rotation_sweeper);
+        async move {
+            rotation_sweeper.run_pass().await;
         }
     }));
     tracing::info!(
         sweep_seconds = PAUSE_SWEEP_INTERVAL.as_secs(),
-        page_size = PAUSE_PAGE_SIZE,
-        max_pages = PAUSE_MAX_PAGES_PER_PASS,
-        "chat inactivity cadence started"
+        pause_page_size = PAUSE_PAGE_SIZE,
+        pause_max_pages = PAUSE_MAX_PAGES_PER_PASS,
+        rotation_page_size = ROTATION_PAGE_SIZE,
+        rotation_max_pages = ROTATION_MAX_PAGES_PER_PASS,
+        "chat lifecycle cadence started"
     );
 }
 
@@ -212,6 +363,12 @@ mod tests {
         pauses: AtomicUsize,
     }
 
+    struct FakeRotationBackend {
+        pages: AsyncMutex<VecDeque<Page<ChatHostId>>>,
+        calls: AsyncMutex<Vec<Option<PageCursor>>>,
+        outcomes: AsyncMutex<VecDeque<Result<bool, CoreError>>>,
+    }
+
     #[async_trait]
     impl PauseBackend for FakeBackend {
         async fn candidates(
@@ -230,6 +387,26 @@ mod tests {
         async fn pause(&self, _id: &ChatHostId, _now: &str) -> Result<ChatPauseOutcome, CoreError> {
             self.pauses.fetch_add(1, Ordering::SeqCst);
             Ok(self.outcome.clone())
+        }
+    }
+
+    #[async_trait]
+    impl RotationBackend for FakeRotationBackend {
+        async fn candidates(&self, page: PageRequest) -> Result<Page<ChatHostId>, CoreError> {
+            self.calls.lock().await.push(page.cursor().cloned());
+            self.pages
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| CoreError::RuntimeUnavailable("no fake rotation page".into()))
+        }
+
+        async fn rotate(&self, _id: &ChatHostId) -> Result<bool, CoreError> {
+            self.outcomes
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| CoreError::RuntimeUnavailable("no fake rotation outcome".into()))?
         }
     }
 
@@ -310,11 +487,56 @@ mod tests {
         assert_eq!(*backend.calls.lock().await, [None, Some(next)]);
     }
 
+    #[tokio::test]
+    async fn rotation_pass_walks_filtered_pages_and_types_each_outcome() {
+        let next = cursor("chho_rotation_next");
+        let backend = Arc::new(FakeRotationBackend {
+            pages: AsyncMutex::new(VecDeque::from([
+                Page {
+                    items: Vec::new(),
+                    next: Some(next.clone()),
+                },
+                Page {
+                    items: vec![
+                        ChatHostId("chho_rotated".into()),
+                        ChatHostId("chho_busy".into()),
+                        ChatHostId("chho_failed".into()),
+                    ],
+                    next: None,
+                },
+            ])),
+            calls: AsyncMutex::new(Vec::new()),
+            outcomes: AsyncMutex::new(VecDeque::from([
+                Ok(true),
+                Ok(false),
+                Err(CoreError::RuntimeUnavailable("rotation failed".into())),
+            ])),
+        });
+        let sweeper = ChatRotationSweeper {
+            backend: backend.clone(),
+            page_size: 2,
+            max_pages: 2,
+            resume_cursor: Mutex::new(None),
+        };
+
+        let stats = sweeper.run_pass().await;
+
+        assert_eq!(stats.pages, 2);
+        assert_eq!(stats.candidates, 3);
+        assert_eq!(stats.rotated, 1);
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(stats.errors, 1);
+        assert!(!stats.page_budget_exhausted);
+        assert_eq!(*backend.calls.lock().await, [None, Some(next)]);
+    }
+
     #[test]
     fn cadence_and_page_bounds_are_fixed() {
         assert_eq!(PAUSE_SWEEP_INTERVAL, Duration::from_secs(60));
         assert_eq!(PAUSE_PAGE_SIZE, 200);
         assert_eq!(PAUSE_MAX_PAGES_PER_PASS, 8);
+        assert_eq!(ROTATION_PAGE_SIZE, 200);
+        assert_eq!(ROTATION_MAX_PAGES_PER_PASS, 8);
     }
 
     #[tokio::test(start_paused = true)]

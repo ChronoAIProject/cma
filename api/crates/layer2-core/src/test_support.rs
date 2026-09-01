@@ -13,11 +13,11 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::authz::{Authorization, Caller, Capability};
 use crate::coordination::{
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
-    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
-    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
-    SessionLeaseRequest, SessionOperation,
+    ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, RuntimeAuthority,
+    RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
+    RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest,
+    SessionLease, SessionLeaseRequest, SessionOperation,
 };
 use crate::environment::Baseline;
 use crate::environment_service::EnvironmentProfileService;
@@ -479,8 +479,17 @@ impl FakeStore {
         events: &[Event],
         create: bool,
         conversation_authority: Option<&ConversationWriteAuthority>,
+        chat_runtime_transition: Option<&ChatRuntimeTransition>,
     ) -> Result<u64, StoreError> {
         Self::validate_ordinary_event_batch(events)?;
+        if let Some(transition) = chat_runtime_transition {
+            transition.validate_for(record)?;
+        }
+        if conversation_authority.is_some() && chat_runtime_transition.is_some() {
+            return Err(StoreError::Malformed(
+                "one session write cannot carry two authority predicates".into(),
+            ));
+        }
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
         let mut receipts = self.write_receipts.lock().await;
@@ -547,6 +556,23 @@ impl FakeStore {
                 }
             }
         }
+        if let Some(transition) = chat_runtime_transition {
+            let durable = existing.expect("a chat runtime transition is an update");
+            let state = coordination
+                .entry(record.session.id.0.clone())
+                .or_insert_with(|| FakeCoordination::legacy(durable));
+            if durable
+                .chat_origin
+                .as_ref()
+                .is_none_or(|origin| origin.host_id != transition.host_id)
+                || SessionBoundary::for_record(durable, state.authority.generation)
+                    != transition.previous
+            {
+                return Err(StoreError::SessionAuthorityChanged {
+                    id: record.session.id.clone(),
+                });
+            }
+        }
 
         if create {
             if record.revision != 0 || existing.is_some() {
@@ -580,14 +606,30 @@ impl FakeStore {
             .load(std::sync::atomic::Ordering::SeqCst)
             && state.authority.generation == 0
             && state.lease.is_none()
-            && conversation_authority.is_none();
+            && conversation_authority.is_none()
+            && chat_runtime_transition.is_none();
         if let Some(durable) = existing {
-            if durable.runtime_id != record.runtime_id && !compatibility_runtime_change_allowed {
+            if durable.runtime_id != record.runtime_id
+                && !compatibility_runtime_change_allowed
+                && chat_runtime_transition.is_none()
+            {
                 return Err(StoreError::SessionAuthorityChanged {
                     id: record.session.id.clone(),
                 });
             }
         }
+        let transition_epochs = chat_runtime_transition
+            .map(|_| {
+                Ok((
+                    state.interaction_epoch.checked_add(1).ok_or_else(|| {
+                        StoreError::Malformed("session interaction epoch overflow".into())
+                    })?,
+                    state.conversation_epoch.checked_add(1).ok_or_else(|| {
+                        StoreError::Malformed("session conversation epoch overflow".into())
+                    })?,
+                ))
+            })
+            .transpose()?;
 
         let mut held = self.events.lock().await;
         let sequence_floor = Self::event_tail(&held, &record.session.id).max(recorded_tail);
@@ -613,7 +655,19 @@ impl FakeStore {
         durable.session.last_seq = durable_tail;
         held.extend(events.iter().cloned().map(StoredEvent::from));
         sessions.insert(record.session.id.0.clone(), durable.clone());
-        if compatibility_runtime_change_allowed {
+        if let Some(transition) = chat_runtime_transition {
+            let (interaction_epoch, conversation_epoch) =
+                transition_epochs.expect("a transition computed its fencing epochs");
+            state.authority = transition.next.clone();
+            state.next_generation = state.next_generation.max(transition.next.generation);
+            if let Some(held) = state.lease.take() {
+                state.retired_lease_tokens.insert(held.lease.token);
+            }
+            state.interaction_epoch = interaction_epoch;
+            state.conversation_epoch = conversation_epoch;
+            state.conversation_link_token = None;
+            state.conversation_opening = None;
+        } else if compatibility_runtime_change_allowed {
             // Compatibility-stage writers have no separate authority switch.
             // Once a recorded generation exists, ordinary record/event commits
             // must never be allowed to move runtime ownership.
@@ -1970,7 +2024,7 @@ impl SessionStore for FakeStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.commit_idempotent(write_id, record, events, false, None)
+        self.commit_idempotent(write_id, record, events, false, None, None)
             .await
     }
 
@@ -1981,7 +2035,18 @@ impl SessionStore for FakeStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.commit_idempotent(write_id, record, events, false, Some(authority))
+        self.commit_idempotent(write_id, record, events, false, Some(authority), None)
+            .await
+    }
+
+    async fn commit_chat_runtime_transition_idempotent(
+        &self,
+        write_id: &str,
+        transition: &ChatRuntimeTransition,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.commit_idempotent(write_id, record, events, false, None, Some(transition))
             .await
     }
 
@@ -1991,7 +2056,7 @@ impl SessionStore for FakeStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.commit_idempotent(write_id, record, events, true, None)
+        self.commit_idempotent(write_id, record, events, true, None, None)
             .await
     }
 
@@ -2421,6 +2486,45 @@ mod runtime_started_store_tests {
         })
     }
 
+    fn chat_record() -> (SessionRecord, crate::ChatHostId) {
+        let owner = SubjectId("subject-chat-runtime-transition".into());
+        let host_id = crate::ChatHostId::for_owner(&owner);
+        let mut record = SessionRecord::new(Session {
+            chat: Some(crate::ChatSession {
+                worktree_name: "chat-1".into(),
+                worktree_path: "/workspace/worktrees/chat-1".into(),
+                title: None,
+                paused_notice: Some("paused".into()),
+            }),
+            id: SessionId("sesn_chat_runtime_transition".into()),
+            owner,
+            kernel: KernelId::new("example-runtime"),
+            status: SessionStatus::Ready,
+            recovery_state: RecoveryState::Normal,
+            stop_reason: None,
+            options: AgentOptions::default(),
+            environment_profile: None,
+            geometry: TerminalGeometry::default(),
+            last_seq: 0,
+            runtime_version: Some("runtime-v1".into()),
+            rotations: 0,
+            rotated_at: None,
+            capabilities: Default::default(),
+            granted_services: None,
+            granted_skills: None,
+            pricing: None,
+            created_at: "2026-08-27T00:00:00Z".into(),
+        });
+        record.runtime_id = Some("runtime-chat-old".into());
+        record.chat_origin = Some(crate::store::ChatOrigin {
+            host_id: host_id.clone(),
+            worktree_name: "chat-1".into(),
+            worktree_path: "/workspace/worktrees/chat-1".into(),
+            paused_notice: Some("paused".into()),
+        });
+        (record, host_id)
+    }
+
     fn runtime_started(id: &SessionId) -> Event {
         Event {
             session_id: id.clone(),
@@ -2484,6 +2588,261 @@ mod runtime_started_store_tests {
             events[0].kind,
             StoredEventKind::Known(EventKind::RuntimeIncarnationStarted)
         ));
+    }
+
+    #[tokio::test]
+    async fn fake_store_chat_runtime_transition_fences_writers_without_cleanup_debt() {
+        let store = FakeStore::default();
+        let (original, host_id) = chat_record();
+        store.seed(&original).await.unwrap();
+        let previous_authority = store
+            .runtime_authority(&original.session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let previous = SessionBoundary::for_record(&original, previous_authority.generation);
+        let lease = store
+            .acquire_session_lease(&SessionLeaseRequest {
+                session_id: original.session.id.clone(),
+                holder: "chat-transition-holder".into(),
+                token: "chat-transition-lease".into(),
+                boundary: previous.clone(),
+                operation: SessionOperation::Lifecycle,
+                ttl: Duration::from_secs(60),
+            })
+            .await
+            .unwrap();
+        let opening = store
+            .acquire_conversation_opening(
+                &ConversationOpeningLeaseRequest::new(
+                    original.session.id.clone(),
+                    lease.holder.clone(),
+                    "runtime-chat-old",
+                    previous_authority.generation,
+                    None,
+                    Duration::from_secs(60),
+                ),
+                Some(&lease),
+            )
+            .await
+            .unwrap();
+        let stale_link = store
+            .publish_conversation_link(&opening, Some(&lease))
+            .await
+            .unwrap();
+
+        let marker = Event {
+            session_id: original.session.id.clone(),
+            seq: 1,
+            kind: EventKind::RuntimeIncarnationStarted,
+            appended_at: "2026-08-27T00:00:01Z".into(),
+        };
+        let mut replacement = original.clone();
+        replacement.runtime_id = Some("runtime-chat-new".into());
+        replacement.session.status = SessionStatus::Provisioning;
+        replacement.session.last_seq = marker.seq;
+        let transition = ChatRuntimeTransition {
+            host_id,
+            previous,
+            next: RuntimeAuthority {
+                generation: 1,
+                runtime_id: Some("runtime-chat-new".into()),
+            },
+        };
+        let first_revision = store
+            .commit_chat_runtime_transition_idempotent(
+                "chat-runtime-transition",
+                &transition,
+                &replacement,
+                std::slice::from_ref(&marker),
+            )
+            .await
+            .unwrap();
+        let durable = store.get(&original.session.id).await.unwrap().unwrap();
+        assert_eq!(durable.revision, first_revision);
+        assert_eq!(durable.runtime_id.as_deref(), Some("runtime-chat-new"));
+        assert_eq!(durable.session.status, SessionStatus::Provisioning);
+        assert_eq!(
+            store
+                .runtime_authority(&original.session.id)
+                .await
+                .unwrap()
+                .unwrap(),
+            transition.next
+        );
+        assert!(matches!(
+            store.validate_conversation_link(&stale_link).await,
+            Err(StoreError::ConversationLinkChanged { .. })
+        ));
+        assert!(matches!(
+            store
+                .renew_session_lease(&lease, Duration::from_secs(60))
+                .await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        assert!(store
+            .runtime_cleanup_debts(&original.session.id)
+            .await
+            .unwrap()
+            .is_empty());
+
+        let next_boundary = SessionBoundary::for_record(&durable, transition.next.generation);
+        let next_lease = store
+            .acquire_session_lease(&SessionLeaseRequest {
+                session_id: original.session.id.clone(),
+                holder: "chat-successor-holder".into(),
+                token: "chat-successor-lease".into(),
+                boundary: next_boundary,
+                operation: SessionOperation::Lifecycle,
+                ttl: Duration::from_secs(60),
+            })
+            .await
+            .unwrap();
+        let next_opening = store
+            .acquire_conversation_opening(
+                &ConversationOpeningLeaseRequest::new(
+                    original.session.id.clone(),
+                    next_lease.holder.clone(),
+                    "runtime-chat-new",
+                    transition.next.generation,
+                    None,
+                    Duration::from_secs(60),
+                ),
+                Some(&next_lease),
+            )
+            .await
+            .unwrap();
+        let successor_link = store
+            .publish_conversation_link(&next_opening, Some(&next_lease))
+            .await
+            .unwrap();
+
+        let replay_revision = store
+            .commit_chat_runtime_transition_idempotent(
+                "chat-runtime-transition",
+                &transition,
+                &replacement,
+                std::slice::from_ref(&marker),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay_revision, first_revision);
+        store
+            .validate_conversation_link(&successor_link)
+            .await
+            .expect("replaying the old receipt does not fence a successor link");
+        assert_eq!(
+            store
+                .events_since(&original.session.id, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store
+            .runtime_cleanup_debts(&original.session.id)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn fake_store_chat_runtime_transition_rejects_stale_host_and_boundary() {
+        let store = FakeStore::default();
+        let (original, host_id) = chat_record();
+        store.seed(&original).await.unwrap();
+        let previous = SessionBoundary::for_record(&original, 0);
+        let marker = Event {
+            session_id: original.session.id.clone(),
+            seq: 1,
+            kind: EventKind::RuntimeIncarnationStarted,
+            appended_at: "2026-08-27T00:00:01Z".into(),
+        };
+
+        let other_host = crate::ChatHostId::for_owner(&SubjectId("another-chat-owner".into()));
+        let mut wrong_host_record = original.clone();
+        wrong_host_record.runtime_id = Some("runtime-chat-new".into());
+        wrong_host_record.session.last_seq = marker.seq;
+        wrong_host_record
+            .chat_origin
+            .as_mut()
+            .unwrap()
+            .host_id
+            .clone_from(&other_host);
+        let wrong_host = ChatRuntimeTransition {
+            host_id: other_host,
+            previous: previous.clone(),
+            next: RuntimeAuthority {
+                generation: 1,
+                runtime_id: Some("runtime-chat-new".into()),
+            },
+        };
+        assert!(matches!(
+            store
+                .commit_chat_runtime_transition_idempotent(
+                    "chat-runtime-wrong-host",
+                    &wrong_host,
+                    &wrong_host_record,
+                    std::slice::from_ref(&marker),
+                )
+                .await,
+            Err(StoreError::SessionAuthorityChanged { .. })
+        ));
+
+        let mut stale_record = original.clone();
+        stale_record.runtime_id = Some("runtime-chat-new".into());
+        stale_record.session.last_seq = marker.seq;
+        let stale_boundary = ChatRuntimeTransition {
+            host_id,
+            previous: SessionBoundary {
+                status: SessionStatus::Idle,
+                ..previous
+            },
+            next: RuntimeAuthority {
+                generation: 1,
+                runtime_id: Some("runtime-chat-new".into()),
+            },
+        };
+        assert!(matches!(
+            store
+                .commit_chat_runtime_transition_idempotent(
+                    "chat-runtime-stale-boundary",
+                    &stale_boundary,
+                    &stale_record,
+                    std::slice::from_ref(&marker),
+                )
+                .await,
+            Err(StoreError::SessionAuthorityChanged { .. })
+        ));
+
+        let durable = store.get(&original.session.id).await.unwrap().unwrap();
+        assert_eq!(durable.revision, original.revision);
+        assert_eq!(durable.runtime_id, original.runtime_id);
+        assert_eq!(durable.session.status, original.session.status);
+        assert_eq!(durable.session.last_seq, original.session.last_seq);
+        assert_eq!(durable.chat_origin, original.chat_origin);
+        assert_eq!(
+            store
+                .runtime_authority(&original.session.id)
+                .await
+                .unwrap()
+                .unwrap(),
+            RuntimeAuthority {
+                generation: 0,
+                runtime_id: Some("runtime-chat-old".into()),
+            }
+        );
+        assert!(store
+            .events_since(&original.session.id, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(store.write_receipts.lock().await.is_empty());
+        assert!(store
+            .runtime_cleanup_debts(&original.session.id)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
