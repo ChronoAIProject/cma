@@ -221,6 +221,9 @@ async fn relay(
     params: AttachParams,
 ) -> std::io::Result<()> {
     let (mut sink, source) = socket.split();
+    let conversation_slot = params
+        .conversational()
+        .then(|| crate::SlotId::from_query(params.conversation.clone()));
 
     if params.telemetric() && !params.framed() {
         tracing::warn!(runtime = %id, "a resource reading cannot be sent on a wire with no lane discriminator");
@@ -239,7 +242,10 @@ async fn relay(
         } else {
             ["ctl", "term"]
         };
-        let ready = serde_json::to_string(&Ready::declaring(&lanes).resuming(state.resuming()))
+        let resuming = conversation_slot
+            .as_ref()
+            .and_then(|slot| state.resuming(slot));
+        let ready = serde_json::to_string(&Ready::declaring(&lanes).resuming(resuming))
             .map_err(|e| std::io::Error::other(format!("cannot render the ready frame: {e}")))?;
         if sink.send(Message::Text(ready.into())).await.is_err() {
             return Ok(());
@@ -250,7 +256,7 @@ async fn relay(
         return crate::telemetry::relay_telemetry(sink, source, state, id, interval_ms).await;
     }
     if params.conversational() {
-        let slot = crate::SlotId::from_query(params.conversation.clone());
+        let slot = conversation_slot.expect("a conversational link resolved its slot");
         crate::conversation_link::relay_conversation(sink, source, state, id, slot).await
     } else {
         relay_terminal(sink, source, state, id, params).await

@@ -448,6 +448,24 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
+    /// Restore one captured conversation into an exact supervisor slot.
+    ///
+    /// Unlike `RuntimeSpec::restore_from`, this may be called repeatedly before
+    /// the replacement runtime opens any conversation. The supervisor binds
+    /// the identifier contained in each opaque snapshot to `conversation_slot`,
+    /// so opening that slot can load the right history without treating it as
+    /// a conversation that is already live in the new process.
+    async fn restore_conversation(
+        &self,
+        _handle: &RuntimeHandle,
+        _conversation_slot: &str,
+        _snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot restore a conversation into a named slot".to_string(),
+        ))
+    }
+
     /// Quiesce every supported workspace writer, seal one complete checkpoint,
     /// resume the same writers, and return the exact retained artifact.
     ///
@@ -608,6 +626,9 @@ mod tests {
             bare.snapshot_conversation(&handle, "conv-1")
                 .await
                 .expect_err("no id-addressed snapshot"),
+            bare.restore_conversation(&handle, "slot-1", b"snapshot")
+                .await
+                .expect_err("no named-slot restore"),
             bare.list_runtimes().await.expect_err("cannot enumerate"),
             bare.watch_resources(&handle, mpsc::channel(1).0)
                 .await

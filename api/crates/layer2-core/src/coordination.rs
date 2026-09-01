@@ -11,6 +11,45 @@ use std::time::Duration;
 use crate::ids::SessionId;
 use crate::session::SessionStatus;
 use crate::store::SessionRecord;
+use crate::ChatHostId;
+
+/// Host-authorized replacement of one chat thread's shared runtime authority.
+///
+/// Chat threads share one provider runtime, so their session rows must move to
+/// its new handle without creating one provider-cleanup debt per thread. The
+/// host lifecycle owns that cleanup. This predicate instead fences the exact
+/// old session boundary and advances the per-thread authority used by runtime
+/// interactions and conversation links.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatRuntimeTransition {
+    /// Durable shared host the session must still belong to.
+    pub host_id: ChatHostId,
+    /// Exact status and runtime authority observed before the replacement.
+    pub previous: SessionBoundary,
+    /// Shared replacement handle and host generation to publish.
+    pub next: RuntimeAuthority,
+}
+
+impl ChatRuntimeTransition {
+    /// Validate invariants independent of a particular store representation.
+    pub fn validate_for(&self, record: &SessionRecord) -> Result<(), crate::StoreError> {
+        if self.host_id.0.is_empty()
+            || self.next.generation == 0
+            || self.next.generation <= self.previous.authority.generation
+            || self.next.runtime_id.as_deref().is_none_or(str::is_empty)
+            || record.runtime_id != self.next.runtime_id
+            || record
+                .chat_origin
+                .as_ref()
+                .is_none_or(|origin| origin.host_id != self.host_id)
+        {
+            return Err(crate::StoreError::Malformed(
+                "invalid shared chat runtime transition".into(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// One attempt to reserve durable authority while a conversation link opens.
 ///

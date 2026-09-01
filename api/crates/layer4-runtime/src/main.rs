@@ -203,12 +203,12 @@ pub(crate) struct AppState {
     /// by a protocol call are both told by name, and neither is distinguishable
     /// from here.
     snapshot_named: bool,
-    /// The conversation this pod is taking over, once one has been handed to it.
+    /// Conversations this pod is taking over, keyed by supervisor slot.
     ///
     /// The agent is not started until something attaches, which is what makes
     /// a handover possible over HTTP at all: the conversation can arrive after
     /// the pod is running and still be there before the agent reads it.
-    resuming: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    resuming: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<SlotId, String>>>,
     /// What the model endpoint last refused with, if anything.
     ///
     /// Read when a conversation ends badly, so the owner is told the agent
@@ -265,7 +265,7 @@ impl AppState {
             snapshot_dir: None,
             resume_args: None,
             snapshot_named: false,
-            resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            resuming: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             // Nothing has been refused, which is the honest state for a pod
             // that has made no upstream call.
             model_fault: upstream::UpstreamFault::default(),
@@ -309,7 +309,7 @@ impl AppState {
                 "this runtime has reached its conversation slot limit",
             ));
         }
-        let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command())?);
+        let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command(&slot))?);
         held.ever_started = true;
         held.slots.insert(slot, std::sync::Arc::clone(&bridge));
         Ok(bridge)
@@ -335,7 +335,7 @@ impl AppState {
         self.registry
             .get_or_start(
                 id,
-                &self.agent_command(),
+                &self.agent_command(&SlotId::Legacy),
                 cols,
                 rows,
                 upstream::PLACEHOLDER_KEY,
@@ -344,22 +344,22 @@ impl AppState {
     }
 
     /// The conversation this pod was handed, if it was handed one.
-    pub(crate) fn resuming(&self) -> Option<String> {
+    pub(crate) fn resuming(&self, slot: &SlotId) -> Option<String> {
         match self.resuming.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+            Ok(guard) => guard.get(slot).cloned(),
+            Err(poisoned) => poisoned.into_inner().get(slot).cloned(),
         }
     }
 
     /// The command to start the agent with, given what this pod has been told.
-    fn agent_command(&self) -> String {
+    fn agent_command(&self, slot: &SlotId) -> String {
         let command = match self.command.lock() {
             Ok(held) => held.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         };
         let carried = match self.resuming.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+            Ok(guard) => guard.get(slot).cloned(),
+            Err(poisoned) => poisoned.into_inner().get(slot).cloned(),
         };
         let Some(conversation) = carried else {
             return command;
@@ -711,7 +711,7 @@ async fn main() {
         snapshot_dir,
         resume_args,
         snapshot_named,
-        resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        resuming: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         conversation: std::sync::Arc::new(Mutex::new(ConversationState::default())),
         resources,
     };
@@ -1217,6 +1217,7 @@ mod process_plane_tests {
 /// accepting the call would report success for a handover that did not happen.
 async fn conversation_restore(
     State(state): State<AppState>,
+    Query(params): Query<ConversationSnapshotParams>,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     if body.is_empty() {
@@ -1237,27 +1238,55 @@ async fn conversation_restore(
     let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
         return unsupported();
     };
+    let slot = SlotId::from_query(params.conversation);
+    let carried_conversation = conversation::carried_conversation_id(&body);
+    match carried_conversation.as_deref() {
+        Some(conversation) => {
+            let guard = match state.resuming.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if let Some(current) = guard.get(&slot) {
+                if current != conversation && !matches!(slot, SlotId::Legacy) {
+                    tracing::error!(
+                        current,
+                        attempted = conversation,
+                        "a conversation slot was restored with a different identity"
+                    );
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        "this conversation slot is already bound to a different conversation",
+                    )
+                        .into_response();
+                }
+            }
+        }
+        None if state.snapshot_named || !matches!(slot, SlotId::Legacy) => {
+            tracing::error!("the conversation handed over does not name itself");
+            return (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "the conversation does not name itself, so the agent cannot be told to continue it",
+            )
+                .into_response();
+        }
+        None => {}
+    }
     match conversation::restore(&state.home, sessions_dir, &body, &stamp()) {
         Ok(restored) => {
             match restored.session_id {
-                Some(conversation) => match state.resuming.lock() {
-                    Ok(mut guard) => *guard = Some(conversation),
-                    Err(poisoned) => *poisoned.into_inner() = Some(conversation),
-                },
+                Some(conversation) => {
+                    let mut guard = match state.resuming.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    guard.insert(slot, conversation);
+                }
                 // Whether this matters depends on the kernel, and the adapter
                 // that started this pod has already said which it is. One that
                 // must be told by name which conversation to continue, and is
                 // not told, starts a fresh one and reports success — silent
                 // loss, and the runtime this came from is about to be torn
                 // down. One that finds its own history was never told anything.
-                None if state.snapshot_named => {
-                    tracing::error!("the conversation handed over does not name itself");
-                    return (
-                        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                        "the conversation does not name itself, so the agent cannot be told to continue it",
-                    )
-                        .into_response();
-                }
                 None => tracing::info!(
                     "the conversation handed over names no identifier; this kernel finds its own"
                 ),
@@ -2347,6 +2376,7 @@ mod runtime_prelude_router_tests {
         );
         let response = conversation_restore(
             State(runtime.state.clone()),
+            Query(ConversationSnapshotParams::default()),
             axum::body::Bytes::from(carried),
         )
         .await

@@ -146,14 +146,20 @@ pub(super) async fn prepare(
             }
             let status = session.status;
             let capabilities = session.capabilities;
-            let deferred = action.is_prompt() && status == SessionStatus::Provisioning;
+            let paused_chat = action.is_prompt()
+                && status == SessionStatus::Idle
+                && session.stop_reason == Some(layer2_core::StopReason::IdleTimeout)
+                && session.chat.is_some();
+            let deferred =
+                action.is_prompt() && (status == SessionStatus::Provisioning || paused_chat);
             if action.is_prompt() && status == SessionStatus::Running {
                 if let Err(error) = capabilities.require(SessionCapability::Steer) {
                     let problem = core_problem(error).await;
                     return plan_from_report(complete_refusal(problem, false, claim).await);
                 }
             }
-            let admission = spawn_admission(service, caller, id, action, deferred, claim);
+            let admission =
+                spawn_admission(service, caller, id, action, deferred, paused_chat, claim);
             if deferred {
                 Ok(StreamPlan {
                     after: 0,
@@ -206,11 +212,12 @@ fn spawn_admission(
     id: SessionId,
     action: RunAction,
     deferred: bool,
+    paused_chat: bool,
     claim: Option<AcquiredClaim>,
 ) -> tokio::task::JoinHandle<AdmissionReport> {
-    tokio::spawn(
-        async move { perform_admission(service, caller, id, action, deferred, claim).await },
-    )
+    tokio::spawn(async move {
+        perform_admission(service, caller, id, action, deferred, paused_chat, claim).await
+    })
 }
 
 async fn perform_admission(
@@ -219,9 +226,10 @@ async fn perform_admission(
     id: SessionId,
     action: RunAction,
     deferred: bool,
+    paused_chat: bool,
     claim: Option<AcquiredClaim>,
 ) -> AdmissionReport {
-    if action.is_prompt() {
+    if action.is_prompt() && !paused_chat {
         if let Err(error) = service
             .await_conversable(&caller, &id, CONVERSATION_READINESS_BOUND)
             .await
@@ -248,13 +256,24 @@ async fn perform_admission(
     let watching = service.subscribe_live(&caller, &id).await.ok();
     let resources = service.subscribe_resources(&caller, &id).await.ok();
     let outcome = match action {
-        RunAction::Prompt(prompt) => match service.send_prompt(&caller, &id, prompt).await {
+        RunAction::Prompt(prompt) => match tokio::time::timeout(
+            CONVERSATION_READINESS_BOUND,
+            service.send_prompt(&caller, &id, prompt),
+        )
+        .await
+        .map_err(|_| ConversationReadinessError::ProvisioningTimedOut)
+        .and_then(|result| result.map_err(ConversationReadinessError::Refused))
+        {
             Ok(turn_started) => RunAdmissionOutcome::PromptAccepted {
                 turn_started,
                 synthetic_start: deferred,
             },
-            Err(error) => {
-                return complete_refusal(core_problem(error).await, deferred, claim).await
+            Err(ConversationReadinessError::ProvisioningTimedOut) => {
+                return complete_refusal(StoredProblem::provisioning_timeout(), deferred, claim)
+                    .await
+            }
+            Err(ConversationReadinessError::Refused(error)) => {
+                return complete_refusal(core_problem(error).await, deferred, claim).await;
             }
         },
         RunAction::Resume(resolutions) => {

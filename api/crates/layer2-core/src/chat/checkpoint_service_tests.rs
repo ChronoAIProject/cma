@@ -34,6 +34,7 @@ pub(super) struct MemoryChatHosts {
     pub(super) records: Mutex<HashMap<String, ChatHostRecord>>,
     creates: AtomicUsize,
     pub(super) fail_updates: AtomicUsize,
+    pub(super) replace_after_candidate_list: Mutex<Option<(usize, ChatHostRecord)>>,
 }
 
 impl MemoryChatHosts {
@@ -145,7 +146,26 @@ impl ChatHostStore for MemoryChatHosts {
         &self,
         query: &ChatHostListQuery,
     ) -> Result<Page<ChatHostRecord>, StoreError> {
-        self.list(query).await
+        let page = self.list(query).await?;
+        let replacement = {
+            let mut pending = self.replace_after_candidate_list.lock().await;
+            match pending.as_mut() {
+                Some((remaining, _)) if *remaining > 1 => {
+                    *remaining -= 1;
+                    None
+                }
+                Some(_) => pending.take().map(|(_, replacement)| replacement),
+                None => None,
+            }
+        };
+        if let Some(replacement) = replacement {
+            replacement.validate().map_err(StoreError::Malformed)?;
+            self.records
+                .lock()
+                .await
+                .insert(replacement.id.0.clone(), replacement);
+        }
+        Ok(page)
     }
 }
 
@@ -155,7 +175,7 @@ pub(super) struct MemoryCheckpoints {
     stages: Mutex<Vec<(String, Option<String>, String)>>,
     prunes: Mutex<Vec<(String, String)>>,
     fail_stages: AtomicUsize,
-    tamper_next_read: AtomicBool,
+    pub(super) tamper_next_read: AtomicBool,
 }
 
 impl MemoryCheckpoints {
@@ -441,6 +461,7 @@ pub(super) async fn fixture(owner: &str, thread_count: usize) -> CheckpointFixtu
         capabilities: KernelCapabilities {
             conversation: true,
             snapshot: true,
+            steer: true,
             ..KernelCapabilities::default()
         },
         conversation_ids_from_slots: true,

@@ -8042,6 +8042,180 @@ async fn real_ordinary_commits_serialize_with_authority_switch_and_retirement() 
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_chat_runtime_transition_is_atomic_idempotent_and_fences_old_writers() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_chat_runtime_transition_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .unwrap();
+    let id = SessionId("sesn_real_chat_runtime_transition".into());
+    let owner = SubjectId("real-chat-runtime-transition-owner".into());
+    let host_id = ChatHostId::for_owner(&owner);
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.owner = owner;
+    seed.session.last_seq = 0;
+    seed.runtime_id = Some("runtime-chat-old".into());
+    seed.chat_origin = Some(ChatOrigin {
+        host_id: host_id.clone(),
+        worktree_name: "chat-1".into(),
+        worktree_path: "/workspace/worktrees/chat-1".into(),
+        paused_notice: Some("paused".into()),
+    });
+    store
+        .create_session_idempotent("seed-real-chat-runtime-transition", &seed, &[])
+        .await
+        .unwrap();
+
+    let original = store.get(&id).await.unwrap().unwrap();
+    let original_authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let previous = SessionBoundary::for_record(&original, original_authority.generation);
+    let lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "real-chat-transition-holder".into(),
+            token: "real-chat-transition-lease".into(),
+            boundary: previous.clone(),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .unwrap();
+    let opening = store
+        .acquire_conversation_opening(
+            &ConversationOpeningLeaseRequest::new(
+                id.clone(),
+                lease.holder.clone(),
+                "runtime-chat-old",
+                original_authority.generation,
+                None,
+                Duration::from_secs(60),
+            ),
+            Some(&lease),
+        )
+        .await
+        .unwrap();
+    let stale_link = store
+        .publish_conversation_link(&opening, Some(&lease))
+        .await
+        .unwrap();
+
+    let marker = Event {
+        session_id: id.clone(),
+        seq: 1,
+        kind: EventKind::RuntimeIncarnationStarted,
+        appended_at: "2026-09-01T00:00:01Z".into(),
+    };
+    let next = RuntimeAuthority {
+        generation: original_authority.generation + 1,
+        runtime_id: Some("runtime-chat-new".into()),
+    };
+    let transition = ChatRuntimeTransition {
+        host_id,
+        previous,
+        next: next.clone(),
+    };
+    let mut replacement = original.clone();
+    replacement.runtime_id.clone_from(&next.runtime_id);
+    replacement.session.status = SessionStatus::Provisioning;
+    replacement.session.recovery_state = RecoveryState::Recovering;
+    replacement.session.last_seq = marker.seq;
+
+    let first_revision = store
+        .commit_chat_runtime_transition_idempotent(
+            "real-chat-runtime-transition",
+            &transition,
+            &replacement,
+            std::slice::from_ref(&marker),
+        )
+        .await
+        .unwrap();
+    let durable = store.get(&id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, first_revision);
+    assert_eq!(durable.runtime_id, next.runtime_id);
+    assert_eq!(durable.session.status, SessionStatus::Provisioning);
+    assert_eq!(
+        store.runtime_authority(&id).await.unwrap(),
+        Some(next.clone())
+    );
+    assert!(matches!(
+        store.validate_conversation_link(&stale_link).await,
+        Err(StoreError::ConversationLinkChanged { .. })
+    ));
+    assert!(matches!(
+        store
+            .renew_session_lease(&lease, Duration::from_secs(60))
+            .await,
+        Err(StoreError::SessionLeaseLost { .. })
+    ));
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+    assert_eq!(store.events_since(&id, 0).await.unwrap().len(), 1);
+
+    let successor_boundary = SessionBoundary::for_record(&durable, next.generation);
+    let successor_lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "real-chat-successor-holder".into(),
+            token: "real-chat-successor-lease".into(),
+            boundary: successor_boundary,
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .unwrap();
+    let successor_opening = store
+        .acquire_conversation_opening(
+            &ConversationOpeningLeaseRequest::new(
+                id.clone(),
+                successor_lease.holder.clone(),
+                next.runtime_id.as_deref().unwrap(),
+                next.generation,
+                None,
+                Duration::from_secs(60),
+            ),
+            Some(&successor_lease),
+        )
+        .await
+        .unwrap();
+    let successor_link = store
+        .publish_conversation_link(&successor_opening, Some(&successor_lease))
+        .await
+        .unwrap();
+
+    let replay_revision = store
+        .commit_chat_runtime_transition_idempotent(
+            "real-chat-runtime-transition",
+            &transition,
+            &replacement,
+            std::slice::from_ref(&marker),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay_revision, first_revision);
+    store
+        .validate_conversation_link(&successor_link)
+        .await
+        .expect("the old transition receipt does not fence its successor");
+    assert_eq!(store.events_since(&id, 0).await.unwrap().len(), 1);
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn a_real_conversation_commit_rejects_stale_authority_without_reserving_the_write() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");

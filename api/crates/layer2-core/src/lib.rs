@@ -158,19 +158,21 @@ pub use chat::{
     ChatAgentSettings, ChatCheckpointConversation, ChatCheckpointConversationRef,
     ChatCheckpointOutcome, ChatCheckpointRef, ChatCheckpointSweep, ChatHostFailure, ChatHostId,
     ChatHostListQuery, ChatHostOperatorNote, ChatHostRecord, ChatHostSettings, ChatHostStatus,
-    ChatInactivity, ChatPauseOutcome, ChatProvisioningPhase, ChatSettings, ChatSettingsSnapshot,
-    ChatSettingsViolation, ChatSetup, ChatThreadSlot, ChatUnavailableCause, ChatWorkspaceAuthority,
-    ChatWorkspaceSource, CHAT_CHECKPOINT_INTERVAL_SECONDS, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS,
-    MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES,
+    ChatInactivity, ChatPauseOutcome, ChatPromptAdmission, ChatPromptDeliveryState,
+    ChatProvisioningPhase, ChatReviveCause, ChatRevivePhase, ChatSettings, ChatSettingsSnapshot,
+    ChatSettingsViolation, ChatSetup, ChatThreadRestoreFailure, ChatThreadSlot,
+    ChatUnavailableCause, ChatWorkspaceAuthority, ChatWorkspaceSource,
+    CHAT_CHECKPOINT_INTERVAL_SECONDS, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS,
+    MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES, MAX_CHAT_PROMPT_ADMISSIONS, MAX_CHAT_PROMPT_BYTES,
 };
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
 pub use coordination::{
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
-    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
-    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
-    SessionLeaseRequest, SessionOperation,
+    ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, RuntimeAuthority,
+    RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
+    RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest,
+    SessionLease, SessionLeaseRequest, SessionOperation,
 };
 pub use credentials::CredentialDeliveryTarget;
 pub use deployment_capacity::{DeploymentCapacity, Reserved};

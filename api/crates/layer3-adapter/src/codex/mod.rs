@@ -144,6 +144,17 @@ impl KernelAdapter for CodexAdapter {
             .await
     }
 
+    async fn restore_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_slot: &str,
+        snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        self.hosted
+            .restore_conversation(handle, conversation_slot, snapshot)
+            .await
+    }
+
     async fn prepare_workspace_source(
         &self,
         handle: &RuntimeHandle,
