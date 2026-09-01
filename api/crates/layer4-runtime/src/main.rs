@@ -19,14 +19,16 @@ mod sponsored_model;
 mod telemetry;
 mod upstream;
 mod workspace;
+mod workspace_setup;
+mod workspace_source;
 mod writer_fence;
 
 use std::net::SocketAddr;
 
 use axum::{
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use ring::rand::SecureRandom as _;
@@ -38,9 +40,34 @@ use crate::pty::PtyRegistry;
 use crate::sponsored_model::SponsoredModelGate;
 use crate::upstream::{CredentialHolder, UpstreamState};
 
+const MAX_CONVERSATION_SLOTS: usize = 16;
+
+/// One independently supervised conversation process in this pod.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum SlotId {
+    /// Compatibility identity for callers that predate named slots.
+    Legacy,
+    /// Opaque control-plane identity supplied by the attach query.
+    Named(String),
+}
+
+impl SlotId {
+    pub(crate) fn from_query(value: Option<String>) -> Self {
+        value.map_or(Self::Legacy, Self::Named)
+    }
+
+    #[cfg(test)]
+    fn named(value: &str) -> Self {
+        Self::Named(value.to_string())
+    }
+}
+
 #[derive(Default)]
 struct ConversationState {
-    active: Option<std::sync::Arc<Bridge>>,
+    slots: std::collections::HashMap<SlotId, std::sync::Arc<Bridge>>,
+    /// Latches first successful start even if an ended slot is later retired
+    /// and its replacement cannot be spawned.
+    ever_started: bool,
     /// Process-session roots retained after a bridge primary exits. A bridge
     /// may leave descendants able to mutate the workspace, so replacement
     /// cannot discard their checkpoint authority until procfs proves the
@@ -73,12 +100,16 @@ impl HeldWorkspaceWriters {
 }
 
 impl ConversationState {
-    fn retire_active(&mut self) {
-        if let Some(bridge) = self.active.take() {
+    fn retire_slot(&mut self, slot: &SlotId) {
+        if let Some(bridge) = self.slots.remove(slot) {
             if let Some(root) = bridge.writer_session_root() {
                 self.retired_writer_roots.insert(root);
             }
         }
+    }
+
+    fn has_started(&self) -> bool {
+        self.ever_started
     }
 
     fn writer_session_roots(&mut self) -> Vec<i32> {
@@ -98,13 +129,11 @@ impl ConversationState {
             .iter()
             .copied()
             .collect::<Vec<_>>();
-        if let Some(root) = self
-            .active
-            .as_ref()
-            .and_then(|bridge| bridge.writer_session_root())
-        {
-            roots.push(root);
-        }
+        roots.extend(
+            self.slots
+                .values()
+                .filter_map(|bridge| bridge.writer_session_root()),
+        );
         roots
     }
 }
@@ -140,6 +169,8 @@ pub(crate) struct AppState {
     workspace_authority: std::sync::Arc<RwLock<Option<WorkspaceAuthority>>>,
     /// One capture/version fence at a time within this runtime generation.
     checkpoint_gate: std::sync::Arc<Mutex<()>>,
+    /// The one repository clone prepared for conversation worktrees.
+    workspace_source: std::sync::Arc<Mutex<workspace_source::WorkspaceSources>>,
     /// Writer and startup-admission authority retained across a successful
     /// hold-for-teardown response.
     workspace_writer_hold: std::sync::Arc<Mutex<WorkspaceWriterHoldState>>,
@@ -173,22 +204,22 @@ pub(crate) struct AppState {
     /// by a protocol call are both told by name, and neither is distinguishable
     /// from here.
     snapshot_named: bool,
-    /// The conversation this pod is taking over, once one has been handed to it.
+    /// Conversations this pod is taking over, keyed by supervisor slot.
     ///
     /// The agent is not started until something attaches, which is what makes
     /// a handover possible over HTTP at all: the conversation can arrive after
     /// the pod is running and still be there before the agent reads it.
-    resuming: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    resuming: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<SlotId, String>>>,
     /// What the model endpoint last refused with, if anything.
     ///
     /// Read when a conversation ends badly, so the owner is told the agent
     /// could not reach its model rather than being shown an empty turn.
     pub(crate) model_fault: upstream::UpstreamFault,
-    /// The kernel's conversation bridge, once anything has asked for one.
+    /// The kernel's independently keyed conversation bridges.
     ///
     /// Started lazily, exactly as the pty is, and for the same reason: a pod
-    /// runs one session on one plane, and starting a process nothing is going
-    /// to talk to would put a kernel on the model endpoint for no reason.
+    /// runs one process plane, and starting processes nothing is going to talk
+    /// to would put kernels on the model endpoint for no reason.
     conversation: std::sync::Arc<Mutex<ConversationState>>,
     /// This pod's view of its own consumption.
     ///
@@ -224,6 +255,9 @@ impl AppState {
             checkpoint_root: std::path::PathBuf::from("/home/chrono/.cma-checkpoints"),
             workspace_authority: std::sync::Arc::new(RwLock::new(None)),
             checkpoint_gate: std::sync::Arc::new(Mutex::new(())),
+            workspace_source: std::sync::Arc::new(Mutex::new(
+                workspace_source::WorkspaceSources::default(),
+            )),
             workspace_writer_hold: std::sync::Arc::new(Mutex::new(
                 WorkspaceWriterHoldState::default(),
             )),
@@ -232,7 +266,7 @@ impl AppState {
             snapshot_dir: None,
             resume_args: None,
             snapshot_named: false,
-            resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            resuming: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             // Nothing has been refused, which is the honest state for a pod
             // that has made no upstream call.
             model_fault: upstream::UpstreamFault::default(),
@@ -244,24 +278,24 @@ impl AppState {
         }
     }
 
-    /// The kernel's conversation bridge, started if it is not already running.
+    /// One keyed conversation bridge, started if it is not already running.
     ///
-    /// Lazy for the same reason the pty is: a pod hosts one session on one
-    /// plane, and which plane is decided by what the control plane opens. A
-    /// bridge started eagerly would be a kernel process on the model endpoint
-    /// for a session that was only ever going to be a terminal.
-    async fn conversation_bridge(&self) -> std::io::Result<std::sync::Arc<Bridge>> {
+    /// Lazy for the same reason the pty is: a pod hosts only one kind of
+    /// process plane, and which plane is decided by what the control plane
+    /// opens. A bridge started eagerly would put a kernel on the model endpoint
+    /// for a pod that was only ever going to serve a terminal.
+    async fn conversation_bridge(&self, slot: SlotId) -> std::io::Result<std::sync::Arc<Bridge>> {
         let _startup = self.startup_gate.write().await;
         let mut held = self.conversation.lock().await;
-        if let Some(running) = held.active.as_ref() {
+        if let Some(running) = held.slots.get(&slot).cloned() {
             // A cached bridge whose process has gone is not a bridge. Handing
             // it back gave a conversation that accepted prompts and answered
             // none — the agent was dead and nothing said so.
             if !running.is_ended() {
-                return Ok(std::sync::Arc::clone(running));
+                return Ok(running);
             }
             tracing::warn!("the conversation bridge had ended; starting a fresh one");
-            held.retire_active();
+            held.retire_slot(&slot);
         }
         if self.registry.is_running().await {
             // One session, one plane. A pod driving a terminal and a
@@ -271,8 +305,14 @@ impl AppState {
                 "this runtime is already hosting a terminal",
             ));
         }
-        let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command())?);
-        held.active = Some(std::sync::Arc::clone(&bridge));
+        if held.slots.len() >= MAX_CONVERSATION_SLOTS {
+            return Err(std::io::Error::other(
+                "this runtime has reached its conversation slot limit",
+            ));
+        }
+        let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command(&slot))?);
+        held.ever_started = true;
+        held.slots.insert(slot, std::sync::Arc::clone(&bridge));
         Ok(bridge)
     }
 
@@ -288,7 +328,7 @@ impl AppState {
         tokio::sync::broadcast::Receiver<Vec<u8>>,
     )> {
         let _startup = self.startup_gate.write().await;
-        if self.conversation.lock().await.active.is_some() {
+        if self.conversation.lock().await.has_started() {
             return Err(std::io::Error::other(
                 "this runtime is already hosting a conversation",
             ));
@@ -296,7 +336,7 @@ impl AppState {
         self.registry
             .get_or_start(
                 id,
-                &self.agent_command(),
+                &self.agent_command(&SlotId::Legacy),
                 cols,
                 rows,
                 upstream::PLACEHOLDER_KEY,
@@ -305,22 +345,22 @@ impl AppState {
     }
 
     /// The conversation this pod was handed, if it was handed one.
-    pub(crate) fn resuming(&self) -> Option<String> {
+    pub(crate) fn resuming(&self, slot: &SlotId) -> Option<String> {
         match self.resuming.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+            Ok(guard) => guard.get(slot).cloned(),
+            Err(poisoned) => poisoned.into_inner().get(slot).cloned(),
         }
     }
 
     /// The command to start the agent with, given what this pod has been told.
-    fn agent_command(&self) -> String {
+    fn agent_command(&self, slot: &SlotId) -> String {
         let command = match self.command.lock() {
             Ok(held) => held.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         };
         let carried = match self.resuming.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+            Ok(guard) => guard.get(slot).cloned(),
+            Err(poisoned) => poisoned.into_inner().get(slot).cloned(),
         };
         let Some(conversation) = carried else {
             return command;
@@ -663,13 +703,16 @@ async fn main() {
         checkpoint_root: home.join(".cma-workspace-checkpoints"),
         workspace_authority: std::sync::Arc::new(RwLock::new(None)),
         checkpoint_gate: std::sync::Arc::new(Mutex::new(())),
+        workspace_source: std::sync::Arc::new(Mutex::new(
+            workspace_source::WorkspaceSources::default(),
+        )),
         workspace_writer_hold: std::sync::Arc::new(Mutex::new(WorkspaceWriterHoldState::default())),
         startup_gate: std::sync::Arc::new(RwLock::new(())),
         writer_supervisor,
         snapshot_dir,
         resume_args,
         snapshot_named,
-        resuming: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        resuming: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         conversation: std::sync::Arc::new(Mutex::new(ConversationState::default())),
         resources,
     };
@@ -728,6 +771,23 @@ fn runtime_router(state: AppState) -> Router {
         .route(
             "/runtime/workspace/checkpoint/resume",
             post(workspace_checkpoint_resume).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/runtime/workspace/source",
+            post(workspace_source_prepare).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/runtime/workspace/setup",
+            post(workspace_setup_run)
+                .layer(DefaultBodyLimit::max(workspace_setup::MAX_REQUEST_BYTES)),
+        )
+        .route(
+            "/runtime/workspace/trees",
+            post(workspace_tree_add).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/runtime/workspace/trees/{name}",
+            delete(workspace_tree_remove),
         )
         .with_state(state)
 }
@@ -940,7 +1000,7 @@ mod conversation_writer_tests {
     async fn replacing_an_ended_bridge_retains_its_live_descendant_in_the_writer_fence() {
         let state = AppState::for_test(&["/bin/sh"]);
         let first = state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("first bridge starts");
         let first_root = first
@@ -956,7 +1016,7 @@ mod conversation_writer_tests {
             .expect("the first primary exits while its descendant remains");
 
         let replacement = state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("replacement bridge starts");
         let replacement_root = replacement
@@ -986,6 +1046,45 @@ mod conversation_writer_tests {
 
         assert!(replacement.send(b"exit 0".to_vec()).await);
     }
+
+    #[tokio::test]
+    async fn every_concurrent_slot_and_its_descendant_is_in_the_writer_fence() {
+        let state = AppState::for_test(&["/bin/sh"]);
+        let first = state
+            .conversation_bridge(SlotId::named("writer-a"))
+            .await
+            .expect("the first slot starts");
+        let second = state
+            .conversation_bridge(SlotId::named("writer-b"))
+            .await
+            .expect("the second slot starts");
+        assert!(first.send(b"sleep 10 &".to_vec()).await);
+        assert!(second.send(b"sleep 10 &".to_vec()).await);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let roots = state.writer_session_roots().await;
+        assert_eq!(roots.len(), 2, "both slot process sessions are authority");
+        let writer_count = tokio::task::spawn_blocking(move || {
+            let mut fence = writer_fence::WriterFence::quiesce(
+                roots,
+                writer_fence::SupervisorBoundary::default(),
+            )?;
+            let count = fence.writer_count()?;
+            fence.resume()?;
+            Ok::<_, String>(count)
+        })
+        .await
+        .expect("the writer-fence task joins")
+        .expect("both slot process trees quiesce");
+        assert!(
+            writer_count >= 4,
+            "both bridges and both descendants must be fenced"
+        );
+
+        let cleanup = b"kill $(jobs -p) 2>/dev/null; exit 0".to_vec();
+        assert!(first.send(cleanup.clone()).await);
+        assert!(second.send(cleanup).await);
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1008,7 +1107,7 @@ mod process_plane_tests {
         let conversation_barrier = std::sync::Arc::clone(&barrier);
         let conversation = tokio::spawn(async move {
             conversation_barrier.wait().await;
-            conversation_state.conversation_bridge().await
+            conversation_state.conversation_bridge(SlotId::Legacy).await
         });
 
         barrier.wait().await;
@@ -1031,10 +1130,62 @@ mod process_plane_tests {
     }
 
     #[tokio::test]
+    async fn conversation_slots_reuse_their_bridge_and_enforce_the_advertised_cap() {
+        let state = AppState::for_test(&["/bin/cat"]);
+        let mut bridges = Vec::new();
+        for index in 0..MAX_CONVERSATION_SLOTS {
+            bridges.push(
+                state
+                    .conversation_bridge(SlotId::named(&format!("slot-{index}")))
+                    .await
+                    .expect("every advertised slot starts"),
+            );
+        }
+        let reused = state
+            .conversation_bridge(SlotId::named("slot-0"))
+            .await
+            .expect("an existing slot reattaches at the cap");
+        assert!(std::sync::Arc::ptr_eq(&bridges[0], &reused));
+
+        let overflow = match state
+            .conversation_bridge(SlotId::named("one-slot-too-many"))
+            .await
+        {
+            Ok(_) => panic!("a seventeenth bridge must be refused"),
+            Err(error) => error,
+        };
+        assert!(overflow.to_string().contains("slot limit"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_slot_restart_does_not_reopen_pre_start_mutations() {
+        let state = AppState::for_test(&["/usr/bin/true", "/no/such/conversation-bridge"]);
+        let ended = state
+            .conversation_bridge(SlotId::named("latched"))
+            .await
+            .expect("the first slot starts");
+        tokio::time::timeout(std::time::Duration::from_secs(2), ended.ended())
+            .await
+            .expect("the first slot ends");
+        assert!(state.switch_command("/no/such/conversation-bridge"));
+        assert!(
+            state
+                .conversation_bridge(SlotId::named("latched"))
+                .await
+                .is_err(),
+            "the replacement command is absent"
+        );
+        assert!(
+            agent_started(&state).await,
+            "first start remains latched after replacement failure"
+        );
+    }
+
+    #[tokio::test]
     async fn a_conversation_rejects_a_later_terminal() {
         let state = AppState::for_test(&["/bin/sh"]);
         let conversation = state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("the conversation starts");
 
@@ -1055,7 +1206,7 @@ mod process_plane_tests {
             .await
             .expect("the terminal starts");
 
-        let conversation = state.conversation_bridge().await;
+        let conversation = state.conversation_bridge(SlotId::Legacy).await;
         assert!(
             matches!(conversation, Err(ref error) if error.to_string().contains("terminal")),
             "the terminal plane must exclude the conversation plane"
@@ -1072,6 +1223,7 @@ mod process_plane_tests {
 /// accepting the call would report success for a handover that did not happen.
 async fn conversation_restore(
     State(state): State<AppState>,
+    Query(params): Query<ConversationSnapshotParams>,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     if body.is_empty() {
@@ -1092,27 +1244,55 @@ async fn conversation_restore(
     let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
         return unsupported();
     };
+    let slot = SlotId::from_query(params.conversation);
+    let carried_conversation = conversation::carried_conversation_id(&body);
+    match carried_conversation.as_deref() {
+        Some(conversation) => {
+            let guard = match state.resuming.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if let Some(current) = guard.get(&slot) {
+                if current != conversation && !matches!(slot, SlotId::Legacy) {
+                    tracing::error!(
+                        current,
+                        attempted = conversation,
+                        "a conversation slot was restored with a different identity"
+                    );
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        "this conversation slot is already bound to a different conversation",
+                    )
+                        .into_response();
+                }
+            }
+        }
+        None if state.snapshot_named || !matches!(slot, SlotId::Legacy) => {
+            tracing::error!("the conversation handed over does not name itself");
+            return (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "the conversation does not name itself, so the agent cannot be told to continue it",
+            )
+                .into_response();
+        }
+        None => {}
+    }
     match conversation::restore(&state.home, sessions_dir, &body, &stamp()) {
         Ok(restored) => {
             match restored.session_id {
-                Some(conversation) => match state.resuming.lock() {
-                    Ok(mut guard) => *guard = Some(conversation),
-                    Err(poisoned) => *poisoned.into_inner() = Some(conversation),
-                },
+                Some(conversation) => {
+                    let mut guard = match state.resuming.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    guard.insert(slot, conversation);
+                }
                 // Whether this matters depends on the kernel, and the adapter
                 // that started this pod has already said which it is. One that
                 // must be told by name which conversation to continue, and is
                 // not told, starts a fresh one and reports success — silent
                 // loss, and the runtime this came from is about to be torn
                 // down. One that finds its own history was never told anything.
-                None if state.snapshot_named => {
-                    tracing::error!("the conversation handed over does not name itself");
-                    return (
-                        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                        "the conversation does not name itself, so the agent cannot be told to continue it",
-                    )
-                        .into_response();
-                }
                 None => tracing::info!(
                     "the conversation handed over names no identifier; this kernel finds its own"
                 ),
@@ -1167,11 +1347,27 @@ fn unsupported() -> axum::response::Response {
 }
 
 /// Hand over the agent's conversation so it can be resumed elsewhere.
-async fn conversation_snapshot(State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationSnapshotParams {
+    #[serde(default)]
+    conversation: Option<String>,
+}
+
+async fn conversation_snapshot(
+    State(state): State<AppState>,
+    Query(params): Query<ConversationSnapshotParams>,
+) -> impl IntoResponse {
     let Some(sessions_dir) = state.snapshot_dir.as_deref() else {
         return unsupported();
     };
-    match conversation::capture(&state.home, sessions_dir) {
+    let captured = match params.conversation.as_deref() {
+        Some(conversation_id) => {
+            conversation::capture_by_id(&state.home, sessions_dir, conversation_id)
+        }
+        None => conversation::capture(&state.home, sessions_dir),
+    };
+    match captured {
         Ok(Some(bytes)) => (
             axum::http::StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
@@ -1181,6 +1377,11 @@ async fn conversation_snapshot(State(state): State<AppState>) -> impl IntoRespon
         // Nothing to carry is not a failure, and must be distinguishable from
         // one: a caller that read an error as "no conversation" would replace
         // a runtime and silently drop the session's history.
+        Ok(None) if params.conversation.is_some() => (
+            axum::http::StatusCode::NOT_FOUND,
+            "the requested conversation was not found",
+        )
+            .into_response(),
         Ok(None) => axum::http::StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::error!(error = %e, "cannot capture the conversation");
@@ -1379,6 +1580,8 @@ struct WorkspaceCheckpointParams {
     source: String,
     baseline: String,
     #[serde(default)]
+    include_git_metadata: bool,
+    #[serde(default)]
     disposition: RuntimeWorkspaceCheckpointDisposition,
 }
 
@@ -1448,7 +1651,15 @@ async fn workspace_checkpoint(
     let retained = tokio::task::spawn_blocking({
         let checkpoint_root = checkpoint_root.clone();
         let source = source.clone();
-        move || workspace::load_capture(&checkpoint_root, params.epoch, params.version, &source)
+        move || {
+            workspace::load_capture(
+                &checkpoint_root,
+                params.epoch,
+                params.version,
+                &source,
+                params.include_git_metadata,
+            )
+        }
     })
     .await;
     match retained {
@@ -1496,6 +1707,7 @@ async fn workspace_checkpoint(
             params.version,
             &source,
             writers.writer_count()?,
+            params.include_git_metadata,
         )?;
         match disposition {
             RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture => {
@@ -1689,8 +1901,136 @@ fn checkpoint_response(captured: workspace::Captured) -> axum::response::Respons
     }
 }
 
+async fn workspace_source_prepare(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<workspace_source::WorkspaceSourceRequest>,
+) -> impl IntoResponse {
+    if let Err(error) = request.validate() {
+        return workspace_source_response(error);
+    }
+
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    if agent_started(&state).await {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+
+    let mut sources = state.workspace_source.lock().await;
+    match sources.prepare(&state.workspace_root, request).await {
+        Ok(receipt) => {
+            *state.workspace_authority.write().await = Some(WorkspaceAuthority {
+                epoch: receipt.workspace_epoch,
+                source_revision: receipt.source_revision.clone(),
+                baseline_manifest_digest: receipt.baseline_manifest_digest.clone(),
+            });
+            axum::Json(receipt).into_response()
+        }
+        Err(error) => workspace_source_response(error),
+    }
+}
+
+async fn workspace_setup_run(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<workspace_setup::WorkspaceSetupRequest>,
+) -> impl IntoResponse {
+    if let Err(detail) = request.validate() {
+        return (axum::http::StatusCode::BAD_REQUEST, detail).into_response();
+    }
+
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    if agent_started(&state).await {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+    let repository = match state
+        .workspace_source
+        .lock()
+        .await
+        .setup_directory(&state.workspace_root)
+    {
+        Ok(repository) => repository,
+        Err(error) => return workspace_source_response(error),
+    };
+    match workspace_setup::run(&repository, &request.commands).await {
+        Ok(receipt) => axum::Json(receipt).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "workspace setup runner failed");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace setup runner failed",
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn workspace_tree_add(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<workspace_source::WorkspaceTreeRequest>,
+) -> impl IntoResponse {
+    if let Err(error) = request.validate() {
+        return workspace_source_response(error);
+    }
+
+    // Checkpoint takes these in the same order. The write side prevents a new
+    // process from starting halfway through git's metadata mutation, while an
+    // already-running agent remains allowed to request another worktree.
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    let mut sources = state.workspace_source.lock().await;
+    match sources.add_tree(&state.workspace_root, request).await {
+        Ok(receipt) => axum::Json(receipt).into_response(),
+        Err(error) => workspace_source_response(error),
+    }
+}
+
+async fn workspace_tree_remove(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if let Err(error) = workspace_source::validate_tree_name(&name) {
+        return workspace_source_response(error);
+    }
+
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    let mut sources = state.workspace_source.lock().await;
+    match sources.remove_tree(&state.workspace_root, &name).await {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => workspace_source_response(error),
+    }
+}
+
+fn workspace_source_response(
+    error: workspace_source::WorkspaceSourceError,
+) -> axum::response::Response {
+    let status = match error {
+        workspace_source::WorkspaceSourceError::Invalid(_) => axum::http::StatusCode::BAD_REQUEST,
+        workspace_source::WorkspaceSourceError::Conflict(_) => axum::http::StatusCode::CONFLICT,
+        workspace_source::WorkspaceSourceError::NotFound => axum::http::StatusCode::NOT_FOUND,
+        workspace_source::WorkspaceSourceError::Git { .. } => {
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY
+        }
+        workspace_source::WorkspaceSourceError::Timeout(_) => {
+            axum::http::StatusCode::GATEWAY_TIMEOUT
+        }
+        workspace_source::WorkspaceSourceError::Runtime(_) => {
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    (status, error.to_string()).into_response()
+}
+
 async fn agent_started(state: &AppState) -> bool {
-    state.registry.is_running().await || state.conversation.lock().await.active.is_some()
+    state.registry.is_running().await || state.conversation.lock().await.has_started()
 }
 
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
@@ -1712,6 +2052,8 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": prelude::SUPPORTED,
+        "conversationSlots": { "max": MAX_CONVERSATION_SLOTS },
+        "workspaceSource": { "version": workspace_source::CAPABILITY_VERSION },
         "workspaceCheckpoint": workspace_checkpoint_readiness(),
         "githubCapability": {
             "name": "github_capability_v2",
@@ -2033,7 +2375,7 @@ mod runtime_prelude_router_tests {
             axum::body::Bytes::from(pack.bytes),
         ));
         assert!(matches!(poll_once(write.as_mut()), Poll::Pending));
-        let mut conversation = Box::pin(runtime.state.conversation_bridge());
+        let mut conversation = Box::pin(runtime.state.conversation_bridge(SlotId::Legacy));
         assert!(matches!(poll_once(conversation.as_mut()), Poll::Pending));
 
         drop(held);
@@ -2068,7 +2410,7 @@ mod runtime_prelude_router_tests {
         let runtime = RuntimeFixture::start("conversation-plane").await;
         runtime
             .state
-            .conversation_bridge()
+            .conversation_bridge(SlotId::Legacy)
             .await
             .expect("the conversation starts");
 
@@ -2079,6 +2421,7 @@ mod runtime_prelude_router_tests {
         );
         let response = conversation_restore(
             State(runtime.state.clone()),
+            Query(ConversationSnapshotParams::default()),
             axum::body::Bytes::from(carried),
         )
         .await

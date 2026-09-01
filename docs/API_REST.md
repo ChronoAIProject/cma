@@ -1,10 +1,10 @@
 # REST Interface
 
-**Priority 2 — for backend server clients.**
+**Priority 3 — for backend server clients.**
 
 REST is the **superset interface**: it projects all ten core operations and is the reference realisation of the core session model. Every other interface is a projection of the same model; where a question about semantics is ambiguous elsewhere, this document is the answer.
 
-See [API_Overview.md](./API_Overview.md) for the core operation set, session lifecycle, and event model.
+See [API_Overview.md](./API_Overview.md) for the core operation set, session lifecycle, and event model. The stateful streaming chat projection is specified separately in [API_Responses.md](./API_Responses.md); it shares this interface's authentication, problem, request-limit, and rate-limit rules.
 
 ---
 
@@ -62,8 +62,8 @@ The configured rate is also the maximum burst:
 |---|---:|---|
 | Pre-authentication admission, per client network | 6,000 per minute | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` |
 | `GET` or `HEAD` on `/livez` and `/ready`, per client network | 120 per minute | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` |
-| Provision or rotate: `POST /sessions`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive`, `POST /launches/{id}/start` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
-| Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
+| Provision or rotate: `POST /sessions`, `POST /api/v1/conversations`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive`, `POST /launches/{id}/start` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
+| Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer`, `POST /api/v1/responses` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
 | Every other admitted request | 600 per minute | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` |
 
 Every non-preflight, non-health request first consumes the cheap network
@@ -1123,12 +1123,13 @@ Content-Type: application/json
 
 | Field                 | Required | Notes                                                                                                                                         |
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surface`             | no       | Closed enum. `"chat"` creates a worktree-backed thread on the owner's deployment-managed shared host. Omit it for an ordinary agent session. Chat cannot be combined with `environment_profile` |
 | `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
 | `rows`                | no       | Initial terminal height                                                                                                                         |
 | `environment_profile` | no       | Id from [Environment Profiles](#3-environment-profiles). **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
 | `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
 
-**These four are the whole body.** An earlier version of this section
+**These five are the whole body.** An earlier version of this section
 documented `llm_source` as required, along with `environment`, `workspace`,
 `concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
 side-effecting `POST`. The body fields have never existed in the service and are
@@ -1142,6 +1143,12 @@ how freely it acts, whose access it spends, what it carries, and how much CPU
 and memory it reserves — so nothing else about the agent is sent here. The size
 is the profile's: omitting `agent.size` takes the deployment's reservation, and
 the answer is frozen for the life of the session, including across a rotation.
+
+`surface: "chat"` selects the deployment's chat settings instead of an
+environment profile. Those settings pin the host runtime, model, reasoning
+effort, delegated credential, setup, and workspace source for every thread on
+that owner's host. Sending both `surface: "chat"` and `environment_profile`
+returns `422 invalid_request`; neither setting silently wins.
 
 **A caller does not choose a kernel here.** Which one a session runs on comes
 from the [environment profile](#3-environment-profiles) it names, or from what
@@ -1194,6 +1201,22 @@ it may ask for without trying. `runtime_version`, `rotations` and `rotated_at`
 appear once a session has been moved, and are absent before that because a
 session that has never been rotated has nothing to explain.
 
+A chat thread additionally carries its durable worktree projection:
+
+```json
+{
+  "chat": {
+    "worktree_name": "chat-3",
+    "worktree_path": "/workspace/chat-3"
+  }
+}
+```
+
+`title` appears after automatic title generation commits one, and
+`paused_notice` appears while the shared host is paused. Both are omitted when
+absent. Host identity and provider runtime authority are private and never
+appear in this projection.
+
 A priced session also carries the price settled when it was created:
 
 ```json
@@ -1229,11 +1252,13 @@ who may read other owners' sessions. `limit` is absent when this deployment has
 set no limit. `exempt` is true only for a caller explicitly allowed to exceed
 the limit; it is not inferred from an absent limit.
 
-`live` counts records whose desired state wants a runtime: `provisioning`,
-`ready`, `running`, and `rotating`. It is read from the session record, never
-from provider inventory. An `idle` (paused) session consumes no slot, nor does
-a terminated one. Reviving a paused session is checked as a new ask, which is
-what prevents pause and revive from walking around the limit.
+`live` counts ordinary agent records whose desired state wants a runtime:
+`provisioning`, `ready`, `running`, and `rotating`. It is read from the session
+record, never from provider inventory. An `idle` (paused) session consumes no
+slot, nor does a terminated one. Reviving a paused session is checked as a new
+ask, which is what prevents pause and revive from walking around the limit.
+Chat threads are excluded because their shared host's `max_threads` is the
+independent bound; opening another chat window does not reserve another host.
 
 **This is advisory.** It exists so a client can offer only what will be
 permitted, rather than offering everything and letting people discover
@@ -1257,7 +1282,7 @@ hard distributed limit requires a conditional write in the session store.
 
 ```http
 GET    /api/v1/sessions/{id}
-GET    /api/v1/sessions?status=running&limit=50
+GET    /api/v1/sessions?status=running&surface=chat&limit=50
 POST   /api/v1/sessions/{id}/stop
 POST   /api/v1/sessions/{id}/revive
 GET    /api/v1/sessions/{id}/transcript
@@ -1275,6 +1300,7 @@ these query parameters:
 | Parameter | Meaning |
 |---|---|
 | `status` | Exact lifecycle value to retain, such as `running`; omit it for every status |
+| `surface` | `chat` retains shared-host chat threads; `agent` retains ordinary sessions; omit it for both |
 | `limit` | Page size, default `50`, clamped to `1..=200` (`0` becomes `1`) |
 | `cursor` | Opaque continuation copied from the previous response's next link |
 
@@ -1305,6 +1331,15 @@ names, not identifiers or the response itself. A newly created provisioning
 session can omit `agent.skills` until installation has actually been recorded.
 
 `DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
+
+Chat lifecycle is platform-managed. An owner cannot `stop`, `revive`, or
+change the plane of one chat thread; each returns `409 invalid_state` with
+chat-specific detail. Terminal endpoints are refused by the thread's granted
+capabilities. `DELETE` is allowed: it terminates the thread and removes its
+worktree from a live host, or removes it from the paused host's restore set.
+Deleting the final thread retires the now-empty shared host. Operator
+`stop_any` and `terminate_any` remain available for abuse response and affect
+the addressed thread without treating the shared host as owner-controlled.
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
 
@@ -2159,11 +2194,11 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 
 | Permission | Capability | What it opens |
 |---|---|---|
-| `cma:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
+| `cma:admin:sessions` | read every session and shared chat host | `GET /api/v1/admin/sessions`, `GET /api/v1/admin/chat/hosts` |
 | `cma:admin:users` | read the user directory | `GET /api/v1/admin/users` |
 | `cma:admin:activity` | read the activity log and redacted Trigger support | `GET /api/v1/admin/activity`, `GET /api/v1/admin/triggers/support` |
 | `cma:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
-| `cma:admin:control` | stop or terminate any session and authorize read-only Trigger effect reconciliation | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate`, `POST /api/v1/admin/triggers/launches/{launch_id}/reconcile` |
+| `cma:admin:control` | stop or terminate any session, retire a shared chat host, and authorize read-only Trigger effect reconciliation | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate`, `POST /api/v1/admin/chat/hosts/{id}/retire`, `POST /api/v1/admin/triggers/launches/{launch_id}/reconcile` |
 | `cma:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
@@ -2180,11 +2215,96 @@ and opaque `cursor` parameters as the caller-owned session list. It defaults to
 `Link` only when another page exists. Unknown parameters are refused with
 `400 invalid_query`.
 
-**No read is unbounded.** The admin session collection uses cursor pages as
-described above. `GET /api/v1/admin/users` and `GET /api/v1/admin/activity`
-both take `limit`, both clamp it, and both default to 100.
+`GET /api/v1/admin/chat/hosts` uses the same bounded array-and-`Link`
+contract with `limit` and a route-bound opaque `cursor`. It has no status
+filter. A cursor issued for sessions or any other collection is invalid here,
+and a host cursor is invalid on those collections.
 
-**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists. That `404` is byte-for-byte the one a session that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
+**No read is unbounded.** The admin session and chat-host collections use cursor
+pages as described above. `GET /api/v1/admin/users` and
+`GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default
+to 100.
+
+**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. Identifier-bearing session and chat-host controls keep the session surface's `404`, because a refusal must not confirm the target exists. That `404` is byte-for-byte the one a target that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
+
+### Chat-host inventory and retirement
+
+```http
+GET  /api/v1/admin/chat/hosts?limit=50&cursor=<opaque>
+POST /api/v1/admin/chat/hosts/{id}/retire
+```
+
+Inventory requires `cma:admin:sessions`, exposed to clients as
+`read_all_sessions`. It is newest first, defaults to 50 rows, clamps every
+request to 1 through 200 rows, and emits a standard `Link: <...>; rel="next"`
+only when another page exists. Its `200` body remains a JSON array:
+
+```json
+[
+  {
+    "id": "chho_0123456789abcdef0123456789abcdef",
+    "owner": "76fe9d91",
+    "status": "paused",
+    "thread_count": 3,
+    "runtime_version": "2026.09.1",
+    "paused_at": "2026-09-01T01:00:00Z",
+    "revived_at": "2026-09-01T00:30:00Z",
+    "checkpoint_captured_at": "2026-09-01T00:59:58Z",
+    "last_failure": {
+      "phase": "workspace_setup",
+      "command_index": 1,
+      "output_excerpt": "error: toolchain download failed\n",
+      "retryable": true,
+      "cleanup_pending": false,
+      "occurred_at": "2026-09-01T01:00:01Z"
+    },
+    "settings_revision": 17,
+    "created_at": "2026-08-31T23:00:00Z"
+  }
+]
+```
+
+`status` is one of `provisioning`, `active`, `pausing`, `paused`, `reviving`,
+or `retired`. Optional lifecycle times, `runtime_version`, and `last_failure`
+are omitted when absent. A failure phase is one of `runtime`,
+`workspace_source`, `workspace_setup`, `credential`, `cleanup`, or
+`runtime_lost`. Setup failures may carry the zero-based `command_index` and the
+combined output tail, already bounded to 32 KiB. `thread_count` counts retained,
+non-removed threads. The projection does not expose provider runtime authority,
+transition claims, configured setup command text, prompt content, checkpoint
+object references or digests, credentials, or the pinned settings body.
+
+Retirement requires `cma:admin:control`, exposed as `control_any_session`, and
+is valid for active and paused hosts. It returns the resulting host projection
+with `200 OK`. Repeating it for a retired host is a no-op with the same `200`;
+no `Idempotency-Key` is required. Another non-retired lifecycle state returns
+`409 invalid_state` rather than racing its transition.
+
+For an active host, the service fences new input, captures every retained
+conversation and the workspace, verifies the sealed checkpoint bytes, and only
+then performs identity-fenced runtime deletion. A failed capture or verification
+does not authorize deletion. For a paused host, no new capture is needed. In
+both cases, retained threads become `terminated` with `stop_reason: "revoked"`
+and this durable status detail:
+
+```text
+Administrative chat-host retirement revoked this thread.
+```
+
+Retirement does not delete checkpoint objects or thread event histories. Old
+thread reads remain available under their existing session ids. The owner's
+next New Chat creates a fresh, higher-generation host incarnation under the
+then-current settings and does not reuse the retired incarnation's thread set.
+
+Both inventory and retirement are activity-classified as `chat_host_list` and
+`chat_host_retire`; retirement targets the host id and attributes the operator
+subject. No prompt, message, checkpoint reference, or settings body is recorded.
+
+The TypeScript SDK exposes `listChatHostsPage`, `listChatHosts`, and
+`retireChatHost` (also as configured-client methods). The Rust SDK exposes
+`Client::list_chat_host_page`, `Client::list_chat_hosts`,
+`Client::list_chat_hosts_with_limits`, and `Client::retire_chat_host`. Both SDKs
+validate the closed lifecycle and bind continuations to this exact collection.
 
 ### Platform settings
 
@@ -2209,6 +2329,7 @@ exists:
 {
   "revision": 12,
   "settings": {
+    "chat": null,
     "briefing": {
       "before": [
         "# Working in this session",
@@ -2249,6 +2370,7 @@ exists:
     "live_sessions": 4
   },
   "previous": {
+    "chat": null,
     "briefing": {
       "before": ["# Working in this session"],
       "reach_heading": "## Granted services",
@@ -2308,6 +2430,7 @@ Content-Type: application/json
 {
   "expected_revision": 12,
   "settings": {
+    "chat": null,
     "briefing": {
       "before": ["# Working in this session"],
       "reach_heading": "## What you can reach",
@@ -2411,6 +2534,7 @@ as `GET`. The object it replaced becomes `previous`:
 {
   "revision": 13,
   "settings": {
+    "chat": null,
     "briefing": {
       "before": [
         "# Working in this session",
@@ -2451,6 +2575,7 @@ as `GET`. The object it replaced becomes `previous`:
     "live_sessions": 5
   },
   "previous": {
+    "chat": null,
     "briefing": {
       "before": [
         "# Working in this session",
@@ -2493,15 +2618,89 @@ as `GET`. The object it replaced becomes `previous`:
 }
 ```
 
-The four settings accepted by `PATCH` have distinct replacement rules.
+The five settings accepted by `PATCH` have distinct replacement rules.
 `pricing` is accepted only inside the complete document sent to `PUT`:
 
 | Setting | PATCH rule |
 |---|---|
+| `chat` | The object replaces the complete Chat declaration. Omitted nested fields take the shipped defaults listed below. Explicit `null` removes the object and turns Chat off; omission leaves the current object unchanged. Unknown nested fields are refused. |
 | `briefing` | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose. |
 | `deployment_capacity` | The object replaces the whole declaration. `cpu_millis` and `memory_mib` are nullable non-negative `u64` totals; `null` leaves that dimension undeclared, while zero is an explicit ceiling. `assumed_session_size` is either `null` or a non-zero CPU/memory pair. The setting itself cannot be `null`. |
 | `size_bounds` | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
 | `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation. |
+
+The optional Chat declaration can be changed on its own through the same public
+route used by the dashboard and both SDKs:
+
+```http
+PATCH /api/v1/admin/settings
+Content-Type: application/json
+
+{
+  "expected_revision": 13,
+  "chat": {
+    "enabled": true,
+    "workspace": {
+      "repository_url": "https://github.com/the-omega-institute/trureturing",
+      "branch": "dev"
+    },
+    "agent": {
+      "model": null,
+      "reasoning_effort": "high",
+      "instructions": "",
+      "record_tool_bodies": true
+    },
+    "message_prefixes": ["/codex-formalize"],
+    "inactivity": { "pause_after_seconds": 900 },
+    "setup": { "commands": [] },
+    "host": { "size": null, "max_threads": 10 }
+  }
+}
+```
+
+Those values are also the nested defaults, except that `enabled` ships
+`false`. An absent or `null` Chat object means the feature is off; old settings
+documents therefore remain off rather than gaining a synthesized object. An
+empty object supplied as `chat` resolves to the complete dark default. The
+model may be `null` to use the deployment default. Thinking effort is one of
+`minimal`, `low`, `medium`, `high`, or `x_high`. An explicit host size is a
+positive `u32` pair in millicores and MiB; `null` uses the deployment default.
+
+Chat validation is byte-based where stated: `repository_url` must be a
+credential-free HTTPS URL of at most 512 UTF-8 bytes, with no query or fragment
+and a basename safe to use as one workspace directory; `branch` is 1 through
+200 UTF-8 bytes with no whitespace. There may be at most 8 message prefixes,
+each non-empty after trimming, single-line, and at most 256 UTF-8 bytes. The
+pause interval is 60 through 86400 seconds. There may be at most 16 setup
+commands, each at most 4096 UTF-8 bytes. `max_threads` is 1 through 50. A
+semantic refusal is `422 invalid_request` and names `field` and `path` without
+reflecting the submitted scalar. Permission (`unrestricted`), mode
+(`conversation`), credential (`delegated`), and the deployment's default agent
+kernel are fixed behavior and are not stored fields.
+
+Setup commands run sequentially after the repository clone and again after a
+revived workspace is restored, before any conversation process opens. Each is
+executed by `/bin/bash -c` in the prepared repository as runtime uid 10001,
+which has no root authority. Commands therefore must use user-space installs,
+must be idempotent, and should prefer paths under the repository so installed
+toolchains ride the pause checkpoint. The Lean fixture command is exactly:
+
+```sh
+[ -x .toolchain/bin/lake ] || (curl -sSf https://elan.lean-lang.org/elan-init.sh | ELAN_HOME=$PWD/.toolchain sh -s -- -y --default-toolchain "$(cat lean-toolchain)")
+```
+
+The supervisor gives each command 600 seconds, stops at the first nonzero exit,
+and retains only one combined stdout/stderr tail of at most 32 KiB. A setup call
+is serialized with startup and is refused once any conversation has opened in
+that runtime incarnation. A failing index and its bounded excerpt are retained
+on the host for operators; neither configured command text nor output is copied
+to activity.
+
+To remove only Chat while preserving every other setting, send:
+
+```json
+{ "expected_revision": 14, "chat": null }
+```
 
 `cpu_pressure` and `memory_pressure` are independently editable only inside the
 complete document sent to `PUT`; `PATCH` does not accept either policy. Each
@@ -2574,9 +2773,11 @@ write routes return the 403 `not-an-operator` refusal described above when the
 caller lacks `configure_platform`, and a stale revision always returns the 409
 `settings_conflict` response without changing the stored document.
 
-Reset restores only the shipped briefing. It preserves the current size bounds
-and live-session limit, increments the revision, and records the complete
-pre-reset object as `previous`:
+Reset restores the shipped briefing and removes the optional Chat object,
+returning Chat to its absent, off state. It preserves deployment capacity,
+pressure policies, pricing history, size bounds and the live-session limit,
+increments the revision, and records the complete pre-reset object as
+`previous`:
 
 ```http
 POST /api/v1/admin/settings/reset

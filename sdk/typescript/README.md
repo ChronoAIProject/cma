@@ -13,6 +13,9 @@ npm pack
 ```
 
 The archive is for local scratch-consumer validation, not registry publication.
+The public client includes CMA's stateful Responses conversation resources and
+single-turn folding SSE connection; its exact subset is documented in
+[API_Responses.md](../../docs/API_Responses.md).
 
 The complete, executable integration guide lives in this package:
 

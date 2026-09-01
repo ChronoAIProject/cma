@@ -1,6 +1,6 @@
 //! Layer 1 — public interfaces.
 //!
-//! Five interface types, each a projection of the Layer 2 core session model.
+//! Six interface types, each a projection of the Layer 2 core session model.
 //! An interface may expose a subset of core operations where its protocol
 //! cannot express one. It must never invent an operation absent from Layer 2,
 //! and must never carry business logic.
@@ -13,6 +13,7 @@ pub mod agui;
 pub mod auth;
 pub mod mcp;
 pub mod pty;
+pub mod responses;
 pub mod rest;
 pub mod tickets;
 

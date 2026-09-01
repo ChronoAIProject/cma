@@ -9,18 +9,22 @@
 //! `docs/API_AGUI.md` §6 is the contract. The document and this handler must
 //! agree, and a test asserts the shape rather than trusting that they do.
 
-use axum::Json;
+use std::sync::Arc;
+
+use axum::{extract::State, Json};
 
 /// The capability document.
-pub(super) async fn declare() -> Json<serde_json::Value> {
-    Json(document())
+pub(super) async fn declare(
+    State(service): State<Arc<layer2_core::SessionService>>,
+) -> Json<serde_json::Value> {
+    Json(document(service.chat_surface_enabled().await))
 }
 
 /// The capability document before the HTTP wrapper is applied.
 ///
 /// Kept as one value constructor so the served route, documentation mirror,
 /// and cross-language fixture are assertions about the same source.
-pub(super) fn document() -> serde_json::Value {
+pub(super) fn document(chat_enabled: bool) -> serde_json::Value {
     serde_json::json!({
         "protocol": "ag-ui",
         "transports": ["sse"],
@@ -76,6 +80,10 @@ pub(super) fn document() -> serde_json::Value {
                 "cma:changePlane": false,
                 "cma:planeChangeObserved": true,
                 "cma:resources": true,
+                // Unlike build capabilities, this follows deployment policy.
+                // The reference client reads it once and never infers Chat
+                // availability by probing a creation route.
+                "cma:chat": { "enabled": chat_enabled },
                 // The run stream also carries what is happening right now, not
                 // only what has happened. Those frames are marked
                 // `cma:live` and carry no SSE id: they are not in the

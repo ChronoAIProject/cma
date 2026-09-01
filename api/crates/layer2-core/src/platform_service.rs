@@ -21,7 +21,13 @@ use crate::authz::Caller;
 use crate::authz::Capability;
 use crate::error::CoreError;
 use crate::store::{PlatformSettingsStore, StoredSettings};
-use crate::{PlatformSettings, SessionBriefing};
+use crate::{ChatSettingsSnapshot, PlatformSettings, SessionBriefing};
+
+/// One atomic settings read used to build a new chat host.
+pub(crate) struct ChatHostPolicy {
+    pub snapshot: ChatSettingsSnapshot,
+    pub briefing: SessionBriefing,
+}
 
 /// The deployment's settings, and who may change them.
 pub struct PlatformSettingsService {
@@ -91,6 +97,32 @@ impl PlatformSettingsService {
         Ok(self.current().await?.settings)
     }
 
+    /// The validated settings revision a newly created chat host must pin.
+    ///
+    /// Unlike ordinary session provisioning this fails closed. Falling back to
+    /// defaults here could silently clone a different repository or enable a
+    /// surface the administrator disabled.
+    pub async fn chat_snapshot(&self) -> Result<Option<ChatSettingsSnapshot>, CoreError> {
+        Ok(self.chat_host_policy().await?.map(|policy| policy.snapshot))
+    }
+
+    /// Chat policy and deployment briefing from one fail-closed revision.
+    pub(crate) async fn chat_host_policy(&self) -> Result<Option<ChatHostPolicy>, CoreError> {
+        let stored = self.current().await?;
+        let Some(settings) = stored.settings.chat else {
+            return Ok(None);
+        };
+        let snapshot = ChatSettingsSnapshot::new(stored.revision, settings)
+            .map_err(|violation| CoreError::InvalidRequest(violation.to_string()))?;
+        if let Some(size) = snapshot.settings.host.size {
+            stored.settings.size_bounds.check(size)?;
+        }
+        Ok(Some(ChatHostPolicy {
+            snapshot,
+            briefing: stored.settings.briefing,
+        }))
+    }
+
     /// Change the settings, refusing if somebody has written since `expected`.
     pub async fn write(
         &self,
@@ -108,6 +140,10 @@ impl PlatformSettingsService {
         };
         let current = self.current().await?;
         if current.revision == expected {
+            if let Some(chat) = &settings.chat {
+                chat.validate()
+                    .map_err(|violation| CoreError::InvalidRequest(violation.to_string()))?;
+            }
             settings
                 .pricing
                 .sealed_against(&current.settings.pricing)
@@ -134,20 +170,22 @@ impl PlatformSettingsService {
         }
     }
 
-    /// Put the session briefing back to what the platform ships.
+    /// Put resettable settings back to what the platform ships.
     ///
     /// A write like any other, and conditional like any other. Its own method
     /// because a client should not have to hold a copy of the defaults to
     /// restore them — and if it did, its copy would be the one that drifts.
-    /// Other settings are preserved: resetting prose must not quietly widen a
-    /// size bound or remove a live-session limit set for a different reason.
-    pub async fn reset_briefing(
+    /// Sealed policy is preserved: reset must not rewrite prices, widen a size
+    /// bound, or remove a live-session limit. Chat is resettable and returns to
+    /// its absent, disabled state so a reset can never leave the surface on.
+    pub async fn reset_settings(
         &self,
         caller: &Caller,
         expected: u64,
     ) -> Result<StoredSettings, CoreError> {
         let mut current = self.read(caller).await?.settings;
         current.briefing = SessionBriefing::default();
+        current.chat = None;
         self.write(caller, expected, current).await
     }
 
@@ -295,7 +333,7 @@ mod tests {
             Err(CoreError::Forbidden)
         ));
         assert!(matches!(
-            svc.reset_briefing(&ordinary(), 0).await,
+            svc.reset_settings(&ordinary(), 0).await,
             Err(CoreError::Forbidden)
         ));
         // And the refusal is not a side effect of the store being empty.
@@ -424,24 +462,80 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_restores_only_the_shipped_words_without_the_client_holding_them() {
+    async fn reset_restores_shipped_words_and_removes_chat_without_changing_sealed_policy() {
         let svc = PlatformSettingsService::new(Arc::new(FakeStore::default()));
         let mut configured = changed();
         configured.size_bounds.max_memory_mib =
             std::num::NonZeroU32::new(4_096).expect("the test bound is non-zero");
         configured.live_sessions =
             Some(std::num::NonZeroU32::new(3).expect("the test limit is non-zero"));
+        configured.chat = Some(crate::ChatSettings {
+            enabled: true,
+            ..Default::default()
+        });
         let written = svc
             .write(&admin(), 0, configured.clone())
             .await
             .expect("written");
         let back = svc
-            .reset_briefing(&admin(), written.revision)
+            .reset_settings(&admin(), written.revision)
             .await
             .expect("reset");
         assert_eq!(back.settings.briefing, SessionBriefing::default());
+        assert_eq!(back.settings.chat, None);
         assert_eq!(back.settings.size_bounds, configured.size_bounds);
         assert_eq!(back.settings.live_sessions, configured.live_sessions);
+    }
+
+    #[tokio::test]
+    async fn chat_settings_are_validated_before_any_store_write() {
+        let store = Arc::new(FakeStore::default());
+        let svc =
+            PlatformSettingsService::new(Arc::clone(&store) as Arc<dyn PlatformSettingsStore>);
+        let settings = PlatformSettings {
+            chat: Some(crate::ChatSettings {
+                inactivity: crate::ChatInactivity {
+                    pause_after_seconds: 59,
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let refused = svc.write(&admin(), 0, settings).await;
+        let Err(CoreError::InvalidRequest(detail)) = refused else {
+            panic!("invalid chat settings must be refused: {refused:?}");
+        };
+        assert!(detail.contains("chat.inactivity.pause_after_seconds"));
+        assert!(store.held.lock().expect("not poisoned").is_none());
+    }
+
+    #[tokio::test]
+    async fn chat_snapshot_pins_the_written_revision_and_derived_directory() {
+        let svc = PlatformSettingsService::new(Arc::new(FakeStore::default()));
+        assert_eq!(svc.chat_snapshot().await.expect("defaults read"), None);
+
+        let settings = PlatformSettings {
+            chat: Some(crate::ChatSettings {
+                enabled: true,
+                workspace: crate::ChatWorkspaceSource {
+                    repository_url: "https://example.test/team/sample.git".into(),
+                    branch: "main".into(),
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let stored = svc.write(&admin(), 0, settings).await.expect("written");
+        let snapshot = svc
+            .chat_snapshot()
+            .await
+            .expect("readable")
+            .expect("configured");
+
+        assert_eq!(snapshot.settings_revision, stored.revision);
+        assert_eq!(snapshot.settings, stored.settings.chat.unwrap());
+        assert_eq!(snapshot.workspace_directory, "sample");
     }
 
     #[tokio::test]

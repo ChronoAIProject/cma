@@ -2632,6 +2632,8 @@ pub(crate) fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
         },
         own_credential: matches!(options.credential, crate::options::CredentialMode::Own),
         restricted_service_gateway: false,
+        working_directory: None,
+        conversation_slot: None,
         // Nothing to rejoin: this is a runtime being started, which has no
         // conversation yet. Taking one back over is the readopt path's, and it
         // reads the name from the record rather than from anything held here.

@@ -52,6 +52,38 @@ fn a_collection_is_classified_without_a_target() {
 }
 
 #[test]
+fn responses_routes_use_the_same_actions_without_retaining_prompt_bodies() {
+    let create = classified(Method::POST, "/api/v1/conversations");
+    assert_eq!(create.action, Action::SessionCreate);
+    assert!(create.target.is_none());
+    assert!(!create.reads_body);
+
+    let conversation = classified(Method::GET, "/api/v1/conversations/sesn_chat");
+    assert_eq!(conversation.action, Action::SessionRead);
+    assert_eq!(
+        conversation.target,
+        Some(ActivityTarget::Session(SessionId("sesn_chat".into())))
+    );
+
+    let items = classified(Method::GET, "/api/v1/conversations/sesn_chat/items");
+    assert_eq!(items.action, Action::SessionEventsRead);
+    assert_eq!(items.target, conversation.target);
+
+    let input = classified(Method::POST, "/api/v1/responses");
+    assert_eq!(input.action, Action::SessionInput);
+    assert!(input.target.is_none());
+    assert!(
+        !input.reads_body,
+        "Responses input contains owner prose and must never enter activity detail"
+    );
+
+    let response = classified(Method::GET, "/api/v1/responses/resp_sesn_chat_17");
+    assert_eq!(response.action, Action::SessionRead);
+    assert_eq!(response.target, conversation.target);
+    assert!(classify(&Method::GET, "/api/v1/responses/not-a-response").is_none());
+}
+
+#[test]
 fn the_method_decides_between_two_actions_at_one_address() {
     assert_eq!(
         classified(Method::POST, "/api/v1/sessions").action,
@@ -107,6 +139,17 @@ fn the_operator_surface_is_classified_too() {
         c.target,
         Some(ActivityTarget::Session(SessionId("sesn_1".into())))
     );
+
+    let list = classified(Method::GET, "/api/v1/admin/chat/hosts");
+    assert_eq!(list.action, Action::ChatHostList);
+    assert!(list.target.is_none());
+    let retire = classified(Method::POST, "/api/v1/admin/chat/hosts/chho_example/retire");
+    assert_eq!(retire.action, Action::ChatHostRetire);
+    assert_eq!(
+        retire.target,
+        Some(ActivityTarget::ChatHost(ChatHostId("chho_example".into())))
+    );
+    assert!(!retire.reads_body);
 }
 
 #[test]

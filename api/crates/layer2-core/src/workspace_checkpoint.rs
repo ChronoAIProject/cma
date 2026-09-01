@@ -6,6 +6,7 @@ use layer3_adapter::{
     KernelAdapter, RuntimeHandle, WorkspaceCheckpointDisposition, WorkspaceCheckpointPackage,
     WorkspaceCheckpointRequest, WorkspaceWriterState,
 };
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     CoreError, LaunchId, SessionId, SessionService, StoreError, SubjectId,
@@ -113,7 +114,7 @@ impl SessionService {
             .trigger_origin
             .as_ref()
             .cloned()
-            .ok_or(CoreError::InvalidState)?;
+            .ok_or_else(CoreError::invalid_state)?;
         let runtime_generation = u64::from(record.session.rotations).saturating_add(1);
         let owner = record.session.owner.clone();
         let source = self
@@ -143,6 +144,7 @@ impl SessionService {
             version: intent.version,
             source_revision: origin.source_revision.clone(),
             baseline_manifest_digest: origin.manifest_digest.clone(),
+            include_git_metadata: false,
             disposition,
         };
         let captured = self
@@ -436,7 +438,7 @@ impl SessionService {
         let origin = record
             .trigger_origin
             .as_ref()
-            .ok_or(CoreError::InvalidState)?;
+            .ok_or_else(CoreError::invalid_state)?;
         let runtime_generation = u64::from(record.session.rotations).saturating_add(1);
         if &record.session.owner != owner
             || &origin.launch_id != launch_id
@@ -549,4 +551,154 @@ fn workspace_store_core_error(error: StoreError) -> CoreError {
         StoreError::Unavailable(detail) => CoreError::RuntimeUnavailable(detail),
         other => CoreError::RuntimeUnavailable(other.to_string()),
     }
+}
+
+/// Validate one adapter package independently of its transport parser.
+///
+/// Chat uses the complete-Git digest domain while Trigger deliberately keeps
+/// the original domain, so the capture scope is part of the sealed identity.
+pub(crate) fn validate_workspace_checkpoint_package(
+    request: &WorkspaceCheckpointRequest,
+    checkpoint: &WorkspaceCheckpointPackage,
+) -> Result<(), CoreError> {
+    if request.epoch == 0
+        || request.version == 0
+        || checkpoint.epoch != request.epoch
+        || checkpoint.version != request.version
+        || !checkpoint
+            .source_revision
+            .eq_ignore_ascii_case(&request.source_revision)
+        || checkpoint.includes_git_metadata != request.include_git_metadata
+        || checkpoint.archive.is_empty()
+        || checkpoint.quiesced_writers == 0
+        || !is_hex(&checkpoint.source_revision, 40)
+        || !is_hex(&checkpoint.manifest_digest, 64)
+        || !is_hex(&checkpoint.archive_sha256, 64)
+        || checkpoint_digest(&checkpoint.archive) != checkpoint.archive_sha256
+        || checkpoint.entries.len() > crate::MAX_REPOSITORY_FILES
+    {
+        return Err(CoreError::RuntimeRefused(
+            "the runtime returned a malformed workspace checkpoint".into(),
+        ));
+    }
+
+    let mut total_bytes = 0_u64;
+    let mut previous_path: Option<&str> = None;
+    for entry in &checkpoint.entries {
+        if entry.path.is_empty()
+            || previous_path.is_some_and(|previous| previous >= entry.path.as_str())
+            || !is_hex(&entry.content_sha256, 64)
+            || entry
+                .provider_object_id
+                .as_deref()
+                .is_some_and(|object| !is_hex(object, 40))
+        {
+            return Err(CoreError::RuntimeRefused(
+                "the runtime returned malformed workspace entry metadata".into(),
+            ));
+        }
+        previous_path = Some(&entry.path);
+        match entry.kind {
+            layer3_adapter::WorkspaceEntryKind::Regular
+                if matches!(entry.mode, 0o100644 | 0o100755) && entry.symlink_target.is_none() => {}
+            layer3_adapter::WorkspaceEntryKind::Symlink
+                if entry.mode == 0o120000
+                    && entry.symlink_target.as_deref().is_some_and(|target| {
+                        u64::try_from(target.len()).ok() == Some(entry.size)
+                            && checkpoint_digest(target.as_bytes()) == entry.content_sha256
+                    }) => {}
+            _ => {
+                return Err(CoreError::RuntimeRefused(
+                    "the runtime returned an unsupported workspace entry".into(),
+                ))
+            }
+        }
+        total_bytes = total_bytes.checked_add(entry.size).ok_or_else(|| {
+            CoreError::RuntimeRefused("the workspace checkpoint byte count overflowed".into())
+        })?;
+    }
+    if total_bytes != checkpoint.total_bytes || total_bytes > crate::MAX_REPOSITORY_BYTES {
+        return Err(CoreError::RuntimeRefused(
+            "the workspace checkpoint size does not match its entries".into(),
+        ));
+    }
+    if checkpoint_manifest_digest(checkpoint)? != checkpoint.manifest_digest {
+        return Err(CoreError::RuntimeRefused(
+            "the workspace checkpoint manifest digest is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn checkpoint_manifest_digest(
+    checkpoint: &WorkspaceCheckpointPackage,
+) -> Result<String, CoreError> {
+    let mut digest = Sha256::new();
+    digest.update(b"cma-workspace-manifest-v1\0");
+    if checkpoint.includes_git_metadata {
+        digest.update(b"complete-git-workspace-v1\0");
+    }
+    checkpoint_hash_text(&mut digest, &checkpoint.source_revision)?;
+    digest.update(
+        u64::try_from(checkpoint.entries.len())
+            .map_err(|_| CoreError::RuntimeRefused("workspace manifest is too large".into()))?
+            .to_be_bytes(),
+    );
+    for entry in &checkpoint.entries {
+        checkpoint_hash_text(&mut digest, &entry.path)?;
+        digest.update([match entry.kind {
+            layer3_adapter::WorkspaceEntryKind::Regular => 1,
+            layer3_adapter::WorkspaceEntryKind::Symlink => 2,
+        }]);
+        digest.update(entry.mode.to_be_bytes());
+        digest.update(entry.size.to_be_bytes());
+        checkpoint_hash_text(&mut digest, &entry.content_sha256)?;
+        checkpoint_hash_optional_text(&mut digest, entry.provider_object_id.as_deref())?;
+        checkpoint_hash_optional_text(&mut digest, entry.symlink_target.as_deref())?;
+    }
+    Ok(checkpoint_hex(&digest.finalize()))
+}
+
+fn checkpoint_hash_text(digest: &mut Sha256, value: &str) -> Result<(), CoreError> {
+    digest.update(
+        u64::try_from(value.len())
+            .map_err(|_| CoreError::RuntimeRefused("workspace manifest value is too large".into()))?
+            .to_be_bytes(),
+    );
+    digest.update(value.as_bytes());
+    Ok(())
+}
+
+fn checkpoint_hash_optional_text(
+    digest: &mut Sha256,
+    value: Option<&str>,
+) -> Result<(), CoreError> {
+    match value {
+        Some(value) => {
+            digest.update([1]);
+            checkpoint_hash_text(digest, value)
+        }
+        None => {
+            digest.update([0]);
+            Ok(())
+        }
+    }
+}
+
+fn checkpoint_digest(bytes: &[u8]) -> String {
+    checkpoint_hex(&Sha256::digest(bytes))
+}
+
+fn checkpoint_hex(bytes: &[u8]) -> String {
+    const CHARS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(CHARS[usize::from(byte >> 4)]));
+        out.push(char::from(CHARS[usize::from(byte & 0x0f)]));
+    }
+    out
+}
+
+fn is_hex(value: &str, bytes: usize) -> bool {
+    value.len() == bytes && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

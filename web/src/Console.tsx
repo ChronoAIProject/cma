@@ -11,10 +11,11 @@ import { BouncingText } from './sessions/BouncingText';
 import { SignInCard } from './chat/SignInCard';
 import type { SignIn } from '@chronoai/cma-sdk';
 import type { Stage } from './sessions/progress';
-import { SessionActions } from './sessions/SessionActions';
+import { ChatSessionActions, SessionActions } from './sessions/SessionActions';
 import { SessionHeader } from './sessions/SessionHeader';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { ConversationSurface } from './chat/ConversationSurface';
+import { ChatSurface } from './chat/ChatSurface';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
 import { selectLiveWindow, unattachedNote } from './canvas/layout';
@@ -26,11 +27,13 @@ import { consumePendingTurn } from './auth/pendingTurn';
 import type { User } from './auth/types';
 import {
   ApiError,
+  createChatSession,
   followSession,
   listKernels,
   listSessions,
   quoteSession,
   readAllowance,
+  readChatSurfaceEnabled,
   readSessionSpend,
 } from './api/client';
 import {
@@ -58,6 +61,7 @@ import { TriggerReview } from './trigger/TriggerReview';
 import { LaunchSurface } from './trigger/LaunchSurface';
 import { ContributionSurface } from './trigger/ContributionSurface';
 import { PublisherSurface } from './publisher/PublisherSurface';
+import { loadSurfaceMode, storeSurfaceMode, type SurfaceMode } from './shell/surfaceMode';
 
 /**
  * The authenticated surface. Same page, now driven live.
@@ -88,6 +92,10 @@ interface ConsoleProps {
 /** The transient surfaces §1 admits. They are state, never routes. */
 type ConsoleView = 'sessions' | 'publisher' | 'operations' | 'developer';
 
+function belongsToSurface(session: Session, surface: SurfaceMode): boolean {
+  return surface === 'chat' ? session.chat !== undefined : session.chat === undefined;
+}
+
 /**
  * Geometry the first frame is requested at.
  *
@@ -111,6 +119,8 @@ export function Console({
   const [openingForId, setOpeningForId] = useState<string | null>(null);
 
   const [sessions, setSessions] = useState<readonly Session[]>([]);
+  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>(loadSurfaceMode);
+  const [chatAvailable, setChatAvailable] = useState(false);
   const [allowance, setAllowance] = useState<Allowance | undefined>(undefined);
   const allowanceRead = useRef(0);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -368,17 +378,48 @@ export function Console({
     let cancelled = false;
     void (async () => {
       try {
-        const existing = await listSessions();
+        const chatEnabled = await readChatSurfaceEnabled();
         if (cancelled) {
           return;
         }
+        const agents = await listSessions('agent');
+        let chats: readonly Session[] = [];
+        if (chatEnabled) {
+          try {
+            chats = await listSessions('chat');
+          } catch (cause) {
+            if (!cancelled) {
+              report(
+                cause,
+                'Loading your chats failed.',
+                'Your Agent sessions are still available.',
+              );
+            }
+          }
+        }
+        const existing = [...agents, ...chats];
+        if (cancelled) {
+          return;
+        }
+        setChatAvailable(chatEnabled);
         setSessions(existing);
         const openingRoute = routeRef.current;
-        const requested =
+        const routed =
           openingRoute.kind === 'session'
             ? existing.find((session) => session.id === openingRoute.sessionId)
-            : existing.find((session) => session.lifecycle !== 'terminated');
+            : undefined;
+        const preferredSurface = chatEnabled ? surfaceMode : 'agent';
+        const requested =
+          routed ??
+          existing.find(
+            (session) =>
+              belongsToSurface(session, preferredSurface) && session.lifecycle !== 'terminated',
+          );
         if (requested !== undefined) {
+          const requestedSurface = requested.chat === undefined ? 'agent' : 'chat';
+          if (requestedSurface === 'agent' || chatEnabled) {
+            setSurfaceMode(requestedSurface);
+          }
           selectState(requested.id);
         }
       } catch (cause) {
@@ -420,6 +461,28 @@ export function Console({
     setFocusHistory,
     refreshAllowance,
   });
+
+  const startChat = useCallback(async () => {
+    setNotice(null);
+    markActing(true);
+    try {
+      const session = await createChatSession();
+      setSessions((previous) => [session, ...previous]);
+      select(session.id);
+    } catch (cause) {
+      if (cause instanceof ApiError) {
+        setNotice({
+          failed: cause.message,
+          unchanged: 'No chat was created.',
+          code: cause.code ?? (cause.status > 0 ? `HTTP ${String(cause.status)}` : undefined),
+        });
+      } else {
+        report(cause, 'Starting a chat failed.', 'No chat was created.');
+      }
+    } finally {
+      markActing(false);
+    }
+  }, [markActing, report, select]);
 
   /*
    * Follow whichever session is still starting. The stream is the only thing
@@ -501,10 +564,19 @@ export function Console({
 
   // The canvas shows exactly what the rail lists, so one arrangement never
   // holds a session the other has let go of.
-  const listed = useMemo(() => listable(sessions), [sessions]);
+  const effectiveSurface: SurfaceMode = chatAvailable ? surfaceMode : 'agent';
+  const allListed = useMemo(() => listable(sessions), [sessions]);
+  const listed = useMemo(
+    () => allListed.filter((session) => belongsToSurface(session, effectiveSurface)),
+    [allListed, effectiveSurface],
+  );
   const canvasNodes = useMemo(
-    () => nodes.filter((node) => abilitiesFor(node.session).listed),
-    [nodes],
+    () =>
+      nodes.filter(
+        (node) =>
+          abilitiesFor(node.session).listed && belongsToSurface(node.session, effectiveSurface),
+      ),
+    [nodes, effectiveSurface],
   );
 
   const changeArrangement = useCallback((next: Arrangement) => {
@@ -566,12 +638,41 @@ export function Console({
       return 'Loading sessions';
     }
     if (listed.length === 0) {
-      return 'No sessions';
+      return effectiveSurface === 'chat' ? 'No chats' : 'No sessions';
     }
-    const count = `${String(listed.length)} session${listed.length === 1 ? '' : 's'}`;
+    const noun = effectiveSurface === 'chat' ? 'chat' : 'session';
+    const count = `${String(listed.length)} ${noun}${listed.length === 1 ? '' : 's'}`;
     return `${count} · ${String(liveCount)} live`;
-  }, [view, loading, listed, liveCount]);
-  const creation = useMemo(() => creationAbilityFor(allowance), [allowance]);
+  }, [view, loading, listed, liveCount, effectiveSurface]);
+  const agentCreation = useMemo(() => creationAbilityFor(allowance), [allowance]);
+  const creation = effectiveSurface === 'chat' ? { canCreate: true } : agentCreation;
+
+  const changeSurface = useCallback(
+    (next: SurfaceMode) => {
+      setSurfaceMode(next);
+      storeSurfaceMode(next);
+      const candidates = listable(sessions).filter((session) => belongsToSurface(session, next));
+      const current = candidates.find((session) => session.id === effectiveActiveId);
+      const target =
+        current ??
+        candidates.find((session) => session.lifecycle !== 'terminated') ??
+        candidates[0];
+      if (target === undefined) {
+        clearSelection();
+      } else {
+        select(target.id);
+      }
+    },
+    [clearSelection, effectiveActiveId, select, sessions],
+  );
+
+  const beginCreate = useCallback(() => {
+    if (effectiveSurface === 'chat') {
+      void startChat();
+    } else {
+      setChoosing(true);
+    }
+  }, [effectiveSurface, startChat]);
 
   return (
     <AppFrame
@@ -587,10 +688,11 @@ export function Console({
         <Sidebar
           collapsed={collapsed}
           creation={creation}
+          surface={effectiveSurface}
+          chatAvailable={chatAvailable}
+          onSurfaceChange={changeSurface}
           onToggleCollapsed={onToggle}
-          onCreate={() => {
-            setChoosing(true);
-          }}
+          onCreate={beginCreate}
           onSearch={() => {
             setCommandOpen(true);
           }}
@@ -632,6 +734,7 @@ export function Console({
           {collapsed ? null : (
             <SessionRail
               sessions={listed}
+              surface={effectiveSurface}
               activeId={effectiveActiveId}
               order={order}
               onSelect={select}
@@ -727,7 +830,7 @@ export function Console({
               session={active}
               waiting={active !== null && active.id === waitingId}
               actions={
-                active === null ? undefined : (
+                active === null ? undefined : active.chat === undefined ? (
                   <SessionActions
                     session={active}
                     signingIn={pendingSignIn !== undefined}
@@ -760,6 +863,13 @@ export function Console({
                     detailsOpen={detailsOpen}
                     kernels={kernels}
                     onChangePlane={(to) => void changeSessionPlane(active.id, to)}
+                  />
+                ) : (
+                  <ChatSessionActions
+                    onDetails={() => {
+                      setDetailsOpen((open) => !open);
+                    }}
+                    detailsOpen={detailsOpen}
                   />
                 )
               }
@@ -853,6 +963,8 @@ export function Console({
                 message="Moving this session to an updated runtime. It will come back where it left off."
                 stage={stages[active.id] ?? null}
               />
+            ) : active.chat !== undefined ? (
+              <ChatSurface key={active.id} session={active} />
             ) : active.plane === 'conversation' ? (
               /*
                * §18 and §1: the middle column is drawn from the session's own
@@ -920,6 +1032,7 @@ export function Console({
           {commandOpen ? (
             <CommandBar
               sessions={listed}
+              surface={effectiveSurface}
               creation={creation}
               canvasAvailable
               onClose={() => {
@@ -933,13 +1046,13 @@ export function Console({
                 changeArrangement(next);
               }}
               onNewSession={() => {
-                setChoosing(true);
+                beginCreate();
               }}
             />
           ) : null}
 
           <NewSessionDialog
-            open={choosing}
+            open={choosing && effectiveSurface === 'agent'}
             profiles={profiles}
             kernels={kernels}
             store={profileStore}

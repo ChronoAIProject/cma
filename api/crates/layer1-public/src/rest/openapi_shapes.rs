@@ -84,6 +84,21 @@ pub(super) enum SessionMode {
     Conversation,
 }
 
+/// Deployment-managed session surface selected at creation.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SessionSurface {
+    Chat,
+}
+
+/// Session family accepted by the owner session collection.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SessionSurfaceFilter {
+    Chat,
+    Agent,
+}
+
 /// How much a session's runtime reserves.
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct SessionSize {
@@ -128,6 +143,8 @@ pub(super) enum ActivityAction {
     SessionPlaneChange,
     SessionApprovalResolve,
     SessionUsageRead,
+    ChatHostList,
+    ChatHostRetire,
     EnvironmentProfileCreate,
     EnvironmentProfileRead,
     EnvironmentProfileList,
@@ -187,6 +204,10 @@ pub(super) enum ActivityAction {
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct SessionId(String);
 
+/// Identifier of a deployment-managed chat host.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatHostId(String);
+
 /// Identifier of a reusable environment profile.
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct EnvironmentProfileId(String);
@@ -212,6 +233,7 @@ pub(super) struct LaunchId(String);
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub(super) enum ActivityTarget {
     Session(SessionId),
+    ChatHost(ChatHostId),
     EnvironmentProfile(EnvironmentProfileId),
     Subject(SubjectId),
     Trigger(TriggerId),
@@ -219,6 +241,30 @@ pub(super) enum ActivityTarget {
     PublicTrigger(PublicTriggerId),
     Launch(LaunchId),
     TriggerConnection(String),
+}
+
+/// Lifecycle of a deployment-managed chat host.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ChatHostStatus {
+    Provisioning,
+    Active,
+    Pausing,
+    Paused,
+    Reviving,
+    Retired,
+}
+
+/// Bounded phase vocabulary for one retained shared-host failure.
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ChatProvisioningPhase {
+    Runtime,
+    WorkspaceSource,
+    WorkspaceSetup,
+    Credential,
+    Cleanup,
+    RuntimeLost,
 }
 
 /// How an activity came out.
@@ -235,6 +281,8 @@ pub(super) enum ActivityOutcome {
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct PlatformSettings {
     #[serde(default)]
+    chat: Option<ChatSettings>,
+    #[serde(default)]
     briefing: SessionBriefing,
     #[serde(default)]
     deployment_capacity: DeploymentCapacity,
@@ -249,6 +297,59 @@ pub(super) struct PlatformSettings {
     #[serde(default)]
     #[schema(value_type = Option<u32>, minimum = 1)]
     live_sessions: Option<u32>,
+}
+
+/// Deployment-owned policy for the chat surface.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatSettings {
+    enabled: bool,
+    workspace: ChatWorkspaceSource,
+    agent: ChatAgentSettings,
+    #[schema(max_items = 8)]
+    message_prefixes: Vec<String>,
+    inactivity: ChatInactivity,
+    setup: ChatSetup,
+    host: ChatHostSettings,
+}
+
+/// Repository prepared for an owner's shared chat host.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatWorkspaceSource {
+    #[schema(max_length = 512)]
+    repository_url: String,
+    #[schema(min_length = 1, max_length = 200)]
+    branch: String,
+}
+
+/// Agent policy shared by all threads on one host.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatAgentSettings {
+    model: Option<String>,
+    reasoning_effort: ReasoningEffort,
+    instructions: String,
+    record_tool_bodies: bool,
+}
+
+/// Host inactivity policy.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatInactivity {
+    #[schema(minimum = 60, maximum = 86400)]
+    pause_after_seconds: u32,
+}
+
+/// Ordered workspace preparation commands.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatSetup {
+    #[schema(max_items = 16)]
+    commands: Vec<String>,
+}
+
+/// Reservation and thread cap for a shared host.
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct ChatHostSettings {
+    size: Option<SessionSize>,
+    #[schema(minimum = 1, maximum = 50)]
+    max_threads: u8,
 }
 
 /// Editable prose around the generated granted-services section.
@@ -528,6 +629,8 @@ mod tests {
             core::ActivityAction::SessionPlaneChange => ActivityAction::SessionPlaneChange,
             core::ActivityAction::SessionApprovalResolve => ActivityAction::SessionApprovalResolve,
             core::ActivityAction::SessionUsageRead => ActivityAction::SessionUsageRead,
+            core::ActivityAction::ChatHostList => ActivityAction::ChatHostList,
+            core::ActivityAction::ChatHostRetire => ActivityAction::ChatHostRetire,
             core::ActivityAction::EnvironmentProfileCreate => ActivityAction::EnvironmentProfileCreate,
             core::ActivityAction::EnvironmentProfileRead => ActivityAction::EnvironmentProfileRead,
             core::ActivityAction::EnvironmentProfileList => ActivityAction::EnvironmentProfileList,
@@ -601,6 +704,7 @@ mod tests {
         fn exhaustive(value: core::ActivityTarget) {
             match value {
                 core::ActivityTarget::Session(_) => {}
+                core::ActivityTarget::ChatHost(_) => {}
                 core::ActivityTarget::EnvironmentProfile(_) => {}
                 core::ActivityTarget::Subject(_) => {}
                 core::ActivityTarget::Trigger(_) => {}
@@ -615,6 +719,10 @@ mod tests {
             (
                 core::ActivityTarget::Session(core::SessionId("sesn_schema".into())),
                 ActivityTarget::Session(SessionId("sesn_schema".into())),
+            ),
+            (
+                core::ActivityTarget::ChatHost(core::ChatHostId("chho_schema".into())),
+                ActivityTarget::ChatHost(ChatHostId("chho_schema".into())),
             ),
             (
                 core::ActivityTarget::EnvironmentProfile(core::EnvironmentProfileId(
@@ -752,6 +860,30 @@ mod tests {
 
     fn actual_settings() -> core::PlatformSettings {
         core::PlatformSettings {
+            chat: Some(core::ChatSettings {
+                enabled: true,
+                workspace: core::ChatWorkspaceSource {
+                    repository_url: "https://example.test/team/repository".into(),
+                    branch: "development".into(),
+                },
+                agent: core::ChatAgentSettings {
+                    model: Some("deployment-model".into()),
+                    reasoning_effort: core::ReasoningEffort::XHigh,
+                    instructions: "Read the repository guidance.".into(),
+                    record_tool_bodies: false,
+                },
+                message_prefixes: vec!["/formalize".into()],
+                inactivity: core::ChatInactivity {
+                    pause_after_seconds: 1_200,
+                },
+                setup: core::ChatSetup {
+                    commands: vec!["tool install".into()],
+                },
+                host: core::ChatHostSettings {
+                    size: Some(core::SessionSize::new(2_000, 4_096).expect("non-zero")),
+                    max_threads: 12,
+                },
+            }),
             briefing: core::SessionBriefing {
                 before: vec!["before".into()],
                 reach_heading: "reach heading".into(),
@@ -794,6 +926,33 @@ mod tests {
 
     fn mirror_settings() -> PlatformSettings {
         PlatformSettings {
+            chat: Some(ChatSettings {
+                enabled: true,
+                workspace: ChatWorkspaceSource {
+                    repository_url: "https://example.test/team/repository".into(),
+                    branch: "development".into(),
+                },
+                agent: ChatAgentSettings {
+                    model: Some("deployment-model".into()),
+                    reasoning_effort: ReasoningEffort::XHigh,
+                    instructions: "Read the repository guidance.".into(),
+                    record_tool_bodies: false,
+                },
+                message_prefixes: vec!["/formalize".into()],
+                inactivity: ChatInactivity {
+                    pause_after_seconds: 1_200,
+                },
+                setup: ChatSetup {
+                    commands: vec!["tool install".into()],
+                },
+                host: ChatHostSettings {
+                    size: Some(SessionSize {
+                        cpu_millis: 2_000,
+                        memory_mib: 4_096,
+                    }),
+                    max_threads: 12,
+                },
+            }),
             briefing: SessionBriefing {
                 before: vec!["before".into()],
                 reach_heading: "reach heading".into(),
@@ -850,6 +1009,22 @@ mod tests {
         let actual = actual_settings();
         let mirror = mirror_settings();
         assert_object_mirror::<PlatformSettings>(&actual, &mirror);
+        let actual_chat = actual.chat.as_ref().expect("chat fixture");
+        let mirror_chat = mirror.chat.as_ref().expect("chat mirror fixture");
+        assert_object_mirror::<ChatSettings>(actual_chat, mirror_chat);
+        assert_object_mirror::<ChatWorkspaceSource>(&actual_chat.workspace, &mirror_chat.workspace);
+        assert_object_mirror::<ChatAgentSettings>(&actual_chat.agent, &mirror_chat.agent);
+        assert_object_mirror::<ChatInactivity>(&actual_chat.inactivity, &mirror_chat.inactivity);
+        assert_object_mirror::<ChatSetup>(&actual_chat.setup, &mirror_chat.setup);
+        assert_object_mirror::<ChatHostSettings>(&actual_chat.host, &mirror_chat.host);
+        assert_object_mirror::<SessionSize>(
+            actual_chat.host.size.as_ref().expect("chat host size"),
+            mirror_chat
+                .host
+                .size
+                .as_ref()
+                .expect("chat host size mirror"),
+        );
         assert_object_mirror::<SessionBriefing>(&actual.briefing, &mirror.briefing);
         assert_object_mirror::<DeploymentCapacity>(
             &actual.deployment_capacity,
@@ -901,6 +1076,12 @@ mod tests {
             ActivityTarget::name(),
             ActivityOutcome::name(),
             PlatformSettings::name(),
+            ChatSettings::name(),
+            ChatWorkspaceSource::name(),
+            ChatAgentSettings::name(),
+            ChatInactivity::name(),
+            ChatSetup::name(),
+            ChatHostSettings::name(),
             SessionBriefing::name(),
             DeploymentCapacity::name(),
             CpuPressurePolicy::name(),

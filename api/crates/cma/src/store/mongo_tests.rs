@@ -1,12 +1,12 @@
 use super::*;
 use layer2_core::{
     store::{PendingHandover, PendingHandoverTarget},
-    AgentOptions, ConversationLink, ConversationWriteAuthority, Event, EventKind, GrantedSkill,
-    KernelId, PageCursor, PageRequest, Rate, RateCardId, RecoveryState, RuntimeCleanupReason,
-    Session, SessionBoundary, SessionCapabilities, SessionId, SessionLeaseRequest,
-    SessionListQuery, SessionMode, SessionOperation, SessionPricing, SessionRecord, SessionStatus,
-    SkillId, SkillPack, SkillPackDigest, SkillPackState, StopReason, StoredEventKind, SubjectId,
-    TerminalGeometry,
+    AgentOptions, ChatHostId, ChatOrigin, ConversationLink, ConversationWriteAuthority, Event,
+    EventKind, GrantedSkill, KernelId, PageCursor, PageRequest, Rate, RateCardId, RecoveryState,
+    RuntimeCleanupReason, Session, SessionBoundary, SessionCapabilities, SessionId,
+    SessionLeaseRequest, SessionListQuery, SessionMode, SessionOperation, SessionPricing,
+    SessionRecord, SessionStatus, SessionSurfaceFilter, SkillId, SkillPack, SkillPackDigest,
+    SkillPackState, StopReason, StoredEventKind, SubjectId, TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{
@@ -33,6 +33,7 @@ fn record_with(pricing: Option<SessionPricing>) -> SessionRecord {
         granted_services: None,
         granted_skills: None,
         pricing,
+        chat: None,
         created_at: "2026-08-23T04:00:00Z".into(),
     })
 }
@@ -168,6 +169,447 @@ fn session_pricing_round_trips_exactly() {
     let read = from_doc(stored).expect("price can be read");
 
     assert_eq!(read.session.pricing, Some(expected));
+}
+
+#[test]
+fn private_chat_origin_round_trips_and_derives_the_public_projection() {
+    let mut expected = record_with(None);
+    let origin = ChatOrigin {
+        host_id: ChatHostId("chho_round_trip".into()),
+        worktree_name: "chat-7".into(),
+        worktree_path: "/workspace/chat-7".into(),
+        title: Some("Durable round trip title".into()),
+        paused_notice: Some(
+            "Your current chat session has been idle for 15min and has been auto-paused.".into(),
+        ),
+    };
+    expected.chat_origin = Some(origin.clone());
+    expected.session.chat = Some(origin.public_projection());
+
+    let stored = to_doc(&expected).expect("chat origin can be stored");
+    let document = mongodb::bson::serialize_to_document(&stored).expect("stored doc serializes");
+    assert!(document.contains_key("chat_origin"));
+    assert!(
+        !document.contains_key("chat"),
+        "public projection is derived on read"
+    );
+
+    let read = from_doc(stored).expect("chat origin can be read");
+    assert_eq!(read.chat_origin, Some(origin.clone()));
+    assert_eq!(read.session.chat, Some(origin.public_projection()));
+    assert_eq!(
+        read.session.chat.unwrap().title.as_deref(),
+        Some("Durable round trip title")
+    );
+}
+
+#[test]
+fn a_legacy_chat_origin_without_a_paused_notice_reads_as_unpaused() {
+    let mut expected = record_with(None);
+    let origin = ChatOrigin {
+        host_id: ChatHostId("chho_legacy_notice".into()),
+        worktree_name: "chat-2".into(),
+        worktree_path: "/workspace/chat-2".into(),
+        title: None,
+        paused_notice: Some("this field did not exist on the legacy writer".into()),
+    };
+    expected.chat_origin = Some(origin.clone());
+    expected.session.chat = Some(origin.public_projection());
+    let stored = to_doc(&expected).expect("chat origin can be stored");
+    let mut document =
+        mongodb::bson::serialize_to_document(&stored).expect("stored doc serializes");
+    assert!(document
+        .get_document_mut("chat_origin")
+        .expect("private chat origin is nested")
+        .remove("paused_notice")
+        .is_some());
+    let legacy: SessionDoc =
+        mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
+
+    let read = from_doc(legacy).expect("legacy record decodes");
+    assert_eq!(
+        read.chat_origin
+            .as_ref()
+            .and_then(|origin| origin.paused_notice.as_deref()),
+        None
+    );
+    assert_eq!(
+        read.session
+            .chat
+            .as_ref()
+            .and_then(|chat| chat.paused_notice.as_deref()),
+        None
+    );
+}
+
+#[test]
+fn title_work_is_absent_on_creation_and_preserved_across_record_replacement() {
+    let mut existing = to_doc(&record_with(None)).expect("existing record encodes");
+    assert!(existing.chat_title_work.is_none());
+    existing.chat_title_work = Some(ChatTitleWorkDoc {
+        attempted: true,
+        lease: Some(ChatTitleLeaseDoc {
+            holder: "title-holder".into(),
+            token: "title-token".into(),
+            generate: true,
+            expires_at: DateTime::from_millis(1_900_000_000_000),
+        }),
+        completed_token: None,
+    });
+    let mut replacement = to_doc(&record_with(None)).expect("replacement record encodes");
+
+    preserve_chat_title_work(&existing, &mut replacement);
+
+    let work = replacement.chat_title_work.unwrap();
+    assert!(work.attempted);
+    let lease = work.lease.unwrap();
+    assert_eq!(lease.holder, "title-holder");
+    assert_eq!(lease.token, "title-token");
+    assert!(lease.generate);
+    assert_eq!(lease.expires_at, DateTime::from_millis(1_900_000_000_000));
+    assert!(work.completed_token.is_none());
+}
+
+#[test]
+fn title_claim_uses_store_time_and_encodes_first_attempt_vs_takeover_atomically() {
+    let request = ChatTitleClaimRequest::new(
+        SessionId("sesn_title_pipeline".into()),
+        "title-holder",
+        Duration::from_secs(45),
+    );
+    let filter = chat_title_claim_filter(&request);
+    assert_eq!(filter.get_str("_id").unwrap(), "sesn_title_pipeline");
+    assert_eq!(
+        filter.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
+        SESSION_WRITE_PROTOCOL
+    );
+    assert_eq!(
+        filter.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
+        SESSION_COORDINATION_PROTOCOL
+    );
+    let rendered_filter = format!("{filter:?}");
+    assert!(rendered_filter.contains("chat_title_work.attempted"));
+    assert!(rendered_filter.contains("chat_title_work.lease.expires_at"));
+    assert!(rendered_filter.contains("$$NOW"));
+
+    let pipeline = chat_title_claim_update(&request).unwrap();
+    assert_eq!(pipeline.len(), 1);
+    let set = pipeline[0].get_document("$set").unwrap();
+    assert!(set.get_bool("chat_title_work.attempted").unwrap());
+    let lease = set.get_document("chat_title_work.lease").unwrap();
+    assert_eq!(lease.get_str("holder").unwrap(), request.holder());
+    assert_eq!(lease.get_str("token").unwrap(), request.token());
+    assert_eq!(
+        lease
+            .get_document("expires_at")
+            .unwrap()
+            .get_document("$dateAdd")
+            .unwrap(),
+        &doc! {
+            "startDate": "$$NOW",
+            "unit": "millisecond",
+            "amount": 45_000_i64,
+        }
+    );
+    assert_eq!(
+        lease.get_document("generate").unwrap(),
+        &doc! {
+            "$ne": [
+                { "$ifNull": ["$chat_title_work.attempted", false] },
+                true,
+            ]
+        }
+    );
+    assert_eq!(
+        set.get_document("revision").unwrap(),
+        &doc! { "$add": ["$revision", 1_i64] }
+    );
+
+    let generate = chat_title_claim_from_document(
+        &request,
+        &doc! { "chat_title_work": { "lease": { "generate": true } } },
+    )
+    .unwrap();
+    let takeover = chat_title_claim_from_document(
+        &request,
+        &doc! { "chat_title_work": { "lease": { "generate": false } } },
+    )
+    .unwrap();
+    assert_eq!(generate.mode(), ChatTitleClaimMode::Generate);
+    assert_eq!(takeover.mode(), ChatTitleClaimMode::FallbackOnly);
+}
+
+#[test]
+fn title_completion_matches_the_exact_lease_without_using_expiry_and_clears_it() {
+    let request = ChatTitleClaimRequest::new(
+        SessionId("sesn_title_completion".into()),
+        "completion-holder",
+        Duration::from_secs(45),
+    );
+    let claim = ChatTitleClaim::acquired(request, ChatTitleClaimMode::Generate);
+    let title = ChatThreadTitle::new("Safe Stored Title".into()).unwrap();
+    let filter = chat_title_completion_filter(&claim);
+    assert_eq!(filter.get_str("_id").unwrap(), "sesn_title_completion");
+    assert_eq!(
+        filter.get_str("chat_title_work.lease.holder").unwrap(),
+        "completion-holder"
+    );
+    assert_eq!(
+        filter.get_str("chat_title_work.lease.token").unwrap(),
+        claim.token()
+    );
+    assert!(!format!("{filter:?}").contains("expires_at"));
+
+    let update = chat_title_completion_update(&claim, &title);
+    let set = update.get_document("$set").unwrap();
+    assert_eq!(
+        set.get_str("chat_origin.title").unwrap(),
+        "Safe Stored Title"
+    );
+    assert_eq!(
+        set.get_str("chat_title_work.completed_token").unwrap(),
+        claim.token()
+    );
+    assert_eq!(
+        update
+            .get_document("$unset")
+            .unwrap()
+            .get_str("chat_title_work.lease")
+            .unwrap(),
+        ""
+    );
+    assert_eq!(
+        update
+            .get_document("$inc")
+            .unwrap()
+            .get_i64("revision")
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn malformed_title_transcript_events_never_echo_private_content() {
+    let private = "private-transcript-content-must-not-escape";
+    let malformed = [
+        doc! { "kind": private },
+        doc! {
+            "kind": {
+                "type": "message_committed",
+                "content": private,
+            }
+        },
+        doc! {
+            "kind": {
+                "type": "owner_message",
+                "content": { "private": private },
+            }
+        },
+    ];
+
+    for document in &malformed {
+        let error = chat_title_event_content(Some(document), "owner_message")
+            .expect_err("the malformed event is rejected");
+        let rendered = format!("{error:?} {error}");
+        assert!(
+            !rendered.contains(private),
+            "private content escaped: {rendered}"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_chat_title_work_is_durable_fenced_and_projects_once() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_chat_titles_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .expect("test store opens");
+    let id = SessionId("sesn_real_chat_title".into());
+    let owner = SubjectId("real-chat-title-owner".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.owner = owner.clone();
+    seed.session.last_seq = 6;
+    seed.chat_origin = Some(ChatOrigin {
+        host_id: ChatHostId::for_owner(&owner),
+        worktree_name: "chat-1".into(),
+        worktree_path: "/workspace/worktrees/chat-1".into(),
+        title: None,
+        paused_notice: None,
+    });
+    let events = vec![
+        Event {
+            session_id: id.clone(),
+            seq: 1,
+            kind: EventKind::SessionCreated,
+            appended_at: "2026-09-01T01:00:01Z".into(),
+        },
+        Event {
+            session_id: id.clone(),
+            seq: 2,
+            kind: EventKind::OwnerMessage {
+                content: "First durable owner message".into(),
+            },
+            appended_at: "2026-09-01T01:00:02Z".into(),
+        },
+        Event {
+            session_id: id.clone(),
+            seq: 3,
+            kind: EventKind::MessageCommitted {
+                content: "First durable assistant message".into(),
+            },
+            appended_at: "2026-09-01T01:00:03Z".into(),
+        },
+        Event {
+            session_id: id.clone(),
+            seq: 4,
+            kind: EventKind::TurnCompleted,
+            appended_at: "2026-09-01T01:00:04Z".into(),
+        },
+        Event {
+            session_id: id.clone(),
+            seq: 5,
+            kind: EventKind::OwnerMessage {
+                content: "Later owner message must not win".into(),
+            },
+            appended_at: "2026-09-01T01:00:05Z".into(),
+        },
+        Event {
+            session_id: id.clone(),
+            seq: 6,
+            kind: EventKind::MessageCommitted {
+                content: "Later assistant message must not win".into(),
+            },
+            appended_at: "2026-09-01T01:00:06Z".into(),
+        },
+    ];
+    store
+        .create_session_idempotent("seed-real-chat-title", &seed, &events)
+        .await
+        .expect("completed chat is seeded");
+
+    let candidates = store
+        .chat_title_candidates(PageRequest::new(16, None))
+        .await
+        .expect("title candidates are readable");
+    assert_eq!(candidates.items.as_slice(), std::slice::from_ref(&id));
+    let transcript = store
+        .chat_title_transcript(&id)
+        .await
+        .expect("title transcript is readable");
+    assert_eq!(
+        transcript.owner_message.as_deref(),
+        Some("First durable owner message")
+    );
+    assert_eq!(
+        transcript.assistant_message.as_deref(),
+        Some("First durable assistant message")
+    );
+    assert!(transcript.turn_completed);
+
+    let first_request =
+        ChatTitleClaimRequest::new(id.clone(), "title-holder-a", Duration::from_secs(60));
+    let first = store
+        .acquire_chat_title_claim(&first_request)
+        .await
+        .expect("first claim succeeds")
+        .expect("first claim is available");
+    assert_eq!(first.mode(), ChatTitleClaimMode::Generate);
+
+    let mut ordinary = store.get(&id).await.unwrap().unwrap();
+    ordinary.context_ref = Some("ordinary-write-preserved".into());
+    store
+        .commit_session_idempotent("ordinary-write-during-title-lease", &ordinary, &[])
+        .await
+        .expect("ordinary replacement preserves title work");
+    let competing_request =
+        ChatTitleClaimRequest::new(id.clone(), "title-holder-b", Duration::from_secs(60));
+    assert!(store
+        .acquire_chat_title_claim(&competing_request)
+        .await
+        .expect("active claim check succeeds")
+        .is_none());
+
+    store
+        .sessions
+        .clone_with_type::<Document>()
+        .update_one(
+            doc! { "_id": &id.0 },
+            doc! { "$set": { "chat_title_work.lease.expires_at": DateTime::from_millis(0) } },
+        )
+        .await
+        .expect("test expires the first lease");
+    let successor = store
+        .acquire_chat_title_claim(&competing_request)
+        .await
+        .expect("takeover succeeds")
+        .expect("expired claim can be taken over");
+    assert_eq!(successor.mode(), ChatTitleClaimMode::FallbackOnly);
+
+    let stale_title = ChatThreadTitle::new("Stale generated title".into()).unwrap();
+    assert!(!store
+        .complete_chat_title(&first, &stale_title)
+        .await
+        .expect("stale completion is fenced"));
+    let fallback = ChatThreadTitle::new("First durable owner message".into()).unwrap();
+    assert!(store
+        .complete_chat_title(&successor, &fallback)
+        .await
+        .expect("successor completion commits"));
+    assert!(store
+        .complete_chat_title(&successor, &fallback)
+        .await
+        .expect("unknown-result completion retry is idempotent"));
+
+    let durable = store.get(&id).await.unwrap().unwrap();
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some("ordinary-write-preserved")
+    );
+    assert_eq!(
+        durable
+            .chat_origin
+            .as_ref()
+            .and_then(|origin| origin.title.as_deref()),
+        Some("First durable owner message")
+    );
+    assert_eq!(
+        durable
+            .session
+            .chat
+            .as_ref()
+            .and_then(|chat| chat.title.as_deref()),
+        Some("First durable owner message")
+    );
+    assert!(store
+        .chat_title_candidates(PageRequest::new(16, None))
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    let stored = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &id.0 })
+        .projection(doc! { "_id": 0, "chat_title_work": 1 })
+        .await
+        .unwrap()
+        .unwrap();
+    let work = stored.get_document("chat_title_work").unwrap();
+    assert_eq!(work.get_str("completed_token").unwrap(), successor.token());
+    assert!(!work.contains_key("lease"));
+
+    client.database(&database).drop().await.unwrap();
 }
 
 #[test]
@@ -1075,6 +1517,7 @@ fn reserved_capacity_pipeline_matches_and_sums_only_durable_runtime_promises() {
         vec![
             doc! {
                 "$match": {
+                    "chat_origin": { "$exists": false },
                     "$or": [
                         {
                             "status": {
@@ -2895,6 +3338,34 @@ fn coordination_receipts_have_a_required_session_and_kind_index() {
 }
 
 #[test]
+fn chat_title_transcript_index_has_the_exact_ordered_nonunique_contract() {
+    let required = required_indexes()
+        .into_iter()
+        .find(|required| required.name == CHAT_TITLE_EVENT_INDEX)
+        .expect("the chat-title transcript index is required");
+    assert_eq!(required.collection, EVENTS);
+    assert_eq!(required.name, "session_id_1_kind.type_1_seq_1");
+    assert_eq!(
+        required
+            .keys
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_i32()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("session_id", Some(1)),
+            ("kind.type", Some(1)),
+            ("seq", Some(1)),
+        ]
+    );
+    assert!(!required.unique);
+
+    let model = required_index_model(&required);
+    let options = model.options.expect("required indexes carry exact options");
+    assert_eq!(options.name.as_deref(), Some(CHAT_TITLE_EVENT_INDEX));
+    assert_eq!(options.unique, Some(false));
+}
+
+#[test]
 fn exact_required_index_is_accepted_but_a_missing_one_is_rejected() {
     let required = required_event_index();
     let exact = required_index_model(&required);
@@ -3767,6 +4238,24 @@ fn session_page_filter_pushes_status_and_both_cursor_keys_into_mongo() {
         }
     );
     assert_eq!(session_page_sort(), doc! { "created_at": -1, "_id": -1 });
+}
+
+#[test]
+fn session_page_filter_pushes_both_surface_families_into_mongo() {
+    for (surface, exists) in [
+        (SessionSurfaceFilter::Chat, true),
+        (SessionSurfaceFilter::Agent, false),
+    ] {
+        let query =
+            SessionListQuery::new(PageRequest::new(50, None), None).with_surface(Some(surface));
+        assert_eq!(
+            session_page_filter(doc! { "owner": "subject-a" }, &query).unwrap(),
+            doc! {
+                "owner": "subject-a",
+                "chat_origin": { "$exists": exists },
+            }
+        );
+    }
 }
 
 #[test]
@@ -7951,6 +8440,181 @@ async fn real_ordinary_commits_serialize_with_authority_switch_and_retirement() 
         .unwrap()
         .runtime_id
         .is_none());
+
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_chat_runtime_transition_is_atomic_idempotent_and_fences_old_writers() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_chat_runtime_transition_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .unwrap();
+    let id = SessionId("sesn_real_chat_runtime_transition".into());
+    let owner = SubjectId("real-chat-runtime-transition-owner".into());
+    let host_id = ChatHostId::for_owner(&owner);
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.owner = owner;
+    seed.session.last_seq = 0;
+    seed.runtime_id = Some("runtime-chat-old".into());
+    seed.chat_origin = Some(ChatOrigin {
+        host_id: host_id.clone(),
+        worktree_name: "chat-1".into(),
+        worktree_path: "/workspace/worktrees/chat-1".into(),
+        title: None,
+        paused_notice: Some("paused".into()),
+    });
+    store
+        .create_session_idempotent("seed-real-chat-runtime-transition", &seed, &[])
+        .await
+        .unwrap();
+
+    let original = store.get(&id).await.unwrap().unwrap();
+    let original_authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let previous = SessionBoundary::for_record(&original, original_authority.generation);
+    let lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "real-chat-transition-holder".into(),
+            token: "real-chat-transition-lease".into(),
+            boundary: previous.clone(),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .unwrap();
+    let opening = store
+        .acquire_conversation_opening(
+            &ConversationOpeningLeaseRequest::new(
+                id.clone(),
+                lease.holder.clone(),
+                "runtime-chat-old",
+                original_authority.generation,
+                None,
+                Duration::from_secs(60),
+            ),
+            Some(&lease),
+        )
+        .await
+        .unwrap();
+    let stale_link = store
+        .publish_conversation_link(&opening, Some(&lease))
+        .await
+        .unwrap();
+
+    let marker = Event {
+        session_id: id.clone(),
+        seq: 1,
+        kind: EventKind::RuntimeIncarnationStarted,
+        appended_at: "2026-09-01T00:00:01Z".into(),
+    };
+    let next = RuntimeAuthority {
+        generation: original_authority.generation + 1,
+        runtime_id: Some("runtime-chat-new".into()),
+    };
+    let transition = ChatRuntimeTransition {
+        host_id,
+        previous,
+        next: next.clone(),
+    };
+    let mut replacement = original.clone();
+    replacement.runtime_id.clone_from(&next.runtime_id);
+    replacement.session.status = SessionStatus::Provisioning;
+    replacement.session.recovery_state = RecoveryState::Recovering;
+    replacement.session.last_seq = marker.seq;
+
+    let first_revision = store
+        .commit_chat_runtime_transition_idempotent(
+            "real-chat-runtime-transition",
+            &transition,
+            &replacement,
+            std::slice::from_ref(&marker),
+        )
+        .await
+        .unwrap();
+    let durable = store.get(&id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, first_revision);
+    assert_eq!(durable.runtime_id, next.runtime_id);
+    assert_eq!(durable.session.status, SessionStatus::Provisioning);
+    assert_eq!(
+        store.runtime_authority(&id).await.unwrap(),
+        Some(next.clone())
+    );
+    assert!(matches!(
+        store.validate_conversation_link(&stale_link).await,
+        Err(StoreError::ConversationLinkChanged { .. })
+    ));
+    assert!(matches!(
+        store
+            .renew_session_lease(&lease, Duration::from_secs(60))
+            .await,
+        Err(StoreError::SessionLeaseLost { .. })
+    ));
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+    assert_eq!(store.events_since(&id, 0).await.unwrap().len(), 1);
+
+    let successor_boundary = SessionBoundary::for_record(&durable, next.generation);
+    let successor_lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "real-chat-successor-holder".into(),
+            token: "real-chat-successor-lease".into(),
+            boundary: successor_boundary,
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .unwrap();
+    let successor_opening = store
+        .acquire_conversation_opening(
+            &ConversationOpeningLeaseRequest::new(
+                id.clone(),
+                successor_lease.holder.clone(),
+                next.runtime_id.as_deref().unwrap(),
+                next.generation,
+                None,
+                Duration::from_secs(60),
+            ),
+            Some(&successor_lease),
+        )
+        .await
+        .unwrap();
+    let successor_link = store
+        .publish_conversation_link(&successor_opening, Some(&successor_lease))
+        .await
+        .unwrap();
+
+    let replay_revision = store
+        .commit_chat_runtime_transition_idempotent(
+            "real-chat-runtime-transition",
+            &transition,
+            &replacement,
+            std::slice::from_ref(&marker),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay_revision, first_revision);
+    store
+        .validate_conversation_link(&successor_link)
+        .await
+        .expect("the old transition receipt does not fence its successor");
+    assert_eq!(store.events_since(&id, 0).await.unwrap().len(), 1);
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
 
     client.database(&database).drop().await.unwrap();
 }

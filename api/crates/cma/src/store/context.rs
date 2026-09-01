@@ -18,11 +18,15 @@
 use std::sync::Arc;
 
 use layer2_core::{
-    store::{ContextStore, HandoverSnapshot, HandoverStore, StoreError},
-    SessionId,
+    store::{
+        ChatCheckpointObjectReceipt, ChatCheckpointStore, ContextStore, HandoverSnapshot,
+        HandoverStore, StoreError,
+    },
+    ChatHostId, SessionId,
 };
 use mongodb::bson::{self, spec::BinarySubtype, Binary, Bson};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::store::token::TokenSource;
 
@@ -39,6 +43,8 @@ const CONTENT_TYPE: &str = "application/x-ndjson";
 /// its exact handover from an older value at the same stable object key.
 const HANDOVER_CONTENT_TYPE: &str = "application/vnd.chrono.handover+bson";
 const HANDOVER_ENVELOPE_VERSION: i32 = 1;
+const CHAT_CHECKPOINT_CONTENT_TYPE: &str = "application/vnd.chrono.chat-checkpoint+bson";
+const CHAT_CHECKPOINT_ENVELOPE_VERSION: i32 = 1;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct HandoverEnvelope {
@@ -107,6 +113,96 @@ impl HandoverEnvelope {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChatCheckpointEnvelope {
+    version: i32,
+    generations: Vec<ChatCheckpointGeneration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChatCheckpointGeneration {
+    sha256: String,
+    bytes: i64,
+    payload: Binary,
+}
+
+impl ChatCheckpointEnvelope {
+    fn encode(generations: Vec<ChatCheckpointGeneration>) -> Result<Vec<u8>, StoreError> {
+        let envelope = Self {
+            version: CHAT_CHECKPOINT_ENVELOPE_VERSION,
+            generations,
+        };
+        envelope.validate()?;
+        bson::serialize_to_vec(&envelope)
+            .map_err(|error| StoreError::Malformed(format!("chat checkpoint envelope: {error}")))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
+        let envelope: Self = bson::deserialize_from_slice(bytes)
+            .map_err(|error| StoreError::Malformed(format!("chat checkpoint envelope: {error}")))?;
+        envelope.validate()?;
+        Ok(envelope)
+    }
+
+    fn validate(&self) -> Result<(), StoreError> {
+        if self.version != CHAT_CHECKPOINT_ENVELOPE_VERSION {
+            return Err(StoreError::Malformed(format!(
+                "unsupported chat checkpoint envelope version {}",
+                self.version
+            )));
+        }
+        if self.generations.is_empty() || self.generations.len() > 2 {
+            return Err(StoreError::Malformed(
+                "a chat checkpoint envelope must retain one or two generations".into(),
+            ));
+        }
+        let mut digests = std::collections::BTreeSet::new();
+        for generation in &self.generations {
+            require_checkpoint_sha256(&generation.sha256)?;
+            if generation.payload.subtype != BinarySubtype::Generic
+                || generation.payload.bytes.is_empty()
+                || usize::try_from(generation.bytes).ok() != Some(generation.payload.bytes.len())
+                || checkpoint_digest(&generation.payload.bytes) != generation.sha256
+                || !digests.insert(generation.sha256.as_str())
+            {
+                return Err(StoreError::Malformed(
+                    "a chat checkpoint generation does not match its immutable identity".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn generation(&self, sha256: &str) -> Option<&ChatCheckpointGeneration> {
+        self.generations
+            .iter()
+            .find(|generation| generation.sha256 == sha256)
+    }
+}
+
+impl ChatCheckpointGeneration {
+    fn new(payload: Vec<u8>) -> Result<Self, StoreError> {
+        if payload.is_empty() {
+            return Err(StoreError::Malformed(
+                "a chat checkpoint object must not be empty".into(),
+            ));
+        }
+        let bytes = i64::try_from(payload.len()).map_err(|_| {
+            StoreError::Malformed("a chat checkpoint object exceeds the storage wire bound".into())
+        })?;
+        Ok(Self {
+            sha256: checkpoint_digest(&payload),
+            bytes,
+            payload: Binary {
+                subtype: BinarySubtype::Generic,
+                bytes: payload,
+            },
+        })
+    }
+}
+
 /// Object store for session context, via the platform's storage service.
 pub struct ChronoStorageContextStore {
     /// Fully qualified base, already including the proxy path to the service.
@@ -158,6 +254,16 @@ impl ChronoStorageContextStore {
     /// overwrites it with an envelope carrying that rotation's exact claim.
     pub fn handover_key_for(id: &SessionId) -> String {
         format!("sessions/{}/handover.snapshot", id.0)
+    }
+
+    /// Stable physical key carrying at most two logical conversation generations.
+    pub fn chat_conversation_checkpoint_key_for(id: &SessionId) -> String {
+        Self::handover_key_for(id)
+    }
+
+    /// Stable physical key carrying at most two logical workspace generations.
+    pub fn chat_workspace_checkpoint_key_for(host: &ChatHostId) -> String {
+        format!("chat-hosts/{}/checkpoint-v1", host.0)
     }
 
     /// The collection endpoint, which every operation addresses by key.
@@ -247,6 +353,97 @@ impl ChronoStorageContextStore {
             "{kind} delete returned {status}"
         )))
     }
+
+    async fn stage_chat_checkpoint_object(
+        &self,
+        key: &str,
+        retain_sha256: Option<&str>,
+        payload: Vec<u8>,
+        kind: &str,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError> {
+        let candidate = ChatCheckpointGeneration::new(payload)?;
+        let retained = match retain_sha256 {
+            Some(retain_sha256) => {
+                require_checkpoint_sha256(retain_sha256)?;
+                let bytes = self.download_object(key, kind).await?.ok_or_else(|| {
+                    StoreError::Unavailable(format!("the committed {kind} generation is missing"))
+                })?;
+                let envelope = ChatCheckpointEnvelope::decode(&bytes)?;
+                Some(envelope.generation(retain_sha256).cloned().ok_or_else(|| {
+                    StoreError::Unavailable(format!(
+                        "the committed {kind} generation is no longer retained"
+                    ))
+                })?)
+            }
+            None => None,
+        };
+        let mut generations = retained.into_iter().collect::<Vec<_>>();
+        if generations
+            .first()
+            .is_none_or(|retained| retained.sha256 != candidate.sha256)
+        {
+            generations.push(candidate.clone());
+        }
+        let encoded = ChatCheckpointEnvelope::encode(generations)?;
+        self.upload_object(key, CHAT_CHECKPOINT_CONTENT_TYPE, encoded, kind)
+            .await?;
+
+        let readback = self
+            .download_object(key, kind)
+            .await?
+            .ok_or_else(|| StoreError::Unavailable(format!("the staged {kind} is missing")))?;
+        let readback = ChatCheckpointEnvelope::decode(&readback)?;
+        let verified = readback.generation(&candidate.sha256).ok_or_else(|| {
+            StoreError::Unavailable(format!("the staged {kind} generation was not retained"))
+        })?;
+        Ok(ChatCheckpointObjectReceipt {
+            object_reference: key.to_string(),
+            sha256: verified.sha256.clone(),
+            bytes: u64::try_from(verified.bytes).map_err(|_| {
+                StoreError::Malformed(format!("the staged {kind} has a negative size"))
+            })?,
+        })
+    }
+
+    async fn read_chat_checkpoint_object(
+        &self,
+        key: &str,
+        sha256: &str,
+        kind: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        require_checkpoint_sha256(sha256)?;
+        let Some(bytes) = self.download_object(key, kind).await? else {
+            return Ok(None);
+        };
+        let envelope = ChatCheckpointEnvelope::decode(&bytes)?;
+        Ok(envelope
+            .generation(sha256)
+            .map(|generation| generation.payload.bytes.clone()))
+    }
+
+    async fn prune_chat_checkpoint_object(
+        &self,
+        key: &str,
+        keep_sha256: &str,
+        kind: &str,
+    ) -> Result<(), StoreError> {
+        require_checkpoint_sha256(keep_sha256)?;
+        let bytes = self.download_object(key, kind).await?.ok_or_else(|| {
+            StoreError::Unavailable(format!("the committed {kind} object is missing"))
+        })?;
+        let envelope = ChatCheckpointEnvelope::decode(&bytes)?;
+        let retained = envelope.generation(keep_sha256).cloned().ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "the committed {kind} generation is no longer retained"
+            ))
+        })?;
+        if envelope.generations.len() == 1 {
+            return Ok(());
+        }
+        let encoded = ChatCheckpointEnvelope::encode(vec![retained])?;
+        self.upload_object(key, CHAT_CHECKPOINT_CONTENT_TYPE, encoded, kind)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -308,6 +505,114 @@ impl HandoverStore for ChronoStorageContextStore {
         self.delete_object(&Self::handover_key_for(id), "handover snapshot")
             .await
     }
+}
+
+#[async_trait::async_trait]
+impl ChatCheckpointStore for ChronoStorageContextStore {
+    async fn stage_conversation(
+        &self,
+        id: &SessionId,
+        retain_sha256: Option<&str>,
+        snapshot: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError> {
+        let key = Self::chat_conversation_checkpoint_key_for(id);
+        self.stage_chat_checkpoint_object(
+            &key,
+            retain_sha256,
+            snapshot,
+            "chat conversation checkpoint",
+        )
+        .await
+    }
+
+    async fn read_conversation(
+        &self,
+        id: &SessionId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let expected = Self::chat_conversation_checkpoint_key_for(id);
+        if object_reference != expected {
+            return Err(StoreError::Malformed(format!(
+                "chat checkpoint reference does not belong to session {id}"
+            )));
+        }
+        self.read_chat_checkpoint_object(object_reference, sha256, "chat conversation checkpoint")
+            .await
+    }
+
+    async fn prune_conversation(
+        &self,
+        id: &SessionId,
+        keep_sha256: &str,
+    ) -> Result<(), StoreError> {
+        self.prune_chat_checkpoint_object(
+            &Self::chat_conversation_checkpoint_key_for(id),
+            keep_sha256,
+            "chat conversation checkpoint",
+        )
+        .await
+    }
+
+    async fn stage_workspace(
+        &self,
+        host: &ChatHostId,
+        retain_sha256: Option<&str>,
+        archive: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError> {
+        let key = Self::chat_workspace_checkpoint_key_for(host);
+        self.stage_chat_checkpoint_object(&key, retain_sha256, archive, "chat workspace checkpoint")
+            .await
+    }
+
+    async fn read_workspace(
+        &self,
+        host: &ChatHostId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let expected = Self::chat_workspace_checkpoint_key_for(host);
+        if object_reference != expected {
+            return Err(StoreError::Malformed(format!(
+                "chat workspace checkpoint reference does not belong to host {host}"
+            )));
+        }
+        self.read_chat_checkpoint_object(object_reference, sha256, "chat workspace checkpoint")
+            .await
+    }
+
+    async fn prune_workspace(
+        &self,
+        host: &ChatHostId,
+        keep_sha256: &str,
+    ) -> Result<(), StoreError> {
+        self.prune_chat_checkpoint_object(
+            &Self::chat_workspace_checkpoint_key_for(host),
+            keep_sha256,
+            "chat workspace checkpoint",
+        )
+        .await
+    }
+}
+
+fn require_checkpoint_sha256(value: &str) -> Result<(), StoreError> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(StoreError::Malformed(
+            "chat checkpoint digest must be a SHA-256".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn checkpoint_digest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    const CHARS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push(char::from(CHARS[usize::from(byte >> 4)]));
+        out.push(char::from(CHARS[usize::from(byte & 0x0f)]));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -448,6 +753,66 @@ mod tests {
             ChronoStorageContextStore::handover_key_for(&id),
             ChronoStorageContextStore::key_for(&id)
         );
+    }
+
+    #[test]
+    fn chat_checkpoint_keys_are_stable_and_partitioned_by_owner() {
+        let session = SessionId("sesn_chat_1".into());
+        let host = ChatHostId("chho_owner_1".into());
+        assert_eq!(
+            ChronoStorageContextStore::chat_conversation_checkpoint_key_for(&session),
+            "sessions/sesn_chat_1/handover.snapshot"
+        );
+        assert_eq!(
+            ChronoStorageContextStore::chat_workspace_checkpoint_key_for(&host),
+            "chat-hosts/chho_owner_1/checkpoint-v1"
+        );
+    }
+
+    #[test]
+    fn chat_checkpoint_envelopes_reject_tampered_and_ambiguous_generations() {
+        let first = ChatCheckpointGeneration::new(b"first".to_vec()).unwrap();
+        let second = ChatCheckpointGeneration::new(b"second".to_vec()).unwrap();
+        let encoded = ChatCheckpointEnvelope::encode(vec![first.clone(), second.clone()]).unwrap();
+        let decoded = ChatCheckpointEnvelope::decode(&encoded).unwrap();
+        assert_eq!(decoded.generations.len(), 2);
+        let retained = decoded.generation(&first.sha256).unwrap();
+        assert_eq!(retained.sha256, first.sha256);
+        assert_eq!(retained.bytes, first.bytes);
+        assert_eq!(retained.payload, first.payload);
+
+        for malformed in [
+            ChatCheckpointEnvelope {
+                version: CHAT_CHECKPOINT_ENVELOPE_VERSION + 1,
+                generations: vec![first.clone()],
+            },
+            ChatCheckpointEnvelope {
+                version: CHAT_CHECKPOINT_ENVELOPE_VERSION,
+                generations: Vec::new(),
+            },
+            ChatCheckpointEnvelope {
+                version: CHAT_CHECKPOINT_ENVELOPE_VERSION,
+                generations: vec![first.clone(), first.clone()],
+            },
+        ] {
+            let bytes = bson::serialize_to_vec(&malformed).unwrap();
+            assert!(matches!(
+                ChatCheckpointEnvelope::decode(&bytes),
+                Err(StoreError::Malformed(_))
+            ));
+        }
+
+        let mut tampered = first;
+        tampered.payload.bytes[0] ^= 0xff;
+        let bytes = bson::serialize_to_vec(&ChatCheckpointEnvelope {
+            version: CHAT_CHECKPOINT_ENVELOPE_VERSION,
+            generations: vec![tampered],
+        })
+        .unwrap();
+        assert!(matches!(
+            ChatCheckpointEnvelope::decode(&bytes),
+            Err(StoreError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -617,6 +982,173 @@ mod tests {
             matches!(error, StoreError::Malformed(ref detail) if detail.contains("does not belong")),
             "got {error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn chat_staging_retains_the_committed_generation_until_pruned() {
+        let (base, fixture, server) = storage_fixture().await;
+        let store = ChronoStorageContextStore::new(
+            base,
+            "bkt",
+            Arc::new(crate::store::token::StaticToken("tok".into())),
+        );
+        let session = SessionId("sesn_checkpoint".into());
+        let first_bytes = b"conversation generation one".to_vec();
+        let second_bytes = b"conversation generation two".to_vec();
+
+        let first = store
+            .stage_conversation(&session, None, first_bytes.clone())
+            .await
+            .expect("the first generation stages");
+        let second = store
+            .stage_conversation(&session, Some(&first.sha256), second_bytes.clone())
+            .await
+            .expect("the replacement stages beside the committed generation");
+        assert_eq!(first.object_reference, second.object_reference);
+        assert_eq!(
+            store
+                .read_conversation(&session, &first.object_reference, &first.sha256)
+                .await
+                .unwrap(),
+            Some(first_bytes),
+            "a crash before host CAS leaves the old digest readable"
+        );
+        assert_eq!(
+            store
+                .read_conversation(&session, &second.object_reference, &second.sha256)
+                .await
+                .unwrap(),
+            Some(second_bytes)
+        );
+        let stored = fixture
+            .objects
+            .lock()
+            .await
+            .get(&first.object_reference)
+            .cloned()
+            .unwrap();
+        assert_eq!(stored.content_type, CHAT_CHECKPOINT_CONTENT_TYPE);
+        assert_eq!(
+            ChatCheckpointEnvelope::decode(&stored.bytes)
+                .unwrap()
+                .generations
+                .len(),
+            2
+        );
+
+        store
+            .prune_conversation(&session, &second.sha256)
+            .await
+            .expect("post-CAS pruning succeeds");
+        assert_eq!(
+            store
+                .read_conversation(&session, &first.object_reference, &first.sha256)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .read_conversation(&session, &second.object_reference, &second.sha256)
+                .await
+                .unwrap(),
+            Some(b"conversation generation two".to_vec())
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_staging_requires_the_exact_retained_generation_and_reference() {
+        let (base, fixture, server) = storage_fixture().await;
+        let store = ChronoStorageContextStore::new(
+            base,
+            "bkt",
+            Arc::new(crate::store::token::StaticToken("tok".into())),
+        );
+        let session = SessionId("sesn_checkpoint".into());
+        let host = ChatHostId("chho_checkpoint".into());
+        let first = store
+            .stage_workspace(&host, None, b"workspace one".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(
+            first.object_reference,
+            "chat-hosts/chho_checkpoint/checkpoint-v1"
+        );
+        let before = fixture
+            .objects
+            .lock()
+            .await
+            .get(&first.object_reference)
+            .unwrap()
+            .bytes
+            .clone();
+        let missing = "f".repeat(64);
+        assert!(matches!(
+            store
+                .stage_workspace(&host, Some(&missing), b"workspace two".to_vec())
+                .await,
+            Err(StoreError::Unavailable(_))
+        ));
+        assert_eq!(
+            fixture
+                .objects
+                .lock()
+                .await
+                .get(&first.object_reference)
+                .unwrap()
+                .bytes,
+            before,
+            "a missing old generation cannot overwrite the valid object"
+        );
+
+        assert!(matches!(
+            store
+                .read_workspace(&host, "chat-hosts/chho_other/checkpoint-v1", &first.sha256,)
+                .await,
+            Err(StoreError::Malformed(_))
+        ));
+        assert!(matches!(
+            store
+                .read_conversation(
+                    &session,
+                    "sessions/sesn_other/handover.snapshot",
+                    &first.sha256,
+                )
+                .await,
+            Err(StoreError::Malformed(_))
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_reads_fail_closed_when_the_stable_envelope_is_tampered() {
+        let (base, fixture, server) = storage_fixture().await;
+        let store = ChronoStorageContextStore::new(
+            base,
+            "bkt",
+            Arc::new(crate::store::token::StaticToken("tok".into())),
+        );
+        let session = SessionId("sesn_tampered".into());
+        let receipt = store
+            .stage_conversation(&session, None, b"sealed".to_vec())
+            .await
+            .unwrap();
+        let key = receipt.object_reference.clone();
+        let mut objects = fixture.objects.lock().await;
+        let object = objects.get_mut(&key).unwrap();
+        let mut envelope = ChatCheckpointEnvelope::decode(&object.bytes).unwrap();
+        envelope.generations[0].payload.bytes.push(0);
+        object.bytes = bson::serialize_to_vec(&envelope).unwrap();
+        drop(objects);
+
+        assert!(matches!(
+            store
+                .read_conversation(&session, &key, &receipt.sha256)
+                .await,
+            Err(StoreError::Malformed(_))
+        ));
+        server.abort();
     }
 
     #[test]

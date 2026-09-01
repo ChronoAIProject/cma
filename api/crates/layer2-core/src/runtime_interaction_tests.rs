@@ -500,6 +500,7 @@ impl SessionStore for InteractionStore {
 
 fn record() -> SessionRecord {
     let mut record = SessionRecord::new(Session {
+        chat: None,
         id: SessionId("sesn_runtime_interaction".into()),
         owner: SubjectId("subject-runtime-interaction".into()),
         kernel: KernelId::new("fake"),

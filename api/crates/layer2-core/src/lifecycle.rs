@@ -125,7 +125,7 @@ impl SessionService {
         id: &SessionId,
     ) -> Result<(), CoreError> {
         caller.require_any_control()?;
-        self.end_session(caller, id).await.map(|_| ())
+        self.end_session(caller, id, false).await.map(|_| ())
     }
 
     /// End a session as an operator, whoever owns it.
@@ -147,17 +147,31 @@ impl SessionService {
         caller
             .authorization
             .require(Capability::ControlAnySession)?;
-        self.end_session(caller, id).await
+        self.end_session(caller, id, true).await
     }
 
     async fn end_session(
         self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
+        operator: bool,
     ) -> Result<SubjectId, CoreError> {
         let lifecycle = self.lock_lifecycle(id).await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "terminate")?;
+        if record.chat_origin.is_some() {
+            if !operator {
+                return Err(CoreError::chat_lifecycle_managed("termination"));
+            }
+            return self
+                .set_chat_thread_lifecycle(
+                    record,
+                    SessionStatus::Terminated,
+                    RecoveryState::Retired,
+                    "operator terminated this platform-managed chat thread",
+                )
+                .await;
+        }
         let owner = record.session.owner.clone();
         let lease = self
             .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Lifecycle)
@@ -681,7 +695,7 @@ impl SessionService {
         id: &SessionId,
     ) -> Result<(), CoreError> {
         caller.require_any_control()?;
-        self.rest_session(caller, id).await.map(|_| ())
+        self.rest_session(caller, id, false).await.map(|_| ())
     }
 
     /// Stop a session's runtime as an operator, whoever owns it.
@@ -697,17 +711,31 @@ impl SessionService {
         caller
             .authorization
             .require(Capability::ControlAnySession)?;
-        self.rest_session(caller, id).await
+        self.rest_session(caller, id, true).await
     }
 
     async fn rest_session(
         self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
+        operator: bool,
     ) -> Result<SubjectId, CoreError> {
         let lifecycle = self.lock_lifecycle(id).await;
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "stop")?;
+        if record.chat_origin.is_some() {
+            if !operator {
+                return Err(CoreError::chat_lifecycle_managed("stop"));
+            }
+            return self
+                .set_chat_thread_lifecycle(
+                    record,
+                    SessionStatus::Idle,
+                    RecoveryState::Idle,
+                    "operator stopped this platform-managed chat thread",
+                )
+                .await;
+        }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
@@ -1028,6 +1056,62 @@ impl SessionService {
         Ok(owner)
     }
 
+    /// Apply an operator abuse-control transition without touching the shared
+    /// host runtime borrowed by this thread.
+    async fn set_chat_thread_lifecycle(
+        &self,
+        observed: SessionRecord,
+        status: SessionStatus,
+        recovery_state: RecoveryState,
+        detail: &'static str,
+    ) -> Result<SubjectId, CoreError> {
+        let id = observed.session.id.clone();
+        let owner = observed.session.owner.clone();
+        let _input_fence = self.input_gates.gate(&id).write_owned().await;
+        let ordering = self.conversation_order_gates.gate(&id);
+        let _ordered = ordering.lock().await;
+        let mut current = self
+            .store
+            .get(&id)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::SessionNotFound)?;
+        if current.chat_origin != observed.chat_origin || current.runtime_id != observed.runtime_id
+        {
+            return Err(CoreError::RuntimeUnavailable(
+                "the chat thread changed while its lifecycle was being updated".into(),
+            ));
+        }
+        if current.session.status.is_terminal() {
+            if status == SessionStatus::Terminated {
+                self.entries.write().await.remove(&id);
+                return Ok(owner);
+            }
+            return Err(CoreError::SessionTerminated);
+        }
+        current.session.status = status;
+        current.session.stop_reason = Some(StopReason::UserTerminated);
+        current.session.recovery_state = recovery_state;
+        self.persist_durably(
+            &mut current,
+            vec![Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::StatusChanged {
+                    status,
+                    stop_reason: Some(StopReason::UserTerminated),
+                    detail: Some(detail.into()),
+                    capability: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .map_err(store_failed)?;
+        self.entries.write().await.remove(&id);
+        Ok(owner)
+    }
+
     /// Remove a session permanently.
     ///
     /// Distinct from ending one. Terminating stops the runtime and leaves the
@@ -1053,6 +1137,9 @@ impl SessionService {
         let initial = self.record(id).await?;
         if !initial.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
+        }
+        if initial.chat_origin.is_some() {
+            return self.delete_chat_thread(initial).await;
         }
         // Idempotent termination also repairs a terminal row whose authority or
         // exact cleanup debt survived an earlier process. Delete must not skip
@@ -1110,5 +1197,153 @@ impl SessionService {
         }
         tracing::info!(session_id = %id, "session deleted");
         Ok(cleanup_record.context_ref)
+    }
+
+    async fn delete_chat_thread(
+        self: &Arc<Self>,
+        observed: SessionRecord,
+    ) -> Result<Option<String>, CoreError> {
+        let id = observed.session.id.clone();
+        let lifecycle = self.lock_lifecycle(&id).await;
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        let ordering = self.conversation_order_gates.gate(&id);
+        let ordered = ordering.lock().await;
+        let current = self
+            .store
+            .get(&id)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::SessionNotFound)?;
+        let origin = current
+            .chat_origin
+            .clone()
+            .ok_or_else(|| CoreError::chat_lifecycle_managed("delete transition"))?;
+        if current.session.owner != observed.session.owner {
+            return Err(CoreError::Forbidden);
+        }
+        let host_store = self.chat_hosts.clone().ok_or({
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+        })?;
+        let owner_guard = self.chat_host_guards.lock(&current.session.owner).await;
+        let mut host = host_store
+            .get(&origin.host_id)
+            .await
+            .map_err(|_| {
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+            })?
+            .ok_or(CoreError::ChatUnavailable(
+                crate::ChatUnavailableCause::Retired,
+            ))?;
+        let slot_removed = host
+            .threads
+            .iter()
+            .find(|slot| slot.session_id == id)
+            .map(|slot| slot.removed)
+            .ok_or_else(|| {
+                CoreError::RuntimeUnavailable(
+                    "the chat host no longer contains this thread allocation".into(),
+                )
+            })?;
+        if !slot_removed {
+            match host.status {
+                crate::ChatHostStatus::Active | crate::ChatHostStatus::Pausing => {
+                    let runtime_id = host.runtime_id.clone().ok_or({
+                        CoreError::ChatUnavailable(crate::ChatUnavailableCause::Provisioning)
+                    })?;
+                    if current.runtime_id.as_deref() != Some(runtime_id.as_str()) {
+                        return Err(CoreError::RuntimeUnavailable(
+                            "the chat thread does not name its host's current runtime".into(),
+                        ));
+                    }
+                    let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
+                        CoreError::ChatUnavailable(
+                            crate::ChatUnavailableCause::CapabilityUnsupported(
+                                "configured chat kernel".into(),
+                            ),
+                        )
+                    })?;
+                    adapter
+                        .remove_workspace_tree(&RuntimeHandle(runtime_id), &origin.worktree_name)
+                        .await
+                        .map_err(|_| {
+                            CoreError::ChatUnavailable(
+                                crate::ChatUnavailableCause::ProvisioningFailed {
+                                    phase: crate::ChatProvisioningPhase::Cleanup,
+                                    command_index: None,
+                                    retryable: true,
+                                },
+                            )
+                        })?;
+                }
+                crate::ChatHostStatus::Paused => {}
+                crate::ChatHostStatus::Reviving => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::RevivePending,
+                    ));
+                }
+                crate::ChatHostStatus::Provisioning => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::Provisioning,
+                    ));
+                }
+                crate::ChatHostStatus::Retired => {}
+            }
+        }
+        loop {
+            let slot = host
+                .threads
+                .iter_mut()
+                .find(|slot| slot.session_id == id)
+                .ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "the chat host no longer contains this thread allocation".into(),
+                    )
+                })?;
+            slot.removed = true;
+            if let Some(mut checkpoint) = host.checkpoint.take() {
+                checkpoint
+                    .conversations
+                    .retain(|conversation| conversation.session_id != id);
+                if !checkpoint.conversations.is_empty() {
+                    checkpoint.reseal().map_err(CoreError::InvalidRequest)?;
+                    host.checkpoint = Some(checkpoint);
+                }
+            }
+            host.updated_at = crate::clock::now_rfc3339();
+            match host_store
+                .update_if_revision(host.revision, &host)
+                .await
+                .map_err(|_| {
+                    CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+                })? {
+                Some(committed) => {
+                    host = committed;
+                    break;
+                }
+                None => {
+                    host = host_store
+                        .get(&origin.host_id)
+                        .await
+                        .map_err(|_| {
+                            CoreError::ChatUnavailable(
+                                crate::ChatUnavailableCause::HostStoreUnavailable,
+                            )
+                        })?
+                        .ok_or({
+                            CoreError::ChatUnavailable(crate::ChatUnavailableCause::Retired)
+                        })?;
+                }
+            }
+        }
+        self.entries.write().await.remove(&id);
+        let context_ref = current.context_ref;
+        drop(owner_guard);
+        self.retire_chat_host_if_empty(&host.id).await?;
+        self.delete_durably(&id).await.map_err(store_failed)?;
+        self.sequences.forget(&id);
+        drop(ordered);
+        drop(input_fence);
+        drop(lifecycle);
+        Ok(context_ref)
     }
 }
