@@ -26,6 +26,13 @@ import {
   createClient,
   ProtocolError,
   type CreateSession,
+  type ConversationItemsRequest,
+  type CreateResponseRequest,
+  type OperationOptions,
+  type ResponsesConnection,
+  type ResponsesConversation,
+  type ResponsesConversationItemList,
+  type ResponsesResponse,
   type SessionListSurface,
 } from '@chronoai/cma-sdk';
 import type {
@@ -445,6 +452,39 @@ export function createSession(
 /** Provision a deployment-configured chat thread with no caller-owned choices. */
 export function createChatSession(): Promise<Session> {
   return bot.createSession({ surface: 'chat' });
+}
+
+/** Read one caller-owned chat through the public Responses interface. */
+export function readResponsesConversation(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ResponsesConversation> {
+  return bot.readConversation(id, { signal });
+}
+
+/** Read one newest-first page of durable chat history. */
+export function listResponsesConversationItems(
+  id: string,
+  page: ConversationItemsRequest = {},
+  signal?: AbortSignal,
+): Promise<ResponsesConversationItemList> {
+  return bot.listConversationItems(id, page, { signal });
+}
+
+/** Admit one chat turn and return its folding Responses connection. */
+export function createResponsesTurn(
+  request: CreateResponseRequest,
+  options: OperationOptions = {},
+): Promise<ResponsesConnection> {
+  return bot.createResponse(request, options);
+}
+
+/** Reconstruct one durable chat response after its stream is no longer available. */
+export function readResponsesResponse(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ResponsesResponse> {
+  return bot.readResponse(id, { signal });
 }
 
 /** Quote a new session at the deployment's current sealed rate card. */
