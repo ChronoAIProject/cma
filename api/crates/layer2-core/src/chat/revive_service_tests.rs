@@ -93,6 +93,7 @@ async fn paused_message_restores_every_thread_and_delivers_the_admitted_turn() {
     let fixture = fixture("revive-message", 3).await;
     let paused = pause(&fixture, "dirty-worktree-marker").await;
     let target = fixture.threads[2].id.clone();
+    fixture.adapter.chat_workspace_events.lock().await.clear();
 
     let turn_started = fixture
         .service
@@ -166,6 +167,20 @@ async fn paused_message_restores_every_thread_and_delivers_the_admitted_turn() {
             thread.chat.as_ref().map(|chat| chat.worktree_path.as_str())
         );
     }
+    assert_eq!(
+        *fixture.adapter.chat_workspace_events.lock().await,
+        [
+            "workspace_restore",
+            "conversation_snapshot_restore",
+            "conversation_snapshot_restore",
+            "conversation_snapshot_restore",
+            "workspace_setup",
+            "conversation_open",
+            "conversation_open",
+            "conversation_open",
+        ],
+        "revival must set up the restored workspace before any conversation reopens"
+    );
     let received = fixture.adapter.conversation_inputs.lock().await;
     let target_inputs = received.get(target.as_str()).unwrap().lock().await.clone();
     assert_eq!(
@@ -193,6 +208,54 @@ async fn paused_message_restores_every_thread_and_delivers_the_admitted_turn() {
         [EventKind::TurnStarted, EventKind::OwnerMessage { content }]
             if content == "continue from disk"
     )));
+}
+
+#[tokio::test]
+async fn revive_setup_failure_retains_index_and_excerpt_through_queued_admission() {
+    let fixture = fixture("revive-setup-failure", 2).await;
+    pause(&fixture, "setup-failure-workspace").await;
+    fixture.adapter.chat_workspace_events.lock().await.clear();
+    *fixture.adapter.workspace_setup_failure_index.lock().await = Some(1);
+
+    let error = fixture
+        .service
+        .send_prompt(
+            &fixture.caller,
+            &fixture.threads[0].id,
+            "retain the setup failure evidence".into(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        CoreError::ChatUnavailable(ChatUnavailableCause::ProvisioningFailed {
+            phase: ChatProvisioningPhase::WorkspaceSetup,
+            command_index: Some(1),
+            retryable: true,
+        })
+    ));
+    let failed = host(&fixture).await;
+    assert_eq!(failed.status, ChatHostStatus::Paused);
+    let failure = failed.last_failure.as_ref().unwrap();
+    assert_eq!(failure.command_index, Some(1));
+    assert_eq!(
+        failure.output_excerpt.as_deref(),
+        Some("bounded test failure")
+    );
+    let admission = failed.prompt_admissions.last().unwrap();
+    assert_eq!(admission.state, ChatPromptDeliveryState::RecoveryRequired);
+    assert_eq!(admission.failure_command_index, Some(1));
+    assert_eq!(
+        *fixture.adapter.chat_workspace_events.lock().await,
+        [
+            "workspace_restore",
+            "conversation_snapshot_restore",
+            "conversation_snapshot_restore",
+            "workspace_setup",
+        ],
+        "a failed setup remains ahead of every conversation open"
+    );
 }
 
 #[tokio::test]

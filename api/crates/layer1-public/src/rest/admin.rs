@@ -273,6 +273,32 @@ impl AdminSessionView {
 /// One deployment-managed shared chat host, stripped of checkpoint object
 /// references, prompt payloads, and other lifecycle-internal authority.
 #[derive(Debug, Serialize, ToSchema)]
+pub struct AdminChatHostFailureView {
+    #[schema(value_type = openapi_shapes::ChatProvisioningPhase)]
+    phase: layer2_core::ChatProvisioningPhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_excerpt: Option<String>,
+    retryable: bool,
+    cleanup_pending: bool,
+    occurred_at: String,
+}
+
+impl From<layer2_core::ChatHostFailure> for AdminChatHostFailureView {
+    fn from(failure: layer2_core::ChatHostFailure) -> Self {
+        Self {
+            phase: failure.phase,
+            command_index: failure.command_index,
+            output_excerpt: failure.output_excerpt,
+            retryable: failure.retryable,
+            cleanup_pending: failure.cleanup_pending,
+            occurred_at: failure.occurred_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AdminChatHostView {
     id: String,
     owner: String,
@@ -287,6 +313,8 @@ pub struct AdminChatHostView {
     revived_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     checkpoint_captured_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_failure: Option<AdminChatHostFailureView>,
     settings_revision: u64,
     created_at: String,
 }
@@ -305,6 +333,7 @@ impl From<ChatHostRecord> for AdminChatHostView {
                 .checkpoint
                 .as_ref()
                 .map(|checkpoint| checkpoint.captured_at.clone()),
+            last_failure: host.last_failure.map(AdminChatHostFailureView::from),
             settings_revision: host.pinned_settings.settings_revision,
             created_at: host.created_at,
         }

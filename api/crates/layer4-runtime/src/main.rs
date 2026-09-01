@@ -19,6 +19,7 @@ mod sponsored_model;
 mod telemetry;
 mod upstream;
 mod workspace;
+mod workspace_setup;
 mod workspace_source;
 mod writer_fence;
 
@@ -774,6 +775,11 @@ fn runtime_router(state: AppState) -> Router {
         .route(
             "/runtime/workspace/source",
             post(workspace_source_prepare).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
+        .route(
+            "/runtime/workspace/setup",
+            post(workspace_setup_run)
+                .layer(DefaultBodyLimit::max(workspace_setup::MAX_REQUEST_BYTES)),
         )
         .route(
             "/runtime/workspace/trees",
@@ -1924,6 +1930,45 @@ async fn workspace_source_prepare(
             axum::Json(receipt).into_response()
         }
         Err(error) => workspace_source_response(error),
+    }
+}
+
+async fn workspace_setup_run(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<workspace_setup::WorkspaceSetupRequest>,
+) -> impl IntoResponse {
+    if let Err(detail) = request.validate() {
+        return (axum::http::StatusCode::BAD_REQUEST, detail).into_response();
+    }
+
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let _startup = state.startup_gate.write().await;
+    if agent_started(&state).await {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+    let repository = match state
+        .workspace_source
+        .lock()
+        .await
+        .setup_directory(&state.workspace_root)
+    {
+        Ok(repository) => repository,
+        Err(error) => return workspace_source_response(error),
+    };
+    match workspace_setup::run(&repository, &request.commands).await {
+        Ok(receipt) => axum::Json(receipt).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "workspace setup runner failed");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace setup runner failed",
+            )
+                .into_response()
+        }
     }
 }
 

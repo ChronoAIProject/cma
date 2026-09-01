@@ -1712,9 +1712,13 @@ impl HostedKernel {
             .post_json_to_sandbox_with_response(&endpoint.endpoint, WORKSPACE_SETUP_PATH, body)
             .await
             .map_err(runtime_operation_error)?;
-        serde_json::from_slice(&response).map_err(|_| {
+        let receipt: WorkspaceSetupReceipt = serde_json::from_slice(&response).map_err(|_| {
             AdapterError::Rejected("runtime returned an invalid workspace setup receipt".into())
-        })
+        })?;
+        receipt.validate(commands.len()).map_err(|_| {
+            AdapterError::Rejected("runtime returned an invalid workspace setup receipt".into())
+        })?;
+        Ok(receipt)
     }
 
     /// Ask the shared Layer 4 supervisor for one coherent, resumable capture.

@@ -43,6 +43,8 @@ const DEFAULT_CHAT: ChatSettings = {
 const DEFAULT_RETAINED_SIZE = { cpuMillis: 2_000, memoryMib: 4_096 };
 const MAX_U32 = 4_294_967_295;
 const UTF8 = new TextEncoder();
+const LEAN_SETUP_FIXTURE =
+  '[ -x .toolchain/bin/lake ] || (curl -sSf https://elan.lean-lang.org/elan-init.sh | ELAN_HOME=$PWD/.toolchain sh -s -- -y --default-toolchain "$(cat lean-toolchain)")';
 
 function byteLength(value: string): number {
   return UTF8.encode(value).byteLength;
@@ -401,8 +403,13 @@ export function ChatSettingsView({ store }: ChatSettingsViewProps) {
 
         <SettingsSection id={`${id}-setup`} title="Setup">
           <p className="chat-settings__caption chat-settings__field--wide">
-            Run inside the workspace after it is prepared, and again after every revive. Commands
-            run as the sandbox user; write them idempotent.
+            Run inside the prepared repository and again after every revive. Commands run as uid
+            10001 without root access. Keep them idempotent and prefer workspace-local installation
+            so toolchains survive pause checkpoints.
+          </p>
+          <p className="chat-settings__fixture chat-settings__field--wide">
+            <span>Lean fixture</span>
+            <code>{LEAN_SETUP_FIXTURE}</code>
           </p>
           <OrderedEditor
             label="Software-installation commands"

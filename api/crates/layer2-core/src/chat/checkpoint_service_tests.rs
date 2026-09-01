@@ -387,6 +387,9 @@ pub(super) struct CheckpointFixture {
 fn enabled_settings() -> Arc<PlatformSettingsService> {
     let chat = ChatSettings {
         enabled: true,
+        setup: ChatSetup {
+            commands: vec!["prepare one".into(), "prepare two".into()],
+        },
         host: ChatHostSettings {
             max_threads: 8,
             ..ChatHostSettings::default()

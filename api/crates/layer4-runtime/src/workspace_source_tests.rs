@@ -53,6 +53,37 @@ fn fixture(name: &str) -> (PathBuf, PathBuf, WorkspaceSources, WorkspaceSourceRe
 }
 
 #[test]
+fn setup_directory_recovers_only_the_main_clone_from_a_restored_workspace() {
+    let base = root("restored-setup-directory");
+    let workspace = base.join("workspace");
+    let repository = workspace.join("project");
+    std::fs::create_dir_all(repository.join(".git")).unwrap();
+    let worktree = workspace.join("worktrees/chat-1");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        "gitdir: ../../project/.git/worktrees/chat-1\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        WorkspaceSources::default()
+            .setup_directory(&workspace)
+            .expect("the restored main clone is unambiguous"),
+        repository
+    );
+
+    std::fs::create_dir_all(workspace.join("other/.git")).unwrap();
+    assert!(matches!(
+        WorkspaceSources::default().setup_directory(&workspace),
+        Err(WorkspaceSourceError::Conflict(
+            "the restored workspace contains multiple repository roots"
+        ))
+    ));
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn source_and_tree_inputs_are_closed_and_path_safe() {
     for url in [
         "http://example.test/repo",

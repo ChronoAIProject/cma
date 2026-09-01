@@ -7,7 +7,7 @@ use std::time::Duration;
 use layer3_adapter::{
     AdapterError, KernelAdapter, RuntimeEnvironment, RuntimeHandle, RuntimeIdentity, RuntimeMode,
     RuntimeOptions, RuntimePermission, RuntimeSpec, TermSize, WorkspaceCheckpointPackage,
-    WorkspaceEntryPackage, WorkspacePackage, WorkspaceSetupReceipt, WorkspaceWriterState,
+    WorkspaceEntryPackage, WorkspacePackage, WorkspaceWriterState,
 };
 
 use super::checkpoints::{live_session_ids, ChatCaptureRefusal};
@@ -41,6 +41,8 @@ struct ChatRevivalFailure<'a> {
     detail: &'static str,
     retryable: bool,
     provisioning_phase: Option<ChatProvisioningPhase>,
+    command_index: Option<usize>,
+    output_excerpt: Option<String>,
     runtime: Option<(&'a RuntimeHandle, &'a Arc<dyn KernelAdapter>)>,
 }
 
@@ -123,6 +125,7 @@ impl crate::SessionService {
         reviving.last_failure = Some(crate::ChatHostFailure {
             phase: ChatProvisioningPhase::RuntimeLost,
             command_index: None,
+            output_excerpt: None,
             retryable: true,
             cleanup_pending: false,
             occurred_at: now.clone(),
@@ -257,6 +260,7 @@ impl crate::SessionService {
         reviving.last_failure = Some(crate::ChatHostFailure {
             phase: ChatProvisioningPhase::RuntimeLost,
             command_index: None,
+            output_excerpt: None,
             retryable: true,
             cleanup_pending: false,
             occurred_at: now.clone(),
@@ -1231,7 +1235,7 @@ impl crate::SessionService {
                         return Err(CoreError::ChatUnavailable(
                             ChatUnavailableCause::ProvisioningFailed {
                                 phase,
-                                command_index: None,
+                                command_index: admission.failure_command_index,
                                 retryable: admission.failure_retryable,
                             },
                         ));
@@ -1340,6 +1344,8 @@ impl crate::SessionService {
                         detail: "The durable chat checkpoint failed verification.",
                         retryable: false,
                         provisioning_phase: None,
+                        command_index: None,
+                        output_excerpt: None,
                         runtime: None,
                     },
                 )
@@ -1357,6 +1363,8 @@ impl crate::SessionService {
                     detail: "The durable chat threads could not enter recovery.",
                     retryable: true,
                     provisioning_phase: None,
+                    command_index: None,
+                    output_excerpt: None,
                     runtime: None,
                 },
             )
@@ -1403,6 +1411,8 @@ impl crate::SessionService {
                             detail: "The replacement chat runtime could not be provisioned.",
                             retryable: error.is_runtime_loss(),
                             provisioning_phase: Some(ChatProvisioningPhase::Runtime),
+                            command_index: None,
+                            output_excerpt: None,
                             runtime: None,
                         },
                     )
@@ -1456,6 +1466,8 @@ impl crate::SessionService {
                                 "The replacement disappeared while restoring chat conversations.",
                             retryable: true,
                             provisioning_phase: None,
+                            command_index: None,
+                            output_excerpt: None,
                             runtime: Some((&handle, &adapter)),
                         },
                     )
@@ -1477,7 +1489,22 @@ impl crate::SessionService {
         let setup = adapter
             .run_workspace_setup(&handle, &host.pinned_settings.settings.setup.commands)
             .await;
-        if !valid_setup(setup.as_ref().ok()) {
+        let setup_failure = match setup {
+            Ok(receipt) => {
+                match receipt.validate(host.pinned_settings.settings.setup.commands.len()) {
+                    Ok(()) => receipt.failed_step().map(|step| {
+                        (
+                            Some(step.command_index),
+                            Some(step.output_excerpt.clone()),
+                            true,
+                        )
+                    }),
+                    Err(_) => Some((None, None, false)),
+                }
+            }
+            Err(error) => Some((None, None, error.is_runtime_loss())),
+        };
+        if let Some((command_index, output_excerpt, retryable)) = setup_failure {
             self.fail_chat_revival(
                 &hosts,
                 &host,
@@ -1485,17 +1512,20 @@ impl crate::SessionService {
                 ChatRevivalFailure {
                     phase: ChatRevivePhase::WorkspaceSetup,
                     detail: "The replacement chat workspace setup failed.",
-                    retryable: setup
-                        .as_ref()
-                        .err()
-                        .is_some_and(AdapterError::is_runtime_loss),
+                    retryable,
                     provisioning_phase: Some(ChatProvisioningPhase::WorkspaceSetup),
+                    command_index,
+                    output_excerpt,
                     runtime: Some((&handle, &adapter)),
                 },
             )
             .await?;
-            return Err(CoreError::RuntimeRefused(
-                "the replacement chat workspace setup failed".into(),
+            return Err(CoreError::ChatUnavailable(
+                ChatUnavailableCause::ProvisioningFailed {
+                    phase: ChatProvisioningPhase::WorkspaceSetup,
+                    command_index,
+                    retryable,
+                },
             ));
         }
 
@@ -1521,6 +1551,8 @@ impl crate::SessionService {
                             detail: "The replacement disappeared while reopening chat threads.",
                             retryable: true,
                             provisioning_phase: None,
+                            command_index: None,
+                            output_excerpt: None,
                             runtime: Some((&handle, &adapter)),
                         },
                     )
@@ -1562,6 +1594,8 @@ impl crate::SessionService {
                     detail: "The replacement chat credential could not be installed.",
                     retryable: revive_error_is_retryable(&error),
                     provisioning_phase: Some(ChatProvisioningPhase::Credential),
+                    command_index: None,
+                    output_excerpt: None,
                     runtime: Some((&handle, &adapter)),
                 },
             )
@@ -2146,6 +2180,8 @@ impl crate::SessionService {
             detail,
             retryable,
             provisioning_phase,
+            command_index,
+            output_excerpt,
             runtime,
         } = failure;
         let cleanup_pending = match runtime {
@@ -2187,7 +2223,8 @@ impl crate::SessionService {
             current.revive_failed_threads = failures.clone();
             current.last_failure = Some(crate::ChatHostFailure {
                 phase: provisioning_phase.unwrap_or_else(|| revive_provisioning_phase(phase)),
-                command_index: None,
+                command_index,
+                output_excerpt: output_excerpt.clone(),
                 retryable,
                 cleanup_pending,
                 occurred_at: crate::clock::now_rfc3339(),
@@ -2205,6 +2242,7 @@ impl crate::SessionService {
                     admission.state = ChatPromptDeliveryState::RecoveryRequired;
                     admission.failure_phase = Some(phase);
                     admission.failure_provisioning_phase = provisioning_phase;
+                    admission.failure_command_index = command_index;
                     admission.failure_retryable = retryable;
                 }
             }
@@ -2334,10 +2372,6 @@ fn next_chat_checkpoint_version(host: &ChatHostRecord) -> Option<u64> {
                 .map_or(0, |checkpoint| checkpoint.checkpoint_version),
         )
         .checked_add(1)
-}
-
-fn valid_setup(setup: Option<&WorkspaceSetupReceipt>) -> bool {
-    setup.is_some_and(|setup| setup.steps.iter().all(|step| step.exit_code == 0))
 }
 
 fn account_paused_image_drift(

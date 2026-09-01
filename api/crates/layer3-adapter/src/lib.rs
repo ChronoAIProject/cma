@@ -39,8 +39,8 @@ pub use runtime::{
     WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
     WorkspaceEntryPackage, WorkspacePackage, WorkspaceSetupReceipt, WorkspaceSetupStep,
     WorkspaceSourceReceipt, WorkspaceSourceRequest, WorkspaceTreeReceipt, WorkspaceTreeRequest,
-    WorkspaceWriterState, RUNTIME_GATEWAY_PROBE_VERSION, SPONSORED_MODEL_RESOURCE,
-    SPONSORED_MODEL_RUNTIME_AUTHORITY_VERSION,
+    WorkspaceWriterState, MAX_WORKSPACE_SETUP_OUTPUT_BYTES, RUNTIME_GATEWAY_PROBE_VERSION,
+    SPONSORED_MODEL_RESOURCE, SPONSORED_MODEL_RUNTIME_AUTHORITY_VERSION,
 };
 pub use terminal_input::TerminalInputSender;
 
