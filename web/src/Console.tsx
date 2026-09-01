@@ -11,10 +11,11 @@ import { BouncingText } from './sessions/BouncingText';
 import { SignInCard } from './chat/SignInCard';
 import type { SignIn } from '@chronoai/cma-sdk';
 import type { Stage } from './sessions/progress';
-import { SessionActions } from './sessions/SessionActions';
+import { ChatSessionActions, SessionActions } from './sessions/SessionActions';
 import { SessionHeader } from './sessions/SessionHeader';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { ConversationSurface } from './chat/ConversationSurface';
+import { ChatSurface } from './chat/ChatSurface';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
 import { selectLiveWindow, unattachedNote } from './canvas/layout';
@@ -829,7 +830,7 @@ export function Console({
               session={active}
               waiting={active !== null && active.id === waitingId}
               actions={
-                active === null ? undefined : (
+                active === null ? undefined : active.chat === undefined ? (
                   <SessionActions
                     session={active}
                     signingIn={pendingSignIn !== undefined}
@@ -862,6 +863,13 @@ export function Console({
                     detailsOpen={detailsOpen}
                     kernels={kernels}
                     onChangePlane={(to) => void changeSessionPlane(active.id, to)}
+                  />
+                ) : (
+                  <ChatSessionActions
+                    onDetails={() => {
+                      setDetailsOpen((open) => !open);
+                    }}
+                    detailsOpen={detailsOpen}
                   />
                 )
               }
@@ -955,6 +963,8 @@ export function Console({
                 message="Moving this session to an updated runtime. It will come back where it left off."
                 stage={stages[active.id] ?? null}
               />
+            ) : active.chat !== undefined ? (
+              <ChatSurface key={active.id} session={active} />
             ) : active.plane === 'conversation' ? (
               /*
                * §18 and §1: the middle column is drawn from the session's own

@@ -5,12 +5,16 @@ import { ProtocolError, TransportError } from '@chronoai/cma-sdk';
 import {
   ApiError,
   createChatSession,
+  createResponsesTurn,
   followSession,
+  listResponsesConversationItems,
   listKernels,
   listSessions,
   listTriggerRevisions,
   listTriggers,
   readChatSurfaceEnabled,
+  readResponsesConversation,
+  readResponsesResponse,
   toSession,
 } from './client';
 
@@ -179,6 +183,105 @@ describe('the Chat surface client boundary', () => {
     const request = fetch.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(request?.method).toBe('POST');
     expect(JSON.parse(String(request?.body))).toEqual({ surface: 'chat' });
+  });
+
+  it('binds every Chat Responses operation to the public same-origin SDK routes', async () => {
+    const durableResponse = JSON.parse(
+      readFileSync(
+        resolve(
+          process.cwd(),
+          '../api/crates/layer1-public/tests/fixtures/responses-sdk/response.json',
+        ),
+        'utf8',
+      ),
+    ) as Record<string, unknown>;
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/v1/conversations/chat%2Fowner') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'chat/owner',
+              object: 'conversation',
+              created_at: 1_788_228_800,
+              metadata: {},
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+        );
+      }
+      if (url === '/api/v1/conversations/chat%2Fowner/items?after=msg%2F2&limit=25') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              object: 'list',
+              data: [],
+              first_id: null,
+              last_id: null,
+              has_more: false,
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+        );
+      }
+      if (url === '/api/v1/responses/resp%2Fowner') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ...durableResponse, id: 'resp/owner' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      }
+      if (url === '/api/v1/responses' && init?.method === 'POST') {
+        return Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+          }),
+        );
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const controller = new AbortController();
+
+    await expect(readResponsesConversation('chat/owner', controller.signal)).resolves.toMatchObject(
+      {
+        id: 'chat/owner',
+        object: 'conversation',
+      },
+    );
+    await expect(
+      listResponsesConversationItems(
+        'chat/owner',
+        { after: 'msg/2', limit: 25 },
+        controller.signal,
+      ),
+    ).resolves.toMatchObject({ object: 'list', data: [] });
+    await expect(readResponsesResponse('resp/owner', controller.signal)).resolves.toMatchObject({
+      id: 'resp/owner',
+      object: 'response',
+    });
+    const connection = await createResponsesTurn(
+      { conversation: 'chat/owner', input: 'Inspect the release' },
+      { signal: controller.signal },
+    );
+
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/v1/conversations/chat%2Fowner',
+      '/api/v1/conversations/chat%2Fowner/items?after=msg%2F2&limit=25',
+      '/api/v1/responses/resp%2Fowner',
+      '/api/v1/responses',
+    ]);
+    expect(JSON.parse(String(fetch.mock.calls[3]?.[1]?.body))).toEqual({
+      conversation: 'chat/owner',
+      input: 'Inspect the release',
+      stream: true,
+    });
+    for (const [, init] of fetch.mock.calls) {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
+    connection.cancel('test complete');
   });
 });
 
