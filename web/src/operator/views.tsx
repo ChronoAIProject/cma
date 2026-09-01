@@ -1,4 +1,5 @@
 import { Button } from '../ui/Button';
+import { InlineConfirm } from '../ui/InlineConfirm';
 import { Pill } from '../ui/Pill';
 import { StateDot } from '../ui/StateDot';
 import { fullTimestampOrNone } from '../sessions/sessionTime';
@@ -12,9 +13,9 @@ import {
   type ActivityFilter,
 } from './activity';
 import { byRecency, labelFor, nameOf, type PersonLabel } from './directory';
-import { controlsFor } from './access';
+import { controlsFor, retirementFor } from './access';
 import { PersonName, RecordList, RecordRow } from './RecordList';
-import type { ActivityEntry, AdminSession, Person, RuntimeInventory } from './types';
+import type { ActivityEntry, AdminSession, ChatHost, Person, RuntimeInventory } from './types';
 
 /**
  * The four views of the operator panel.
@@ -321,6 +322,113 @@ export function SessionsView({
                   >
                     End
                   </Button>
+                </>
+              )
+            }
+          />
+        );
+      })}
+    </RecordList>
+  );
+}
+
+/** Compact age used in host inventory rows. */
+export function chatHostAge(createdAt: number, now: number = Date.now()): string {
+  if (!Number.isFinite(createdAt)) {
+    return 'age unknown';
+  }
+  const elapsed = Math.max(0, now - createdAt);
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) {
+    return 'under 1 min old';
+  }
+  if (minutes < 60) {
+    return `${String(minutes)} min old`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${String(hours)} hr old`;
+  }
+  return `${String(Math.floor(hours / 24))} d old`;
+}
+
+interface ChatHostsViewProps {
+  readonly hosts: readonly ChatHost[];
+  readonly capabilities: readonly Capability[];
+  readonly confirming: string | null;
+  readonly busy: boolean;
+  readonly onConfirm: (id: string | null) => void;
+  readonly onRetire: (id: string) => void;
+}
+
+/** Deployment-managed shared chat runtimes and their audited retirement control. */
+export function ChatHostsView({
+  hosts,
+  capabilities,
+  confirming,
+  busy,
+  onConfirm,
+  onRetire,
+}: ChatHostsViewProps) {
+  return (
+    <RecordList
+      label="Every chat host"
+      empty="No shared chat host has been created yet."
+      count={hosts.length}
+    >
+      {hosts.map((host) => {
+        const retirement = retirementFor(host, capabilities);
+        return (
+          <RecordRow
+            key={host.id}
+            at={chatHostAge(host.createdAt)}
+            primary={
+              <>
+                <PersonName label={labelFor(host.owner)} />
+                <Pill>{host.status}</Pill>
+              </>
+            }
+            meta={
+              <>
+                <span className="record__identifier">{host.id}</span>
+                <span>
+                  {String(host.threadCount)} {host.threadCount === 1 ? 'thread' : 'threads'}
+                </span>
+                {host.runtimeVersion === undefined ? null : (
+                  <span>runtime {host.runtimeVersion}</span>
+                )}
+              </>
+            }
+            actions={
+              confirming === host.id ? (
+                <InlineConfirm
+                  question="Retire this chat host?"
+                  confirmLabel="Retire"
+                  busy={busy}
+                  cancelDisabled={busy}
+                  onCancel={() => {
+                    onConfirm(null);
+                  }}
+                  onConfirm={() => {
+                    onRetire(host.id);
+                  }}
+                />
+              ) : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    disabled={!retirement.canRetire || busy}
+                    title={retirement.reason}
+                    onClick={() => {
+                      onConfirm(host.id);
+                    }}
+                  >
+                    Retire
+                  </Button>
+                  {retirement.reason === undefined ? null : (
+                    <span className="control-reason">{retirement.reason}</span>
+                  )}
                 </>
               )
             }

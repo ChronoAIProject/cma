@@ -40,6 +40,17 @@
 
 export { Cma, createClient } from './client.js';
 export {
+  CHAT_HOST_STATUSES,
+  listChatHosts,
+  listChatHostsPage,
+  retireChatHost,
+  toChatHost,
+  type ChatHost,
+  type ChatHostListRequest,
+  type ChatHostPageRequest,
+  type ChatHostStatus,
+} from './chat-hosts.js';
+export {
   resolveConfig,
   type ClientConfig,
   type Credential,

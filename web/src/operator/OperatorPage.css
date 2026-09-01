@@ -51,7 +51,7 @@
 }
 
 /*
- * The six views as an underlined tablist at the interface size — §19:
+ * The seven views as an underlined tablist at the interface size — §19:
  * selected by weight, accent ink, a 2px accent bottom border AND
  * aria-selected, so colour is never the only signal.
  */
@@ -66,7 +66,9 @@
   gap: 2px;
   align-items: flex-end;
   padding: 0 4px;
+  overflow-x: auto;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+  scrollbar-width: thin;
 }
 
 .operator__tab {
@@ -204,6 +206,12 @@
   min-width: 0;
 }
 
+.operator__record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
 .record__actions {
   display: flex;
   flex: none;
@@ -223,5 +231,28 @@
   .operator__tab {
     padding-inline: 8px;
     font-size: 13px;
+  }
+
+  .operator__intro {
+    padding-inline: var(--page-gutter);
+  }
+
+  .operator__record-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    padding-inline: 12px;
+  }
+
+  .operator__record-at,
+  .operator .record__text,
+  .operator .record__actions {
+    grid-column: 1;
+    min-width: 0;
+  }
+
+  .operator .record__actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 }

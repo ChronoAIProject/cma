@@ -56,6 +56,19 @@ const CHAT_WIRE = {
   host: { size: { cpu_millis: 2_000, memory_mib: 4_096 }, max_threads: 10 },
 };
 
+const CHAT_HOST_WIRE = {
+  id: 'chho_0123456789abcdef0123456789abcdef',
+  owner: 'subject-chat-owner',
+  status: 'active',
+  thread_count: 3,
+  runtime_version: 'runtime-v2',
+  paused_at: '2026-09-01T01:00:00Z',
+  revived_at: '2026-09-01T02:00:00Z',
+  checkpoint_captured_at: '2026-09-01T00:45:00Z',
+  settings_revision: 17,
+  created_at: '2026-08-31T23:00:00Z',
+};
+
 /**
  * The operator store that talks to the control plane.
  *
@@ -406,6 +419,45 @@ describe('talking to the control plane', () => {
       '/api/v1/admin/sessions',
       '/api/v1/admin/sessions?limit=50&cursor=opaque',
       '/api/v1/admin/sessions/sesn_after_fifty/terminate',
+    ]);
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('POST');
+  });
+
+  it('decodes, paginates, and retires chat hosts through their admin routes', async () => {
+    const older = {
+      ...CHAT_HOST_WIRE,
+      id: 'chho_fedcba9876543210fedcba9876543210',
+      status: 'paused',
+    };
+    const retired = { ...CHAT_HOST_WIRE, status: 'retired' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        respond([CHAT_HOST_WIRE], 200, {
+          Link: '</api/v1/admin/chat/hosts?limit=50&cursor=opaque>; rel="next"',
+        }),
+      )
+      .mockResolvedValueOnce(respond([older]))
+      .mockResolvedValueOnce(respond(retired));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = createRestOperatorStore();
+    const hosts = await store.chatHosts();
+    expect(hosts).toHaveLength(2);
+    expect(hosts[0]).toMatchObject({
+      id: CHAT_HOST_WIRE.id,
+      owner: 'subject-chat-owner',
+      status: 'active',
+      threadCount: 3,
+      settingsRevision: 17,
+      createdAt: Date.parse(CHAT_HOST_WIRE.created_at),
+    });
+    await store.retireChatHost(CHAT_HOST_WIRE.id);
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/admin/chat/hosts',
+      '/api/v1/admin/chat/hosts?limit=50&cursor=opaque',
+      `/api/v1/admin/chat/hosts/${CHAT_HOST_WIRE.id}/retire`,
     ]);
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('POST');
   });

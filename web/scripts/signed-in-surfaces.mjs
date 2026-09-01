@@ -103,6 +103,28 @@ const CHAT_SESSIONS = [
   },
 ];
 
+const CHAT_HOSTS = [
+  {
+    id: 'chho_0123456789abcdef0123456789abcdef',
+    owner: 'subject-chat-owner',
+    status: 'active',
+    thread_count: 3,
+    runtime_version: 'runtime-v2',
+    settings_revision: 17,
+    created_at: '2026-08-31T23:00:00Z',
+  },
+  {
+    id: 'chho_fedcba9876543210fedcba9876543210',
+    owner: 'subject-paused-owner',
+    status: 'paused',
+    thread_count: 1,
+    paused_at: '2026-09-01T01:00:00Z',
+    checkpoint_captured_at: '2026-09-01T00:59:58Z',
+    settings_revision: 16,
+    created_at: '2026-08-31T22:00:00Z',
+  },
+];
+
 const RESOURCE_READING = {
   cpuMillisUsed: 100,
   cpuMillisLimit: 2000,
@@ -147,7 +169,10 @@ async function stub(page) {
           'use_own_sessions',
           'manage_own_environment_profiles',
           'read_all_sessions',
+          'control_any_session',
           'read_user_directory',
+          'read_activity_log',
+          'read_runtime_inventory',
           'configure_platform',
         ],
       });
@@ -190,6 +215,7 @@ async function stub(page) {
         },
       });
     }
+    if (path === '/api/v1/admin/chat/hosts') return void json(CHAT_HOSTS);
     if (path === '/api/v1/agui/events') {
       const threadId = url.searchParams.get('thread_id') ?? 'sesn_alpha';
       const frame = {
@@ -658,6 +684,101 @@ async function chatSettingsDiscoverable(page) {
   return problems;
 }
 
+/** Chat-host rows and their inline retirement question fit both supported layouts. */
+async function chatHostInventoryFits(page) {
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
+  if (!(await press(page, 'Operations'))) {
+    return ['chat hosts: Operations was not offered to a session operator'];
+  }
+  await ready(page, '.operator__tabs', { label: 'the Operations view switch' });
+  const opened = await page.evaluate(() => {
+    const tab = [...document.querySelectorAll('[role="tab"]')].find(
+      (candidate) => candidate.textContent?.trim() === 'Chat hosts',
+    );
+    tab?.click();
+    return tab !== undefined;
+  });
+  if (!opened) {
+    return ['chat hosts: the inventory tab is absent'];
+  }
+  await ready(page, '[aria-label="Every chat host"] .record__row', {
+    label: 'the chat-host inventory',
+  });
+
+  const problems = [];
+  for (const width of [1440, 390]) {
+    await page.setViewport({ width, height: width === 390 ? 844 : 900 });
+    await settle(250);
+    if (width === 390 && !(await press(page, 'Retire'))) {
+      problems.push('chat hosts at 390px: retirement cannot be opened');
+    }
+    await settle();
+    const seen = await page.evaluate(() => {
+      const row = document.querySelector('[aria-label="Every chat host"] .record__row');
+      const text = row?.querySelector('.record__text');
+      const actions = row?.querySelector('.record__actions');
+      const tabs = document.querySelector('.operator__tabs');
+      const confirm = row?.querySelector('.confirm');
+      if (row === null || text === null || actions === null || tabs === null) {
+        return { missing: true };
+      }
+      const rowBox = row.getBoundingClientRect();
+      const textBox = text.getBoundingClientRect();
+      const actionBox = actions.getBoundingClientRect();
+      const confirmBox = confirm?.getBoundingClientRect();
+      return {
+        missing: false,
+        columns: getComputedStyle(row).gridTemplateColumns,
+        horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+        rowOffscreen: rowBox.left < -1 || rowBox.right > window.innerWidth + 1,
+        actionsBelow: actionBox.top >= textBox.bottom - 1,
+        confirmation: confirm?.textContent?.includes('Retire this chat host?') === true,
+        confirmationOffscreen:
+          confirmBox !== undefined &&
+          (confirmBox.left < rowBox.left - 1 || confirmBox.right > rowBox.right + 1),
+        tabsScrollable:
+          getComputedStyle(tabs).overflowX === 'auto' && tabs.scrollWidth > tabs.clientWidth,
+        text: row.textContent ?? '',
+      };
+    });
+    if (seen.missing) {
+      problems.push(`chat hosts at ${String(width)}px: the first row is incomplete`);
+      continue;
+    }
+    if (!seen.text.includes('subject-chat-owner') || !seen.text.includes('3 threads')) {
+      problems.push(`chat hosts at ${String(width)}px: required row facts are absent`);
+    }
+    if (seen.horizontal || seen.rowOffscreen || seen.confirmationOffscreen) {
+      problems.push(`chat hosts at ${String(width)}px: the inventory widens the viewport`);
+    }
+    if (width === 390) {
+      if (!seen.actionsBelow || !seen.confirmation) {
+        problems.push('chat hosts at 390px: controls do not stack below the row metadata');
+      }
+      if (!seen.tabsScrollable) {
+        problems.push('chat hosts at 390px: the seven-tab strip is not horizontally scrollable');
+      }
+    } else if (seen.columns.split(' ').length < 3) {
+      problems.push('chat hosts at 1440px: the compact row lost its three-column geometry');
+    }
+  }
+
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    const keep = [...document.querySelectorAll('.confirm button')].find(
+      (button) => button.textContent?.trim() === 'Keep it',
+    );
+    keep?.click();
+    document.querySelector('.row-item')?.click();
+  });
+  await settle();
+  return problems;
+}
+
 /** Wait for AppFrame's observed width and animated tracks to reach a new viewport. */
 async function waitForDeveloperFrame(page, width, phoneControls) {
   try {
@@ -1114,6 +1235,7 @@ async function main() {
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
       ...(await chatSettingsDiscoverable(page)),
+      ...(await chatHostInventoryFits(page)),
       ...(await developerSurface(page)),
       ...(await everyMenuLands(page)),
       ...(await accountMenuReads(page)),
@@ -1131,7 +1253,7 @@ async function main() {
     console.log(
       'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
         'Developer fits both layouts, session metrics keep two rows, every menu lands inside the window, ' +
-        'the Chat surface switches rails, Chat settings are discoverable, and profile resources remain visible',
+        'the Chat surface switches rails, Chat settings and host inventory are reachable, and profile resources remain visible',
     );
   } finally {
     await close();

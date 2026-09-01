@@ -67,6 +67,28 @@ console.log(screen.lines.length, transcript.byteLength);
 The bidirectional WebSocket protocol is documented separately in
 [API_PTY.md](../../../docs/API_PTY.md) and is not exposed by this package version.
 
+## Administrative chat hosts
+
+Callers with administrative session-read capability can walk every bounded
+shared-host page. Retirement additionally requires cross-owner session control:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+const hosts = await cma.listChatHosts();
+const first = hosts[0];
+if (first !== undefined) {
+  const retired = await cma.retireChatHost(first.id);
+  console.log(retired.status);
+}
+```
+
+`listChatHostsPage` exposes one manual page and an opaque continuation.
+Continuations are bound to `/api/v1/admin/chat/hosts`; absolute, cross-origin,
+and different-collection targets are refused before a credential is sent.
+Repeating `retireChatHost` after retirement remains a `200` success.
+
 ## Profiles, pricing, resources, and usage
 
 The TypeScript client also exposes environment-profile CRUD and catalogues,

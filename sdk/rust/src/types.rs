@@ -107,6 +107,73 @@ impl<'de> Deserialize<'de> for SessionId {
     }
 }
 
+/// Stable identifier of a deployment-managed shared chat host.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ChatHostId(String);
+
+impl ChatHostId {
+    /// Validate and retain a chat-host identifier.
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        if !value.starts_with("chho_") || value.len() <= "chho_".len() {
+            return Err(Error::protocol(
+                "a chat host id must start with 'chho_' and carry a suffix",
+            ));
+        }
+        if !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        {
+            return Err(Error::protocol(
+                "a chat host id contains a character outside the wire identifier alphabet",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    /// Borrow the wire identifier.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ChatHostId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ChatHostId").field(&self.0).finish()
+    }
+}
+
+impl fmt::Display for ChatHostId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl AsRef<str> for ChatHostId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl TryFrom<String> for ChatHostId {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        Self::new(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for ChatHostId {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Non-zero terminal dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalGeometry {
@@ -385,6 +452,75 @@ impl SessionPageRequest {
     }
 }
 
+/// Exact position and size for one bounded administrative chat-host page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatHostPageRequest {
+    limit: Option<u16>,
+    cursor: Option<String>,
+    continuation: Option<PageContinuation>,
+}
+
+impl ChatHostPageRequest {
+    /// Start a first-page request using the server's default limit.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set a first-page size from 1 through 200.
+    pub fn with_limit(mut self, limit: u16) -> Result<Self> {
+        if !(MIN_PAGE_SIZE..=MAX_PAGE_SIZE).contains(&limit) {
+            return Err(Error::protocol(format!(
+                "chat host page limit must be from {MIN_PAGE_SIZE} through {MAX_PAGE_SIZE}"
+            )));
+        }
+        if self.continuation.is_some() {
+            return Err(Error::protocol(
+                "a pagination continuation cannot be combined with a page limit",
+            ));
+        }
+        self.limit = Some(limit);
+        Ok(self)
+    }
+
+    /// Resume a first-page query from an opaque cursor supplied out of band.
+    pub fn with_cursor(mut self, cursor: impl Into<String>) -> Result<Self> {
+        let cursor = cursor.into();
+        if cursor.is_empty() {
+            return Err(Error::protocol("chat host page cursor must not be empty"));
+        }
+        if self.continuation.is_some() {
+            return Err(Error::protocol(
+                "a pagination continuation cannot be combined with a cursor",
+            ));
+        }
+        self.cursor = Some(cursor);
+        Ok(self)
+    }
+
+    /// Follow a route-bound continuation returned by [`Page::next`].
+    pub fn continuing(continuation: PageContinuation) -> Self {
+        Self {
+            continuation: Some(continuation),
+            ..Self::default()
+        }
+    }
+
+    /// Requested first-page size, or `None` for the server default.
+    pub fn limit(&self) -> Option<u16> {
+        self.limit
+    }
+
+    /// Opaque first-page cursor supplied by the caller.
+    pub fn cursor(&self) -> Option<&str> {
+        self.cursor.as_deref()
+    }
+
+    /// Server-issued continuation target, when following a previous page.
+    pub fn continuation(&self) -> Option<&PageContinuation> {
+        self.continuation.as_ref()
+    }
+}
+
 /// Finite resource ceilings for the compatibility list-all session operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageWalkLimits {
@@ -423,6 +559,89 @@ impl Default for PageWalkLimits {
             max_pages: 100,
             max_items: 20_000,
         }
+    }
+}
+
+/// Lifecycle of a deployment-managed shared chat runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatHostStatus {
+    /// The initial shared runtime is being created.
+    Provisioning,
+    /// The runtime can serve chat threads.
+    Active,
+    /// Durable inactivity capture is in progress.
+    Pausing,
+    /// The runtime is reclaimed and can be revived.
+    Paused,
+    /// A replacement runtime is being restored.
+    Reviving,
+    /// The host was administratively withdrawn.
+    Retired,
+}
+
+/// Redacted administrative projection of one shared chat host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatHost {
+    /// Stable host identifier.
+    pub id: ChatHostId,
+    /// Subject that owns the shared host.
+    pub owner: String,
+    /// Current host lifecycle position.
+    pub status: ChatHostStatus,
+    /// Number of retained, non-removed chat threads.
+    pub thread_count: usize,
+    /// Runtime image version, when known.
+    #[serde(default)]
+    pub runtime_version: Option<String>,
+    /// Most recent successful pause time, in RFC 3339 form.
+    #[serde(default)]
+    pub paused_at: Option<String>,
+    /// Most recent successful revival time, in RFC 3339 form.
+    #[serde(default)]
+    pub revived_at: Option<String>,
+    /// Time of the retained verified checkpoint, in RFC 3339 form.
+    #[serde(default)]
+    pub checkpoint_captured_at: Option<String>,
+    /// Platform-settings revision pinned when this host generation was created.
+    pub settings_revision: u64,
+    /// Host-generation creation time, in RFC 3339 form.
+    pub created_at: String,
+}
+
+impl ChatHost {
+    pub(crate) fn validate(self) -> Result<Self> {
+        if self.owner.trim().is_empty() {
+            return Err(Error::protocol(
+                "a chat host response contains an empty owner",
+            ));
+        }
+        if self
+            .runtime_version
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(Error::protocol(
+                "a chat host response contains an empty runtime version",
+            ));
+        }
+        for (value, field) in [
+            (self.paused_at.as_deref(), "pause"),
+            (self.revived_at.as_deref(), "revival"),
+            (self.checkpoint_captured_at.as_deref(), "checkpoint"),
+        ] {
+            if value.is_some_and(|timestamp| timestamp.trim().is_empty()) {
+                return Err(Error::protocol(format!(
+                    "a chat host response contains an empty {field} timestamp"
+                )));
+            }
+        }
+        if self.created_at.trim().is_empty() {
+            return Err(Error::protocol(
+                "a chat host response contains an empty creation timestamp",
+            ));
+        }
+        Ok(self)
     }
 }
 
