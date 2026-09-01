@@ -286,6 +286,180 @@ impl crate::SessionService {
         Ok(ChatPauseOutcome::Complete(capture.reference))
     }
 
+    /// Resume an inactivity-pause claim after a control-plane replacement.
+    /// The claim's already-reserved checkpoint version is replayed verbatim so
+    /// Layer 4 either returns the same held fence or refuses recovery.
+    pub(crate) async fn resume_chat_pause_claim(
+        self: &Arc<Self>,
+        host_id: &ChatHostId,
+    ) -> Result<bool, CoreError> {
+        let hosts = self
+            .chat_hosts
+            .clone()
+            .ok_or_else(pause_host_store_unavailable)?;
+        let Some(observed) = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| pause_host_store_unavailable())?
+            .filter(|host| {
+                matches!(
+                    host.status,
+                    ChatHostStatus::Pausing | ChatHostStatus::Paused
+                ) && host.revive_cause.is_none()
+                    && host.last_transition_claim.is_some()
+                    && host.runtime_id.is_some()
+                    && host.checkpoint_sequence > 0
+            })
+        else {
+            return Ok(false);
+        };
+        let claim = observed
+            .last_transition_claim
+            .clone()
+            .expect("the resume predicate proved a pause claim");
+        let session_ids = live_session_ids(&observed);
+        let mut input_fences = Vec::with_capacity(session_ids.len());
+        for session_id in &session_ids {
+            input_fences.push(self.input_gates.gate(session_id).write_owned().await);
+        }
+        let owner_guard = self.chat_host_guards.lock(&observed.owner).await;
+        let Some(current) = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| pause_host_store_unavailable())?
+            .filter(|current| {
+                matches!(
+                    current.status,
+                    ChatHostStatus::Pausing | ChatHostStatus::Paused
+                ) && current.revive_cause.is_none()
+                    && current.last_transition_claim.as_deref() == Some(claim.as_str())
+                    && current.runtime_id == observed.runtime_id
+                    && current.checkpoint_sequence == observed.checkpoint_sequence
+                    && live_session_ids(current) == session_ids
+            })
+        else {
+            return Ok(false);
+        };
+        let records = self.chat_thread_records(&current).await?;
+        let captured_at = current.transition_started_at.clone().ok_or_else(|| {
+            CoreError::RuntimeUnavailable("chat pause claim has no start time".into())
+        })?;
+        let capture = self
+            .capture_claimed_chat_checkpoint(
+                &current,
+                &records,
+                current.checkpoint_sequence,
+                &captured_at,
+            )
+            .await
+            .map_err(|refusal| CoreError::RuntimeRefused(refusal.detail.into()))?;
+        if current.status == ChatHostStatus::Paused
+            && current.checkpoint.as_ref() != Some(&capture.reference)
+        {
+            let _ = capture.resume_writers().await;
+            return Err(CoreError::RuntimeUnavailable(
+                "the replayed pause checkpoint changed its durable reference".into(),
+            ));
+        }
+
+        let notice = chat_pause_notice(
+            current
+                .pinned_settings
+                .settings
+                .inactivity
+                .pause_after_seconds,
+        );
+        for record in records {
+            if record.session.status == SessionStatus::Idle
+                && record.session.stop_reason == Some(StopReason::IdleTimeout)
+            {
+                continue;
+            }
+            self.park_chat_thread(record, &notice).await?;
+        }
+        let published = if current.status == ChatHostStatus::Paused {
+            current
+        } else {
+            self.publish_chat_pause(&hosts, &current, &claim, &capture.reference, &captured_at)
+                .await?
+                .ok_or(CoreError::ChatUnavailable(
+                    crate::ChatUnavailableCause::RevivePending,
+                ))?
+        };
+        capture
+            .adapter
+            .terminate_if_identity(&RuntimeIdentity {
+                handle: capture.runtime.clone(),
+                session: published.id.0.clone(),
+                generation: Some(generation_for(&published)),
+            })
+            .await
+            .map_err(|_| {
+                CoreError::RuntimeUnavailable(
+                    "the replayed chat pause could not fence-delete its runtime".into(),
+                )
+            })?;
+        self.prune_previous_chat_checkpoint(&capture.objects, host_id, &capture.reference)
+            .await;
+        {
+            let mut entries = self.entries.write().await;
+            for session_id in &session_ids {
+                entries.remove(session_id);
+            }
+        }
+        self.finish_chat_pause(&hosts, host_id, &claim, &capture.reference, &captured_at)
+            .await?;
+        drop(owner_guard);
+        drop(input_fences);
+        Ok(true)
+    }
+
+    /// Complete the last durable pause publication when its old runtime is
+    /// already absent. This is safe only for the exact published checkpoint
+    /// version; an unpublished capture is never inferred.
+    pub(crate) async fn finish_torn_down_chat_pause(
+        &self,
+        host_id: &ChatHostId,
+    ) -> Result<bool, CoreError> {
+        let hosts = self
+            .chat_hosts
+            .clone()
+            .ok_or_else(pause_host_store_unavailable)?;
+        let Some(current) = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| pause_host_store_unavailable())?
+            .filter(|host| {
+                host.status == ChatHostStatus::Paused
+                    && host.revive_cause.is_none()
+                    && host.last_transition_claim.is_some()
+                    && host.runtime_id.is_some()
+                    && host.checkpoint.as_ref().is_some_and(|checkpoint| {
+                        checkpoint.checkpoint_version == host.checkpoint_sequence
+                    })
+            })
+        else {
+            return Ok(false);
+        };
+        let claim = current
+            .last_transition_claim
+            .as_deref()
+            .expect("the torn-down pause predicate proved a claim");
+        let checkpoint = current
+            .checkpoint
+            .as_ref()
+            .expect("the torn-down pause predicate proved a checkpoint");
+        {
+            let mut entries = self.entries.write().await;
+            for session_id in live_session_ids(&current) {
+                entries.remove(&session_id);
+            }
+        }
+        self.finish_chat_pause(&hosts, host_id, claim, checkpoint, &checkpoint.captured_at)
+            .await?;
+        Ok(true)
+    }
+
     async fn quiet_chat_thread_records_at(
         &self,
         host: &ChatHostRecord,

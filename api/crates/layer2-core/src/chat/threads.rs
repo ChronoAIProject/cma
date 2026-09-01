@@ -106,6 +106,8 @@ impl SessionService {
             ));
         }
 
+        self.revive_chat_host_for_new_thread(&caller.subject)
+            .await?;
         let ensured = self
             .ensure_chat_host(&caller.subject, spec.caller_credential.as_ref())
             .await?;

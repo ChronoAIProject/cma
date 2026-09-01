@@ -18,11 +18,12 @@ use layer2_core::{
         Page, PageCursor, PendingHandover, SessionListQuery, SessionRecord, SessionStore,
         SkillPack, SkillPackDigest, SkillPackState, StoreError,
     },
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, Event, EventKind, Rate, RateCardId, Reserved, RuntimeAuthority,
-    RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
-    RuntimeReservation, SessionBoundary, SessionId, SessionInteractionLeaseRequest, SessionLease,
-    SessionLeaseRequest, SessionPricing, SessionStatus, StopReason, StoredEvent, SubjectId,
+    ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, Event, EventKind, Rate,
+    RateCardId, Reserved, RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch,
+    RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionId,
+    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionPricing,
+    SessionStatus, StopReason, StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Binary, Bson, Document};
 use mongodb::options::{
@@ -38,8 +39,8 @@ use super::event_doc;
 mod coordination;
 
 use coordination::{
-    all_session_receipts_filter, coordination_clock_update, has_session_lease,
-    require_conversation_write_authority, runtime_authority_from_doc,
+    all_session_receipts_filter, apply_chat_runtime_transition, coordination_clock_update,
+    has_session_lease, require_conversation_write_authority, runtime_authority_from_doc,
     runtime_authority_from_projection, validate_coordination_state,
     validate_session_coordination_receipts, CoordinationCommand, CoordinationDoc,
     CoordinationOutcome, CoordinationReceiptDoc, RuntimeAuthorityProjectionDoc,
@@ -560,6 +561,7 @@ struct EventTransaction {
     write_id: String,
     create: bool,
     conversation_authority: Option<ConversationWriteAuthority>,
+    chat_runtime_transition: Option<ChatRuntimeTransition>,
     events: Vec<Event>,
     documents: Vec<Document>,
     record: SessionDoc,
@@ -6597,7 +6599,7 @@ impl SessionStore for MongoSessionStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.transactional_commit(write_id, record, events, false, None)
+        self.transactional_commit(write_id, record, events, false, None, None)
             .await
     }
 
@@ -6608,7 +6610,18 @@ impl SessionStore for MongoSessionStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.transactional_commit(write_id, record, events, false, Some(authority))
+        self.transactional_commit(write_id, record, events, false, Some(authority), None)
+            .await
+    }
+
+    async fn commit_chat_runtime_transition_idempotent(
+        &self,
+        write_id: &str,
+        transition: &ChatRuntimeTransition,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.transactional_commit(write_id, record, events, false, None, Some(transition))
             .await
     }
 
@@ -6618,7 +6631,7 @@ impl SessionStore for MongoSessionStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.transactional_commit(write_id, record, events, true, None)
+        self.transactional_commit(write_id, record, events, true, None, None)
             .await
     }
 
@@ -6687,8 +6700,17 @@ impl MongoSessionStore {
         events: &[Event],
         create: bool,
         conversation_authority: Option<&ConversationWriteAuthority>,
+        chat_runtime_transition: Option<&ChatRuntimeTransition>,
     ) -> Result<u64, StoreError> {
         validate_transaction_input(write_id, record, events, create)?;
+        if let Some(transition) = chat_runtime_transition {
+            transition.validate_for(record)?;
+        }
+        if conversation_authority.is_some() && chat_runtime_transition.is_some() {
+            return Err(StoreError::Malformed(
+                "one session write cannot carry two authority predicates".into(),
+            ));
+        }
 
         let id = record.session.id.clone();
         let documents = events
@@ -6708,6 +6730,7 @@ impl MongoSessionStore {
             write_id: write_id.to_string(),
             create,
             conversation_authority: conversation_authority.cloned(),
+            chat_runtime_transition: chat_runtime_transition.cloned(),
             events: events.to_vec(),
             documents,
             record,
@@ -6740,7 +6763,9 @@ impl MongoSessionStore {
                             .map_err(mongodb::error::Error::custom);
                     }
 
-                    if transaction.conversation_authority.is_some() {
+                    if transaction.conversation_authority.is_some()
+                        || transaction.chat_runtime_transition.is_some()
+                    {
                         let clocked = transaction
                             .sessions_collection
                             .update_one(
@@ -6815,7 +6840,9 @@ impl MongoSessionStore {
                         .map_err(mongodb::error::Error::custom)?;
                         validate_coordination_state(existing)
                             .map_err(mongodb::error::Error::custom)?;
-                        if existing.runtime_id != transaction.record.runtime_id {
+                        if existing.runtime_id != transaction.record.runtime_id
+                            && transaction.chat_runtime_transition.is_none()
+                        {
                             return Err(mongodb::error::Error::custom(
                                 StoreError::SessionAuthorityChanged {
                                     id: transaction.id.clone(),
@@ -6852,12 +6879,15 @@ impl MongoSessionStore {
                         next_stored_revision(actual).map_err(mongodb::error::Error::custom)?;
                     let mut durable = transaction.record.clone();
                     if let Some(existing) = existing.as_ref() {
-                        durable.coordination = Some(
-                            existing
-                                .coordination
-                                .clone()
-                                .unwrap_or_else(CoordinationDoc::default),
-                        );
+                        let mut coordination = existing
+                            .coordination
+                            .clone()
+                            .unwrap_or_else(CoordinationDoc::default);
+                        if let Some(transition) = transaction.chat_runtime_transition.as_ref() {
+                            apply_chat_runtime_transition(existing, transition, &mut coordination)
+                                .map_err(mongodb::error::Error::custom)?;
+                        }
+                        durable.coordination = Some(coordination);
                     }
                     durable.revision = revision_i64;
                     durable.last_seq = i64::try_from(durable_tail).map_err(|_| {

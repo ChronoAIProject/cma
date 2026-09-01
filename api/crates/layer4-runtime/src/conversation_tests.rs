@@ -459,12 +459,13 @@ async fn the_public_capture_route_selects_by_id_and_preserves_newest_without_one
 }
 
 #[tokio::test]
-async fn several_carries_restore_before_attach_and_every_late_carry_is_refused() {
+async fn several_carries_bind_distinct_slots_before_attach_and_every_late_carry_is_refused() {
     let home = Home::new("multi-restore-route");
     let mut state = crate::AppState::for_test(&["/bin/cat"]);
     state.home = home.path().to_path_buf();
     state.snapshot_dir = Some(SESSIONS_DIR.into());
     state.snapshot_named = true;
+    state.resume_args = Some("--resume".into());
     let inspected = state.clone();
     let (address, server) = serve_runtime(state).await;
     let client = reqwest::Client::new();
@@ -475,6 +476,7 @@ async fn several_carries_restore_before_attach_and_every_late_carry_is_refused()
         let body = format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\"}}}}\n");
         let response = client
             .post(format!("http://{address}/runtime/conversation"))
+            .query(&[("conversation", format!("thread-{index}"))])
             .body(carry::seal(&path, body.as_bytes()))
             .send()
             .await
@@ -484,7 +486,41 @@ async fn several_carries_restore_before_attach_and_every_late_carry_is_refused()
             std::fs::read(home.path().join(SESSIONS_DIR).join(path)).unwrap(),
             body.as_bytes()
         );
+        let slot = crate::SlotId::named(&format!("thread-{index}"));
+        assert_eq!(inspected.resuming(&slot).as_deref(), Some(id.as_str()));
+        assert_eq!(
+            inspected.agent_command(&slot),
+            format!("/bin/cat --resume {id}")
+        );
     }
+    assert_eq!(inspected.resuming(&crate::SlotId::Legacy), None);
+
+    let conflicting_path = PathBuf::from("2026/08/14/conflicting-rollout.jsonl");
+    let conflicting = client
+        .post(format!("http://{address}/runtime/conversation"))
+        .query(&[("conversation", "thread-0")])
+        .body(carry::seal(
+            &conflicting_path,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"conversation-other\"}}\n",
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(conflicting.status(), axum::http::StatusCode::CONFLICT);
+    assert!(
+        !home
+            .path()
+            .join(SESSIONS_DIR)
+            .join(conflicting_path)
+            .exists(),
+        "a rejected slot identity must not leave a rollout on disk"
+    );
+    assert_eq!(
+        inspected
+            .resuming(&crate::SlotId::named("thread-0"))
+            .as_deref(),
+        Some("conversation-0")
+    );
 
     let bridge = inspected
         .conversation_bridge(crate::SlotId::named("attached"))

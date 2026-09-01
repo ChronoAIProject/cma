@@ -1567,6 +1567,7 @@ fn a_pre_enqueue_retained_rejection_survives_runtime_loss_and_precedes_its_succe
                 events: vec![malformed],
                 semantics: super::CommitSemantics::default(),
                 conversation_authority: None,
+                chat_runtime_transition: None,
             },
             retained,
             |_| {},

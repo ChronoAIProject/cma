@@ -25,7 +25,7 @@ use crate::ids::SessionId;
 use crate::sequence::Sequences;
 use crate::service::{SessionEntry, SessionService};
 use crate::store::{SessionRecord, SessionStore, StoreError};
-use crate::ConversationWriteAuthority;
+use crate::{ChatRuntimeTransition, ConversationWriteAuthority};
 
 const FIRST_RETRY_DELAY: Duration = Duration::from_millis(5);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -59,6 +59,7 @@ enum PendingOperation {
         change: Option<Box<RecordChange>>,
         events: Vec<Event>,
         conversation_authority: Option<ConversationWriteAuthority>,
+        chat_runtime_transition: Option<ChatRuntimeTransition>,
         target: Option<CommitTarget>,
         progress: CommitProgress,
         /// Set before post-commit work is first polled, so that phase resumes
@@ -173,6 +174,7 @@ struct CommitRequest {
     events: Vec<Event>,
     semantics: CommitSemantics,
     conversation_authority: Option<ConversationWriteAuthority>,
+    chat_runtime_transition: Option<ChatRuntimeTransition>,
 }
 
 struct CommitContext<'a> {
@@ -180,6 +182,7 @@ struct CommitContext<'a> {
     mode: CommitMode,
     change: Option<&'a RecordChange>,
     conversation_authority: Option<&'a ConversationWriteAuthority>,
+    chat_runtime_transition: Option<&'a ChatRuntimeTransition>,
 }
 
 struct EnqueuedCommit {
@@ -1026,6 +1029,27 @@ impl SessionLog {
                 events,
                 semantics: CommitSemantics::default(),
                 conversation_authority: Some(authority),
+                chat_runtime_transition: None,
+            },
+            None,
+            |_| {},
+        )
+    }
+
+    fn enqueue_chat_runtime_transition(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        events: Vec<Event>,
+        transition: ChatRuntimeTransition,
+    ) -> EnqueuedCommit {
+        self.enqueue_commit_inner(
+            CommitRequest {
+                mode: CommitMode::UpdateExact,
+                record,
+                events,
+                semantics: CommitSemantics::default(),
+                conversation_authority: None,
+                chat_runtime_transition: Some(transition),
             },
             None,
             |_| {},
@@ -1053,6 +1077,7 @@ impl SessionLog {
                     ..CommitSemantics::default()
                 },
                 conversation_authority: None,
+                chat_runtime_transition: None,
             },
             None,
             after_allocation,
@@ -1082,6 +1107,7 @@ impl SessionLog {
                     terminal_lifecycle_repair: false,
                 },
                 conversation_authority: None,
+                chat_runtime_transition: None,
             },
             None,
             after_allocation,
@@ -1199,6 +1225,7 @@ impl SessionLog {
             mut events,
             semantics,
             conversation_authority,
+            chat_runtime_transition,
         } = request;
         let (complete, receiver) = oneshot::channel();
         let (acknowledge_error, observed) = oneshot::channel();
@@ -1344,6 +1371,7 @@ impl SessionLog {
                 change,
                 events,
                 conversation_authority,
+                chat_runtime_transition,
                 target: Some(match retained.take() {
                     Some(retained) => CommitTarget::Retained(retained),
                     None => CommitTarget::Ordinary {
@@ -1459,6 +1487,7 @@ impl SessionLog {
                     change,
                     events,
                     conversation_authority,
+                    chat_runtime_transition,
                     target,
                     progress,
                     outcome,
@@ -1479,6 +1508,7 @@ impl SessionLog {
                                     mode,
                                     change: change.as_deref(),
                                     conversation_authority: conversation_authority.as_ref(),
+                                    chat_runtime_transition: chat_runtime_transition.as_ref(),
                                 },
                                 record,
                                 events,
@@ -1556,6 +1586,7 @@ impl SessionLog {
                                 mode: CommitMode::UpdateExact,
                                 change: None,
                                 conversation_authority: conversation_authority.as_ref(),
+                                chat_runtime_transition: None,
                             },
                             record,
                             events,
@@ -1611,6 +1642,7 @@ impl SessionLog {
             mode,
             change,
             conversation_authority,
+            chat_runtime_transition,
         } = context;
         self.resolve_reported_error(reporter).await?;
         if matches!(mode, CommitMode::UpdateInheriting) && !reporter.progress.prepared {
@@ -1624,21 +1656,38 @@ impl SessionLog {
                 record.session.last_seq = last.seq;
             }
 
-            let result = match (mode, conversation_authority) {
-                (CommitMode::Create, Some(_)) => Err(StoreError::Malformed(
+            let result = match (mode, conversation_authority, chat_runtime_transition) {
+                (CommitMode::Create, Some(_), _) => Err(StoreError::Malformed(
                     "a conversation authority cannot create a session".into(),
                 )),
-                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, Some(authority)) => {
+                (CommitMode::Create, _, Some(_)) => Err(StoreError::Malformed(
+                    "a chat runtime transition cannot create a session".into(),
+                )),
+                (_, Some(_), Some(_)) => Err(StoreError::Malformed(
+                    "one session write cannot carry two authority predicates".into(),
+                )),
+                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, Some(authority), None) => {
                     self.store
                         .commit_conversation_idempotent(write_id, authority, record, events)
                         .await
                 }
-                (CommitMode::Create, None) => {
+                (
+                    CommitMode::UpdateExact | CommitMode::UpdateInheriting,
+                    None,
+                    Some(transition),
+                ) => {
+                    self.store
+                        .commit_chat_runtime_transition_idempotent(
+                            write_id, transition, record, events,
+                        )
+                        .await
+                }
+                (CommitMode::Create, None, None) => {
                     self.store
                         .create_session_idempotent(write_id, record, events)
                         .await
                 }
-                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, None) => {
+                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, None, None) => {
                     self.store
                         .commit_session_idempotent(write_id, record, events)
                         .await
@@ -2270,6 +2319,24 @@ impl SessionService {
         Ok(())
     }
 
+    /// Persist a chat thread's host-authorized shared-runtime publication in
+    /// the same FIFO lane used by every other session record/event write.
+    pub(crate) async fn persist_chat_runtime_transition_durably(
+        &self,
+        record: &mut SessionRecord,
+        events: Vec<Event>,
+        transition: ChatRuntimeTransition,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        let result = lane
+            .enqueue_chat_runtime_transition(record.clone(), events, transition)
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
     /// Persist only a custody-state transition over unrelated durable changes.
     ///
     /// Custody moves without a public event while bytes cross from the session
@@ -2788,6 +2855,7 @@ impl SessionService {
                 events,
                 semantics: CommitSemantics::default(),
                 conversation_authority: None,
+                chat_runtime_transition: None,
             },
             retained,
             |_| {},
@@ -2851,6 +2919,7 @@ impl SessionService {
                     terminal_lifecycle_repair: true,
                 },
                 conversation_authority: None,
+                chat_runtime_transition: None,
             },
             retained,
             |_| {},
@@ -4010,6 +4079,7 @@ where
                 None => CommitSemantics::default(),
             },
             conversation_authority: authority,
+            chat_runtime_transition: None,
         },
         retained,
         |last_seq| live_tail = Some(last_seq.saturating_sub(event_count)),

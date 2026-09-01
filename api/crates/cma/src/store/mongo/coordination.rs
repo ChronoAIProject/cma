@@ -12,11 +12,12 @@ use std::{
 
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, Event, EventKind, RuntimeAuthority, RuntimeAuthorityRetirement,
-    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
-    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
-    SessionLeaseRequest, SessionOperation, StoredEventKind,
+    ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, Event, EventKind,
+    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
+    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary,
+    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionOperation,
+    StoredEventKind,
 };
 use mongodb::bson::{doc, Bson, DateTime, Document};
 use mongodb::options::{ReadConcern, ReplaceOptions, WriteConcern};
@@ -914,6 +915,48 @@ fn current_boundary(session: &SessionDoc) -> Result<SessionBoundary, StoreError>
         status: parse_plain(&session.status)?,
         authority: runtime_authority_from_doc(session)?,
     })
+}
+
+/// Apply one host-owned chat runtime replacement without manufacturing a
+/// session-owned provider cleanup receipt. The enclosing record/event
+/// transaction supplies revision, sequence, tombstone, and idempotency fences.
+pub(super) fn apply_chat_runtime_transition(
+    session: &SessionDoc,
+    transition: &ChatRuntimeTransition,
+    coordination: &mut CoordinationDoc,
+) -> Result<(), StoreError> {
+    validate_coordination_state(session)?;
+    if session
+        .chat_origin
+        .as_ref()
+        .is_none_or(|origin| origin.host_id != transition.host_id)
+        || current_boundary(session)? != transition.previous
+    {
+        return Err(StoreError::SessionAuthorityChanged {
+            id: layer2_core::SessionId(session.id.clone()),
+        });
+    }
+
+    let next_generation = stored_generation(transition.next.generation)?;
+    let interaction_epoch = stored_generation(
+        loaded_generation(coordination.interaction_epoch)?
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session interaction epoch overflow".into()))?,
+    )?;
+    let conversation_epoch = stored_generation(
+        loaded_generation(coordination.conversation_epoch)?
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session conversation epoch overflow".into()))?,
+    )?;
+
+    coordination.authority_generation = next_generation;
+    coordination.next_generation = coordination.next_generation.max(next_generation);
+    coordination.interaction_epoch = interaction_epoch;
+    coordination.conversation_epoch = conversation_epoch;
+    coordination.conversation_link_token = None;
+    coordination.conversation_opening = None;
+    coordination.lease = None;
+    Ok(())
 }
 
 fn stored_generation(generation: u64) -> Result<i64, StoreError> {
@@ -3087,8 +3130,9 @@ pub(super) fn all_session_receipts_filter(id: &layer2_core::SessionId) -> Docume
 mod tests {
     use super::*;
     use layer2_core::{
-        AgentOptions, KernelId, RecoveryState, Session, SessionId, SessionRecord, SessionStatus,
-        SubjectId, TerminalGeometry,
+        AgentOptions, ChatHostId, ChatOrigin, ChatRuntimeTransition, KernelId, RecoveryState,
+        RuntimeAuthority, Session, SessionId, SessionRecord, SessionStatus, SubjectId,
+        TerminalGeometry,
     };
 
     const NOW: i64 = 1_800_000_000_000;
@@ -3154,6 +3198,42 @@ mod tests {
             boundary: current_boundary(session).expect("boundary is valid"),
             ttl: std::time::Duration::from_secs(30),
         }
+    }
+
+    fn chat_transition_session() -> (SessionDoc, ChatHostId) {
+        let mut session = session_doc();
+        let owner = SubjectId(session.owner.clone());
+        let host_id = ChatHostId::for_owner(&owner);
+        session.chat_origin = Some(ChatOrigin {
+            host_id: host_id.clone(),
+            worktree_name: "chat-1".into(),
+            worktree_path: "/workspace/worktrees/chat-1".into(),
+            paused_notice: Some("paused".into()),
+        });
+        let current = BoundaryDoc::from_core(&current_boundary(&session).unwrap()).unwrap();
+        let state = session.coordination.as_mut().unwrap();
+        state.interaction_epoch = 7;
+        state.conversation_epoch = 11;
+        state.conversation_link_token = Some("chat-old-link".into());
+        state.lease = Some(LeaseDoc {
+            holder: "chat-transition-holder".into(),
+            token: "chat-transition-lease".into(),
+            interaction_nonce: None,
+            boundary: current,
+            operation: operation_name(SessionOperation::Lifecycle).into(),
+            expires_at: DateTime::from_millis(NOW + 30_000),
+        });
+        state.conversation_opening = Some(ConversationOpeningDoc {
+            holder: "chat-transition-holder".into(),
+            token: "chat-next-opening".into(),
+            runtime_id: "runtime-original".into(),
+            runtime_generation: 1,
+            runtime_candidate_token: None,
+            session_lease_token: Some("chat-transition-lease".into()),
+            expires_at: DateTime::from_millis(NOW + 30_000),
+        });
+        validate_coordination_state(&session).unwrap();
+        (session, host_id)
     }
 
     fn apply_mutations(
@@ -4496,6 +4576,76 @@ mod tests {
             ),
             Err(StoreError::Malformed(message)) if message.contains("nonce")
         ));
+    }
+
+    #[test]
+    fn chat_runtime_transition_advances_authority_and_fences_every_writer_epoch() {
+        let (session, host_id) = chat_transition_session();
+        let original = session.coordination.clone().unwrap();
+        let transition = ChatRuntimeTransition {
+            host_id,
+            previous: current_boundary(&session).unwrap(),
+            next: RuntimeAuthority {
+                generation: 2,
+                runtime_id: Some("runtime-chat-replacement".into()),
+            },
+        };
+        let mut coordination = original.clone();
+
+        apply_chat_runtime_transition(&session, &transition, &mut coordination).unwrap();
+
+        assert_eq!(coordination.authority_generation, 2);
+        assert_eq!(coordination.next_generation, 2);
+        assert_eq!(
+            coordination.interaction_epoch,
+            original.interaction_epoch + 1
+        );
+        assert_eq!(
+            coordination.conversation_epoch,
+            original.conversation_epoch + 1
+        );
+        assert_eq!(coordination.conversation_link_token, None);
+        assert_eq!(coordination.conversation_opening, None);
+        assert_eq!(coordination.lease, None);
+        assert_eq!(coordination.receipt_count, original.receipt_count);
+    }
+
+    #[test]
+    fn chat_runtime_transition_rejects_stale_mongo_host_and_boundary_without_mutation() {
+        let (session, host_id) = chat_transition_session();
+        let original = session.coordination.clone().unwrap();
+        let next = RuntimeAuthority {
+            generation: 2,
+            runtime_id: Some("runtime-chat-replacement".into()),
+        };
+        let wrong_host = ChatRuntimeTransition {
+            host_id: ChatHostId::for_owner(&SubjectId("another-chat-owner".into())),
+            previous: current_boundary(&session).unwrap(),
+            next: next.clone(),
+        };
+        let mut coordination = original.clone();
+        assert!(matches!(
+            apply_chat_runtime_transition(&session, &wrong_host, &mut coordination),
+            Err(StoreError::SessionAuthorityChanged { .. })
+        ));
+        assert_eq!(coordination, original);
+
+        let stale_boundary = ChatRuntimeTransition {
+            host_id,
+            previous: SessionBoundary {
+                status: SessionStatus::Idle,
+                authority: RuntimeAuthority {
+                    generation: 1,
+                    runtime_id: Some("runtime-original".into()),
+                },
+            },
+            next,
+        };
+        assert!(matches!(
+            apply_chat_runtime_transition(&session, &stale_boundary, &mut coordination),
+            Err(StoreError::SessionAuthorityChanged { .. })
+        ));
+        assert_eq!(coordination, original);
     }
 
     #[test]
