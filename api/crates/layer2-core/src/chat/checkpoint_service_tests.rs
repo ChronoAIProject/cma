@@ -12,8 +12,8 @@ use tokio::sync::Mutex;
 
 use super::*;
 use crate::store::{
-    ChatCheckpointObjectReceipt, ChatCheckpointStore, ChatHostStore, Page, PageCursor,
-    PlatformSettingsStore, StoreError,
+    ChatCheckpointObjectReceipt, ChatCheckpointStore, ChatHostStore, CredentialSource, Page,
+    PageCursor, PlatformSettingsStore, StoreError,
 };
 use crate::test_support::{
     fixture_skill_ports, spec, user, FakeAdapter, FakeProfileStore, FakeStore, FixedCredential,
@@ -414,6 +414,22 @@ pub(super) fn build_service(
     sessions: Arc<FakeStore>,
     checkpoints: Arc<MemoryCheckpoints>,
 ) -> Arc<SessionService> {
+    build_service_with_credentials(
+        adapter,
+        hosts,
+        sessions,
+        checkpoints,
+        Some(Arc::new(FixedCredential("checkpoint-credential".into()))),
+    )
+}
+
+pub(super) fn build_service_with_credentials(
+    adapter: Arc<FakeAdapter>,
+    hosts: Arc<MemoryChatHosts>,
+    sessions: Arc<FakeStore>,
+    checkpoints: Arc<MemoryCheckpoints>,
+    credentials: Option<Arc<dyn CredentialSource>>,
+) -> Arc<SessionService> {
     let settings = enabled_settings();
     let environments = EnvironmentProfileService::new(
         Arc::new(FakeProfileStore::default()),
@@ -435,7 +451,7 @@ pub(super) fn build_service(
         screen,
         sessions,
         SessionPorts {
-            credentials: Some(Arc::new(FixedCredential("checkpoint-credential".into()))),
+            credentials,
             skills: Some(skills),
             settings: Some(settings),
             chat_hosts: Some(hosts),

@@ -7,6 +7,7 @@ mod inactivity;
 mod revive;
 mod settings;
 mod threads;
+mod titles;
 
 pub(crate) use host::generation_for;
 
@@ -28,6 +29,11 @@ pub use inactivity::{ChatPauseOutcome, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS};
 pub use settings::{
     ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSettingsSnapshot,
     ChatSettingsViolation, ChatSetup, ChatWorkspaceSource,
+};
+pub use titles::{
+    ChatTitleGenerationError, ChatTitleGenerationRequest, ChatTitleGenerator, ChatTitleOutcome,
+    CHAT_TITLE_CALL_TIMEOUT_SECONDS, CHAT_TITLE_FALLBACK_CHARACTERS, CHAT_TITLE_INPUT_BYTES,
+    CHAT_TITLE_MAX_CHARACTERS, CHAT_TITLE_SYSTEM_PROMPT,
 };
 
 #[cfg(test)]
@@ -53,3 +59,7 @@ mod revive_service_tests;
 #[cfg(test)]
 #[path = "retirement_service_tests.rs"]
 mod retirement_service_tests;
+
+#[cfg(test)]
+#[path = "titles_tests.rs"]
+mod titles_tests;

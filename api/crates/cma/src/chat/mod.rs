@@ -2,3 +2,4 @@
 
 pub(crate) mod checkpoints;
 pub(crate) mod sweeper;
+pub(crate) mod titles;

@@ -197,6 +197,9 @@ pub struct ChatOrigin {
     pub host_id: crate::ChatHostId,
     pub worktree_name: String,
     pub worktree_path: String,
+    /// Server-owned thread title written once after the first completed turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// Server-composed lifecycle notice retained while the shared host is paused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_notice: Option<String>,
@@ -207,9 +210,118 @@ impl ChatOrigin {
         crate::ChatSession {
             worktree_name: self.worktree_name.clone(),
             worktree_path: self.worktree_path.clone(),
-            title: None,
+            title: self.title.clone(),
             paused_notice: self.paused_notice.clone(),
         }
+    }
+}
+
+/// One bounded durable transcript sample used to name a chat thread.
+///
+/// This deliberately has no `Debug` implementation: both fields are private
+/// conversation content and must never become convenient logging material.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct ChatTitleTranscript {
+    pub owner_message: Option<String>,
+    pub assistant_message: Option<String>,
+    pub turn_completed: bool,
+}
+
+/// Whether a newly acquired title claim may spend one logical model request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatTitleClaimMode {
+    Generate,
+    FallbackOnly,
+}
+
+/// One idempotent request for independent, durable title-generation authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatTitleClaimRequest {
+    session_id: SessionId,
+    holder: String,
+    token: String,
+    ttl: Duration,
+}
+
+impl ChatTitleClaimRequest {
+    pub fn new(session_id: SessionId, holder: impl Into<String>, ttl: Duration) -> Self {
+        Self {
+            session_id,
+            holder: holder.into(),
+            token: format!("title_claim_{}", uuid::Uuid::new_v4().simple()),
+            ttl,
+        }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn holder(&self) -> &str {
+        &self.holder
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    pub fn ttl(&self) -> Duration {
+        self.ttl
+    }
+}
+
+/// Exact lease token that fences a title write from every predecessor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatTitleClaim {
+    request: ChatTitleClaimRequest,
+    mode: ChatTitleClaimMode,
+}
+
+impl ChatTitleClaim {
+    /// Construct the exact claim returned by a durable store acquisition.
+    pub fn acquired(request: ChatTitleClaimRequest, mode: ChatTitleClaimMode) -> Self {
+        Self { request, mode }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        self.request.session_id()
+    }
+
+    pub fn holder(&self) -> &str {
+        self.request.holder()
+    }
+
+    pub fn token(&self) -> &str {
+        self.request.token()
+    }
+
+    pub fn mode(&self) -> ChatTitleClaimMode {
+        self.mode
+    }
+}
+
+/// A validated title value whose content is intentionally redacted from Debug.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ChatThreadTitle(String);
+
+impl ChatThreadTitle {
+    /// Construct a non-empty, trimmed, control-free title of at most 64 characters.
+    pub fn new(value: String) -> Option<Self> {
+        (!value.is_empty()
+            && value.trim() == value
+            && value.chars().count() <= 64
+            && !value.chars().any(char::is_control))
+        .then_some(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for ChatThreadTitle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ChatThreadTitle(<redacted>)")
     }
 }
 
@@ -1219,6 +1331,101 @@ pub trait SessionStore: Send + Sync {
     /// As with [`Self::list_for`], staged skill bytes may be represented by
     /// [`SkillPackState::StagedSummary`] and must be reloaded before mutation.
     async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError>;
+
+    /// One bounded walk over titleless chat threads whose first turn is durable.
+    ///
+    /// The continuation belongs to the raw chat page rather than only to rows
+    /// returned as candidates. Consequently a page may legitimately contain no
+    /// candidates and still carry `next`; maintenance callers must continue it.
+    async fn chat_title_candidates(
+        &self,
+        page: PageRequest,
+    ) -> Result<Page<SessionId>, StoreError> {
+        let raw = self
+            .list_all(
+                &SessionListQuery::new(page, None).with_surface(Some(SessionSurfaceFilter::Chat)),
+            )
+            .await?;
+        let mut candidates = Vec::new();
+        for record in raw.items {
+            if record
+                .chat_origin
+                .as_ref()
+                .is_some_and(|origin| origin.title.is_none())
+                && self
+                    .chat_title_transcript(&record.session.id)
+                    .await?
+                    .turn_completed
+            {
+                candidates.push(record.session.id);
+            }
+        }
+        Ok(Page {
+            items: candidates,
+            next: raw.next,
+        })
+    }
+
+    /// The first owner and assistant messages plus completed-turn evidence.
+    ///
+    /// Production stores should override this with indexed first-event reads.
+    /// The default remains correct for simple stores and test doubles.
+    async fn chat_title_transcript(
+        &self,
+        id: &SessionId,
+    ) -> Result<ChatTitleTranscript, StoreError> {
+        let mut transcript = ChatTitleTranscript::default();
+        for event in self.events_since(id, 0).await? {
+            let crate::event::StoredEventKind::Known(kind) = event.kind else {
+                continue;
+            };
+            match kind {
+                crate::EventKind::OwnerMessage { content }
+                    if transcript.owner_message.is_none() =>
+                {
+                    transcript.owner_message = Some(content);
+                }
+                crate::EventKind::MessageCommitted { content }
+                    if transcript.assistant_message.is_none() =>
+                {
+                    transcript.assistant_message = Some(content);
+                }
+                crate::EventKind::TurnCompleted => transcript.turn_completed = true,
+                _ => {}
+            }
+            if transcript.turn_completed
+                && transcript.owner_message.is_some()
+                && transcript.assistant_message.is_some()
+            {
+                break;
+            }
+        }
+        Ok(transcript)
+    }
+
+    /// Acquire independent title-generation authority for one completed chat.
+    ///
+    /// The first durable acquisition returns `Generate`. A takeover after that
+    /// lease expires must return `FallbackOnly`, which closes the crash window
+    /// without issuing a second model request.
+    async fn acquire_chat_title_claim(
+        &self,
+        _request: &ChatTitleClaimRequest,
+    ) -> Result<Option<ChatTitleClaim>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Write a title once while the exact independent claim is still current.
+    ///
+    /// `true` includes an idempotent retry of this claim's already committed
+    /// title. `false` means another claim or a completed title fenced it.
+    async fn complete_chat_title(
+        &self,
+        _claim: &ChatTitleClaim,
+        _title: &ChatThreadTitle,
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
 
     /// Remove a session and its history permanently.
     ///

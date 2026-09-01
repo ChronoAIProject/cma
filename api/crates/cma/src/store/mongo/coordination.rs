@@ -3208,6 +3208,7 @@ mod tests {
             host_id: host_id.clone(),
             worktree_name: "chat-1".into(),
             worktree_path: "/workspace/worktrees/chat-1".into(),
+            title: None,
             paused_notice: Some("paused".into()),
         });
         let current = BoundaryDoc::from_core(&current_boundary(&session).unwrap()).unwrap();
