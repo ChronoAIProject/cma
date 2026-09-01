@@ -3031,6 +3031,7 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
     record.runtime_id = entry.runtime.as_ref().map(|handle| handle.0.clone());
     record.context_ref = entry.context_ref.clone();
     record.trigger_origin = entry.trigger_origin.clone();
+    record.chat_origin = entry.chat_origin.clone();
     record.initial_prompt = entry.initial_prompt.clone();
     record.skill_packs = entry.skill_packs.clone();
     record.revision = entry.event_log.revision.load(Ordering::Acquire);
@@ -3210,6 +3211,18 @@ impl RecordChange {
             &intended.session.stop_reason,
         );
         compatible &= rebase_selected(
+            status,
+            &mut durable.session.chat,
+            &before.session.chat,
+            &intended.session.chat,
+        );
+        compatible &= rebase_selected(
+            status,
+            &mut durable.chat_origin,
+            &before.chat_origin,
+            &intended.chat_origin,
+        );
+        compatible &= rebase_selected(
             geometry,
             &mut durable.session.geometry,
             &before.session.geometry,
@@ -3352,6 +3365,8 @@ impl RecordChange {
             &mut target.session.stop_reason,
             &intended.session.stop_reason,
         );
+        copy_selected(status, &mut target.session.chat, &intended.session.chat);
+        copy_selected(status, &mut target.chat_origin, &intended.chat_origin);
         copy_selected(
             geometry,
             &mut target.session.geometry,

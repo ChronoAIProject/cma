@@ -6629,6 +6629,19 @@ impl SessionStore for MongoSessionStore {
         Ok(self.last_event_sequence(id).await?.unwrap_or(0))
     }
 
+    async fn newest_event(&self, id: &SessionId) -> Result<Option<StoredEvent>, StoreError> {
+        if self.is_tombstoned(id).await? {
+            return Ok(None);
+        }
+        self.events
+            .find_one(doc! { "session_id": &id.0 })
+            .sort(doc! { "seq": -1 })
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("newest event: {e}")))?
+            .map(event_doc::from_document)
+            .transpose()
+    }
+
     async fn events_since(
         &self,
         id: &SessionId,
