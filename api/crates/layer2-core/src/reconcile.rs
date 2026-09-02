@@ -999,15 +999,8 @@ impl SessionService {
                                 observed_generation,
                             ))
                 });
-                let exact_checkpoint_is_published = observed.status
-                    == crate::ChatHostStatus::Paused
-                    && observed.checkpoint.as_ref().is_some_and(|checkpoint| {
-                        checkpoint.checkpoint_version == observed.checkpoint_sequence
-                    });
                 let outcome = if observed.runtime_id.is_none() || old_runtime_is_serving {
                     self.resume_chat_retirement_claim(&id).await
-                } else if exact_checkpoint_is_published {
-                    self.finish_torn_down_chat_retirement(&id).await
                 } else {
                     let lost_runtime = observed.runtime_id.as_deref().unwrap_or_default();
                     let cause = observed
@@ -1016,8 +1009,14 @@ impl SessionService {
                         .and_then(|runtime| view.stopped_because.get(runtime))
                         .cloned()
                         .map(RuntimeLossCause::from);
-                    self.recover_interrupted_chat_pause(&id, lost_runtime, cause)
-                        .await
+                    match self.finish_torn_down_chat_retirement(&id).await {
+                        Ok(true) => Ok(true),
+                        Ok(false) => {
+                            self.recover_interrupted_chat_pause(&id, lost_runtime, cause)
+                                .await
+                        }
+                        Err(error) => Err(error),
+                    }
                 };
                 if let Err(error) = outcome {
                     tracing::warn!(chat_host = %id, %error, "chat retirement claim remains pending");
