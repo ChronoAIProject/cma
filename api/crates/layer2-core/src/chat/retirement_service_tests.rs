@@ -235,6 +235,79 @@ async fn active_retirement_retains_every_checkpoint_object_generation() {
 }
 
 #[tokio::test]
+async fn active_retirement_fenced_deletes_an_orphan_only_host_without_a_checkpoint() {
+    let fixture = fixture("retire-orphan-only", 1).await;
+    let before = host(&fixture).await;
+    let runtime = before.runtime_id.clone().expect("the host is active");
+    fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .remove(fixture.threads[0].id.as_str());
+
+    let retired = fixture
+        .service
+        .retire_chat_host(&operator(), &before.id)
+        .await
+        .expect("a slot with no durable session is retired as an orphan");
+
+    assert_eq!(retired.status, ChatHostStatus::Retired);
+    assert!(retired.runtime_id.is_none());
+    assert!(retired.checkpoint.is_none());
+    assert!(fixture.adapter.terminated.lock().await.contains(&runtime));
+    assert!(fixture
+        .sessions
+        .get(&fixture.threads[0].id)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn active_retirement_preserves_durable_threads_beside_an_orphan_slot() {
+    let fixture = fixture("retire-mixed-orphan", 2).await;
+    let before = host(&fixture).await;
+    use_package(&fixture, 1, "mixed-orphan-retirement").await;
+    fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .remove(fixture.threads[1].id.as_str());
+
+    let retired = fixture
+        .service
+        .retire_chat_host(&operator(), &before.id)
+        .await
+        .expect("the durable thread is retained while the missing slot is ignored");
+
+    let checkpoint = retired
+        .checkpoint
+        .as_ref()
+        .expect("the durable thread still receives a verified checkpoint");
+    assert_eq!(checkpoint.conversations.len(), 1);
+    assert_eq!(
+        checkpoint.conversations[0].session_id,
+        fixture.threads[0].id
+    );
+    let durable = fixture
+        .sessions
+        .get(&fixture.threads[0].id)
+        .await
+        .unwrap()
+        .expect("the durable thread history remains readable");
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert_eq!(durable.session.stop_reason, Some(StopReason::Revoked));
+    assert!(fixture
+        .sessions
+        .get(&fixture.threads[1].id)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn restart_replays_the_exact_retirement_capture_claim() {
     let fixture = fixture("retire-restart-capture", 2).await;
     let before = host(&fixture).await;
@@ -348,6 +421,45 @@ async fn restart_finishes_retirement_after_verified_runtime_teardown() {
         assert_eq!(record.session.status, SessionStatus::Terminated);
         assert_eq!(record.session.stop_reason, Some(StopReason::Revoked));
     }
+}
+
+#[tokio::test]
+async fn restart_finishes_orphan_retirement_after_runtime_teardown() {
+    let fixture = fixture("retire-orphan-after-teardown", 1).await;
+    let before = host(&fixture).await;
+    let old_runtime = before.runtime_id.clone().expect("the host is active");
+    fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .remove(fixture.threads[0].id.as_str());
+    let mut claimed = before.clone();
+    claimed.status = ChatHostStatus::Pausing;
+    claimed.last_transition_claim = Some("chrt_orphan_after_teardown".into());
+    claimed.transition_started_at = Some("2026-09-01T02:00:00Z".into());
+    claimed.checkpoint_sequence = 1;
+    fixture
+        .hosts
+        .update_if_revision(before.revision, &claimed)
+        .await
+        .expect("the host store remains available")
+        .expect("the orphan retirement claim wins its CAS");
+    fixture.adapter.stop_serving(&old_runtime).await;
+
+    let restarted = build_service(
+        Arc::clone(&fixture.adapter),
+        Arc::clone(&fixture.hosts),
+        Arc::clone(&fixture.sessions),
+        Arc::clone(&fixture.checkpoints),
+    );
+    restarted.reconcile().await;
+
+    let retired = host(&fixture).await;
+    assert_eq!(retired.status, ChatHostStatus::Retired);
+    assert!(retired.runtime_id.is_none());
+    assert!(retired.checkpoint.is_none());
+    assert!(retired.last_transition_claim.is_none());
 }
 
 #[tokio::test]
