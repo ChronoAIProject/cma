@@ -199,11 +199,19 @@ impl Default for ChatInactivityRequest {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(default, deny_unknown_fields)]
 struct ChatSetupRequest {
     #[schema(max_items = 16)]
     commands: Vec<String>,
+}
+
+impl Default for ChatSetupRequest {
+    fn default() -> Self {
+        Self {
+            commands: ChatSetup::default().commands,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]

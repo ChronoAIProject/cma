@@ -34,9 +34,13 @@ const DEFAULT_CHAT: ChatSettings = {
     instructions: '',
     recordToolBodies: true,
   },
-  messagePrefixes: ['/codex-formalize'],
+  messagePrefixes: ['$codex-formal-answer'],
   inactivity: { pauseAfterSeconds: 900 },
-  setup: { commands: [] },
+  setup: {
+    commands: [
+      'set -eu; test -f skills/codex-formal-answer/SKILL.md; mkdir -p "$HOME/.agents/skills/codex-formal-answer" "$HOME/.codex/skills/codex-formal-answer"; cp -R skills/codex-formal-answer/. "$HOME/.agents/skills/codex-formal-answer/"; cp -R skills/codex-formal-answer/. "$HOME/.codex/skills/codex-formal-answer/"',
+    ],
+  },
   host: { size: null, maxThreads: 10 },
 };
 

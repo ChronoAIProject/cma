@@ -50,7 +50,7 @@ const CHAT_WIRE = {
     instructions: 'Review agent.md.',
     record_tool_bodies: true,
   },
-  message_prefixes: ['/codex-formalize'],
+  message_prefixes: ['$codex-formal-answer'],
   inactivity: { pause_after_seconds: 900 },
   setup: { commands: ['npm ci'] },
   host: { size: { cpu_millis: 2_000, memory_mib: 4_096 }, max_threads: 10 },

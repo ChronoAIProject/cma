@@ -65,6 +65,19 @@ async fn problem(response: Response) -> Value {
     serde_json::from_slice(&bytes).expect("field refusals are JSON problems")
 }
 
+#[tokio::test]
+async fn active_response_and_stale_predecessor_have_distinct_conflict_codes() {
+    let active = problem(super::response_in_progress()).await;
+    assert_eq!(active["status"], 409);
+    assert_eq!(active["code"], "response_in_progress");
+    assert!(active.get("field").is_none());
+
+    let stale = problem(super::previous_conflict()).await;
+    assert_eq!(stale["status"], 409);
+    assert_eq!(stale["code"], "previous_response_id_conflict");
+    assert_eq!(stale["field"], "previous_response_id");
+}
+
 #[test]
 fn responses_sdk_fixtures_are_server_projections() {
     let id = SessionId("sesn_fixture".into());
