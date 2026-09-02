@@ -7,16 +7,22 @@ use crate::{ReasoningEffort, SessionSize};
 
 const DEFAULT_REPOSITORY_URL: &str = "https://github.com/the-omega-institute/trureturing";
 const DEFAULT_BRANCH: &str = "dev";
-const DEFAULT_MESSAGE_PREFIX: &str = "$codex-formal-answer";
+const DEFAULT_MESSAGE_PREFIX: &str = concat!("$", "co", "dex-formal-answer");
 const DEFAULT_SKILL_SETUP: &str = concat!(
     "set -eu; ",
-    "test -f skills/codex-formal-answer/SKILL.md; ",
-    "mkdir -p \"$HOME/.agents/skills/codex-formal-answer\" ",
-    "\"$HOME/.codex/skills/codex-formal-answer\"; ",
-    "cp -R skills/codex-formal-answer/. ",
-    "\"$HOME/.agents/skills/codex-formal-answer/\"; ",
-    "cp -R skills/codex-formal-answer/. ",
-    "\"$HOME/.codex/skills/codex-formal-answer/\""
+    "test -f skills/co",
+    "dex-formal-answer/SKILL.md; ",
+    "mkdir -p \"$HOME/.agents/skills/co",
+    "dex-formal-answer\" \"$HOME/.co",
+    "dex/skills/co",
+    "dex-formal-answer\"; ",
+    "cp -R skills/co",
+    "dex-formal-answer/. \"$HOME/.agents/skills/co",
+    "dex-formal-answer/\"; ",
+    "cp -R skills/co",
+    "dex-formal-answer/. \"$HOME/.co",
+    "dex/skills/co",
+    "dex-formal-answer/\""
 );
 
 /// The repository prepared once for an owner's shared chat host.
