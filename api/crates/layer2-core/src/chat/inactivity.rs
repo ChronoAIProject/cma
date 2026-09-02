@@ -676,7 +676,7 @@ impl crate::SessionService {
     ) -> Result<ChatHostRecord, CoreError> {
         if let Some(credentials) = self.credentials.as_ref() {
             credentials
-                .release(&observed.id.credential_session_id())
+                .release(&observed.credential_session_id())
                 .await
                 .map_err(|_| {
                     CoreError::RuntimeUnavailable(

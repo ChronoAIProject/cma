@@ -115,6 +115,10 @@ async fn paused_message_restores_every_thread_and_delivers_the_admitted_turn() {
 
     let replacement = fixture.adapter.last_spec.lock().await.clone().unwrap();
     assert_eq!(replacement.generation.unwrap().get(), 2);
+    assert!(replacement
+        .reservation_token
+        .as_deref()
+        .is_some_and(|token| !token.is_empty()));
     let workspace = replacement
         .workspace
         .expect("the complete archive is carried");
