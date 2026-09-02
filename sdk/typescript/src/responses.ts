@@ -50,11 +50,11 @@ export interface ResponseOutputText {
   readonly logprobs: readonly unknown[];
 }
 
-/** One completed assistant message in a response. */
+/** One assistant message in a response, including partial durable output. */
 export interface ResponseOutputMessage {
   readonly id: string;
   readonly type: 'message';
-  readonly status: 'completed';
+  readonly status: 'in_progress' | 'completed';
   readonly role: 'assistant';
   readonly content: readonly ResponseOutputText[];
 }
@@ -899,12 +899,15 @@ function toToolActivity(raw: unknown): ResponseToolActivity {
 function toOutputMessage(raw: unknown): ResponseOutputMessage {
   const body = objectOf(raw, 'response output message');
   literalOf(body, 'type', 'message');
-  literalOf(body, 'status', 'completed');
+  const status = stringOf(body, 'status');
+  if (status !== 'in_progress' && status !== 'completed') {
+    throw new ProtocolError('response output message status was unsupported');
+  }
   literalOf(body, 'role', 'assistant');
   return {
     id: stringOf(body, 'id'),
     type: 'message',
-    status: 'completed',
+    status,
     role: 'assistant',
     content: arrayOf(body.content, 'response output content').map((rawPart) => {
       const part = objectOf(rawPart, 'response output text');

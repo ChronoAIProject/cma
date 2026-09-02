@@ -14,6 +14,8 @@ use crate::{
     WorkspaceCheckpointReservation,
 };
 
+const MAX_COMPLETE_GIT_WORKSPACE_FILES: usize = 750_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceWriterHoldReceipt {
     pub runtime: RuntimeHandle,
@@ -561,6 +563,11 @@ pub(crate) fn validate_workspace_checkpoint_package(
     request: &WorkspaceCheckpointRequest,
     checkpoint: &WorkspaceCheckpointPackage,
 ) -> Result<(), CoreError> {
+    let max_files = if request.include_git_metadata {
+        MAX_COMPLETE_GIT_WORKSPACE_FILES
+    } else {
+        crate::MAX_REPOSITORY_FILES
+    };
     if request.epoch == 0
         || request.version == 0
         || checkpoint.epoch != request.epoch
@@ -575,7 +582,7 @@ pub(crate) fn validate_workspace_checkpoint_package(
         || !is_hex(&checkpoint.manifest_digest, 64)
         || !is_hex(&checkpoint.archive_sha256, 64)
         || checkpoint_digest(&checkpoint.archive) != checkpoint.archive_sha256
-        || checkpoint.entries.len() > crate::MAX_REPOSITORY_FILES
+        || checkpoint.entries.len() > max_files
     {
         return Err(CoreError::RuntimeRefused(
             "the runtime returned a malformed workspace checkpoint".into(),

@@ -39,7 +39,8 @@ pub fn router(state: SessionsState) -> axum::Router {
 /// Documented routes merged into CMA's single OpenAPI document.
 pub(crate) fn documented_router(state: SessionsState) -> OpenApiRouter {
     OpenApiRouter::new()
-        .routes(routes!(conversations::create, conversations::retrieve))
+        .routes(routes!(conversations::create))
+        .routes(routes!(conversations::retrieve))
         .routes(routes!(items::list))
         .routes(routes!(create::create))
         .routes(routes!(retrieve::retrieve, retrieve::delete))
@@ -200,6 +201,16 @@ pub(crate) fn previous_conflict() -> Response {
     if let Some(object) = body.as_object_mut() {
         object.insert("field".into(), "previous_response_id".into());
     }
+    problem_response(StatusCode::CONFLICT, body)
+}
+
+pub(crate) fn response_in_progress() -> Response {
+    let body = problem_document(
+        StatusCode::CONFLICT,
+        "response-in-progress",
+        "This conversation already has a response in progress.",
+        "response_in_progress",
+    );
     problem_response(StatusCode::CONFLICT, body)
 }
 

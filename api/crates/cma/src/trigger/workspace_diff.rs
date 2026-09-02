@@ -1,7 +1,10 @@
 //! Deterministic, byte-verified review artifacts for Trigger contributions.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read as _;
+use std::sync::Arc;
 
+use flate2::read::ZlibDecoder;
 use layer2_core::{
     CommitIdentity, DiffArtifact, DiffArtifactId, DiffChangeKind, DiffFile, DiffValidationOutcome,
     Launch, ScopeClass, WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceEntry,
@@ -13,7 +16,8 @@ use sha1::Sha1;
 use sha2::{Digest as _, Sha256};
 use similar::{ChangeTag, TextDiff};
 
-const WORKSPACE_ARCHIVE_VERSION: u32 = 1;
+const WORKSPACE_ARCHIVE_VERSION: u32 = 2;
+const LEGACY_WORKSPACE_ARCHIVE_VERSION: u32 = 1;
 const MAX_WORKSPACE_HEADER_BYTES: usize = 128 * 1024 * 1024;
 /// Bounds exact Myers line-diff work as well as rendered patch input. Larger
 /// changed text fails to a compact review outcome instead of using approximate
@@ -98,6 +102,8 @@ struct ArchiveHeader {
     checkpoint_version: u64,
     #[serde(default)]
     quiesced_writers: u32,
+    #[serde(default, rename = "includes_git_metadata")]
+    _includes_git_metadata: bool,
     source_revision: String,
     manifest_digest: String,
     entries: Vec<ArchiveEntry>,
@@ -113,11 +119,36 @@ struct ArchiveEntry {
     content_sha256: String,
     provider_object_id: Option<String>,
     offset: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stored_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compression: Option<ArchiveCompression>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ArchiveCompression {
+    Identity,
+    Zlib,
 }
 
 struct OpenedEntry<'a> {
     metadata: &'a WorkspaceEntry,
-    bytes: &'a [u8],
+    bytes: OpenedContent<'a>,
+}
+
+enum OpenedContent<'a> {
+    Borrowed(&'a [u8]),
+    Shared(Arc<[u8]>),
+}
+
+impl AsRef<[u8]> for OpenedContent<'_> {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
 }
 
 pub(crate) fn deterministic_diff_id(intent_key: &str) -> DiffArtifactId {
@@ -232,7 +263,7 @@ pub(crate) fn build_publication_plan(
                         reviewed.path
                     )));
                 }
-                let blob_id = git_blob_id(current_entry.bytes);
+                let blob_id = git_blob_id(current_entry.bytes.as_ref());
                 if current_entry
                     .metadata
                     .provider_object_id
@@ -251,7 +282,7 @@ pub(crate) fn build_publication_plan(
                     mode: git_mode(current_entry.metadata.mode)?.into(),
                     content_sha256: Some(new_sha256.to_string()),
                     blob_id: Some(blob_id),
-                    content: Some(current_entry.bytes.to_vec()),
+                    content: Some(current_entry.bytes.as_ref().to_vec()),
                 }
             }
             None => {
@@ -380,8 +411,8 @@ pub(crate) fn build_diff_artifact(
         changed_bytes = changed_bytes
             .checked_add(old_size.max(new_size))
             .ok_or_else(|| DiffBuildError::Invalid("changed byte count overflowed".into()))?;
-        let binary = old.is_some_and(|entry| is_binary(entry.bytes))
-            || new.is_some_and(|entry| is_binary(entry.bytes));
+        let binary = old.is_some_and(|entry| is_binary(entry.bytes.as_ref()))
+            || new.is_some_and(|entry| is_binary(entry.bytes.as_ref()));
         let built_patch = match build_patch(old, new, binary) {
             Ok(patch) => patch,
             Err(DiffBuildError::ArtifactTooLarge) => {
@@ -729,8 +760,8 @@ fn build_patch(
     new: Option<&OpenedEntry<'_>>,
     binary: bool,
 ) -> Result<BuiltPatch, DiffBuildError> {
-    let old_bytes = old.map_or(&[][..], |entry| entry.bytes);
-    let new_bytes = new.map_or(&[][..], |entry| entry.bytes);
+    let old_bytes = old.map_or(&[][..], |entry| entry.bytes.as_ref());
+    let new_bytes = new.map_or(&[][..], |entry| entry.bytes.as_ref());
     if binary {
         return Ok(BuiltPatch {
             additions: None,
@@ -862,8 +893,10 @@ fn open_archive<'a>(
     let payload = archive
         .get(header_end..)
         .ok_or_else(|| DiffBuildError::Corrupt("archive payload is missing".into()))?;
-    if header.cma_workspace != WORKSPACE_ARCHIVE_VERSION
-        || header.workspace_epoch != expected_epoch
+    if !matches!(
+        header.cma_workspace,
+        LEGACY_WORKSPACE_ARCHIVE_VERSION | WORKSPACE_ARCHIVE_VERSION
+    ) || header.workspace_epoch != expected_epoch
         || header.checkpoint_version != expected_checkpoint_version
         || (expected_checkpoint_version == 0 && header.quiesced_writers != 0)
         || header.source_revision != manifest.source_revision
@@ -875,38 +908,87 @@ fn open_archive<'a>(
         ));
     }
 
-    let mut expected_offset = 0_u64;
+    let mut ranges = BTreeMap::<u64, (u64, usize)>::new();
+    let mut legacy_expected_offset = 0_u64;
+    let mut logical_bytes = 0_u64;
+    let mut decoded_blocks = BTreeMap::<u64, Arc<[u8]>>::new();
     let mut result = BTreeMap::new();
-    for (wire, metadata) in header.entries.iter().zip(&manifest.entries) {
+    for (index, (wire, metadata)) in header.entries.iter().zip(&manifest.entries).enumerate() {
         if wire.path != metadata.path
             || wire.kind != metadata.kind
             || wire.mode != metadata.mode
             || wire.size != metadata.size
             || wire.content_sha256 != metadata.content_sha256
             || wire.provider_object_id != metadata.provider_object_id
-            || wire.offset != expected_offset
         {
             return Err(DiffBuildError::Corrupt(
                 "archive entry metadata disagrees with its manifest".into(),
             ));
         }
-        expected_offset = expected_offset
+        logical_bytes = logical_bytes
             .checked_add(wire.size)
             .ok_or_else(|| DiffBuildError::Corrupt("archive payload size overflowed".into()))?;
-        let start = usize::try_from(wire.offset)
-            .map_err(|_| DiffBuildError::Corrupt("archive entry offset overflows".into()))?;
-        let end = usize::try_from(expected_offset)
-            .map_err(|_| DiffBuildError::Corrupt("archive entry size overflows".into()))?;
-        let bytes = payload
-            .get(start..end)
-            .ok_or_else(|| DiffBuildError::Corrupt("archive entry is truncated".into()))?;
-        if hex(&Sha256::digest(bytes)) != wire.content_sha256
+        if logical_bytes > MAX_REPOSITORY_BYTES {
+            return Err(DiffBuildError::Corrupt(
+                "archive logical content exceeds its bound".into(),
+            ));
+        }
+        let (stored_size, compression) = archive_entry_storage(header.cma_workspace, wire)?;
+        let end_offset = wire
+            .offset
+            .checked_add(stored_size)
+            .ok_or_else(|| DiffBuildError::Corrupt("archive payload size overflowed".into()))?;
+        if end_offset > MAX_REPOSITORY_BYTES {
+            return Err(DiffBuildError::Corrupt(
+                "archive stored content exceeds its bound".into(),
+            ));
+        }
+        if header.cma_workspace == LEGACY_WORKSPACE_ARCHIVE_VERSION {
+            if wire.offset != legacy_expected_offset {
+                return Err(DiffBuildError::Corrupt(
+                    "archive entries overlap or contain a gap".into(),
+                ));
+            }
+            legacy_expected_offset = end_offset;
+        } else if stored_size > 0 {
+            if let Some((existing_end, existing_index)) =
+                ranges.insert(wire.offset, (end_offset, index))
+            {
+                let existing = &header.entries[existing_index];
+                if existing_end != end_offset
+                    || existing.size != wire.size
+                    || existing.content_sha256 != wire.content_sha256
+                    || existing.stored_size != wire.stored_size
+                    || existing.compression != wire.compression
+                {
+                    return Err(DiffBuildError::Corrupt(
+                        "archive content ranges conflict".into(),
+                    ));
+                }
+            }
+        }
+        let stored = archive_stored_bytes(header.cma_workspace, wire, payload)?;
+        let bytes = match compression {
+            ArchiveCompression::Identity => OpenedContent::Borrowed(stored),
+            ArchiveCompression::Zlib => {
+                let decoded = match decoded_blocks.get(&wire.offset) {
+                    Some(decoded) => Arc::clone(decoded),
+                    None => {
+                        let decoded: Arc<[u8]> = decode_zlib_content(stored, wire.size)?.into();
+                        decoded_blocks.insert(wire.offset, Arc::clone(&decoded));
+                        decoded
+                    }
+                };
+                OpenedContent::Shared(decoded)
+            }
+        };
+        if hex(&Sha256::digest(bytes.as_ref())) != wire.content_sha256
             || wire
                 .provider_object_id
                 .as_deref()
-                .is_some_and(|object| git_blob_id(bytes) != object.to_ascii_lowercase())
+                .is_some_and(|object| git_blob_id(bytes.as_ref()) != object.to_ascii_lowercase())
             || (wire.kind == WorkspaceEntryKind::Symlink
-                && std::str::from_utf8(bytes).ok() != metadata.symlink_target.as_deref())
+                && std::str::from_utf8(bytes.as_ref()).ok() != metadata.symlink_target.as_deref())
         {
             return Err(DiffBuildError::Corrupt(
                 "archive entry bytes failed integrity verification".into(),
@@ -921,12 +1003,109 @@ fn open_archive<'a>(
             ));
         }
     }
-    if usize::try_from(expected_offset).ok() != Some(payload.len()) {
+    let physical_bytes = if header.cma_workspace == LEGACY_WORKSPACE_ARCHIVE_VERSION {
+        legacy_expected_offset
+    } else {
+        let mut expected = 0_u64;
+        for (start, (end, _)) in ranges {
+            if start != expected {
+                return Err(DiffBuildError::Corrupt(
+                    "archive content ranges overlap or contain a gap".into(),
+                ));
+            }
+            expected = end;
+        }
+        expected
+    };
+    if usize::try_from(physical_bytes).ok() != Some(payload.len()) {
         return Err(DiffBuildError::Corrupt(
             "archive payload contains a gap or trailing bytes".into(),
         ));
     }
     Ok(result)
+}
+
+fn archive_entry_storage(
+    archive_version: u32,
+    entry: &ArchiveEntry,
+) -> Result<(u64, ArchiveCompression), DiffBuildError> {
+    match archive_version {
+        LEGACY_WORKSPACE_ARCHIVE_VERSION => {
+            if entry.stored_size.is_some() || entry.compression.is_some() {
+                return Err(DiffBuildError::Corrupt(
+                    "legacy archive contains v2 content metadata".into(),
+                ));
+            }
+            Ok((entry.size, ArchiveCompression::Identity))
+        }
+        WORKSPACE_ARCHIVE_VERSION => {
+            let stored_size = entry
+                .stored_size
+                .ok_or_else(|| DiffBuildError::Corrupt("archive content size is missing".into()))?;
+            let compression = entry
+                .compression
+                .ok_or_else(|| DiffBuildError::Corrupt("archive compression is missing".into()))?;
+            match compression {
+                ArchiveCompression::Identity if stored_size == entry.size => {}
+                ArchiveCompression::Zlib if stored_size < entry.size => {}
+                _ => {
+                    return Err(DiffBuildError::Corrupt(
+                        "archive content encoding is non-canonical".into(),
+                    ))
+                }
+            }
+            Ok((stored_size, compression))
+        }
+        _ => Err(DiffBuildError::Corrupt(
+            "archive version is unsupported".into(),
+        )),
+    }
+}
+
+fn archive_stored_bytes<'a>(
+    archive_version: u32,
+    entry: &ArchiveEntry,
+    payload: &'a [u8],
+) -> Result<&'a [u8], DiffBuildError> {
+    let (stored_size, _) = archive_entry_storage(archive_version, entry)?;
+    let start = usize::try_from(entry.offset)
+        .map_err(|_| DiffBuildError::Corrupt("archive entry offset overflows".into()))?;
+    let size = usize::try_from(stored_size)
+        .map_err(|_| DiffBuildError::Corrupt("archive entry size overflows".into()))?;
+    let end = start
+        .checked_add(size)
+        .ok_or_else(|| DiffBuildError::Corrupt("archive entry range overflows".into()))?;
+    payload
+        .get(start..end)
+        .ok_or_else(|| DiffBuildError::Corrupt("archive entry is truncated".into()))
+}
+
+fn decode_zlib_content(stored: &[u8], expected_size: u64) -> Result<Vec<u8>, DiffBuildError> {
+    let expected_size = usize::try_from(expected_size)
+        .map_err(|_| DiffBuildError::Corrupt("archive decoded size overflows".into()))?;
+    let mut decoder = ZlibDecoder::new(stored);
+    let mut decoded = Vec::with_capacity(expected_size.min(64 * 1024));
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = decoder
+            .read(&mut buffer)
+            .map_err(|_| DiffBuildError::Corrupt("archive content cannot be decoded".into()))?;
+        if read == 0 {
+            break;
+        }
+        if decoded.len().saturating_add(read) > expected_size {
+            return Err(DiffBuildError::Corrupt(
+                "archive content expands past its declared size".into(),
+            ));
+        }
+        decoded.extend_from_slice(&buffer[..read]);
+    }
+    if decoded.len() != expected_size || decoder.total_in() != stored.len() as u64 {
+        return Err(DiffBuildError::Corrupt(
+            "archive content has an invalid decoded size".into(),
+        ));
+    }
+    Ok(decoded)
 }
 
 pub(crate) fn git_blob_id(bytes: &[u8]) -> String {
@@ -954,6 +1133,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::io::Write as _;
 
     use layer2_core::{
         BranchRecord, CheckpointId, CheckpointIntegrity, DiffChangeKind, SessionId, WorkspaceRecord,
@@ -1392,6 +1572,55 @@ mod tests {
     }
 
     #[test]
+    fn legacy_and_compressed_deduplicated_archives_remain_reviewable() {
+        let content = vec![b'x'; 64 * 1024];
+        let fixtures = vec![
+            regular("one/shared.bin", 0o100644, &content),
+            regular("two/shared.bin", 0o100644, &content),
+        ];
+        let manifest = WorkspaceManifest::seal(
+            "a".repeat(40),
+            fixtures.iter().map(workspace_entry).collect(),
+        )
+        .unwrap();
+
+        let legacy = archive_for_version(
+            LEGACY_WORKSPACE_ARCHIVE_VERSION,
+            &manifest,
+            1,
+            1,
+            1,
+            &fixtures,
+        );
+        let legacy = open_archive(&legacy, &manifest, 1, 1, &hex(&Sha256::digest(&legacy)))
+            .expect("retained v1 archives remain readable");
+        assert_eq!(legacy["one/shared.bin"].bytes.as_ref(), content);
+
+        let compressed = compressed_archive(&manifest, 1, 1, 1, &fixtures);
+        let header_len = u64::from_be_bytes(compressed[..8].try_into().unwrap()) as usize;
+        assert!(compressed.len() - 8 - header_len < content.len());
+        let opened = open_archive(
+            &compressed,
+            &manifest,
+            1,
+            1,
+            &hex(&Sha256::digest(&compressed)),
+        )
+        .expect("compressed deduplicated v2 archives are reviewable");
+        assert_eq!(opened["one/shared.bin"].bytes.as_ref(), content);
+        assert_eq!(opened["two/shared.bin"].bytes.as_ref(), content);
+        match (
+            &opened["one/shared.bin"].bytes,
+            &opened["two/shared.bin"].bytes,
+        ) {
+            (OpenedContent::Shared(one), OpenedContent::Shared(two)) => {
+                assert!(Arc::ptr_eq(one, two));
+            }
+            _ => panic!("compressed duplicate blocks must share one decoded allocation"),
+        }
+    }
+
+    #[test]
     fn unsafe_paths_and_symlinks_are_rejected_before_artifact_generation() {
         for path in ["../secret", "/absolute", "a//b", "a\\b", ".git/config"] {
             let candidate = regular(path, 0o100644, b"value");
@@ -1448,7 +1677,14 @@ mod tests {
             current.iter().map(workspace_entry).collect(),
         )
         .unwrap();
-        let baseline_archive = archive(&baseline_manifest, 1, 0, 0, &baseline);
+        let baseline_archive = archive_for_version(
+            LEGACY_WORKSPACE_ARCHIVE_VERSION,
+            &baseline_manifest,
+            1,
+            0,
+            0,
+            &baseline,
+        );
         let checkpoint_archive = archive(&current_manifest, 1, 1, 1, &current);
         let checkpoint = WorkspaceCheckpoint {
             id: CheckpointId::new(),
@@ -1502,6 +1738,24 @@ mod tests {
         quiesced_writers: u32,
         fixtures: &[EntryFixture],
     ) -> Vec<u8> {
+        archive_for_version(
+            WORKSPACE_ARCHIVE_VERSION,
+            manifest,
+            workspace_epoch,
+            checkpoint_version,
+            quiesced_writers,
+            fixtures,
+        )
+    }
+
+    fn archive_for_version(
+        archive_version: u32,
+        manifest: &WorkspaceManifest,
+        workspace_epoch: u64,
+        checkpoint_version: u64,
+        quiesced_writers: u32,
+        fixtures: &[EntryFixture],
+    ) -> Vec<u8> {
         let by_path = fixtures
             .iter()
             .map(|entry| (entry.path.as_str(), entry))
@@ -1521,6 +1775,10 @@ mod tests {
                     content_sha256: entry.content_sha256.clone(),
                     provider_object_id: entry.provider_object_id.clone(),
                     offset,
+                    stored_size: (archive_version == WORKSPACE_ARCHIVE_VERSION)
+                        .then_some(entry.size),
+                    compression: (archive_version == WORKSPACE_ARCHIVE_VERSION)
+                        .then_some(ArchiveCompression::Identity),
                 };
                 offset += entry.size;
                 payload.extend_from_slice(&fixture.bytes);
@@ -1528,10 +1786,80 @@ mod tests {
             })
             .collect();
         let header = ArchiveHeader {
+            cma_workspace: archive_version,
+            workspace_epoch,
+            checkpoint_version,
+            quiesced_writers,
+            _includes_git_metadata: false,
+            source_revision: manifest.source_revision.clone(),
+            manifest_digest: manifest.digest.clone(),
+            entries,
+        };
+        let header = serde_json::to_vec(&header).unwrap();
+        let mut result = Vec::with_capacity(8 + header.len() + payload.len());
+        result.extend_from_slice(&(header.len() as u64).to_be_bytes());
+        result.extend_from_slice(&header);
+        result.extend_from_slice(&payload);
+        result
+    }
+
+    fn compressed_archive(
+        manifest: &WorkspaceManifest,
+        workspace_epoch: u64,
+        checkpoint_version: u64,
+        quiesced_writers: u32,
+        fixtures: &[EntryFixture],
+    ) -> Vec<u8> {
+        let by_path = fixtures
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let mut blocks = BTreeMap::<String, (u64, u64, ArchiveCompression)>::new();
+        let mut payload = Vec::new();
+        let entries = manifest
+            .entries
+            .iter()
+            .map(|entry| {
+                let fixture = by_path[entry.path.as_str()];
+                let (offset, stored_size, compression) = match blocks.get(&entry.content_sha256) {
+                    Some(block) => *block,
+                    None => {
+                        let mut encoder = flate2::write::ZlibEncoder::new(
+                            Vec::new(),
+                            flate2::Compression::default(),
+                        );
+                        encoder.write_all(&fixture.bytes).unwrap();
+                        let encoded = encoder.finish().unwrap();
+                        assert!(encoded.len() < fixture.bytes.len());
+                        let block = (
+                            payload.len() as u64,
+                            encoded.len() as u64,
+                            ArchiveCompression::Zlib,
+                        );
+                        payload.extend_from_slice(&encoded);
+                        blocks.insert(entry.content_sha256.clone(), block);
+                        block
+                    }
+                };
+                ArchiveEntry {
+                    path: entry.path.clone(),
+                    kind: entry.kind,
+                    mode: entry.mode,
+                    size: entry.size,
+                    content_sha256: entry.content_sha256.clone(),
+                    provider_object_id: entry.provider_object_id.clone(),
+                    offset,
+                    stored_size: Some(stored_size),
+                    compression: Some(compression),
+                }
+            })
+            .collect();
+        let header = ArchiveHeader {
             cma_workspace: WORKSPACE_ARCHIVE_VERSION,
             workspace_epoch,
             checkpoint_version,
             quiesced_writers,
+            _includes_git_metadata: false,
             source_revision: manifest.source_revision.clone(),
             manifest_digest: manifest.digest.clone(),
             entries,

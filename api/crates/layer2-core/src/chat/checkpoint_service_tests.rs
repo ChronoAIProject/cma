@@ -1156,21 +1156,24 @@ async fn checkpoint_claim_fences_new_prompt_admission_until_capture_settles() {
     });
     wait_for_checkpoint_fence(&fixture.adapter).await;
 
-    let prompt = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        fixture.service.send_prompt(
-            &fixture.caller,
-            &fixture.threads[0].id,
-            "must not cross the checkpoint fence".into(),
-        ),
-    )
-    .await
-    .expect("the claim produces a bounded admission refusal")
-    .expect_err("a checkpoint claim refuses new input");
-    assert!(matches!(
-        prompt,
-        CoreError::ChatUnavailable(ChatUnavailableCause::Provisioning)
-    ));
+    let service = Arc::clone(&fixture.service);
+    let caller = fixture.caller.clone();
+    let session_id = fixture.threads[0].id.clone();
+    let mut prompt = tokio::spawn(async move {
+        service
+            .send_prompt(
+                &caller,
+                &session_id,
+                "must wait behind the checkpoint fence".into(),
+            )
+            .await
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut prompt)
+            .await
+            .is_err(),
+        "active-host maintenance blocks input instead of pretending to provision"
+    );
     assert!(fixture
         .adapter
         .conversation
@@ -1187,6 +1190,24 @@ async fn checkpoint_claim_fences_new_prompt_admission_until_capture_settles() {
         attempt.await.unwrap().unwrap(),
         ChatCheckpointOutcome::Complete(_)
     ));
+    tokio::time::timeout(std::time::Duration::from_secs(1), prompt)
+        .await
+        .expect("the prompt resumes after capture")
+        .expect("the prompt task joins")
+        .expect("the prompt is delivered");
+    assert_eq!(
+        fixture
+            .adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .unwrap()
+            .sent()
+            .await
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
