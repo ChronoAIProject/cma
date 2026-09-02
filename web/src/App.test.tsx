@@ -144,6 +144,13 @@ let allowanceAnswer: unknown = { live: 0, exempt: false };
 let allowanceFails = false;
 let allowanceReads = 0;
 let reviveProblem: { readonly status: number; readonly body: unknown } | null = null;
+let chatCapability = false;
+let chatProblem: { readonly status: number; readonly body: Record<string, unknown> } | null = null;
+let sessionListSurfaces: (string | null)[] = [];
+let creationBodies: unknown[] = [];
+let deleteResponse: Promise<Response> | null = null;
+let deleteRequested = false;
+let terminateRequested = false;
 
 /** `count` running sessions, distinguishable by start time as the rail shows them. */
 function seedSessions(count: number): void {
@@ -153,6 +160,27 @@ function seedSessions(count: number): void {
     status: 'running',
     created_at: new Date(Date.UTC(2026, 7, 14, 3, i)).toISOString(),
   }));
+}
+
+function chatSession(
+  id: string,
+  status: string,
+  options: { readonly title?: string; readonly stopReason?: string } = {},
+): Record<string, unknown> {
+  return {
+    id,
+    kernel: 'codex',
+    status,
+    stop_reason: options.stopReason,
+    created_at: '2026-08-15T03:00:00Z',
+    conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/conversation'],
+    chat: {
+      worktree_name: `${id}-worktree`,
+      worktree_path: `/work/${id}`,
+      title: options.title,
+      paused_notice: null,
+    },
+  };
 }
 
 /** A canvas node by session id, the way the canvas's own tests find one. */
@@ -179,6 +207,13 @@ beforeEach(() => {
   allowanceFails = false;
   allowanceReads = 0;
   reviveProblem = null;
+  chatCapability = false;
+  chatProblem = null;
+  sessionListSurfaces = [];
+  creationBodies = [];
+  deleteResponse = null;
+  deleteRequested = false;
+  terminateRequested = false;
   FakeEventStream.outcome = 'ready';
   FakeEventStream.signIn = null;
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -216,6 +251,12 @@ beforeEach(() => {
           kernels: [{ id: 'codex', modes: ['terminal', 'conversation'] }],
         });
       }
+      if (path === '/api/v1/agui/capabilities' && method === 'GET') {
+        return json(200, {
+          protocol: 'ag-ui',
+          features: { custom: { 'cma:chat': { enabled: chatCapability } } },
+        });
+      }
       if (path === '/api/v1/sessions/allowance') {
         allowanceReads += 1;
         if (allowanceFails) {
@@ -227,14 +268,87 @@ beforeEach(() => {
         return json(200, { priced: false });
       }
       if (path === '/api/v1/sessions' && method === 'GET') {
+        const surface = url.searchParams.get('surface');
+        sessionListSurfaces.push(surface);
+        const sessions = listing.filter((candidate) => {
+          if (surface === 'chat') return candidate.chat !== undefined;
+          if (surface === 'agent') return candidate.chat === undefined;
+          return true;
+        });
         // Empty unless a test seeded a fleet, which is the fresh-owner case.
-        return json(200, { sessions: listing });
+        return json(200, { sessions });
+      }
+      const chatItems = /^\/api\/v1\/conversations\/([^/]+)\/items$/.exec(path);
+      if (chatItems?.[1] !== undefined && method === 'GET') {
+        const id = decodeURIComponent(chatItems[1]);
+        return json(200, {
+          object: 'list',
+          data: [
+            {
+              id: `msg_${id}_1`,
+              type: 'message',
+              status: 'completed',
+              role: 'assistant',
+              content: [
+                {
+                  type: 'output_text',
+                  text: `Durable answer for ${id}`,
+                  annotations: [],
+                  logprobs: [],
+                },
+              ],
+            },
+            {
+              id: `msg_${id}_2`,
+              type: 'message',
+              status: 'completed',
+              role: 'user',
+              content: [{ type: 'input_text', text: `Durable question for ${id}` }],
+            },
+          ],
+          first_id: `msg_${id}_1`,
+          last_id: `msg_${id}_2`,
+          has_more: false,
+        });
       }
       if (method === 'DELETE') {
+        deleteRequested = true;
+        return deleteResponse ?? new Response(null, { status: 204 });
+      }
+      if (path.endsWith('/terminate') && method === 'POST') {
+        terminateRequested = true;
+        const id = decodeURIComponent(path.split('/').at(-2) ?? '');
+        listing = listing.map((candidate) =>
+          candidate.id === id
+            ? { ...candidate, status: 'terminated', stop_reason: 'user_terminated' }
+            : candidate,
+        );
         return new Response(null, { status: 204 });
       }
       if (path === '/api/v1/sessions' && method === 'POST') {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        creationBodies.push(body);
+        if (body.surface === 'chat' && chatProblem !== null) {
+          return problem(chatProblem.status, chatProblem.body);
+        }
         created += 1;
+        if (body.surface === 'chat') {
+          const chat = {
+            id: `chat_${String(created)}`,
+            kernel: 'codex',
+            status: 'ready',
+            created_at: new Date(0).toISOString(),
+            conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/conversation'],
+            chat: {
+              worktree_name: `chat-${String(created)}`,
+              worktree_path: `/work/chat-${String(created)}`,
+              title: null,
+              paused_notice: null,
+            },
+          };
+          listing = [chat, ...listing];
+          return json(201, chat);
+        }
         // Creation answers before a runtime exists; readiness arrives on the
         // event stream.
         return json(201, {
@@ -362,6 +476,131 @@ describe('App', () => {
 
     expect(await waitForConsole()).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /account menu/i })).toBeInTheDocument();
+  });
+
+  it('keeps the Agent surface unchanged when Chat is not declared', async () => {
+    seedSessions(1);
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(screen.queryByRole('group', { name: 'Session surface' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'New session' })).toBeInTheDocument();
+    expect(screen.getByText('Sessions')).toBeInTheDocument();
+    expect(sessionListSurfaces).toEqual(['agent']);
+  });
+
+  it('switches between strictly separated Agent and Chat rails and persists the choice', async () => {
+    chatCapability = true;
+    seedSessions(1);
+    listing.push(
+      chatSession('chat-active', 'running', { title: 'Architecture review' }),
+      chatSession('chat-paused', 'idle', { stopReason: 'idle_timeout' }),
+    );
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(sessionListSurfaces).toEqual(['agent', 'chat']);
+    expect(screen.getByRole('button', { name: 'Agent' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.queryByRole('tab', { name: /Architecture review/ })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+
+    expect(screen.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Chats')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New Chat' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Active, 1 chat' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Paused, 1 chat' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Architecture review/ })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Chat conversation' })).toHaveAttribute(
+      'data-surface',
+      'chat',
+    );
+    expect(await screen.findByText('Durable answer for chat-active')).toBeInTheDocument();
+    expect(document.querySelector('.conversation__usage-context')).toBeNull();
+    expect(document.querySelector('.resources')).toBeNull();
+    expect(screen.queryByText(/14 Aug 11:00/)).toBeNull();
+    expect(window.localStorage.getItem('cma:surface-mode')).toBe('chat');
+  });
+
+  it('restores a persisted Chat surface when the capability remains enabled', async () => {
+    chatCapability = true;
+    listing = [
+      ...Array.from({ length: 1 }, (_, i) => ({
+        id: `sesn_${String(i)}`,
+        kernel: 'codex',
+        status: 'running',
+        created_at: '2026-08-14T03:00:00Z',
+      })),
+      chatSession('chat-restored', 'running', { title: 'Restored chat' }),
+    ];
+    window.localStorage.setItem('cma:surface-mode', 'chat');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(screen.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('tab', { name: /Restored chat/ })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Chat conversation' })).toBeInTheDocument();
+    expect(screen.queryByText(/14 Aug 11:00/)).toBeNull();
+  });
+
+  it('falls back to Agent when the persisted surface value is corrupt', async () => {
+    chatCapability = true;
+    seedSessions(1);
+    listing.push(chatSession('chat-hidden', 'running', { title: 'Hidden chat' }));
+    window.localStorage.setItem('cma:surface-mode', 'CHAT');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(screen.getByRole('button', { name: 'Agent' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('Hidden chat')).toBeNull();
+  });
+
+  it('creates a Chat in one request without opening the Agent setup dialog', async () => {
+    chatCapability = true;
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'New Chat' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /chat-1/ })).toBeInTheDocument();
+    });
+    expect(creationBodies).toEqual([{ surface: 'chat' }]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it.each([
+    {
+      status: 503,
+      code: 'chat_unavailable',
+      detail: 'The shared chat host is not ready. Try again after it recovers.',
+    },
+    {
+      status: 409,
+      code: 'chat_thread_limit',
+      detail: 'This shared host already has its configured maximum of 10 chat threads.',
+    },
+  ])('shows $code Chat creation details and code verbatim', async ({ status, code, detail }) => {
+    chatCapability = true;
+    chatProblem = { status, body: { detail, code } };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+    await user.click(screen.getByRole('button', { name: 'New Chat' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(detail)).toBeInTheDocument();
+    expect(within(alert).getByText(code)).toBeInTheDocument();
+    expect(alert).toHaveTextContent('No chat was created.');
+    expect(creationBodies).toEqual([{ surface: 'chat' }]);
   });
 
   it('has no navigation menu in either state', async () => {
@@ -579,9 +818,8 @@ describe('App', () => {
   });
 
   it('keeps showing a session that ended on its own', async () => {
-    // Such a session leaves the rail — a list of everything ever run is not a
-    // list of someone's sessions — but whoever had it open is still owed the
-    // last thing it said, so the terminal stays rather than becoming a wait.
+    // The record and history still exist, so it moves into the closed
+    // Terminated group while the open surface keeps showing what it last said.
     FakeEventStream.outcome = 'terminated';
     const user = userEvent.setup();
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
@@ -591,6 +829,7 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.queryAllByRole('tab')).toHaveLength(0);
     });
+    expect(screen.getByRole('button', { name: 'Terminated, 1 session' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: /^Session .* on codex$/ })).toBeInTheDocument();
     expect(screen.queryByText('Attaching…')).toBeNull();
   });
@@ -807,6 +1046,71 @@ describe('App', () => {
       'true',
     );
     expect(isAttached('sesn_0')).toBe(true);
+  });
+
+  it('does not flash a stream error while a provisioning session is deliberately deleted', async () => {
+    FakeEventStream.signIn = {
+      url: 'https://auth.example.test/device',
+      message: 'Sign in to continue',
+    };
+    let finishDelete!: (response: Response) => void;
+    deleteResponse = new Promise((resolve) => {
+      finishDelete = resolve;
+    });
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await startSession(user);
+    await waitFor(() => {
+      expect(streams).toHaveLength(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^delete/i }));
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /delete permanently/i }));
+    await waitFor(() => {
+      expect(deleteRequested).toBe(true);
+    });
+
+    act(() => {
+      streams[0]?.close(new Error('event stream closed during requested deletion'));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    finishDelete(new Response(null, { status: 204 }));
+    await waitFor(() => {
+      expect(screen.queryByRole('tab')).toBeNull();
+    });
+  });
+
+  it('retains a terminated session in its rail group across a reload', async () => {
+    seedSessions(1);
+    const user = userEvent.setup();
+    const first = await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: 'Manage lifecycle' }));
+    await user.click(screen.getByRole('menuitem', { name: /^terminate session/i }));
+    const confirmation = screen.getByRole('dialog', { name: 'Terminate this session?' });
+    await user.click(within(confirmation).getByRole('button', { name: /^terminate session$/i }));
+
+    await waitFor(() => {
+      expect(terminateRequested).toBe(true);
+      expect(screen.getByRole('button', { name: /^Terminated, 1 session/i })).toBeInTheDocument();
+    });
+    expect(deleteRequested).toBe(false);
+
+    first.unmount();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: /^Terminated, 1 session/i }));
+    expect(
+      within(screen.getByRole('tablist', { name: 'Terminated' })).getAllByRole('tab'),
+    ).toHaveLength(1);
   });
 
   it('restores the owner-visible session named by a canonical deep link', async () => {

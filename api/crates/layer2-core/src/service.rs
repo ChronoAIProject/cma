@@ -36,6 +36,21 @@ pub use crate::lease::{AttachmentHandle, Detached};
 pub(crate) use crate::service_state::{Attachment, SessionEntry, LIVE_BUFFER, RESOURCE_BUFFER};
 pub use crate::service_state::{Deployment, ScreenFactory, SessionPorts, SessionService};
 
+/// Whether this creation mints an identity or preserves one derived elsewhere.
+enum CreationIdentity {
+    Fresh,
+    Exact(SessionId),
+}
+
+impl CreationIdentity {
+    fn resolve_with(self, generate_fresh: impl FnOnce() -> SessionId) -> SessionId {
+        match self {
+            Self::Fresh => generate_fresh(),
+            Self::Exact(id) => id,
+        }
+    }
+}
+
 impl SessionService {
     /// Build a service over a set of runtime implementations.
     ///
@@ -52,11 +67,13 @@ impl SessionService {
         let SessionPorts {
             context,
             handovers,
+            chat_checkpoints,
             credentials,
             skills,
             workspaces,
             skill_packs,
             settings,
+            chat_hosts,
         } = ports;
         let sequences = Arc::new(crate::sequence::Sequences::default());
         let event_logs = Arc::new(crate::log::EventLogs::new(
@@ -76,6 +93,7 @@ impl SessionService {
             sequences,
             event_logs,
             starting: RwLock::new(HashSet::new()),
+            chat_hosts_starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
             rotations_in_progress: RwLock::new(HashSet::new()),
             adapters,
@@ -83,9 +101,12 @@ impl SessionService {
             store,
             context,
             handovers,
+            chat_checkpoints,
             credentials,
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
+            chat_hosts,
+            chat_host_guards: Default::default(),
             session_limit_guards: Default::default(),
             deployment_capacity_guard: Default::default(),
             runtime_version: deployment.runtime_version,
@@ -217,6 +238,7 @@ impl SessionService {
         let mut offerings: Vec<_> = self
             .adapters
             .iter()
+            .filter(|(id, _)| self.trigger_kernel.as_ref() != Some(*id))
             .map(|(id, adapter)| (id.clone(), servable_modes(adapter.capabilities())))
             .collect();
         offerings.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
@@ -372,17 +394,30 @@ impl SessionService {
         caller: &Caller,
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
-        self.create_session_with_identity(caller, spec, SessionId::generate(), None)
-            .await
+        if spec.surface == Some(crate::SessionSurface::Chat) {
+            return self.create_chat_thread(caller, spec).await;
+        }
+        self.create_session_with_identity(
+            caller,
+            spec,
+            CreationIdentity::Fresh,
+            None,
+            SessionId::generate,
+        )
+        .await
     }
 
-    async fn create_session_with_identity(
+    async fn create_session_with_identity<F>(
         self: &Arc<Self>,
         caller: &Caller,
         spec: SessionSpec,
-        id: SessionId,
+        identity: CreationIdentity,
         trigger_origin: Option<crate::TriggerSessionOrigin>,
-    ) -> Result<Session, CoreError> {
+        generate_fresh_id: F,
+    ) -> Result<Session, CoreError>
+    where
+        F: FnOnce() -> SessionId + Send,
+    {
         caller.authorization.require(Capability::CreateSession)?;
         // Checked before anything is recorded: a selection this caller may not
         // use, or a store that cannot be read, must fail the request rather
@@ -401,6 +436,12 @@ impl SessionService {
             .environments
             .agent_for(caller, spec.environment_profile.as_ref())
             .await?;
+        if trigger_origin.is_none() && self.trigger_kernel.as_ref() == Some(&agent.kernel) {
+            return Err(CoreError::InvalidRequest(format!(
+                "runtime {} is reserved for managed Trigger sessions",
+                agent.kernel
+            )));
+        }
         let size = Self::resolve_size(&agent);
         let mut spec = spec;
         // Which plane a session is on is the exception, and only where no
@@ -539,8 +580,10 @@ impl SessionService {
             .refuse_at_session_limit(caller, settings.live_sessions)
             .await?;
 
+        let id = identity.resolve_with(generate_fresh_id);
         let geometry = spec.geometry.unwrap_or_default();
         let session = Session {
+            chat: None,
             id: id.clone(),
             owner: caller.subject.clone(),
             kernel: agent.kernel.clone(),
@@ -597,9 +640,9 @@ impl SessionService {
             )
             .await
         {
-            // This identifier was generated for this request and never became
-            // a session the caller can use. Keeping its three reserved event
-            // positions would retain one strong map key per failed creation.
+            // This identifier never became a session the caller can use.
+            // Keeping its three reserved event positions would retain one
+            // strong map key per failed creation.
             self.sequences.forget(&id);
             return Err(store_failed(error));
         }
@@ -618,6 +661,7 @@ impl SessionService {
         self.begin_start(&id).await;
         let service = Arc::clone(self);
         let spawned = record.session.clone();
+        let trigger_origin = record.trigger_origin.clone();
         tokio::spawn(async move {
             service
                 .bring_up(
@@ -629,7 +673,8 @@ impl SessionService {
                     crate::provision_support::BringUpContext::compatibility(
                         crate::provision_failure::Abandonment::Retire,
                         None,
-                    ),
+                    )
+                    .with_trigger_origin(trigger_origin),
                 )
                 .await;
         });
@@ -749,6 +794,7 @@ impl SessionService {
             ]),
         );
         let spec = SessionSpec {
+            surface: None,
             options: AgentOptions::default(),
             geometry: None,
             environment_profile: Some(profile.id.clone()),
@@ -758,7 +804,13 @@ impl SessionService {
             quoted_rate_card: None,
         };
         let attempted = self
-            .create_session_with_identity(&caller, spec, id.clone(), Some(origin.clone()))
+            .create_session_with_identity(
+                &caller,
+                spec,
+                CreationIdentity::Exact(id.clone()),
+                Some(origin.clone()),
+                SessionId::generate,
+            )
             .await;
         drop(creation);
         match attempted {
@@ -954,7 +1006,13 @@ impl SessionService {
                     })
                     && pricing.micros_per_hour > 0
             }
-            crate::BillingMode::Sponsored => false,
+            crate::BillingMode::Sponsored => {
+                pricing.policy_reference == crate::CMA_TRIGGER_SPONSORED_POLICY_V1
+                    && pricing.rate_card.is_none()
+                    && pricing.rate.is_none()
+                    && pricing.micros_per_hour == 0
+                    && pricing.estimated_micros == 0
+            }
         };
         if !common_is_valid || !terms_are_valid {
             return Err(crate::TriggerAdmissionError::PricingUnavailable(
@@ -1021,9 +1079,26 @@ impl SessionService {
                     expires_at: launch.draft_expires_at.clone(),
                 })
             }
-            crate::BillingMode::Sponsored => Err(crate::TriggerAdmissionError::PricingUnavailable(
-                "sponsored billing is disabled for the public MVP".into(),
-            )),
+            crate::BillingMode::Sponsored => {
+                if policy.policy_reference != crate::CMA_TRIGGER_SPONSORED_POLICY_V1 {
+                    return Err(crate::TriggerAdmissionError::PricingUnavailable(
+                        "the sponsored policy reference is not deployment-owned".into(),
+                    ));
+                }
+                Ok(crate::PricingSnapshot {
+                    policy_reference: policy.policy_reference.clone(),
+                    billing_mode: policy.billing_mode,
+                    rate_card: None,
+                    rate: None,
+                    currency: CURRENCY.into(),
+                    cpu_millis: size.cpu_millis(),
+                    memory_mib: size.memory_mib(),
+                    micros_per_hour: 0,
+                    estimated_micros: 0,
+                    quoted_at: now.to_string(),
+                    expires_at: launch.draft_expires_at.clone(),
+                })
+            }
         }
     }
 
@@ -1439,6 +1514,9 @@ pub(crate) fn trigger_session_origin(
     let connection = launch.connection.as_ref().ok_or_else(|| {
         CoreError::InvalidRequest("the Launch GitHub connection is not frozen".into())
     })?;
+    let (github_catalog_service_id, github_user_service_slug) = connection
+        .github_binding()
+        .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
     let pricing = launch.pricing.as_ref().ok_or_else(|| {
         CoreError::InvalidRequest("the Launch pricing snapshot is not frozen".into())
     })?;
@@ -1456,17 +1534,15 @@ pub(crate) fn trigger_session_origin(
             micros_per_hour: pricing.micros_per_hour,
             quoted_at: pricing.quoted_at.clone(),
         }),
-        crate::BillingMode::Sponsored => {
-            return Err(CoreError::InvalidRequest(
-                "sponsored Trigger billing is disabled".into(),
-            ));
-        }
+        crate::BillingMode::Sponsored => None,
     };
     let origin = crate::TriggerSessionOrigin {
         launch_id: launch.id.clone(),
         revision_digest: launch.revision_digest.clone(),
         sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
         github_service_id: connection.service_id.clone(),
+        github_catalog_service_id: Some(github_catalog_service_id.to_string()),
+        github_user_service_slug: Some(github_user_service_slug.to_string()),
         workspace_epoch: workspace.workspace_epoch,
         source_revision: launch.source_sha.clone(),
         manifest_digest: workspace.baseline.digest.clone(),

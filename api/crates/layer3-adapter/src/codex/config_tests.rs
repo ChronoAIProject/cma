@@ -11,10 +11,14 @@ fn spec_with(permission: RuntimePermission, effort: Option<&str>) -> RuntimeSpec
         skills: Vec::new(),
         reaches: Vec::new(),
         runtime_policy_required: false,
+        sponsored_model_required: false,
+        workspace_source_required: false,
+        conversation_slots_required: None,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
+        chat_host: None,
         generation: None,
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
@@ -109,6 +113,20 @@ fn each_level_of_authority_becomes_this_kernels_own_pair() {
             "{permission:?} got {config}"
         );
     }
+}
+
+#[test]
+fn unrestricted_chat_authority_stays_full_access_on_both_codex_paths() {
+    assert_eq!(
+        super::super::permission::mode_for(RuntimePermission::Unrestricted, false),
+        "agent-full-access"
+    );
+    let config = rendered(RuntimePermission::Unrestricted);
+    assert!(config.contains("approval_policy = \"never\""), "{config}");
+    assert!(
+        config.contains("sandbox_mode = \"danger-full-access\""),
+        "{config}"
+    );
 }
 
 #[test]

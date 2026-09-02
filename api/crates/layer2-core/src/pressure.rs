@@ -99,6 +99,13 @@ impl Default for MemoryPressurePolicy {
     }
 }
 
+/// When a session's processor use counts as sustained pressure.
+///
+/// CPU and memory use the same validated hysteresis and dwell contract. The
+/// alias keeps the settings independently named without duplicating a policy
+/// whose invariants and wire form are identical.
+pub type CpuPressurePolicy = MemoryPressurePolicy;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct PressurePolicyWire {
     enter_permille: u16,
@@ -169,12 +176,34 @@ pub struct PressureSample {
     pub at: Instant,
 }
 
+/// One processor reading, reduced to what the pressure fold needs.
+#[derive(Debug, Clone)]
+pub struct CpuPressureSample {
+    /// Occupancy of the reported processor limit, in permille.
+    pub occupancy_permille: Option<u16>,
+    /// Processor use over the reading interval, in thousandths of one core.
+    pub used_millis: u32,
+    /// The processor limit the reading was measured against.
+    pub limit_millis: Option<u32>,
+    /// When the reading was taken, monotonically.
+    pub at: Instant,
+}
+
 /// A session's current memory-pressure fold.
 ///
 /// This state belongs to a live entry and is never stored. Only the two edges
 /// it produces belong in durable history.
 #[derive(Debug, Default)]
 pub struct MemoryPressure {
+    phase: Phase,
+}
+
+/// A session's current processor-pressure fold.
+///
+/// Like memory pressure, this state is live-only. Only its opening and closing
+/// edges belong in durable history.
+#[derive(Debug, Default)]
+pub struct CpuPressure {
     phase: Phase,
 }
 
@@ -185,9 +214,9 @@ enum Phase {
     /// An episode is open.
     Open {
         opened_at: Instant,
-        limit_bytes: u64,
+        limit: u64,
         peak_permille: u16,
-        peak_bytes: u64,
+        peak: u64,
         /// Consecutive readings strictly below exit.
         below: u16,
         /// Consecutive entry-level readings while a close is pending.
@@ -219,119 +248,265 @@ pub enum PressureTransition {
     },
 }
 
+/// The only two durable processor-pressure edges the fold produces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CpuPressureTransition {
+    Opened {
+        used_millis: u32,
+        limit_millis: u32,
+        occupancy_permille: u16,
+    },
+    Closed {
+        peak_millis: u32,
+        limit_millis: u32,
+        peak_permille: u16,
+        duration_seconds: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EpisodeSample {
+    occupancy_permille: Option<u16>,
+    used: u64,
+    limit: Option<u64>,
+    at: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EpisodeTransition {
+    Opened {
+        used: u64,
+        limit: u64,
+        occupancy_permille: u16,
+    },
+    Closed {
+        peak: u64,
+        limit: u64,
+        peak_permille: u16,
+        duration_seconds: u32,
+    },
+}
+
 impl MemoryPressure {
     /// Fold one reading, returning only an episode edge.
-    #[allow(clippy::question_mark)] // Keep the absence rule explicit at the fold boundary.
     pub fn evaluate(
         &mut self,
         sample: &PressureSample,
         policy: &MemoryPressurePolicy,
     ) -> Option<PressureTransition> {
-        let Some(occupancy) = sample.occupancy_permille else {
-            return None;
-        };
-        let sample_limit = sample.limit_bytes?;
-
-        match &mut self.phase {
-            Phase::Quiet { above } => {
-                if occupancy >= policy.enter_permille {
-                    *above = above.saturating_add(1);
-                } else {
-                    *above = 0;
-                }
-                if *above < policy.enter_samples {
-                    return None;
-                }
-
-                self.phase = Phase::Open {
-                    opened_at: sample.at,
-                    limit_bytes: sample_limit,
-                    peak_permille: occupancy,
-                    peak_bytes: sample.used_bytes,
-                    below: 0,
-                    returning: 0,
-                    settling_since: None,
-                };
-                Some(PressureTransition::Opened {
-                    used_bytes: sample.used_bytes,
-                    limit_bytes: sample_limit,
-                    occupancy_permille: occupancy,
-                })
-            }
-            Phase::Open {
-                opened_at,
-                limit_bytes,
+        evaluate_episode(
+            &mut self.phase,
+            &EpisodeSample {
+                occupancy_permille: sample.occupancy_permille,
+                used: sample.used_bytes,
+                limit: sample.limit_bytes,
+                at: sample.at,
+            },
+            policy,
+        )
+        .map(|transition| match transition {
+            EpisodeTransition::Opened {
+                used,
+                limit,
+                occupancy_permille,
+            } => PressureTransition::Opened {
+                used_bytes: used,
+                limit_bytes: limit,
+                occupancy_permille,
+            },
+            EpisodeTransition::Closed {
+                peak,
+                limit,
                 peak_permille,
-                peak_bytes,
-                below,
-                returning,
-                settling_since,
-            } => {
-                *peak_permille = (*peak_permille).max(occupancy);
-                *peak_bytes = (*peak_bytes).max(sample.used_bytes);
-
-                if occupancy >= policy.enter_permille {
-                    if settling_since.is_some() {
-                        *returning = returning.saturating_add(1);
-                        if *returning >= policy.enter_samples {
-                            *settling_since = None;
-                            *returning = 0;
-                            *below = 0;
-                            return None;
-                        }
-                    } else {
-                        *returning = 0;
-                    }
-                } else {
-                    *returning = 0;
-                }
-
-                if occupancy < policy.exit_permille {
-                    *below = below.saturating_add(1);
-                    if *below >= policy.exit_samples && settling_since.is_none() {
-                        *settling_since = Some(sample.at);
-                    }
-                } else {
-                    *below = 0;
-                }
-
-                let since = (*settling_since)?;
-                if sample.at.duration_since(since)
-                    < Duration::from_secs(u64::from(policy.settle_seconds))
-                {
-                    return None;
-                }
-
-                let transition = PressureTransition::Closed {
-                    peak_bytes: *peak_bytes,
-                    limit_bytes: *limit_bytes,
-                    peak_permille: *peak_permille,
-                    duration_seconds: sample.at.duration_since(*opened_at).as_secs() as u32,
-                };
-                self.phase = Phase::Quiet { above: 0 };
-                Some(transition)
-            }
-        }
+                duration_seconds,
+            } => PressureTransition::Closed {
+                peak_bytes: peak,
+                limit_bytes: limit,
+                peak_permille,
+                duration_seconds,
+            },
+        })
     }
 
     /// Close an open episode immediately when its live entry stops serving.
     pub fn abandon(&mut self, at: Instant) -> Option<PressureTransition> {
-        let phase = std::mem::take(&mut self.phase);
-        let Phase::Open {
-            opened_at,
-            limit_bytes,
-            peak_permille,
-            peak_bytes,
-            ..
-        } = phase
-        else {
-            return None;
-        };
-        Some(PressureTransition::Closed {
-            peak_bytes,
-            limit_bytes,
-            peak_permille,
-            duration_seconds: at.duration_since(opened_at).as_secs() as u32,
+        abandon_episode(&mut self.phase, at).map(|transition| match transition {
+            EpisodeTransition::Opened { .. } => unreachable!("abandon only closes an episode"),
+            EpisodeTransition::Closed {
+                peak,
+                limit,
+                peak_permille,
+                duration_seconds,
+            } => PressureTransition::Closed {
+                peak_bytes: peak,
+                limit_bytes: limit,
+                peak_permille,
+                duration_seconds,
+            },
         })
     }
+}
+
+impl CpuPressure {
+    /// Fold one reading, returning only an episode edge.
+    pub fn evaluate(
+        &mut self,
+        sample: &CpuPressureSample,
+        policy: &CpuPressurePolicy,
+    ) -> Option<CpuPressureTransition> {
+        evaluate_episode(
+            &mut self.phase,
+            &EpisodeSample {
+                occupancy_permille: sample.occupancy_permille,
+                used: u64::from(sample.used_millis),
+                limit: sample.limit_millis.map(u64::from),
+                at: sample.at,
+            },
+            policy,
+        )
+        .map(cpu_transition)
+    }
+
+    /// Close an open episode immediately when its live entry stops serving.
+    pub fn abandon(&mut self, at: Instant) -> Option<CpuPressureTransition> {
+        abandon_episode(&mut self.phase, at).map(cpu_transition)
+    }
+}
+
+fn cpu_transition(transition: EpisodeTransition) -> CpuPressureTransition {
+    match transition {
+        EpisodeTransition::Opened {
+            used,
+            limit,
+            occupancy_permille,
+        } => CpuPressureTransition::Opened {
+            used_millis: used as u32,
+            limit_millis: limit as u32,
+            occupancy_permille,
+        },
+        EpisodeTransition::Closed {
+            peak,
+            limit,
+            peak_permille,
+            duration_seconds,
+        } => CpuPressureTransition::Closed {
+            peak_millis: peak as u32,
+            limit_millis: limit as u32,
+            peak_permille,
+            duration_seconds,
+        },
+    }
+}
+
+#[allow(clippy::question_mark)] // Keep the absence rule explicit at the fold boundary.
+fn evaluate_episode(
+    phase: &mut Phase,
+    sample: &EpisodeSample,
+    policy: &MemoryPressurePolicy,
+) -> Option<EpisodeTransition> {
+    let Some(occupancy) = sample.occupancy_permille else {
+        return None;
+    };
+    let sample_limit = sample.limit?;
+
+    match phase {
+        Phase::Quiet { above } => {
+            if occupancy >= policy.enter_permille {
+                *above = above.saturating_add(1);
+            } else {
+                *above = 0;
+            }
+            if *above < policy.enter_samples {
+                return None;
+            }
+
+            *phase = Phase::Open {
+                opened_at: sample.at,
+                limit: sample_limit,
+                peak_permille: occupancy,
+                peak: sample.used,
+                below: 0,
+                returning: 0,
+                settling_since: None,
+            };
+            Some(EpisodeTransition::Opened {
+                used: sample.used,
+                limit: sample_limit,
+                occupancy_permille: occupancy,
+            })
+        }
+        Phase::Open {
+            opened_at,
+            limit,
+            peak_permille,
+            peak,
+            below,
+            returning,
+            settling_since,
+        } => {
+            *peak_permille = (*peak_permille).max(occupancy);
+            *peak = (*peak).max(sample.used);
+
+            if occupancy >= policy.enter_permille {
+                if settling_since.is_some() {
+                    *returning = returning.saturating_add(1);
+                    if *returning >= policy.enter_samples {
+                        *settling_since = None;
+                        *returning = 0;
+                        *below = 0;
+                        return None;
+                    }
+                } else {
+                    *returning = 0;
+                }
+            } else {
+                *returning = 0;
+            }
+
+            if occupancy < policy.exit_permille {
+                *below = below.saturating_add(1);
+                if *below >= policy.exit_samples && settling_since.is_none() {
+                    *settling_since = Some(sample.at);
+                }
+            } else {
+                *below = 0;
+            }
+
+            let since = (*settling_since)?;
+            if sample.at.duration_since(since)
+                < Duration::from_secs(u64::from(policy.settle_seconds))
+            {
+                return None;
+            }
+
+            let transition = EpisodeTransition::Closed {
+                peak: *peak,
+                limit: *limit,
+                peak_permille: *peak_permille,
+                duration_seconds: sample.at.duration_since(*opened_at).as_secs() as u32,
+            };
+            *phase = Phase::Quiet { above: 0 };
+            Some(transition)
+        }
+    }
+}
+
+fn abandon_episode(phase: &mut Phase, at: Instant) -> Option<EpisodeTransition> {
+    let previous = std::mem::take(phase);
+    let Phase::Open {
+        opened_at,
+        limit,
+        peak_permille,
+        peak,
+        ..
+    } = previous
+    else {
+        return None;
+    };
+    Some(EpisodeTransition::Closed {
+        peak,
+        limit,
+        peak_permille,
+        duration_seconds: at.duration_since(opened_at).as_secs() as u32,
+    })
 }

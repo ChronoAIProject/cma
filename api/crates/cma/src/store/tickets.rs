@@ -139,6 +139,8 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::ConfigurePlatform => "configure_platform",
         Capability::ControlAnySession => "control_any_session",
         Capability::ExceedSessionLimit => "exceed_session_limit",
+        Capability::ManageOwnSponsorships => "manage_own_sponsorships",
+        Capability::ReconcileSponsoredUsage => "reconcile_sponsored_usage",
     }
 }
 
@@ -156,6 +158,8 @@ fn capability(name: &str) -> Result<Capability, StoreError> {
         "configure_platform" => Ok(Capability::ConfigurePlatform),
         "control_any_session" => Ok(Capability::ControlAnySession),
         "exceed_session_limit" => Ok(Capability::ExceedSessionLimit),
+        "manage_own_sponsorships" => Ok(Capability::ManageOwnSponsorships),
+        "reconcile_sponsored_usage" => Ok(Capability::ReconcileSponsoredUsage),
         other => Err(StoreError::Malformed(format!(
             "terminal ticket names unknown capability {other:?}"
         ))),

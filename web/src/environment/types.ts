@@ -268,6 +268,11 @@ export function isValidKey(key: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
 }
 
+/** Whether one profile-size figure is representable by the public API. */
+export function isValidProfileSizeValue(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0 && value <= 4_294_967_295;
+}
+
 /**
  * What is wrong with a draft, or null when nothing is.
  *
@@ -277,6 +282,13 @@ export function isValidKey(key: string): boolean {
 export function validate(draft: ProfileDraft): string | null {
   if (draft.name.trim().length === 0) {
     return 'Give the profile a name.';
+  }
+  const size = draft.agent.size;
+  if (size !== undefined && !isValidProfileSizeValue(size.cpuMillis)) {
+    return 'Enter CPU as a positive whole number of millicores.';
+  }
+  if (size !== undefined && !isValidProfileSizeValue(size.memoryMib)) {
+    return 'Enter memory as a positive whole number of MiB.';
   }
   const seen = new Set<string>();
   for (const variable of draft.variables) {

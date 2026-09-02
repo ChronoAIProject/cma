@@ -174,9 +174,7 @@ impl AuthorityAdmissionSnapshot {
         })?;
         if !same_connection_authority(retained, &self.connection)
             || self.authority.subject != launch.owner
-            || self.authority.service_id != self.connection.service_id
-            || self.authority.service_state_version != self.connection.service_state_version
-            || self.authority.backing_key_id != self.connection.backing_key_id
+            || self.authority.detects_drift(&self.connection)
             || self.authority.state != DelegationState::Available
             || crate::seconds_from_rfc3339(&self.authority.observed_at).is_none()
             || !same_repository_authority(
@@ -436,6 +434,8 @@ impl CapabilityAuthorityAdmission {
 
 fn same_connection_authority(expected: &ConnectionSnapshot, actual: &ConnectionSnapshot) -> bool {
     expected.service_id == actual.service_id
+        && expected.github_catalog_service_id == actual.github_catalog_service_id
+        && expected.github_user_service_slug == actual.github_user_service_slug
         && expected.service_state_version == actual.service_state_version
         && expected.backing_key_id == actual.backing_key_id
         && expected.account.account_id == actual.account.account_id
@@ -537,6 +537,53 @@ impl Launch {
                 )
             })?;
         admission.validate_effect_for(self, claim)?;
+        Ok(admission)
+    }
+
+    /// Return the immutable admission retained for a reconciliation claim.
+    ///
+    /// This is evidence that the original worker may have crossed its external
+    /// boundary. It is deliberately separate from
+    /// [`Self::effect_authority_admission_at`]: the returned snapshot retains the
+    /// original fence and cannot authorize a write under the replacement
+    /// worker's lease. A reconciler may use it only to bind read-only provider or
+    /// runtime observations to the original intent.
+    pub fn historical_effect_authority_admission(
+        &self,
+        claim: &EffectClaim,
+    ) -> Result<&AuthorityAdmissionSnapshot, TriggerValidationError> {
+        if claim.mode != EffectClaimMode::Reconcile {
+            return Err(TriggerValidationError::field(
+                "effect_claim.mode",
+                "must be reconciliation before historical admission is read",
+            ));
+        }
+        let admission = self
+            .effects
+            .iter()
+            .find(|record| {
+                record.kind == claim.kind
+                    && record.intent_key == claim.intent_key
+                    && record.attempt == claim.attempt
+                    && record.fence == claim.fence
+                    && record.state == super::EffectState::Reconciling
+            })
+            .and_then(|record| record.authority_admission.as_ref())
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "authority_admission",
+                    "has no retained executable evidence for this reconciliation",
+                )
+            })?;
+        let original = EffectClaim {
+            kind: claim.kind,
+            mode: EffectClaimMode::Execute,
+            intent_key: claim.intent_key.clone(),
+            attempt: claim.attempt,
+            reconciliation_attempt: 0,
+            fence: admission.fence,
+        };
+        admission.validate_effect_for(self, &original)?;
         Ok(admission)
     }
 

@@ -1628,6 +1628,7 @@ dependencies = [
  "tower",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -1636,6 +1637,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "layer3-adapter",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1644,7 +1646,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
+ "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -1664,6 +1668,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.24.0",
  "tracing",
+ "url",
  "uuid",
  "vt100",
 ]
@@ -1688,6 +1693,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
+ "url",
 ]
 
 [[package]]
@@ -2908,6 +2914,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3639,6 +3651,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

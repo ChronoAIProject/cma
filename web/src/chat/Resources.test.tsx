@@ -3,8 +3,14 @@ import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import type { MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
-import { MemoryPressureNotice, Resources, formatBytes } from './Resources';
+import type { CpuPressure, MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
+import {
+  CpuPressureNotice,
+  MemoryPressureNotice,
+  Resources,
+  formatBytes,
+  formatMemory,
+} from './Resources';
 
 function reading(overrides: Partial<ResourceReading> = {}): ResourceReading {
   return {
@@ -31,6 +37,13 @@ const PRESSURE: MemoryPressure = {
   limitBytes: 1024 ** 3,
   occupancyPermille: 871,
   since: '2026-08-23T04:12:00Z',
+};
+
+const CPU_PRESSURE: CpuPressure = {
+  usedMillis: 850,
+  limitMillis: 1000,
+  occupancyPermille: 850,
+  since: '2026-08-23T04:12:02Z',
 };
 
 describe('the seven resource sentences', () => {
@@ -61,7 +74,7 @@ describe('the seven resource sentences', () => {
           })}
         />
       ),
-      expected: 'Memory · 892 MiB / 1 GiB',
+      expected: 'Memory · 892 MiB / 1024 MiB',
     },
     {
       name: 'a figure without a ceiling',
@@ -83,7 +96,7 @@ describe('the seven resource sentences', () => {
   it.each(cases)('renders $name without inventing zero', ({ view, expected }) => {
     render(view);
     expect(screen.getByText(expected)).toBeInTheDocument();
-    expect(expected).not.toContain('0');
+    expect(expected).not.toMatch(/(?:^|\D)0(?:\D|$)/);
   });
 
   it('keeps all seven meanings in different words', () => {
@@ -121,7 +134,7 @@ describe('bounded and unbounded readings', () => {
     const view = render(
       <Resources granted resources={reading({ cpuMillisUsed: 500, cpuMillisLimit: 1000 })} />,
     );
-    expect(screen.getByText('CPU · 500m / 1 core')).toBeInTheDocument();
+    expect(screen.getByText('CPU · 500m / 1000m')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'CPU' })).toHaveAttribute('aria-valuenow', '50');
 
     view.rerender(<Resources granted resources={reading({ cpuMillisLimit: 1000 })} />);
@@ -154,16 +167,40 @@ describe('bounded and unbounded readings', () => {
           cpuMillisUsed: 500,
           cpuMillisLimit: 1000,
         })}
-        pressure={PRESSURE}
+        memoryPressure={PRESSURE}
       />,
     );
 
-    expect(screen.getByText('Memory under pressure · 892 MiB / 1 GiB')).toBeInTheDocument();
+    expect(screen.getByText('Memory under pressure · 892 MiB / 1024 MiB')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Memory under pressure' })).toHaveAttribute(
       'data-pressure',
       'true',
     );
     expect(screen.getByRole('progressbar', { name: 'CPU' })).not.toHaveAttribute('data-pressure');
+  });
+
+  it('states CPU pressure in the processor figure and accessible label', () => {
+    render(
+      <Resources
+        granted
+        resources={reading({
+          cpuMillisUsed: CPU_PRESSURE.usedMillis,
+          cpuMillisLimit: CPU_PRESSURE.limitMillis,
+          memoryBytesUsed: PRESSURE.usedBytes,
+          memoryBytesLimit: PRESSURE.limitBytes,
+        })}
+        cpuPressure={CPU_PRESSURE}
+      />,
+    );
+
+    expect(screen.getByText('CPU under pressure · 850m / 1000m')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'CPU under pressure' })).toHaveAttribute(
+      'data-pressure',
+      'true',
+    );
+    expect(screen.getByRole('progressbar', { name: 'Memory' })).not.toHaveAttribute(
+      'data-pressure',
+    );
   });
 });
 
@@ -174,6 +211,11 @@ describe('byte figures', () => {
     expect(formatBytes(18 * 1024)).toBe('18 KiB');
     expect(formatBytes(892 * 1024 ** 2)).toBe('892 MiB');
     expect(formatBytes(1024 ** 3)).toBe('1 GiB');
+  });
+
+  it('keeps session memory ceilings in mebibytes', () => {
+    expect(formatMemory(435 * 1024 ** 2)).toBe('435 MiB');
+    expect(formatMemory(4 * 1024 ** 3)).toBe('4096 MiB');
   });
 });
 
@@ -206,6 +248,24 @@ describe('the memory-pressure notice', () => {
   });
 });
 
+describe('the CPU-pressure notice', () => {
+  it('is actionable, uses processor units, and dismisses independently', async () => {
+    const person = userEvent.setup();
+    render(<CpuPressureNotice pressure={CPU_PRESSURE} />);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('CPU pressure is high');
+    expect(alert).toHaveTextContent('850m used of 1000m');
+    await person.click(screen.getByRole('button', { name: 'Dismiss cpu pressure notice' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('renders no notice without an open episode', () => {
+    const { container } = render(<CpuPressureNotice pressure={undefined} />);
+    expect(container.firstChild).toBeNull();
+  });
+});
+
 describe('resource motion', () => {
   it('uses no keyframe or animation and only the shared transition vocabulary', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/chat/Resources.css'), 'utf8');
@@ -217,5 +277,11 @@ describe('resource motion', () => {
       'transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);',
     );
     expect(css).toMatch(/prefers-reduced-motion:\s*reduce/);
+  });
+
+  it('keeps memory, CPU, and network in three fixed columns', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/chat/Resources.css'), 'utf8');
+
+    expect(css).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
   });
 });

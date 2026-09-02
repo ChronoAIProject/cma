@@ -454,7 +454,7 @@ async fn a_conversation_close_removes_its_registered_generation() {
     assert!(control
         .send(crate::TerminalInput::Credential {
             operation_id: "unused-operation".into(),
-            value: "unused".into(),
+            credential: crate::RuntimeCredential::from("unused"),
         })
         .await
         .is_err());
@@ -464,9 +464,10 @@ async fn a_conversation_close_removes_its_registered_generation() {
 async fn a_fresh_conversation_is_started_and_held_to_its_mode() {
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;
+    let cwd = "/home/chrono/worktrees/chat 1/[literal]".to_string();
     open_bridge(
         stream,
-        "/home/chrono".into(),
+        cwd.clone(),
         Some("read-only".into()),
         None,
         None,
@@ -481,6 +482,12 @@ async fn a_fresh_conversation_is_started_and_held_to_its_mode() {
         "a session is initialized, started, then pinned to what its owner asked for"
     );
     assert_eq!(done.mode.as_deref(), Some("read-only"));
+    let session_new = done
+        .frames
+        .iter()
+        .find(|frame| frame["method"] == "session/new")
+        .expect("the fresh-session call was recorded");
+    assert_eq!(session_new["params"]["cwd"], cwd);
 }
 
 #[tokio::test]
@@ -489,22 +496,22 @@ async fn a_carried_conversation_is_loaded_rather_than_started_again() {
     // identifier, so its owner's history is still there after a rotation.
     let (url, served) = bridging(Some("conv-carried"), None, Some(3)).await;
     let stream = connect(&url).await;
-    open_bridge(
-        stream,
-        "/home/chrono".into(),
-        Some("agent".into()),
-        None,
-        None,
-        false,
-    )
-    .await
-    .expect("the bridge answered everything");
+    let cwd = "/home/chrono/worktrees/chat 2/#verbatim?".to_string();
+    open_bridge(stream, cwd.clone(), Some("agent".into()), None, None, false)
+        .await
+        .expect("the bridge answered everything");
     let done = served.await.expect("the fixture finished");
     assert_eq!(
         done.asked,
         vec!["initialize", "session/load", "session/set_mode"],
         "a carried conversation must be loaded, never started fresh"
     );
+    let session_load = done
+        .frames
+        .iter()
+        .find(|frame| frame["method"] == "session/load")
+        .expect("the carried-session call was recorded");
+    assert_eq!(session_load["params"]["cwd"], cwd);
 }
 
 #[tokio::test]

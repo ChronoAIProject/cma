@@ -58,6 +58,13 @@
   border-radius: 12px;
 }
 
+.sessionheader[data-surface='chat'] .sessionheader__crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Pushes the action cluster to the trailing edge. */
 .sessionheader__spacer {
   flex: 1;
@@ -96,5 +103,9 @@
 
   .sessionheader__spacer {
     display: none;
+  }
+
+  .sessionheader[data-surface='chat'] .sessionheader__crumb {
+    flex: 1 1 160px;
   }
 }

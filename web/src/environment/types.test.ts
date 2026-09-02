@@ -79,6 +79,32 @@ describe('validate', () => {
     });
     expect(message).not.toContain('super-secret');
   });
+
+  it('requires a complete positive whole-number sandbox size', () => {
+    const base = { ...emptyDraft(), name: 'mine' };
+    for (const [size, expected] of [
+      [{ cpuMillis: Number.NaN, memoryMib: 1024 }, /CPU/i],
+      [{ cpuMillis: 0, memoryMib: 1024 }, /CPU/i],
+      [{ cpuMillis: 1.5, memoryMib: 1024 }, /CPU/i],
+      [{ cpuMillis: 4_294_967_296, memoryMib: 1024 }, /CPU/i],
+      [{ cpuMillis: 1000, memoryMib: Number.NaN }, /memory/i],
+      [{ cpuMillis: 1000, memoryMib: 0 }, /memory/i],
+      [{ cpuMillis: 1000, memoryMib: 1024.5 }, /memory/i],
+      [{ cpuMillis: 1000, memoryMib: 4_294_967_296 }, /memory/i],
+    ] as const) {
+      expect(validate({ ...base, agent: { ...base.agent, size } })).toMatch(expected);
+    }
+  });
+
+  it('accepts a valid explicit sandbox size', () => {
+    const base = { ...emptyDraft(), name: 'mine' };
+    expect(
+      validate({
+        ...base,
+        agent: { ...base.agent, size: { cpuMillis: 2000, memoryMib: 8192 } },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe('draftOf', () => {

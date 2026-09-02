@@ -133,7 +133,7 @@ impl SessionService {
                 "the Trigger session no longer matches this Launch authority".into(),
             ));
         }
-        let mut initial = record.initial_prompt.ok_or(CoreError::InvalidState)?;
+        let mut initial = record.initial_prompt.ok_or_else(CoreError::invalid_state)?;
         validate_existing(&initial, launch, &id)?;
 
         match initial.delivery.state {
@@ -142,7 +142,7 @@ impl SessionService {
                     .reach
                     .as_ref()
                     .map(|reach| reach.runtime_audience.as_str())
-                    .ok_or(CoreError::InvalidState)?;
+                    .ok_or_else(CoreError::invalid_state)?;
                 {
                     let entries = self.entries.read().await;
                     let entry = entries.get(&id).ok_or_else(|| {
@@ -370,7 +370,7 @@ impl SessionService {
                 Some(PromptDeliveryState::Queued),
             )?;
             if !entry.pending_approvals.is_empty() || entry.session.status != SessionStatus::Ready {
-                return Err(CoreError::InvalidState);
+                return Err(CoreError::invalid_state());
             }
             let input = entry.conversation.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("this session holds no conversation".into())
@@ -517,7 +517,7 @@ fn require_live_state(
     expected: Option<PromptDeliveryState>,
 ) -> Result<(), CoreError> {
     if current.map(|initial| initial.delivery.state) != expected {
-        return Err(CoreError::InvalidState);
+        return Err(CoreError::invalid_state());
     }
     Ok(())
 }
@@ -533,7 +533,7 @@ fn validate_dispatch_prerequisites(launch: &Launch) -> Result<(), CoreError> {
             .as_ref()
             .is_none_or(|reach| reach.state != CapabilityRevocationState::Active)
     {
-        return Err(CoreError::InvalidState);
+        return Err(CoreError::invalid_state());
     }
     Ok(())
 }
@@ -547,7 +547,7 @@ fn validate_dispatch_authority(
             "the worker claim is not for initial prompt dispatch".into(),
         ));
     }
-    let lease = launch.lease.as_ref().ok_or(CoreError::InvalidState)?;
+    let lease = launch.lease.as_ref().ok_or_else(CoreError::invalid_state)?;
     let expected_mode = match claim.mode {
         EffectClaimMode::Execute => EffectState::Claimed,
         EffectClaimMode::Reconcile => EffectState::Reconciling,
@@ -561,7 +561,7 @@ fn validate_dispatch_authority(
             && effect.state == expected_mode
     });
     if !claimed || lease.fencing_token != claim.fence || launch.fencing_counter != claim.fence {
-        return Err(CoreError::InvalidState);
+        return Err(CoreError::invalid_state());
     }
     let authority = DispatchAuthority {
         fence: claim.fence,
@@ -581,7 +581,7 @@ impl DispatchAuthority {
             .unwrap_or_default()
             .as_secs();
         if self.fence == 0 || now >= expiry {
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
         Ok(())
     }
@@ -650,9 +650,15 @@ fn validate_existing(
 
 pub(crate) fn render_payload(launch: &Launch) -> Result<String, CoreError> {
     let upstream = &launch.revision.content.upstream.repository;
-    let fork = launch.fork.as_ref().ok_or(CoreError::InvalidState)?;
-    let branch = launch.branch.as_ref().ok_or(CoreError::InvalidState)?;
-    let workspace = launch.workspace.as_ref().ok_or(CoreError::InvalidState)?;
+    let fork = launch.fork.as_ref().ok_or_else(CoreError::invalid_state)?;
+    let branch = launch
+        .branch
+        .as_ref()
+        .ok_or_else(CoreError::invalid_state)?;
+    let workspace = launch
+        .workspace
+        .as_ref()
+        .ok_or_else(CoreError::invalid_state)?;
     let document = json!({
         "schema": "cma.github_trigger.initial_prompt.v1",
         "launch_id": launch.id,

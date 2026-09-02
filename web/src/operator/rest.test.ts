@@ -41,6 +41,42 @@ const SETTINGS_WIRE = {
   },
 };
 
+const CHAT_WIRE = {
+  enabled: true,
+  workspace: { repository_url: 'https://example.test/team/chat.git', branch: 'dev' },
+  agent: {
+    model: null,
+    reasoning_effort: 'high',
+    instructions: 'Review agent.md.',
+    record_tool_bodies: true,
+  },
+  message_prefixes: ['/codex-formalize'],
+  inactivity: { pause_after_seconds: 900 },
+  setup: { commands: ['npm ci'] },
+  host: { size: { cpu_millis: 2_000, memory_mib: 4_096 }, max_threads: 10 },
+};
+
+const CHAT_HOST_WIRE = {
+  id: 'chho_0123456789abcdef0123456789abcdef',
+  owner: 'subject-chat-owner',
+  status: 'active',
+  thread_count: 3,
+  runtime_version: 'runtime-v2',
+  paused_at: '2026-09-01T01:00:00Z',
+  revived_at: '2026-09-01T02:00:00Z',
+  checkpoint_captured_at: '2026-09-01T00:45:00Z',
+  last_failure: {
+    phase: 'workspace_setup',
+    command_index: 1,
+    output_excerpt: 'bounded setup failure',
+    retryable: true,
+    cleanup_pending: false,
+    occurred_at: '2026-09-01T02:05:00Z',
+  },
+  settings_revision: 17,
+  created_at: '2026-08-31T23:00:00Z',
+};
+
 /**
  * The operator store that talks to the control plane.
  *
@@ -395,6 +431,50 @@ describe('talking to the control plane', () => {
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('POST');
   });
 
+  it('decodes, paginates, and retires chat hosts through their admin routes', async () => {
+    const older = {
+      ...CHAT_HOST_WIRE,
+      id: 'chho_fedcba9876543210fedcba9876543210',
+      status: 'paused',
+    };
+    const retired = { ...CHAT_HOST_WIRE, status: 'retired' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        respond([CHAT_HOST_WIRE], 200, {
+          Link: '</api/v1/admin/chat/hosts?limit=50&cursor=opaque>; rel="next"',
+        }),
+      )
+      .mockResolvedValueOnce(respond([older]))
+      .mockResolvedValueOnce(respond(retired));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = createRestOperatorStore();
+    const hosts = await store.chatHosts();
+    expect(hosts).toHaveLength(2);
+    expect(hosts[0]).toMatchObject({
+      id: CHAT_HOST_WIRE.id,
+      owner: 'subject-chat-owner',
+      status: 'active',
+      threadCount: 3,
+      settingsRevision: 17,
+      lastFailure: {
+        phase: 'workspace_setup',
+        commandIndex: 1,
+        outputExcerpt: 'bounded setup failure',
+      },
+      createdAt: Date.parse(CHAT_HOST_WIRE.created_at),
+    });
+    await store.retireChatHost(CHAT_HOST_WIRE.id);
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/admin/chat/hosts',
+      '/api/v1/admin/chat/hosts?limit=50&cursor=opaque',
+      `/api/v1/admin/chat/hosts/${CHAT_HOST_WIRE.id}/retire`,
+    ]);
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('POST');
+  });
+
   it('acts on a session through its own address, encoded', async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(null, 204));
     vi.stubGlobal('fetch', fetchMock);
@@ -414,7 +494,7 @@ describe('talking to the control plane', () => {
     const store = createRestOperatorStore();
     const current = await store.readPlatformSettings();
     await store.changePlatformSettings(current.revision, current.settings);
-    await store.resetPlatformBriefing(current.revision);
+    await store.resetPlatformSettings(current.revision);
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/admin/settings');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/admin/settings');
@@ -431,6 +511,31 @@ describe('talking to the control plane', () => {
     expect(fetchMock.mock.calls[2]?.[1]).toEqual(
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ expected_revision: 7 }) }),
     );
+  });
+
+  it('reads and conditionally replaces Chat through the public SDK route', async () => {
+    const response = { revision: 7, settings: { chat: CHAT_WIRE }, previous: { chat: null } };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(respond(response)));
+    vi.stubGlobal('fetch', fetchMock);
+    const store = createRestOperatorStore();
+
+    const current = await store.readChatSettings();
+    expect(current.chat?.workspace.repositoryUrl).toBe('https://example.test/team/chat.git');
+    await store.changeChatSettings(current.revision, current.chat);
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/admin/settings',
+      '/api/v1/admin/settings',
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ credentials: 'include' }),
+    );
+    const change = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(change.method).toBe('PATCH');
+    expect(JSON.parse(String(change.body))).toEqual({
+      expected_revision: 7,
+      chat: CHAT_WIRE,
+    });
   });
 
   it('maps the settings conflict code to the operator-domain error', async () => {

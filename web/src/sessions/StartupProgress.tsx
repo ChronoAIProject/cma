@@ -21,6 +21,15 @@ interface StartupProgressProps {
   readonly stage: Stage | null;
 }
 
+/** The shared, wire-truthful stage line, also used while a paused Chat revives. */
+export function StartupStage({ stage }: Pick<StartupProgressProps, 'stage'>) {
+  return (
+    <p className="startup__stage" aria-live="polite">
+      {stage === null ? 'Starting…' : stageLabel(stage)}
+    </p>
+  );
+}
+
 export function StartupProgress({ message, stage }: StartupProgressProps) {
   const fraction = stage === null ? 0 : stageProgress(stage);
   const percent = Math.round(fraction * 100);
@@ -47,9 +56,7 @@ export function StartupProgress({ message, stage }: StartupProgressProps) {
        * "connecting to the terminal" fail for different reasons, and knowing
        * which one is slow is most of what someone wants when it is slow.
        */}
-      <p className="startup__stage" aria-live="polite">
-        {stage === null ? 'Starting…' : stageLabel(stage)}
-      </p>
+      <StartupStage stage={stage} />
     </div>
   );
 }

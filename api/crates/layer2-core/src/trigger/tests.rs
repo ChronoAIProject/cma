@@ -16,6 +16,7 @@ const DRAFT_EXPIRY: &str = "2026-08-27T12:00:00Z";
 const AFTER_DRAFT_EXPIRY: &str = "2026-08-27T12:00:01Z";
 pub(crate) const TEST_TRIGGER_RUNTIME_VERSION: &str = "cma-trigger-test-runtime@sha256:admitted";
 const TEST_TRIGGER_KERNEL: &str = "trigger-test-kernel";
+const TEST_HISTORICAL_KERNEL: &str = "historical-trigger-test-kernel";
 
 pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
     let owner = SubjectId("trigger-contributor".into());
@@ -149,6 +150,204 @@ fn capability_lifetime_is_hard_bounded() {
     capability.validate().unwrap();
     capability.expires_at_epoch_seconds += 1;
     assert!(capability.validate().is_err());
+}
+
+#[test]
+fn connection_generation_must_be_positive() {
+    let mut snapshot = connection();
+    snapshot
+        .validate_for(&[ScopeClass::PublicRepository])
+        .unwrap();
+
+    for invalid_generation in [0, -1] {
+        snapshot.service_state_version = invalid_generation;
+        let error = snapshot
+            .validate_for(&[ScopeClass::PublicRepository])
+            .unwrap_err();
+        assert!(error.to_string().contains("generation data"));
+    }
+}
+
+#[test]
+fn fresh_connection_authority_requires_the_exact_canonical_github_binding() {
+    let required = [ScopeClass::PublicRepository];
+
+    for (catalog_service_id, user_service_slug) in [
+        (None, Some("api-github-2")),
+        (Some("catalog-github"), None),
+        (Some("catalog.github"), Some("api-github-2")),
+        (Some("catalog-github"), Some("API-github")),
+        (Some("catalog-github"), Some("-api-github")),
+        (Some("catalog-github"), Some("api-github-")),
+    ] {
+        let mut snapshot = connection();
+        snapshot.github_catalog_service_id = catalog_service_id.map(str::to_string);
+        snapshot.github_user_service_slug = user_service_slug.map(str::to_string);
+        assert!(snapshot.validate_for(&required).is_err());
+    }
+
+    let mut valid = connection();
+    valid.github_user_service_slug = Some("api--github-2".into());
+    valid.validate_for(&required).unwrap();
+}
+
+#[test]
+fn historical_connection_authority_remains_readable_without_v2_binding() {
+    let mut wire = serde_json::to_value(connection()).unwrap();
+    let object = wire.as_object_mut().unwrap();
+    object.remove("github_catalog_service_id");
+    object.remove("github_user_service_slug");
+
+    let snapshot: ConnectionSnapshot = serde_json::from_value(wire).unwrap();
+    assert_eq!(snapshot.github_catalog_service_id, None);
+    assert_eq!(snapshot.github_user_service_slug, None);
+    snapshot
+        .validate_historical_for(&[ScopeClass::PublicRepository])
+        .unwrap();
+    assert!(snapshot
+        .validate_for(&[ScopeClass::PublicRepository])
+        .is_err());
+}
+
+#[test]
+fn authority_admission_rejects_missing_or_drifted_github_route_provenance() {
+    let (mut effect_launch, lease) = leased_started_launch();
+    let preflight = effect_launch
+        .claim_next_effect(&lease, NOW, "claim-preflight-for-route-drift")
+        .unwrap()
+        .unwrap();
+    effect_launch
+        .complete_effect(
+            &lease,
+            &preflight,
+            EffectCompletion {
+                result: LaunchEffectResult::Preflight {
+                    connection: effect_launch.connection.clone().unwrap(),
+                    authority: effect_launch.authority.clone().unwrap(),
+                    source_sha: "a".repeat(40),
+                    workflow_paths: Vec::new(),
+                },
+                safe_detail: "Authority is current.".into(),
+                external_resource_ids: BTreeMap::new(),
+                now: NOW.into(),
+                correlation_id: "complete-preflight-for-route-drift".into(),
+            },
+        )
+        .unwrap();
+    let effect = effect_launch
+        .claim_next_effect(&lease, NOW, "claim-fork-for-route-drift")
+        .unwrap()
+        .unwrap();
+    assert_eq!(effect.kind, LaunchEffectKind::Fork);
+
+    let connection = effect_launch.connection.clone().unwrap();
+    let authority = effect_launch.authority.clone().unwrap();
+    for (case, catalog_service_id, user_service_slug) in [
+        (
+            "missing-catalog",
+            None,
+            authority.github_user_service_slug.clone(),
+        ),
+        (
+            "wrong-catalog",
+            Some("catalog-github-other".into()),
+            authority.github_user_service_slug.clone(),
+        ),
+        (
+            "missing-user-slug",
+            authority.github_catalog_service_id.clone(),
+            None,
+        ),
+        (
+            "wrong-user-slug",
+            authority.github_catalog_service_id.clone(),
+            Some("api-github-3".into()),
+        ),
+    ] {
+        let mut drifted = authority.clone();
+        drifted.github_catalog_service_id = catalog_service_id;
+        drifted.github_user_service_slug = user_service_slug;
+        assert!(
+            AuthorityAdmissionSnapshot::for_effect(
+                &effect_launch,
+                &effect,
+                connection.clone(),
+                drifted,
+                effect_launch.revision.content.upstream.repository.clone(),
+                None,
+                None,
+                NOW,
+            )
+            .is_err(),
+            "effect admission accepted {case}"
+        );
+    }
+
+    let mut renewal_launch = reviewed_launch();
+    let renewal_connection = renewal_launch.connection.clone().unwrap();
+    let credential = crate::SessionCredentialAuthority {
+        session_id: renewal_launch.session.as_ref().unwrap().session_id.clone(),
+        custody_generation: 1,
+        provider_key_id: "provider-session-key-1".into(),
+        provider_state_version: 1,
+        provider_expires_at_epoch_milliseconds: 2_000_000_000_000,
+        grant_fingerprint: "a".repeat(64),
+    };
+    let renewal_authority = AuthorityProvenance {
+        subject: renewal_launch.owner.clone(),
+        subject_token_generation: 1,
+        service_id: renewal_connection.service_id.clone(),
+        github_catalog_service_id: renewal_connection.github_catalog_service_id.clone(),
+        github_user_service_slug: renewal_connection.github_user_service_slug.clone(),
+        service_state_version: renewal_connection.service_state_version,
+        backing_key_id: renewal_connection.backing_key_id.clone(),
+        session_credential_authority: Some(credential),
+        state: DelegationState::Available,
+        observed_at: NOW.into(),
+    };
+    renewal_launch.authority = Some(renewal_authority.clone());
+    let target_generation = renewal_launch.reach.as_ref().unwrap().policy_generation + 1;
+    for (case, catalog_service_id, user_service_slug) in [
+        (
+            "missing-catalog",
+            None,
+            renewal_authority.github_user_service_slug.clone(),
+        ),
+        (
+            "wrong-catalog",
+            Some("catalog-github-other".into()),
+            renewal_authority.github_user_service_slug.clone(),
+        ),
+        (
+            "missing-user-slug",
+            renewal_authority.github_catalog_service_id.clone(),
+            None,
+        ),
+        (
+            "wrong-user-slug",
+            renewal_authority.github_catalog_service_id.clone(),
+            Some("api-github-3".into()),
+        ),
+    ] {
+        let mut drifted = renewal_authority.clone();
+        drifted.github_catalog_service_id = catalog_service_id;
+        drifted.github_user_service_slug = user_service_slug;
+        assert!(
+            AuthorityAdmissionSnapshot::for_capability_renewal(
+                &renewal_launch,
+                7,
+                target_generation,
+                renewal_connection.clone(),
+                drifted,
+                renewal_launch.revision.content.upstream.repository.clone(),
+                renewal_launch.fork.as_ref().unwrap().repository.clone(),
+                renewal_launch.branch.clone().unwrap(),
+                NOW,
+            )
+            .is_err(),
+            "capability renewal admission accepted {case}"
+        );
+    }
 }
 
 #[test]
@@ -325,6 +524,7 @@ fn prompt_delivery_progress_is_identity_bound_monotonic_and_evented() {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -707,6 +907,7 @@ fn a_long_initial_turn_uses_its_session_deadline_not_the_generic_poll_budget() {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -997,6 +1198,7 @@ fn recovery_required_prompt_launch() -> Launch {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -1356,6 +1558,8 @@ fn reconciled_publication_progress_resets_the_ambiguity_budget() {
         subject: launch.owner.clone(),
         subject_token_generation: 1,
         service_id: connection.service_id.clone(),
+        github_catalog_service_id: connection.github_catalog_service_id.clone(),
+        github_user_service_slug: connection.github_user_service_slug.clone(),
         service_state_version: connection.service_state_version,
         backing_key_id: connection.backing_key_id.clone(),
         session_credential_authority: None,
@@ -1939,6 +2143,161 @@ fn trigger_sandbox_profile_is_closed_to_the_supported_mvp_policy() {
     }
 }
 
+#[test]
+fn sponsored_commercial_policy_has_an_explicit_typed_binding() {
+    let mut candidate = content(SubjectId("publisher".into()));
+    candidate.commercial_policy = CommercialPolicy {
+        billing_mode: BillingMode::Sponsored,
+        policy_reference: CMA_TRIGGER_SPONSORED_POLICY_V1.into(),
+        sponsorship: Some(SponsoredPolicyBinding {
+            tenant_id: "tenant-1".into(),
+            policy_id: SponsorshipPolicyId::new(),
+        }),
+    };
+    candidate
+        .validate()
+        .expect("a complete sponsored policy binding is structurally valid");
+
+    let mut missing = candidate.clone();
+    missing.commercial_policy.sponsorship = None;
+    assert_eq!(
+        missing.validate().unwrap_err().field.as_deref(),
+        Some("commercial_policy.sponsorship")
+    );
+
+    let mut wrong_contract = candidate.clone();
+    wrong_contract.commercial_policy.policy_reference = SponsorshipPolicyId::new().0;
+    assert_eq!(
+        wrong_contract.validate().unwrap_err().field.as_deref(),
+        Some("commercial_policy.policy_reference")
+    );
+
+    let mut sponsored_github = candidate;
+    sponsored_github.repository_access.credential_route = CredentialRoute::SponsoredGrant;
+    assert_eq!(
+        sponsored_github.validate().unwrap_err().field.as_deref(),
+        Some("repository_access.credential_route")
+    );
+}
+
+#[test]
+fn sponsored_launch_authority_is_derived_from_durable_launch_and_policy_state() {
+    let publisher = SubjectId("sponsoring-publisher".into());
+    let contributor = SubjectId("sponsored-contributor".into());
+    let policy_id = SponsorshipPolicyId::new();
+    let mut published = revision(publisher.clone());
+    published.content.commercial_policy = CommercialPolicy {
+        billing_mode: BillingMode::Sponsored,
+        policy_reference: CMA_TRIGGER_SPONSORED_POLICY_V1.into(),
+        sponsorship: Some(SponsoredPolicyBinding {
+            tenant_id: "tenant-sponsored".into(),
+            policy_id: policy_id.clone(),
+        }),
+    };
+    published.digest = published.content.digest().unwrap();
+    let mut launch = Launch::new(contributor.clone(), published, NOW, "sponsored-launch").unwrap();
+    let policy = SponsorshipPolicy {
+        schema_version: SPONSORSHIP_SCHEMA_VERSION,
+        id: policy_id,
+        tenant_id: "tenant-sponsored".into(),
+        owner: SponsorBillingOwner::Developer {
+            subject: publisher,
+            display_name: "Sponsoring publisher".into(),
+        },
+        credential_id: SponsoredCredentialId::new(),
+        provider_policy: SponsoredProviderPolicy {
+            provider: "provider-a".into(),
+            provider_policy_key: "provider-a:bounded-v1".into(),
+            allowed_models: BTreeSet::from(["model-a".into()]),
+            allowed_resources: BTreeSet::from(["responses".into()]),
+        },
+        per_launch_quota: SponsoredQuota {
+            requests: 2,
+            input_tokens: 1_000,
+            output_tokens: 1_000,
+        },
+        aggregate_quota: SponsoredQuota {
+            requests: 4,
+            input_tokens: 2_000,
+            output_tokens: 2_000,
+        },
+        per_launch_budget_micros: 1_000,
+        aggregate_budget_micros: 2_000,
+        max_requests_per_minute: 2,
+        max_concurrent_launches: 2,
+        expires_at: "2026-08-30T12:00:00Z".into(),
+        state: SponsorshipPolicyState::Active,
+        generation: 1,
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        revoked_at: None,
+    };
+    policy.validate().unwrap();
+
+    let draft = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(draft.state, SponsoredLaunchState::TermsReview);
+    assert_eq!(draft.generation, 1);
+    assert_eq!(draft.contributor, contributor);
+    assert_eq!(draft.session_id, None);
+
+    launch.started_at = Some(LATER.into());
+    launch.state = LaunchState::PromptPending;
+    launch.revision_number = 7;
+    launch.session = Some(SessionLink {
+        session_id: SessionId("session-sponsored".into()),
+        environment_profile_id: "profile-sponsored".into(),
+        runtime_generation: 3,
+        created_at: LATER.into(),
+    });
+    let starting = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(starting.state, SponsoredLaunchState::Starting);
+    assert_eq!(starting.generation, 4);
+    assert_eq!(
+        starting.session_id,
+        Some(SessionId("session-sponsored".into()))
+    );
+
+    launch.revision_number = 99;
+    let after_worker_bookkeeping = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(after_worker_bookkeeping, starting);
+
+    launch.state = LaunchState::AuthRequired;
+    let recoverable = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(recoverable.state, SponsoredLaunchState::Recoverable);
+    launch.state = LaunchState::Completed;
+    let closed = SponsoredLaunchAuthority::from_launch(&launch, &policy).unwrap();
+    assert_eq!(closed.state, SponsoredLaunchState::Closed);
+
+    let mut next_policy = policy.clone();
+    next_policy.generation = 2;
+    next_policy.updated_at = LATER.into();
+    let next = SponsoredLaunchAuthority::from_launch(&launch, &next_policy).unwrap();
+    assert_ne!(next.launch_snapshot_digest, closed.launch_snapshot_digest);
+
+    next_policy.tenant_id = "another-tenant".into();
+    assert_eq!(
+        SponsoredLaunchAuthority::from_launch(&launch, &next_policy)
+            .unwrap_err()
+            .field
+            .as_deref(),
+        Some("commercial_policy.sponsorship")
+    );
+}
+
+#[test]
+fn non_sponsored_billing_rejects_a_sponsorship_binding() {
+    let mut candidate = content(SubjectId("publisher".into()));
+    candidate.commercial_policy.sponsorship = Some(SponsoredPolicyBinding {
+        tenant_id: "tenant-1".into(),
+        policy_id: SponsorshipPolicyId::new(),
+    });
+
+    assert_eq!(
+        candidate.validate().unwrap_err().field.as_deref(),
+        Some("commercial_policy.sponsorship")
+    );
+}
+
 fn reconciled_pull_request(mut record: PullRequestRecord) -> PullRequestRecord {
     record.provider_id = Some(70);
     record.provider_node_id = Some("PR_node_7".into());
@@ -2181,6 +2540,8 @@ fn reviewed_launch() -> Launch {
             new_provider_object_id: None,
             old_bytes: 0,
             new_bytes: bytes.len() as u64,
+            additions: Some(1),
+            deletions: Some(0),
             patch: Some("--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n".into()),
             patch_complete: true,
         }],
@@ -2261,6 +2622,7 @@ fn leased_prompt_launch_for_connection_revocation() -> Launch {
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -2912,6 +3274,8 @@ fn capability_admission_and_renewal_refresh_canonical_locators_without_weakening
         subject: launch.owner.clone(),
         subject_token_generation: 2,
         service_id: connection.service_id.clone(),
+        github_catalog_service_id: connection.github_catalog_service_id.clone(),
+        github_user_service_slug: connection.github_user_service_slug.clone(),
         service_state_version: connection.service_state_version,
         backing_key_id: connection.backing_key_id.clone(),
         session_credential_authority: Some(crate::SessionCredentialAuthority {
@@ -4866,6 +5230,22 @@ fn admitted_effect_takeover_retains_audit_evidence_without_reusing_write_authori
         .validate_effect_for(&launch, &forged_execute)
         .is_err());
     assert!(launch.effect_authority_admission(&takeover).is_err());
+    assert_eq!(
+        launch
+            .historical_effect_authority_admission(&takeover)
+            .expect("reconciliation may read the exact retained admission"),
+        &admission
+    );
+    assert!(launch
+        .historical_effect_authority_admission(&forged_execute)
+        .is_err());
+    let wrong_intent = EffectClaim {
+        intent_key: "cma-trigger:wrong:fork:1".into(),
+        ..takeover.clone()
+    };
+    assert!(launch
+        .historical_effect_authority_admission(&wrong_intent)
+        .is_err());
 
     let mut recovery = launch.clone();
     recovery
@@ -4999,6 +5379,8 @@ fn leased_started_launch() -> (Launch, WorkerLease) {
         subject: owner.clone(),
         subject_token_generation: 1,
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
         session_credential_authority: None,
@@ -5091,6 +5473,7 @@ fn initial_prompt_lifecycle_waits_spend_neither_execute_nor_reconciliation_budge
         .session_id()
         .unwrap();
     let session = crate::Session {
+        chat: None,
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
@@ -5306,6 +5689,7 @@ fn content(owner: SubjectId) -> TriggerRevisionContent {
         commercial_policy: CommercialPolicy {
             billing_mode: BillingMode::ZeroCost,
             policy_reference: "public-zero-cost-v1".into(),
+            sponsorship: None,
         },
         override_policy: OverridePolicy {
             editable_fields: vec![EditableField::TaskInput],
@@ -5381,6 +5765,8 @@ fn fork() -> RepositoryIdentity {
 fn connection() -> ConnectionSnapshot {
     ConnectionSnapshot {
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
         account: ConnectedAccount {
@@ -5414,6 +5800,8 @@ fn capability() -> LaunchCapability {
         session_id: crate::SessionId::generate(),
         runtime_audience: "runtime-generation-1".into(),
         service_id: "service-1".into(),
+        github_catalog_service_id: "catalog-github".into(),
+        github_user_service_slug: "api-github-2".into(),
         upstream: upstream(),
         fork: fork(),
         allowed_ref: "refs/heads/cma/launch".into(),
@@ -5426,7 +5814,7 @@ fn capability() -> LaunchCapability {
         expires_at_epoch_seconds: 160,
         issuer: "cma".into(),
         audience: "layer4".into(),
-        signature_key_id: "trigger-policy-v1".into(),
+        signature_key_id: "trigger-policy-v2".into(),
         numeric_binding_observed_at: NOW.into(),
         revocation: CapabilityRevocationState::Active,
     }
@@ -5471,6 +5859,183 @@ impl TriggerLaunchAdmission for TestAdmission {
     }
 }
 
+struct TestSponsorshipVerifier;
+
+#[async_trait]
+impl TriggerSponsorshipVerifier for TestSponsorshipVerifier {
+    async fn verify_policy_binding(
+        &self,
+        publisher: &SubjectId,
+        binding: &SponsoredPolicyBinding,
+    ) -> Result<(), TriggerAdmissionError> {
+        if publisher.0 == "publisher" && binding.tenant_id == "tenant-1" {
+            Ok(())
+        } else {
+            Err(TriggerAdmissionError::PricingUnavailable(
+                "test policy unavailable".into(),
+            ))
+        }
+    }
+
+    async fn verify_start_acceptance(
+        &self,
+        _contributor: &SubjectId,
+        _launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RefusingStartSponsorshipVerifier {
+    start_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl TriggerSponsorshipVerifier for RefusingStartSponsorshipVerifier {
+    async fn verify_policy_binding(
+        &self,
+        _publisher: &SubjectId,
+        _binding: &SponsoredPolicyBinding,
+    ) -> Result<(), TriggerAdmissionError> {
+        Ok(())
+    }
+
+    async fn verify_start_acceptance(
+        &self,
+        _contributor: &SubjectId,
+        _launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        self.start_calls.fetch_add(1, Ordering::SeqCst);
+        Err(TriggerAdmissionError::SponsoredTermsNotAccepted)
+    }
+}
+
+fn sponsored_content(owner: SubjectId) -> TriggerRevisionContent {
+    let mut configured = content(owner);
+    configured.commercial_policy = CommercialPolicy {
+        billing_mode: BillingMode::Sponsored,
+        policy_reference: CMA_TRIGGER_SPONSORED_POLICY_V1.into(),
+        sponsorship: Some(SponsoredPolicyBinding {
+            tenant_id: "tenant-1".into(),
+            policy_id: SponsorshipPolicyId::new(),
+        }),
+    };
+    configured
+}
+
+#[tokio::test]
+async fn sponsored_drafts_require_a_composed_owner_policy_verifier() {
+    let publisher = SubjectId("publisher".into());
+    let (unconfigured, _) = service();
+    let error = unconfigured
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            sponsored_content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .expect_err("a dormant deployment cannot accept sponsored policy authority");
+    assert!(matches!(
+        error,
+        TriggerServiceError::Admission(TriggerAdmissionError::PricingUnavailable(_))
+    ));
+
+    let store = Arc::new(MemoryTriggerStore::default());
+    let configured = TriggerService::new(store.clone(), store, Arc::new(TestAuthority))
+        .with_launch_admission(Arc::new(TestAdmission))
+        .with_sponsorship_verifier(Arc::new(TestSponsorshipVerifier));
+    configured
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            sponsored_content(publisher),
+            NOW,
+        )
+        .await
+        .expect("the configured verifier admits the publisher's exact policy binding");
+}
+
+#[tokio::test]
+async fn sponsored_start_refusal_precedes_rollout_and_durable_launch_mutation() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let store = Arc::new(MemoryTriggerStore::default());
+    let admission = Arc::new(CountingAdmission::default());
+    let authority = Arc::new(CountingAuthority::default());
+    let sponsorship = Arc::new(RefusingStartSponsorshipVerifier::default());
+    let preparing = TriggerService::new(store.clone(), store.clone(), authority.clone())
+        .with_launch_admission(admission.clone())
+        .with_sponsorship_verifier(sponsorship.clone());
+    let draft = preparing
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            sponsored_content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = preparing
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let launch = preparing
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "sponsored-review",
+        )
+        .await
+        .unwrap();
+    let launch_calls_before = authority.launch_calls.load(Ordering::SeqCst);
+    let repository_id = published.revision.content.upstream.repository.repository_id;
+    let paused = TriggerService::new(store.clone(), store.clone(), authority.clone())
+        .with_launch_admission(admission.clone())
+        .with_sponsorship_verifier(sponsorship.clone())
+        .with_rollout(Arc::new(
+            TriggerRolloutPolicy::new(true, true, false, [publisher.0], [repository_id], 100)
+                .unwrap(),
+        ));
+
+    let error = paused
+        .start(
+            &contributor,
+            &launch.id,
+            StartLaunchCommand {
+                expected_revision: launch.revision_number,
+                confirmation: confirmation(
+                    ConfirmationAction::Start,
+                    &contributor,
+                    &launch.effective.digest,
+                ),
+                acknowledge_workflow_risk: false,
+                now: LATER.into(),
+                correlation_id: "unaccepted-sponsored-start".into(),
+            },
+        )
+        .await
+        .expect_err("current durable acceptance is mandatory at Start");
+
+    assert!(matches!(
+        error,
+        TriggerServiceError::Admission(TriggerAdmissionError::SponsoredTermsNotAccepted)
+    ));
+    assert_eq!(sponsorship.start_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(admission.start_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        authority.launch_calls.load(Ordering::SeqCst),
+        launch_calls_before
+    );
+    assert_eq!(
+        paused.get_launch(&contributor, &launch.id).await.unwrap(),
+        launch,
+        "acceptance refusal must happen before the rollout pause is persisted"
+    );
+}
+
 #[tokio::test]
 async fn public_preview_projects_the_deployment_contributor_estimate() {
     let publisher = SubjectId("publisher".into());
@@ -5479,6 +6044,7 @@ async fn public_preview_projects_the_deployment_contributor_estimate() {
     configured.commercial_policy = CommercialPolicy {
         billing_mode: BillingMode::Contributor,
         policy_reference: CMA_TRIGGER_CONTRIBUTOR_POLICY_V1.into(),
+        sponsorship: None,
     };
     let draft = service
         .create_draft(publisher.clone(), "service-1".into(), configured, NOW)
@@ -5503,6 +6069,154 @@ async fn public_preview_projects_the_deployment_contributor_estimate() {
             ..
         } if currency == "USD" && display == "$0.025"
     ));
+}
+
+#[derive(Clone, Copy)]
+enum PreviewPolicyOutcome {
+    Available,
+    Renamed,
+    NotForkable,
+    NotFound,
+    IdentityDrift,
+    Transient,
+}
+
+struct PreviewPolicyAuthority(PreviewPolicyOutcome);
+
+#[async_trait]
+impl TriggerAuthorityVerifier for PreviewPolicyAuthority {
+    async fn verify_publisher(
+        &self,
+        subject: &SubjectId,
+        content: &TriggerRevisionContent,
+        selected_service_id: &str,
+    ) -> Result<PublisherAuthority, TriggerServiceError> {
+        TestAuthority
+            .verify_publisher(subject, content, selected_service_id)
+            .await
+    }
+
+    async fn verify_launch(
+        &self,
+        subject: &SubjectId,
+        revision: &TriggerRevision,
+        selected_service_id: &str,
+        previous: Option<&ConnectionSnapshot>,
+    ) -> Result<LaunchAuthority, TriggerServiceError> {
+        TestAuthority
+            .verify_launch(subject, revision, selected_service_id, previous)
+            .await
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        let mut repository = revision.content.upstream.repository.clone();
+        match self.0 {
+            PreviewPolicyOutcome::Available => Ok(TriggerPreviewRepositoryPolicy {
+                repository,
+                public_forkable: true,
+            }),
+            PreviewPolicyOutcome::Renamed => {
+                repository.canonical_owner = "renamed-owner".into();
+                repository.canonical_name = "renamed-repository".into();
+                repository.default_branch = "trunk".into();
+                Ok(TriggerPreviewRepositoryPolicy {
+                    repository,
+                    public_forkable: true,
+                })
+            }
+            PreviewPolicyOutcome::NotForkable => {
+                repository.allow_forking = false;
+                Ok(TriggerPreviewRepositoryPolicy {
+                    repository,
+                    public_forkable: false,
+                })
+            }
+            PreviewPolicyOutcome::NotFound => Err(TriggerAuthorityError::ResourceNotFound.into()),
+            PreviewPolicyOutcome::IdentityDrift => {
+                Err(TriggerAuthorityError::AuthorityDrift.into())
+            }
+            PreviewPolicyOutcome::Transient => Err(TriggerAuthorityError::Transient.into()),
+        }
+    }
+}
+
+async fn preview_for_policy(outcome: PreviewPolicyOutcome) -> TriggerPreview {
+    let publisher = SubjectId("publisher".into());
+    let store = Arc::new(MemoryTriggerStore::default());
+    let service = TriggerService::new(
+        store.clone(),
+        store,
+        Arc::new(PreviewPolicyAuthority(outcome)),
+    )
+    .with_launch_admission(Arc::new(TestAdmission));
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    service
+        .preview(&published.revision.public_id)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn public_preview_maps_current_repository_policy_to_typed_availability() {
+    let available = preview_for_policy(PreviewPolicyOutcome::Available).await;
+    assert_eq!(
+        available.availability,
+        TriggerPreviewAvailability::Published
+    );
+    assert_eq!(available.unavailable_reason, None);
+
+    let renamed = preview_for_policy(PreviewPolicyOutcome::Renamed).await;
+    assert_eq!(renamed.availability, TriggerPreviewAvailability::Published);
+    assert_eq!(renamed.repository_owner, "renamed-owner");
+    assert_eq!(renamed.repository_name, "renamed-repository");
+
+    let not_forkable = preview_for_policy(PreviewPolicyOutcome::NotForkable).await;
+    assert_eq!(
+        not_forkable.availability,
+        TriggerPreviewAvailability::Unavailable
+    );
+    assert_eq!(
+        not_forkable.unavailable_reason,
+        Some(TriggerPreviewUnavailableReason::UpstreamNotForkable)
+    );
+    assert!(!not_forkable.allow_forking);
+
+    for (outcome, reason) in [
+        (
+            PreviewPolicyOutcome::NotFound,
+            TriggerPreviewUnavailableReason::UpstreamUnavailable,
+        ),
+        (
+            PreviewPolicyOutcome::IdentityDrift,
+            TriggerPreviewUnavailableReason::UpstreamIdentityChanged,
+        ),
+        (
+            PreviewPolicyOutcome::Transient,
+            TriggerPreviewUnavailableReason::RepositoryPolicyUnavailable,
+        ),
+    ] {
+        let preview = preview_for_policy(outcome).await;
+        assert_eq!(
+            preview.availability,
+            TriggerPreviewAvailability::Unavailable
+        );
+        assert_eq!(preview.unavailable_reason, Some(reason));
+    }
 }
 
 #[derive(Default)]
@@ -5659,10 +6373,21 @@ async fn assert_expiry_was_fenced(
 }
 
 fn review_admission(launch: &Launch, now: &str) -> LaunchReviewAdmission {
+    let sponsored =
+        launch.revision.content.commercial_policy.billing_mode == BillingMode::Sponsored;
     LaunchReviewAdmission {
         pricing: PricingSnapshot {
-            policy_reference: CMA_TRIGGER_ZERO_COST_POLICY_V1.into(),
-            billing_mode: BillingMode::ZeroCost,
+            policy_reference: if sponsored {
+                CMA_TRIGGER_SPONSORED_POLICY_V1
+            } else {
+                CMA_TRIGGER_ZERO_COST_POLICY_V1
+            }
+            .into(),
+            billing_mode: if sponsored {
+                BillingMode::Sponsored
+            } else {
+                BillingMode::ZeroCost
+            },
             rate_card: None,
             rate: None,
             currency: crate::CURRENCY.into(),
@@ -5714,6 +6439,151 @@ fn runtime_admission_requires_an_explicit_opaque_kernel() {
     let decoded: RuntimeAdmissionSnapshot =
         serde_json::from_value(future).expect("the core accepts an opaque kernel identity");
     assert_eq!(decoded.kernel, KernelId::new(TEST_TRIGGER_KERNEL));
+}
+
+#[test]
+fn retained_runtime_route_requires_one_complete_exact_admission_snapshot() {
+    let launch = session_launch(&"a".repeat(64));
+    assert_eq!(
+        launch.runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        ),
+        RuntimeAdmissionRoute::Current
+    );
+    assert!(launch
+        .validate_runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        )
+        .is_ok());
+
+    let mut historical = launch.clone();
+    historical.runtime_admission.as_mut().unwrap().kernel = KernelId::new(TEST_HISTORICAL_KERNEL);
+    assert_eq!(
+        historical.runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        ),
+        RuntimeAdmissionRoute::Historical
+    );
+    assert_eq!(
+        historical
+            .validate_runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            )
+            .unwrap_err()
+            .field
+            .as_deref(),
+        Some("runtime_admission.kernel")
+    );
+
+    for (corruption, expected_field) in [
+        ("missing", "runtime_admission"),
+        ("wrong-kernel", "runtime_admission.kernel"),
+        ("missing-version", "runtime_admission.runtime_version"),
+        ("malformed-time", "runtime_admission.observed_at"),
+        (
+            "missing-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+        (
+            "duplicate-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+    ] {
+        let mut retained = launch.clone();
+        match corruption {
+            "missing" => retained.runtime_admission = None,
+            "wrong-kernel" => {
+                retained.runtime_admission.as_mut().unwrap().kernel = KernelId::new("other-route");
+            }
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = " \t".into();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "not-a-time".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        let error = retained
+            .validate_runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            )
+            .unwrap_err();
+        assert_eq!(error.field.as_deref(), Some(expected_field), "{corruption}");
+        assert_eq!(
+            retained.runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            ),
+            RuntimeAdmissionRoute::Invalid,
+            "{corruption}"
+        );
+    }
+
+    for corruption in [
+        "missing-version",
+        "malformed-time",
+        "missing-capability",
+        "duplicate-capability",
+    ] {
+        let mut retained = historical.clone();
+        match corruption {
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = " \t".into();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "not-a-time".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        assert_eq!(
+            retained.runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            ),
+            RuntimeAdmissionRoute::Invalid,
+            "historical {corruption}"
+        );
+    }
 }
 
 fn start_admission(launch: &Launch, now: &str) -> StartAdmissionSnapshot {
@@ -5768,6 +6638,8 @@ impl TriggerAuthorityVerifier for TestAuthority {
                 subject: SubjectId("contributor".into()),
                 subject_token_generation: 1,
                 service_id: connection.service_id.clone(),
+                github_catalog_service_id: connection.github_catalog_service_id.clone(),
+                github_user_service_slug: connection.github_user_service_slug.clone(),
                 service_state_version: connection.service_state_version,
                 backing_key_id: connection.backing_key_id.clone(),
                 session_credential_authority: None,
@@ -5777,6 +6649,16 @@ impl TriggerAuthorityVerifier for TestAuthority {
             connection,
             source_sha: "a".repeat(40),
             workflow_paths: Vec::new(),
+        })
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        Ok(TriggerPreviewRepositoryPolicy {
+            repository: revision.content.upstream.repository.clone(),
+            public_forkable: true,
         })
     }
 }

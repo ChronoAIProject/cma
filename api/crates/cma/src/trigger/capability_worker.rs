@@ -288,7 +288,13 @@ impl CapabilityWorker {
         }
         let reach = launch.reach.clone();
 
-        if self.triggers.rollout_policy().capability_must_revoke()
+        // A historical runtime route may surrender authority but may never
+        // receive a renewed policy or credential. Share the existing durable
+        // revocation transition so this large worker future does not gain a
+        // second Launch-carrying await state.
+        let runtime_admission_must_revoke = !super::has_current_trigger_runtime_admission(&launch);
+        if (runtime_admission_must_revoke
+            || self.triggers.rollout_policy().capability_must_revoke())
             && !launch.capability_requires_revocation()
             && reach
                 .as_ref()
