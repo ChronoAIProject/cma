@@ -582,6 +582,12 @@ impl KernelAdapter for FakeAdapter {
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
         self.provision_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if spec.generation.is_some() != spec.reservation_token.is_some() {
+            return Err(AdapterError::Rejected(
+                "coordinated provisioning requires both a runtime generation and its reservation token"
+                    .into(),
+            ));
+        }
         if self
             .pause_next_provision
             .swap(false, std::sync::atomic::Ordering::SeqCst)
