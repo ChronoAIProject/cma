@@ -1756,12 +1756,7 @@ impl crate::SessionService {
             .map_err(|_| AdapterError::Unavailable("chat skill resolution failed".into()))?;
         let services = baseline.services().to_vec();
         match self
-            .credential_for(
-                &host.id.credential_session_id(),
-                &host.owner,
-                &services,
-                None,
-            )
+            .credential_for(&host.credential_session_id(), &host.owner, &services, None)
             .await
             .map_err(|_| AdapterError::Unavailable("chat credential resolution failed".into()))?
         {
@@ -1773,11 +1768,14 @@ impl crate::SessionService {
             }
         }
         let settings = &host.pinned_settings.settings;
+        let reservation_token = host.last_transition_claim.clone().ok_or_else(|| {
+            AdapterError::Rejected("chat replacement provisioning has no transition claim".into())
+        })?;
         let spec = RuntimeSpec {
             session_id: host.id.0.clone(),
             chat_host: Some(host.id.0.clone()),
             generation: Some(generation_for(host)),
-            reservation_token: None,
+            reservation_token: Some(reservation_token),
             size: TermSize {
                 cols: 120,
                 rows: 40,

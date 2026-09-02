@@ -42,9 +42,37 @@ impl ChatHostId {
     }
 
     /// Credential custody remains on the existing session-scoped port while
-    /// receiving a deterministic identity that no user session can mint.
-    pub(crate) fn credential_session_id(&self) -> SessionId {
-        SessionId(format!("sesn_chat_{}", self.0.trim_start_matches("chho_")))
+    /// receiving an identity that no user session can mint.
+    pub(crate) fn credential_session_id(&self, generation: u64) -> SessionId {
+        let base = self.0.trim_start_matches("chho_");
+        if generation == 0 {
+            SessionId(format!("sesn_chat_{base}"))
+        } else {
+            SessionId(format!("sesn_chat_{base}_cg{generation}"))
+        }
+    }
+
+    /// Recover a host and credential incarnation from its synthetic session id.
+    pub(crate) fn from_credential_session_id(id: &SessionId) -> Option<(Self, u64)> {
+        let encoded = id.as_str().strip_prefix("sesn_chat_")?;
+        let (base, generation) = match encoded.split_once("_cg") {
+            Some((base, encoded_generation)) => {
+                let generation = encoded_generation.parse::<u64>().ok()?;
+                if generation == 0 || generation.to_string() != encoded_generation {
+                    return None;
+                }
+                (base, generation)
+            }
+            None => (encoded, 0),
+        };
+        if base.len() != 32
+            || !base
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return None;
+        }
+        Some((Self(format!("chho_{base}")), generation))
     }
 }
 
@@ -422,6 +450,10 @@ pub struct ChatHostRecord {
     /// and from the workspace epoch sealed inside a checkpoint archive.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub runtime_generation: u64,
+    /// Incarnation of credential custody for this deterministic owner host.
+    /// Zero preserves the synthetic id used before this field was introduced.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub credential_generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_authority: Option<ChatWorkspaceAuthority>,
     pub threads: Vec<ChatThreadSlot>,
@@ -479,6 +511,7 @@ impl ChatHostRecord {
             runtime_id: None,
             runtime_version: None,
             runtime_generation: 1,
+            credential_generation: 0,
             workspace_authority: None,
             threads: Vec::new(),
             threads_created: 0,
@@ -502,6 +535,10 @@ impl ChatHostRecord {
             updated_at: now,
             revision: 0,
         }
+    }
+
+    pub(crate) fn credential_session_id(&self) -> SessionId {
+        self.id.credential_session_id(self.credential_generation)
     }
 
     /// Reject corrupt durable state before it can authorize provider work.
@@ -818,6 +855,10 @@ impl crate::service::SessionService {
                     generation_for(&host).get().checked_add(1).ok_or_else(|| {
                         CoreError::InvalidRequest("chat runtime generation exhausted".into())
                     })?;
+                let next_credential_generation =
+                    host.credential_generation.checked_add(1).ok_or_else(|| {
+                        CoreError::InvalidRequest("chat credential generation exhausted".into())
+                    })?;
                 let checkpoint_sequence = host.checkpoint_sequence.max(
                     host.checkpoint
                         .as_ref()
@@ -825,10 +866,36 @@ impl crate::service::SessionService {
                 );
                 let mut candidate = self.fresh_chat_host_candidate(owner).await?;
                 candidate.runtime_generation = next_generation;
+                candidate.credential_generation = next_credential_generation;
                 candidate.checkpoint_sequence = checkpoint_sequence;
                 candidate.revision = host.revision;
                 store
                     .update_if_revision(host.revision, &candidate)
+                    .await
+                    .map_err(|_| host_store_unavailable())?
+                    .ok_or_else(|| chat_unavailable(ChatUnavailableCause::Provisioning))?
+            }
+            Some(mut host)
+                if host.status == ChatHostStatus::Provisioning
+                    && host.credential_generation == 0
+                    && host.last_transition_claim.is_none()
+                    && host.runtime_id.is_none()
+                    && host.threads.iter().all(|thread| thread.removed)
+                    && host.last_failure.as_ref().is_some_and(|failure| {
+                        failure.phase == ChatProvisioningPhase::Credential
+                            && !failure.retryable
+                            && !failure.cleanup_pending
+                    }) =>
+            {
+                host.credential_generation = 1;
+                host.last_failure = None;
+                host.last_transition_claim =
+                    Some(format!("chcl_{}", uuid::Uuid::new_v4().simple()));
+                host.transition_started_at = Some(crate::clock::now_rfc3339());
+                host.updated_at = crate::clock::now_rfc3339();
+                let expected = host.revision;
+                store
+                    .update_if_revision(expected, &host)
                     .await
                     .map_err(|_| host_store_unavailable())?
                     .ok_or_else(|| chat_unavailable(ChatUnavailableCause::Provisioning))?
@@ -960,7 +1027,7 @@ impl crate::service::SessionService {
             }
         };
 
-        let credential_session = host.id.credential_session_id();
+        let credential_session = host.credential_session_id();
         match self
             .credential_for(
                 &credential_session,
@@ -999,6 +1066,10 @@ impl crate::service::SessionService {
 
         let settings = host.pinned_settings.settings.clone();
         let generation = generation_for(&host);
+        let reservation_token = host
+            .last_transition_claim
+            .clone()
+            .ok_or_else(|| chat_unavailable(ChatUnavailableCause::Provisioning))?;
         let options = RuntimeOptions {
             mode: RuntimeMode::Conversation,
             model: settings.agent.model.clone(),
@@ -1024,7 +1095,7 @@ impl crate::service::SessionService {
             session_id: host.id.0.clone(),
             chat_host: Some(host.id.0.clone()),
             generation: Some(generation),
-            reservation_token: None,
+            reservation_token: Some(reservation_token),
             size: TermSize {
                 cols: 120,
                 rows: 40,
@@ -1337,7 +1408,7 @@ impl crate::service::SessionService {
             runtime_generation: generation_for(&host).get(),
             runtime_id: runtime_id.clone(),
         };
-        let credential_session = host.id.credential_session_id();
+        let credential_session = host.credential_session_id();
         let credential = source
             .prepare_credential_delivery(
                 &credential_session,
@@ -1499,7 +1570,7 @@ impl crate::service::SessionService {
 
             if let Some(credentials) = self.credentials.as_ref() {
                 if credentials
-                    .release(&host.id.credential_session_id())
+                    .release(&host.credential_session_id())
                     .await
                     .is_err()
                 {
