@@ -571,6 +571,8 @@ function workspaceFixture() {
     content_sha256: digest(payload),
     provider_object_id: WORKSPACE_PROVIDER_OBJECT,
     offset: 0,
+    stored_size: payload.length,
+    compression: "identity",
   };
   const manifest = crypto.createHash("sha256");
   manifest.update(Buffer.from("cma-workspace-manifest-v1\0", "utf8"));
@@ -588,7 +590,7 @@ function workspaceFixture() {
   const manifestDigest = manifest.digest("hex");
   const header = Buffer.from(
     JSON.stringify({
-      cma_workspace: 1,
+      cma_workspace: 2,
       workspace_epoch: WORKSPACE_EPOCH,
       checkpoint_version: 0,
       quiesced_writers: 0,
@@ -655,7 +657,7 @@ async function holdWorkspaceCheckpoint(baseUrl, fixture) {
     wire.subarray(8, 8 + acknowledgementBytes).toString("utf8"),
   );
   const archive = wire.subarray(8 + acknowledgementBytes);
-  assert.equal(acknowledgement.cma_checkpoint, 1);
+  assert.equal(acknowledgement.cma_checkpoint, 2);
   assert.equal(acknowledgement.workspace_epoch, WORKSPACE_EPOCH);
   assert.equal(
     acknowledgement.checkpoint_version,

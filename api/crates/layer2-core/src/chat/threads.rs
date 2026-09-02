@@ -72,7 +72,7 @@ impl SessionService {
         if host.owner != record.session.owner {
             return Err(CoreError::Forbidden);
         }
-        if host.last_transition_claim.is_some() {
+        if host.status != ChatHostStatus::Active {
             return Err(unavailable(ChatUnavailableCause::Provisioning));
         }
         let retained = host.threads.iter().any(|slot| {

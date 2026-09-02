@@ -1754,9 +1754,12 @@ async fn workspace_checkpoint(
             }
             checkpoint_held_response(captured, &token)
         }
-        Ok(Err(_)) => {
+        Ok(Err(error)) => {
             drop(admission);
-            tracing::warn!("workspace checkpoint refused");
+            tracing::warn!(
+                reason = workspace::checkpoint_refusal_reason(&error),
+                "workspace checkpoint refused"
+            );
             (
                 axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                 "workspace checkpoint refused",

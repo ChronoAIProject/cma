@@ -280,7 +280,7 @@ async function stub(page) {
               instructions: '',
               record_tool_bodies: true,
             },
-            message_prefixes: ['/codex-formalize'],
+            message_prefixes: ['$codex-formal-answer'],
             inactivity: { pause_after_seconds: 900 },
             setup: { commands: [] },
             host: { size: null, max_threads: 10 },
