@@ -621,9 +621,13 @@ First stage the documented complete defaults while Chat remains dark:
       "instructions": "",
       "record_tool_bodies": true
     },
-    "message_prefixes": ["/codex-formalize"],
+    "message_prefixes": ["$codex-formal-answer"],
     "inactivity": { "pause_after_seconds": 900 },
-    "setup": { "commands": [] },
+    "setup": {
+      "commands": [
+        "set -eu; test -f skills/codex-formal-answer/SKILL.md; mkdir -p \"$HOME/.agents/skills/codex-formal-answer\" \"$HOME/.codex/skills/codex-formal-answer\"; cp -R skills/codex-formal-answer/. \"$HOME/.agents/skills/codex-formal-answer/\"; cp -R skills/codex-formal-answer/. \"$HOME/.codex/skills/codex-formal-answer/\""
+      ]
+    },
     "host": { "size": null, "max_threads": 10 }
   }
 }
@@ -652,10 +656,11 @@ while it is still dark and set `setup.commands` to the exact Lean recipe:
       "instructions": "",
       "record_tool_bodies": true
     },
-    "message_prefixes": ["/codex-formalize"],
+    "message_prefixes": ["$codex-formal-answer"],
     "inactivity": { "pause_after_seconds": 900 },
     "setup": {
       "commands": [
+        "set -eu; test -f skills/codex-formal-answer/SKILL.md; mkdir -p \"$HOME/.agents/skills/codex-formal-answer\" \"$HOME/.codex/skills/codex-formal-answer\"; cp -R skills/codex-formal-answer/. \"$HOME/.agents/skills/codex-formal-answer/\"; cp -R skills/codex-formal-answer/. \"$HOME/.codex/skills/codex-formal-answer/\"",
         "[ -x .toolchain/bin/lake ] || (curl -sSf https://elan.lean-lang.org/elan-init.sh | ELAN_HOME=$PWD/.toolchain sh -s -- -y --default-toolchain \"$(cat lean-toolchain)\")"
       ]
     },
@@ -688,10 +693,11 @@ the reviewed dark declaration except for `enabled: true`:
       "instructions": "",
       "record_tool_bodies": true
     },
-    "message_prefixes": ["/codex-formalize"],
+    "message_prefixes": ["$codex-formal-answer"],
     "inactivity": { "pause_after_seconds": 900 },
     "setup": {
       "commands": [
+        "set -eu; test -f skills/codex-formal-answer/SKILL.md; mkdir -p \"$HOME/.agents/skills/codex-formal-answer\" \"$HOME/.codex/skills/codex-formal-answer\"; cp -R skills/codex-formal-answer/. \"$HOME/.agents/skills/codex-formal-answer/\"; cp -R skills/codex-formal-answer/. \"$HOME/.codex/skills/codex-formal-answer/\"",
         "[ -x .toolchain/bin/lake ] || (curl -sSf https://elan.lean-lang.org/elan-init.sh | ELAN_HOME=$PWD/.toolchain sh -s -- -y --default-toolchain \"$(cat lean-toolchain)\")"
       ]
     },
@@ -713,7 +719,7 @@ Use a fresh rollout owner and retain opaque identifiers only.
 2. Select `Chat`, create one thread, and confirm one host progresses from
    `provisioning` to `active` with `thread_count: 1` and no `last_failure`.
 3. Send one short message. Confirm the durable owner message is verbatim and
-   does not contain `/codex-formalize`; confirm the runtime received the
+   does not contain `$codex-formal-answer`; confirm the runtime received the
    prefixed form through authorized test evidence only.
 4. Confirm the conversation streams through the Responses projection and
    reaches one durable terminal response. Retrieve it and list conversation

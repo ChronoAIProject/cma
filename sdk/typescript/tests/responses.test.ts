@@ -69,6 +69,22 @@ describe('server-owned Responses fixtures', () => {
     );
     expect(events.at(-1)?.type).toBe('response.completed');
   });
+
+  it('decodes partial assistant output while a response is still in progress', () => {
+    const partial = structuredClone(fixture('response.json')) as Record<string, unknown>;
+    partial.status = 'in_progress';
+    partial.usage = null;
+    const message = (partial.output as Record<string, unknown>[])[0];
+    if (message === undefined) {
+      throw new Error('response fixture output is empty');
+    }
+    message.status = 'in_progress';
+
+    expect(toResponse(partial)).toMatchObject({
+      status: 'in_progress',
+      output: [{ status: 'in_progress', content: [{ text: 'Hello from CMA' }] }],
+    });
+  });
 });
 
 describe('Responses resources', () => {

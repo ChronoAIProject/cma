@@ -14,7 +14,7 @@ use crate::auth::AuthenticatedCaller;
 use crate::rest::{BodyProblem, Problem, SessionsState};
 
 use super::retrieve::{latest_turn, parse_response_id};
-use super::{field_refusal, not_found, previous_conflict};
+use super::{field_refusal, not_found, previous_conflict, response_in_progress};
 
 const ADMISSION_BOUND: Duration = Duration::from_secs(10 * 60);
 
@@ -48,7 +48,7 @@ pub(super) struct ParsedRequest {
     responses(
         (status = 200, description = "One response turn as Server-Sent Events", body = String, content_type = "text/event-stream"),
         (status = 404, description = "Unknown, foreign, or non-chat conversation", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
-        (status = 409, description = "previous_response_id no longer names the conversation end", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "The predecessor is stale or a response is already in progress", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 422, description = "A field is outside the declared Responses chat subset", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
     )
 )]
@@ -122,7 +122,16 @@ pub(super) async fn create(
     });
     let admitted = match tokio::time::timeout(ADMISSION_BOUND, &mut admission).await {
         Ok(Ok(Ok(admitted))) => admitted,
-        Ok(Ok(Err(CoreError::InvalidState { .. }))) => return previous_conflict(),
+        Ok(Ok(Err(CoreError::InvalidState { detail })))
+            if detail.as_deref() == Some(layer2_core::CONVERSATION_ADVANCED_DETAIL) =>
+        {
+            return previous_conflict()
+        }
+        Ok(Ok(Err(CoreError::InvalidState { detail })))
+            if detail.as_deref() == Some(layer2_core::CONVERSATION_IN_PROGRESS_DETAIL) =>
+        {
+            return response_in_progress()
+        }
         Ok(Ok(Err(error))) => return Problem::from(error).into_response(),
         Ok(Err(error)) => {
             tracing::error!(%error, "Responses prompt admission task failed");

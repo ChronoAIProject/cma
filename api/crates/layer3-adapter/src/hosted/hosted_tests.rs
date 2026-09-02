@@ -409,7 +409,9 @@ fn checkpoint_wire_with_receipt(
                 "size": payload.len(),
                 "content_sha256": content_sha256,
                 "provider_object_id": "c".repeat(40),
-                "offset": 0
+                "offset": 0,
+                "stored_size": payload.len(),
+                "compression": "identity"
             }]
         }),
         payload,
@@ -440,6 +442,47 @@ fn checkpoint_wire_with_receipt(
             );
     }
     length_delimited(acknowledgement, &archive)
+}
+
+fn checkpoint_wire_from_archive(
+    request: &WorkspaceCheckpointRequest,
+    archive_version: u32,
+    entries: serde_json::Value,
+    payload: &[u8],
+    logical_bytes: u64,
+) -> Vec<u8> {
+    let manifest_digest = "d".repeat(64);
+    let entry_count = entries.as_array().expect("entries are an array").len();
+    let archive = length_delimited(
+        serde_json::json!({
+            "cma_workspace": archive_version,
+            "workspace_epoch": request.epoch,
+            "checkpoint_version": request.version,
+            "quiesced_writers": 2,
+            "includes_git_metadata": request.include_git_metadata,
+            "source_revision": request.source_revision,
+            "manifest_digest": manifest_digest,
+            "entries": entries,
+        }),
+        payload,
+    );
+    let archive_sha256 = hex(&Sha256::digest(&archive));
+    length_delimited(
+        serde_json::json!({
+            "cma_checkpoint": archive_version,
+            "workspace_epoch": request.epoch,
+            "checkpoint_version": request.version,
+            "source_revision": request.source_revision,
+            "includes_git_metadata": request.include_git_metadata,
+            "manifest_digest": manifest_digest,
+            "archive_sha256": archive_sha256,
+            "entries": entry_count,
+            "bytes": logical_bytes,
+            "quiesced_writers": 2,
+            "writers_resumed": true,
+        }),
+        &archive,
+    )
 }
 
 /// Serve one HTTP response and then stop.
@@ -1381,7 +1424,7 @@ fn checkpoint_capture_requires_v2_and_validates_the_exact_sealed_wire() {
 
     let request = checkpoint_request();
     let wire = checkpoint_wire(&request, true);
-    let package = parse_workspace_checkpoint(&wire, &request).expect("v2 checkpoint is valid");
+    let package = parse_workspace_checkpoint(wire, &request).expect("v2 checkpoint is valid");
     assert_eq!(package.epoch, request.epoch);
     assert_eq!(package.version, request.version);
     assert_eq!(package.total_bytes, 7);
@@ -1397,21 +1440,88 @@ fn checkpoint_capture_requires_v2_and_validates_the_exact_sealed_wire() {
 }
 
 #[test]
+fn checkpoint_parser_accepts_v1_and_deduplicated_compressed_v2_archives() {
+    let request = checkpoint_request();
+    let legacy_payload = b"legacy\n";
+    let legacy = checkpoint_wire_from_archive(
+        &request,
+        LEGACY_WORKSPACE_ARCHIVE_VERSION,
+        serde_json::json!([{
+            "path": "README.md",
+            "kind": "regular",
+            "mode": 0o100644,
+            "size": legacy_payload.len(),
+            "content_sha256": hex(&Sha256::digest(legacy_payload)),
+            "provider_object_id": "c".repeat(40),
+            "offset": 0,
+        }]),
+        legacy_payload,
+        legacy_payload.len() as u64,
+    );
+    let legacy = parse_workspace_checkpoint(legacy, &request)
+        .expect("a retained v1 runtime archive remains readable");
+    assert_eq!(legacy.total_bytes, legacy_payload.len() as u64);
+
+    let content = vec![b'x'; 64 * 1024];
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&content).unwrap();
+    let compressed = encoder.finish().unwrap();
+    assert!(compressed.len() < content.len());
+    let sha256 = hex(&Sha256::digest(&content));
+    let entries = serde_json::json!([
+        {
+            "path": "repository/shared.bin",
+            "kind": "regular",
+            "mode": 0o100644,
+            "size": content.len(),
+            "content_sha256": sha256.clone(),
+            "provider_object_id": "c".repeat(40),
+            "offset": 0,
+            "stored_size": compressed.len(),
+            "compression": "zlib",
+        },
+        {
+            "path": "worktrees/chat-1/shared.bin",
+            "kind": "regular",
+            "mode": 0o100644,
+            "size": content.len(),
+            "content_sha256": sha256,
+            "provider_object_id": "c".repeat(40),
+            "offset": 0,
+            "stored_size": compressed.len(),
+            "compression": "zlib",
+        }
+    ]);
+    let logical_bytes = (content.len() * 2) as u64;
+    let compressed = checkpoint_wire_from_archive(
+        &request,
+        WORKSPACE_ARCHIVE_VERSION,
+        entries,
+        &compressed,
+        logical_bytes,
+    );
+    let compressed = parse_workspace_checkpoint(compressed, &request)
+        .expect("a deduplicated compressed v2 runtime archive is valid");
+    assert_eq!(compressed.entries.len(), 2);
+    assert_eq!(compressed.total_bytes, logical_bytes);
+}
+
+#[test]
 fn checkpoint_capture_rejects_unresumed_mismatched_truncated_and_corrupt_results() {
     let request = checkpoint_request();
-    assert!(parse_workspace_checkpoint(&checkpoint_wire(&request, false), &request).is_err());
+    assert!(parse_workspace_checkpoint(checkpoint_wire(&request, false), &request).is_err());
 
     let mut other_version = request.clone();
     other_version.version += 1;
-    assert!(parse_workspace_checkpoint(&checkpoint_wire(&request, true), &other_version).is_err());
+    assert!(parse_workspace_checkpoint(checkpoint_wire(&request, true), &other_version).is_err());
 
     let mut truncated = checkpoint_wire(&request, true);
     truncated.pop();
-    assert!(parse_workspace_checkpoint(&truncated, &request).is_err());
+    assert!(parse_workspace_checkpoint(truncated, &request).is_err());
 
     let mut corrupt = checkpoint_wire(&request, true);
     *corrupt.last_mut().unwrap() ^= 0xff;
-    assert!(parse_workspace_checkpoint(&corrupt, &request).is_err());
+    assert!(parse_workspace_checkpoint(corrupt, &request).is_err());
 }
 
 #[test]
@@ -1426,7 +1536,7 @@ fn teardown_capture_requires_an_exact_non_expiring_writer_hold_receipt() {
         Some(&token),
         None,
     );
-    let package = parse_workspace_checkpoint(&wire, &request).expect("the exact hold is accepted");
+    let package = parse_workspace_checkpoint(wire, &request).expect("the exact hold is accepted");
     assert_eq!(
         package.writer_state,
         crate::WorkspaceWriterState::HeldForTeardown
@@ -1434,7 +1544,7 @@ fn teardown_capture_requires_an_exact_non_expiring_writer_hold_receipt() {
     assert_eq!(package.writer_resume_token.as_deref(), Some(token.as_str()));
 
     assert!(parse_workspace_checkpoint(
-        &checkpoint_wire_with_receipt(
+        checkpoint_wire_with_receipt(
             &request,
             true,
             Some("held_for_teardown"),
@@ -1445,17 +1555,17 @@ fn teardown_capture_requires_an_exact_non_expiring_writer_hold_receipt() {
     )
     .is_err());
     assert!(parse_workspace_checkpoint(
-        &checkpoint_wire_with_receipt(&request, false, Some("held_for_teardown"), None, None,),
+        checkpoint_wire_with_receipt(&request, false, Some("held_for_teardown"), None, None,),
         &request,
     )
     .is_err());
     assert!(parse_workspace_checkpoint(
-        &checkpoint_wire_with_receipt(&request, false, Some("resumed"), Some(&token), None,),
+        checkpoint_wire_with_receipt(&request, false, Some("resumed"), Some(&token), None,),
         &request,
     )
     .is_err());
     assert!(parse_workspace_checkpoint(
-        &checkpoint_wire_with_receipt(
+        checkpoint_wire_with_receipt(
             &request,
             false,
             Some("held_for_teardown"),
@@ -1466,7 +1576,7 @@ fn teardown_capture_requires_an_exact_non_expiring_writer_hold_receipt() {
     )
     .is_err());
     assert!(parse_workspace_checkpoint(
-        &checkpoint_wire_with_receipt(
+        checkpoint_wire_with_receipt(
             &request,
             false,
             Some("held_for_teardown"),
@@ -1505,7 +1615,7 @@ async fn malformed_held_checkpoint_resumes_the_exact_token_once_and_preserves_re
         None,
     );
     *wire.last_mut().expect("checkpoint has an archive") ^= 0xff;
-    let original = parse_workspace_checkpoint(&wire, &request)
+    let original = parse_workspace_checkpoint(wire.clone(), &request)
         .expect_err("the corrupt archive is rejected")
         .to_string();
     let fixture = checkpoint_fixture(

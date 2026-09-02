@@ -57,6 +57,9 @@ pub const MAX_TURN_METADATA_VALUE_CHARS: usize = 512;
 /// is no longer current.
 pub const CONVERSATION_ADVANCED_DETAIL: &str =
     "the conversation advanced beyond the expected previous turn";
+/// Fixed refusal returned when a linear conversation already has a live turn.
+pub const CONVERSATION_IN_PROGRESS_DETAIL: &str =
+    "the conversation already has a response in progress";
 
 /// Durable, protocol-neutral context for an interface that admits only a new
 /// turn at the current end of a conversation.
@@ -679,7 +682,7 @@ impl SessionService {
         }
         if linear.is_some() && record.session.status == SessionStatus::Running {
             return Err(CoreError::InvalidState {
-                detail: Some("a linear prompt cannot steer an in-flight turn".into()),
+                detail: Some(CONVERSATION_IN_PROGRESS_DETAIL.into()),
             });
         }
         if record.session.status == SessionStatus::Running
@@ -754,7 +757,7 @@ impl SessionService {
                     .require(Capability::Conversation)?;
                 if linear.is_some() && entry.session.status == SessionStatus::Running {
                     return Err(CoreError::InvalidState {
-                        detail: Some("a linear prompt cannot steer an in-flight turn".into()),
+                        detail: Some(CONVERSATION_IN_PROGRESS_DETAIL.into()),
                     });
                 }
                 if entry.session.status == SessionStatus::Running {
