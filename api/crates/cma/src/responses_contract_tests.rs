@@ -84,6 +84,79 @@ async fn create_chat_conversation(surface: &TestSurface) -> (SessionId, Value) {
     (id, body)
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn conversation_creation_survives_a_dropped_request() {
+    let surface = chat_test_surface(true);
+    let pause = surface.kernel.pause_next_provision().await;
+    let request_app = surface.app.clone();
+    let request = tokio::spawn(async move {
+        request_app
+            .oneshot(json_request(Method::POST, "/api/v1/conversations", "{}"))
+            .await
+            .expect("the conversation route answers")
+    });
+
+    pause.wait_until_reached().await;
+    request.abort();
+    assert!(request
+        .await
+        .expect_err("the simulated browser request was dropped")
+        .is_cancelled());
+    pause.release();
+
+    let id = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let candidate = surface
+                .chat_hosts
+                .get_for_owner(&surface.caller.subject)
+                .await
+                .expect("the chat host store remains readable")
+                .filter(|host| host.status == ChatHostStatus::Active)
+                .and_then(|host| {
+                    host.threads
+                        .iter()
+                        .find(|slot| !slot.removed)
+                        .map(|slot| slot.session_id.clone())
+                });
+            let durable = match candidate {
+                Some(id)
+                    if surface
+                        .store
+                        .get(&id)
+                        .await
+                        .expect("the session store remains readable")
+                        .is_some() =>
+                {
+                    Some(id)
+                }
+                _ => None,
+            };
+            if let Some(id) = durable {
+                break id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("server-owned conversation creation completes after the request is dropped");
+
+    let host = surface
+        .chat_hosts
+        .get_for_owner(&surface.caller.subject)
+        .await
+        .unwrap()
+        .expect("the active chat host remains durable");
+    assert_eq!(host.threads.iter().filter(|slot| !slot.removed).count(), 1);
+    assert_eq!(host.threads[0].session_id, id);
+    let session = surface
+        .sessions
+        .get_session(&surface.caller, &id)
+        .await
+        .expect("the detached creation commits a readable conversation");
+    assert_eq!(session.status, SessionStatus::Ready);
+    assert!(session.chat.is_some());
+}
+
 async fn retrieve_response(app: &Router, id: &str) -> Value {
     let response = app
         .clone()
