@@ -348,7 +348,7 @@ data:
   # The API and runtime also share one exact four-MiB skill-prelude limit. Adopt
   # the matching runtime image before deploying an API that accepts that limit;
   # the currently pinned v0.7.0 runtime rejects bodies above two MiB with 413.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime:v0.9.0"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime:v0.10.0@sha256:0d2781ec75e55a8901714dc1e879d7048797fc52fb5d92e580c60849beb3e568"
   # The default, and therefore the floor a session receives when its profile
   # names no size.
   #
