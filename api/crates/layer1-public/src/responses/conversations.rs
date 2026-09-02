@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     extract::{Path, State},
@@ -52,27 +52,40 @@ pub(super) async fn create(
         );
     }
 
-    let session = match state
-        .sessions
-        .create_session(
-            &caller,
-            SessionSpec {
-                surface: Some(SessionSurface::Chat),
-                options: Default::default(),
-                geometry: None,
-                environment_profile: None,
-                caller_credential: credential
-                    .map(|Extension(value)| value.into_caller_credential()),
-                runtime_credential: None,
-                requested_mode: None,
-                quoted_rate_card: None,
-            },
-        )
-        .await
-    {
-        Ok(session) => session,
-        Err(CoreError::Forbidden | CoreError::SessionNotFound) => return not_found(),
-        Err(error) => return Problem::from(error).into_response(),
+    let service = Arc::clone(&state.sessions);
+    let creation_caller = caller.clone();
+    let creation = tokio::spawn(async move {
+        service
+            .create_session(
+                &creation_caller,
+                SessionSpec {
+                    surface: Some(SessionSurface::Chat),
+                    options: Default::default(),
+                    geometry: None,
+                    environment_profile: None,
+                    caller_credential: credential
+                        .map(|Extension(value)| value.into_caller_credential()),
+                    runtime_credential: None,
+                    requested_mode: None,
+                    quoted_rate_card: None,
+                },
+            )
+            .await
+    });
+    // Dropping a JoinHandle detaches its task. Once creation begins, a closed
+    // tab or request timeout therefore cannot strand a host slot before the
+    // corresponding durable session has been committed or rolled back.
+    let session = match creation.await {
+        Ok(Ok(session)) => session,
+        Ok(Err(CoreError::Forbidden | CoreError::SessionNotFound)) => return not_found(),
+        Ok(Err(error)) => return Problem::from(error).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "conversation creation task failed");
+            return Problem::from(CoreError::RuntimeUnavailable(
+                "the conversation creation task failed".into(),
+            ))
+            .into_response();
+        }
     };
     let events = match state
         .sessions
