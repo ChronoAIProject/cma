@@ -371,6 +371,14 @@ async fn next_new_chat_reincarnates_a_retired_host_without_losing_old_history() 
     assert_eq!(fresh.id, retired.id);
     assert_eq!(fresh.status, ChatHostStatus::Active);
     assert!(fresh.runtime_generation > retired.runtime_generation);
+    assert_eq!(
+        fresh.credential_generation,
+        retired.credential_generation + 1
+    );
+    assert_ne!(
+        fresh.credential_session_id(),
+        retired.credential_session_id()
+    );
     assert_eq!(fresh.checkpoint, None);
     assert_eq!(fresh.pinned_settings.settings_revision, 11);
     assert_eq!(fresh.threads.len(), 1);

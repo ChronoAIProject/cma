@@ -37,9 +37,20 @@ fn owner_identity_is_deterministic_opaque_and_owner_specific() {
     assert_ne!(first, other);
     assert!(first.as_str().starts_with("chho_"));
     assert_eq!(first.as_str().len(), 37);
+    let legacy = first.credential_session_id(0);
     assert_eq!(
-        first.credential_session_id().as_str(),
+        legacy.as_str(),
         first.as_str().replacen("chho_", "sesn_chat_", 1)
+    );
+    assert_eq!(
+        ChatHostId::from_credential_session_id(&legacy),
+        Some((first.clone(), 0))
+    );
+    let reincarnated = first.credential_session_id(2);
+    assert_eq!(reincarnated.as_str(), format!("{}_cg2", legacy.as_str()));
+    assert_eq!(
+        ChatHostId::from_credential_session_id(&reincarnated),
+        Some((first, 2))
     );
 }
 
