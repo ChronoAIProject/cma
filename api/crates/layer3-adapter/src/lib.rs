@@ -154,6 +154,9 @@ pub enum AdapterError {
     Unsupported(String),
 }
 
+pub(crate) const HELD_CHECKPOINT_RECOVERY_ERROR: &str =
+    "held workspace checkpoint could not be safely recovered";
+
 impl AdapterError {
     /// The same failure, said with more context, and still the same kind.
     ///
@@ -180,6 +183,13 @@ impl AdapterError {
     #[must_use]
     pub fn is_runtime_loss(&self) -> bool {
         matches!(self, Self::Unavailable(_))
+    }
+
+    /// Whether a hold-for-teardown request failed without positive proof that
+    /// its runtime writers reopened. Callers must fail closed on this class.
+    #[must_use]
+    pub fn requires_workspace_writer_recovery(&self) -> bool {
+        matches!(self, Self::Unavailable(message) if message.contains(HELD_CHECKPOINT_RECOVERY_ERROR))
     }
 }
 

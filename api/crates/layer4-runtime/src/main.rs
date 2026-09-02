@@ -31,7 +31,6 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use ring::rand::SecureRandom as _;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::bridge::Bridge;
@@ -78,9 +77,91 @@ struct ConversationState {
 #[derive(Default)]
 struct WorkspaceWriterHoldState {
     held: Option<HeldWorkspaceWriters>,
+    /// A caller-issued hold token registered before the blocking capture can
+    /// stop any process. Resume can therefore cancel an in-flight request even
+    /// when its HTTP response was dropped.
+    in_flight: Option<InFlightWorkspaceHold>,
     /// Makes an explicit resume retry idempotent if its first acknowledgement
     /// was lost. A new hold clears this receipt, so older tokens stay stale.
     last_resumed_token: Option<String>,
+}
+
+#[derive(Clone)]
+struct InFlightWorkspaceHold {
+    resume_token: String,
+    cancel_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    completion: std::sync::Arc<WorkspaceResumeCompletion>,
+}
+
+/// Registration retained until a blocking candidate crosses into the writer
+/// fence. Dropping it before then proves that no writer was stopped and settles
+/// an exact-token resume without waiting for the abandoned HTTP handler.
+struct PendingWorkspaceHold {
+    state: std::sync::Arc<std::sync::Mutex<WorkspaceWriterHoldState>>,
+    in_flight: InFlightWorkspaceHold,
+    armed: bool,
+}
+
+impl PendingWorkspaceHold {
+    fn cancelled(&self) -> bool {
+        self.in_flight
+            .cancel_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingWorkspaceHold {
+    fn drop(&mut self) {
+        if self.armed {
+            settle_in_flight_workspace_hold(&self.state, Some(&self.in_flight), Ok(()));
+        }
+    }
+}
+
+#[derive(Default)]
+struct WorkspaceResumeCompletion {
+    result: std::sync::Mutex<Option<Result<(), String>>>,
+    notify: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct WorkspaceCheckpointTestControl {
+    reached_fence: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reached_notify: std::sync::Arc<tokio::sync::Notify>,
+    release_fence: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl WorkspaceResumeCompletion {
+    fn complete(&self, result: Result<(), String>) {
+        let mut current = self
+            .result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if current.is_none() {
+            *current = Some(result);
+            self.notify.notify_waiters();
+        }
+    }
+
+    async fn wait(&self) -> Result<(), String> {
+        loop {
+            let notified = self.notify.notified();
+            if let Some(result) = self
+                .result
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+            {
+                return result;
+            }
+            notified.await;
+        }
+    }
 }
 
 struct HeldWorkspaceWriters {
@@ -173,7 +254,9 @@ pub(crate) struct AppState {
     workspace_source: std::sync::Arc<Mutex<workspace_source::WorkspaceSources>>,
     /// Writer and startup-admission authority retained across a successful
     /// hold-for-teardown response.
-    workspace_writer_hold: std::sync::Arc<Mutex<WorkspaceWriterHoldState>>,
+    workspace_writer_hold: std::sync::Arc<std::sync::Mutex<WorkspaceWriterHoldState>>,
+    #[cfg(test)]
+    workspace_checkpoint_test_control: Option<WorkspaceCheckpointTestControl>,
     /// Serializes pre-start filesystem mutations against the first process
     /// start. Readers may start an agent; writers must finish before any
     /// agent process can observe the filesystem.
@@ -258,9 +341,11 @@ impl AppState {
             workspace_source: std::sync::Arc::new(Mutex::new(
                 workspace_source::WorkspaceSources::default(),
             )),
-            workspace_writer_hold: std::sync::Arc::new(Mutex::new(
+            workspace_writer_hold: std::sync::Arc::new(std::sync::Mutex::new(
                 WorkspaceWriterHoldState::default(),
             )),
+            #[cfg(test)]
+            workspace_checkpoint_test_control: None,
             startup_gate: std::sync::Arc::new(RwLock::new(())),
             writer_supervisor: writer_fence::SupervisorBoundary::default(),
             snapshot_dir: None,
@@ -706,7 +791,11 @@ async fn main() {
         workspace_source: std::sync::Arc::new(Mutex::new(
             workspace_source::WorkspaceSources::default(),
         )),
-        workspace_writer_hold: std::sync::Arc::new(Mutex::new(WorkspaceWriterHoldState::default())),
+        workspace_writer_hold: std::sync::Arc::new(std::sync::Mutex::new(
+            WorkspaceWriterHoldState::default(),
+        )),
+        #[cfg(test)]
+        workspace_checkpoint_test_control: None,
         startup_gate: std::sync::Arc::new(RwLock::new(())),
         writer_supervisor,
         snapshot_dir,
@@ -1583,6 +1672,8 @@ struct WorkspaceCheckpointParams {
     include_git_metadata: bool,
     #[serde(default)]
     disposition: RuntimeWorkspaceCheckpointDisposition,
+    #[serde(default)]
+    resume_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
@@ -1595,7 +1686,8 @@ enum RuntimeWorkspaceCheckpointDisposition {
 
 enum WorkspaceCaptureResult {
     Resumed(workspace::Captured),
-    Held(workspace::Captured, writer_fence::WriterFence),
+    Held(workspace::Captured),
+    Cancelled,
 }
 
 /// Capture one coherent repository tree while the existing agent remains the
@@ -1604,7 +1696,33 @@ async fn workspace_checkpoint(
     State(state): State<AppState>,
     Query(params): Query<WorkspaceCheckpointParams>,
 ) -> impl IntoResponse {
-    let _checkpoint = state.checkpoint_gate.lock().await;
+    let checkpoint = state.checkpoint_gate.clone().lock_owned().await;
+    let hold_token = match params.disposition {
+        RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture => {
+            if params.resume_token.is_some() {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "a resumed workspace checkpoint cannot name a hold token",
+                )
+                    .into_response();
+            }
+            None
+        }
+        RuntimeWorkspaceCheckpointDisposition::HoldForTeardown => {
+            let Some(token) = params
+                .resume_token
+                .as_deref()
+                .filter(|token| valid_workspace_resume_token(token))
+            else {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "a valid caller-issued workspace writer resume token is required",
+                )
+                    .into_response();
+            };
+            Some(token.to_ascii_lowercase())
+        }
+    };
     let authority = state.workspace_authority.read().await.clone();
     if authority.as_ref().is_none_or(|authority| {
         authority.epoch != params.epoch
@@ -1623,12 +1741,16 @@ async fn workspace_checkpoint(
     }
 
     let held_replay = {
-        let holds = state.workspace_writer_hold.lock().await;
+        let holds = state
+            .workspace_writer_hold
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match holds.held.as_ref() {
             Some(held)
                 if params.disposition == RuntimeWorkspaceCheckpointDisposition::HoldForTeardown
                     && held.epoch == params.epoch
-                    && held.version == params.version =>
+                    && held.version == params.version
+                    && hold_token.as_deref() == Some(held.resume_token.as_str()) =>
             {
                 Some((held.captured.clone(), held.resume_token.clone()))
             }
@@ -1643,8 +1765,37 @@ async fn workspace_checkpoint(
         }
     };
     if let Some((captured, token)) = held_replay {
+        drop(checkpoint);
         return checkpoint_held_response(captured, &token);
     }
+
+    let in_flight = hold_token
+        .as_ref()
+        .map(|resume_token| InFlightWorkspaceHold {
+            resume_token: resume_token.clone(),
+            cancel_requested: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            completion: std::sync::Arc::new(WorkspaceResumeCompletion::default()),
+        });
+    if let Some(in_flight) = in_flight.as_ref() {
+        let mut holds = state
+            .workspace_writer_hold
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if holds.held.is_some() || holds.in_flight.is_some() {
+            return (
+                axum::http::StatusCode::CONFLICT,
+                "another workspace writer hold is active",
+            )
+                .into_response();
+        }
+        holds.last_resumed_token = None;
+        holds.in_flight = Some(in_flight.clone());
+    }
+    let pending_hold = in_flight.as_ref().map(|in_flight| PendingWorkspaceHold {
+        state: state.workspace_writer_hold.clone(),
+        in_flight: in_flight.clone(),
+        armed: true,
+    });
 
     let checkpoint_root = state.checkpoint_root.clone();
     let source = params.source.clone();
@@ -1691,71 +1842,222 @@ async fn workspace_checkpoint(
         }
     }
 
-    // Agent input and process starts take the read side. This write guard
-    // closes admission before the kernel process groups are stopped.
+    let workspace_root = state.workspace_root.clone();
+    let epoch = params.epoch;
+    let version = params.version;
+    let include_git_metadata = params.include_git_metadata;
+    let candidate = tokio::task::spawn_blocking({
+        let workspace_root = workspace_root.clone();
+        let checkpoint_root = checkpoint_root.clone();
+        let source = source.clone();
+        let pending_hold = pending_hold;
+        move || {
+            let cancelled = || {
+                pending_hold
+                    .as_ref()
+                    .is_some_and(PendingWorkspaceHold::cancelled)
+            };
+            workspace::build_capture_candidate(
+                &workspace_root,
+                &checkpoint_root,
+                epoch,
+                version,
+                &source,
+                include_git_metadata,
+                cancelled,
+            )
+            .map(|candidate| (candidate, checkpoint, pending_hold))
+        }
+    })
+    .await;
+    let (candidate, checkpoint, pending_hold) = match candidate {
+        Ok(Ok(candidate)) => candidate,
+        Ok(Err(error)) => {
+            tracing::warn!(
+                reason = workspace::checkpoint_refusal_reason(&error),
+                "workspace checkpoint candidate refused"
+            );
+            return (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "workspace checkpoint refused",
+            )
+                .into_response();
+        }
+        Err(error) => {
+            tracing::error!(%error, "workspace checkpoint candidate task failed");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace checkpoint failed",
+            )
+                .into_response();
+        }
+    };
+
+    // Agent input and process starts take the read side. This owned guard and
+    // the checkpoint mutex move into the blocking task, so cancellation of the
+    // HTTP handler cannot reopen admission while stopped writers still exist.
+    if pending_hold
+        .as_ref()
+        .is_some_and(PendingWorkspaceHold::cancelled)
+    {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "workspace checkpoint was cancelled before its writer fence",
+        )
+            .into_response();
+    }
     let admission = state.startup_gate.clone().write_owned().await;
     let writer_roots = state.writer_session_roots().await;
-    let workspace_root = state.workspace_root.clone();
     let writer_supervisor = state.writer_supervisor;
     let disposition = params.disposition;
+
+    let hold_state = state.workspace_writer_hold.clone();
+    #[cfg(test)]
+    let checkpoint_test_control = state.workspace_checkpoint_test_control.clone();
     let capture = tokio::task::spawn_blocking(move || {
-        let mut writers = writer_fence::WriterFence::quiesce(writer_roots, writer_supervisor)?;
-        let prepared = workspace::prepare_capture(
-            &workspace_root,
-            &checkpoint_root,
-            params.epoch,
-            params.version,
-            &source,
-            writers.writer_count()?,
-            params.include_git_metadata,
-        )?;
+        let _checkpoint = checkpoint;
+        let mut admission = Some(admission);
+        let mut pending_hold = pending_hold;
+        if pending_hold
+            .as_ref()
+            .is_some_and(PendingWorkspaceHold::cancelled)
+        {
+            return Ok(WorkspaceCaptureResult::Cancelled);
+        }
+        if let Some(pending_hold) = pending_hold.as_mut() {
+            pending_hold.disarm();
+        }
+        let mut writers = match writer_fence::WriterFence::quiesce(writer_roots, writer_supervisor)
+        {
+            Ok(writers) => writers,
+            Err(error) => {
+                let recovery = if writer_fence::quiesce_error_writers_resumed(&error) {
+                    Ok(())
+                } else {
+                    Err(error.clone())
+                };
+                settle_in_flight_workspace_hold(&hold_state, in_flight.as_ref(), recovery);
+                return Err(error);
+            }
+        };
+        #[cfg(test)]
+        if let Some(control) = checkpoint_test_control.as_ref() {
+            control
+                .reached_fence
+                .store(true, std::sync::atomic::Ordering::Release);
+            control.reached_notify.notify_waiters();
+            while !control
+                .release_fence
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+        let writer_count = match writers.writer_count() {
+            Ok(count) => count,
+            Err(error) => {
+                let resumed = writers.resume();
+                settle_in_flight_workspace_hold(&hold_state, in_flight.as_ref(), resumed.clone());
+                resumed?;
+                return Err(error);
+            }
+        };
+        let cancelled = || {
+            in_flight.as_ref().is_some_and(|hold| {
+                hold.cancel_requested
+                    .load(std::sync::atomic::Ordering::Acquire)
+            })
+        };
+        let prepared = match candidate
+            .verify_workspace(&workspace_root, cancelled)
+            .and_then(|()| candidate.seal(writer_count))
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let resumed = writers.resume();
+                settle_in_flight_workspace_hold(&hold_state, in_flight.as_ref(), resumed.clone());
+                resumed?;
+                if cancelled() {
+                    return Ok(WorkspaceCaptureResult::Cancelled);
+                }
+                return Err(error);
+            }
+        };
+        if cancelled() {
+            let resumed = writers.resume();
+            settle_in_flight_workspace_hold(&hold_state, in_flight.as_ref(), resumed.clone());
+            resumed?;
+            return Ok(WorkspaceCaptureResult::Cancelled);
+        }
         match disposition {
             RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture => {
                 writers.resume()?;
                 prepared.commit().map(WorkspaceCaptureResult::Resumed)
             }
             RuntimeWorkspaceCheckpointDisposition::HoldForTeardown => {
-                let captured = prepared.commit()?;
-                Ok(WorkspaceCaptureResult::Held(captured, writers))
+                let captured = match prepared.commit() {
+                    Ok(captured) => captured,
+                    Err(error) => {
+                        let resumed = writers.resume();
+                        settle_in_flight_workspace_hold(
+                            &hold_state,
+                            in_flight.as_ref(),
+                            resumed.clone(),
+                        );
+                        resumed?;
+                        return Err(error);
+                    }
+                };
+                let hold = in_flight
+                    .as_ref()
+                    .expect("hold disposition registered an in-flight token");
+                let mut holds = hold_state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let still_registered = holds.in_flight.as_ref().is_some_and(|registered| {
+                    constant_time_token_eq(&registered.resume_token, &hold.resume_token)
+                });
+                if !still_registered
+                    || hold
+                        .cancel_requested
+                        .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    drop(holds);
+                    let resumed = writers.resume();
+                    settle_in_flight_workspace_hold(
+                        &hold_state,
+                        in_flight.as_ref(),
+                        resumed.clone(),
+                    );
+                    resumed?;
+                    return Ok(WorkspaceCaptureResult::Cancelled);
+                }
+                holds.in_flight = None;
+                holds.held = Some(HeldWorkspaceWriters {
+                    epoch,
+                    version,
+                    resume_token: hold.resume_token.clone(),
+                    captured: captured.clone(),
+                    writers,
+                    _startup_admission: admission.take().expect("capture owns startup admission"),
+                });
+                Ok(WorkspaceCaptureResult::Held(captured))
             }
         }
     })
     .await;
     match capture {
-        Ok(Ok(WorkspaceCaptureResult::Resumed(captured))) => {
-            drop(admission);
-            checkpoint_response(captured)
-        }
-        Ok(Ok(WorkspaceCaptureResult::Held(captured, writers))) => {
-            let token = match workspace_writer_resume_token() {
-                Ok(token) => token,
-                Err(error) => {
-                    tracing::error!(%error, "workspace writer hold token generation failed");
-                    drop(writers);
-                    drop(admission);
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "workspace writer hold could not be established",
-                    )
-                        .into_response();
-                }
-            };
-            {
-                let mut holds = state.workspace_writer_hold.lock().await;
-                holds.last_resumed_token = None;
-                holds.held = Some(HeldWorkspaceWriters {
-                    epoch: params.epoch,
-                    version: params.version,
-                    resume_token: token.clone(),
-                    captured: captured.clone(),
-                    writers,
-                    _startup_admission: admission,
-                });
-            }
+        Ok(Ok(WorkspaceCaptureResult::Resumed(captured))) => checkpoint_response(captured),
+        Ok(Ok(WorkspaceCaptureResult::Held(captured))) => {
+            let token = hold_token.expect("held capture has a caller-issued token");
             checkpoint_held_response(captured, &token)
         }
+        Ok(Ok(WorkspaceCaptureResult::Cancelled)) => (
+            axum::http::StatusCode::CONFLICT,
+            "workspace checkpoint was cancelled and its writers resumed",
+        )
+            .into_response(),
         Ok(Err(error)) => {
-            drop(admission);
             tracing::warn!(
                 reason = workspace::checkpoint_refusal_reason(&error),
                 "workspace checkpoint refused"
@@ -1767,7 +2069,6 @@ async fn workspace_checkpoint(
                 .into_response()
         }
         Err(error) => {
-            drop(admission);
             tracing::error!(%error, "workspace checkpoint task failed");
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -1800,12 +2101,34 @@ fn checkpoint_held_response(
     }
 }
 
-fn workspace_writer_resume_token() -> Result<String, String> {
-    let mut bytes = [0_u8; 32];
-    ring::rand::SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| "secure random source refused the writer hold token".to_string())?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+fn valid_workspace_resume_token(token: &str) -> bool {
+    token.len() == 64
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn settle_in_flight_workspace_hold(
+    state: &std::sync::Arc<std::sync::Mutex<WorkspaceWriterHoldState>>,
+    in_flight: Option<&InFlightWorkspaceHold>,
+    result: Result<(), String>,
+) {
+    let Some(in_flight) = in_flight else {
+        return;
+    };
+    in_flight.completion.complete(result.clone());
+    if result.is_err() {
+        return;
+    }
+    let mut holds = state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if holds.in_flight.as_ref().is_some_and(|registered| {
+        constant_time_token_eq(&registered.resume_token, &in_flight.resume_token)
+    }) {
+        holds.in_flight = None;
+        holds.last_resumed_token = Some(in_flight.resume_token.clone());
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1818,44 +2141,80 @@ async fn workspace_checkpoint_resume(
     State(state): State<AppState>,
     axum::Json(request): axum::Json<WorkspaceCheckpointResumeRequest>,
 ) -> impl IntoResponse {
-    let _checkpoint = state.checkpoint_gate.lock().await;
-    if request.resume_token.len() != 64
-        || !request
-            .resume_token
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
+    if !valid_workspace_resume_token(&request.resume_token) {
         return (
             axum::http::StatusCode::BAD_REQUEST,
             "workspace writer resume token is invalid",
         )
             .into_response();
     }
-    let held = {
-        let mut holds = state.workspace_writer_hold.lock().await;
-        if holds.last_resumed_token.as_deref() == Some(request.resume_token.as_str()) {
-            return axum::Json(serde_json::json!({
-                "resume_token": request.resume_token,
-                "writers_resumed": true,
-            }))
-            .into_response();
-        }
-        let matches = holds
-            .held
-            .as_ref()
-            .is_some_and(|held| constant_time_token_eq(&held.resume_token, &request.resume_token));
-        matches.then(|| holds.held.take()).flatten()
-    };
-    let Some(held) = held else {
+    enum ResumeTarget {
+        AlreadyResumed,
+        Held(HeldWorkspaceWriters),
+        InFlight(std::sync::Arc<WorkspaceResumeCompletion>),
+    }
+    let target =
+        {
+            let mut holds = state
+                .workspace_writer_hold
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if holds
+                .last_resumed_token
+                .as_deref()
+                .is_some_and(|token| constant_time_token_eq(token, &request.resume_token))
+            {
+                Some(ResumeTarget::AlreadyResumed)
+            } else if holds.held.as_ref().is_some_and(|held| {
+                constant_time_token_eq(&held.resume_token, &request.resume_token)
+            }) {
+                holds.held.take().map(ResumeTarget::Held)
+            } else if let Some(in_flight) = holds.in_flight.as_ref().filter(|in_flight| {
+                constant_time_token_eq(&in_flight.resume_token, &request.resume_token)
+            }) {
+                in_flight
+                    .cancel_requested
+                    .store(true, std::sync::atomic::Ordering::Release);
+                Some(ResumeTarget::InFlight(in_flight.completion.clone()))
+            } else {
+                None
+            }
+        };
+    let Some(target) = target else {
         return (
             axum::http::StatusCode::CONFLICT,
             "workspace writer resume token is stale",
         )
             .into_response();
     };
-    match held.resume() {
+    let result = match target {
+        ResumeTarget::AlreadyResumed => Ok(request.resume_token.clone()),
+        ResumeTarget::Held(held) => {
+            match tokio::task::spawn_blocking(move || held.resume()).await {
+                Ok(result) => result,
+                Err(error) => Err(format!("workspace writer resume task failed: {error}")),
+            }
+        }
+        ResumeTarget::InFlight(completion) => completion
+            .wait()
+            .await
+            .map(|()| request.resume_token.clone()),
+    };
+    match result {
         Ok(token) => {
-            state.workspace_writer_hold.lock().await.last_resumed_token = Some(token.clone());
+            let mut holds = state
+                .workspace_writer_hold
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if holds
+                .in_flight
+                .as_ref()
+                .is_some_and(|in_flight| constant_time_token_eq(&in_flight.resume_token, &token))
+            {
+                holds.in_flight = None;
+            }
+            holds.last_resumed_token = Some(token.clone());
+            drop(holds);
             axum::Json(serde_json::json!({
                 "resume_token": token,
                 "writers_resumed": true,

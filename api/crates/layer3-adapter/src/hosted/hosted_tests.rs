@@ -229,6 +229,7 @@ async fn workspace_fixture(
 }
 
 enum CheckpointResumeResponse {
+    AcknowledgeExact,
     Acknowledge(serde_json::Value),
     Refuse,
     Disconnect,
@@ -274,6 +275,43 @@ async fn write_http_bytes(
     stream.shutdown().await.expect("checkpoint fixture closes");
 }
 
+fn requested_resume_token(request: &(String, Vec<u8>)) -> Option<&str> {
+    let Some(path) = request.0.lines().next().and_then(|line| {
+        let mut fields = line.split_whitespace();
+        let _method = fields.next()?;
+        fields.next()
+    }) else {
+        return None;
+    };
+    path.split_once('?')
+        .map(|(_, query)| query)
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .find_map(|field| field.strip_prefix("resume_token="))
+}
+
+fn checkpoint_wire_with_requested_token(wire: &[u8], request: &(String, Vec<u8>)) -> Vec<u8> {
+    let Some(requested) = requested_resume_token(request) else {
+        return wire.to_vec();
+    };
+    let Ok((header, archive)) =
+        open_length_delimited(wire, 64 * 1024, "workspace checkpoint acknowledgement")
+    else {
+        return wire.to_vec();
+    };
+    let Ok(mut header) = serde_json::from_slice::<serde_json::Value>(header) else {
+        return wire.to_vec();
+    };
+    let valid_existing = header["writer_resume_token"].as_str().is_some_and(|token| {
+        token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+    });
+    if !valid_existing {
+        return wire.to_vec();
+    }
+    header["writer_resume_token"] = serde_json::Value::String(requested.to_string());
+    length_delimited(header, archive)
+}
+
 async fn checkpoint_fixture(
     wire: Vec<u8>,
     resume: Option<CheckpointResumeResponse>,
@@ -300,11 +338,17 @@ async fn checkpoint_fixture(
                 1 => {
                     write_json(
                         &mut stream,
-                        serde_json::json!({ "workspaceCheckpoint": { "version": 5 } }),
+                        serde_json::json!({ "workspaceCheckpoint": { "version": 6 } }),
                     )
                     .await
                 }
-                2 => write_http_bytes(&mut stream, 200, "application/octet-stream", &wire).await,
+                2 => {
+                    let response = checkpoint_wire_with_requested_token(
+                        &wire,
+                        requests.last().expect("checkpoint request was captured"),
+                    );
+                    write_http_bytes(&mut stream, 200, "application/octet-stream", &response).await
+                }
                 _ => unreachable!(),
             }
         }
@@ -317,6 +361,20 @@ async fn checkpoint_fixture(
                     .expect("checkpoint fixture accepts resume");
                 requests.push(read_http_request(&mut stream).await);
                 match response {
+                    CheckpointResumeResponse::AcknowledgeExact => {
+                        let request: serde_json::Value = serde_json::from_slice(
+                            &requests.last().expect("resume request was captured").1,
+                        )
+                        .expect("resume request is JSON");
+                        write_json(
+                            &mut stream,
+                            serde_json::json!({
+                                "resume_token": request["resume_token"],
+                                "writers_resumed": true,
+                            }),
+                        )
+                        .await
+                    }
                     CheckpointResumeResponse::Acknowledge(receipt) => {
                         write_json(&mut stream, receipt).await
                     }
@@ -1402,22 +1460,22 @@ fn checkpoint_capture_requires_v2_and_validates_the_exact_sealed_wire() {
         false,
     ));
     assert!(!readiness_supports_workspace_checkpoint(
-        br#"{"workspaceCheckpoint":{"version":3}}"#,
+        br#"{"workspaceCheckpoint":{"version":5}}"#,
         crate::WorkspaceCheckpointDisposition::HoldForTeardown,
         false,
     ));
     assert!(readiness_supports_workspace_checkpoint(
-        br#"{"workspaceCheckpoint":{"version":4}}"#,
+        br#"{"workspaceCheckpoint":{"version":6}}"#,
         crate::WorkspaceCheckpointDisposition::HoldForTeardown,
         false,
     ));
     assert!(!readiness_supports_workspace_checkpoint(
-        br#"{"workspaceCheckpoint":{"version":4}}"#,
+        br#"{"workspaceCheckpoint":{"version":5}}"#,
         crate::WorkspaceCheckpointDisposition::HoldForTeardown,
         true,
     ));
     assert!(readiness_supports_workspace_checkpoint(
-        br#"{"workspaceCheckpoint":{"version":5}}"#,
+        br#"{"workspaceCheckpoint":{"version":6}}"#,
         crate::WorkspaceCheckpointDisposition::HoldForTeardown,
         true,
     ));
@@ -1618,14 +1676,7 @@ async fn malformed_held_checkpoint_resumes_the_exact_token_once_and_preserves_re
     let original = parse_workspace_checkpoint(wire.clone(), &request)
         .expect_err("the corrupt archive is rejected")
         .to_string();
-    let fixture = checkpoint_fixture(
-        wire,
-        Some(CheckpointResumeResponse::Acknowledge(serde_json::json!({
-            "resume_token": token,
-            "writers_resumed": true,
-        }))),
-    )
-    .await;
+    let fixture = checkpoint_fixture(wire, Some(CheckpointResumeResponse::AcknowledgeExact)).await;
     let kernel = hosted(&fixture.base_url);
 
     let error = kernel
@@ -1643,14 +1694,15 @@ async fn malformed_held_checkpoint_resumes_the_exact_token_once_and_preserves_re
     assert!(requests[3]
         .0
         .starts_with("POST /runtime/workspace/checkpoint/resume "));
+    let requested = requested_resume_token(&requests[2]).expect("hold request carries a token");
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&requests[3].1).unwrap(),
-        serde_json::json!({ "resume_token": "a".repeat(64) })
+        serde_json::json!({ "resume_token": requested })
     );
 }
 
 #[tokio::test]
-async fn held_checkpoint_without_a_valid_resume_token_requires_recovery_without_resuming() {
+async fn held_checkpoint_with_an_invalid_echo_recovers_the_caller_issued_token() {
     for token in [None, Some("g".repeat(64))] {
         let request = held_checkpoint_request();
         let wire = checkpoint_wire_with_receipt(
@@ -1660,15 +1712,22 @@ async fn held_checkpoint_without_a_valid_resume_token_requires_recovery_without_
             token.as_deref(),
             None,
         );
-        let fixture = checkpoint_fixture(wire, None).await;
+        let fixture =
+            checkpoint_fixture(wire, Some(CheckpointResumeResponse::AcknowledgeExact)).await;
         let kernel = hosted(&fixture.base_url);
 
         let error = kernel
             .checkpoint_workspace(&RuntimeHandle("sbx-held-no-token".into()), &request)
             .await
-            .expect_err("an unprovable hold cannot be returned as an ordinary rejection");
-        assert_held_checkpoint_recovery_required(error);
-        assert_eq!(fixture.finish().await.len(), 3);
+            .expect_err("an invalid echoed token remains a rejected checkpoint");
+        assert!(matches!(error, AdapterError::Rejected(_)));
+        let requests = fixture.finish().await;
+        assert_eq!(requests.len(), 4);
+        let requested = requested_resume_token(&requests[2]).expect("hold request carries a token");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&requests[3].1).unwrap(),
+            serde_json::json!({ "resume_token": requested })
+        );
     }
 }
 
@@ -1738,6 +1797,88 @@ async fn held_checkpoint_resume_refusal_or_mismatched_receipt_requires_recovery(
 }
 
 #[tokio::test]
+async fn dropping_a_held_checkpoint_request_recovers_its_preissued_token() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("cancellation fixture binds");
+    let address = listener.local_addr().expect("fixture has an address");
+    let (checkpoint_seen, checkpoint_reached) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        let mut held_checkpoint_stream = None;
+        let mut checkpoint_seen = Some(checkpoint_seen);
+        for ordinal in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("fixture accepts request");
+            requests.push(read_http_request(&mut stream).await);
+            match ordinal {
+                0 => {
+                    write_json(
+                        &mut stream,
+                        serde_json::json!({ "endpoint": address.to_string() }),
+                    )
+                    .await;
+                }
+                1 => {
+                    write_json(
+                        &mut stream,
+                        serde_json::json!({ "workspaceCheckpoint": { "version": 6 } }),
+                    )
+                    .await;
+                }
+                2 => {
+                    checkpoint_seen
+                        .take()
+                        .expect("checkpoint notification is sent once")
+                        .send(())
+                        .expect("checkpoint waiter remains present");
+                    // Keep the request unanswered. Dropping the adapter future
+                    // must schedule resume without learning anything from it.
+                    held_checkpoint_stream = Some(stream);
+                }
+                _ => unreachable!(),
+            }
+        }
+        let (mut resume, _) = listener.accept().await.expect("fixture accepts resume");
+        requests.push(read_http_request(&mut resume).await);
+        let resume_request: serde_json::Value =
+            serde_json::from_slice(&requests.last().expect("resume was captured").1)
+                .expect("resume request is JSON");
+        write_json(
+            &mut resume,
+            serde_json::json!({
+                "resume_token": resume_request["resume_token"],
+                "writers_resumed": true,
+            }),
+        )
+        .await;
+        drop(held_checkpoint_stream);
+        requests
+    });
+
+    let base_url = format!("http://{address}");
+    let request = held_checkpoint_request();
+    let checkpoint = tokio::spawn(async move {
+        hosted(&base_url)
+            .checkpoint_workspace(&RuntimeHandle("sbx-held-cancelled".into()), &request)
+            .await
+    });
+    checkpoint_reached
+        .await
+        .expect("the hold request reaches the runtime");
+    checkpoint.abort();
+    assert!(checkpoint.await.unwrap_err().is_cancelled());
+
+    let requests = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .expect("drop recovery is scheduled promptly")
+        .expect("cancellation fixture completes");
+    assert_eq!(requests.len(), 4);
+    let requested = requested_resume_token(&requests[2]).expect("hold request carries a token");
+    let resumed: serde_json::Value = serde_json::from_slice(&requests[3].1).unwrap();
+    assert_eq!(resumed["resume_token"], requested);
+}
+
+#[tokio::test]
 async fn periodic_checkpoint_parse_failure_never_uses_the_teardown_resume_path() {
     let request = checkpoint_request();
     let mut wire = checkpoint_wire(&request, true);
@@ -1775,11 +1916,10 @@ async fn valid_held_checkpoint_stays_held_without_calling_resume() {
         checkpoint.writer_state,
         crate::WorkspaceWriterState::HeldForTeardown
     );
-    assert_eq!(
-        checkpoint.writer_resume_token.as_deref(),
-        Some(token.as_str())
-    );
-    assert_eq!(fixture.finish().await.len(), 3);
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 3);
+    let requested = requested_resume_token(&requests[2]).expect("hold request carries a token");
+    assert_eq!(checkpoint.writer_resume_token.as_deref(), Some(requested));
 }
 
 #[test]
@@ -2931,7 +3071,7 @@ fn chat_readiness_requires_source_slots_and_coherent_checkpoint_together() {
     let ready = serde_json::json!({
         "workspaceSource": { "version": 2 },
         "conversationSlots": { "max": 16 },
-        "workspaceCheckpoint": { "version": 5 },
+        "workspaceCheckpoint": { "version": 6 },
     });
     let body = serde_json::to_vec(&ready).expect("readiness serializes");
     super::require_chat_runtime_capabilities(&body, 16)
@@ -2947,7 +3087,7 @@ fn chat_readiness_requires_source_slots_and_coherent_checkpoint_together() {
     );
 
     let mut legacy_checkpoint = ready.clone();
-    legacy_checkpoint["workspaceCheckpoint"]["version"] = serde_json::json!(4);
+    legacy_checkpoint["workspaceCheckpoint"]["version"] = serde_json::json!(5);
     let error = super::require_chat_runtime_capabilities(
         &serde_json::to_vec(&legacy_checkpoint).unwrap(),
         16,
@@ -3067,7 +3207,7 @@ async fn every_missing_chat_capability_is_fenced_before_restore_or_prelude() {
         "status": "ready",
         "workspaceSource": { "version": 2 },
         "conversationSlots": { "max": 3 },
-        "workspaceCheckpoint": { "version": 5 },
+        "workspaceCheckpoint": { "version": 6 },
     });
     let mut missing_source = full.clone();
     missing_source

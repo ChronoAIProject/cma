@@ -52,6 +52,7 @@ use crate::{
     WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
     WorkspaceEntryPackage, WorkspacePackage, WorkspaceSetupReceipt, WorkspaceSourceRequest,
     WorkspaceTreeReceipt, WorkspaceTreeRequest, WorkspaceWriterState,
+    HELD_CHECKPOINT_RECOVERY_ERROR,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -193,7 +194,7 @@ const WORKSPACE_TREES_PATH: &str = "/runtime/workspace/trees";
 const WORKSPACE_SETUP_PATH: &str = "/runtime/workspace/setup";
 const RUNTIME_GATEWAY_PROBE_PATH: &str = "/runtime/gateway-probe";
 const WORKSPACE_VERSION: u64 = 2;
-const WORKSPACE_HOLD_VERSION: u64 = 4;
+const WORKSPACE_HOLD_VERSION: u64 = 6;
 const WORKSPACE_COMPLETE_GIT_VERSION: u64 = 5;
 const WORKSPACE_SOURCE_RECEIPT_VERSION: u64 = 2;
 const WORKSPACE_ARCHIVE_VERSION: u32 = 2;
@@ -204,8 +205,6 @@ const MAX_WORKSPACE_HEADER_BYTES: usize = 128 * 1024 * 1024;
 const MAX_WORKSPACE_INLINE_BYTES: u64 = 1_024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize =
     MAX_WORKSPACE_BYTES + MAX_WORKSPACE_HEADER_BYTES + 128 * 1024;
-const HELD_CHECKPOINT_RECOVERY_ERROR: &str =
-    "held workspace checkpoint could not be safely recovered";
 const RUNTIME_POLICY_VERSION: u64 = 2;
 const RUNTIME_GATEWAY_PROBE_VERSION: u64 = 2;
 
@@ -217,6 +216,65 @@ const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// How often to re-check a sandbox that is not yet running.
 const READY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Exact-token recovery scheduled when a hold request future is cancelled.
+/// The guard is armed only after readiness and request validation have passed,
+/// immediately before the runtime can observe the hold request.
+struct HeldCheckpointRecoveryGuard {
+    client: SandboxClient,
+    endpoint: String,
+    resume_token: String,
+    armed: bool,
+}
+
+impl HeldCheckpointRecoveryGuard {
+    fn new(client: SandboxClient, endpoint: String, resume_token: String) -> Self {
+        Self {
+            client,
+            endpoint,
+            resume_token,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    async fn recover(&mut self) -> Result<(), AdapterError> {
+        match resume_workspace_writers_with_client(&self.client, &self.endpoint, &self.resume_token)
+            .await
+        {
+            Ok(()) => {
+                self.disarm();
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Drop for HeldCheckpointRecoveryGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!("held workspace checkpoint recovery could not be scheduled");
+            return;
+        };
+        let client = self.client.clone();
+        let endpoint = self.endpoint.clone();
+        let resume_token = self.resume_token.clone();
+        runtime.spawn(async move {
+            if let Err(error) =
+                resume_workspace_writers_with_client(&client, &endpoint, &resume_token).await
+            {
+                tracing::error!(%error, "cancelled held workspace checkpoint could not be recovered");
+            }
+        });
+    }
+}
 
 #[derive(serde::Deserialize)]
 struct RuntimeReadiness {
@@ -1759,7 +1817,9 @@ impl HostedKernel {
             WorkspaceCheckpointDisposition::ResumeAfterCapture => "resume_after_capture",
             WorkspaceCheckpointDisposition::HoldForTeardown => "hold_for_teardown",
         };
-        let path = format!(
+        let resume_token = (request.disposition == WorkspaceCheckpointDisposition::HoldForTeardown)
+            .then(workspace_writer_resume_token);
+        let mut path = format!(
             "{WORKSPACE_CHECKPOINT_PATH}?epoch={}&version={}&source={}&baseline={}&include_git_metadata={}&disposition={disposition}",
             request.epoch,
             request.version,
@@ -1767,7 +1827,18 @@ impl HostedKernel {
             request.baseline_manifest_digest,
             request.include_git_metadata,
         );
-        let wire = self
+        if let Some(resume_token) = resume_token.as_deref() {
+            path.push_str("&resume_token=");
+            path.push_str(resume_token);
+        }
+        let mut recovery = resume_token.as_ref().map(|resume_token| {
+            HeldCheckpointRecoveryGuard::new(
+                self.client.clone(),
+                endpoint.endpoint.clone(),
+                resume_token.clone(),
+            )
+        });
+        let wire = match self
             .client
             .post_to_sandbox_with_bounded_response(
                 &endpoint.endpoint,
@@ -1775,21 +1846,30 @@ impl HostedKernel {
                 Vec::new(),
                 MAX_WORKSPACE_RESPONSE_BYTES,
             )
-            .await?;
-        let held_resume_token = (request.disposition
-            == WorkspaceCheckpointDisposition::HoldForTeardown)
-            .then(|| held_checkpoint_resume_token(&wire))
-            .flatten();
+            .await
+        {
+            Ok(wire) => wire,
+            Err(error) => {
+                let original = AdapterError::from(error);
+                if let Some(recovery) = recovery.as_mut() {
+                    if recovery.recover().await.is_err() {
+                        return Err(AdapterError::Unavailable(
+                            HELD_CHECKPOINT_RECOVERY_ERROR.into(),
+                        ));
+                    }
+                }
+                return Err(original);
+            }
+        };
         let checkpoint = match parse_workspace_checkpoint(wire, request) {
             Ok(checkpoint) => checkpoint,
             Err(original @ AdapterError::Rejected(_))
                 if request.disposition == WorkspaceCheckpointDisposition::HoldForTeardown =>
             {
-                let resume_token = held_resume_token.ok_or_else(|| {
-                    AdapterError::Unavailable(HELD_CHECKPOINT_RECOVERY_ERROR.into())
-                })?;
-                if self
-                    .resume_workspace_writers_at(&endpoint.endpoint, &resume_token)
+                if recovery
+                    .as_mut()
+                    .expect("a held checkpoint has a recovery guard")
+                    .recover()
                     .await
                     .is_err()
                 {
@@ -1801,6 +1881,28 @@ impl HostedKernel {
             }
             Err(error) => return Err(error),
         };
+        if let Some(expected) = resume_token.as_deref() {
+            if checkpoint.writer_resume_token.as_deref() != Some(expected) {
+                if recovery
+                    .as_mut()
+                    .expect("a held checkpoint has a recovery guard")
+                    .recover()
+                    .await
+                    .is_err()
+                {
+                    return Err(AdapterError::Unavailable(
+                        HELD_CHECKPOINT_RECOVERY_ERROR.into(),
+                    ));
+                }
+                return Err(AdapterError::Rejected(
+                    "runtime did not echo the caller-issued writer resume token".into(),
+                ));
+            }
+            recovery
+                .as_mut()
+                .expect("a held checkpoint has a recovery guard")
+                .disarm();
+        }
         tracing::info!(
             sandbox = %handle.0,
             epoch = checkpoint.epoch,
@@ -1847,22 +1949,7 @@ impl HostedKernel {
         endpoint: &str,
         resume_token: &str,
     ) -> Result<(), AdapterError> {
-        let body = serde_json::to_vec(&WorkspaceWriterResumeRequest { resume_token })
-            .expect("a workspace writer resume request is serializable");
-        let response = self
-            .client
-            .post_to_sandbox_with_response(endpoint, WORKSPACE_CHECKPOINT_RESUME_PATH, body)
-            .await?;
-        let receipt: WorkspaceWriterResumeReceipt =
-            serde_json::from_slice(&response).map_err(|_| {
-                AdapterError::Rejected("runtime returned an invalid writer resume receipt".into())
-            })?;
-        if !receipt.writers_resumed || receipt.resume_token != resume_token {
-            return Err(AdapterError::Rejected(
-                "runtime did not acknowledge the exact writer resume token".into(),
-            ));
-        }
-        Ok(())
+        resume_workspace_writers_with_client(&self.client, endpoint, resume_token).await
     }
 
     /// Run one closed read through the exact runtime's command sandbox and
@@ -2275,7 +2362,8 @@ fn require_chat_runtime_capabilities(
         true,
     ) {
         return Err(AdapterError::Unsupported(
-            "this runtime image does not advertise complete-Git workspaceCheckpoint v5".into(),
+            "this runtime image does not advertise cancellation-safe complete-Git workspaceCheckpoint v6"
+                .into(),
         ));
     }
     Ok(())
@@ -2493,15 +2581,22 @@ fn readiness_supports_workspace_checkpoint(
     disposition: WorkspaceCheckpointDisposition,
     include_git_metadata: bool,
 ) -> bool {
-    let minimum = if include_git_metadata {
-        WORKSPACE_COMPLETE_GIT_VERSION
-    } else {
-        match disposition {
-            WorkspaceCheckpointDisposition::ResumeAfterCapture => WORKSPACE_VERSION,
-            WorkspaceCheckpointDisposition::HoldForTeardown => WORKSPACE_HOLD_VERSION,
+    let minimum = match disposition {
+        WorkspaceCheckpointDisposition::HoldForTeardown => WORKSPACE_HOLD_VERSION,
+        WorkspaceCheckpointDisposition::ResumeAfterCapture if include_git_metadata => {
+            WORKSPACE_COMPLETE_GIT_VERSION
         }
+        WorkspaceCheckpointDisposition::ResumeAfterCapture => WORKSPACE_VERSION,
     };
     workspace_checkpoint_version(body).is_some_and(|version| version >= minimum)
+}
+
+fn workspace_writer_resume_token() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
 }
 
 #[derive(serde::Serialize)]
@@ -2514,6 +2609,28 @@ struct WorkspaceWriterResumeRequest<'a> {
 struct WorkspaceWriterResumeReceipt {
     resume_token: String,
     writers_resumed: bool,
+}
+
+async fn resume_workspace_writers_with_client(
+    client: &SandboxClient,
+    endpoint: &str,
+    resume_token: &str,
+) -> Result<(), AdapterError> {
+    let body = serde_json::to_vec(&WorkspaceWriterResumeRequest { resume_token })
+        .expect("a workspace writer resume request is serializable");
+    let response = client
+        .post_to_sandbox_with_response(endpoint, WORKSPACE_CHECKPOINT_RESUME_PATH, body)
+        .await?;
+    let receipt: WorkspaceWriterResumeReceipt =
+        serde_json::from_slice(&response).map_err(|_| {
+            AdapterError::Rejected("runtime returned an invalid writer resume receipt".into())
+        })?;
+    if !receipt.writers_resumed || receipt.resume_token != resume_token {
+        return Err(AdapterError::Rejected(
+            "runtime did not acknowledge the exact writer resume token".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -2948,19 +3065,6 @@ fn decode_checkpoint_inline(
     String::from_utf8(decoded).map_err(|_| {
         AdapterError::Rejected("runtime checkpoint symlink target is not UTF-8".into())
     })
-}
-
-fn held_checkpoint_resume_token(wire: &[u8]) -> Option<String> {
-    let (acknowledgement, _) =
-        open_length_delimited(wire, 64 * 1024, "workspace checkpoint acknowledgement").ok()?;
-    let acknowledgement: CheckpointAcknowledgement =
-        serde_json::from_slice(acknowledgement).ok()?;
-    let token = acknowledgement.writer_resume_token?;
-    (!acknowledgement.writers_resumed
-        && acknowledgement.writer_state == Some(CheckpointWriterState::HeldForTeardown)
-        && token.len() == 64
-        && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    .then_some(token)
 }
 
 fn validate_checkpoint_writer_receipt(

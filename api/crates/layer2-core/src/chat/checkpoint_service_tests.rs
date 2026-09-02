@@ -4,8 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::{
-    KernelAdapter, KernelCapabilities, WorkspaceCheckpointDisposition, WorkspaceCheckpointPackage,
-    WorkspaceCheckpointRequest, WorkspaceEntryKind, WorkspaceEntryPackage, WorkspaceWriterState,
+    AdapterError, KernelAdapter, KernelCapabilities, WorkspaceCheckpointDisposition,
+    WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
+    WorkspaceEntryPackage, WorkspaceWriterState,
 };
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -922,7 +923,7 @@ async fn sweep_reports_completed_and_skipped_active_candidates() {
 }
 
 #[tokio::test]
-async fn capture_storage_and_resume_failures_preserve_the_active_host_and_add_a_note() {
+async fn capture_storage_failures_preserve_the_active_host_but_resume_failure_requires_recovery() {
     let missing = fixture("checkpoint-missing-conversation", 1).await;
     use_package(&missing, 1, "missing").await;
     missing.adapter.conversation_snapshots.lock().await.clear();
@@ -970,7 +971,93 @@ async fn capture_storage_and_resume_failures_preserve_the_active_host_and_add_a_
             .unwrap(),
         ChatCheckpointOutcome::Refused
     );
-    assert_refused_without_state_loss(&before, &host(&resume).await, CAPTURE_AT);
+    let after = host(&resume).await;
+    assert_eq!(after.status, ChatHostStatus::Pausing);
+    assert_eq!(after.runtime_id, before.runtime_id);
+    assert_eq!(after.runtime_version, before.runtime_version);
+    assert_eq!(after.workspace_authority, before.workspace_authority);
+    assert_eq!(after.checkpoint, before.checkpoint);
+    assert_eq!(after.last_transition_claim, None);
+    assert_eq!(after.transition_started_at, None);
+    let note = after
+        .last_operator_note
+        .as_ref()
+        .expect("writer recovery requirement is visible to operators");
+    assert_eq!(note.code, "recovery_required");
+    assert_eq!(note.observed_at, CAPTURE_AT);
+    assert_eq!(
+        note.detail,
+        "Workspace writer resumption could not be verified."
+    );
+}
+
+#[tokio::test]
+async fn ambiguous_hold_failure_never_returns_the_host_to_active() {
+    let fixture = fixture("checkpoint-ambiguous-hold", 1).await;
+    *fixture.adapter.checkpoint_error.lock().await = Some(AdapterError::Unavailable(
+        "held workspace checkpoint could not be safely recovered".into(),
+    ));
+    let before = host(&fixture).await;
+
+    assert_eq!(
+        fixture
+            .service
+            .checkpoint_chat_host(&before.id, CAPTURE_AT)
+            .await
+            .unwrap(),
+        ChatCheckpointOutcome::Refused
+    );
+    let after = host(&fixture).await;
+    assert_eq!(after.status, ChatHostStatus::Pausing);
+    assert_eq!(after.runtime_id, before.runtime_id);
+    assert_eq!(after.last_transition_claim, None);
+    assert_eq!(after.transition_started_at, None);
+    let note = after
+        .last_operator_note
+        .as_ref()
+        .expect("ambiguous writer state is visible to operators");
+    assert_eq!(note.code, "recovery_required");
+    assert_eq!(note.observed_at, CAPTURE_AT);
+    assert!(fixture.adapter.workspace_resumes.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_first_checkpoint_refusal_observes_the_full_backoff() {
+    let fixture = fixture("checkpoint-first-refusal-backoff", 1).await;
+    *fixture.adapter.checkpoint_error.lock().await =
+        Some(AdapterError::Rejected("ordinary capture refusal".into()));
+    let id = host(&fixture).await.id;
+    assert_eq!(
+        fixture
+            .service
+            .checkpoint_chat_host(&id, CAPTURE_AT)
+            .await
+            .unwrap(),
+        ChatCheckpointOutcome::Refused
+    );
+    assert_eq!(fixture.adapter.checkpoint_calls.load(Ordering::SeqCst), 1);
+
+    use_package(&fixture, 2, "after-backoff").await;
+    assert_eq!(
+        fixture
+            .service
+            .checkpoint_chat_host(&id, "2026-09-01T02:04:59Z")
+            .await
+            .unwrap(),
+        ChatCheckpointOutcome::NotEligible
+    );
+    assert_eq!(fixture.adapter.checkpoint_calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        fixture
+            .service
+            .checkpoint_chat_host(&id, FIVE_MINUTES_LATER)
+            .await
+            .unwrap(),
+        ChatCheckpointOutcome::Complete(ChatCheckpointRef {
+            checkpoint_version: 2,
+            ..
+        })
+    ));
 }
 
 fn assert_refused_without_state_loss(
@@ -1139,9 +1226,10 @@ async fn concurrent_workers_publish_only_one_checkpoint_version() {
 }
 
 #[tokio::test]
-async fn checkpoint_claim_fences_new_prompt_admission_until_capture_settles() {
+async fn a_new_prompt_preempts_an_expensive_checkpoint_candidate() {
     let fixture = fixture("checkpoint-input-fence", 1).await;
-    let id = host(&fixture).await.id;
+    let before = host(&fixture).await;
+    let id = before.id.clone();
     use_package(&fixture, 1, "fence").await;
     fixture
         .adapter
@@ -1159,40 +1247,18 @@ async fn checkpoint_claim_fences_new_prompt_admission_until_capture_settles() {
     let service = Arc::clone(&fixture.service);
     let caller = fixture.caller.clone();
     let session_id = fixture.threads[0].id.clone();
-    let mut prompt = tokio::spawn(async move {
+    let prompt = tokio::spawn(async move {
         service
             .send_prompt(
                 &caller,
                 &session_id,
-                "must wait behind the checkpoint fence".into(),
+                "new input takes priority over periodic capture".into(),
             )
             .await
     });
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), &mut prompt)
-            .await
-            .is_err(),
-        "active-host maintenance blocks input instead of pretending to provision"
-    );
-    assert!(fixture
-        .adapter
-        .conversation
-        .lock()
-        .await
-        .as_ref()
-        .unwrap()
-        .sent()
-        .await
-        .is_empty());
-
-    fixture.adapter.continue_checkpoint.add_permits(1);
-    assert!(matches!(
-        attempt.await.unwrap().unwrap(),
-        ChatCheckpointOutcome::Complete(_)
-    ));
     tokio::time::timeout(std::time::Duration::from_secs(1), prompt)
         .await
-        .expect("the prompt resumes after capture")
+        .expect("the prompt is not blocked by candidate construction")
         .expect("the prompt task joins")
         .expect("the prompt is delivered");
     assert_eq!(
@@ -1208,6 +1274,68 @@ async fn checkpoint_claim_fences_new_prompt_admission_until_capture_settles() {
             .len(),
         1
     );
+
+    fixture.adapter.continue_checkpoint.add_permits(1);
+    assert_eq!(
+        attempt.await.unwrap().unwrap(),
+        ChatCheckpointOutcome::Refused
+    );
+    assert_refused_without_state_loss(&before, &host(&fixture).await, CAPTURE_AT);
+    assert_eq!(
+        fixture.adapter.workspace_resumes.lock().await.len(),
+        1,
+        "the invalidated held capture reopens its writers"
+    );
+    assert!(fixture.checkpoints.objects.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn admitted_input_cannot_deadlock_a_held_checkpoint() {
+    let fixture = fixture("checkpoint-held-input-race", 1).await;
+    let before = host(&fixture).await;
+    let id = before.id.clone();
+    use_package(&fixture, 1, "held-input-race").await;
+    fixture
+        .adapter
+        .hold_checkpoint
+        .store(true, Ordering::SeqCst);
+
+    let service = Arc::clone(&fixture.service);
+    let checkpoint_id = id.clone();
+    let attempt = tokio::spawn(async move {
+        service
+            .checkpoint_chat_host(&checkpoint_id, CAPTURE_AT)
+            .await
+    });
+    wait_for_checkpoint_fence(&fixture.adapter).await;
+
+    // This models a prompt admitted by Layer 2 just before the runtime takes
+    // its startup/write fence. The prompt cannot finish until runtime writers
+    // resume, so checkpoint recovery must not wait for this read guard.
+    let admitted_input = fixture
+        .service
+        .input_gates
+        .gate(&fixture.threads[0].id)
+        .read_owned()
+        .await;
+    fixture.adapter.continue_checkpoint.add_permits(1);
+
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), attempt)
+            .await
+            .expect("the checkpoint resumes writers without waiting for admitted input")
+            .expect("the checkpoint task joins")
+            .expect("the checkpoint refusal is returned"),
+        ChatCheckpointOutcome::Refused
+    );
+    assert_eq!(
+        fixture.adapter.workspace_resumes.lock().await.len(),
+        1,
+        "the runtime hold is released before waiting on admitted input"
+    );
+    drop(admitted_input);
+    assert_refused_without_state_loss(&before, &host(&fixture).await, CAPTURE_AT);
+    assert!(fixture.checkpoints.objects.lock().await.is_empty());
 }
 
 #[tokio::test]

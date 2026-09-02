@@ -38,7 +38,7 @@ const DEFAULT_CHAT: ChatSettings = {
   inactivity: { pauseAfterSeconds: 900 },
   setup: {
     commands: [
-      'set -eu; test -f skills/codex-formal-answer/SKILL.md; mkdir -p "$HOME/.agents/skills/codex-formal-answer" "$HOME/.codex/skills/codex-formal-answer"; cp -R skills/codex-formal-answer/. "$HOME/.agents/skills/codex-formal-answer/"; cp -R skills/codex-formal-answer/. "$HOME/.codex/skills/codex-formal-answer/"',
+      'set -eu; found=0; for skill in skills/*; do test -f "$skill/SKILL.md" || continue; name=${skill##*/}; case "$name" in \'\'|*[!a-z0-9_-]*) exit 1;; esac; found=1; mkdir -p "$HOME/.agents/skills/$name" "$HOME/.codex/skills/$name"; cp -R "$skill"/. "$HOME/.agents/skills/$name/"; cp -R "$skill"/. "$HOME/.codex/skills/$name/"; done; test "$found" -eq 1',
     ],
   },
   host: { size: null, maxThreads: 10 },

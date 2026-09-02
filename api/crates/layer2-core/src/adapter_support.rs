@@ -214,6 +214,7 @@ pub(crate) struct FakeAdapter {
     /// A sealed workspace capture returned to Layer 2 when a test configures
     /// this runtime to support the v2 checkpoint capability.
     pub(crate) checkpoint: Mutex<Option<WorkspaceCheckpointPackage>>,
+    pub(crate) checkpoint_error: Mutex<Option<AdapterError>>,
     pub(crate) checkpoint_calls: std::sync::atomic::AtomicUsize,
     pub(crate) checkpoint_requests: Mutex<Vec<(String, WorkspaceCheckpointRequest)>>,
     pub(crate) hold_checkpoint: std::sync::atomic::AtomicBool,
@@ -329,6 +330,7 @@ impl Default for FakeAdapter {
             fail_watch: false,
             resource_watch_calls: std::sync::atomic::AtomicUsize::new(0),
             checkpoint: Mutex::default(),
+            checkpoint_error: Mutex::default(),
             checkpoint_calls: std::sync::atomic::AtomicUsize::new(0),
             checkpoint_requests: Mutex::default(),
             hold_checkpoint: std::sync::atomic::AtomicBool::new(false),
@@ -1231,6 +1233,9 @@ impl KernelAdapter for FakeAdapter {
                 .await
                 .expect("the test adapter remains alive")
                 .forget();
+        }
+        if let Some(error) = self.checkpoint_error.lock().await.take() {
+            return Err(error);
         }
         self.checkpoint.lock().await.clone().ok_or_else(|| {
             AdapterError::Unsupported("this test runtime cannot checkpoint its workspace".into())

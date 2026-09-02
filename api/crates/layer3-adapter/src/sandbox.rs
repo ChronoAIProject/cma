@@ -187,6 +187,7 @@ pub enum SandboxError {
 }
 
 /// Thin client over the sandbox lifecycle API.
+#[derive(Clone)]
 pub struct SandboxClient {
     base_url: String,
     api_key: String,

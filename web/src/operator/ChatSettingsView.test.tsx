@@ -31,9 +31,12 @@ describe('the chat settings document', () => {
     expect(screen.getByLabelText('Branch')).toHaveValue('dev');
     expect(screen.getByLabelText('Thinking effort')).toHaveValue('high');
     expect(screen.getByLabelText('Prepended texts 1')).toHaveValue('$codex-formal-answer');
-    expect(
-      (screen.getByLabelText('Software-installation commands 1') as HTMLInputElement).value,
-    ).toContain('skills/codex-formal-answer/SKILL.md');
+    const defaultSetup = (
+      screen.getByLabelText('Software-installation commands 1') as HTMLInputElement
+    ).value;
+    expect(defaultSetup).toContain('for skill in skills/*');
+    expect(defaultSetup).toContain('$HOME/.agents/skills/$name');
+    expect(defaultSetup).toContain('$HOME/.codex/skills/$name');
     expect(screen.getByRole('switch', { name: 'Accept new chats' })).not.toBeChecked();
     expect(screen.getByText('Chat sessions run with full access (unrestricted).')).toBeVisible();
     expect(

@@ -739,6 +739,37 @@ fn capture_round_trip_preserves_the_complete_current_tree() {
 }
 
 #[test]
+fn a_live_candidate_is_refused_if_the_fenced_workspace_changed() {
+    let base = root("candidate-mutation");
+    let workspace = base.join("source");
+    let checkpoints = base.join("checkpoints");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("work.txt"), b"candidate\n").unwrap();
+
+    let candidate = build_capture_candidate(
+        &workspace,
+        &checkpoints,
+        21,
+        1,
+        &"a".repeat(40),
+        false,
+        || false,
+    )
+    .expect("the live candidate is built before fencing");
+    std::fs::write(workspace.join("work.txt"), b"changed under candidate\n").unwrap();
+    let error = candidate
+        .verify_workspace(&workspace, || false)
+        .expect_err("a stale candidate cannot be sealed");
+    assert!(error.contains("changed"));
+    assert!(load_capture(&checkpoints, 21, 1, &"a".repeat(40), false)
+        .unwrap()
+        .is_none());
+
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn a_checkpoint_version_is_immutable_across_ambiguous_retries() {
     let base = root("capture-idempotent");
     let workspace = base.join("source");
@@ -929,6 +960,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
             baseline: baseline_digest.clone(),
             include_git_metadata: false,
             disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
+            resume_token: None,
         }),
     )
     .await
@@ -944,6 +976,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
             baseline: header.manifest_digest.clone(),
             include_git_metadata: false,
             disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
+            resume_token: None,
         }),
     )
     .await
@@ -957,6 +990,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
         baseline: baseline_digest.clone(),
         include_git_metadata: false,
         disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
+        resume_token: None,
     };
     #[cfg(not(target_os = "linux"))]
     {
@@ -980,6 +1014,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
                 baseline: checkpoint_params.baseline.clone(),
                 include_git_metadata: false,
                 disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
+                resume_token: None,
             }),
         )
         .await
@@ -1031,6 +1066,39 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
     }
 }
 
+#[tokio::test]
+async fn a_teardown_hold_requires_its_caller_issued_token_before_fencing() {
+    let state = crate::AppState::for_test(&[]);
+    *state.workspace_authority.write().await = Some(crate::WorkspaceAuthority {
+        epoch: 3,
+        source_revision: "a".repeat(40),
+        baseline_manifest_digest: "b".repeat(64),
+    });
+    let response = crate::workspace_checkpoint(
+        State(state.clone()),
+        Query(crate::WorkspaceCheckpointParams {
+            epoch: 3,
+            version: 1,
+            source: "a".repeat(40),
+            baseline: "b".repeat(64),
+            include_git_metadata: true,
+            disposition: crate::RuntimeWorkspaceCheckpointDisposition::HoldForTeardown,
+            resume_token: None,
+        }),
+    )
+    .await
+    .into_response();
+
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    let holds = state
+        .workspace_writer_hold
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(holds.held.is_none());
+    assert!(holds.in_flight.is_none());
+    assert!(state.startup_gate.try_write().is_ok());
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn teardown_hold_has_no_deadline_and_only_the_exact_token_resumes() {
@@ -1051,6 +1119,7 @@ async fn teardown_hold_has_no_deadline_and_only_the_exact_token_resumes() {
         source_revision: source.clone(),
         baseline_manifest_digest: baseline.clone(),
     });
+    let resume_token = "c".repeat(64);
     let request = || crate::WorkspaceCheckpointParams {
         epoch: 11,
         version: 7,
@@ -1058,6 +1127,7 @@ async fn teardown_hold_has_no_deadline_and_only_the_exact_token_resumes() {
         baseline: baseline.clone(),
         include_git_metadata: false,
         disposition: crate::RuntimeWorkspaceCheckpointDisposition::HoldForTeardown,
+        resume_token: Some(resume_token.clone()),
     };
 
     let first = crate::workspace_checkpoint(State(state.clone()), Query(request()))
@@ -1080,6 +1150,7 @@ async fn teardown_hold_has_no_deadline_and_only_the_exact_token_resumes() {
         .expect("the hold names its exact resume token")
         .to_string();
     assert_eq!(token.len(), 64);
+    assert_eq!(token, resume_token);
     assert!(state.startup_gate.try_write().is_err());
 
     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -1143,6 +1214,232 @@ async fn teardown_hold_has_no_deadline_and_only_the_exact_token_resumes() {
     .await
     .into_response();
     assert_eq!(replayed_resume.status(), axum::http::StatusCode::OK);
+
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn cancelling_a_capture_keeps_admission_closed_until_exact_token_resume() {
+    let base = root("cancelled-held-capture");
+    let workspace = base.join("workspace");
+    let checkpoints = base.join("checkpoints");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("work.txt"), b"stable\n").unwrap();
+
+    let source = "a".repeat(40);
+    let baseline = "b".repeat(64);
+    let token = "c".repeat(64);
+    let control = crate::WorkspaceCheckpointTestControl::default();
+    let mut state = crate::AppState::for_test(&[]);
+    state.workspace_root = workspace;
+    state.checkpoint_root = checkpoints;
+    state.workspace_checkpoint_test_control = Some(control.clone());
+    *state.workspace_authority.write().await = Some(crate::WorkspaceAuthority {
+        epoch: 12,
+        source_revision: source.clone(),
+        baseline_manifest_digest: baseline.clone(),
+    });
+
+    let checkpoint_state = state.clone();
+    let checkpoint_token = token.clone();
+    let checkpoint = tokio::spawn(async move {
+        crate::workspace_checkpoint(
+            State(checkpoint_state),
+            Query(crate::WorkspaceCheckpointParams {
+                epoch: 12,
+                version: 1,
+                source,
+                baseline,
+                include_git_metadata: false,
+                disposition: crate::RuntimeWorkspaceCheckpointDisposition::HoldForTeardown,
+                resume_token: Some(checkpoint_token),
+            }),
+        )
+        .await
+        .into_response()
+    });
+
+    loop {
+        let reached = control.reached_notify.notified();
+        if control
+            .reached_fence
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            break;
+        }
+        reached.await;
+    }
+    assert!(state.startup_gate.try_write().is_err());
+    checkpoint.abort();
+    assert!(checkpoint.await.unwrap_err().is_cancelled());
+    assert!(
+        state.startup_gate.try_write().is_err(),
+        "dropping the HTTP handler cannot release capture admission"
+    );
+
+    let resume_state = state.clone();
+    let resume_token = token.clone();
+    let resume = tokio::spawn(async move {
+        crate::workspace_checkpoint_resume(
+            State(resume_state),
+            axum::Json(crate::WorkspaceCheckpointResumeRequest { resume_token }),
+        )
+        .await
+        .into_response()
+    });
+    loop {
+        let cancelled = state
+            .workspace_writer_hold
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .in_flight
+            .as_ref()
+            .is_some_and(|in_flight| {
+                in_flight
+                    .cancel_requested
+                    .load(std::sync::atomic::Ordering::Acquire)
+            });
+        if cancelled {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    control
+        .release_fence
+        .store(true, std::sync::atomic::Ordering::Release);
+    let response = resume.await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let admission = state
+        .startup_gate
+        .try_write()
+        .expect("positive exact-token recovery reopens admission");
+    drop(admission);
+    let holds = state
+        .workspace_writer_hold
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(holds.held.is_none());
+    assert!(holds.in_flight.is_none());
+    assert_eq!(holds.last_resumed_token.as_deref(), Some(token.as_str()));
+
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[tokio::test]
+async fn exact_resume_cancels_a_registered_candidate_before_the_writer_fence() {
+    let base = root("cancelled-before-writer-fence");
+    let workspace = base.join("workspace");
+    let checkpoints = base.join("checkpoints");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("work.txt"), b"stable\n").unwrap();
+
+    let source = "a".repeat(40);
+    let baseline = "b".repeat(64);
+    let token = "d".repeat(64);
+    let mut state = crate::AppState::for_test(&[]);
+    state.workspace_root = workspace;
+    state.checkpoint_root = checkpoints;
+    *state.workspace_authority.write().await = Some(crate::WorkspaceAuthority {
+        epoch: 13,
+        source_revision: source.clone(),
+        baseline_manifest_digest: baseline.clone(),
+    });
+
+    let startup_blocker = state.startup_gate.read().await;
+    let checkpoint_state = state.clone();
+    let checkpoint_token = token.clone();
+    let checkpoint = tokio::spawn(async move {
+        crate::workspace_checkpoint(
+            State(checkpoint_state),
+            Query(crate::WorkspaceCheckpointParams {
+                epoch: 13,
+                version: 1,
+                source,
+                baseline,
+                include_git_metadata: false,
+                disposition: crate::RuntimeWorkspaceCheckpointDisposition::HoldForTeardown,
+                resume_token: Some(checkpoint_token),
+            }),
+        )
+        .await
+        .into_response()
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if state
+                .workspace_writer_hold
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .in_flight
+                .is_some()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the hold token is registered before the writer fence");
+
+    let resume_state = state.clone();
+    let resume_token = token.clone();
+    let resume = tokio::spawn(async move {
+        crate::workspace_checkpoint_resume(
+            State(resume_state),
+            axum::Json(crate::WorkspaceCheckpointResumeRequest { resume_token }),
+        )
+        .await
+        .into_response()
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let cancelled = state
+                .workspace_writer_hold
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .in_flight
+                .as_ref()
+                .is_some_and(|in_flight| {
+                    in_flight
+                        .cancel_requested
+                        .load(std::sync::atomic::Ordering::Acquire)
+                });
+            if cancelled {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("exact resume marks the candidate cancelled");
+
+    drop(startup_blocker);
+    let checkpoint_response = tokio::time::timeout(std::time::Duration::from_secs(2), checkpoint)
+        .await
+        .expect("the cancelled checkpoint settles")
+        .expect("the checkpoint task joins");
+    assert_ne!(checkpoint_response.status(), axum::http::StatusCode::OK);
+    let resume_response = tokio::time::timeout(std::time::Duration::from_secs(2), resume)
+        .await
+        .expect("the exact resume settles")
+        .expect("the resume task joins");
+    assert_eq!(resume_response.status(), axum::http::StatusCode::OK);
+    let admission = state
+        .startup_gate
+        .try_write()
+        .expect("no writer fence retained startup admission");
+    drop(admission);
+    let holds = state
+        .workspace_writer_hold
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(holds.held.is_none());
+    assert!(holds.in_flight.is_none());
+    assert_eq!(holds.last_resumed_token.as_deref(), Some(token.as_str()));
 
     std::fs::remove_dir_all(base).unwrap();
 }

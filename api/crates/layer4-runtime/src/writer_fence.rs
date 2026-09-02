@@ -18,6 +18,8 @@ const QUIESCE_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(target_os = "linux")]
 const ADOPTED_REAP_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(target_os = "linux")]
+const QUIESCE_RECOVERY_REQUIRED: &str = "workspace writer recovery could not be verified";
 
 #[cfg(target_os = "linux")]
 struct ChildSupervisor {
@@ -287,6 +289,19 @@ pub(crate) fn session_has_live_members(root: i32) -> Result<bool, String> {
     }
 }
 
+pub(crate) fn quiesce_error_writers_resumed(error: &str) -> bool {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = error;
+        true
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        !error.contains(QUIESCE_RECOVERY_REQUIRED)
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 struct ProcessRecord {
@@ -308,8 +323,7 @@ fn quiesce_linux(
         let table = match process_table() {
             Ok(table) => table,
             Err(error) => {
-                resume_members_best_effort(&stopped_by_us.iter().copied().collect::<Vec<_>>());
-                return Err(error);
+                return Err(quiesce_refusal(&stopped_by_us, error));
             }
         };
         let states = writer_states(&table, roots, supervisor_root);
@@ -342,20 +356,28 @@ fn quiesce_linux(
                     }
                     Ok(false) => {}
                     Err(error) => {
-                        resume_members_best_effort(
-                            &stopped_by_us.iter().copied().collect::<Vec<_>>(),
-                        );
-                        return Err(error);
+                        return Err(quiesce_refusal(&stopped_by_us, error));
                     }
                 }
             }
         }
 
         if Instant::now() >= deadline {
-            resume_members_best_effort(&stopped_by_us.iter().copied().collect::<Vec<_>>());
-            return Err("workspace writers did not positively quiesce before the deadline".into());
+            return Err(quiesce_refusal(
+                &stopped_by_us,
+                "workspace writers did not positively quiesce before the deadline".into(),
+            ));
         }
         std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn quiesce_refusal(stopped: &BTreeSet<i32>, detail: String) -> String {
+    let stopped = stopped.iter().copied().collect::<Vec<_>>();
+    match resume_members(&stopped) {
+        Ok(()) => detail,
+        Err(resume) => format!("{detail}; {QUIESCE_RECOVERY_REQUIRED}: {resume}"),
     }
 }
 

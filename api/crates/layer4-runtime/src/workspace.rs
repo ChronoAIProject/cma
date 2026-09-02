@@ -1,7 +1,7 @@
 //! Versioned, hash-addressed workspace restore and capture wire.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::io::{Read as _, Write as _};
+use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use flate2::read::ZlibDecoder;
@@ -15,7 +15,7 @@ use unicode_normalization::UnicodeNormalization as _;
 pub const VERSION: u32 = 2;
 const LEGACY_VERSION: u32 = 1;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub const CAPABILITY_VERSION: u32 = 5;
+pub const CAPABILITY_VERSION: u32 = 6;
 pub const MAX_FILES: usize = 750_000;
 pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 1_024;
@@ -179,6 +179,93 @@ pub struct PreparedCapture {
     captured: Option<Captured>,
 }
 
+/// A fully compressed and flushed checkpoint whose workspace bytes have not
+/// yet been confirmed under the writer fence.
+///
+/// Candidate construction is intentionally the expensive phase. The runtime
+/// performs it while writers are admitted, then stops writers only long enough
+/// to hash the live tree again and seal the observed writer count into the
+/// fixed-size archive header.
+pub struct CaptureCandidate {
+    temporary: PathBuf,
+    committed: PathBuf,
+    header: Option<Header>,
+    header_len: usize,
+    archive: Vec<u8>,
+}
+
+impl CaptureCandidate {
+    /// Positively prove that the quiescent tree still names the candidate's
+    /// exact paths, modes, link targets, and file bytes.
+    pub fn verify_workspace(
+        &self,
+        workspace_root: &Path,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(), String> {
+        verify_workspace_entries(
+            workspace_root,
+            self.header
+                .as_ref()
+                .expect("capture candidate has a header"),
+            cancelled,
+        )
+    }
+
+    /// Seal the real writer count without rewriting the already-flushed
+    /// payload. The candidate reserves the decimal width of `u32::MAX`; JSON
+    /// whitespace fills the unused bytes, so the payload offset never moves.
+    pub fn seal(mut self, quiesced_writers: u32) -> Result<PreparedCapture, String> {
+        let header = self
+            .header
+            .as_mut()
+            .expect("capture candidate has a header");
+        header.quiesced_writers = quiesced_writers;
+        let encoded = serde_json::to_vec(&header)
+            .map_err(|error| format!("encode workspace checkpoint header: {error}"))?;
+        if encoded.len() > self.header_len {
+            return Err("sealed workspace checkpoint header exceeds its candidate".into());
+        }
+        let header_end = 8_usize
+            .checked_add(self.header_len)
+            .ok_or_else(|| "workspace checkpoint header length overflowed".to_string())?;
+        let header_bytes = self
+            .archive
+            .get_mut(8..header_end)
+            .ok_or_else(|| "workspace checkpoint candidate header is truncated".to_string())?;
+        header_bytes.fill(b' ');
+        header_bytes[..encoded.len()].copy_from_slice(&encoded);
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&self.temporary)
+            .map_err(|error| format!("open workspace checkpoint for sealing: {error}"))?;
+        file.seek(std::io::SeekFrom::Start(8))
+            .map_err(|error| format!("seek workspace checkpoint header: {error}"))?;
+        file.write_all(header_bytes)
+            .map_err(|error| format!("seal workspace checkpoint header: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("flush sealed workspace checkpoint: {error}"))?;
+
+        let captured = captured_from(
+            self.header.take().expect("capture candidate has a header"),
+            std::mem::take(&mut self.archive),
+        );
+        Ok(PreparedCapture {
+            temporary: std::mem::take(&mut self.temporary),
+            committed: self.committed.clone(),
+            captured: Some(captured),
+        })
+    }
+}
+
+impl Drop for CaptureCandidate {
+    fn drop(&mut self) {
+        if !self.temporary.as_os_str().is_empty() {
+            let _ = std::fs::remove_file(&self.temporary);
+        }
+    }
+}
+
 impl PreparedCapture {
     /// Make a fully flushed capture authoritative after the caller has either
     /// resumed the writers or retained their fence for immediate teardown.
@@ -278,9 +365,8 @@ pub fn load_capture(
     .map(Some)
 }
 
-/// Walk a quiescent tree, seal it deterministically, verify it, and flush a
-/// temporary artifact. The caller must settle the writer disposition before
-/// calling commit.
+/// Compatibility wrapper for callers that already hold a quiescent tree.
+#[cfg(test)]
 pub fn prepare_capture(
     workspace_root: &Path,
     checkpoint_root: &Path,
@@ -290,9 +376,36 @@ pub fn prepare_capture(
     quiesced_writers: u32,
     includes_git_metadata: bool,
 ) -> Result<PreparedCapture, String> {
+    let candidate = build_capture_candidate(
+        workspace_root,
+        checkpoint_root,
+        epoch,
+        version,
+        source_revision,
+        includes_git_metadata,
+        || false,
+    )?;
+    candidate.verify_workspace(workspace_root, || false)?;
+    candidate.seal(quiesced_writers)
+}
+
+/// Walk a live tree, compress it deterministically, validate it, and flush a
+/// temporary artifact before any writer fence is acquired.
+pub fn build_capture_candidate(
+    workspace_root: &Path,
+    checkpoint_root: &Path,
+    epoch: u64,
+    version: u64,
+    source_revision: &str,
+    includes_git_metadata: bool,
+    cancelled: impl Fn() -> bool,
+) -> Result<CaptureCandidate, String> {
     use std::os::unix::fs::PermissionsExt as _;
 
     validate_capture_request(epoch, version, source_revision)?;
+    if cancelled() {
+        return Err("workspace checkpoint capture was cancelled".into());
+    }
     if !workspace_root.is_dir() {
         return Err("workspace root is not a directory".into());
     }
@@ -307,12 +420,18 @@ pub fn prepare_capture(
         return Err("workspace contains too many files".into());
     }
     paths.sort();
+    if cancelled() {
+        return Err("workspace checkpoint capture was cancelled".into());
+    }
 
     let mut entries = Vec::with_capacity(paths.len());
     let mut payload = Vec::new();
     let mut content_offsets = HashMap::<(String, u64), StoredContent>::new();
     let mut logical_bytes = 0_u64;
     for relative in paths {
+        if cancelled() {
+            return Err("workspace checkpoint capture was cancelled".into());
+        }
         validate_path(&relative)?;
         let path = workspace_root.join(&relative);
         let metadata = std::fs::symlink_metadata(&path)
@@ -352,7 +471,7 @@ pub fn prepare_capture(
         let stored = match content_offsets.get(&content_key).copied() {
             Some(existing) => existing,
             _ => {
-                let (compression, encoded) = compress_content(&bytes)?;
+                let (compression, encoded) = compress_content(&bytes, &cancelled)?;
                 let offset = u64::try_from(payload.len())
                     .map_err(|_| "workspace size exceeded this runtime".to_string())?;
                 let stored_size = u64::try_from(encoded.len())
@@ -390,7 +509,9 @@ pub fn prepare_capture(
         cma_workspace: VERSION,
         workspace_epoch: epoch,
         checkpoint_version: version,
-        quiesced_writers,
+        // Reserve the maximum decimal width. `CaptureCandidate::seal` replaces
+        // it under the fence and pads the remainder with JSON whitespace.
+        quiesced_writers: u32::MAX,
         includes_git_metadata,
         source_revision: source_revision.to_ascii_lowercase(),
         manifest_digest: "0".repeat(64),
@@ -419,6 +540,9 @@ pub fn prepare_capture(
     payload[..8].copy_from_slice(&header_len.to_be_bytes());
     payload[8..prefix_len].copy_from_slice(&encoded);
     let archive = payload;
+    if cancelled() {
+        return Err("workspace checkpoint capture was cancelled".into());
+    }
     validate_archive(&archive, epoch, version, source_revision)?;
 
     std::fs::create_dir_all(checkpoint_root)
@@ -441,11 +565,12 @@ pub fn prepare_capture(
         .map_err(|error| format!("write workspace checkpoint: {error}"))?;
     file.sync_all()
         .map_err(|error| format!("flush workspace checkpoint: {error}"))?;
-    let captured = captured_from(header, archive);
-    Ok(PreparedCapture {
+    Ok(CaptureCandidate {
         temporary,
         committed,
-        captured: Some(captured),
+        header: Some(header),
+        header_len: encoded.len(),
+        archive,
     })
 }
 
@@ -623,6 +748,94 @@ fn collect_capture_paths(
     Ok(())
 }
 
+fn verify_workspace_entries(
+    workspace_root: &Path,
+    expected: &Header,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    if cancelled() {
+        return Err("workspace checkpoint capture was cancelled".into());
+    }
+    if !workspace_root.is_dir() {
+        return Err("workspace root is not a directory".into());
+    }
+    let mut paths = Vec::new();
+    collect_capture_paths(
+        workspace_root,
+        workspace_root,
+        &mut paths,
+        expected.includes_git_metadata,
+    )?;
+    if paths.len() > MAX_FILES {
+        return Err("workspace contains too many files".into());
+    }
+    paths.sort();
+    if paths.len() != expected.entries.len()
+        || paths
+            .iter()
+            .zip(&expected.entries)
+            .any(|(path, entry)| path != &entry.path)
+    {
+        return Err("workspace changed while its checkpoint candidate was prepared".into());
+    }
+
+    let mut logical_bytes = 0_u64;
+    for (relative, expected_entry) in paths.iter().zip(&expected.entries) {
+        if cancelled() {
+            return Err("workspace checkpoint capture was cancelled".into());
+        }
+        validate_path(relative)?;
+        let path = workspace_root.join(relative);
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("inspect workspace entry {relative}: {error}"))?;
+        let (kind, mode, bytes) = if metadata.file_type().is_file() {
+            let bytes = std::fs::read(&path)
+                .map_err(|error| format!("read workspace entry {relative}: {error}"))?;
+            let mode = if metadata.permissions().mode() & 0o111 == 0 {
+                0o100644
+            } else {
+                0o100755
+            };
+            (EntryKind::Regular, mode, bytes)
+        } else if metadata.file_type().is_symlink() {
+            let target = std::fs::read_link(&path)
+                .map_err(|error| format!("read workspace symlink {relative}: {error}"))?;
+            let target = target
+                .to_str()
+                .ok_or_else(|| "workspace symlink target is not UTF-8".to_string())?;
+            validate_symlink(relative, target)?;
+            (EntryKind::Symlink, 0o120000, target.as_bytes().to_vec())
+        } else {
+            return Err(format!(
+                "workspace entry {relative} has an unsupported type"
+            ));
+        };
+        let size = u64::try_from(bytes.len())
+            .map_err(|_| "workspace entry exceeds this runtime".to_string())?;
+        logical_bytes = logical_bytes
+            .checked_add(size)
+            .ok_or_else(|| "workspace size overflowed".to_string())?;
+        if logical_bytes > MAX_BYTES {
+            return Err("workspace exceeds its byte bound".into());
+        }
+        if cancelled() {
+            return Err("workspace checkpoint capture was cancelled".into());
+        }
+        let provider_object_id = git_blob_id(&bytes);
+        if expected_entry.kind != kind
+            || expected_entry.mode != mode
+            || expected_entry.size != size
+            || expected_entry.content_sha256 != hex(&Sha256::digest(&bytes))
+            || expected_entry.provider_object_id.as_deref() != Some(provider_object_id.as_str())
+        {
+            return Err("workspace changed while its checkpoint candidate was prepared".into());
+        }
+    }
+    Ok(())
+}
+
 fn git_blob_id(bytes: &[u8]) -> String {
     let mut digest = Sha1::new();
     digest.update(format!("blob {}\0", bytes.len()).as_bytes());
@@ -630,14 +843,22 @@ fn git_blob_id(bytes: &[u8]) -> String {
     hex(&digest.finalize())
 }
 
-fn compress_content(bytes: &[u8]) -> Result<(ContentCompression, Vec<u8>), String> {
+fn compress_content(
+    bytes: &[u8],
+    cancelled: impl Fn() -> bool,
+) -> Result<(ContentCompression, Vec<u8>), String> {
     if bytes.is_empty() {
         return Ok((ContentCompression::Identity, Vec::new()));
     }
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(bytes)
-        .map_err(|error| format!("compress workspace content: {error}"))?;
+    for chunk in bytes.chunks(1024 * 1024) {
+        if cancelled() {
+            return Err("workspace checkpoint capture was cancelled".into());
+        }
+        encoder
+            .write_all(chunk)
+            .map_err(|error| format!("compress workspace content: {error}"))?;
+    }
     let compressed = encoder
         .finish()
         .map_err(|error| format!("finish workspace content compression: {error}"))?;

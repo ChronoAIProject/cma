@@ -9,20 +9,13 @@ const DEFAULT_REPOSITORY_URL: &str = "https://github.com/the-omega-institute/tru
 const DEFAULT_BRANCH: &str = "dev";
 const DEFAULT_MESSAGE_PREFIX: &str = concat!("$", "co", "dex-formal-answer");
 const DEFAULT_SKILL_SETUP: &str = concat!(
-    "set -eu; ",
-    "test -f skills/co",
-    "dex-formal-answer/SKILL.md; ",
-    "mkdir -p \"$HOME/.agents/skills/co",
-    "dex-formal-answer\" \"$HOME/.co",
-    "dex/skills/co",
-    "dex-formal-answer\"; ",
-    "cp -R skills/co",
-    "dex-formal-answer/. \"$HOME/.agents/skills/co",
-    "dex-formal-answer/\"; ",
-    "cp -R skills/co",
-    "dex-formal-answer/. \"$HOME/.co",
-    "dex/skills/co",
-    "dex-formal-answer/\""
+    "set -eu; found=0; for skill in skills/*; do ",
+    "test -f \"$skill/SKILL.md\" || continue; name=${skill##*/}; ",
+    "case \"$name\" in ''|*[!a-z0-9_-]*) exit 1;; esac; found=1; ",
+    "mkdir -p \"$HOME/.agents/skills/$name\" \"$HOME/.codex/skills/$name\"; ",
+    "cp -R \"$skill\"/. \"$HOME/.agents/skills/$name/\"; ",
+    "cp -R \"$skill\"/. \"$HOME/.codex/skills/$name/\"; done; ",
+    "test \"$found\" -eq 1"
 );
 
 /// The repository prepared once for an owner's shared chat host.
@@ -310,6 +303,8 @@ impl ChatSettingsSnapshot {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, process::Command};
+
     use super::*;
 
     #[test]
@@ -320,6 +315,54 @@ mod tests {
         assert_eq!(settings.message_prefixes, [DEFAULT_MESSAGE_PREFIX]);
         assert_eq!(settings.workspace_directory().unwrap(), "trureturing");
         assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn default_setup_projects_every_workspace_skill_into_codex_discovery_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "cma-chat-skill-setup-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace = root.join("workspace");
+        let home = root.join("home");
+        let skills = [
+            "codex-formal-answer",
+            "codex-formalize",
+            "codex-theory-ingest",
+        ];
+        for skill in skills {
+            let directory = workspace.join("skills").join(skill);
+            fs::create_dir_all(&directory).expect("create test skill directory");
+            fs::write(
+                directory.join("SKILL.md"),
+                format!("---\nname: {skill}\ndescription: test\n---\n"),
+            )
+            .expect("write test skill");
+        }
+        fs::create_dir_all(&home).expect("create test home");
+
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(DEFAULT_SKILL_SETUP)
+            .current_dir(&workspace)
+            .env("HOME", &home)
+            .status()
+            .expect("execute default skill setup");
+        assert!(status.success());
+        for skill in skills {
+            assert!(home
+                .join(".agents/skills")
+                .join(skill)
+                .join("SKILL.md")
+                .is_file());
+            assert!(home
+                .join(".codex/skills")
+                .join(skill)
+                .join("SKILL.md")
+                .is_file());
+        }
+
+        fs::remove_dir_all(root).expect("remove test directory");
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::{
 };
 
 pub const CHAT_CHECKPOINT_INTERVAL_SECONDS: u64 = 5 * 60;
+pub const CHAT_CHECKPOINT_REFUSAL_BACKOFF_SECONDS: u64 = 5 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatCheckpointOutcome {
@@ -47,6 +48,7 @@ pub(super) struct HeldChatCheckpoint {
     pub(super) runtime: RuntimeHandle,
     pub(super) writer_resume_token: String,
     pub(super) objects: Arc<dyn ChatCheckpointStore>,
+    pub(super) _input_fences: Vec<tokio::sync::OwnedRwLockWriteGuard<()>>,
 }
 
 impl HeldChatCheckpoint {
@@ -142,14 +144,13 @@ impl crate::SessionService {
         if initial_sessions.is_empty() {
             return Ok(ChatCheckpointOutcome::NotEligible);
         }
-        let mut input_fences = Vec::with_capacity(initial_sessions.len());
+        let mut initial_input_fences = Vec::with_capacity(initial_sessions.len());
         for session_id in &initial_sessions {
             let Ok(fence) = self.input_gates.gate(session_id).try_write_owned() else {
                 return Ok(ChatCheckpointOutcome::Busy);
             };
-            input_fences.push(fence);
+            initial_input_fences.push(fence);
         }
-        let _input_fences = input_fences;
         let Some(_owner_guard) = self.chat_host_guards.try_lock(&observed.owner).await else {
             return Ok(ChatCheckpointOutcome::Busy);
         };
@@ -231,12 +232,29 @@ impl crate::SessionService {
                     .await;
             }
         };
+
+        // Candidate construction can take minutes for a complete Git workspace.
+        // New prompts take priority during that expensive, writer-admitted phase.
+        // The capture path reacquires every input fence and revalidates quietness
+        // after the runtime has established its short writer hold.
+        drop(initial_input_fences);
         let capture = match self
-            .capture_claimed_chat_checkpoint(&claimed, &records, version, now)
+            .capture_preemptible_chat_checkpoint(&claimed, &records, version, now)
             .await
         {
             Ok(capture) => capture,
             Err(refusal) => {
+                if !refusal.writers_reopened {
+                    return self
+                        .require_chat_checkpoint_recovery(
+                            &hosts,
+                            host_id,
+                            &claim,
+                            now,
+                            refusal.detail,
+                        )
+                        .await;
+                }
                 return self
                     .refuse_chat_checkpoint(&hosts, host_id, &claim, now, refusal.detail)
                     .await;
@@ -247,7 +265,7 @@ impl crate::SessionService {
         // admit a new turn or worktree before the host CAS below.
         if capture.resume_writers().await.is_err() {
             return self
-                .refuse_chat_checkpoint(
+                .require_chat_checkpoint_recovery(
                     &hosts,
                     host_id,
                     &claim,
@@ -301,13 +319,40 @@ impl crate::SessionService {
         version: u64,
         now: &str,
     ) -> Result<HeldChatCheckpoint, ChatCaptureRefusal> {
-        let targets =
-            self.chat_conversation_targets(records)
-                .await
-                .map_err(|_| ChatCaptureRefusal {
-                    detail: "A durable conversation identity could not be resolved.",
-                    writers_reopened: true,
-                })?;
+        self.capture_chat_checkpoint(claimed, records, version, now, false)
+            .await
+    }
+
+    async fn capture_preemptible_chat_checkpoint(
+        &self,
+        claimed: &ChatHostRecord,
+        records: &[SessionRecord],
+        version: u64,
+        now: &str,
+    ) -> Result<HeldChatCheckpoint, ChatCaptureRefusal> {
+        self.capture_chat_checkpoint(claimed, records, version, now, true)
+            .await
+    }
+
+    async fn capture_chat_checkpoint(
+        &self,
+        claimed: &ChatHostRecord,
+        records: &[SessionRecord],
+        version: u64,
+        now: &str,
+        revalidate_after_workspace_hold: bool,
+    ) -> Result<HeldChatCheckpoint, ChatCaptureRefusal> {
+        let mut targets =
+            if revalidate_after_workspace_hold {
+                None
+            } else {
+                Some(self.chat_conversation_targets(records).await.map_err(|_| {
+                    ChatCaptureRefusal {
+                        detail: "A durable conversation identity could not be resolved.",
+                        writers_reopened: true,
+                    }
+                })?)
+            };
         let authority = claimed
             .workspace_authority
             .as_ref()
@@ -347,9 +392,16 @@ impl crate::SessionService {
         let workspace = adapter
             .checkpoint_workspace(&runtime, &request)
             .await
-            .map_err(|_| ChatCaptureRefusal {
-                detail: "The runtime refused the complete workspace capture.",
-                writers_reopened: true,
+            .map_err(|error| {
+                let writers_reopened = !error.requires_workspace_writer_recovery();
+                ChatCaptureRefusal {
+                    detail: if writers_reopened {
+                        "The runtime refused the complete workspace capture."
+                    } else {
+                        "Workspace writer resumption could not be verified."
+                    },
+                    writers_reopened,
+                }
             })?;
         let writer_resume_token = match validate_held_chat_workspace(&request, &workspace) {
             Ok(token) => token,
@@ -367,6 +419,73 @@ impl crate::SessionService {
                 });
             }
         };
+
+        let mut input_fences = Vec::new();
+        if revalidate_after_workspace_hold {
+            let session_ids = live_session_ids(claimed);
+            input_fences.reserve(session_ids.len());
+            for session_id in &session_ids {
+                let Ok(fence) = self.input_gates.gate(session_id).try_write_owned() else {
+                    // An admitted prompt may be waiting behind the runtime's
+                    // writer hold. Waiting for its read fence here would
+                    // deadlock: the prompt needs resumed runtime writers while
+                    // checkpoint publication would wait for the prompt. Give
+                    // input priority and reopen the runtime immediately.
+                    drop(input_fences);
+                    let writers_reopened = adapter
+                        .resume_workspace_writers(&runtime, &writer_resume_token)
+                        .await
+                        .is_ok();
+                    let detail = if writers_reopened {
+                        "The chat host became active while its workspace capture was prepared."
+                    } else {
+                        "Workspace writer resumption could not be verified."
+                    };
+                    return Err(ChatCaptureRefusal {
+                        detail,
+                        writers_reopened,
+                    });
+                };
+                input_fences.push(fence);
+            }
+            let records = match self.quiet_chat_thread_records(claimed).await {
+                Ok(Some(records)) => records,
+                Ok(None) | Err(_) => {
+                    let writers_reopened = adapter
+                        .resume_workspace_writers(&runtime, &writer_resume_token)
+                        .await
+                        .is_ok();
+                    let detail = if writers_reopened {
+                        "The chat host became active while its workspace capture was prepared."
+                    } else {
+                        "Workspace writer resumption could not be verified."
+                    };
+                    return Err(ChatCaptureRefusal {
+                        detail,
+                        writers_reopened,
+                    });
+                }
+            };
+            targets = match self.chat_conversation_targets(&records).await {
+                Ok(targets) => Some(targets),
+                Err(_) => {
+                    let writers_reopened = adapter
+                        .resume_workspace_writers(&runtime, &writer_resume_token)
+                        .await
+                        .is_ok();
+                    let detail = if writers_reopened {
+                        "A durable conversation identity could not be resolved."
+                    } else {
+                        "Workspace writer resumption could not be verified."
+                    };
+                    return Err(ChatCaptureRefusal {
+                        detail,
+                        writers_reopened,
+                    });
+                }
+            };
+        }
+        let targets = targets.expect("chat capture resolved its conversation targets");
 
         let conversations = match self
             .capture_chat_conversations(&adapter, &runtime, &targets)
@@ -416,6 +535,7 @@ impl crate::SessionService {
             runtime,
             writer_resume_token,
             objects,
+            _input_fences: input_fences,
         })
     }
 
@@ -682,6 +802,46 @@ impl crate::SessionService {
         Ok(ChatCheckpointOutcome::Refused)
     }
 
+    async fn require_chat_checkpoint_recovery(
+        &self,
+        hosts: &Arc<dyn ChatHostStore>,
+        host_id: &ChatHostId,
+        claim: &str,
+        now: &str,
+        detail: &'static str,
+    ) -> Result<ChatCheckpointOutcome, CoreError> {
+        loop {
+            let Some(current) = hosts
+                .get(host_id)
+                .await
+                .map_err(|_| checkpoint_host_store_unavailable())?
+            else {
+                return Ok(ChatCheckpointOutcome::Refused);
+            };
+            if current.last_transition_claim.as_deref() != Some(claim) {
+                return Ok(ChatCheckpointOutcome::Refused);
+            }
+            let mut replacement = current.clone();
+            replacement.status = ChatHostStatus::Pausing;
+            replacement.last_transition_claim = None;
+            replacement.transition_started_at = None;
+            replacement.last_operator_note = Some(ChatHostOperatorNote {
+                code: "recovery_required".into(),
+                detail: detail.into(),
+                observed_at: now.into(),
+            });
+            replacement.updated_at = now.into();
+            if hosts
+                .update_if_revision(current.revision, &replacement)
+                .await
+                .map_err(|_| checkpoint_host_store_unavailable())?
+                .is_some()
+            {
+                return Ok(ChatCheckpointOutcome::Refused);
+            }
+        }
+    }
+
     async fn release_chat_checkpoint_claim(
         &self,
         hosts: &Arc<dyn ChatHostStore>,
@@ -729,6 +889,14 @@ fn chat_checkpoint_due(host: &ChatHostRecord, now_seconds: u64) -> bool {
         || host.last_transition_claim.is_some()
         || host.runtime_id.is_none()
     {
+        return false;
+    }
+    if host.last_operator_note.as_ref().is_some_and(|note| {
+        note.code == "checkpoint_refused"
+            && crate::seconds_from_rfc3339(&note.observed_at).is_some_and(|refused| {
+                now_seconds < refused.saturating_add(CHAT_CHECKPOINT_REFUSAL_BACKOFF_SECONDS)
+            })
+    }) {
         return false;
     }
     host.checkpoint.as_ref().is_none_or(|checkpoint| {
