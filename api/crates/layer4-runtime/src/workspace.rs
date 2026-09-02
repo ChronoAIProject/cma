@@ -1,18 +1,22 @@
 //! Versioned, hash-addressed workspace restore and capture wire.
 
-use std::collections::BTreeSet;
-use std::io::Write as _;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
+use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest as _, Sha256};
 use unicode_normalization::UnicodeNormalization as _;
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
+const LEGACY_VERSION: u32 = 1;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub const CAPABILITY_VERSION: u32 = 5;
-pub const MAX_FILES: usize = 100_000;
+pub const MAX_FILES: usize = 750_000;
 pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 1_024;
 const MAX_HEADER_BYTES: usize = 128 * 1024 * 1024;
@@ -26,6 +30,13 @@ enum EntryKind {
     Regular,
     Symlink,
     Submodule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ContentCompression {
+    Identity,
+    Zlib,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,6 +65,17 @@ struct Entry {
     content_sha256: String,
     provider_object_id: Option<String>,
     offset: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stored_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compression: Option<ContentCompression>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StoredContent {
+    offset: u64,
+    stored_size: u64,
+    compression: ContentCompression,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -67,6 +89,7 @@ pub struct Restored {
 
 #[derive(Debug, Clone)]
 pub struct Captured {
+    archive_version: u32,
     pub workspace_epoch: u64,
     pub checkpoint_version: u64,
     pub source_revision: String,
@@ -114,7 +137,7 @@ impl Captured {
         writer_resume_token: Option<&str>,
     ) -> Result<Vec<u8>, String> {
         let acknowledgement = serde_json::to_vec(&CaptureAcknowledgement {
-            cma_checkpoint: VERSION,
+            cma_checkpoint: self.archive_version,
             workspace_epoch: self.workspace_epoch,
             checkpoint_version: self.checkpoint_version,
             source_revision: &self.source_revision,
@@ -131,14 +154,21 @@ impl Captured {
         .map_err(|error| format!("encode checkpoint acknowledgement: {error}"))?;
         let header_len = u64::try_from(acknowledgement.len())
             .map_err(|_| "checkpoint acknowledgement is too large".to_string())?;
-        let mut wire = Vec::with_capacity(
-            8_usize
-                .saturating_add(acknowledgement.len())
-                .saturating_add(self.archive.len()),
+        let prefix_len = 8_usize
+            .checked_add(acknowledgement.len())
+            .ok_or_else(|| "checkpoint wire size overflowed".to_string())?;
+        let archive_len = self.archive.len();
+        let mut wire = self.archive;
+        wire.reserve(prefix_len);
+        wire.resize(
+            archive_len
+                .checked_add(prefix_len)
+                .ok_or_else(|| "checkpoint wire size overflowed".to_string())?,
+            0,
         );
-        wire.extend_from_slice(&header_len.to_be_bytes());
-        wire.extend_from_slice(&acknowledgement);
-        wire.extend_from_slice(&self.archive);
+        wire.copy_within(0..archive_len, prefix_len);
+        wire[..8].copy_from_slice(&header_len.to_be_bytes());
+        wire[8..prefix_len].copy_from_slice(&acknowledgement);
         Ok(wire)
     }
 }
@@ -280,7 +310,8 @@ pub fn prepare_capture(
 
     let mut entries = Vec::with_capacity(paths.len());
     let mut payload = Vec::new();
-    let mut offset = 0_u64;
+    let mut content_offsets = HashMap::<(String, u64), StoredContent>::new();
+    let mut logical_bytes = 0_u64;
     for relative in paths {
         validate_path(&relative)?;
         let path = workspace_root.join(&relative);
@@ -310,22 +341,49 @@ pub fn prepare_capture(
         };
         let size = u64::try_from(bytes.len())
             .map_err(|_| "workspace entry exceeds this runtime".to_string())?;
-        offset = offset
+        logical_bytes = logical_bytes
             .checked_add(size)
             .ok_or_else(|| "workspace size overflowed".to_string())?;
-        if offset > MAX_BYTES {
+        if logical_bytes > MAX_BYTES {
             return Err("workspace exceeds its byte bound".into());
         }
+        let content_sha256 = hex(&Sha256::digest(&bytes));
+        let content_key = (content_sha256.clone(), size);
+        let stored = match content_offsets.get(&content_key).copied() {
+            Some(existing) => existing,
+            _ => {
+                let (compression, encoded) = compress_content(&bytes)?;
+                let offset = u64::try_from(payload.len())
+                    .map_err(|_| "workspace size exceeded this runtime".to_string())?;
+                let stored_size = u64::try_from(encoded.len())
+                    .map_err(|_| "workspace content exceeds this runtime".to_string())?;
+                let end = offset
+                    .checked_add(stored_size)
+                    .ok_or_else(|| "workspace size overflowed".to_string())?;
+                if end > MAX_BYTES {
+                    return Err("workspace exceeds its byte bound".into());
+                }
+                payload.extend_from_slice(&encoded);
+                let stored = StoredContent {
+                    offset,
+                    stored_size,
+                    compression,
+                };
+                content_offsets.insert(content_key, stored);
+                stored
+            }
+        };
         entries.push(Entry {
             path: relative,
             kind,
             mode,
             size,
-            content_sha256: hex(&Sha256::digest(&bytes)),
+            content_sha256,
             provider_object_id: Some(git_blob_id(&bytes)),
-            offset: offset - size,
+            offset: stored.offset,
+            stored_size: Some(stored.stored_size),
+            compression: Some(stored.compression),
         });
-        payload.extend_from_slice(&bytes);
     }
 
     let mut header = Header {
@@ -346,14 +404,21 @@ pub fn prepare_capture(
     }
     let header_len = u64::try_from(encoded.len())
         .map_err(|_| "workspace checkpoint header exceeds this runtime".to_string())?;
-    let mut archive = Vec::with_capacity(
-        8_usize
-            .saturating_add(encoded.len())
-            .saturating_add(payload.len()),
+    let prefix_len = 8_usize
+        .checked_add(encoded.len())
+        .ok_or_else(|| "workspace checkpoint size overflowed".to_string())?;
+    let payload_len = payload.len();
+    payload.reserve(prefix_len);
+    payload.resize(
+        payload_len
+            .checked_add(prefix_len)
+            .ok_or_else(|| "workspace checkpoint size overflowed".to_string())?,
+        0,
     );
-    archive.extend_from_slice(&header_len.to_be_bytes());
-    archive.extend_from_slice(&encoded);
-    archive.extend_from_slice(&payload);
+    payload.copy_within(0..payload_len, prefix_len);
+    payload[..8].copy_from_slice(&header_len.to_be_bytes());
+    payload[8..prefix_len].copy_from_slice(&encoded);
+    let archive = payload;
     validate_archive(&archive, epoch, version, source_revision)?;
 
     std::fs::create_dir_all(checkpoint_root)
@@ -507,6 +572,7 @@ fn validate_archive(
 
 fn captured_from(header: Header, archive: Vec<u8>) -> Captured {
     Captured {
+        archive_version: header.cma_workspace,
         workspace_epoch: header.workspace_epoch,
         checkpoint_version: header.checkpoint_version,
         source_revision: header.source_revision,
@@ -564,6 +630,24 @@ fn git_blob_id(bytes: &[u8]) -> String {
     hex(&digest.finalize())
 }
 
+fn compress_content(bytes: &[u8]) -> Result<(ContentCompression, Vec<u8>), String> {
+    if bytes.is_empty() {
+        return Ok((ContentCompression::Identity, Vec::new()));
+    }
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(bytes)
+        .map_err(|error| format!("compress workspace content: {error}"))?;
+    let compressed = encoder
+        .finish()
+        .map_err(|error| format!("finish workspace content compression: {error}"))?;
+    if compressed.len() < bytes.len() {
+        Ok((ContentCompression::Zlib, compressed))
+    } else {
+        Ok((ContentCompression::Identity, bytes.to_vec()))
+    }
+}
+
 /// Verify a complete archive, materialize it away from the live path, verify
 /// the resulting filesystem, and only then make it visible.
 pub fn restore(
@@ -599,9 +683,9 @@ pub fn restore(
             .map_err(|error| error.to_string())?
             .is_none();
         if !empty {
-            verify_existing_tree(target, &header.entries, payload).map_err(|why| {
-                format!("the existing workspace does not match this archive: {why}")
-            })?;
+            verify_existing_tree(target, &header.entries, payload, header.cma_workspace).map_err(
+                |why| format!("the existing workspace does not match this archive: {why}"),
+            )?;
             return Ok(restored(&header));
         }
         std::fs::remove_dir(target)
@@ -616,8 +700,8 @@ pub fn restore(
     std::fs::create_dir(&staging)
         .map_err(|error| format!("create workspace staging directory: {error}"))?;
     let mut cleanup = Staging(Some(staging.clone()));
-    materialize(&staging, &header.entries, payload)?;
-    verify_materialized(&staging, &header.entries, payload)?;
+    materialize(&staging, &header.entries, payload, header.cma_workspace)?;
+    verify_materialized(&staging, &header.entries, payload, header.cma_workspace)?;
 
     std::fs::rename(&staging, target)
         .map_err(|error| format!("commit restored workspace: {error}"))?;
@@ -660,7 +744,7 @@ fn open(archive: &[u8]) -> Result<(Header, &[u8]), String> {
 }
 
 fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
-    if header.cma_workspace != VERSION || header.workspace_epoch == 0 {
+    if !matches!(header.cma_workspace, LEGACY_VERSION | VERSION) || header.workspace_epoch == 0 {
         return Err("workspace archive version or epoch is unsupported".into());
     }
     if header.entries.len() > MAX_FILES {
@@ -677,7 +761,9 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
     }
     let mut seen_aliases = BTreeSet::new();
     let mut previous_path: Option<&str> = None;
-    let mut expected_offset = 0_u64;
+    let mut ranges = BTreeMap::<u64, (u64, u64, &str, ContentCompression)>::new();
+    let mut legacy_expected_offset = 0_u64;
+    let mut logical_bytes = 0_u64;
     for entry in &header.entries {
         if excluded_capture_path(&entry.path, header.includes_git_metadata) {
             return Err("workspace archive contains a path outside its capture scope".into());
@@ -694,15 +780,38 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
             return Err("workspace archive paths are repeated, nested, or out of order".into());
         }
         previous_path = Some(&entry.path);
-        if entry.offset != expected_offset {
-            return Err("workspace archive entries overlap or contain a gap".into());
-        }
-        expected_offset = expected_offset
+        logical_bytes = logical_bytes
             .checked_add(entry.size)
             .ok_or_else(|| "workspace archive size overflowed".to_string())?;
-        if expected_offset > MAX_BYTES {
+        if logical_bytes > MAX_BYTES {
             return Err("workspace archive exceeds its byte bound".into());
         }
+        let (stored_size, compression) = entry_storage(header.cma_workspace, entry)?;
+        let end = entry
+            .offset
+            .checked_add(stored_size)
+            .ok_or_else(|| "workspace archive size overflowed".to_string())?;
+        if end > MAX_BYTES {
+            return Err("workspace archive exceeds its byte bound".into());
+        }
+        let verify_block = if header.cma_workspace == LEGACY_VERSION {
+            if entry.offset != legacy_expected_offset {
+                return Err("workspace archive entries overlap or contain a gap".into());
+            }
+            legacy_expected_offset = end;
+            true
+        } else if stored_size == 0 {
+            true
+        } else {
+            let descriptor = (end, entry.size, entry.content_sha256.as_str(), compression);
+            match ranges.insert(entry.offset, descriptor) {
+                Some(existing) if existing != descriptor => {
+                    return Err("workspace archive content ranges conflict".into())
+                }
+                Some(_) => false,
+                None => true,
+            }
+        };
         require_sha256(&entry.content_sha256, "entry")?;
         match entry.kind {
             EntryKind::Regular if matches!(entry.mode, 0o100644 | 0o100755) => {}
@@ -719,14 +828,19 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
                 return Err("workspace archive contains an invalid Git object ID".into());
             }
         }
-        let bytes = entry_bytes(entry, payload)?;
-        if hex(&Sha256::digest(bytes)) != entry.content_sha256 {
-            return Err(format!("workspace entry {} failed its SHA-256", entry.path));
+        let stored = stored_entry_bytes(header.cma_workspace, entry, payload)?;
+        if verify_block {
+            verify_stored_content(stored, compression, entry.size, &entry.content_sha256)
+                .map_err(|why| format!("workspace entry {} {why}", entry.path))?;
         }
         if entry.kind == EntryKind::Symlink {
+            if entry.size > MAX_PATH_BYTES as u64 {
+                return Err("workspace archive contains an unsafe symlink".into());
+            }
+            let bytes = decode_entry_bytes(header.cma_workspace, entry, payload)?;
             validate_symlink(
                 &entry.path,
-                std::str::from_utf8(bytes)
+                std::str::from_utf8(&bytes)
                     .map_err(|_| "workspace symlink target is not UTF-8".to_string())?,
             )?;
         }
@@ -743,33 +857,78 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
     }) {
         return Err("workspace archive paths alias a file as a directory".into());
     }
-    if usize::try_from(expected_offset).ok() != Some(payload.len()) {
+    let physical_bytes = if header.cma_workspace == LEGACY_VERSION {
+        legacy_expected_offset
+    } else {
+        let mut expected = 0_u64;
+        for (start, (end, _, _, _)) in ranges {
+            if start != expected {
+                return Err("workspace archive content ranges overlap or contain a gap".into());
+            }
+            expected = end;
+        }
+        expected
+    };
+    if usize::try_from(physical_bytes).ok() != Some(payload.len()) {
         return Err("workspace archive payload has trailing or missing bytes".into());
     }
     Ok(())
 }
 
-fn materialize(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), String> {
+fn materialize(
+    root: &Path,
+    entries: &[Entry],
+    payload: &[u8],
+    archive_version: u32,
+) -> Result<(), String> {
     use std::os::unix::fs::{symlink, PermissionsExt as _};
 
+    let mut materialized_regular = HashMap::<u64, PathBuf>::new();
     for entry in entries {
         let destination = root.join(&entry.path);
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("create workspace directory: {error}"))?;
         }
-        let bytes = entry_bytes(entry, payload)?;
         match entry.kind {
             EntryKind::Regular => {
-                let mut file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&destination)
-                    .map_err(|error| format!("create workspace file {}: {error}", entry.path))?;
-                file.write_all(bytes)
-                    .map_err(|error| format!("write workspace file {}: {error}", entry.path))?;
-                file.sync_all()
-                    .map_err(|error| format!("flush workspace file {}: {error}", entry.path))?;
+                if archive_version == VERSION
+                    && entry.size > 0
+                    && materialized_regular.contains_key(&entry.offset)
+                {
+                    std::fs::copy(
+                        materialized_regular
+                            .get(&entry.offset)
+                            .expect("checked materialized content"),
+                        &destination,
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "copy workspace file {} from shared content: {error}",
+                            entry.path
+                        )
+                    })?;
+                    std::fs::File::open(&destination)
+                        .and_then(|file| file.sync_all())
+                        .map_err(|error| {
+                            format!("flush copied workspace file {}: {error}", entry.path)
+                        })?;
+                } else {
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&destination)
+                        .map_err(|error| {
+                            format!("create workspace file {}: {error}", entry.path)
+                        })?;
+                    write_entry_content(archive_version, entry, payload, &mut file)
+                        .map_err(|error| format!("write workspace file {}: {error}", entry.path))?;
+                    file.sync_all()
+                        .map_err(|error| format!("flush workspace file {}: {error}", entry.path))?;
+                    if archive_version == VERSION && entry.size > 0 {
+                        materialized_regular.insert(entry.offset, destination.clone());
+                    }
+                }
                 std::fs::set_permissions(
                     &destination,
                     std::fs::Permissions::from_mode(entry.mode & 0o777),
@@ -777,7 +936,8 @@ fn materialize(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), Str
                 .map_err(|error| format!("set workspace mode {}: {error}", entry.path))?;
             }
             EntryKind::Symlink => {
-                let target = std::str::from_utf8(bytes)
+                let bytes = decode_entry_bytes(archive_version, entry, payload)?;
+                let target = std::str::from_utf8(&bytes)
                     .map_err(|_| "workspace symlink target is not UTF-8".to_string())?;
                 symlink(target, &destination)
                     .map_err(|error| format!("create workspace symlink {}: {error}", entry.path))?;
@@ -790,7 +950,12 @@ fn materialize(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), Str
     Ok(())
 }
 
-fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), String> {
+fn verify_materialized(
+    root: &Path,
+    entries: &[Entry],
+    payload: &[u8],
+    archive_version: u32,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt as _;
 
     for entry in entries {
@@ -801,9 +966,8 @@ fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result
             EntryKind::Regular => {
                 if !metadata.file_type().is_file()
                     || metadata.permissions().mode() & 0o777 != entry.mode & 0o777
-                    || std::fs::read(&path)
-                        .map_err(|error| format!("read workspace entry {}: {error}", entry.path))?
-                        != entry_bytes(entry, payload)?
+                    || metadata.len() != entry.size
+                    || sha256_file(&path)? != entry.content_sha256
                 {
                     return Err(format!(
                         "materialized workspace file {} disagrees",
@@ -812,7 +976,8 @@ fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result
                 }
             }
             EntryKind::Symlink => {
-                let expected_target = std::str::from_utf8(entry_bytes(entry, payload)?)
+                let bytes = decode_entry_bytes(archive_version, entry, payload)?;
+                let expected_target = std::str::from_utf8(&bytes)
                     .map_err(|_| "workspace symlink target is not UTF-8")?;
                 if !metadata.file_type().is_symlink()
                     || std::fs::read_link(&path)
@@ -849,7 +1014,12 @@ fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result
     Ok(())
 }
 
-fn verify_existing_tree(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), String> {
+fn verify_existing_tree(
+    root: &Path,
+    entries: &[Entry],
+    payload: &[u8],
+    archive_version: u32,
+) -> Result<(), String> {
     let expected_files = entries
         .iter()
         .filter(|entry| entry.kind != EntryKind::Submodule)
@@ -880,7 +1050,7 @@ fn verify_existing_tree(root: &Path, entries: &[Entry], payload: &[u8]) -> Resul
     if actual_files != expected_files || actual_directories != expected_directories {
         return Err("its path set differs".into());
     }
-    verify_materialized(root, entries, payload)
+    verify_materialized(root, entries, payload, archive_version)
 }
 
 fn collect_materialized_paths(
@@ -916,17 +1086,192 @@ fn collect_materialized_paths(
     Ok(())
 }
 
-fn entry_bytes<'a>(entry: &Entry, payload: &'a [u8]) -> Result<&'a [u8], String> {
+fn entry_storage(archive_version: u32, entry: &Entry) -> Result<(u64, ContentCompression), String> {
+    match archive_version {
+        LEGACY_VERSION => {
+            if entry.stored_size.is_some() || entry.compression.is_some() {
+                return Err("legacy workspace archive contains v2 content metadata".into());
+            }
+            Ok((entry.size, ContentCompression::Identity))
+        }
+        VERSION => {
+            let stored_size = entry
+                .stored_size
+                .ok_or_else(|| "workspace archive content size is missing".to_string())?;
+            let compression = entry
+                .compression
+                .ok_or_else(|| "workspace archive compression is missing".to_string())?;
+            match compression {
+                ContentCompression::Identity if stored_size == entry.size => {}
+                ContentCompression::Zlib if stored_size < entry.size => {}
+                _ => return Err("workspace archive content encoding is non-canonical".into()),
+            }
+            Ok((stored_size, compression))
+        }
+        _ => Err("workspace archive version is unsupported".into()),
+    }
+}
+
+fn stored_entry_bytes<'a>(
+    archive_version: u32,
+    entry: &Entry,
+    payload: &'a [u8],
+) -> Result<&'a [u8], String> {
+    let (stored_size, _) = entry_storage(archive_version, entry)?;
     let start = usize::try_from(entry.offset)
         .map_err(|_| "workspace entry offset exceeds this runtime".to_string())?;
-    let size = usize::try_from(entry.size)
-        .map_err(|_| "workspace entry size exceeds this runtime".to_string())?;
+    let size = usize::try_from(stored_size)
+        .map_err(|_| "workspace stored entry size exceeds this runtime".to_string())?;
     let end = start
         .checked_add(size)
         .ok_or_else(|| "workspace entry range overflowed".to_string())?;
     payload
         .get(start..end)
         .ok_or_else(|| "workspace entry extends past the payload".to_string())
+}
+
+fn verify_stored_content(
+    stored: &[u8],
+    compression: ContentCompression,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<(), String> {
+    let actual_sha256 = match compression {
+        ContentCompression::Identity => hash_decoded_content(stored, expected_size)?,
+        ContentCompression::Zlib => {
+            let mut decoder = ZlibDecoder::new(stored);
+            let digest = hash_decoded_content(&mut decoder, expected_size)?;
+            if decoder.total_in() != stored.len() as u64 {
+                return Err("contains trailing compressed bytes".into());
+            }
+            digest
+        }
+    };
+    if actual_sha256 != expected_sha256 {
+        return Err("failed its SHA-256".into());
+    }
+    Ok(())
+}
+
+fn hash_decoded_content(
+    mut reader: impl std::io::Read,
+    expected_size: u64,
+) -> Result<String, String> {
+    let mut digest = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("could not be decoded: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| "decoded size overflowed".to_string())?;
+        if total > expected_size {
+            return Err("expanded past its declared size".into());
+        }
+        digest.update(&buffer[..read]);
+    }
+    if total != expected_size {
+        return Err("has the wrong decoded size".into());
+    }
+    Ok(hex(&digest.finalize()))
+}
+
+fn decode_entry_bytes(
+    archive_version: u32,
+    entry: &Entry,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    if entry.size > MAX_PATH_BYTES as u64 {
+        return Err("workspace inline entry exceeds its bound".into());
+    }
+    let (stored_size, compression) = entry_storage(archive_version, entry)?;
+    let stored = stored_entry_bytes(archive_version, entry, payload)?;
+    let mut decoded = Vec::with_capacity(
+        usize::try_from(entry.size)
+            .map_err(|_| "workspace inline entry exceeds this runtime".to_string())?,
+    );
+    match compression {
+        ContentCompression::Identity => decoded.extend_from_slice(stored),
+        ContentCompression::Zlib => {
+            let mut decoder = ZlibDecoder::new(stored);
+            decoder
+                .read_to_end(&mut decoded)
+                .map_err(|error| format!("decode workspace content: {error}"))?;
+            if decoder.total_in() != stored_size {
+                return Err("workspace content contains trailing compressed bytes".into());
+            }
+        }
+    }
+    if decoded.len() as u64 != entry.size || hex(&Sha256::digest(&decoded)) != entry.content_sha256
+    {
+        return Err("workspace inline entry failed integrity verification".into());
+    }
+    Ok(decoded)
+}
+
+fn write_entry_content(
+    archive_version: u32,
+    entry: &Entry,
+    payload: &[u8],
+    writer: &mut impl std::io::Write,
+) -> Result<(), String> {
+    let (stored_size, compression) = entry_storage(archive_version, entry)?;
+    let stored = stored_entry_bytes(archive_version, entry, payload)?;
+    let written = match compression {
+        ContentCompression::Identity => {
+            writer
+                .write_all(stored)
+                .map_err(|error| error.to_string())?;
+            stored.len() as u64
+        }
+        ContentCompression::Zlib => {
+            let mut decoder = ZlibDecoder::new(stored);
+            let written = std::io::copy(&mut decoder, writer).map_err(|error| error.to_string())?;
+            if decoder.total_in() != stored_size {
+                return Err("content contains trailing compressed bytes".into());
+            }
+            written
+        }
+    };
+    if written != entry.size {
+        return Err("content has the wrong decoded size".into());
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("read workspace entry {}: {error}", path.display()))?;
+    hash_decoded_content(
+        file,
+        std::fs::metadata(path)
+            .map_err(|error| format!("inspect workspace entry {}: {error}", path.display()))?
+            .len(),
+    )
+}
+
+pub fn checkpoint_refusal_reason(error: &str) -> &'static str {
+    if error.contains("too many files") {
+        "too_many_files"
+    } else if error.contains("byte bound") || error.contains("too large") {
+        "too_many_bytes"
+    } else if error.contains("writer") {
+        "writer_quiescence"
+    } else if error.contains("path")
+        || error.contains("symlink")
+        || error.contains("capture scope")
+        || error.contains("escaped")
+        || error.contains("UTF-8")
+    {
+        "unsafe_path"
+    } else {
+        "workspace_invalid"
+    }
 }
 
 fn manifest_digest(header: &Header, payload: &[u8]) -> Result<String, String> {
@@ -952,15 +1297,14 @@ fn manifest_digest(header: &Header, payload: &[u8]) -> Result<String, String> {
         digest.update(entry.size.to_be_bytes());
         hash_text(&mut digest, &entry.content_sha256)?;
         hash_optional_text(&mut digest, entry.provider_object_id.as_deref())?;
-        let target = if entry.kind == EntryKind::Symlink {
-            Some(
-                std::str::from_utf8(entry_bytes(entry, payload)?)
-                    .map_err(|_| "workspace symlink target is not UTF-8".to_string())?,
-            )
+        if entry.kind == EntryKind::Symlink {
+            let bytes = decode_entry_bytes(header.cma_workspace, entry, payload)?;
+            let target = std::str::from_utf8(&bytes)
+                .map_err(|_| "workspace symlink target is not UTF-8".to_string())?;
+            hash_optional_text(&mut digest, Some(target))?;
         } else {
-            None
-        };
-        hash_optional_text(&mut digest, target)?;
+            hash_optional_text(&mut digest, None)?;
+        }
     }
     Ok(hex(&digest.finalize()))
 }

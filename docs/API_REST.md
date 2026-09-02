@@ -2650,9 +2650,13 @@ Content-Type: application/json
       "instructions": "",
       "record_tool_bodies": true
     },
-    "message_prefixes": ["/codex-formalize"],
+    "message_prefixes": ["$codex-formal-answer"],
     "inactivity": { "pause_after_seconds": 900 },
-    "setup": { "commands": [] },
+    "setup": {
+      "commands": [
+        "set -eu; test -f skills/codex-formal-answer/SKILL.md; mkdir -p \"$HOME/.agents/skills/codex-formal-answer\" \"$HOME/.codex/skills/codex-formal-answer\"; cp -R skills/codex-formal-answer/. \"$HOME/.agents/skills/codex-formal-answer/\"; cp -R skills/codex-formal-answer/. \"$HOME/.codex/skills/codex-formal-answer/\""
+      ]
+    },
     "host": { "size": null, "max_threads": 10 }
   }
 }

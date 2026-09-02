@@ -6,6 +6,13 @@ use axum::response::IntoResponse as _;
 use super::*;
 
 fn fixture(entries: Vec<(&str, EntryKind, u32, &[u8])>) -> (Vec<u8>, Header) {
+    fixture_for_version(VERSION, entries)
+}
+
+fn fixture_for_version(
+    archive_version: u32,
+    entries: Vec<(&str, EntryKind, u32, &[u8])>,
+) -> (Vec<u8>, Header) {
     let mut offset = 0_u64;
     let mut payload = Vec::new();
     let entries = entries
@@ -19,6 +26,8 @@ fn fixture(entries: Vec<(&str, EntryKind, u32, &[u8])>) -> (Vec<u8>, Header) {
                 content_sha256: hex(&Sha256::digest(body)),
                 provider_object_id: Some("1".repeat(40)),
                 offset,
+                stored_size: (archive_version == VERSION).then_some(body.len() as u64),
+                compression: (archive_version == VERSION).then_some(ContentCompression::Identity),
             };
             offset += body.len() as u64;
             payload.extend_from_slice(body);
@@ -26,7 +35,7 @@ fn fixture(entries: Vec<(&str, EntryKind, u32, &[u8])>) -> (Vec<u8>, Header) {
         })
         .collect();
     let mut header = Header {
-        cma_workspace: VERSION,
+        cma_workspace: archive_version,
         workspace_epoch: 1,
         checkpoint_version: 0,
         quiesced_writers: 0,
@@ -41,6 +50,41 @@ fn fixture(entries: Vec<(&str, EntryKind, u32, &[u8])>) -> (Vec<u8>, Header) {
     archive.extend_from_slice(&encoded);
     archive.extend_from_slice(&payload);
     (archive, header)
+}
+
+#[test]
+fn legacy_v1_archive_remains_restore_compatible() {
+    let base = root("legacy-v1");
+    let target = base.join("workspace");
+    let _ = std::fs::remove_dir_all(&base);
+    let (archive, header) = fixture_for_version(
+        LEGACY_VERSION,
+        vec![("README.md", EntryKind::Regular, 0o100644, b"legacy\n")],
+    );
+    restore(
+        &target,
+        &archive,
+        header.workspace_epoch,
+        &header.source_revision,
+        &header.manifest_digest,
+        &hex(&Sha256::digest(&archive)),
+    )
+    .expect("a retained v1 checkpoint still restores");
+    assert_eq!(
+        std::fs::read(target.join("README.md")).unwrap(),
+        b"legacy\n"
+    );
+    let wire = captured_from(header, archive)
+        .into_wire()
+        .expect("a retained v1 checkpoint can be retried");
+    let acknowledgement_len = u64::from_be_bytes(wire[..8].try_into().unwrap()) as usize;
+    let acknowledgement: serde_json::Value =
+        serde_json::from_slice(&wire[8..8 + acknowledgement_len]).unwrap();
+    assert_eq!(
+        acknowledgement["cma_checkpoint"], LEGACY_VERSION,
+        "an ambiguous v1 retry must name the retained archive version"
+    );
+    std::fs::remove_dir_all(base).unwrap();
 }
 
 fn root(name: &str) -> PathBuf {
@@ -497,6 +541,85 @@ fn complete_git_capture_preserves_clone_and_worktree_linkage_only_when_requested
         b"dirty\n"
     );
     std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn repeated_worktree_content_is_stored_once_and_restores_at_every_path() {
+    let base = root("deduplicated-worktrees");
+    let workspace = base.join("source");
+    let checkpoints = base.join("checkpoints");
+    let restored = base.join("restored");
+    let _ = std::fs::remove_dir_all(&base);
+    let content = vec![b'x'; 64 * 1024];
+    let paths = [
+        "repository/Library/shared.lean",
+        "worktrees/chat-1/Library/shared.lean",
+        "worktrees/chat-2/Library/shared.lean",
+    ];
+    for path in paths {
+        let path = workspace.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, &content).unwrap();
+    }
+
+    let captured = prepare_capture(&workspace, &checkpoints, 17, 1, &"a".repeat(40), 2, true)
+        .unwrap()
+        .commit()
+        .unwrap();
+    let (header, payload) = open(&captured.archive).unwrap();
+    assert_eq!(header.entries.len(), 3);
+    assert_eq!(
+        header
+            .entries
+            .iter()
+            .map(|entry| entry.offset)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([0])
+    );
+    assert!(header.entries.iter().all(|entry| {
+        entry.compression == Some(ContentCompression::Zlib)
+            && entry.stored_size == Some(payload.len() as u64)
+    }));
+    assert!(payload.len() < content.len());
+    assert_eq!(captured.bytes, (content.len() * paths.len()) as u64);
+
+    restore(
+        &restored,
+        &captured.archive,
+        captured.workspace_epoch,
+        &captured.source_revision,
+        &captured.manifest_digest,
+        &captured.archive_sha256,
+    )
+    .unwrap();
+    for path in paths {
+        assert_eq!(std::fs::read(restored.join(path)).unwrap(), content);
+    }
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn checkpoint_refusals_are_reduced_to_stable_safe_reasons() {
+    assert_eq!(
+        checkpoint_refusal_reason("workspace contains too many files"),
+        "too_many_files"
+    );
+    assert_eq!(
+        checkpoint_refusal_reason("workspace exceeds its byte bound"),
+        "too_many_bytes"
+    );
+    assert_eq!(
+        checkpoint_refusal_reason("workspace symlink target is not UTF-8"),
+        "unsafe_path"
+    );
+    assert_eq!(
+        checkpoint_refusal_reason("writer process could not be quiesced"),
+        "writer_quiescence"
+    );
+    assert_eq!(
+        checkpoint_refusal_reason("some internal detail"),
+        "workspace_invalid"
+    );
 }
 
 #[test]
