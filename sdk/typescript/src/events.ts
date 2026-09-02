@@ -53,6 +53,8 @@ export const KNOWN_SESSION_EVENT_TYPES = [
   'approval_requested',
   'approval_resolved',
   'plane_changed',
+  'cpu_pressure_opened',
+  'cpu_pressure_closed',
   'memory_pressure_opened',
   'memory_pressure_closed',
   'runtime_handover_started',
@@ -540,6 +542,17 @@ function validateKnownEvent(type: KnownSessionEventType, event: Record<string, u
       oneOf(event.from, ['terminal', 'conversation'], 'plane_changed from');
       oneOf(event.to, ['terminal', 'conversation'], 'plane_changed to');
       nonEmptyString(event.snapshot_at, 'plane_changed snapshot_at');
+      return;
+    case 'cpu_pressure_opened':
+      safeInteger(event.used_millis, 'cpu_pressure_opened used_millis');
+      safeInteger(event.limit_millis, 'cpu_pressure_opened limit_millis');
+      safeInteger(event.occupancy_permille, 'cpu_pressure_opened occupancy_permille');
+      return;
+    case 'cpu_pressure_closed':
+      safeInteger(event.peak_millis, 'cpu_pressure_closed peak_millis');
+      safeInteger(event.limit_millis, 'cpu_pressure_closed limit_millis');
+      safeInteger(event.peak_permille, 'cpu_pressure_closed peak_permille');
+      safeInteger(event.duration_seconds, 'cpu_pressure_closed duration_seconds');
       return;
     case 'memory_pressure_opened':
       safeInteger(event.used_bytes, 'memory_pressure_opened used_bytes');

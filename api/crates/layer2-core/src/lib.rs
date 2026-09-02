@@ -14,6 +14,7 @@ pub mod activity_service;
 pub mod authz;
 pub mod capabilities;
 mod capacity_bounds;
+pub mod chat;
 pub mod clock;
 pub mod conversation;
 mod conversation_log;
@@ -51,6 +52,7 @@ mod rotate;
 mod runtime_policy;
 mod sequence;
 mod spend;
+mod sponsored_model_authority;
 
 #[cfg(test)]
 #[path = "provision_tests.rs"]
@@ -152,14 +154,32 @@ pub use activity_service::ActivityService;
 pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
+pub use chat::{
+    ChatAgentSettings, ChatCheckpointConversation, ChatCheckpointConversationRef,
+    ChatCheckpointOutcome, ChatCheckpointRef, ChatCheckpointSweep, ChatHostFailure, ChatHostId,
+    ChatHostListQuery, ChatHostOperatorNote, ChatHostRecord, ChatHostSettings, ChatHostStatus,
+    ChatInactivity, ChatPauseOutcome, ChatPromptAdmission, ChatPromptDeliveryState,
+    ChatProvisioningPhase, ChatReviveCause, ChatRevivePhase, ChatSettings, ChatSettingsSnapshot,
+    ChatSettingsViolation, ChatSetup, ChatThreadRestoreFailure, ChatThreadSlot,
+    ChatTitleGenerationError, ChatTitleGenerationRequest, ChatTitleGenerator, ChatTitleOutcome,
+    ChatUnavailableCause, ChatWorkspaceAuthority, ChatWorkspaceSource,
+    CHAT_CHECKPOINT_INTERVAL_SECONDS, CHAT_PAUSE_REFUSAL_BACKOFF_SECONDS,
+    CHAT_TITLE_CALL_TIMEOUT_SECONDS, CHAT_TITLE_FALLBACK_CHARACTERS, CHAT_TITLE_INPUT_BYTES,
+    CHAT_TITLE_MAX_CHARACTERS, CHAT_TITLE_SYSTEM_PROMPT, MAX_CHAT_CONVERSATION_SNAPSHOT_BYTES,
+    MAX_CHAT_PROMPT_ADMISSIONS, MAX_CHAT_PROMPT_BYTES,
+};
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
-pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
+pub use conversation::{
+    ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage,
+    CONVERSATION_ADVANCED_DETAIL, MAX_TURN_METADATA_KEY_CHARS, MAX_TURN_METADATA_PAIRS,
+    MAX_TURN_METADATA_VALUE_CHARS,
+};
 pub use coordination::{
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
-    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
-    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
-    SessionLeaseRequest, SessionOperation,
+    ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, RuntimeAuthority,
+    RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
+    RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest,
+    SessionLease, SessionLeaseRequest, SessionOperation,
 };
 pub use credentials::CredentialDeliveryTarget;
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
@@ -175,7 +195,7 @@ pub use environment::{
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
-pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
+pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind, ToolBody};
 pub use ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 pub use inventory::{
     ProviderInventory, ProviderRuntimeGeneration, ProviderView, RuntimeAuthorityComparison,
@@ -191,7 +211,9 @@ pub use platform::{
 };
 pub use platform_service::PlatformSettingsService;
 pub use pressure::{
-    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample, PressureTransition,
+    CpuPressure, CpuPressurePolicy, CpuPressureSample, CpuPressureTransition,
+    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample,
+    PressureTransition,
 };
 pub use reconcile::Reclaimed;
 pub use recovery_pair::{
@@ -200,25 +222,29 @@ pub use recovery_pair::{
 };
 pub use resources::{HeldReading, ResourceReading, ResourceStatus};
 pub use runtime_policy::{
-    RuntimeGatewayReachabilityError, RuntimeGatewayReachabilityReceipt, RuntimePolicyObservation,
+    RuntimeGatewayReachabilityError, RuntimeGatewayReachabilityReceipt,
+    RuntimeGatewayReconciliationReceipt, RuntimePolicyObservation,
 };
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
 pub use session::{
-    trigger_session_id, CallerCredential, RecoveryState, RuntimeLossCause, Session,
-    SessionCredentialAuthority, SessionSpec, SessionStatus, StopReason, TriggerSessionOrigin,
+    trigger_session_id, CallerCredential, ChatSession, RecoveryState, RuntimeLossCause, Session,
+    SessionCredentialAuthority, SessionSpec, SessionStatus, SessionSurface, StopReason,
+    TriggerSessionOrigin,
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
+pub use sponsored_model_authority::SponsoredModelAuthorityError;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, HandoverSnapshot,
-    HandoverStore, InitialPromptDispatch, OperationClaim, OperationReservation, OperationStore,
-    Page, PageCursor, PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery,
-    SessionRecord, SessionStore, SessionWorkspaceSource, SkillPack, SkillPackDigest,
+    ActivityStore, ChatCheckpointObjectReceipt, ChatCheckpointStore, ChatOrigin, ContextStore,
+    CredentialSource, EnvironmentProfileStore, HandoverSnapshot, HandoverStore,
+    InitialPromptDispatch, OperationClaim, OperationReservation, OperationStore, Page, PageCursor,
+    PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery, SessionRecord,
+    SessionStore, SessionSurfaceFilter, SessionWorkspaceSource, SkillPack, SkillPackDigest,
     SkillPackState, SkillPackStore, SkillSource, StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
 };
-pub use store::{PlatformSettingsStore, StoredSettings};
+pub use store::{ChatHostStore, PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
 pub use trigger::*;

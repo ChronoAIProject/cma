@@ -10,7 +10,6 @@
 .resources__status {
   align-self: center;
   width: 100%;
-  max-width: 320px;
   color: var(--dsw-alias-label-tertiary);
   font-size: var(--text-meta);
   font-variant-numeric: tabular-nums;
@@ -18,20 +17,28 @@
 }
 
 .resources {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+  min-height: 26px;
+}
+
+.resources__status {
+  max-width: 320px;
 }
 
 .resources__status,
 .resources__figure {
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .resources__row {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  align-items: stretch;
   min-width: 0;
 }
 
@@ -52,7 +59,7 @@
   transition: width var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
-/* Pressure belongs to memory alone; CPU remains neutral beside it. */
+/* Only a reading with an open durable episode spends the failure ink. */
 .resources__track[data-pressure='true'] .resources__fill {
   background: var(--fail);
 }

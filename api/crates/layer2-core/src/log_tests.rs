@@ -30,6 +30,7 @@ fn id() -> SessionId {
 
 fn record() -> SessionRecord {
     SessionRecord::new(Session {
+        chat: None,
         id: id(),
         owner: SubjectId("subject-log".into()),
         kernel: KernelId::new("fake"),
@@ -1566,6 +1567,7 @@ fn a_pre_enqueue_retained_rejection_survives_runtime_loss_and_precedes_its_succe
                 events: vec![malformed],
                 semantics: super::CommitSemantics::default(),
                 conversation_authority: None,
+                chat_runtime_transition: None,
             },
             retained,
             |_| {},
@@ -4413,6 +4415,7 @@ async fn stale_state_can_only_attempt_cas_and_cannot_reset_the_revision() {
 #[tokio::test]
 async fn a_legacy_record_tail_remains_the_floor_for_new_atomic_writes() {
     let store = FakeStore::default();
+    store.seed(&record()).await.expect("seed live session");
     store
         .append_events(&[said(1, "one"), said(2, "two")])
         .await
@@ -4491,6 +4494,7 @@ async fn a_terminal_fake_record_cannot_be_written_back_as_live() {
 #[tokio::test]
 async fn the_canonical_fake_refuses_lower_and_internal_gap_batches_atomically() {
     let store = FakeStore::default();
+    store.seed(&record()).await.expect("seed live session");
     store
         .append_events(&[said(1, "one")])
         .await
@@ -4512,6 +4516,17 @@ async fn the_canonical_fake_refuses_lower_and_internal_gap_batches_atomically() 
         })
     ));
     assert_eq!(store.events_since(&id(), 0).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_canonical_fake_rejects_an_orphan_append_without_mutating_history() {
+    let store = FakeStore::default();
+
+    assert!(matches!(
+        store.append_events(&[said(1, "orphan")]).await,
+        Err(StoreError::SessionDeleted { id: refused }) if refused == id()
+    ));
+    assert!(store.events_since(&id(), 0).await.unwrap().is_empty());
 }
 
 #[tokio::test]

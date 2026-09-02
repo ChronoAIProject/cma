@@ -6,6 +6,42 @@ All client methods accept an optional final `OperationOptions` with `signal` and
 `timeoutMs`. Unary success bodies are consumed or cancelled before the method
 returns, so a prompt, steer, or approval does not leave an SSE response pinned.
 
+## Responses chat
+
+The Responses client creates stateful chat conversations, streams one linear
+turn, folds display text, live reasoning, and current tool activity, then reads
+the durable result:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+const conversation = await cma.createConversation();
+const connection = await cma.createResponse({
+  conversation: conversation.id,
+  input: 'Summarise this repository',
+});
+
+for await (const event of connection) {
+  console.log(event.type, connection.state.outputText);
+}
+
+const terminal = connection.state.terminal;
+if (terminal !== undefined) {
+  const durable = await cma.readResponse(terminal.id);
+  const history = await cma.listConversationItems(conversation.id, { limit: 20 });
+  console.log(durable.status, history.data.length);
+}
+```
+
+`ResponsesConnection` is single-consumer and validates zero-based contiguous
+`sequence_number` values. `cancel()` and breaking the `for await` loop close only
+the local response body; neither calls the explicitly unsupported server cancel
+route or cancels CMA's core turn. Reasoning is live-only. Recover durable output
+with `readResponse` and `listConversationItems` after a disconnect. See the
+[Responses contract](../../../docs/API_Responses.md) for the exact subset and
+linear `previous_response_id` rule.
+
 ## Input and turn control
 
 ```ts
@@ -66,6 +102,28 @@ console.log(screen.lines.length, transcript.byteLength);
 
 The bidirectional WebSocket protocol is documented separately in
 [API_PTY.md](../../../docs/API_PTY.md) and is not exposed by this package version.
+
+## Administrative chat hosts
+
+Callers with administrative session-read capability can walk every bounded
+shared-host page. Retirement additionally requires cross-owner session control:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+const hosts = await cma.listChatHosts();
+const first = hosts[0];
+if (first !== undefined) {
+  const retired = await cma.retireChatHost(first.id);
+  console.log(retired.status);
+}
+```
+
+`listChatHostsPage` exposes one manual page and an opaque continuation.
+Continuations are bound to `/api/v1/admin/chat/hosts`; absolute, cross-origin,
+and different-collection targets are refused before a credential is sent.
+Repeating `retireChatHost` after retirement remains a `200` success.
 
 ## Profiles, pricing, resources, and usage
 

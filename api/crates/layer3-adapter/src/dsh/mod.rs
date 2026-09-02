@@ -72,6 +72,13 @@ impl DshAdapter {
             spec,
         }
     }
+
+    fn conversation_working_directory(&self, options: &RuntimeOptions) -> String {
+        options
+            .working_directory
+            .clone()
+            .unwrap_or_else(|| self.hosted.workspace().to_string())
+    }
 }
 
 #[async_trait::async_trait]
@@ -152,17 +159,23 @@ impl KernelAdapter for DshAdapter {
         options: &RuntimeOptions,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
-        let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
+        let (stream, url) = self
+            .hosted
+            .connect_conversation(handle, options.conversation_slot.as_deref())
+            .await?;
+        let lifecycle = self
+            .hosted
+            .conversation_link_lifecycle(&handle.0, options.conversation_slot.as_deref());
         tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
         // The permission mode is not sent: this harness reads it from its
         // environment at boot, and the one mode it could be asked to change to
         // is the one this kernel refuses to provision at all.
         let (conversation, control) = translate::Harness::open(
             stream,
-            self.hosted.workspace().to_string(),
+            self.conversation_working_directory(options),
             &self.spec,
             options.resume_conversation.clone(),
-            self.hosted.link_lifecycle(&handle.0),
+            lifecycle,
             updates,
         )
         .await?;
@@ -171,10 +184,52 @@ impl KernelAdapter for DshAdapter {
         Ok(conversation)
     }
 
+    async fn prepare_workspace_source(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceSourceRequest,
+    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
+        self.hosted.prepare_workspace_source(handle, request).await
+    }
+
+    async fn add_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceTreeRequest,
+    ) -> Result<crate::WorkspaceTreeReceipt, AdapterError> {
+        self.hosted.add_workspace_tree(handle, request).await
+    }
+
+    async fn remove_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        name: &str,
+    ) -> Result<(), AdapterError> {
+        self.hosted.remove_workspace_tree(handle, name).await
+    }
+
+    async fn run_workspace_setup(
+        &self,
+        handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<crate::WorkspaceSetupReceipt, AdapterError> {
+        self.hosted.run_workspace_setup(handle, commands).await
+    }
+
+    async fn snapshot_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        self.hosted
+            .snapshot_conversation(handle, conversation_id)
+            .await
+    }
+
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: &crate::RuntimeCredential,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
     }
@@ -185,6 +240,16 @@ impl KernelAdapter for DshAdapter {
         envelope: &str,
     ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
         self.hosted.install_runtime_policy(handle, envelope).await
+    }
+
+    async fn install_sponsored_model_authority(
+        &self,
+        handle: &RuntimeHandle,
+        authority: &crate::SponsoredModelRuntimeAuthority,
+    ) -> Result<crate::SponsoredModelAuthorityReceipt, AdapterError> {
+        self.hosted
+            .install_sponsored_model_authority(handle, authority)
+            .await
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {

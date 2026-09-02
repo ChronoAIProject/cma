@@ -14,8 +14,9 @@ use crate::store::{PlatformSettingsStore, StoreError, StoredSettings};
 use crate::{
     AgentConfiguration, Baseline, BillingMode, CoreError, DeploymentCapacity,
     EnvironmentProfileService, KernelId, Launch, LaunchReviewAdmission, LaunchState,
-    PlatformSettings, PlatformSettingsService, Rate, RequiredCapability, SessionMode, SubjectId,
-    TriggerAdmissionError, TriggerLaunchAdmission, CMA_TRIGGER_CONTRIBUTOR_POLICY_V1,
+    PlatformSettings, PlatformSettingsService, Rate, RequiredCapability, SessionMode,
+    SponsoredPolicyBinding, SponsorshipPolicyId, SubjectId, TriggerAdmissionError,
+    TriggerLaunchAdmission, CMA_TRIGGER_CONTRIBUTOR_POLICY_V1, CMA_TRIGGER_SPONSORED_POLICY_V1,
     CMA_TRIGGER_ZERO_COST_POLICY_V1,
 };
 
@@ -24,6 +25,7 @@ const STARTED_AT: &str = "2026-08-26T12:01:00Z";
 const RUNTIME_V1: &str = "cma-trigger-test-runtime@sha256:admitted";
 const RUNTIME_V2: &str = "cma-trigger-test-runtime@sha256:replacement";
 const TEST_KERNEL: &str = "trigger-test-kernel";
+const ORDINARY_TEST_KERNEL: &str = "ordinary-test-kernel";
 
 struct MutableSettings(StdMutex<StoredSettings>);
 
@@ -237,7 +239,8 @@ fn build_service(
 ) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
-    adapters.insert(KernelId::new(TEST_KERNEL), adapter);
+    adapters.insert(KernelId::new(TEST_KERNEL), adapter.clone());
+    adapters.insert(KernelId::new(ORDINARY_TEST_KERNEL), adapter);
     let profiles = Arc::new(crate::test_support::FakeProfileStore::default());
     let environments = EnvironmentProfileService::new(
         profiles,
@@ -245,7 +248,7 @@ fn build_service(
         None,
         None,
         AgentConfiguration {
-            kernel: KernelId::new(TEST_KERNEL),
+            kernel: KernelId::new(ORDINARY_TEST_KERNEL),
             mode: SessionMode::Conversation,
             ..AgentConfiguration::default()
         },
@@ -283,9 +286,14 @@ fn launch(billing_mode: BillingMode) -> Launch {
     revision.content.commercial_policy.policy_reference = match billing_mode {
         BillingMode::ZeroCost => CMA_TRIGGER_ZERO_COST_POLICY_V1,
         BillingMode::Contributor => CMA_TRIGGER_CONTRIBUTOR_POLICY_V1,
-        BillingMode::Sponsored => "disabled-test-sponsorship",
+        BillingMode::Sponsored => CMA_TRIGGER_SPONSORED_POLICY_V1,
     }
     .into();
+    revision.content.commercial_policy.sponsorship =
+        (billing_mode == BillingMode::Sponsored).then(|| SponsoredPolicyBinding {
+            tenant_id: "sponsored-test-tenant".into(),
+            policy_id: SponsorshipPolicyId::new(),
+        });
     revision.digest = revision.content.digest().expect("test revision is valid");
     Launch::new(
         SubjectId("trigger-contributor".into()),
@@ -356,6 +364,41 @@ async fn zero_cost_is_pinned_even_when_the_deployment_has_a_price() {
         .ensure_trigger_session(&launch)
         .await
         .expect("the zero-cost Trigger session is accepted");
+    assert_eq!(session.pricing, None);
+}
+
+#[tokio::test]
+async fn sponsored_usage_is_not_charged_by_the_trigger_control_plane() {
+    let fixture = fixture(priced_settings());
+    let mut reviewed = launch(BillingMode::Sponsored);
+    let admission = review(fixture.service.as_ref(), &mut reviewed)
+        .await
+        .expect("a sponsored Launch receives a provider-usage-only review");
+
+    assert_eq!(admission.pricing.billing_mode, BillingMode::Sponsored);
+    assert_eq!(
+        admission.pricing.policy_reference,
+        CMA_TRIGGER_SPONSORED_POLICY_V1
+    );
+    assert_eq!(admission.pricing.rate_card, None);
+    assert_eq!(admission.pricing.rate, None);
+    assert_eq!(admission.pricing.micros_per_hour, 0);
+    assert_eq!(admission.pricing.estimated_micros, 0);
+
+    let launch = ready_for_provisioning(&fixture, BillingMode::Sponsored).await;
+    let origin = crate::service::trigger_session_origin(&launch)
+        .expect("the sponsored Trigger origin remains valid");
+    assert_eq!(origin.billing_mode, BillingMode::Sponsored);
+    assert_eq!(
+        origin.pricing_policy_reference,
+        CMA_TRIGGER_SPONSORED_POLICY_V1
+    );
+    assert_eq!(origin.pricing, None);
+    let session = fixture
+        .service
+        .ensure_trigger_session(&launch)
+        .await
+        .expect("the sponsored Trigger session retains provider usage accounting");
     assert_eq!(session.pricing, None);
 }
 

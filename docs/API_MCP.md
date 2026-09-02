@@ -1,6 +1,6 @@
 # MCP Interface
 
-**Priority 4 — for agent clients.**
+**Priority 5 — for agent clients.**
 
 **This interface is not built yet.** Nothing below is served today; it is the design the implementation will be held to, and the endpoint refuses with `501` until then.
 
@@ -114,7 +114,7 @@ Between steps 3 and 5 the session is `idle` with `stop_reason: requires_action`,
 | `screen_snapshot` | — | not projected |
 | `get_usage` | — | reported inside `chrono_get_session` rather than as its own operation |
 
-This is the **narrowest** of the five interfaces, and that is intentional. An agent delegating a task wants a result, not a control surface. A caller needing streaming or steering should use [REST](./API_REST.md) or [AG-UI](./API_AGUI.md).
+This is the **narrowest** of the six interfaces, and that is intentional. An agent delegating a task wants a result, not a control surface. A caller needing streaming or steering should use [REST](./API_REST.md) or [AG-UI](./API_AGUI.md).
 
 Invoking an unprojected operation returns a typed error naming the missing capability, never a silent no-op.
 

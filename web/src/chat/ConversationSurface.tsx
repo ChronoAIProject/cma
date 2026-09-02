@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageStream } from './MessageStream';
 import { ApprovalCard } from './ApprovalCard';
 import { SignInCard } from './SignInCard';
 import { Composer } from './Composer';
 import { Context } from './Context';
 import { Usage } from './Usage';
-import { MemoryPressureNotice, Resources } from './Resources';
+import { CpuPressureNotice, MemoryPressureNotice, Resources } from './Resources';
 import { RuntimeLoss } from './RuntimeLoss';
 import { initialConversation, reduce, type Conversation } from '@chronoai/cma-sdk';
 import { planeStateFor } from './planeState';
@@ -68,6 +68,8 @@ interface ConversationSurfaceProps {
   readonly onInspect?: (call: ToolCallEntry) => void;
   /** The call the column is showing, when it is showing one. */
   readonly inspectingId?: string;
+  /** Hide link failures caused by an intentional lifecycle transition. */
+  readonly suppressConnectionFailure?: boolean;
 }
 
 /**
@@ -87,6 +89,7 @@ export function ConversationSurface({
   onWaitingChange,
   onInspect,
   inspectingId,
+  suppressConnectionFailure = false,
 }: ConversationSurfaceProps) {
   const [conversation, setConversation] = useState<Conversation>(initialConversation);
   const [link, setLink] = useState<LinkStatus>('reconnecting');
@@ -104,6 +107,11 @@ export function ConversationSurface({
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
   const [lossDismissed, setLossDismissed] = useState(false);
   const [resourcesUnreported, setResourcesUnreported] = useState(false);
+  const suppressConnectionFailureRef = useRef(suppressConnectionFailure);
+
+  useEffect(() => {
+    suppressConnectionFailureRef.current = suppressConnectionFailure;
+  }, [suppressConnectionFailure]);
 
   const client = useMemo(
     () => new AguiOperations(session.id, operations),
@@ -178,12 +186,16 @@ export function ConversationSurface({
       (status, failure) => {
         setLink(status);
         if (status === 'failed') {
-          const detail = failure?.message ?? 'the control plane gave no reason';
-          setLinkFailure(
-            failure?.status === undefined
-              ? `The session event stream failed: ${detail}`
-              : `The session event stream was refused (HTTP ${String(failure.status)}): ${detail}`,
-          );
+          if (suppressConnectionFailureRef.current) {
+            setLinkFailure(undefined);
+          } else {
+            const detail = failure?.message ?? 'the control plane gave no reason';
+            setLinkFailure(
+              failure?.status === undefined
+                ? `The session event stream failed: ${detail}`
+                : `The session event stream was refused (HTTP ${String(failure.status)}): ${detail}`,
+            );
+          }
         }
         if (status === 'live') {
           setLinkFailure(undefined);
@@ -255,13 +267,15 @@ export function ConversationSurface({
     onWaitingChange?.(state.waiting);
   }, [state.waiting, onWaitingChange]);
 
+  const visibleLinkFailure = suppressConnectionFailure ? undefined : linkFailure;
+
   const reason =
     state.reason ??
     (link === 'reconnecting' ? 'Reconnecting to this session.' : undefined) ??
-    linkFailure ??
+    visibleLinkFailure ??
     refusal;
 
-  const visibleFailure = linkFailure ?? refusal;
+  const visibleFailure = visibleLinkFailure ?? refusal;
 
   return (
     <section className="conversation" aria-label="Conversation">
@@ -273,6 +287,7 @@ export function ConversationSurface({
       />
 
       <MemoryPressureNotice pressure={conversation.memoryPressure} />
+      <CpuPressureNotice pressure={conversation.cpuPressure} />
 
       {visibleFailure === undefined ? null : (
         <div className="notice notice--fail conversation__refusal" role="alert">
@@ -351,14 +366,17 @@ export function ConversationSurface({
               }
             />
           )}
-          <Usage granted={capabilities.usage} usage={conversation.usage} />
+          <div className="conversation__usage-context">
+            <Usage granted={capabilities.usage} usage={conversation.usage} />
+            <Context granted={capabilities.usage} usage={conversation.usage} />
+          </div>
           <Resources
             granted={capabilities.resources}
             unreported={resourcesUnreported}
             resources={conversation.resources}
-            pressure={conversation.memoryPressure}
+            cpuPressure={conversation.cpuPressure}
+            memoryPressure={conversation.memoryPressure}
           />
-          <Context granted={capabilities.usage} usage={conversation.usage} />
         </div>
       </div>
     </section>

@@ -52,6 +52,10 @@ pub(crate) struct BringUpContext {
     /// separate from skill and credential custody because those authorities
     /// have independent lifetimes and replacement rules.
     pub(crate) trigger_recovery: Option<crate::TriggerRecoveryPair>,
+    /// Exact Trigger authority used to render the route-specific agent
+    /// briefing. Ordinary sessions carry `None` and retain the configured
+    /// platform briefing byte-for-byte.
+    pub(crate) trigger_origin: Option<crate::TriggerSessionOrigin>,
     /// Exact bytes resolved before H1 was touched, when this is a handover.
     pub(crate) prepared_skills: Option<PreparedSkillPacks>,
     /// Exact durable rotation claim this bring-up must publish or abandon.
@@ -68,6 +72,7 @@ impl BringUpContext {
             lease: None,
             handover: None,
             trigger_recovery: None,
+            trigger_origin: None,
             prepared_skills: None,
             rotation_claim,
         }
@@ -75,6 +80,14 @@ impl BringUpContext {
 
     pub(crate) fn with_prepared_skills(mut self, prepared: PreparedSkillPacks) -> Self {
         self.prepared_skills = Some(prepared);
+        self
+    }
+
+    pub(crate) fn with_trigger_origin(
+        mut self,
+        origin: Option<crate::TriggerSessionOrigin>,
+    ) -> Self {
+        self.trigger_origin = origin;
         self
     }
 }
@@ -1482,6 +1495,7 @@ impl SessionService {
             mut lease,
             handover,
             trigger_recovery,
+            trigger_origin,
             mut prepared_skills,
             rotation_claim,
         } = context;
@@ -1507,40 +1521,51 @@ impl SessionService {
         // Render here, where both inputs are authoritative: this service owns
         // the deployment setting and the session record owns its frozen grant.
         // Layer 3 receives prose and has no reason to understand either model.
-        let platform_briefing = self
+        let mut platform_briefing = self
             .settings
             .for_provisioning()
             .await
             .briefing
             .render(&reaches);
+        let mut credential_failure = trigger_origin.as_ref().and_then(|origin| {
+            append_trigger_github_briefing(&mut platform_briefing, origin)
+                .err()
+                .map(|error| {
+                    crate::provision_failure::StartFailure::permanent(format!(
+                        "the exact Trigger GitHub route binding is unavailable: {error}"
+                    ))
+                })
+        });
         // Kept for the common failure path below. Abandoning here would run
         // before ordinary provisioning acquires its durable runtime lease and
         // could turn a coordinated authority into handle-only deletion.
-        let (mut credential_failure, credential_available) = match self
-            .credential_for(
-                &session.id,
-                &session.owner,
-                &services,
-                spec.caller_credential.as_ref(),
-            )
-            .await
-        {
-            // This call establishes durable custody before a provider runtime
-            // is created. Its value is intentionally discarded: exact
-            // selection happens only after the target generation exists.
-            Ok(credential) => (None, credential.is_some()),
-            Err(error) => {
-                tracing::error!(
-                    session_id = %id,
-                    error = %error,
-                    "could not establish durable credential custody"
-                );
-                (
-                    Some(crate::provision_failure::StartFailure::transient(
-                        "the durable credential store is unavailable".to_string(),
-                    )),
-                    false,
+        let credential_available = if credential_failure.is_some() {
+            false
+        } else {
+            match self
+                .credential_for(
+                    &session.id,
+                    &session.owner,
+                    &services,
+                    spec.caller_credential.as_ref(),
                 )
+                .await
+            {
+                // This call establishes durable custody before a provider runtime
+                // is created. Its value is intentionally discarded: exact
+                // selection happens only after the target generation exists.
+                Ok(credential) => credential.is_some(),
+                Err(error) => {
+                    tracing::error!(
+                        session_id = %id,
+                        error = %error,
+                        "could not establish durable credential custody"
+                    );
+                    credential_failure = Some(crate::provision_failure::StartFailure::transient(
+                        "the durable credential store is unavailable".to_string(),
+                    ));
+                    false
+                }
             }
         };
         if credential_failure.is_none() && !credential_available {
@@ -2607,6 +2632,8 @@ pub(crate) fn runtime_options(options: &AgentOptions) -> RuntimeOptions {
         },
         own_credential: matches!(options.credential, crate::options::CredentialMode::Own),
         restricted_service_gateway: false,
+        working_directory: None,
+        conversation_slot: None,
         // Nothing to rejoin: this is a runtime being started, which has no
         // conversation yet. Taking one back over is the readopt path's, and it
         // reads the name from the record rather than from anything held here.
@@ -2625,4 +2652,67 @@ pub(crate) fn runtime_capacity(size: Option<SessionSize>) -> Option<RuntimeCapac
         cpu_millis: size.cpu_millis,
         memory_mib: size.memory_mib,
     })
+}
+
+fn append_trigger_github_briefing(
+    briefing: &mut String,
+    origin: &crate::TriggerSessionOrigin,
+) -> Result<(), crate::TriggerValidationError> {
+    let (service_id, catalog_service_id, user_service_slug) = origin.github_binding()?;
+    briefing.push_str("\n\n## GitHub access for this Trigger\n\n");
+    briefing.push_str(&format!(
+        "Use the retained catalog route and exact connection for every GitHub call:\n\
+         `nyxid proxy request {catalog_service_id} <path> --by-id --via-service {service_id}`.\n\n\
+         The selected per-user route slug is `{user_service_slug}`. It is binding evidence, not the CLI target. \
+         Do not use the ordinary `nyxid proxy request <slug> <path>` form for GitHub in this Trigger session; the restricted gateway refuses it."
+    ));
+    Ok(())
+}
+
+#[cfg(test)]
+mod trigger_briefing_tests {
+    use super::append_trigger_github_briefing;
+    use crate::{BillingMode, LaunchId, TriggerSessionOrigin};
+
+    fn origin() -> TriggerSessionOrigin {
+        TriggerSessionOrigin {
+            launch_id: LaunchId("lnch_12345678-1234-1234-1234-1234567890ab".into()),
+            revision_digest: "a".repeat(64),
+            sandbox_profile: "sandbox".into(),
+            github_service_id: "user_service_1".into(),
+            github_catalog_service_id: Some("catalog_github_1".into()),
+            github_user_service_slug: Some("api-github-2".into()),
+            workspace_epoch: 1,
+            source_revision: "b".repeat(40),
+            manifest_digest: "c".repeat(64),
+            object_reference: "baseline.pack".into(),
+            archive_sha256: "d".repeat(64),
+            timeout_seconds: 3_600,
+            pricing_policy_reference: "zero-cost".into(),
+            billing_mode: BillingMode::ZeroCost,
+            pricing: None,
+        }
+    }
+
+    #[test]
+    fn trigger_briefing_uses_the_catalog_route_and_exact_user_service() {
+        let mut briefing = "ordinary briefing".to_string();
+        append_trigger_github_briefing(&mut briefing, &origin()).unwrap();
+
+        assert!(briefing.contains(
+            "nyxid proxy request catalog_github_1 <path> --by-id --via-service user_service_1"
+        ));
+        assert!(briefing.contains("per-user route slug is `api-github-2`"));
+        assert!(briefing.contains("restricted gateway refuses it"));
+    }
+
+    #[test]
+    fn trigger_briefing_rejects_unrenderable_authority_metadata() {
+        let mut invalid = origin();
+        invalid.github_catalog_service_id = Some("catalog` injected".into());
+        let mut briefing = "ordinary briefing".to_string();
+
+        assert!(append_trigger_github_briefing(&mut briefing, &invalid).is_err());
+        assert_eq!(briefing, "ordinary briefing");
+    }
 }

@@ -27,7 +27,7 @@
 //! sets differ between runtimes and grow without warning, and a session must
 //! not fail because a kernel invented a category.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::{sync::Arc, time::Duration};
 
 use layer3_adapter::{
@@ -45,6 +45,76 @@ use crate::log::{append_batch, append_conversation_with, drop_undelivered};
 use crate::service::{store_failed, SessionService};
 use crate::session::SessionStatus;
 use crate::store::{SessionRecord, StoreError};
+
+/// Maximum number of caller metadata pairs retained beside one prompt turn.
+pub const MAX_TURN_METADATA_PAIRS: usize = 16;
+/// Maximum Unicode scalar count accepted for one turn metadata key.
+pub const MAX_TURN_METADATA_KEY_CHARS: usize = 64;
+/// Maximum Unicode scalar count accepted for one turn metadata value.
+pub const MAX_TURN_METADATA_VALUE_CHARS: usize = 512;
+
+/// Fixed race-time refusal returned when a caller's linear conversation view
+/// is no longer current.
+pub const CONVERSATION_ADVANCED_DETAIL: &str =
+    "the conversation advanced beyond the expected previous turn";
+
+/// Durable, protocol-neutral context for an interface that admits only a new
+/// turn at the current end of a conversation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct LinearPromptContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_previous_turn: Option<u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) metadata: BTreeMap<String, String>,
+}
+
+impl LinearPromptContext {
+    fn new(
+        expected_previous_turn: Option<u64>,
+        metadata: BTreeMap<String, String>,
+    ) -> Result<Self, CoreError> {
+        validate_turn_metadata(&metadata)?;
+        Ok(Self {
+            expected_previous_turn,
+            metadata,
+        })
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        validate_turn_metadata(&self.metadata).map_err(|error| error.to_string())
+    }
+}
+
+fn validate_turn_metadata(metadata: &BTreeMap<String, String>) -> Result<(), CoreError> {
+    if metadata.len() > MAX_TURN_METADATA_PAIRS {
+        return Err(CoreError::InvalidRequest(format!(
+            "turn metadata accepts at most {MAX_TURN_METADATA_PAIRS} pairs"
+        )));
+    }
+    if metadata
+        .keys()
+        .any(|key| key.chars().count() > MAX_TURN_METADATA_KEY_CHARS)
+    {
+        return Err(CoreError::InvalidRequest(format!(
+            "turn metadata keys accept at most {MAX_TURN_METADATA_KEY_CHARS} characters"
+        )));
+    }
+    if metadata
+        .values()
+        .any(|value| value.chars().count() > MAX_TURN_METADATA_VALUE_CHARS)
+    {
+        return Err(CoreError::InvalidRequest(format!(
+            "turn metadata values accept at most {MAX_TURN_METADATA_VALUE_CHARS} characters"
+        )));
+    }
+    Ok(())
+}
+
+fn conversation_advanced() -> CoreError {
+    CoreError::InvalidState {
+        detail: Some(CONVERSATION_ADVANCED_DETAIL.into()),
+    }
+}
 
 /// What a session has used, as its runtime reports it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -412,7 +482,7 @@ impl SessionService {
                     SessionStatus::Rotating => {
                         unreachable!("interaction preflight refuses rotation")
                     }
-                    SessionStatus::Idle => return Err(CoreError::InvalidState),
+                    SessionStatus::Idle => return Err(CoreError::invalid_state()),
                     SessionStatus::Terminated => unreachable!("terminal status handled above"),
                 }
 
@@ -441,6 +511,35 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<u64, CoreError> {
+        self.send_prompt_with_context(caller, id, text, None).await
+    }
+
+    /// Open a new prompt turn only at the caller's expected conversation end.
+    ///
+    /// Unlike [`Self::send_prompt`], this path never steers an in-flight turn.
+    /// The expectation is revalidated while holding distributed interaction
+    /// authority immediately before runtime delivery, so two replicas cannot
+    /// both extend the same response branch.
+    pub async fn send_linear_prompt(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        text: String,
+        expected_previous_turn: Option<u64>,
+        metadata: BTreeMap<String, String>,
+    ) -> Result<u64, CoreError> {
+        let context = LinearPromptContext::new(expected_previous_turn, metadata)?;
+        self.send_prompt_with_context(caller, id, text, Some(context))
+            .await
+    }
+
+    async fn send_prompt_with_context(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        text: String,
+        linear: Option<LinearPromptContext>,
+    ) -> Result<u64, CoreError> {
         caller
             .authorization
             .require(AuthorizationCapability::UseOwnSessions)?;
@@ -453,6 +552,122 @@ impl SessionService {
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
+        if let Some(origin) = record.chat_origin.as_ref() {
+            let hosts = self.chat_hosts.as_ref().ok_or({
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+            })?;
+            let host = hosts
+                .get(&origin.host_id)
+                .await
+                .map_err(|_| {
+                    CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+                })?
+                .ok_or(CoreError::ChatUnavailable(
+                    crate::ChatUnavailableCause::Retired,
+                ))?;
+            if host.owner != caller.subject
+                || !host.threads.iter().any(|slot| {
+                    slot.session_id == *id
+                        && slot.worktree_name == origin.worktree_name
+                        && slot.worktree_path == origin.worktree_path
+                        && !slot.removed
+                })
+            {
+                return Err(CoreError::Forbidden);
+            }
+            match host.status {
+                crate::ChatHostStatus::Pausing
+                    if host.revive_cause == Some(crate::ChatReviveCause::ImageDrift) =>
+                {
+                    return Err(CoreError::SessionRotating);
+                }
+                crate::ChatHostStatus::Pausing => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::RevivePending,
+                    ));
+                }
+                crate::ChatHostStatus::Paused if host.last_transition_claim.is_some() => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::RevivePending,
+                    ));
+                }
+                crate::ChatHostStatus::Paused | crate::ChatHostStatus::Reviving => {
+                    return self
+                        .send_prompt_to_paused_chat(&caller.subject, id, text, linear)
+                        .await;
+                }
+                crate::ChatHostStatus::Provisioning => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::Provisioning,
+                    ));
+                }
+                crate::ChatHostStatus::Retired => {
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::Retired,
+                    ));
+                }
+                crate::ChatHostStatus::Active
+                    if host
+                        .revive_failed_threads
+                        .iter()
+                        .any(|failure| failure.session_id == *id) =>
+                {
+                    let failure = host
+                        .revive_failed_threads
+                        .iter()
+                        .find(|failure| failure.session_id == *id)
+                        .expect("the active-host guard found this thread's restore failure");
+                    return Err(CoreError::ChatUnavailable(
+                        crate::ChatUnavailableCause::RestoreFailed {
+                            phase: failure.phase,
+                            retryable: failure.retryable,
+                        },
+                    ));
+                }
+                crate::ChatHostStatus::Active
+                    if host.prompt_admissions.iter().any(|admission| {
+                        matches!(
+                            admission.state,
+                            crate::ChatPromptDeliveryState::Queued
+                                | crate::ChatPromptDeliveryState::DispatchFenced
+                        )
+                    }) =>
+                {
+                    return self
+                        .send_prompt_to_paused_chat(&caller.subject, id, text, linear)
+                        .await;
+                }
+                crate::ChatHostStatus::Active
+                    if (record.session.status == SessionStatus::Idle
+                        && record.session.stop_reason
+                            == Some(crate::session::StopReason::IdleTimeout))
+                        || (record.session.status == SessionStatus::Provisioning
+                            && record.session.recovery_state
+                                == crate::session::RecoveryState::Recovering) =>
+                {
+                    return self
+                        .send_prompt_to_paused_chat(&caller.subject, id, text, linear)
+                        .await;
+                }
+                crate::ChatHostStatus::Active => {}
+            }
+        }
+        self.send_live_prompt_with_context(&caller.subject, id, text, linear)
+            .await
+    }
+
+    /// Deliver one prompt after any host-level durable admission has settled.
+    pub(crate) async fn send_live_prompt_with_context(
+        self: &Arc<Self>,
+        owner: &crate::SubjectId,
+        id: &SessionId,
+        text: String,
+        linear: Option<LinearPromptContext>,
+    ) -> Result<u64, CoreError> {
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(owner) {
+            return Err(CoreError::Forbidden);
+        }
         if let Some(state) = record.reserved_initial_prompt_state() {
             return Err(CoreError::InitialPromptReserved(state));
         }
@@ -461,6 +676,11 @@ impl SessionService {
         }
         if record.is_effectively_rotating() {
             return Err(CoreError::SessionRotating);
+        }
+        if linear.is_some() && record.session.status == SessionStatus::Running {
+            return Err(CoreError::InvalidState {
+                detail: Some("a linear prompt cannot steer an in-flight turn".into()),
+            });
         }
         if record.session.status == SessionStatus::Running
             && !record.session.capabilities.unrecorded()
@@ -475,7 +695,13 @@ impl SessionService {
         // Readopt before taking the update-ordering gate. Opening a conversation
         // can itself report sign-in and command updates, and those must remain
         // foldable while lifecycle recovery runs.
-        self.conversation_input(caller, id, Capability::Conversation)
+        let caller = Caller {
+            subject: owner.clone(),
+            authorization: crate::Authorization::from_capabilities([
+                AuthorizationCapability::UseOwnSessions,
+            ]),
+        };
+        self.conversation_input(&caller, id, Capability::Conversation)
             .await?;
         // Serialize this process's prompts before acquiring distributed
         // interaction authority. This gate participates in no lifecycle path;
@@ -483,9 +709,10 @@ impl SessionService {
         // waits to observe whether the first made steering necessary.
         let admission = self.prompt_gates.gate(id).lock_owned().await;
         let durable = self.record(id).await?;
+        let effective = self.effective_prompt_text(&durable, &text).await?;
         let service = Arc::clone(self);
         let id = id.clone();
-        let owner = caller.subject.clone();
+        let owner = owner.clone();
         self.run_runtime_interaction_at(&durable, move |authority| async move {
             // Compatibility stores have no durable exclusion, so retain the
             // established lifecycle-before-input order. A coordinated lease
@@ -525,11 +752,16 @@ impl SessionService {
                     .session
                     .capabilities
                     .require(Capability::Conversation)?;
+                if linear.is_some() && entry.session.status == SessionStatus::Running {
+                    return Err(CoreError::InvalidState {
+                        detail: Some("a linear prompt cannot steer an in-flight turn".into()),
+                    });
+                }
                 if entry.session.status == SessionStatus::Running {
                     entry.session.capabilities.require(Capability::Steer)?;
                 }
                 if !entry.pending_approvals.is_empty() {
-                    return Err(CoreError::InvalidState);
+                    return Err(CoreError::invalid_state());
                 }
                 let runtime_id = entry.runtime.as_ref().map(|runtime| runtime.0.clone());
                 authority.ensure_runtime_delivery_allowed(
@@ -554,6 +786,13 @@ impl SessionService {
                 )
             };
 
+            if let Some(context) = linear.as_ref() {
+                let latest = service.latest_turn_started_unscoped(&id).await?;
+                if latest != context.expected_previous_turn {
+                    return Err(conversation_advanced());
+                }
+            }
+
             // A successful receipt makes the complete prompt boundary mandatory
             // finalization. Do not recheck an expiring interaction deadline
             // between delivery and enqueueing this state.
@@ -561,7 +800,7 @@ impl SessionService {
                 .toward_runtime(
                     &id,
                     &input,
-                    ConversationInput::Prompt(vec![ContentBlock::from(text.clone())]),
+                    ConversationInput::Prompt(vec![ContentBlock::from(effective)]),
                 )
                 .await?;
             let mandatory = {
@@ -578,23 +817,32 @@ impl SessionService {
                             "the delivered prompt's runtime generation is no longer live".into(),
                         )
                     })?;
-                append_batch(
-                    entry,
-                    [
-                        EventKind::TurnStarted,
-                        EventKind::OwnerMessage { content: text },
-                    ],
-                )
+                let mut events = vec![
+                    EventKind::TurnStarted,
+                    EventKind::OwnerMessage { content: text },
+                ];
+                if let Some(context) = linear {
+                    events.push(EventKind::TurnMetadata {
+                        metadata: context.metadata,
+                    });
+                }
+                let event_count = events.len() as u64;
+                (append_batch(entry, events), event_count)
             };
             // Keep immediate runtime updates behind both receipt phases. The
             // mandatory history has no lifecycle ownership and can rebase over
             // a handover; the exact optional proposal below cannot.
+            let (mandatory, event_count) = mandatory;
             let record = mandatory.committed().await.map_err(store_failed)?;
-            let turn_started = record.session.last_seq.checked_sub(1).ok_or_else(|| {
-                CoreError::RuntimeUnavailable(
-                    "session store: committed prompt boundary had no valid sequence".into(),
-                )
-            })?;
+            let turn_started = record
+                .session
+                .last_seq
+                .checked_sub(event_count.saturating_sub(1))
+                .ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "session store: committed prompt boundary had no valid sequence".into(),
+                    )
+                })?;
             // `TurnStarted` resets approval identity during durable replay. Do
             // the same locally only after that boundary is committed, and only
             // on the exact conversation entry that delivered this prompt.
@@ -633,6 +881,14 @@ impl SessionService {
             Ok(turn_started)
         })
         .await
+    }
+
+    async fn latest_turn_started_unscoped(&self, id: &SessionId) -> Result<Option<u64>, CoreError> {
+        let events = self.store.events_since(id, 0).await.map_err(store_failed)?;
+        Ok(events.into_iter().rev().find_map(|event| match event.kind {
+            crate::StoredEventKind::Known(EventKind::TurnStarted) => Some(event.seq),
+            _ => None,
+        }))
     }
 
     /// Abandon the turn in flight, leaving the conversation open.
@@ -752,7 +1008,7 @@ impl SessionService {
         resolutions: &[ApprovalResolution],
     ) -> Result<(), CoreError> {
         if resolutions.is_empty() {
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
 
         caller
@@ -817,7 +1073,7 @@ impl SessionService {
                     !unique.insert(resolution.request_id.as_str())
                         || !entry.pending_approvals.contains_key(&resolution.request_id)
                 }) {
-                    return Err(CoreError::InvalidState);
+                    return Err(CoreError::invalid_state());
                 }
                 let input = entry.conversation.clone().ok_or_else(|| {
                     CoreError::RuntimeUnavailable("this session holds no conversation".into())

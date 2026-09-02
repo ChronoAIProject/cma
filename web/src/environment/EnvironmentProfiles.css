@@ -232,6 +232,44 @@ textarea.field__input[aria-invalid='true'] {
   border-top: none;
 }
 
+/* A profile either inherits both resource figures or states both. */
+.editor__resources {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor__resource-default {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.editor__resource-default input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--dsw-alias-state-business-primary);
+}
+
+.editor__resource-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* Keep the machine specification discoverable while the deployment owns it. */
+.editor__resource-fields .input:has(input:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /*
  * The row that sessions start from, said on the row.
  *
@@ -273,5 +311,9 @@ textarea.field__input[aria-invalid='true'] {
 
   .pair > .field__input:first-child {
     grid-column: 1 / -1;
+  }
+
+  .editor__resource-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

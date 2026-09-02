@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::body::{to_bytes, Body};
+use axum::extract::DefaultBodyLimit;
 use axum::http::{header, Method, Request, StatusCode};
 use futures_util::StreamExt;
 use layer2_core::{
@@ -22,9 +23,9 @@ use layer2_core::{
     PublishedRevision, PublisherAuthority, PublisherRepositoryRole, PullRequestDefaults,
     QuotaSnapshot, ReachStatus, RepositoryAccessPolicy, RepositoryIdentity,
     RepositoryOperationClass, RepositoryVisibility, RequiredCapability, ResourcePolicy,
-    RuntimeAdmissionSnapshot, ScopeClass, SessionCredentialAuthority, SessionId, SessionLink,
-    SessionSize, SetupPolicy, SourceMode, StartAdmissionSnapshot, StoreError, SubjectId,
-    TriggerAdmissionError, TriggerAuthorityVerifier, TriggerConnection,
+    RuntimeAdmissionSnapshot, ScopeClass, SessionCredentialAuthority, SessionCredentialRetirement,
+    SessionId, SessionLink, SessionSize, SetupPolicy, SourceMode, StartAdmissionSnapshot,
+    StoreError, SubjectId, TriggerAdmissionError, TriggerAuthorityVerifier, TriggerConnection,
     TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft, TriggerId,
     TriggerLaunchAdmission, TriggerPage, TriggerPageRequest, TriggerRepositorySelection,
     TriggerRevision, TriggerRevisionContent, TriggerRevisionId, TriggerService,
@@ -1416,6 +1417,8 @@ async fn contribution_read_is_owner_only_and_has_no_write_side_effect() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["artifact"]["digest"], artifact.digest);
+    assert_eq!(value["artifact"]["files"][0]["additions"], 1);
+    assert_eq!(value["artifact"]["files"][0]["deletions"], 0);
     assert_eq!(value["contribution"]["state"], "published");
     assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
@@ -1540,7 +1543,8 @@ async fn diff_download_is_tenant_isolated_integrity_checked_and_hardened() {
     );
     assert_eq!(fixture.artifacts.reads.load(Ordering::SeqCst), 1);
 
-    let projection = serde_json::to_value(LaunchView::from(fixture.launch.clone())).unwrap();
+    let projection =
+        serde_json::to_value(LaunchView::try_from(fixture.launch.clone()).unwrap()).unwrap();
     assert_eq!(
         projection["diff"]["download_url"],
         format!(
@@ -1570,6 +1574,400 @@ async fn diff_download_is_tenant_isolated_integrity_checked_and_hardened() {
         .unwrap();
     assert_eq!(wrong.status(), StatusCode::NOT_FOUND);
     assert_eq!(fixture.artifacts.reads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn invalid_runtime_admissions_are_typed_and_absent_from_public_inventory() {
+    for (corruption, expected_field) in [
+        ("missing", "runtime_admission"),
+        ("unknown-kernel", "runtime_admission.kernel"),
+        ("missing-version", "runtime_admission.runtime_version"),
+        (
+            "legacy-missing-version",
+            "runtime_admission.runtime_version",
+        ),
+        ("malformed-time", "runtime_admission.observed_at"),
+        (
+            "missing-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+        (
+            "duplicate-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        {
+            let mut retained = fixture.store.launch.lock().unwrap();
+            let launch = retained.as_mut().unwrap();
+            match corruption {
+                "missing" => launch.runtime_admission = None,
+                "unknown-kernel" => {
+                    launch.runtime_admission.as_mut().unwrap().kernel =
+                        layer2_core::KernelId::new("unknown-trigger-route");
+                }
+                "missing-version" => {
+                    launch.runtime_admission.as_mut().unwrap().runtime_version = " \t".into();
+                }
+                "legacy-missing-version" => {
+                    let runtime = launch.runtime_admission.as_mut().unwrap();
+                    runtime.kernel = layer2_core::KernelId::new(LEGACY_PUBLIC_TRIGGER_KERNEL_ID);
+                    runtime.runtime_version = " \t".into();
+                }
+                "malformed-time" => {
+                    launch.runtime_admission.as_mut().unwrap().observed_at =
+                        "not-a-timestamp".into();
+                }
+                "missing-capability" => {
+                    launch
+                        .runtime_admission
+                        .as_mut()
+                        .unwrap()
+                        .supported_capabilities
+                        .pop();
+                }
+                "duplicate-capability" => {
+                    let runtime = launch.runtime_admission.as_mut().unwrap();
+                    runtime
+                        .supported_capabilities
+                        .push(runtime.supported_capabilities[0]);
+                }
+                _ => unreachable!("the table contains only declared corruptions"),
+            }
+        }
+
+        let direct = fixture
+            .router()
+            .oneshot(authenticated_request(
+                Method::GET,
+                &format!("/api/v1/launches/{LAUNCH_ID}"),
+                OWNER,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(direct.status(), StatusCode::CONFLICT, "{corruption}");
+        let body = to_bytes(direct.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["code"], "trigger_runtime_route_unavailable",
+            "{corruption}"
+        );
+        assert_eq!(body["field"], expected_field, "{corruption}");
+        assert!(
+            body["remediation"]
+                .as_str()
+                .unwrap()
+                .contains("Open a New Launch"),
+            "{corruption}"
+        );
+
+        let page = fixture
+            .router()
+            .oneshot(authenticated_request(
+                Method::GET,
+                "/api/v1/launches",
+                OWNER,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK, "{corruption}");
+        let body = to_bytes(page.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["items"], json!([]), "{corruption}");
+        assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn exact_legacy_runtime_is_readable_reclickable_cancellable_and_otherwise_read_only() {
+    let fixture = Fixture::new();
+    let (expected_revision, snapshot_digest) = {
+        let mut retained = fixture.store.launch.lock().unwrap();
+        let launch = retained.as_mut().unwrap();
+        launch.runtime_admission.as_mut().unwrap().kernel =
+            layer2_core::KernelId::new(LEGACY_PUBLIC_TRIGGER_KERNEL_ID);
+        launch.draft_expires_at = "2026-08-27T00:00:00Z".into();
+        (launch.revision_number, launch.effective.digest.clone())
+    };
+    let launch_id = fixture.launch.id.0.clone();
+    let public_id = fixture.revision.public_id.0.clone();
+    let rest = fixture.router();
+
+    let (status, body) = send(
+        &rest,
+        Method::POST,
+        &format!("/api/v1/triggers/public/{public_id}/launches"),
+        json!({}),
+        "legacy-readme-reclick",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["id"], launch_id);
+    assert_eq!(body["runtime_admission"]["kernel"], "codex");
+    assert_eq!(body["draft_expires_at"], "2026-08-27T00:00:00Z");
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 0);
+
+    for uri in [
+        format!("/api/v1/launches/{launch_id}"),
+        format!("/api/v1/launches/{launch_id}/events?after=0&limit=10"),
+        format!("/api/v1/launches/{launch_id}/diff"),
+    ] {
+        let (status, _) = send(&rest, Method::GET, &uri, json!({}), "legacy-rest-read").await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+
+    let page = rest
+        .clone()
+        .oneshot(authenticated_request(
+            Method::GET,
+            "/api/v1/launches",
+            OWNER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page: Value =
+        serde_json::from_slice(&to_bytes(page.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(page["items"][0]["id"], launch_id);
+    assert_eq!(page["items"][0]["runtime_admission"]["kernel"], "codex");
+
+    let agui = crate::agui::trigger::router(fixture.state());
+    for suffix in [
+        "",
+        "/events?starting_after=0&limit=10&follow=false",
+        "/diff",
+    ] {
+        let uri = format!("/api/v1/agui/launches/{launch_id}{suffix}");
+        let (status, _) = send(&agui, Method::GET, &uri, json!({}), "legacy-agui-read").await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+
+    for (index, (method, uri)) in [
+        (
+            Method::PATCH,
+            format!("/api/v1/launches/{launch_id}/overrides"),
+        ),
+        (
+            Method::PUT,
+            format!("/api/v1/launches/{launch_id}/connection"),
+        ),
+        (Method::POST, format!("/api/v1/launches/{launch_id}/start")),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/contributions/review"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/contributions/publish"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/review"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/open"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/update"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/refresh"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/complete"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/recover-initial-prompt"),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let response = send(
+            &rest,
+            method,
+            &uri,
+            json!({}),
+            &format!("legacy-current-command-{index}"),
+        )
+        .await;
+        assert_runtime_quarantine(response, "runtime_admission.kernel", &uri);
+    }
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 0);
+
+    let (status, body) = send(
+        &rest,
+        Method::POST,
+        &format!("/api/v1/launches/{launch_id}/cancel"),
+        json!({
+            "expected_revision": expected_revision,
+            "snapshot_digest": snapshot_digest,
+        }),
+        "legacy-cancel",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["state"], "cancelled");
+    assert_eq!(body["runtime_admission"]["kernel"], "codex");
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 0);
+
+    let mut artifact_fixture = Fixture::new();
+    let artifact = artifact_fixture.install_diff(b"legacy diff artifact".to_vec());
+    artifact_fixture
+        .store
+        .launch
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .runtime_admission
+        .as_mut()
+        .unwrap()
+        .kernel = layer2_core::KernelId::new(LEGACY_PUBLIC_TRIGGER_KERNEL_ID);
+    let artifact_uri = format!(
+        "/api/v1/launches/{}/diff-artifacts/{}/download",
+        artifact_fixture.launch.id.0, artifact.id.0
+    );
+    let response = artifact_fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, &artifact_uri, OWNER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(artifact_fixture.artifacts.reads.load(Ordering::SeqCst), 1);
+    assert_eq!(artifact_fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(artifact_fixture.provider_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn malformed_native_runtime_is_quarantined_before_every_public_surface_or_mutation() {
+    let fixture = Fixture::new();
+    fixture
+        .store
+        .launch
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .runtime_admission
+        .as_mut()
+        .unwrap()
+        .runtime_version = String::new();
+    let launch_id = fixture.launch.id.0.clone();
+    let public_id = fixture.revision.public_id.0.clone();
+    let rest = fixture.router();
+
+    let rest_reads = [
+        format!("/api/v1/launches/{launch_id}"),
+        format!("/api/v1/launches/{launch_id}/events?after=0&limit=10"),
+        format!("/api/v1/launches/{launch_id}/diff"),
+        format!("/api/v1/launches/{launch_id}/diff-artifacts/{DIFF_ID}/download"),
+    ];
+    for (index, uri) in rest_reads.into_iter().enumerate() {
+        let response = send(
+            &rest,
+            Method::GET,
+            &uri,
+            json!({}),
+            &format!("quarantined-read-{index}"),
+        )
+        .await;
+        assert_runtime_quarantine(response, "runtime_admission.runtime_version", &uri);
+    }
+
+    let agui = crate::agui::trigger::router(fixture.state());
+    for suffix in [
+        "",
+        "/events?starting_after=0&limit=10&follow=false",
+        "/diff",
+    ] {
+        let uri = format!("/api/v1/agui/launches/{launch_id}{suffix}");
+        let response = send(
+            &agui,
+            Method::GET,
+            &uri,
+            json!({}),
+            &format!("quarantined-agui-{suffix}"),
+        )
+        .await;
+        assert_runtime_quarantine(response, "runtime_admission.runtime_version", &uri);
+    }
+
+    let mutations = [
+        (
+            Method::PATCH,
+            format!("/api/v1/launches/{launch_id}/overrides"),
+        ),
+        (
+            Method::PUT,
+            format!("/api/v1/launches/{launch_id}/connection"),
+        ),
+        (Method::POST, format!("/api/v1/launches/{launch_id}/start")),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/contributions/review"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/contributions/publish"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/review"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/open"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/update"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/pull-request/refresh"),
+        ),
+        (Method::POST, format!("/api/v1/launches/{launch_id}/cancel")),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/complete"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/launches/{launch_id}/recover-initial-prompt"),
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/triggers/public/{public_id}/launches"),
+        ),
+    ];
+    for (index, (method, uri)) in mutations.into_iter().enumerate() {
+        let response = send(
+            &rest,
+            method,
+            &uri,
+            json!({}),
+            &format!("quarantined-mutation-{index}"),
+        )
+        .await;
+        assert_runtime_quarantine(response, "runtime_admission.runtime_version", &uri);
+    }
+
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.artifacts.reads.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -1887,6 +2285,8 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         "TriggerTask",
         "TriggerSessionPolicy",
         "TriggerAvailability",
+        "TriggerPreviewAvailability",
+        "TriggerPreviewUnavailableReason",
         "RepositoryVisibility",
         "PublisherRepositoryRole",
         "ConnectionState",
@@ -1924,6 +2324,7 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         "ForkRecord",
         "BranchRecord",
         "SessionLink",
+        "SessionCredentialRetirement",
         "ReachStatus",
         "PromptDelivery",
         "PromptDeliveryState",
@@ -1954,7 +2355,10 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         json!(["task_input", "work_label", "resource_size", "timeout"]),
         "optional_checks remains an empty compatibility field in the public MVP"
     );
-    assert_eq!(schemas["TriggerKernel"]["enum"], json!(["codex"]));
+    assert_eq!(
+        schemas["TriggerKernel"]["enum"],
+        json!(["codex", "codex-trigger-native-v1"])
+    );
     assert_eq!(
         schemas["RuntimeAdmissionSnapshot"]["properties"]["kernel"]["$ref"],
         "#/components/schemas/TriggerKernel"
@@ -1983,8 +2387,27 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         schemas["DiffArtifactView"]["properties"]["files"]["items"]["$ref"],
         "#/components/schemas/DiffFile"
     );
+    let diff_file_required = schemas["DiffFile"]["required"]
+        .as_array()
+        .expect("DiffFile has required fields");
+    for field in ["additions", "deletions"] {
+        assert!(
+            diff_file_required.iter().any(|required| required == field),
+            "DiffFile.{field} must always appear on the wire"
+        );
+        let schema = &schemas["DiffFile"]["properties"][field];
+        let wire = schema.to_string();
+        assert!(
+            wire.contains("integer") && wire.contains("null"),
+            "DiffFile.{field} must be a nullable integer: {schema}"
+        );
+    }
     for (owner, field, target) in [
-        ("TriggerPreviewView", "availability", "TriggerAvailability"),
+        (
+            "TriggerPreviewView",
+            "availability",
+            "TriggerPreviewAvailability",
+        ),
         ("TriggerPreviewView", "visibility", "RepositoryVisibility"),
         ("TriggerPreviewView", "permission_ceiling", "PermissionMode"),
         ("TriggerPreviewView", "billing_mode", "BillingMode"),
@@ -2017,6 +2440,26 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
             "{owner}.{field} must reference its closed wire vocabulary"
         );
     }
+    assert_eq!(
+        schemas["TriggerPreviewAvailability"]["enum"],
+        json!(["published", "retired", "unavailable"])
+    );
+    assert_eq!(
+        schemas["TriggerPreviewUnavailableReason"]["enum"],
+        json!([
+            "upstream_not_forkable",
+            "upstream_unavailable",
+            "upstream_identity_changed",
+            "repository_policy_unavailable"
+        ])
+    );
+    let unavailable_reason = &schemas["TriggerPreviewView"]["properties"]["unavailable_reason"];
+    let unavailable_reason_wire = unavailable_reason.to_string();
+    assert!(
+        unavailable_reason_wire.contains("#/components/schemas/TriggerPreviewUnavailableReason")
+            && unavailable_reason_wire.contains("null"),
+        "preview unavailable_reason must be nullable and closed: {unavailable_reason}"
+    );
     let status_failure = &schemas["PullRequestRecordView"]["properties"]["status_failure"];
     let status_failure_wire = status_failure.to_string();
     assert!(
@@ -2117,6 +2560,10 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         ("fork", "ForkRecord"),
         ("branch", "BranchRecord"),
         ("session", "SessionLink"),
+        (
+            "session_credential_retirement",
+            "SessionCredentialRetirement",
+        ),
         ("reach", "ReachStatus"),
         ("delivery", "PromptDelivery"),
     ] {
@@ -2191,7 +2638,8 @@ fn launch_projection_excludes_credential_and_worker_internals() {
         ),
         ("prompt_origin_key".into(), "private-prompt-origin".into()),
     ]);
-    let wire = serde_json::to_string(&LaunchView::from(fixture.launch.clone())).unwrap();
+    let wire =
+        serde_json::to_string(&LaunchView::try_from(fixture.launch.clone()).unwrap()).unwrap();
     assert!(wire.contains("public-session-id"));
     for forbidden in [
         "backing_key_id",
@@ -2216,6 +2664,30 @@ fn launch_projection_excludes_credential_and_worker_internals() {
     ] {
         assert!(!wire.contains(forbidden), "leaked {forbidden}");
     }
+}
+
+#[test]
+fn launch_projection_exposes_only_positive_session_credential_retirement_evidence() {
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    fixture.launch.state = LaunchState::Completed;
+    fixture.launch.terminal_at = Some("2026-08-28T01:02:44Z".into());
+    fixture.launch.reach.as_mut().unwrap().state = CapabilityRevocationState::Revoked;
+    let session_id = fixture.launch.session.as_ref().unwrap().session_id.clone();
+    fixture.launch.session_credential_retirement = Some(SessionCredentialRetirement {
+        session_id: session_id.clone(),
+        settled_at: "2026-08-28T01:02:45Z".into(),
+    });
+
+    let projection =
+        serde_json::to_value(LaunchView::try_from(fixture.launch.clone()).unwrap()).unwrap();
+    assert_eq!(
+        projection["session_credential_retirement"],
+        json!({
+            "session_id": session_id.0,
+            "settled_at": "2026-08-28T01:02:45Z",
+        })
+    );
 }
 
 #[tokio::test]
@@ -2347,7 +2819,8 @@ async fn trigger_sdk_fixture_values() -> Vec<(&'static str, Value)> {
         ),
         (
             "launch.json",
-            serde_json::to_value(LaunchView::from(draft_fixture.launch.clone())).unwrap(),
+            serde_json::to_value(LaunchView::try_from(draft_fixture.launch.clone()).unwrap())
+                .unwrap(),
         ),
         (
             "launch_progress.json",
@@ -2478,6 +2951,13 @@ async fn authority_failures_keep_auth_drift_rate_limit_and_outage_distinct() {
             Authority::ConnectionInactive,
             StatusCode::CONFLICT,
             "trigger_connection_inactive",
+        ),
+        (
+            Authority::UnapprovedScope {
+                scope: "repo".into(),
+            },
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "trigger_scope_unapproved",
         ),
         (
             Authority::AuthorityDrift,
@@ -2674,6 +3154,314 @@ async fn rollout_denials_are_typed_without_exposing_policy_configuration() {
     }
 }
 
+#[tokio::test]
+async fn unconfigured_sponsorship_route_fails_closed_without_reflecting_credentials() {
+    const CREDENTIAL_MARKER: &str = "sponsorship-secret-do-not-reflect";
+    let fixture = Fixture::new();
+    let app: axum::Router = crate::rest::sponsorships::documented_router(fixture.state()).into();
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/sponsorships/credentials")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "stable_request_id": "33333333-3333-4333-8333-333333333333",
+                "owner": {
+                    "kind": "developer",
+                    "display_name": "Sponsor"
+                },
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "credential": CREDENTIAL_MARKER
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+    request
+        .extensions_mut()
+        .insert(Authorization::from_capabilities([
+            Capability::ManageOwnSponsorships,
+        ]));
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "sponsorship_unavailable");
+    assert!(!body.to_string().contains(CREDENTIAL_MARKER));
+}
+
+#[tokio::test]
+async fn sponsorship_body_and_query_rejections_are_fixed_private_and_non_reflective() {
+    const SECRET_MARKER: &str = "sponsorship-secret-do-not-reflect";
+    let fixture = Fixture::new();
+    let app: axum::Router = crate::rest::sponsorships::documented_router(fixture.state()).into();
+    let app = app.layer(DefaultBodyLimit::max(512));
+
+    for (body, status, code) in [
+        (
+            format!(r#"{{"credential":"{SECRET_MARKER}","#),
+            StatusCode::BAD_REQUEST,
+            "malformed_json",
+        ),
+        (
+            json!({
+                "stable_request_id": "33333333-3333-4333-8333-333333333333",
+                "owner": { "kind": "developer", "display_name": "Sponsor" },
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "credential": SECRET_MARKER,
+                SECRET_MARKER: true,
+            })
+            .to_string(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_request",
+        ),
+    ] {
+        let mut request = Request::post("/api/v1/sponsorships/credentials")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+        request
+            .extensions_mut()
+            .insert(Authorization::from_capabilities([
+                Capability::ManageOwnSponsorships,
+            ]));
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], code);
+        assert!(!body.to_string().contains(SECRET_MARKER));
+    }
+
+    let mut request = Request::get(format!(
+        "/api/v1/sponsorships/credentials?limit={SECRET_MARKER}"
+    ))
+    .body(Body::empty())
+    .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+    request
+        .extensions_mut()
+        .insert(Authorization::from_capabilities([
+            Capability::ManageOwnSponsorships,
+        ]));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "invalid_query");
+    assert_eq!(
+        body["detail"],
+        "The query string does not match this operation's request schema."
+    );
+    assert!(!body.to_string().contains(SECRET_MARKER));
+
+    let oversized = json!({
+        "stable_request_id": "33333333-3333-4333-8333-333333333333",
+        "owner": { "kind": "developer", "display_name": "Sponsor" },
+        "provider": "provider",
+        "provider_policy_key": "provider-policy-v1",
+        "credential": SECRET_MARKER.repeat(64),
+    })
+    .to_string();
+    let mut request = Request::post("/api/v1/sponsorships/credentials")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(oversized))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+    request
+        .extensions_mut()
+        .insert(Authorization::from_capabilities([
+            Capability::ManageOwnSponsorships,
+        ]));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "request_too_large");
+    assert!(!body.to_string().contains(SECRET_MARKER));
+}
+
+#[tokio::test]
+async fn public_sponsorship_creation_refuses_unproven_organization_ownership() {
+    const ORGANIZATION_MARKER: &str = "private-organization-identity-do-not-reflect";
+    const DISPLAY_MARKER: &str = "private-organization-display-do-not-reflect";
+    const CREDENTIAL_MARKER: &str = "private-organization-secret-do-not-reflect";
+    let fixture = Fixture::new();
+    let app: axum::Router = crate::rest::sponsorships::documented_router(fixture.state()).into();
+
+    let requests = [
+        (
+            "/api/v1/sponsorships/credentials",
+            json!({
+                "stable_request_id": "33333333-3333-4333-8333-333333333333",
+                "owner": {
+                    "kind": "organization",
+                    "organization_id": ORGANIZATION_MARKER,
+                    "display_name": DISPLAY_MARKER
+                },
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "credential": CREDENTIAL_MARKER
+            }),
+        ),
+        (
+            "/api/v1/sponsorships/policies",
+            json!({
+                "stable_request_id": "organization-policy-request",
+                "tenant_id": "tenant-a",
+                "owner": {
+                    "kind": "organization",
+                    "organization_id": ORGANIZATION_MARKER,
+                    "display_name": DISPLAY_MARKER
+                },
+                "credential_id": "11111111-1111-4111-8111-111111111111",
+                "provider": "provider",
+                "provider_policy_key": "provider-policy-v1",
+                "allowed_models": ["model-a"],
+                "allowed_resources": ["responses"],
+                "per_launch_quota": {
+                    "requests": 1,
+                    "input_tokens": 100,
+                    "output_tokens": 100
+                },
+                "aggregate_quota": {
+                    "requests": 10,
+                    "input_tokens": 1000,
+                    "output_tokens": 1000
+                },
+                "per_launch_budget_micros": 1000,
+                "aggregate_budget_micros": 10000,
+                "max_requests_per_minute": 10,
+                "max_concurrent_launches": 2,
+                "expires_at": "2026-08-30T00:00:00Z"
+            }),
+        ),
+    ];
+
+    for (uri, body) in requests {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+        request
+            .extensions_mut()
+            .insert(Authorization::from_capabilities([
+                Capability::ManageOwnSponsorships,
+            ]));
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "sponsorship_resource_not_found");
+        let wire = body.to_string();
+        for marker in [ORGANIZATION_MARKER, DISPLAY_MARKER, CREDENTIAL_MARKER] {
+            assert!(!wire.contains(marker));
+        }
+    }
+}
+
+#[test]
+fn sponsorship_openapi_is_complete_secret_aware_and_has_no_activation_command() {
+    let documented = crate::rest::sponsorships::documented_router(Fixture::new().state());
+    let document = serde_json::to_value(documented.get_openapi()).unwrap();
+    let paths = document["paths"].as_object().unwrap();
+    let expected = BTreeSet::from([
+        "/api/v1/launches/{launch_id}/sponsorship/acceptance",
+        "/api/v1/launches/{launch_id}/sponsorship/grant",
+        "/api/v1/launches/{launch_id}/sponsorship/terms",
+        "/api/v1/sponsorships/audit",
+        "/api/v1/sponsorships/credentials",
+        "/api/v1/sponsorships/credentials/{credential_id}",
+        "/api/v1/sponsorships/credentials/{credential_id}/revoke",
+        "/api/v1/sponsorships/credentials/{credential_id}/rotate",
+        "/api/v1/sponsorships/grants",
+        "/api/v1/sponsorships/grants/{grant_id}/close",
+        "/api/v1/sponsorships/grants/{grant_id}/revoke",
+        "/api/v1/sponsorships/kill-switch",
+        "/api/v1/sponsorships/policies",
+        "/api/v1/sponsorships/policies/{policy_id}",
+        "/api/v1/sponsorships/policies/{policy_id}/revoke",
+        "/api/v1/sponsorships/policies/{policy_id}/suspend",
+        "/api/v1/sponsorships/usage/reconciliations",
+        "/api/v1/sponsorships/usage/reservations",
+    ]);
+    assert_eq!(
+        paths.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        expected
+    );
+    assert!(paths.keys().all(|path| !path.contains("activate")));
+    for (path, schema) in [
+        ("/api/v1/sponsorships/credentials", "CredentialView"),
+        ("/api/v1/sponsorships/policies", "PolicyView"),
+        ("/api/v1/sponsorships/grants", "GrantView"),
+    ] {
+        let response_schema = &document["paths"][path]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"];
+        assert_eq!(response_schema["type"], "array");
+        assert_eq!(
+            response_schema["items"]["$ref"],
+            format!("#/components/schemas/{schema}")
+        );
+    }
+    assert!(document["components"]["schemas"]["GrantView"]["properties"]
+        .get("contributor")
+        .is_some());
+    assert!(document["paths"]["/api/v1/sponsorships/credentials"]
+        .get("post")
+        .is_some());
+    assert!(document["paths"]["/api/v1/sponsorships/policies"]
+        .get("post")
+        .is_some());
+
+    assert_eq!(
+        document["components"]["schemas"]["RegisterCredentialRequest"]["properties"]["credential"]
+            ["format"],
+        "password"
+    );
+    assert_eq!(
+        document["components"]["schemas"]["RotateCredentialRequest"]["properties"]["replacement"]
+            ["format"],
+        "password"
+    );
+    let reservation_responses =
+        &document["paths"]["/api/v1/sponsorships/usage/reservations"]["post"]["responses"];
+    for status in ["200", "201", "429", "503"] {
+        assert!(
+            reservation_responses.get(status).is_some(),
+            "usage reservation is missing its {status} contract"
+        );
+    }
+}
+
 fn trigger_content_request_value(content: &TriggerRevisionContent) -> Value {
     let mut request = serde_json::to_value(content).unwrap();
     let upstream = request["upstream"].clone();
@@ -2702,6 +3490,16 @@ async fn send(
     idempotency_key: &str,
 ) -> (StatusCode, Vec<u8>) {
     send_as(app, method, uri, body, idempotency_key, OWNER).await
+}
+
+fn assert_runtime_quarantine(response: (StatusCode, Vec<u8>), expected_field: &str, context: &str) {
+    assert_eq!(response.0, StatusCode::CONFLICT, "{context}");
+    let problem: Value = serde_json::from_slice(&response.1).unwrap();
+    assert_eq!(
+        problem["code"], "trigger_runtime_route_unavailable",
+        "{context}"
+    );
+    assert_eq!(problem["field"], expected_field, "{context}");
 }
 
 async fn send_as(
@@ -3003,6 +3801,8 @@ impl Fixture {
                 new_provider_object_id: None,
                 old_bytes: 0,
                 new_bytes: content.len() as u64,
+                additions: Some(1),
+                deletions: Some(0),
                 patch: Some(
                     "--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n".into(),
                 ),
@@ -3149,6 +3949,7 @@ impl Fixture {
             }),
             operations: self.operations.clone(),
             diff_artifacts: Some(self.artifacts.clone()),
+            sponsorships: None,
         }
     }
 
@@ -3591,7 +4392,7 @@ fn review_admission(launch: &Launch, now: &str) -> LaunchReviewAdmission {
             expires_at: launch.draft_expires_at.clone(),
         },
         runtime: RuntimeAdmissionSnapshot {
-            kernel: layer2_core::KernelId::new("codex"),
+            kernel: layer2_core::KernelId::new("codex-trigger-native-v1"),
             runtime_version: "cma-trigger-test-runtime@sha256:admitted".into(),
             supported_capabilities: launch
                 .revision
@@ -3687,6 +4488,16 @@ impl TriggerAuthorityVerifier for StaticAuthority {
             provenance: authority,
             source_sha: "a".repeat(40),
             workflow_paths: Vec::new(),
+        })
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<layer2_core::TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        Ok(layer2_core::TriggerPreviewRepositoryPolicy {
+            repository: revision.content.upstream.repository.clone(),
+            public_forkable: true,
         })
     }
 }
@@ -3974,6 +4785,7 @@ fn content(owner: SubjectId) -> TriggerRevisionContent {
         commercial_policy: CommercialPolicy {
             billing_mode: BillingMode::ZeroCost,
             policy_reference: "public-zero-cost-v1".into(),
+            sponsorship: None,
         },
         override_policy: OverridePolicy {
             editable_fields: vec![EditableField::TaskInput],
@@ -4003,6 +4815,8 @@ fn upstream() -> RepositoryIdentity {
 fn connection() -> ConnectionSnapshot {
     ConnectionSnapshot {
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "backing-key".into(),
         account: ConnectedAccount {
@@ -4024,6 +4838,8 @@ fn provenance() -> AuthorityProvenance {
         subject: SubjectId(OWNER.into()),
         subject_token_generation: 1,
         service_id: "service-1".into(),
+        github_catalog_service_id: Some("catalog-github".into()),
+        github_user_service_slug: Some("api-github-2".into()),
         service_state_version: 2,
         backing_key_id: "backing-key".into(),
         session_credential_authority: None,

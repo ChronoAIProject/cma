@@ -422,6 +422,130 @@ async fn renews_inside_the_expiry_margin_without_an_extra_runtime_probe() {
 }
 
 #[tokio::test]
+async fn historical_runtime_route_revokes_authority_instead_of_renewing_it() {
+    let mut launch = launch_with_active_reach(epoch(NOW) + 20);
+    launch.runtime_admission.as_mut().unwrap().kernel =
+        layer2_core::KernelId::new(super::super::LEGACY_TRIGGER_KERNEL_ID);
+    let service = service_for_launch(launch.clone());
+    let executor = Arc::new(ScriptedExecutor::new(
+        Vec::new(),
+        Vec::new(),
+        vec![RevocationStep::Acknowledge {
+            runtime_audience: "runtime-v1".into(),
+            tombstone: true,
+            agent_key: true,
+        }],
+    ));
+    let worker = test_worker(
+        service.clone(),
+        executor.clone(),
+        "historical-route-revocation",
+        &[NOW, ONE_SECOND_LATER],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(
+                &launch.id,
+                launch.revision_number,
+                "historical-route-revocation",
+            )
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Revoked
+    );
+    assert!(executor.renewal_calls.lock().unwrap().is_empty());
+    assert_eq!(executor.runtime_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.revocation_calls.load(Ordering::SeqCst), 1);
+    let current = stored(&service, &launch).await;
+    assert_eq!(
+        current.reach.unwrap().state,
+        CapabilityRevocationState::Revoked
+    );
+}
+
+#[tokio::test]
+async fn malformed_current_runtime_admission_revokes_authority_instead_of_renewing_it() {
+    for corruption in [
+        "missing",
+        "missing-version",
+        "malformed-time",
+        "missing-capability",
+        "duplicate-capability",
+    ] {
+        let mut launch = launch_with_active_reach(epoch(NOW) + 20);
+        match corruption {
+            "missing" => launch.runtime_admission = None,
+            "missing-version" => {
+                launch.runtime_admission.as_mut().unwrap().runtime_version = String::new();
+            }
+            "malformed-time" => {
+                launch.runtime_admission.as_mut().unwrap().observed_at = "invalid".into();
+            }
+            "missing-capability" => {
+                launch
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = launch.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        let service = service_for_launch(launch.clone());
+        let executor = Arc::new(ScriptedExecutor::new(
+            Vec::new(),
+            Vec::new(),
+            vec![RevocationStep::Acknowledge {
+                runtime_audience: "runtime-v1".into(),
+                tombstone: true,
+                agent_key: true,
+            }],
+        ));
+        let worker = test_worker(
+            service.clone(),
+            executor.clone(),
+            &format!("malformed-admission-{corruption}"),
+            &[NOW, ONE_SECOND_LATER],
+        );
+
+        assert_eq!(
+            worker
+                .run_once(&launch.id, launch.revision_number, corruption)
+                .await
+                .unwrap(),
+            CapabilityRunOutcome::Revoked,
+            "{corruption}"
+        );
+        assert!(
+            executor.renewal_calls.lock().unwrap().is_empty(),
+            "{corruption}"
+        );
+        assert_eq!(
+            executor.runtime_calls.load(Ordering::SeqCst),
+            0,
+            "{corruption}"
+        );
+        assert_eq!(
+            executor.revocation_calls.load(Ordering::SeqCst),
+            1,
+            "{corruption}"
+        );
+        assert_eq!(
+            stored(&service, &launch).await.reach.unwrap().state,
+            CapabilityRevocationState::Revoked,
+            "{corruption}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn capability_maintenance_audit_is_closed_and_never_retains_authority_values() {
     let activity_store = Arc::new(RecordingActivityStore::default());
     let activity = layer2_core::ActivityService::new(activity_store.clone());

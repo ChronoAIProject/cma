@@ -2471,6 +2471,18 @@ mod tests {
             revision_digest: launch.revision_digest.clone(),
             sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
             github_service_id: launch.connection.as_ref().unwrap().service_id.clone(),
+            github_catalog_service_id: launch
+                .connection
+                .as_ref()
+                .unwrap()
+                .github_catalog_service_id
+                .clone(),
+            github_user_service_slug: launch
+                .connection
+                .as_ref()
+                .unwrap()
+                .github_user_service_slug
+                .clone(),
             workspace_epoch: 1,
             source_revision: launch.source_sha.clone(),
             manifest_digest: baseline.digest.clone(),
@@ -2525,6 +2537,7 @@ mod tests {
             quiesced_writers: 1,
             writer_state: layer3_adapter::WorkspaceWriterState::HeldForTeardown,
             writer_resume_token: Some("resume-pair-1".into()),
+            includes_git_metadata: false,
             archive,
         };
         (
@@ -2796,6 +2809,18 @@ mod tests {
             revision_digest: launch.revision_digest.clone(),
             sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
             github_service_id: launch.connection.as_ref().unwrap().service_id.clone(),
+            github_catalog_service_id: launch
+                .connection
+                .as_ref()
+                .unwrap()
+                .github_catalog_service_id
+                .clone(),
+            github_user_service_slug: launch
+                .connection
+                .as_ref()
+                .unwrap()
+                .github_user_service_slug
+                .clone(),
             workspace_epoch: 1,
             source_revision: launch.source_sha.clone(),
             manifest_digest: baseline.digest.clone(),

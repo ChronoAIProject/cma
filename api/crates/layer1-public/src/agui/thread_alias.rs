@@ -14,6 +14,7 @@ const CREATION_OPERATION: &str = "agui-thread-create-v1";
 #[derive(Serialize)]
 struct CreationFingerprint<'a> {
     environment_profile: Option<&'a str>,
+    surface: Option<layer2_core::SessionSurface>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,16 +24,26 @@ enum CreationOutcome {
     Refused { problem: StoredProblem },
 }
 
+pub(super) struct CreationParameters {
+    pub credential: Option<DelegatedCredential>,
+    pub environment_profile: Option<String>,
+    pub surface: Option<layer2_core::SessionSurface>,
+}
+
 /// Find an existing session or create one under a durable requested-id alias.
 pub(super) async fn session_for_run(
     service: Arc<SessionService>,
     operations: Arc<dyn OperationStore>,
     caller: layer2_core::Caller,
     requested: SessionId,
-    credential: Option<DelegatedCredential>,
-    environment_profile: Option<String>,
+    creation: CreationParameters,
     resume: bool,
 ) -> Result<Session, RunFailure> {
+    let CreationParameters {
+        credential,
+        environment_profile,
+        surface,
+    } = creation;
     match service.get_session(&caller, &requested).await {
         Ok(session) => return Ok(session),
         // Anything else -- a foreign session or a store outage -- is not a
@@ -49,6 +60,7 @@ pub(super) async fn session_for_run(
 
     let fingerprint = admission::fingerprint(&CreationFingerprint {
         environment_profile: environment_profile.as_deref(),
+        surface,
     })?;
     match admission::reserve::<CreationOutcome>(
         operations,
@@ -70,6 +82,7 @@ pub(super) async fn session_for_run(
         }
         Reservation::Acquired(claim) => {
             let spec = SessionSpec {
+                surface,
                 environment_profile: environment_profile.map(layer2_core::EnvironmentProfileId),
                 geometry: None,
                 options: layer2_core::AgentOptions {

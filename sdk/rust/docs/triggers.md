@@ -97,7 +97,7 @@ let runtime = launch
     .runtime_admission
     .as_ref()
     .ok_or_else(|| std::io::Error::other("runtime admission is unavailable"))?;
-if runtime.kernel != cma_sdk::TriggerKernel::Codex {
+if runtime.kernel != cma_sdk::TriggerKernel::CodexTriggerNativeV1 {
     return Err(std::io::Error::other("unsupported locked Trigger kernel").into());
 }
 let connections = client.list_trigger_connections().await?;
@@ -142,6 +142,16 @@ review. `runtime_admission.kernel` is the closed, server-owned kernel selection
 shown before Start; it is independent of the runtime image string and capability
 inventory. Workflow acknowledgement is required only when `workflow_paths` is
 nonempty and does not grant additional GitHub scope.
+
+The closed vocabulary also decodes `TriggerKernel::Codex` for a retained
+pre-versioned Launch. That value is deliberately historical and
+`is_legacy_read_only()` returns true. Clients may list and inspect the Launch,
+refresh its CMA snapshot and events, follow its existing session, read or
+download a retained diff artifact, create a separate New Launch, or cancel it.
+They must not offer overrides, connection selection, Start, diff capture,
+branch publication, pull-request review/open/update/status refresh, completion,
+or initial-prompt recovery. CMA fences those commands even if a stale client
+submits one. Unknown kernel strings still fail deserialization.
 
 Publisher policy validation remains HTTP `422` with code
 `invalid_trigger_request`. The Problem Details extensions
@@ -223,6 +233,11 @@ artifact, publish exactly its digest to the guarded branch, then review and
 confirm one exact Open or Update pull-request proposal. Review writes nothing to
 GitHub and takes no idempotency key. Confirmation uses the proposal's
 `intent_digest` and a new key.
+
+Every reviewed file carries paired `additions` and `deletions`. They are exact
+`Some` counts for text even when the bounded response omits its patch, and both
+are `None` for binary content whose line counts are unavailable. A client must
+not derive counts from the optional patch or interpret `None` as zero.
 
 ```rust,no_run
 use cma_sdk::{

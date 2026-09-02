@@ -1,6 +1,6 @@
 # PTY Interface
 
-**Priority 3 — for CLI-like streaming clients.**
+**Priority 4 — for CLI-like streaming clients.**
 
 The PTY interface relays a real pseudo-terminal from the agent runtime to a client, byte for byte. A browser attaching to it sees exactly what a developer running `codex` in a local terminal would see, including the full-screen TUI.
 

@@ -5,9 +5,11 @@ import {
   createSession,
   deleteSession,
   DeploymentAtCapacity,
+  readSession,
   reviveSession,
   SessionLimitReached,
   stopSession,
+  terminateSession,
 } from '../api/client';
 import type { Session, SessionLifecycle, SessionPlane } from './types';
 
@@ -72,6 +74,8 @@ export interface SessionActions {
   readonly start: (environmentProfile?: string | null, quotedRateCard?: string) => Promise<void>;
   /** Release the sandbox, keeping the session readable and revivable. */
   readonly endSession: (id: string) => Promise<void>;
+  /** End the session permanently while retaining its record and history. */
+  readonly terminateSessionById: (id: string) => Promise<void>;
   /** Give a stopped session a sandbox again, under the same identifier. */
   readonly reviveSessionById: (id: string) => Promise<void>;
   /** Remove the session and its history. */
@@ -137,13 +141,35 @@ export function useSessionActions({
       setNotice(null);
       setActing(true);
       try {
-        // Stop rather than terminate: ending a session releases what it is
-        // costing without throwing away what it did, and the owner can pick it
-        // up again. Terminating is what delete does on the way out.
+        // Stop rather than terminate: pausing releases what it is costing
+        // without throwing away what it did, and the owner can pick it up
+        // again. Retained termination is the separate final lifecycle action.
         await stopSession(id);
         applyLifecycle(id, 'idle');
       } catch (cause) {
         report(cause, 'Pausing the session failed.', 'The session keeps running.');
+      } finally {
+        refreshAllowance();
+        setActing(false);
+      }
+    },
+    [applyLifecycle, refreshAllowance, report, setActing, setNotice],
+  );
+
+  /** End a session while keeping its record and history available to read. */
+  const terminateSessionById = useCallback(
+    async (id: string) => {
+      setNotice(null);
+      setActing(true);
+      try {
+        await terminateSession(id);
+        applyLifecycle(id, 'terminated');
+      } catch (cause) {
+        report(
+          cause,
+          'Terminating the session failed.',
+          'The session remains available in its current state.',
+        );
       } finally {
         refreshAllowance();
         setActing(false);
@@ -214,7 +240,39 @@ export function useSessionActions({
       setNotice(null);
       setActing(true);
       try {
-        await deleteSession(id);
+        try {
+          await deleteSession(id);
+        } catch (cause) {
+          try {
+            const fresh = await readSession(id);
+            setSessions((prev) =>
+              prev.map((session) => (session.id === id ? { ...session, ...fresh } : session)),
+            );
+            report(
+              cause,
+              'Deleting the session failed.',
+              fresh.lifecycle === 'terminated'
+                ? 'The session is terminated and its history remains available.'
+                : 'The session and its history remain available.',
+            );
+            return;
+          } catch (readCause) {
+            // A lost response can look like a failed delete even after the
+            // server committed it. The authoritative follow-up 404 means there
+            // is no failure to flash and the local record can be removed.
+            if (!(readCause instanceof ApiError && readCause.status === 404)) {
+              report(
+                cause,
+                'Deleting the session failed.',
+                'Its current state could not be confirmed. Refresh before trying again.',
+              );
+              return;
+            }
+          }
+        }
+        // A stream may close while the server performs a requested deletion.
+        // Clear any transport notice it raised before removing the session.
+        setNotice(null);
         setSessions((prev) => prev.filter((s) => s.id !== id));
         // Out of the history as well as out of the list: a deleted id left
         // there is a slot of the canvas's attachment budget spent remembering
@@ -236,8 +294,6 @@ export function useSessionActions({
             select(successor.id);
           }
         }
-      } catch (cause) {
-        report(cause, 'Deleting the session failed.', 'The session and its history are untouched.');
       } finally {
         refreshAllowance();
         setActing(false);
@@ -257,5 +313,12 @@ export function useSessionActions({
     ],
   );
 
-  return { start, endSession, reviveSessionById, removeSession, changeSessionPlane };
+  return {
+    start,
+    endSession,
+    terminateSessionById,
+    reviveSessionById,
+    removeSession,
+    changeSessionPlane,
+  };
 }

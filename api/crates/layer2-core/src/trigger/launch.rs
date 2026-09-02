@@ -440,6 +440,17 @@ pub struct RuntimeAdmissionSnapshot {
     pub observed_at: String,
 }
 
+/// Runtime route carried by one complete durable admission snapshot.
+///
+/// `Invalid` includes missing snapshots, unknown kernels, and any partial or
+/// contradictory version, timestamp, or capability inventory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeAdmissionRoute {
+    Current,
+    Historical,
+    Invalid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuotaSnapshot {
     pub live_sessions: u32,
@@ -807,6 +818,117 @@ impl Launch {
             },
         )?;
         Ok(launch)
+    }
+
+    /// Classify a retained runtime admission against the current
+    /// composition-selected route and capability inventory.
+    ///
+    /// A durable snapshot is authority: absent or partial fields are invalid
+    /// and must never be inferred from today's configuration.
+    pub fn runtime_admission_route(
+        &self,
+        current_kernel: &str,
+        historical_kernel: &str,
+        expected_capabilities: &[RequiredCapability],
+    ) -> RuntimeAdmissionRoute {
+        self.validated_runtime_admission_route(
+            current_kernel,
+            historical_kernel,
+            expected_capabilities,
+        )
+        .unwrap_or(RuntimeAdmissionRoute::Invalid)
+    }
+
+    /// Return a readable current or exact historical route while preserving the
+    /// precise malformed field for a quarantined snapshot.
+    pub fn validated_runtime_admission_route(
+        &self,
+        current_kernel: &str,
+        historical_kernel: &str,
+        expected_capabilities: &[RequiredCapability],
+    ) -> Result<RuntimeAdmissionRoute, TriggerValidationError> {
+        let runtime = self.runtime_admission.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "runtime_admission",
+                "the durable runtime admission snapshot is missing",
+            )
+        })?;
+        if current_kernel.trim().is_empty()
+            || historical_kernel.trim().is_empty()
+            || current_kernel == historical_kernel
+        {
+            return Err(TriggerValidationError::field(
+                "runtime_admission.kernel",
+                "has no composition-selected current runtime route",
+            ));
+        }
+        if runtime.runtime_version.trim().is_empty() {
+            return Err(TriggerValidationError::field(
+                "runtime_admission.runtime_version",
+                "does not pin a runtime version",
+            ));
+        }
+        if crate::seconds_from_rfc3339(&runtime.observed_at).is_none() {
+            return Err(TriggerValidationError::field(
+                "runtime_admission.observed_at",
+                "does not contain a CMA timestamp",
+            ));
+        }
+
+        let expected: BTreeSet<_> = expected_capabilities.iter().copied().collect();
+        let published: BTreeSet<_> = self
+            .revision
+            .content
+            .session
+            .required_capabilities
+            .iter()
+            .copied()
+            .collect();
+        let supported: BTreeSet<_> = runtime.supported_capabilities.iter().copied().collect();
+        if expected.len() != expected_capabilities.len()
+            || published.len() != self.revision.content.session.required_capabilities.len()
+            || supported.len() != runtime.supported_capabilities.len()
+            || published != expected
+            || supported != expected
+        {
+            return Err(TriggerValidationError::field(
+                "runtime_admission.supported_capabilities",
+                "does not exactly capture the selected capability inventory",
+            ));
+        }
+        match runtime.kernel.as_str() {
+            kernel if kernel == current_kernel => Ok(RuntimeAdmissionRoute::Current),
+            kernel if kernel == historical_kernel => Ok(RuntimeAdmissionRoute::Historical),
+            _ => Err(TriggerValidationError::field(
+                "runtime_admission.kernel",
+                "does not name a retained Trigger runtime route",
+            )),
+        }
+    }
+
+    /// Validate authority for new work on the current runtime route. Exact
+    /// historical admissions remain readable through
+    /// `validated_runtime_admission_route` but can never satisfy this
+    /// current-only admission boundary.
+    pub fn validate_runtime_admission_route(
+        &self,
+        expected_kernel: &str,
+        historical_kernel: &str,
+        expected_capabilities: &[RequiredCapability],
+    ) -> Result<(), TriggerValidationError> {
+        match self.validated_runtime_admission_route(
+            expected_kernel,
+            historical_kernel,
+            expected_capabilities,
+        )? {
+            RuntimeAdmissionRoute::Current => Ok(()),
+            RuntimeAdmissionRoute::Historical | RuntimeAdmissionRoute::Invalid => {
+                Err(TriggerValidationError::field(
+                    "runtime_admission.kernel",
+                    "does not name the selected durable runtime route",
+                ))
+            }
+        }
     }
 
     pub fn update_overrides(
@@ -2439,6 +2561,11 @@ fn validate_review_admission(
             if pricing.rate_card.is_some()
                 && pricing.rate.is_some()
                 && pricing.micros_per_hour > 0 => {}
+        super::BillingMode::Sponsored
+            if pricing.rate_card.is_none()
+                && pricing.rate.is_none()
+                && pricing.micros_per_hour == 0
+                && pricing.estimated_micros == 0 => {}
         _ => {
             return Err(TriggerValidationError::field(
                 "pricing",

@@ -225,6 +225,9 @@ impl SessionService {
     /// version tracking, so nothing can vouch for what it is running, and
     /// leaving it there forever is the one outcome that is certainly wrong.
     pub(crate) fn needs_rotation(&self, record: &SessionRecord) -> bool {
+        if record.chat_origin.is_some() {
+            return false;
+        }
         let Some(wanted) = self.runtime_version.as_deref() else {
             // No expected version configured, so nothing to be behind.
             return false;
@@ -292,6 +295,9 @@ impl SessionService {
     ) -> Result<Session, CoreError> {
         let record = self.record(id).await?;
         caller.require_own_control_of(&record.session.owner)?;
+        if record.chat_origin.is_some() {
+            return Err(CoreError::chat_lifecycle_managed("plane change"));
+        }
         if let Some(state) = record.reserved_initial_prompt_state() {
             return Err(CoreError::InitialPromptReserved(state));
         }
@@ -301,7 +307,7 @@ impl SessionService {
         if record.is_effectively_rotating() {
             // Already mid-handover. Starting a second one would capture a
             // sandbox being torn down and resume from whichever answered last.
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
         // A blocked approval owns a runtime too, but cannot change planes while
         // its answer is addressed to a request on the current conversation.
@@ -309,7 +315,7 @@ impl SessionService {
             // Nothing to carry. A stopped session is started on whichever
             // plane its profile names when it is revived, and moving one that
             // is not running would mean rotating a sandbox that does not exist.
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
         if record.session.options.mode == mode {
             // Already there. Not an error and not a rotation: charging a
@@ -370,7 +376,7 @@ impl SessionService {
             )));
         }
         if record.runtime_id.is_none() {
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
         if self.rotation_refused.read().await.contains(&id) {
             // This runtime has already said it cannot hand its conversation
@@ -382,7 +388,7 @@ impl SessionService {
         }
         if !self.begin_start(&id).await {
             // Something else already has this session in hand.
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
 
         // From the first local claim onward this work belongs to the service,
@@ -416,7 +422,7 @@ impl SessionService {
         };
         let Some(old) = record.runtime_id.clone().map(RuntimeHandle) else {
             self.finish_start(&id).await;
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         };
 
         // Refresh before acquiring cross-replica provider authority. The lease
@@ -434,7 +440,7 @@ impl SessionService {
             }
             Ok(_) => {
                 self.finish_start(&id).await;
-                return Err(CoreError::InvalidState);
+                return Err(CoreError::invalid_state());
             }
             Err(error) => {
                 self.finish_start(&id).await;
@@ -786,6 +792,7 @@ impl SessionService {
 
         let geometry = moved.session.geometry;
         let spec = SessionSpec {
+            surface: None,
             geometry: Some(geometry),
             options: moved.session.options.clone(),
             environment_profile: moved.session.environment_profile.clone(),
@@ -796,6 +803,7 @@ impl SessionService {
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();
+        let trigger_origin = moved.trigger_origin.clone();
         let rotation_claim = moved.rotation_claim.clone();
         tokio::spawn(async move {
             service
@@ -810,6 +818,7 @@ impl SessionService {
                         lease: None,
                         handover: None,
                         trigger_recovery,
+                        trigger_origin,
                         prepared_skills: None,
                         rotation_claim,
                     }
@@ -1182,6 +1191,7 @@ impl SessionService {
         };
         let geometry = moved.session.geometry;
         let spec = SessionSpec {
+            surface: None,
             geometry: Some(geometry),
             options: moved.session.options.clone(),
             environment_profile: moved.session.environment_profile.clone(),
@@ -1192,6 +1202,7 @@ impl SessionService {
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();
+        let trigger_origin = moved.trigger_origin.clone();
         let rotation_claim = rotating.rotation_claim.clone();
         tokio::spawn(async move {
             service
@@ -1206,6 +1217,7 @@ impl SessionService {
                         lease: Some(lease),
                         handover: Some(handover),
                         trigger_recovery,
+                        trigger_origin,
                         prepared_skills: None,
                         rotation_claim,
                     }

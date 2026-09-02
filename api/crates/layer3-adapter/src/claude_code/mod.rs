@@ -76,6 +76,8 @@ impl ClaudeCodeAdapter {
             options.resume_conversation.clone(),
             // This kernel refuses own-account sessions during provisioning.
             false,
+            options.working_directory.clone(),
+            options.conversation_slot.clone(),
         )
     }
 }
@@ -170,10 +172,52 @@ impl KernelAdapter for ClaudeCodeAdapter {
             .await
     }
 
+    async fn prepare_workspace_source(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceSourceRequest,
+    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
+        self.hosted.prepare_workspace_source(handle, request).await
+    }
+
+    async fn add_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceTreeRequest,
+    ) -> Result<crate::WorkspaceTreeReceipt, AdapterError> {
+        self.hosted.add_workspace_tree(handle, request).await
+    }
+
+    async fn remove_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        name: &str,
+    ) -> Result<(), AdapterError> {
+        self.hosted.remove_workspace_tree(handle, name).await
+    }
+
+    async fn run_workspace_setup(
+        &self,
+        handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<crate::WorkspaceSetupReceipt, AdapterError> {
+        self.hosted.run_workspace_setup(handle, commands).await
+    }
+
+    async fn snapshot_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        self.hosted
+            .snapshot_conversation(handle, conversation_id)
+            .await
+    }
+
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: &crate::RuntimeCredential,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
     }
@@ -184,6 +228,16 @@ impl KernelAdapter for ClaudeCodeAdapter {
         envelope: &str,
     ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
         self.hosted.install_runtime_policy(handle, envelope).await
+    }
+
+    async fn install_sponsored_model_authority(
+        &self,
+        handle: &RuntimeHandle,
+        authority: &crate::SponsoredModelRuntimeAuthority,
+    ) -> Result<crate::SponsoredModelAuthorityReceipt, AdapterError> {
+        self.hosted
+            .install_sponsored_model_authority(handle, authority)
+            .await
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {

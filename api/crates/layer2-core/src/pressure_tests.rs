@@ -3,7 +3,9 @@
 use std::time::{Duration, Instant};
 
 use crate::{
-    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample, PressureTransition,
+    CpuPressure, CpuPressurePolicy, CpuPressureSample, CpuPressureTransition,
+    InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample,
+    PressureTransition,
 };
 
 struct Driver {
@@ -11,6 +13,48 @@ struct Driver {
     policy: MemoryPressurePolicy,
     next_at: Instant,
     transitions: Vec<PressureTransition>,
+}
+
+struct CpuDriver {
+    machine: CpuPressure,
+    policy: CpuPressurePolicy,
+    next_at: Instant,
+    transitions: Vec<CpuPressureTransition>,
+}
+
+impl CpuDriver {
+    fn new() -> Self {
+        Self {
+            machine: CpuPressure::default(),
+            policy: CpuPressurePolicy::default(),
+            next_at: Instant::now(),
+            transitions: Vec::new(),
+        }
+    }
+
+    fn feed(&mut self, occupancy_permille: Option<u16>) -> Option<CpuPressureTransition> {
+        let at = self.next_at;
+        self.next_at += Duration::from_secs(2);
+        let transition = self.machine.evaluate(
+            &CpuPressureSample {
+                occupancy_permille,
+                used_millis: u32::from(occupancy_permille.unwrap_or(0)),
+                limit_millis: occupancy_permille.map(|_| 1_000),
+                at,
+            },
+            &self.policy,
+        );
+        if let Some(edge) = transition.clone() {
+            self.transitions.push(edge);
+        }
+        transition
+    }
+
+    fn feed_many(&mut self, occupancy_permille: Option<u16>, count: usize) {
+        for _ in 0..count {
+            self.feed(occupancy_permille);
+        }
+    }
 }
 
 impl Driver {
@@ -286,6 +330,53 @@ fn an_adversarial_hour_cannot_exceed_forty_six_events() {
     // One cycle is 5 entry readings + 15 exit readings + 60 more readings for
     // the floor: 160 seconds. That permits 23 opens and 22 closes in 3,600
     // seconds, or 45 edges against the 1,800 readings a level signal would emit.
+    for index in 0..1_800 {
+        driver.feed(Some(if index % 80 < 5 { 850 } else { 650 }));
+    }
+    assert!(driver.transitions.len() <= 46, "{:?}", driver.transitions);
+    assert!(driver.transitions.len() >= 40, "{:?}", driver.transitions);
+}
+
+#[test]
+fn cpu_pressure_uses_the_same_sustained_hysteretic_contract() {
+    let mut driver = CpuDriver::new();
+    driver.feed_many(Some(850), 4);
+    assert!(driver.transitions.is_empty());
+    assert!(matches!(
+        driver.feed(Some(850)),
+        Some(CpuPressureTransition::Opened {
+            used_millis: 850,
+            limit_millis: 1_000,
+            occupancy_permille: 850,
+        })
+    ));
+    driver.feed_many(Some(850), 20);
+    assert_eq!(driver.transitions.len(), 1, "a held level is one opening");
+    driver.feed_many(Some(650), 75);
+    assert!(matches!(
+        driver.transitions.as_slice(),
+        [
+            CpuPressureTransition::Opened { .. },
+            CpuPressureTransition::Closed { .. }
+        ]
+    ));
+}
+
+#[test]
+fn cpu_pressure_without_a_truthful_denominator_is_silent() {
+    let mut driver = CpuDriver::new();
+    driver.feed_many(None, 100);
+    driver.feed_many(Some(850), 4);
+    assert!(driver.transitions.is_empty());
+    assert!(matches!(
+        driver.feed(Some(850)),
+        Some(CpuPressureTransition::Opened { .. })
+    ));
+}
+
+#[test]
+fn an_adversarial_cpu_hour_cannot_exceed_forty_six_events() {
+    let mut driver = CpuDriver::new();
     for index in 0..1_800 {
         driver.feed(Some(if index % 80 < 5 { 850 } else { 650 }));
     }

@@ -110,6 +110,17 @@ pub enum EventKind {
         /// What the owner sent, verbatim.
         content: String,
     },
+    /// Opaque caller metadata attached to the turn that just began.
+    ///
+    /// Kept beside the owner's message rather than inside it: conversation
+    /// projections can show the message without exposing transport metadata,
+    /// while an interface that owns response resources can reconstruct the
+    /// exact response after a control-plane restart. Keys and values are
+    /// bounded before this event is accepted by [`crate::SessionService`].
+    TurnMetadata {
+        /// Caller-supplied string pairs, in deterministic key order.
+        metadata: std::collections::BTreeMap<String, String>,
+    },
     /// The agent began using a tool.
     ToolCallStarted {
         /// Correlates with every later update to the same call.
@@ -303,6 +314,33 @@ pub enum EventKind {
         /// Whether the action was permitted.
         allowed: bool,
     },
+    /// A session's processor use has held near its reported limit long enough to say so.
+    ///
+    /// Durable because it happened once and the readings it was folded from
+    /// are never stored. A missing rate or limit produces no episode.
+    ///
+    /// An open episode ends at the first status change that leaves
+    /// `is_interactive()`, whether or not a close was written. A second open
+    /// with no close between replaces the first; this is state, not a stack.
+    CpuPressureOpened {
+        /// Processor use over the reading interval, in thousandths of one core.
+        used_millis: u32,
+        /// The processor limit it was measured against, in the same unit.
+        limit_millis: u32,
+        /// The first as a fraction of the second, in permille.
+        occupancy_permille: u16,
+    },
+    /// A session's processor use came away from its limit and stayed away.
+    CpuPressureClosed {
+        /// The highest processor use observed during the episode.
+        peak_millis: u32,
+        /// The processor limit those readings were measured against.
+        limit_millis: u32,
+        /// The peak as a fraction of the limit, in permille.
+        peak_permille: u16,
+        /// How long the episode ran, from a monotonic clock.
+        duration_seconds: u32,
+    },
     /// A session's memory has been near its limit long enough to say so.
     ///
     /// Durable because it happened once and the readings it was folded from
@@ -457,6 +495,7 @@ const KNOWN_TAGS: &[&str] = &[
     "conversation_opened",
     "message_committed",
     "owner_message",
+    "turn_metadata",
     "tool_call_started",
     "tool_call_updated",
     "usage_reported",
@@ -471,6 +510,8 @@ const KNOWN_TAGS: &[&str] = &[
     "terminal_resized",
     "approval_requested",
     "approval_resolved",
+    "cpu_pressure_opened",
+    "cpu_pressure_closed",
     "memory_pressure_opened",
     "memory_pressure_closed",
     "runtime_handover_started",

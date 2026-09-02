@@ -1,4 +1,4 @@
-import type { MemoryPressure, Resources } from './model.js';
+import type { CpuPressure, MemoryPressure, Resources } from './model.js';
 
 /** A JSON integer the browser can carry without silently changing it. */
 function figure(value: unknown): number | undefined {
@@ -57,4 +57,27 @@ export function memoryPressureFrom(value: unknown): MemoryPressure | undefined {
     since === undefined
     ? undefined
     : { usedBytes, limitBytes, occupancyPermille, since };
+}
+
+/** A complete open processor episode, or absence for null, missing, or malformed state. */
+export function cpuPressureFrom(value: unknown): CpuPressure | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const pressure = value as Record<string, unknown>;
+  const usedMillis = figure(pressure.usedMillis);
+  const limitMillis = figure(pressure.limitMillis);
+  const occupancyPermille = figure(pressure.occupancyPermille);
+  const since =
+    typeof pressure.since === 'string' &&
+    pressure.since !== '' &&
+    !Number.isNaN(Date.parse(pressure.since))
+      ? pressure.since
+      : undefined;
+  return usedMillis === undefined ||
+    limitMillis === undefined ||
+    occupancyPermille === undefined ||
+    since === undefined
+    ? undefined
+    : { usedMillis, limitMillis, occupancyPermille, since };
 }

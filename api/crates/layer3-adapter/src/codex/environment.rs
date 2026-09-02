@@ -25,7 +25,7 @@ use crate::RuntimeSpec;
 /// kernel at all.
 pub(super) const SESSIONS_DIR: &str = ".codex/sessions";
 
-const TRIGGER_GATEWAY_PROBE_COMMAND: &str = r#"["codex","sandbox","--permission-profile","cma-trigger","--","/usr/local/bin/layer4-runtime","runtime-gateway-probe-helper-v1"]"#;
+const TRIGGER_GATEWAY_PROBE_COMMAND: &str = r#"["codex","sandbox","--permission-profile","cma-trigger","--","/usr/local/bin/layer4-runtime","runtime-gateway-probe-helper-v2"]"#;
 
 /// How sandboxes for this kernel are configured.
 #[derive(Debug, Clone)]

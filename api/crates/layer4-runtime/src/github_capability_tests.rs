@@ -14,6 +14,8 @@ const SESSION_B: &str = "sesn_trg_123456781234123412341234567890ac";
 const RUNTIME: &str = "sandbox-runtime-1";
 const RUNTIME_B: &str = "sandbox-runtime-2";
 const SERVICE: &str = "service-1";
+const CATALOG_SERVICE: &str = "catalog-service-github";
+const USER_SERVICE_SLUG: &str = "api-github-2";
 const BRANCH: &str = "cma/launch-1234";
 const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -127,6 +129,8 @@ fn policy(generation: u64, fence: u64) -> CapabilityDocument {
         session_id: SESSION.into(),
         runtime_audience: RUNTIME.into(),
         service_id: SERVICE.into(),
+        catalog_service_id: CATALOG_SERVICE.into(),
+        user_service_slug: USER_SERVICE_SLUG.into(),
         upstream: Box::new(upstream()),
         fork: Box::new(fork()),
         allowed_ref: format!("refs/heads/{BRANCH}"),
@@ -169,6 +173,11 @@ fn gate_for(signer: &Signer, session_id: &str) -> GithubCapabilityGate {
             "chrono-llm".into(),
             "ornn".into(),
             GITHUB_SERVICE_SLUG.into(),
+            USER_SERVICE_SLUG.into(),
+            "api-github-pat".into(),
+            SERVICE.into(),
+            CATALOG_SERVICE.into(),
+            "unexpected-baseline".into(),
         ],
         &signer.keyring(),
     )
@@ -176,7 +185,7 @@ fn gate_for(signer: &Signer, session_id: &str) -> GithubCapabilityGate {
 }
 
 fn github_uri(path: &str) -> Uri {
-    format!("/api/v1/proxy/s/api-github{path}?_nyxid_via={SERVICE}")
+    format!("/api/v1/proxy/{CATALOG_SERVICE}{path}?_nyxid_via={SERVICE}")
         .parse()
         .expect("URI")
 }
@@ -206,11 +215,29 @@ async fn missing_policy_fails_closed_for_github_but_not_an_entitled_non_github_s
         gate.evaluate(&Method::GET, &passthrough, &[], NOW).await,
         Ok(None)
     );
-    let unknown: Uri = "/api/v1/proxy/s/some-other-service/data".parse().unwrap();
+    let unknown: Uri = "/api/v1/proxy/s/unexpected-baseline/data".parse().unwrap();
     assert_eq!(
         gate.evaluate(&Method::GET, &unknown, &[], NOW).await,
-        Err(CapabilityRefusal::OperationDenied)
+        Err(CapabilityRefusal::OperationDenied),
+        "capability-required runtimes deny configured reaches outside the MVP baseline"
     );
+
+    for slug in [
+        GITHUB_SERVICE_SLUG,
+        USER_SERVICE_SLUG,
+        "api-github-pat",
+        SERVICE,
+        CATALOG_SERVICE,
+    ] {
+        let alternate: Uri = format!("/api/v1/proxy/s/{slug}/repositories/30?_nyxid_via={SERVICE}")
+            .parse()
+            .unwrap();
+        assert_eq!(
+            gate.evaluate(&Method::GET, &alternate, &[], NOW).await,
+            Err(CapabilityRefusal::OperationDenied),
+            "{slug} must never enter generic slug passthrough"
+        );
+    }
 }
 
 #[tokio::test]
@@ -224,7 +251,7 @@ async fn exact_numeric_repository_read_is_canonicalized_with_the_service_selecto
     assert_eq!(request.operation, GithubOperationClass::RepositoryRead);
     assert_eq!(
         request.path_and_query,
-        "/api/v1/proxy/s/api-github/repositories/30?_nyxid_via=service-1"
+        "/api/v1/proxy/catalog-service-github/repositories/30?_nyxid_via=service-1"
     );
     assert!(request.body.is_empty());
 }
@@ -233,7 +260,7 @@ async fn exact_numeric_repository_read_is_canonicalized_with_the_service_selecto
 async fn tree_reads_accept_only_the_fork_and_known_query_shape() {
     let (_, gate) = installed_gate().await;
     let uri: Uri = format!(
-        "/api/v1/proxy/s/api-github/repos/contributor/project/git/trees/{SHA}?recursive=1&_nyxid_via={SERVICE}"
+        "/api/v1/proxy/{CATALOG_SERVICE}/repos/contributor/project/git/trees/{SHA}?recursive=1&_nyxid_via={SERVICE}"
     )
     .parse()
     .unwrap();
@@ -246,7 +273,7 @@ async fn tree_reads_accept_only_the_fork_and_known_query_shape() {
     assert_eq!(
         request.path_and_query,
         format!(
-            "/api/v1/proxy/s/api-github/repos/contributor/project/git/trees/{SHA}?_nyxid_via={SERVICE}&recursive=1"
+            "/api/v1/proxy/{CATALOG_SERVICE}/repos/contributor/project/git/trees/{SHA}?_nyxid_via={SERVICE}&recursive=1"
         )
     );
 
@@ -256,7 +283,7 @@ async fn tree_reads_accept_only_the_fork_and_known_query_shape() {
         Err(CapabilityRefusal::ResourceMismatch)
     );
     let extra: Uri = format!(
-        "/api/v1/proxy/s/api-github/repos/contributor/project/git/trees/{SHA}?recursive=1&page=2&_nyxid_via={SERVICE}"
+        "/api/v1/proxy/{CATALOG_SERVICE}/repos/contributor/project/git/trees/{SHA}?recursive=1&page=2&_nyxid_via={SERVICE}"
     )
     .parse()
     .unwrap();
@@ -492,7 +519,7 @@ async fn launch_ref_updates_require_the_exact_ref_and_force_false() {
 }
 
 #[tokio::test]
-async fn raw_service_id_and_ambiguous_encodings_cannot_bypass_the_slug_filter() {
+async fn wrong_catalog_slug_routes_and_ambiguous_encodings_cannot_bypass_the_catalog_filter() {
     let (_, gate) = installed_gate().await;
     for raw in [
         "/api/v1/proxy/service-internal/repos/contributor/project",
@@ -503,9 +530,83 @@ async fn raw_service_id_and_ambiguous_encodings_cannot_bypass_the_slug_filter() 
         let uri: Uri = raw.parse().unwrap();
         assert!(matches!(
             gate.evaluate(&Method::GET, &uri, &[], NOW + 1).await,
-            Err(CapabilityRefusal::OperationDenied | CapabilityRefusal::MalformedRequest)
+            Err(CapabilityRefusal::OperationDenied
+                | CapabilityRefusal::MalformedRequest
+                | CapabilityRefusal::ResourceMismatch)
         ));
     }
+}
+
+#[tokio::test]
+async fn signed_noncanonical_user_slug_is_evidence_only_and_never_an_authority_route() {
+    let (_, gate) = installed_gate().await;
+    for slug in [
+        USER_SERVICE_SLUG,
+        "api-github-pat",
+        SERVICE,
+        CATALOG_SERVICE,
+    ] {
+        let uri: Uri = format!("/api/v1/proxy/s/{slug}/repositories/30?_nyxid_via={SERVICE}")
+            .parse()
+            .unwrap();
+        assert_eq!(
+            gate.evaluate(&Method::GET, &uri, &[], NOW + 1).await,
+            Err(CapabilityRefusal::OperationDenied)
+        );
+    }
+
+    assert!(gate
+        .evaluate(&Method::GET, &github_uri("/repositories/30"), &[], NOW + 1)
+        .await
+        .expect("the exact catalog-ID route is allowed")
+        .is_some());
+}
+
+#[tokio::test]
+async fn gateway_probe_binding_matches_the_full_live_signed_tuple() {
+    let (signer, gate) = installed_gate().await;
+    assert!(
+        gate.matches_probe_binding(SERVICE, CATALOG_SERVICE, USER_SERVICE_SLUG, 30, NOW + 1)
+            .await
+    );
+    for (service_id, catalog_service_id, user_service_slug, repository_id) in [
+        ("other-service", CATALOG_SERVICE, USER_SERVICE_SLUG, 30),
+        (SERVICE, "other-catalog", USER_SERVICE_SLUG, 30),
+        (SERVICE, CATALOG_SERVICE, "api-github-3", 30),
+        (SERVICE, CATALOG_SERVICE, USER_SERVICE_SLUG, 31),
+    ] {
+        assert!(
+            !gate
+                .matches_probe_binding(
+                    service_id,
+                    catalog_service_id,
+                    user_service_slug,
+                    repository_id,
+                    NOW + 1,
+                )
+                .await
+        );
+    }
+    assert!(
+        !gate
+            .matches_probe_binding(
+                SERVICE,
+                CATALOG_SERVICE,
+                USER_SERVICE_SLUG,
+                30,
+                NOW + MAX_LIFETIME_SECONDS + MAX_CLOCK_SKEW_SECONDS + 1,
+            )
+            .await
+    );
+
+    gate.install(RUNTIME, &signer.sign(&tombstone(2, 2)), NOW + 1)
+        .await
+        .unwrap();
+    assert!(
+        !gate
+            .matches_probe_binding(SERVICE, CATALOG_SERVICE, USER_SERVICE_SLUG, 30, NOW + 1)
+            .await
+    );
 }
 
 #[tokio::test]
@@ -523,9 +624,10 @@ async fn wrong_service_and_an_ungranted_operation_are_typed_denials() {
     gate.install(RUNTIME, &signer.sign(&read_only), NOW)
         .await
         .unwrap();
-    let wrong_service: Uri = "/api/v1/proxy/s/api-github/repositories/30?_nyxid_via=other"
-        .parse()
-        .unwrap();
+    let wrong_service: Uri =
+        "/api/v1/proxy/catalog-service-github/repositories/30?_nyxid_via=other"
+            .parse()
+            .unwrap();
     assert_eq!(
         gate.evaluate(&Method::GET, &wrong_service, &[], NOW + 1)
             .await,
@@ -952,9 +1054,10 @@ async fn one_session_cannot_replace_or_use_another_sessions_policy() {
             .await,
         Err(CapabilityRefusal::ResourceMismatch)
     );
-    let own_b_uri: Uri = "/api/v1/proxy/s/api-github/repositories/40?_nyxid_via=service-1"
-        .parse()
-        .unwrap();
+    let own_b_uri: Uri =
+        "/api/v1/proxy/catalog-service-github/repositories/40?_nyxid_via=service-1"
+            .parse()
+            .unwrap();
     assert!(gate_b
         .evaluate(&Method::GET, &own_b_uri, &[], NOW + 1)
         .await

@@ -411,7 +411,7 @@ async fn only_outstanding_approvals_are_answerable_after_a_restart() {
             replacement
                 .resolve_approval(&alice, &created.id, refused.into(), ApprovalDecision::Allow,)
                 .await,
-            Err(CoreError::InvalidState),
+            Err(CoreError::invalid_state()),
             "{refused} must not be resurrected as pending"
         );
     }
@@ -610,7 +610,7 @@ async fn readoption_fences_resolution_until_the_replacement_is_live() {
                 ApprovalDecision::Allow,
             )
             .await,
-        Err(CoreError::InvalidState),
+        Err(CoreError::invalid_state()),
         "the replacement keeps its recorded resolution final"
     );
     drop(keep_original_updates_open);

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import markMarkup from '../assets/brand/cma-mark-animated.svg?raw';
 import type { CreationAbility } from '../sessions/availability';
 import { BUILD } from './build';
+import type { SurfaceMode } from './surfaceMode';
 import { IconNewChatOutline16, IconPanelLeftOutline16, IconSearchOutline16 } from '../ui/icons';
 import './Sidebar.css';
 
@@ -21,6 +22,9 @@ import './Sidebar.css';
 interface SidebarProps {
   readonly collapsed: boolean;
   readonly creation: CreationAbility;
+  readonly surface: SurfaceMode;
+  readonly chatAvailable: boolean;
+  readonly onSurfaceChange: (surface: SurfaceMode) => void;
   readonly onToggleCollapsed: () => void;
   readonly onCreate: () => void;
   /** Opens the command plate. The rail expands the sidebar instead. */
@@ -44,6 +48,9 @@ interface SidebarProps {
 export function Sidebar({
   collapsed,
   creation,
+  surface,
+  chatAvailable,
+  onSurfaceChange,
   onToggleCollapsed,
   onCreate,
   onSearch,
@@ -96,6 +103,23 @@ export function Sidebar({
         </span>
       )}
 
+      {!collapsed && chatAvailable ? (
+        <div className="sidebar__surfaces" role="group" aria-label="Session surface">
+          {(['chat', 'agent'] as const).map((candidate) => (
+            <button
+              key={candidate}
+              type="button"
+              aria-pressed={surface === candidate}
+              onClick={() => {
+                onSurfaceChange(candidate);
+              }}
+            >
+              {candidate === 'chat' ? 'Chat' : 'Agent'}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <button
         type="button"
         className="sidebar__new"
@@ -104,7 +128,11 @@ export function Sidebar({
         onClick={onCreate}
       >
         <IconNewChatOutline16 />
-        {collapsed ? null : <span className="sidebar__newlabel">New session</span>}
+        {collapsed ? null : (
+          <span className="sidebar__newlabel">
+            {surface === 'chat' ? 'New Chat' : 'New session'}
+          </span>
+        )}
       </button>
       {creation.reason === undefined ? null : (
         <span className="control-reason" id={reasonId}>

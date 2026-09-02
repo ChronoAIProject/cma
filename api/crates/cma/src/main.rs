@@ -7,14 +7,18 @@
 
 mod activity;
 mod auth;
+mod chat;
 mod config;
 mod health;
 mod kernels;
+mod model_gateway;
+mod model_provider;
 mod permissions;
 mod rate_limit;
 mod renewal;
 mod screen;
 mod skills;
+mod sponsorship;
 mod store;
 mod sweep;
 mod trigger;
@@ -26,7 +30,7 @@ mod pty_integration_tests;
 #[path = "rate_limit_tests.rs"]
 mod rate_limit_tests;
 
-use std::{future::Future, net::SocketAddr, sync::Arc};
+use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
@@ -42,6 +46,7 @@ use layer1_public::{
     agui::AguiInterface,
     mcp::McpInterface,
     pty::PtyInterface,
+    responses::ResponsesInterface,
     rest::{HttpProblem, RestInterface},
     InterfaceProfile,
 };
@@ -62,10 +67,11 @@ use crate::config::{Config, MongoCutoverStage, MongoCutoverStageConfig};
 use crate::screen::VtScreen;
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const PROCESS_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
-    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
 );
 
 type TriggerProviderPorts = (
@@ -74,9 +80,68 @@ type TriggerProviderPorts = (
     Option<Arc<trigger::github::GithubBroker>>,
 );
 
+/// Composition facts required before a Trigger Launch may claim the native
+/// runtime route or any of its closed capabilities.
+///
+/// Rollout state is deliberately absent. A disabled environment still needs
+/// the fully composed scheduler to reconcile retained work and revoke existing
+/// reach; rollout policy independently denies new admission and effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TriggerCompositionReadiness {
+    native_runtime_adapter: bool,
+    provider_github_broker: bool,
+    durable_workspace_store: bool,
+    github_capability_signer: bool,
+}
+
+impl TriggerCompositionReadiness {
+    fn is_ready(self) -> bool {
+        self.native_runtime_adapter
+            && self.provider_github_broker
+            && self.durable_workspace_store
+            && self.github_capability_signer
+    }
+
+    fn missing_prerequisites(self) -> Vec<&'static str> {
+        [
+            (
+                self.native_runtime_adapter,
+                "native_trigger_runtime_adapter",
+            ),
+            (self.provider_github_broker, "provider_github_broker"),
+            (
+                self.durable_workspace_store,
+                "durable_trigger_workspace_store",
+            ),
+            (self.github_capability_signer, "github_capability_signer"),
+        ]
+        .into_iter()
+        .filter_map(|(present, name)| (!present).then_some(name))
+        .collect()
+    }
+
+    fn admitted_session_route(
+        self,
+        configured_capabilities: &[layer2_core::RequiredCapability],
+    ) -> (
+        Vec<layer2_core::RequiredCapability>,
+        Option<layer2_core::KernelId>,
+    ) {
+        if self.is_ready() {
+            (
+                configured_capabilities.to_vec(),
+                Some(layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
+            )
+        } else {
+            (Vec::new(), None)
+        }
+    }
+}
+
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
         Box::new(AguiInterface),
+        Box::new(ResponsesInterface),
         Box::new(RestInterface),
         Box::new(PtyInterface),
         Box::new(McpInterface),
@@ -90,8 +155,8 @@ fn interface_is_served(interface: &dyn InterfaceProfile) -> bool {
 
 /// Compose the REST surface before protocol-specific and browser routes join it.
 ///
-/// The three Layer 1 routers have different state, so the binary is where they
-/// meet. Applying the method fallback after all three are merged covers every
+/// The Layer 1 routers have different state, so the binary is where they meet.
+/// Applying the method fallback after all of them are merged covers every
 /// declared REST path without giving any child router a conflicting fallback.
 /// The wildcard is path-scoped so `/auth/*` keeps the browser flow's own
 /// vocabulary.
@@ -108,11 +173,71 @@ fn rest_api_router(
         .layer(axum::middleware::from_fn(rest_links))
 }
 
+/// Keep the private runtime gateway outside middleware that resolves ordinary
+/// user credentials. Its per-session bearer has its own exact custody check,
+/// body limit, concurrency bound, and timeout inside the gateway router.
+fn merge_sponsored_model_gateway(public: Router, gateway: Option<Router>) -> Router {
+    match gateway {
+        Some(gateway) => public.merge(gateway),
+        None => public,
+    }
+}
+
 /// Advertise the REST profile and its machine-readable service description.
 async fn rest_links(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().append(header::LINK, REST_LINKS);
     response
+}
+
+/// Keep sponsorship responses private even when an outer production guard
+/// refuses the request before a sponsorship handler can run.
+fn with_sponsorship_privacy(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(sponsorship_privacy))
+}
+
+async fn sponsorship_privacy(request: Request, next: Next) -> Response {
+    let private = is_sponsorship_path(request.uri().path());
+    let mut response = next.run(request).await;
+    if private {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response.headers_mut().insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        );
+    }
+    response
+}
+
+fn is_sponsorship_path(path: &str) -> bool {
+    sponsorship_span_path(path).is_some()
+}
+
+fn sponsorship_span_path(path: &str) -> Option<&'static str> {
+    if path == "/internal/v1/sponsored-model/responses" {
+        return Some("/internal/v1/sponsored-model/responses");
+    }
+    if path == "/api/v1/sponsorships" {
+        return Some("/api/v1/sponsorships");
+    }
+    if path.starts_with("/api/v1/sponsorships/") {
+        return Some("/api/v1/sponsorships/{redacted}");
+    }
+    let rest = path.strip_prefix("/api/v1/launches/")?;
+    let (_, launch_resource) = rest.split_once('/')?;
+    if launch_resource == "sponsorship" {
+        return Some("/api/v1/launches/{launch_id}/sponsorship");
+    }
+    launch_resource
+        .split('/')
+        .any(|segment| segment == "sponsorship")
+        .then_some("/api/v1/launches/{launch_id}/sponsorship/{redacted}")
+}
+
+fn request_span_path(path: &str) -> &str {
+    sponsorship_span_path(path).unwrap_or(path)
 }
 
 /// Apply the browser boundary shared by every public interface.
@@ -279,7 +404,7 @@ fn request_span(request: &Request) -> tracing::Span {
         "http.request",
         request_id = %request_id,
         method = %request.method(),
-        path = %request.uri().path(),
+        path = %request_span_path(request.uri().path()),
     )
 }
 
@@ -439,7 +564,7 @@ async fn main() {
 }
 
 async fn serve_normal_control_plane() {
-    let config = match Config::from_env() {
+    let mut config = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
             // Configuration failures are fatal and must say exactly what is
@@ -449,6 +574,18 @@ async fn serve_normal_control_plane() {
             std::process::exit(2);
         }
     };
+    // Resolve the exact public gateway origin before constructing Mongo,
+    // adapters, workers, or any other sponsorship dependency. Taking the
+    // tuple also drops staged-disabled raw secrets at this boundary.
+    let sponsorship_gateway_origin = config.sponsorship_gateway_origin();
+    let sponsorship_config =
+        match sponsorship::select(config.sponsorship.take(), sponsorship_gateway_origin) {
+            Ok(selected) => selected,
+            Err(error) => {
+                tracing::error!(error = %error, "sponsorship configuration is not usable");
+                std::process::exit(2);
+            }
+        };
     tracing::info!(
         bind = %config.bind,
         public_url = %config.public_url,
@@ -462,6 +599,7 @@ async fn serve_normal_control_plane() {
         rate_input_per_minute = config.rate_limits.input_per_minute.get(),
         trusted_proxy_networks = config.trusted_proxies.cidrs.len(),
         trusted_proxy_hops = config.trusted_proxies.forwarded_hops,
+        cloudflare_proxy_networks = config.trusted_proxies.cloudflare_cidrs.len(),
         "configuration loaded"
     );
 
@@ -537,9 +675,13 @@ async fn serve_normal_control_plane() {
             std::process::exit(2);
         }
     };
+    // `mongodb::Client::clone` retains the same pool. Keep that handle before
+    // moving the ordinary stores out of their startup aggregate.
+    let mongo_client = stores.client().clone();
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
+    let chat_host_store = Arc::new(stores.chat_hosts) as Arc<dyn layer2_core::ChatHostStore>;
     let operation_store = Arc::new(stores.operations) as Arc<dyn layer2_core::OperationStore>;
     let trigger_store = Arc::new(stores.triggers);
     let ticket_store =
@@ -615,6 +757,9 @@ async fn serve_normal_control_plane() {
     let handovers = storage
         .as_ref()
         .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>);
+    let chat_checkpoints = storage
+        .as_ref()
+        .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::ChatCheckpointStore>);
     let skill_packs = storage.map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
 
     let trigger_workspace_store: Option<Arc<crate::store::ChronoStorageTriggerWorkspaceStore>> =
@@ -662,6 +807,7 @@ async fn serve_normal_control_plane() {
                     base_url,
                     Arc::clone(&auth_state),
                     trigger_store.clone() as Arc<dyn layer2_core::ConnectionRevocationStore>,
+                    config.trigger.public_github_service_slug.clone(),
                 ) {
                     Ok(broker) => Arc::new(broker),
                     Err(error) => {
@@ -676,6 +822,15 @@ async fn serve_normal_control_plane() {
                 (unavailable.clone(), unavailable, None)
             }
         };
+    let trigger_composition = TriggerCompositionReadiness {
+        native_runtime_adapter: adapters
+            .contains_key(&layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
+        provider_github_broker: trigger_github.is_some(),
+        durable_workspace_store: trigger_workspace_store.is_some(),
+        github_capability_signer: github_capability_signer.is_some(),
+    };
+    let (trigger_runtime_capabilities, trigger_kernel) =
+        trigger_composition.admitted_session_route(&config.trigger.runtime_capabilities);
     if !auth_state.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; every request is attributed \
@@ -734,7 +889,7 @@ async fn serve_normal_control_plane() {
     // session provisioning and the administrator surface must never observe
     // different revisions of deployment policy by construction.
     let settings = Arc::new(PlatformSettingsService::new(settings_store));
-    let environments = EnvironmentProfileService::new(
+    let environments = EnvironmentProfileService::new_with_reserved_kernels(
         profile_store,
         baseline,
         catalog
@@ -743,6 +898,7 @@ async fn serve_normal_control_plane() {
         service_picker,
         config.default_agent.clone(),
         Arc::clone(&settings),
+        [layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)],
     );
     let service = SessionService::new(
         adapters,
@@ -751,6 +907,7 @@ async fn serve_normal_control_plane() {
         layer2_core::SessionPorts {
             context,
             handovers,
+            chat_checkpoints,
             credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
             // The same registry the profile editor picks from, asked for
             // contents rather than for names. A deployment without one still
@@ -763,6 +920,7 @@ async fn serve_normal_control_plane() {
                 .map(|store| store as Arc<dyn layer2_core::SessionWorkspaceSource>),
             skill_packs,
             settings: Some(Arc::clone(&settings)),
+            chat_hosts: Some(chat_host_store),
         },
         Arc::clone(&environments),
         layer2_core::Deployment {
@@ -773,24 +931,46 @@ async fn serve_normal_control_plane() {
             runtime_version: Some(config.sandbox_image.clone()),
             identity: Some(config.deployment_id.clone()),
             adopts_untagged: config.adopts_untagged_runtimes,
-            trigger_runtime_capabilities: config.trigger.runtime_capabilities.clone(),
+            trigger_runtime_capabilities,
             // The versioned Trigger profile selects this adapter explicitly;
             // Layer 2 treats the identifier as opaque and remains kernel-neutral.
-            trigger_kernel: Some(layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
+            trigger_kernel,
         },
     );
-    let trigger_service = Arc::new(
-        TriggerService::new(
-            trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
-            trigger_store as Arc<dyn layer2_core::LaunchStore>,
-            trigger_authority,
-        )
-        .with_launch_admission(Arc::clone(&service) as Arc<dyn layer2_core::TriggerLaunchAdmission>)
-        .with_session_cancellation(
-            Arc::clone(&service) as Arc<dyn layer2_core::TriggerSessionCancellation>
-        )
-        .with_rollout(Arc::new(config.trigger.rollout.clone())),
+    let mut sponsorship_runtime = match sponsorship::compose(
+        sponsorship_config,
+        &mongo_client,
+        &config.mongodb_database,
+        &config.deployment_id,
+        Arc::clone(&auth_state),
+        Arc::clone(&service),
+    )
+    .await
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot compose the sponsorship runtime");
+            std::process::exit(2);
+        }
+    };
+    let trigger_service = TriggerService::new(
+        trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
+        trigger_store as Arc<dyn layer2_core::LaunchStore>,
+        trigger_authority,
+    )
+    .with_launch_admission(Arc::clone(&service) as Arc<dyn layer2_core::TriggerLaunchAdmission>)
+    .with_session_cancellation(
+        Arc::clone(&service) as Arc<dyn layer2_core::TriggerSessionCancellation>
     );
+    let trigger_service = match sponsorship_runtime.as_ref() {
+        Some(sponsorship) => {
+            let verifier: Arc<dyn layer2_core::TriggerSponsorshipVerifier> = sponsorship.service();
+            trigger_service.with_sponsorship_verifier(verifier)
+        }
+        None => trigger_service,
+    };
+    let trigger_service =
+        Arc::new(trigger_service.with_rollout(Arc::new(config.trigger.rollout.clone())));
     tracing::info!(
         runtime_version = %config.sandbox_image,
         deployment = %config.deployment_id,
@@ -802,43 +982,40 @@ async fn serve_normal_control_plane() {
     // creator of the deterministic Trigger session, and Session is its
     // read-only attachment check. No partial worker starts: every closed effect
     // shares one executor, so a missing provider, durable workspace store, or
-    // policy signer disables all three scheduler lanes by construction.
-    let mut missing_trigger_worker_prerequisites = Vec::new();
-    if trigger_github.is_none() {
-        missing_trigger_worker_prerequisites.push("provider_github_broker");
-    }
-    if trigger_workspace_store.is_none() {
-        missing_trigger_worker_prerequisites.push("durable_trigger_workspace_store");
-    }
-    if github_capability_signer.is_none() {
-        missing_trigger_worker_prerequisites.push("github_capability_signer");
-    }
+    // policy signer disables all four scheduler lanes by construction.
+    let missing_trigger_worker_prerequisites = trigger_composition.missing_prerequisites();
     let trigger_effect_executor = match (
+        trigger_composition.is_ready(),
         trigger_github,
         trigger_workspace_store.as_ref(),
         github_capability_signer.as_ref(),
     ) {
-        (Some(github), Some(workspace_store), Some(signer)) => {
+        (true, Some(github), Some(workspace_store), Some(signer)) => {
             let baseline_store: Arc<dyn layer2_core::BaselineObjectStore> =
                 Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
             let checkpoint_store: Arc<dyn layer2_core::CheckpointObjectStore> =
                 Arc::clone(workspace_store) as Arc<dyn layer2_core::CheckpointObjectStore>;
             let diff_store: Arc<dyn layer2_core::DiffArtifactObjectStore> =
                 Arc::clone(workspace_store) as Arc<dyn layer2_core::DiffArtifactObjectStore>;
-            Some(Arc::new(
-                trigger::github_effects::GithubEffectExecutor::with_runtime(
-                    github,
-                    baseline_store,
-                    checkpoint_store,
-                    diff_store,
-                    Arc::clone(&service),
-                    Arc::clone(signer),
-                    trigger::github_effects::GithubEffectRuntimeLimits {
-                        fork_readiness_timeout: config.trigger.fork_readiness_timeout,
-                        changed_file_limit: config.trigger.changed_file_limit,
-                    },
-                ),
-            ))
+            let executor = trigger::github_effects::GithubEffectExecutor::with_runtime(
+                github,
+                baseline_store,
+                checkpoint_store,
+                diff_store,
+                Arc::clone(&service),
+                Arc::clone(signer),
+                trigger::github_effects::GithubEffectRuntimeLimits {
+                    fork_readiness_timeout: config.trigger.fork_readiness_timeout,
+                    changed_file_limit: config.trigger.changed_file_limit,
+                },
+            );
+            let executor = match sponsorship_runtime.as_ref() {
+                Some(sponsorship) => {
+                    executor.with_sponsorship(sponsorship.service(), sponsorship.gateway_origin())
+                }
+                None => executor,
+            };
+            Some(Arc::new(executor))
         }
         _ => None,
     };
@@ -881,6 +1058,21 @@ async fn serve_normal_control_plane() {
 
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
 
+    // Recovery-point behavior and host claims belong to the core. This binary
+    // owns only the deployment cadence that asks for one bounded pass.
+    chat::checkpoints::spawn(Arc::clone(&service));
+    let chat_title_generator = chat::titles::HttpChatTitleGenerator::new(
+        &config.upstream_base_url,
+        &config.upstream_model,
+    )
+    .map(|generator| Arc::new(generator) as Arc<dyn layer2_core::ChatTitleGenerator>);
+    if chat_title_generator.is_none() {
+        tracing::warn!(
+            "chat title model adapter is unavailable; deterministic title fallback remains active"
+        );
+    }
+    chat::sweeper::spawn(Arc::clone(&service), chat_title_generator);
+
     // Sessions end only when their owner says so, which leaves this as the one
     // thing that reclaims a runtime nothing refers to or finishes a session
     // whose start-up died with an earlier process.
@@ -906,6 +1098,9 @@ async fn serve_normal_control_plane() {
             diff_artifacts: trigger_workspace_store
                 .clone()
                 .map(|store| store as Arc<dyn layer2_core::DiffArtifactObjectStore>),
+            sponsorships: sponsorship_runtime
+                .as_ref()
+                .map(sponsorship::SponsorshipRuntime::service),
         }),
     };
     let rest = rest_api_router(
@@ -921,51 +1116,64 @@ async fn serve_normal_control_plane() {
     );
     let rate_limits =
         rate_limit::RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
-
-    let app = with_request_context(with_cors(
-        Router::new()
-            .merge(health::router(store))
-            .merge(rest)
-            // The priority-1 interface, sharing the facade's state because it
-            // projects the same sessions: a thread here is a session there, and
-            // two states would be two answers to the same question.
-            .merge(layer1_public::agui::router(public_state))
-            .merge(layer1_public::pty::router(
-                layer1_public::pty::TerminalState {
-                    sessions: Arc::clone(&service),
-                    tickets: Arc::clone(&tickets),
-                },
-            ))
-            .merge(layer1_public::mcp::router())
-            .merge(layer1_public::a2a::router())
-            .merge(auth::router(Arc::clone(&auth_state)))
-            // Added in reverse wrapping order. Activity records admitted work,
-            // never the traffic being refused to protect its own Mongo write.
-            .layer(axum::middleware::from_fn_with_state(
-                ActivityRecorder::new(Arc::clone(&activity)),
-                activity::record,
-            ))
-            // Exact route-class limits see the identity established outside
-            // them and run before activity buffers a body or writes MongoDB.
-            .layer(axum::middleware::from_fn_with_state(
+    let sponsored_model_gateway = sponsorship_runtime
+        .as_ref()
+        .map(sponsorship::SponsorshipRuntime::gateway_router)
+        .map(|gateway| {
+            gateway.layer(axum::middleware::from_fn_with_state(
                 Arc::clone(&rate_limits),
-                rate_limit::enforce,
-            ))
-            .layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&auth_state),
-                auth::attach_subject,
-            ))
-            // A cheap network guard is outside authentication, bounding store
-            // lookups and bearer introspection as well as downstream work.
-            .layer(axum::middleware::from_fn_with_state(
-                rate_limits,
                 rate_limit::admit,
             ))
-            // The extension is outermost so every body extractor sees the
-            // chosen ceiling. The activity recorder uses the same constant.
-            .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES)),
+        });
+    let public = Router::new()
+        .merge(health::router(store))
+        .merge(rest)
+        // The priority-1 interface, sharing the facade's state because it
+        // projects the same sessions: a thread here is a session there, and
+        // two states would be two answers to the same question.
+        .merge(layer1_public::agui::router(public_state))
+        .merge(layer1_public::pty::router(
+            layer1_public::pty::TerminalState {
+                sessions: Arc::clone(&service),
+                tickets: Arc::clone(&tickets),
+            },
+        ))
+        .merge(layer1_public::mcp::router())
+        .merge(layer1_public::a2a::router())
+        .merge(auth::router(Arc::clone(&auth_state)))
+        // Added in reverse wrapping order. Activity records admitted work,
+        // never the traffic being refused to protect its own Mongo write.
+        .layer(axum::middleware::from_fn_with_state(
+            ActivityRecorder::new(Arc::clone(&activity)),
+            activity::record,
+        ))
+        // Exact route-class limits see the identity established outside them
+        // and run before activity buffers a body or writes MongoDB.
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&rate_limits),
+            rate_limit::enforce,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&auth_state),
+            auth::attach_subject,
+        ))
+        // A cheap network guard is outside authentication, bounding store
+        // lookups and bearer introspection as well as downstream work.
+        .layer(axum::middleware::from_fn_with_state(
+            rate_limits,
+            rate_limit::admit,
+        ))
+        // The extension is outermost so every body extractor sees the chosen
+        // ceiling. The activity recorder uses the same constant.
+        .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
+    // Merge only after public middleware is fixed onto its routes. The model
+    // gateway must authenticate the runtime bearer itself, not send it through
+    // ordinary subject authentication or provider introspection.
+    let routed = merge_sponsored_model_gateway(public, sponsored_model_gateway);
+    let app = with_sponsorship_privacy(with_request_context(with_cors(
+        routed,
         config.cors_origins.clone(),
-    ));
+    )));
 
     let listener = match tokio::net::TcpListener::bind(&config.bind).await {
         Ok(l) => l,
@@ -976,15 +1184,69 @@ async fn serve_normal_control_plane() {
     };
     tracing::info!(bind = %config.bind, "control plane listening");
 
-    if let Err(e) = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    {
+    let (shutdown_notice, shutdown_wait) = tokio::sync::watch::channel(false);
+    let sponsorship_workers = sponsorship_runtime
+        .as_mut()
+        .and_then(|runtime| runtime.start_workers(shutdown_notice.clone()));
+    let server = async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(wait_for_shutdown(shutdown_wait))
+        .await
+    };
+    tokio::pin!(server);
+
+    // A server failure is handled immediately. A termination signal instead
+    // starts one absolute budget for both Axum and the owned recovery lanes;
+    // neither drain is allowed to consume the other's Kubernetes grace period.
+    let server_completed = tokio::select! {
+        result = server.as_mut() => Some(result),
+        _ = shutdown_signal() => None,
+    };
+    let _ = shutdown_notice.send(true);
+    let server_result = match server_completed {
+        Some(result) => {
+            if let Some(workers) = sponsorship_workers {
+                workers.shutdown().await;
+            }
+            result
+        }
+        None => {
+            let worker_drain = async move {
+                if let Some(workers) = sponsorship_workers {
+                    workers.shutdown().await;
+                }
+            };
+            match tokio::time::timeout(PROCESS_DRAIN_TIMEOUT, async {
+                let (server_result, ()) = tokio::join!(server.as_mut(), worker_drain);
+                server_result
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!(
+                        timeout_seconds = PROCESS_DRAIN_TIMEOUT.as_secs(),
+                        "process drain timed out; cancelling unfinished HTTP and recovery work"
+                    );
+                    return;
+                }
+            }
+        }
+    };
+    if let Err(e) = server_result {
         tracing::error!(error = %e, "server stopped with an error");
         std::process::exit(1);
+    }
+}
+
+async fn wait_for_shutdown(mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            break;
+        }
     }
 }
 
@@ -1133,6 +1395,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sponsored_model_gateway_bypasses_ordinary_auth_middleware() {
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        use tower::ServiceExt as _;
+
+        let public_auth_calls = Arc::new(AtomicUsize::new(0));
+        let observed_auth_calls = Arc::clone(&public_auth_calls);
+        let public = Router::new()
+            .route("/public", post(|| async { StatusCode::NO_CONTENT }))
+            .layer(axum::middleware::from_fn(
+                move |request: Request, next: Next| {
+                    let observed_auth_calls = Arc::clone(&observed_auth_calls);
+                    async move {
+                        observed_auth_calls.fetch_add(1, Ordering::SeqCst);
+                        next.run(request).await
+                    }
+                },
+            ));
+        let gateway = Router::new().route(
+            "/internal/v1/sponsored-model/responses",
+            post(|| async { StatusCode::NO_CONTENT }),
+        );
+        let app = merge_sponsored_model_gateway(public, Some(gateway));
+
+        let gateway_response = app
+            .clone()
+            .oneshot(
+                Request::post("/internal/v1/sponsored-model/responses")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gateway_response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(public_auth_calls.load(Ordering::SeqCst), 0);
+
+        let public_response = app
+            .oneshot(Request::post("/public").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(public_response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(public_auth_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn legacy_stage_completion_and_client_shutdown_precede_listener_bind() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let stage_events = Arc::clone(&events);
@@ -1185,7 +1492,7 @@ mod tests {
     }
 
     #[test]
-    fn request_span_records_correlation_without_query_credentials() {
+    fn request_span_redacts_sponsorship_paths_and_query_credentials() {
         use tracing::{field::Visit, span::Attributes, Subscriber};
         use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer};
 
@@ -1220,7 +1527,7 @@ mod tests {
         let fields = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::registry().with(Capture(Arc::clone(&fields)));
         tracing::subscriber::with_default(subscriber, || {
-            let request = Request::get(
+            let ordinary_request = Request::get(
                 "/api/v1/sessions/sesn_trace_canary/terminal\
                  ?ticket=pty-ticket-secret-488&code=oauth-code-secret-488\
                  &state=oauth-state-secret-488",
@@ -1228,7 +1535,40 @@ mod tests {
             .header("x-request-id", "48800000-0000-4000-8000-000000000006")
             .body(axum::body::Body::empty())
             .expect("request builds");
-            let _span = request_span(&request);
+            let _ordinary_span = request_span(&ordinary_request);
+            let sponsorship_request = Request::get(
+                "/api/v1/sponsorships/credentials/credential-path-marker-488/\
+                 malformed-suffix-marker-488?cursor=sponsorship-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("sponsorship request builds");
+            let _sponsorship_span = request_span(&sponsorship_request);
+            let launch_request = Request::get(
+                "/api/v1/launches/launch-path-marker-488/sponsorship/\
+                 malformed-launch-suffix-marker-488?cursor=launch-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("Launch sponsorship request builds");
+            let _launch_span = request_span(&launch_request);
+            let empty_launch_request = Request::get(
+                "/api/v1/launches//sponsorship/malformed-empty-launch-marker-488\
+                 ?cursor=empty-launch-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("empty Launch sponsorship request builds");
+            let _empty_launch_span = request_span(&empty_launch_request);
+            let repeated_separator_request = Request::get(
+                "/api/v1/launches/repeated-launch-marker-488//sponsorship/\
+                 malformed-repeated-marker-488?cursor=repeated-launch-query-marker-488",
+            )
+            .body(axum::body::Body::empty())
+            .expect("repeated-separator sponsorship request builds");
+            let _repeated_separator_span = request_span(&repeated_separator_request);
+            let ordinary_launch_request =
+                Request::get("/api/v1/launches/ordinary-launch-control-489/status")
+                    .body(axum::body::Body::empty())
+                    .expect("ordinary Launch request builds");
+            let _ordinary_launch_span = request_span(&ordinary_launch_request);
         });
         let fields = fields.lock().expect("capture lock is usable");
         assert!(
@@ -1242,10 +1582,41 @@ mod tests {
             }),
             "request span must carry the request path: {fields:?}"
         );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path" && value.contains("/api/v1/sponsorships/{redacted}")
+            }),
+            "sponsorship spans must use a fixed redacted path: {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path"
+                    && value.contains("/api/v1/launches/{launch_id}/sponsorship/{redacted}")
+            }),
+            "Launch sponsorship spans must redact the Launch and suffix: {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path"
+                    && value.contains("/api/v1/launches/ordinary-launch-control-489/status")
+            }),
+            "ordinary Launch spans must preserve their request path: {fields:?}"
+        );
         for secret in [
             "pty-ticket-secret-488",
             "oauth-code-secret-488",
             "oauth-state-secret-488",
+            "credential-path-marker-488",
+            "malformed-suffix-marker-488",
+            "sponsorship-query-marker-488",
+            "launch-path-marker-488",
+            "malformed-launch-suffix-marker-488",
+            "launch-query-marker-488",
+            "malformed-empty-launch-marker-488",
+            "empty-launch-query-marker-488",
+            "repeated-launch-marker-488",
+            "malformed-repeated-marker-488",
+            "repeated-launch-query-marker-488",
         ] {
             assert!(
                 fields.iter().all(|(_, value)| !value.contains(secret)),
@@ -1294,6 +1665,79 @@ mod tests {
         assert!(
             issuer < scheduler,
             "an immediate scheduler tick must observe the installed issuer"
+        );
+    }
+
+    #[test]
+    fn trigger_route_and_workers_share_one_complete_prerequisite_table() {
+        let complete = TriggerCompositionReadiness {
+            native_runtime_adapter: true,
+            provider_github_broker: true,
+            durable_workspace_store: true,
+            github_capability_signer: true,
+        };
+        let configured = vec![
+            layer2_core::RequiredCapability::Conversation,
+            layer2_core::RequiredCapability::RestrictedServiceGateway,
+        ];
+        let (capabilities, kernel) = complete.admitted_session_route(&configured);
+        assert_eq!(capabilities, configured);
+        assert_eq!(kernel.unwrap().as_str(), trigger::TRIGGER_KERNEL_ID);
+        assert!(complete.missing_prerequisites().is_empty());
+
+        for (missing, expected) in [
+            (
+                TriggerCompositionReadiness {
+                    native_runtime_adapter: false,
+                    ..complete
+                },
+                "native_trigger_runtime_adapter",
+            ),
+            (
+                TriggerCompositionReadiness {
+                    provider_github_broker: false,
+                    ..complete
+                },
+                "provider_github_broker",
+            ),
+            (
+                TriggerCompositionReadiness {
+                    durable_workspace_store: false,
+                    ..complete
+                },
+                "durable_trigger_workspace_store",
+            ),
+            (
+                TriggerCompositionReadiness {
+                    github_capability_signer: false,
+                    ..complete
+                },
+                "github_capability_signer",
+            ),
+        ] {
+            let (capabilities, kernel) = missing.admitted_session_route(&configured);
+            assert!(capabilities.is_empty(), "{expected}");
+            assert!(kernel.is_none(), "{expected}");
+            assert_eq!(missing.missing_prerequisites(), [expected]);
+        }
+    }
+
+    #[test]
+    fn incomplete_trigger_composition_reports_every_missing_boundary_in_stable_order() {
+        let missing = TriggerCompositionReadiness {
+            native_runtime_adapter: false,
+            provider_github_broker: false,
+            durable_workspace_store: false,
+            github_capability_signer: false,
+        };
+        assert_eq!(
+            missing.missing_prerequisites(),
+            [
+                "native_trigger_runtime_adapter",
+                "provider_github_broker",
+                "durable_trigger_workspace_store",
+                "github_capability_signer",
+            ]
         );
     }
 }

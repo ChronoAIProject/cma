@@ -808,6 +808,7 @@ async fn run_release_journey() {
         checkpoint_store: Some(objects.clone()),
         diff_store: Some(objects.clone()),
         sessions: Some(sessions.clone()),
+        sponsorship: None,
         capability_signer: Some(test_signer()),
         fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         changed_file_limit: TEST_CHANGED_FILE_LIMIT,
@@ -1333,6 +1334,7 @@ fn checkpoint_package(
         quiesced_writers: 1,
         writer_state: layer3_adapter::WorkspaceWriterState::Resumed,
         writer_resume_token: None,
+        includes_git_metadata: false,
         archive,
     }
 }

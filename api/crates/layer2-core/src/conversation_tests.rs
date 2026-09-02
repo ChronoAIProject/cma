@@ -4,7 +4,7 @@
 //! client saw, a client that arrives later — or comes back after a restart —
 //! must be able to reconstruct from the sequence alone.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, PermissionLocator};
@@ -1608,4 +1608,221 @@ async fn a_sign_in_for_a_session_nobody_holds_any_more_is_dropped_quietly() {
             .any(|s| s.id == id),
         "the core must survive a sign-in for a session that no longer exists"
     );
+}
+
+#[tokio::test]
+async fn linear_prompt_metadata_is_durable_but_ordinary_prompt_history_is_unchanged() {
+    let (ordinary, owner, ordinary_id, _) = conversation().await;
+    let ordinary_turn = ordinary
+        .send_prompt(&owner, &ordinary_id, "ordinary input".into())
+        .await
+        .expect("ordinary input is accepted");
+    let ordinary_events = ordinary
+        .events_since(&owner, &ordinary_id, None)
+        .await
+        .expect("ordinary history is readable");
+    assert!(ordinary_events.iter().any(|event| {
+        event.seq == ordinary_turn && matches!(event.kind, EventKind::TurnStarted)
+    }));
+    assert!(ordinary_events
+        .iter()
+        .all(|event| !matches!(event.kind, EventKind::TurnMetadata { .. })));
+
+    let (linear, owner, linear_id, _) = conversation().await;
+    let metadata = BTreeMap::from([
+        ("request".into(), "response-create".into()),
+        ("trace".into(), "linear-one".into()),
+    ]);
+    let linear_turn = linear
+        .send_linear_prompt(
+            &owner,
+            &linear_id,
+            "linear input".into(),
+            None,
+            metadata.clone(),
+        )
+        .await
+        .expect("the first linear input is accepted");
+    let linear_events = linear
+        .events_since(&owner, &linear_id, None)
+        .await
+        .expect("linear history is readable");
+    let turn_index = linear_events
+        .iter()
+        .position(|event| event.seq == linear_turn && matches!(event.kind, EventKind::TurnStarted))
+        .expect("the returned turn boundary is durable");
+    assert!(matches!(
+        &linear_events[turn_index + 1].kind,
+        EventKind::OwnerMessage { content } if content == "linear input"
+    ));
+    assert!(matches!(
+        &linear_events[turn_index + 2].kind,
+        EventKind::TurnMetadata { metadata: retained } if retained == &metadata
+    ));
+}
+
+#[tokio::test]
+async fn linear_metadata_bounds_are_enforced_before_runtime_delivery() {
+    let (service, owner, id, adapter) = conversation().await;
+    let cases = [
+        (0..=crate::MAX_TURN_METADATA_PAIRS)
+            .map(|index| (format!("key-{index}"), "value".into()))
+            .collect(),
+        BTreeMap::from([(
+            "k".repeat(crate::MAX_TURN_METADATA_KEY_CHARS + 1),
+            "value".into(),
+        )]),
+        BTreeMap::from([(
+            "key".into(),
+            "v".repeat(crate::MAX_TURN_METADATA_VALUE_CHARS + 1),
+        )]),
+    ];
+    for metadata in cases {
+        assert!(matches!(
+            service
+                .send_linear_prompt(&owner, &id, "must not arrive".into(), None, metadata)
+                .await,
+            Err(crate::CoreError::InvalidRequest(_))
+        ));
+    }
+
+    let sent = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation is open")
+        .sent()
+        .await;
+    assert!(
+        sent.is_empty(),
+        "invalid metadata must be refused pre-delivery"
+    );
+    assert!(service
+        .events_since(&owner, &id, None)
+        .await
+        .unwrap()
+        .iter()
+        .all(|event| !matches!(event.kind, EventKind::TurnStarted)));
+}
+
+#[tokio::test]
+async fn a_stale_linear_predecessor_is_refused_before_runtime_delivery() {
+    let (service, owner, id, adapter) = conversation().await;
+    let error = service
+        .send_linear_prompt(
+            &owner,
+            &id,
+            "fork attempt".into(),
+            Some(99),
+            BTreeMap::new(),
+        )
+        .await
+        .expect_err("a nonexistent predecessor cannot be extended");
+    assert_eq!(
+        error,
+        crate::CoreError::InvalidState {
+            detail: Some(crate::CONVERSATION_ADVANCED_DETAIL.into())
+        }
+    );
+    assert!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation is open")
+            .sent()
+            .await
+            .is_empty(),
+        "a stale branch must never reach the runtime"
+    );
+}
+
+#[tokio::test]
+async fn simultaneous_linear_prompts_cannot_fork_one_conversation_end() {
+    let (service, owner, id, _) = conversation().await;
+    let first =
+        service.send_linear_prompt(&owner, &id, "first contender".into(), None, BTreeMap::new());
+    let second = service.send_linear_prompt(
+        &owner,
+        &id,
+        "second contender".into(),
+        None,
+        BTreeMap::new(),
+    );
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    assert!(first.is_err() || second.is_err());
+
+    let events = service
+        .events_since(&owner, &id, None)
+        .await
+        .expect("the winning history is readable");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::OwnerMessage { .. }))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_completed_linear_turn_can_only_be_extended_by_its_exact_response() {
+    let (service, owner, id, adapter) = conversation().await;
+    let first = service
+        .send_linear_prompt(&owner, &id, "first turn".into(), None, BTreeMap::new())
+        .await
+        .expect("the first turn starts");
+    adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation is open")
+        .updates
+        .send(layer3_adapter::ConversationUpdate::TurnEnded(
+            layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+        ))
+        .await
+        .expect("the core receives completion");
+    assert!(
+        until_logged(&service, &owner, &id, |kind| matches!(
+            kind,
+            EventKind::TurnCompleted
+        ))
+        .await
+    );
+
+    let stale = service
+        .send_linear_prompt(
+            &owner,
+            &id,
+            "missing predecessor".into(),
+            None,
+            BTreeMap::new(),
+        )
+        .await
+        .expect_err("omitting the established predecessor is a fork");
+    assert!(matches!(stale, crate::CoreError::InvalidState { .. }));
+
+    let second = service
+        .send_linear_prompt(
+            &owner,
+            &id,
+            "second turn".into(),
+            Some(first),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("the exact predecessor extends the conversation");
+    assert!(second > first);
 }

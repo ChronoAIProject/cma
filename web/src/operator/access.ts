@@ -1,5 +1,5 @@
 import type { Capability } from '../auth/types';
-import type { AdminSession } from './types';
+import type { AdminSession, ChatHost } from './types';
 
 /**
  * Who is offered what, and which controls apply.
@@ -16,7 +16,8 @@ import type { AdminSession } from './types';
  */
 
 /** Which of the panel's views this is. */
-export type OperatorViewId = 'people' | 'activity' | 'namespace' | 'sessions' | 'settings';
+export type OperatorViewId =
+  'people' | 'activity' | 'namespace' | 'sessions' | 'chat_hosts' | 'settings' | 'chat_settings';
 
 /** One view of the operator panel, and what a caller must hold to see it. */
 export interface OperatorView {
@@ -34,7 +35,7 @@ export interface OperatorView {
 }
 
 /**
- * The five views, in the order the panel offers them.
+ * The six views, in the order the panel offers them.
  *
  * People first because every other record view names them, then what the
  * service was asked to do, then what is running, then the view that acts on
@@ -45,7 +46,9 @@ export const OPERATOR_VIEWS: readonly OperatorView[] = [
   { id: 'activity', label: 'Activity', capability: 'read_activity_log' },
   { id: 'namespace', label: 'Namespace', capability: 'read_runtime_inventory' },
   { id: 'sessions', label: 'Sessions', capability: 'read_all_sessions' },
+  { id: 'chat_hosts', label: 'Chat hosts', capability: 'read_all_sessions' },
   { id: 'settings', label: 'Settings', capability: 'configure_platform' },
+  { id: 'chat_settings', label: 'Chat', capability: 'configure_platform' },
 ];
 
 /** The views this caller is offered. */
@@ -126,4 +129,24 @@ export function controlsFor(
     default:
       return { canStop: true, canTerminate: true };
   }
+}
+
+/** Whether a host may be retired from the inventory, and why not when it may not. */
+export function retirementFor(
+  host: ChatHost,
+  capabilities: readonly Capability[],
+): { readonly canRetire: boolean; readonly reason?: string } {
+  if (!canControlAnySession(capabilities)) {
+    return { canRetire: false, reason: NOT_ENTITLED };
+  }
+  if (host.status === 'retired') {
+    return { canRetire: false, reason: 'This chat host is already retired.' };
+  }
+  if (host.status !== 'active' && host.status !== 'paused') {
+    return {
+      canRetire: false,
+      reason: 'A chat host can be retired only while active or paused.',
+    };
+  }
+  return { canRetire: true };
 }

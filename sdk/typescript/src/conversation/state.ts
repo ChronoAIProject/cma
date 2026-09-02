@@ -2,7 +2,7 @@ import type { AguiEvent } from '../agui/index.js';
 import { applyStateDelta } from '../agui/state.js';
 import { GAP_VALUE_FRAMES, PATHS, type AguiState } from '../wire.js';
 import type { AvailableCommand, ConfigOption, Conversation, Entry, PlanStep } from './model.js';
-import { memoryPressureFrom, resourcesFrom } from './resources.js';
+import { cpuPressureFrom, memoryPressureFrom, resourcesFrom } from './resources.js';
 
 /** Apply the canonical state first, then derive the fields this surface draws. */
 export function reduceStateDelta(
@@ -41,22 +41,32 @@ function projectScalarState(
   const statusReported = event.patch.some(
     (operation) => operation.op === 'replace' && operation.path === PATHS.status,
   );
-  if (statusReported || fieldChanged(previous, current, 'status')) {
-    const status = fieldOf(current, 'status');
+  const status = fieldOf(current, 'status');
+  const statusFolded = statusReported || fieldChanged(previous, current, 'status');
+  const sessionInteractive = status === 'ready' || status === 'running';
+  if (statusFolded) {
     next = {
       ...next,
       // Unknown future values stay noninteractive until this SDK learns what
       // they mean. `running` is lifecycle-interactive; steer admission still
       // depends on the granted capability and concurrent-input policy.
-      sessionInteractive: status === 'ready' || status === 'running',
+      sessionInteractive,
     };
   }
 
   if (fieldChanged(previous, current, 'resources')) {
     next = { ...next, resources: resourcesFrom(fieldOf(current, 'resources')) };
   }
+  if (fieldChanged(previous, current, 'cpuPressure')) {
+    next = { ...next, cpuPressure: cpuPressureFrom(fieldOf(current, 'cpuPressure')) };
+  }
   if (fieldChanged(previous, current, 'memoryPressure')) {
     next = { ...next, memoryPressure: memoryPressureFrom(fieldOf(current, 'memoryPressure')) };
+  }
+  if (statusFolded && !sessionInteractive) {
+    // A runtime can disappear before it writes the closing edges. Lifecycle
+    // state still makes both derived warnings definitively no longer current.
+    next = { ...next, cpuPressure: undefined, memoryPressure: undefined };
   }
 
   const previousUsage = recordOf(fieldOf(previous, 'usage'));

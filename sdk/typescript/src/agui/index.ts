@@ -14,6 +14,11 @@ export {
   type LinkStatus,
 } from './connection.js';
 export {
+  readAguiCapabilities,
+  toAguiCapabilities,
+  type AguiCapabilityDocument,
+} from './capabilities.js';
+export {
   toEvent,
   type AguiEvent,
   type Interrupt,

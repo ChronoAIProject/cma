@@ -170,7 +170,7 @@ Content-Type: application/json
   ],
   "tools": [],
   "context": [],
-  "forwardedProps": { "environmentProfile": "envp_7dec1b0ca73c46b88121b259577bbe96" }
+  "forwardedProps": { "surface": "chat" }
 }
 ```
 
@@ -179,7 +179,7 @@ Content-Type: application/json
 | `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected. The new session gets an identifier chosen by the service, not the one you sent, and every event on the run carries it: read `threadId` off the first event and use that from then on |
 | `runId` | Client-generated id for this turn; echoed on every event of the run stream. An explicit value names one subject- and effective-session-scoped admission with a five-minute execution lease; a finite stored outcome is replayable for 24 hours from its completion. Reusing it with the same final prompt or normalized approval resolutions replays that finite admission rather than delivering another action; changing that semantic action returns HTTP 422 with code `agui_operation_reused`. It must contain a non-whitespace character and differ from the effective `threadId`, or CMA returns HTTP 422 with code `invalid_request`. Frames read over `GET /api/v1/agui/events` carry the session's own id here — see §7 |
 | `messages` | The conversation. The final user message is the turn's input |
-| `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the profile it names or from what the deployment configured, and no interface chooses one |
+| `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `surface: "chat"` selects the deployment-managed chat surface; `environmentProfile` selects an ordinary session profile. They are mutually exclusive. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the selected configuration, and no interface chooses one |
 | `resume` | Present only when answering an interrupt — see §4 |
 
 `forwardedProps` is ignored on an existing thread because what it sets is frozen at session creation. Changing it requires a new thread.
@@ -206,10 +206,19 @@ finite creation outcome is retained for 24 hours from completion. Retrying it
 with the same creation-affecting properties resolves
 to the same core-minted session, and using the minted id directly reaches that
 same session. Reusing the requested alias with a different
-`environmentProfile` returns `agui_operation_reused`; it never provisions a
-second session under the ambiguous alias.
+`environmentProfile` or a different `surface` returns
+`agui_operation_reused`; it never provisions a second session under the
+ambiguous alias.
 
-`environmentProfile` is the one property in it this service reads. `kernel` is accepted and ignored, as the table above says; `llmSource` was named here as though it were honoured and frozen, and has never existed anywhere in the service — the same phantom `docs/API_REST.md` carried as `llm_source`. Both are gone from the example above, so it now shows only what sending actually does something.
+`environmentProfile` and `surface` are the creation properties this service
+reads. `surface` is a closed enum whose current value is `chat`. A chat surface
+uses the deployment's complete chat configuration and therefore cannot be
+combined with `environmentProfile`; that request returns `422 invalid_request`
+before a session or host is provisioned. `kernel` is accepted and ignored, as
+the table above says; `llmSource` was named here as though it were honoured and
+frozen, and has never existed anywhere in the service — the same phantom
+`docs/API_REST.md` carried as `llm_source`. Both are absent from the example
+above, so it shows only what sending actually changes.
 
 Unlike a body this service defines, an unrecognised property here is **not** refused. `forwardedProps` is AG-UI's own extension point, and a conforming client may forward props aimed at middleware or another consumer entirely; rejecting a run over one would break that. The absence is therefore declared rather than enforced, which is what `docs/API_Overview.md`'s "subsets are declared, not discovered" asks for. `POST /api/v1/sessions` takes the opposite approach for the opposite reason: that body is CMA's own, so an unknown field there is refused by name.
 
@@ -268,6 +277,7 @@ emitted.
   "planeChanges": [],
   "contextCompactions": [],
   "runtimeLosses": [],
+  "cpuPressure": null,
   "memoryPressure": null,
   "resources": null
 }
@@ -283,7 +293,8 @@ command list are real reports, arriving as `0` and `[]` rather than remaining
 unknown. `/usage/contextUsed` is different only at the core event boundary:
 zero there is the established "no context reading" sentinel, so its projection
 omits that operation and preserves the canonical `null` or last positive value.
-For `/memoryPressure`, `null` means no pressure episode is currently open.
+For `/cpuPressure` and `/memoryPressure`, `null` means no pressure episode is
+currently open.
 For `/status` and `/progress`, `null` means that no durable lifecycle or
 provisioning value has reached this stream yet.
 
@@ -298,6 +309,7 @@ of the current contract.
 | `/availableCommands` | `replace` | array of `{name: string, description: string}` | the kernel announces the complete command list; projected durably and on the cursorless live lane |
 | `/configOptions` | `replace` | array of `{id: string, name: string, kind: string}` | the kernel reports the complete set of configurable options |
 | `/contextCompactions/-` | `add` | `{was: integer, now: integer, window?: integer}` | the agent summarises its conversation to make room; `window` is omitted where unstated |
+| `/cpuPressure` | `replace` | `{usedMillis: integer, limitMillis: integer, occupancyPermille: integer, since: string or null}` or `null` | a durable processor-pressure episode opens or closes |
 | `/gaps/-` | `add` | `{frames: integer}` | the runtime reports that conversation frames were dropped |
 | `/memoryPressure` | `replace` | `{usedBytes: integer, limitBytes: integer, occupancyPermille: integer, since: string or null}` or `null` | a durable memory-pressure episode opens or closes |
 | `/mode` | `replace` | permission-mode string in the kernel's own vocabulary | the session's permission mode changes |
@@ -483,13 +495,14 @@ The consequence for a chat UI is worth stating plainly: **the log** gives you th
 
 **`STATE_DELTA` is where `get_usage` lands.** Token counts arrive as RFC 6902 patches against `/usage`, so a chat UI can show spend without polling. A positive current reading is written at `/usage/contextUsed`. Core turn accounting uses zero in that field to mean that it carried no context reading; that sentinel is not projected, so the initial `null` or prior positive reading remains. The ceiling is written at `/usage/contextWindow` only where the runtime states one. An absent ceiling means "not stated", never zero, and a later usage report that omits it does not erase one already stated.
 
-Memory pressure is durable state folded from those ephemeral readings. An
-opening edge replaces `/memoryPressure` with `usedBytes`, `limitBytes`,
-`occupancyPermille`, and `since`, where `since` is the durable event's own
-timestamp. A closing edge replaces the path with `null`, never removes it: a
-client that joined after the open may not have the path, and RFC 6902 would
-reject removing it. Neither edge ends the run; a squeeze is something to show
-while the agent remains working, not a `RUN_ERROR`.
+Processor and memory pressure are independent durable states folded from those
+ephemeral readings. An opening edge replaces `/cpuPressure` with `usedMillis`,
+`limitMillis`, `occupancyPermille`, and `since`, or `/memoryPressure` with the
+corresponding byte figures. `since` is the durable event's own timestamp. A
+closing edge replaces its path with `null`, never removes it: a client that
+joined after the open may not have the path, and RFC 6902 would reject removing
+it. Neither edge ends the run; pressure is something to show while the agent
+remains working, not a `RUN_ERROR`.
 
 When the agent summarises the conversation to make room, a patch is appended to `/contextCompactions/-` with `was`, `now`, and `window` where a ceiling was stated. `window` is omitted rather than null where none is known. This is a durable boundary and precedes the lower `/usage/contextUsed` reading that revealed it, so a replay explains why the conversation became smaller instead of leaving its reader to infer that from the figures.
 
@@ -701,6 +714,7 @@ GET /api/v1/agui/capabilities
     "execution":      { "codeExecution": true, "sandboxed": true },
     "custom":         { "cma:terminal": false, "cma:usage": true,
                         "cma:resources": true,
+                        "cma:chat": { "enabled": false },
                         "cma:changePlane": false, "cma:planeChangeObserved": true,
                         "cma:liveFrames": true,
                         "cma:trigger": {
@@ -720,6 +734,11 @@ GET /api/v1/agui/capabilities
 `websocket: false` is deliberate. AG-UI here rides SSE; the terminal has its own WebSocket and is not an AG-UI transport.
 
 The `events` map is the machine-readable form of §3 and is the contract. Read it rather than assuming.
+
+`cma:chat.enabled` is the deployment's current owner-facing Chat switch, not a
+static claim about the build. It is `false` when Chat settings are absent,
+disabled, or cannot be read safely. Clients gate the Chat surface on an exact
+`true`; an older document with no `cma:chat` object is therefore disabled too.
 
 The closed `cma:trigger` object declares companion availability. A missing
 object means this deployment does not project the workflow through AG-UI; it

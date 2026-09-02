@@ -18,9 +18,8 @@ import { Menu } from '../ui/Menu';
  * which is what this header used to do. The primary is Resume where §11
  * offers it — revive is the primary action wherever it is offered — and
  * Reconnect otherwise. The secondary is Details, which opens the drawer.
- * Everything else — moving the session's plane, ending it — lives behind the
- * `···` key. Delete lives at the drawer's foot, away from everything
- * reversible.
+ * Everything else — moving the session's plane, pausing, terminating and
+ * deleting it — lives behind the lifecycle or overflow menus.
  *
  * **Every disabled control states why, and one sentence covers all of them.**
  * `abilitiesFor` is the single source of enablement and it disables controls
@@ -37,6 +36,8 @@ interface SessionActionsProps {
   readonly onReconnect: () => void;
   readonly onRevive: () => void;
   readonly onStop: () => void;
+  /** End the runtime and keep the session's transcript and history. */
+  readonly onTerminate: () => void;
   /**
    * Delete the session and everything it recorded.
    *
@@ -74,12 +75,30 @@ interface SessionActionsProps {
   readonly signingIn?: boolean;
 }
 
+/** Chat lifecycle belongs to the platform, so its header exposes Details alone. */
+export function ChatSessionActions({
+  onDetails,
+  detailsOpen = false,
+}: {
+  readonly onDetails: () => void;
+  readonly detailsOpen?: boolean;
+}) {
+  return (
+    <div className="actions">
+      <Button size="sm" onClick={onDetails} aria-expanded={detailsOpen}>
+        Details
+      </Button>
+    </div>
+  );
+}
+
 export function SessionActions({
   session,
   signingIn = false,
   onReconnect,
   onRevive,
   onStop,
+  onTerminate,
   onDelete,
   onTerminalThemeChange,
   onDetails,
@@ -89,6 +108,7 @@ export function SessionActions({
   busy = false,
 }: SessionActionsProps) {
   const [confirmingSwitch, setConfirmingSwitch] = useState(false);
+  const [confirmingTerminate, setConfirmingTerminate] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [lifecycleOpen, setLifecycleOpen] = useState(false);
@@ -175,6 +195,7 @@ export function SessionActions({
           row('resume', 'Resume', can.canRevive),
           row('reconnect', 'Reconnect', can.canReconnect),
           row('stop', 'Pause session', can.canStop),
+          row('terminate', 'Terminate session', can.canTerminate),
           { type: 'separator', id: 'before-delete' },
           { ...row('delete', 'Delete', can.canDelete), danger: true },
         ]}
@@ -183,7 +204,11 @@ export function SessionActions({
           if (id === 'resume') return onRevive();
           if (id === 'reconnect') return onReconnect();
           if (id === 'stop') return onStop();
-          setConfirmingDelete(true);
+          if (id === 'terminate') {
+            setConfirmingTerminate(true);
+            return;
+          }
+          if (id === 'delete') setConfirmingDelete(true);
         }}
         onClose={() => {
           setLifecycleOpen(false);
@@ -285,6 +310,42 @@ export function SessionActions({
           </Button>
         }
       />
+
+      <Modal
+        open={confirmingTerminate}
+        title="Terminate this session?"
+        onClose={() => {
+          setConfirmingTerminate(false);
+        }}
+        footer={
+          <>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setConfirmingTerminate(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={() => {
+                setConfirmingTerminate(false);
+                onTerminate();
+              }}
+            >
+              Terminate session
+            </Button>
+          </>
+        }
+      >
+        <p className="actions__explain">
+          The sandbox will be stopped and this session cannot be resumed. Its transcript and history
+          will remain under Terminated until deleted.
+        </p>
+      </Modal>
 
       <RiskConfirmation
         open={confirmingDelete}
