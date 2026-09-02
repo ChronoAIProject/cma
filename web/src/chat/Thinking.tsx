@@ -29,8 +29,28 @@ import { IconThinkOutline14 } from '../ui/icons';
  * doing.
  */
 
-interface ThinkingProps {
+export interface ThinkingActivityBody {
   readonly text: string;
+  readonly truncated: boolean;
+}
+
+/** One durable or live tool line inside a turn's Thinking disclosure. */
+export interface ThinkingActivity {
+  readonly id: string;
+  readonly kind: string;
+  readonly target: string;
+  readonly status: string;
+  readonly durationMs?: number | null;
+  readonly arguments?: ThinkingActivityBody | null;
+  readonly result?: ThinkingActivityBody | null;
+}
+
+interface ThinkingProps {
+  /** Live-only reasoning. Empty for a fold reconstructed from durable tools. */
+  readonly text?: string;
+  readonly activities?: readonly ThinkingActivity[];
+  /** Settled folds do not animate or continue counting. */
+  readonly live?: boolean;
 }
 
 /** The newest line, which is what the agent is working through right now. */
@@ -42,7 +62,27 @@ export function summaryOf(text: string): string {
   return lines[lines.length - 1] ?? '';
 }
 
-export function Thinking({ text }: ThinkingProps) {
+/** The duration column of one quiet tool-activity line. */
+export function activityDuration(activity: ThinkingActivity): string {
+  const duration = activity.durationMs;
+  if (duration === undefined || duration === null) {
+    return ['started', 'running', 'in_progress'].includes(activity.status.toLowerCase())
+      ? 'ongoing'
+      : 'not reported';
+  }
+  if (duration < 1000) {
+    return `${String(duration)}ms`;
+  }
+  const seconds = duration / 1000;
+  return `${Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1)}s`;
+}
+
+/** The fixed-order line used both in the shut-row summary and the open body. */
+export function activitySummary(activity: ThinkingActivity): string {
+  return `${activity.kind} - ${activity.target} - ${activity.status} - ${activityDuration(activity)}`;
+}
+
+export function Thinking({ text = '', activities = [], live = true }: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   /*
@@ -53,6 +93,9 @@ export function Thinking({ text }: ThinkingProps) {
   const [seconds, setSeconds] = useState(0);
 
   useEffect(() => {
+    if (!live) {
+      return;
+    }
     const startedAt = Date.now();
     const timer = window.setInterval(() => {
       setSeconds(Math.floor((Date.now() - startedAt) / 1000));
@@ -60,7 +103,7 @@ export function Thinking({ text }: ThinkingProps) {
     return () => {
       window.clearInterval(timer);
     };
-  }, []);
+  }, [live]);
 
   useEffect(() => {
     // Always pinned, unlike the message stream. Nobody scrolls back through
@@ -70,10 +113,25 @@ export function Thinking({ text }: ThinkingProps) {
     if (body !== null && open) {
       body.scrollTop = body.scrollHeight;
     }
-  }, [text, open]);
+  }, [activities, text, open]);
+
+  const recordedDuration = activities.reduce<number | undefined>((longest, activity) => {
+    const duration = activity.durationMs;
+    if (duration === undefined || duration === null) return longest;
+    return longest === undefined ? duration : Math.max(longest, duration);
+  }, undefined);
+  const title =
+    live || recordedDuration !== undefined
+      ? `Thought for ${String(live ? seconds : Math.ceil((recordedDuration ?? 0) / 1000))}s`
+      : 'Thinking';
+  const activity = activities.at(-1);
+  const summary = summaryOf(text) || (activity === undefined ? '' : activitySummary(activity));
 
   return (
-    <section className="thinking" aria-label="What the agent is working through">
+    <section
+      className={`thinking${live ? '' : ' thinking--settled'}`}
+      aria-label="What the agent is working through"
+    >
       {/*
        * The words that make it safe to lose stay on the key whether it is
        * open or not — §18.8.
@@ -89,15 +147,21 @@ export function Thinking({ text }: ThinkingProps) {
         <span className="thinking__glyph" aria-hidden="true">
           <IconThinkOutline14 />
         </span>
-        <span className="thinking__title">Thought for {seconds}s</span>
+        <span className="thinking__title">{title}</span>
         <span className="thinking__dot" aria-hidden="true" />
         {/*
           The summary is the row's reason to exist while it is shut. It never
           wraps: a row that grows with the agent's longest sentence moves the
           conversation under it several times a second.
         */}
-        <span className="thinking__summary">{summaryOf(text)}</span>
-        <span className="sr-only">, not kept after this turn</span>
+        <span className="thinking__summary">{summary}</span>
+        <span className="sr-only">
+          {activities.length === 0
+            ? ', not kept after this turn'
+            : text === ''
+              ? ', tool activity retained in this conversation'
+              : ', reasoning not kept after this turn; tool activity retained in this conversation'}
+        </span>
       </button>
 
       {/*
@@ -107,9 +171,37 @@ export function Thinking({ text }: ThinkingProps) {
        */}
       {open ? (
         <div className="thinking__body" ref={bodyRef}>
-          {text}
+          {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
+          {activities.length === 0 ? null : (
+            <ul className="thinking__activities">
+              {activities.map((item) => (
+                <li className="thinking__activity" key={item.id}>
+                  <p className="thinking__activityline">{activitySummary(item)}</p>
+                  <ActivityBody label="Arguments" body={item.arguments} />
+                  <ActivityBody label="Result" body={item.result} />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ActivityBody({
+  label,
+  body,
+}: {
+  readonly label: string;
+  readonly body?: ThinkingActivityBody | null;
+}) {
+  if (body === undefined || body === null) return null;
+  return (
+    <details className="thinking__activitybody">
+      <summary>{label}</summary>
+      <pre>{body.text}</pre>
+      {body.truncated ? <p>The recorded body was truncated.</p> : null}
+    </details>
   );
 }

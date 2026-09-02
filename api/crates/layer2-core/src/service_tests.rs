@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use layer3_adapter::{AdapterError, ConversationInput, ConversationInputSender, TerminalOutput};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::SystemTime;
 
 /// A screen model that records what it was fed, so the relay's behaviour
 /// can be observed without a real terminal parser.
@@ -125,6 +126,106 @@ async fn output_with_no_subscriber_is_not_an_error() {
     assert_eq!(screen.lock().await.repaint_bytes(), b"onetwo".to_vec());
 }
 
+async fn create_with_counted_fresh_identity(
+    service: &Arc<SessionService>,
+    identity: CreationIdentity,
+) -> (Result<Session, CoreError>, usize) {
+    let generations = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&generations);
+    let caller = user("owner");
+    let created = service
+        .create_session_with_identity(&caller, spec(), identity, None, move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            SessionId("sesn_counted_fresh_identity".into())
+        })
+        .await;
+    (created, generations.load(Ordering::SeqCst))
+}
+
+fn service_with_platform_settings(settings: crate::PlatformSettings) -> Arc<SessionService> {
+    crate::test_support::service_with_environments_and_settings(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+        crate::test_support::no_environments(),
+        settings,
+    )
+}
+
+#[tokio::test]
+async fn deployment_capacity_refusal_does_not_generate_a_fresh_session_id() {
+    let requested = crate::SessionSize::new(1_000, 1_024).expect("the test size is valid");
+    let service = service_with_platform_settings(crate::PlatformSettings {
+        deployment_capacity: crate::DeploymentCapacity {
+            cpu_millis: Some(500),
+            memory_mib: Some(512),
+            assumed_session_size: Some(requested),
+        },
+        ..Default::default()
+    });
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Fresh).await;
+
+    assert!(matches!(
+        result,
+        Err(CoreError::DeploymentAtCapacity { .. })
+    ));
+    assert_eq!(generations, 0);
+}
+
+#[tokio::test]
+async fn live_session_limit_refusal_does_not_generate_a_fresh_session_id() {
+    let service = service_with_platform_settings(crate::PlatformSettings {
+        live_sessions: std::num::NonZeroU32::new(1),
+        ..Default::default()
+    });
+    service
+        .create_session(&user("owner"), spec())
+        .await
+        .expect("the first session occupies the only slot");
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Fresh).await;
+
+    assert_eq!(
+        result.expect_err("the only live-session slot is occupied"),
+        CoreError::SessionLimitReached { limit: 1, live: 1 }
+    );
+    assert_eq!(generations, 0);
+}
+
+#[tokio::test]
+async fn admitted_ordinary_creation_generates_one_fresh_session_id() {
+    let service = service(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+    );
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Fresh).await;
+
+    assert_eq!(
+        result.expect("the ordinary session is admitted").id,
+        SessionId("sesn_counted_fresh_identity".into())
+    );
+    assert_eq!(generations, 1);
+}
+
+#[tokio::test]
+async fn admitted_exact_identity_creation_does_not_generate_a_fresh_session_id() {
+    let service = service(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+    );
+    let exact = SessionId("sesn_exact_identity".into());
+
+    let (result, generations) =
+        create_with_counted_fresh_identity(&service, CreationIdentity::Exact(exact.clone())).await;
+
+    assert_eq!(result.expect("the exact identity is admitted").id, exact);
+    assert_eq!(generations, 0);
+}
+
 #[tokio::test]
 async fn a_session_runs_on_the_kernel_this_deployment_configured() {
     // A caller cannot name one, and the type is what says so: the field a
@@ -222,6 +323,42 @@ async fn a_runtime_is_advertised_as_what_it_says_it_can_be() {
             vec![SessionMode::Terminal, SessionMode::Conversation]
         )],
     );
+}
+
+#[tokio::test]
+async fn a_trigger_runtime_is_neither_advertised_nor_selectable_by_an_ordinary_session() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    });
+    let profiles = Arc::new(crate::test_support::FakeProfileStore::default());
+    let service = build_trigger_session_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+        Arc::new(TriggerWorkspaceBytes {
+            archive: b"reserved runtime".to_vec(),
+            reads: AtomicUsize::new(0),
+        }),
+    );
+
+    assert!(service.available_kernels().is_empty());
+    let error = service
+        .create_session(&user("ordinary-owner"), spec())
+        .await
+        .expect_err("an ordinary session cannot select the managed Trigger runtime");
+    assert!(matches!(error, CoreError::InvalidRequest(_)));
+    assert_eq!(adapter.provision_calls.load(Ordering::SeqCst), 0);
+    assert!(service
+        .list_sessions(&user("ordinary-owner"), &crate::SessionListQuery::default())
+        .await
+        .expect("the empty ledger remains readable")
+        .items
+        .is_empty());
 }
 
 struct TriggerWorkspaceBytes {
@@ -528,8 +665,26 @@ impl crate::SessionWorkspaceSource for LifecycleTriggerWorkspace {
 
 struct TriggerCredential;
 
+fn trigger_credential_authority(session: &SessionId) -> crate::SessionCredentialAuthority {
+    crate::SessionCredentialAuthority {
+        session_id: session.clone(),
+        custody_generation: 1,
+        provider_key_id: "trigger-provider-key-1".into(),
+        provider_state_version: 1,
+        provider_expires_at_epoch_milliseconds: 4_000_000_000_000,
+        grant_fingerprint: "a".repeat(64),
+    }
+}
+
 #[async_trait]
 impl crate::CredentialSource for TriggerCredential {
+    async fn credential_authority(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<crate::SessionCredentialAuthority>, StoreError> {
+        Ok(Some(trigger_credential_authority(session)))
+    }
+
     async fn exact_services_available(
         &self,
         _subject: &SubjectId,
@@ -651,10 +806,12 @@ fn build_trigger_session_service_defaulting_to(
             context: None,
             credentials: Some(Arc::new(TriggerCredential)),
             handovers: Some(adapter.clone()),
+            chat_checkpoints: None,
             skills: None,
             workspaces: Some(workspaces),
             skill_packs: None,
             settings: None,
+            chat_hosts: None,
         },
         environments,
         Deployment {
@@ -778,6 +935,7 @@ async fn install_held_workspace_checkpoint(
         quiesced_writers: 2,
         writer_state: layer3_adapter::WorkspaceWriterState::HeldForTeardown,
         writer_resume_token: Some(token.into()),
+        includes_git_metadata: false,
         archive,
     });
 }
@@ -903,6 +1061,12 @@ async fn killed_trigger_runtime_restores_the_exact_pair_without_replaying_the_ta
         .clone()
         .expect("the replacement spec is observable");
     assert_eq!(restored.session_id, ready.id.0);
+    assert!(restored
+        .platform_briefing
+        .contains("nyxid proxy request catalog-github <path> --by-id --via-service service-1"));
+    assert!(restored
+        .platform_briefing
+        .contains("per-user route slug is `api-github-2`"));
     assert_eq!(
         restored.restore_from.as_deref(),
         Some(pair.conversation.as_slice())
@@ -1151,6 +1315,12 @@ async fn trigger_session_creation_is_deterministic_and_hands_over_exact_workspac
     }
     assert!(service.trigger_credential_ready(&created.id).await);
     let provisioned = adapter.last_spec.lock().await.clone().unwrap();
+    assert!(provisioned
+        .platform_briefing
+        .contains("nyxid proxy request catalog-github <path> --by-id --via-service service-1"));
+    assert!(provisioned
+        .platform_briefing
+        .contains("per-user route slug is `api-github-2`"));
     assert_eq!(
         provisioned.timeout_seconds,
         Some(u64::from(launch.effective.timeout_seconds))
@@ -1254,6 +1424,7 @@ async fn trigger_checkpoint_capture_is_authority_checked_and_lifecycle_fenced() 
         version: 1,
         source_revision: launch.source_sha.clone(),
         baseline_manifest_digest: workspace.baseline.digest.clone(),
+        include_git_metadata: false,
         disposition: layer3_adapter::WorkspaceCheckpointDisposition::ResumeAfterCapture,
     };
     let package = layer3_adapter::WorkspaceCheckpointPackage {
@@ -1267,6 +1438,7 @@ async fn trigger_checkpoint_capture_is_authority_checked_and_lifecycle_fenced() 
         quiesced_writers: 1,
         writer_state: layer3_adapter::WorkspaceWriterState::Resumed,
         writer_resume_token: None,
+        includes_git_metadata: false,
         archive: b"sealed checkpoint".to_vec(),
     };
     *adapter.checkpoint.lock().await = Some(package.clone());
@@ -1630,6 +1802,18 @@ async fn successful_trigger_rotations_capture_then_retire_h1_and_advance_generat
         let settled = await_settled(&service, &caller, &ready.id).await;
         assert_eq!(settled.status, SessionStatus::Ready);
         assert_eq!(settled.rotations, 1);
+        let replacement = adapter
+            .last_spec
+            .lock()
+            .await
+            .clone()
+            .expect("the replacement Trigger spec is observable");
+        assert!(replacement
+            .platform_briefing
+            .contains("nyxid proxy request catalog-github <path> --by-id --via-service service-1"));
+        assert!(replacement
+            .platform_briefing
+            .contains("per-user route slug is `api-github-2`"));
         assert_eq!(workspaces.committed.load(Ordering::SeqCst), 1);
         assert!(adapter.terminated.lock().await.contains(&h1));
         assert!(!adapter.running.lock().await.contains_key(&h1));
@@ -1808,6 +1992,45 @@ async fn unsupported_trigger_sandbox_profile_is_refused_before_provisioning() {
         .expect_err("a retained unsupported profile fails closed at provisioning");
     assert!(matches!(error, CoreError::InvalidRequest(_)));
     assert!(error.to_string().contains("session.sandbox_profile"));
+    assert!(profiles.profiles.lock().await.is_empty());
+    assert!(store.sessions.lock().await.is_empty());
+    assert_eq!(adapter.provision_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn legacy_trigger_route_authority_is_readable_but_cannot_authorize_fresh_provisioning() {
+    let archive = b"legacy trigger archive".to_vec();
+    let archive_sha256 = format!("{:x}", Sha256::digest(&archive));
+    let mut wire = serde_json::to_value(crate::trigger::tests::session_launch(&archive_sha256))
+        .expect("the current Launch fixture serializes");
+    let connection = wire
+        .get_mut("connection")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the Launch retains its connection");
+    connection.remove("github_catalog_service_id");
+    connection.remove("github_user_service_slug");
+    let launch: crate::Launch =
+        serde_json::from_value(wire).expect("the historical Launch remains readable");
+    assert_eq!(
+        launch
+            .connection
+            .as_ref()
+            .unwrap()
+            .github_catalog_service_id,
+        None
+    );
+    assert_eq!(
+        launch.connection.as_ref().unwrap().github_user_service_slug,
+        None
+    );
+
+    let (service, store, adapter, profiles, _workspaces) = trigger_session_service(archive);
+    let error = service
+        .ensure_trigger_session(&launch)
+        .await
+        .expect_err("legacy route authority cannot authorize a new runtime");
+    assert!(matches!(error, CoreError::InvalidRequest(_)));
+    assert!(error.to_string().contains("GitHub"));
     assert!(profiles.profiles.lock().await.is_empty());
     assert!(store.sessions.lock().await.is_empty());
     assert_eq!(adapter.provision_calls.load(Ordering::SeqCst), 0);
@@ -3791,7 +4014,7 @@ async fn expired_authority_and_out_of_order_readiness_never_create_an_outbox() {
                 .service
                 .dispatch_trigger_prompt(&launch, &fixture.claim)
                 .await,
-            Err(CoreError::InvalidState)
+            Err(CoreError::InvalidState { .. })
         ));
         assert!(fixture
             .store
@@ -4019,6 +4242,22 @@ async fn runtime_policy_and_gateway_probe_share_one_handle_and_lifecycle_fence()
             .unwrap()
             .service_id
             .clone(),
+        catalog_service_id: fixture
+            .launch
+            .connection
+            .as_ref()
+            .unwrap()
+            .github_catalog_service_id
+            .clone()
+            .unwrap(),
+        user_service_slug: fixture
+            .launch
+            .connection
+            .as_ref()
+            .unwrap()
+            .github_user_service_slug
+            .clone()
+            .unwrap(),
         resource_id: fixture
             .launch
             .fork
@@ -4069,6 +4308,220 @@ async fn runtime_policy_and_gateway_probe_share_one_handle_and_lifecycle_fence()
     assert_eq!(receipt.policy.fence, 7);
 }
 
+fn trigger_gateway_probe(
+    fixture: &TriggerPromptFixture,
+) -> layer3_adapter::RuntimeGatewayProbeRequest {
+    let connection = fixture
+        .launch
+        .connection
+        .as_ref()
+        .expect("the Trigger Launch retains its exact connection");
+    layer3_adapter::RuntimeGatewayProbeRequest {
+        version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+        service_id: connection.service_id.clone(),
+        catalog_service_id: connection
+            .github_catalog_service_id
+            .clone()
+            .expect("fresh Trigger authority retains the GitHub catalog route"),
+        user_service_slug: connection
+            .github_user_service_slug
+            .clone()
+            .expect("fresh Trigger authority retains the GitHub user route"),
+        resource_id: fixture
+            .launch
+            .fork
+            .as_ref()
+            .expect("the prompt fixture retains its fork")
+            .repository
+            .repository_id,
+    }
+}
+
+#[tokio::test]
+async fn reach_reconciliation_observes_and_probes_without_reinstalling_policy() {
+    let fixture = trigger_prompt_fixture().await;
+    let reach = fixture
+        .launch
+        .reach
+        .as_ref()
+        .expect("the prompt fixture has completed Reach");
+    let expires_at_epoch_seconds = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(300);
+    *fixture.adapter.runtime_policy_observation.lock().await =
+        Some(layer3_adapter::RuntimePolicyObservation {
+            required: true,
+            supported: true,
+            installed: true,
+            revoked: false,
+            launch_id: Some(fixture.launch.id.0.clone()),
+            generation: Some(reach.policy_generation),
+            fence: Some(reach.policy_fence),
+            expires_at_epoch_seconds: Some(expires_at_epoch_seconds),
+            last_refusal: None,
+        });
+    *fixture.adapter.gateway_probe_receipt.lock().await =
+        Some(layer3_adapter::RuntimeGatewayProbeReceipt {
+            version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+            outcome: layer3_adapter::RuntimeGatewayProbeOutcome::Allowed,
+        });
+
+    let receipt = fixture
+        .service
+        .reconcile_runtime_policy_and_probe_with_credential_authority(
+            &fixture.session.id,
+            trigger_gateway_probe(&fixture),
+            &trigger_credential_authority(&fixture.session.id),
+            &fixture.launch.id.0,
+            reach.policy_generation,
+            reach.policy_fence,
+        )
+        .await
+        .expect("the exact installed policy and restricted probe reconcile");
+
+    assert_eq!(
+        receipt.reachability.runtime_audience,
+        reach.runtime_audience
+    );
+    assert_eq!(
+        receipt.reachability.policy.generation,
+        reach.policy_generation
+    );
+    assert_eq!(receipt.reachability.policy.fence, reach.policy_fence);
+    assert_eq!(receipt.expires_at_epoch_seconds, expires_at_epoch_seconds);
+    assert_eq!(
+        fixture
+            .adapter
+            .runtime_policy_observations
+            .lock()
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(fixture.adapter.gateway_probes.lock().await.len(), 1);
+    assert!(
+        fixture.adapter.runtime_policies.lock().await.is_empty(),
+        "reconciliation must never reinstall the GitHub policy"
+    );
+}
+
+#[tokio::test]
+async fn reach_reconciliation_rejects_policy_or_credential_drift_before_any_write() {
+    let cases = [
+        (Some("another-launch".into()), Some(1), Some(1), None),
+        (None, Some(2), Some(1), None),
+        (None, Some(1), Some(2), None),
+        (None, Some(1), Some(1), Some(1)),
+    ];
+    for (launch_override, generation, fence, expiry_override) in cases {
+        let fixture = trigger_prompt_fixture().await;
+        let reach = fixture.launch.reach.as_ref().unwrap();
+        let live_expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_add(300);
+        *fixture.adapter.runtime_policy_observation.lock().await =
+            Some(layer3_adapter::RuntimePolicyObservation {
+                required: true,
+                supported: true,
+                installed: true,
+                revoked: false,
+                launch_id: Some(launch_override.unwrap_or_else(|| fixture.launch.id.0.clone())),
+                generation,
+                fence,
+                expires_at_epoch_seconds: Some(expiry_override.unwrap_or(live_expiry)),
+                last_refusal: None,
+            });
+        *fixture.adapter.gateway_probe_receipt.lock().await =
+            Some(layer3_adapter::RuntimeGatewayProbeReceipt {
+                version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+                outcome: layer3_adapter::RuntimeGatewayProbeOutcome::Allowed,
+            });
+
+        assert_eq!(
+            fixture
+                .service
+                .reconcile_runtime_policy_and_probe_with_credential_authority(
+                    &fixture.session.id,
+                    trigger_gateway_probe(&fixture),
+                    &trigger_credential_authority(&fixture.session.id),
+                    &fixture.launch.id.0,
+                    reach.policy_generation,
+                    reach.policy_fence,
+                )
+                .await
+                .expect_err("drifted or expired policy evidence fails closed"),
+            crate::RuntimeGatewayReachabilityError::PolicyDenied
+        );
+        assert!(fixture.adapter.gateway_probes.lock().await.is_empty());
+        assert!(fixture.adapter.runtime_policies.lock().await.is_empty());
+    }
+
+    let fixture = trigger_prompt_fixture().await;
+    let reach = fixture.launch.reach.as_ref().unwrap();
+    let mut drifted = trigger_credential_authority(&fixture.session.id);
+    drifted.custody_generation += 1;
+    assert_eq!(
+        fixture
+            .service
+            .reconcile_runtime_policy_and_probe_with_credential_authority(
+                &fixture.session.id,
+                trigger_gateway_probe(&fixture),
+                &drifted,
+                &fixture.launch.id.0,
+                reach.policy_generation,
+                reach.policy_fence,
+            )
+            .await
+            .expect_err("credential drift fails before runtime observation"),
+        crate::RuntimeGatewayReachabilityError::CredentialAuthorityDrift
+    );
+    assert!(fixture
+        .adapter
+        .runtime_policy_observations
+        .lock()
+        .await
+        .is_empty());
+    assert!(fixture.adapter.gateway_probes.lock().await.is_empty());
+    assert!(fixture.adapter.runtime_policies.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn expired_sponsored_model_authority_is_rejected_before_runtime_selection() {
+    let fixture = trigger_prompt_fixture().await;
+    let capability = crate::InertGrantCapability {
+        grant_id: crate::SponsoredGrantId::parse("22222222-2222-4222-8222-222222222222").unwrap(),
+        grant_generation: 1,
+        policy_generation: 1,
+        launch_id: fixture.launch.id.clone(),
+        session_id: fixture.session.id.clone(),
+        expires_at: "1970-01-01T00:00:01Z".into(),
+        fingerprint: "f".repeat(64),
+    };
+    let gateway_origin = layer3_adapter::SponsoredModelGatewayOrigin::parse(
+        "https://sponsored-model-gateway.example",
+    )
+    .unwrap();
+
+    assert_eq!(
+        fixture
+            .service
+            .install_sponsored_model_authority(
+                &fixture.session.id,
+                &trigger_credential_authority(&fixture.session.id),
+                &capability,
+                16,
+                &gateway_origin,
+            )
+            .await
+            .expect_err("an expired capability never reaches the runtime adapter"),
+        crate::SponsoredModelAuthorityError::ScopeMismatch
+    );
+}
+
 #[tokio::test]
 async fn invalid_gateway_probe_bindings_never_reach_the_runtime_adapter() {
     let fixture = trigger_prompt_fixture().await;
@@ -4079,20 +4532,56 @@ async fn invalid_gateway_probe_bindings_never_reach_the_runtime_adapter() {
         .unwrap()
         .service_id
         .clone();
+    let catalog_service_id = fixture
+        .launch
+        .connection
+        .as_ref()
+        .unwrap()
+        .github_catalog_service_id
+        .clone()
+        .unwrap();
+    let user_service_slug = fixture
+        .launch
+        .connection
+        .as_ref()
+        .unwrap()
+        .github_user_service_slug
+        .clone()
+        .unwrap();
     for request in [
         layer3_adapter::RuntimeGatewayProbeRequest {
             version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION + 1,
             service_id: service_id.clone(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: user_service_slug.clone(),
             resource_id: 30,
         },
         layer3_adapter::RuntimeGatewayProbeRequest {
             version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: "another-service".into(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: user_service_slug.clone(),
             resource_id: 30,
         },
         layer3_adapter::RuntimeGatewayProbeRequest {
             version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
             service_id: service_id.clone(),
+            catalog_service_id: "another-catalog".into(),
+            user_service_slug: user_service_slug.clone(),
+            resource_id: 30,
+        },
+        layer3_adapter::RuntimeGatewayProbeRequest {
+            version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: service_id.clone(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: "another-github-route".into(),
+            resource_id: 30,
+        },
+        layer3_adapter::RuntimeGatewayProbeRequest {
+            version: layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: service_id.clone(),
+            catalog_service_id: catalog_service_id.clone(),
+            user_service_slug: user_service_slug.clone(),
             resource_id: 0,
         },
     ] {

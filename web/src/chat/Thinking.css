@@ -62,6 +62,63 @@
   border-radius: 10px;
 }
 
+.thinking__reasoning {
+  white-space: pre-wrap;
+}
+
+.thinking__activities {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thinking__reasoning + .thinking__activities {
+  padding-top: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.thinking__activity {
+  min-width: 0;
+}
+
+.thinking__activityline {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.thinking__activitybody {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.thinking__activitybody summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.thinking__activitybody pre {
+  max-height: 120px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--dsw-alias-bg-base);
+  border-radius: 6px;
+}
+
+.thinking__activitybody p {
+  margin: 4px 0 0;
+}
+
 .thinking__glyph {
   display: inline-flex;
   flex: none;
@@ -120,6 +177,10 @@
   animation: thinking-sweep 2.6s ease-out infinite;
   pointer-events: none;
   content: '';
+}
+
+.thinking--settled .thinking__key::after {
+  display: none;
 }
 
 .thinking__key {

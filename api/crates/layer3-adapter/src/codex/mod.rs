@@ -26,6 +26,7 @@ use tokio::sync::mpsc;
 
 /// Drives Codex inside a provider-managed sandbox.
 pub struct CodexAdapter {
+    kernel: &'static str,
     hosted: HostedKernel,
     spec: CodexSandboxSpec,
 }
@@ -34,10 +35,30 @@ impl CodexAdapter {
     /// Build an adapter over a sandbox provider.
     pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
         Self {
+            kernel: "codex",
             hosted: HostedKernel::new(
                 client,
                 spec.deployment.shape.clone(),
                 "codex",
+                spec.deployment.skills_root.clone(),
+                spec.deployment.agent_notes.clone(),
+            ),
+            spec,
+        }
+    }
+
+    /// Build a Codex adapter under a deployment-owned opaque kernel name.
+    ///
+    /// A distinct name lets one deployment route a closed session profile to
+    /// a dedicated provider lane while preserving Codex's implementation and
+    /// keeping the selection provider-neutral above this layer.
+    pub fn named(kernel: &'static str, client: SandboxClient, spec: CodexSandboxSpec) -> Self {
+        Self {
+            kernel,
+            hosted: HostedKernel::new_strict(
+                client,
+                spec.deployment.shape.clone(),
+                kernel,
                 spec.deployment.skills_root.clone(),
                 spec.deployment.agent_notes.clone(),
             ),
@@ -54,6 +75,8 @@ impl CodexAdapter {
             ),
             options.resume_conversation.clone(),
             options.own_credential,
+            options.working_directory.clone(),
+            options.conversation_slot.clone(),
         )
     }
 }
@@ -61,7 +84,7 @@ impl CodexAdapter {
 #[async_trait::async_trait]
 impl KernelAdapter for CodexAdapter {
     fn kernel_name(&self) -> &'static str {
-        "codex"
+        self.kernel
     }
 
     fn capabilities(&self) -> KernelCapabilities {
@@ -111,6 +134,59 @@ impl KernelAdapter for CodexAdapter {
         self.hosted.snapshot(handle).await
     }
 
+    async fn snapshot_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        self.hosted
+            .snapshot_conversation(handle, conversation_id)
+            .await
+    }
+
+    async fn restore_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        conversation_slot: &str,
+        snapshot: &[u8],
+    ) -> Result<(), AdapterError> {
+        self.hosted
+            .restore_conversation(handle, conversation_slot, snapshot)
+            .await
+    }
+
+    async fn prepare_workspace_source(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceSourceRequest,
+    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
+        self.hosted.prepare_workspace_source(handle, request).await
+    }
+
+    async fn add_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspaceTreeRequest,
+    ) -> Result<crate::WorkspaceTreeReceipt, AdapterError> {
+        self.hosted.add_workspace_tree(handle, request).await
+    }
+
+    async fn remove_workspace_tree(
+        &self,
+        handle: &RuntimeHandle,
+        name: &str,
+    ) -> Result<(), AdapterError> {
+        self.hosted.remove_workspace_tree(handle, name).await
+    }
+
+    async fn run_workspace_setup(
+        &self,
+        handle: &RuntimeHandle,
+        commands: &[String],
+    ) -> Result<crate::WorkspaceSetupReceipt, AdapterError> {
+        self.hosted.run_workspace_setup(handle, commands).await
+    }
+
     async fn checkpoint_workspace(
         &self,
         handle: &RuntimeHandle,
@@ -150,7 +226,7 @@ impl KernelAdapter for CodexAdapter {
     async fn refresh_credential(
         &self,
         handle: &RuntimeHandle,
-        credential: &str,
+        credential: &crate::RuntimeCredential,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
     }
@@ -161,6 +237,16 @@ impl KernelAdapter for CodexAdapter {
         envelope: &str,
     ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
         self.hosted.install_runtime_policy(handle, envelope).await
+    }
+
+    async fn install_sponsored_model_authority(
+        &self,
+        handle: &RuntimeHandle,
+        authority: &crate::SponsoredModelRuntimeAuthority,
+    ) -> Result<crate::SponsoredModelAuthorityReceipt, AdapterError> {
+        self.hosted
+            .install_sponsored_model_authority(handle, authority)
+            .await
     }
 
     async fn observe_runtime_policy(

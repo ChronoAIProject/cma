@@ -17,7 +17,7 @@
 import { open, visit, settle, ready, CLIPPED_BY } from './browser.mjs';
 
 const PORT = 4319;
-const EXPECTED_DEVELOPER_GUIDES = 9;
+const EXPECTED_DEVELOPER_GUIDES = Object.freeze({ typescript: 10, rust: 9 });
 
 /** A profile list long enough that a clipped menu hides some of it. */
 const PROFILES = [
@@ -37,7 +37,7 @@ const PROFILES = [
     reasoning_effort: 'high',
     permission: 'guarded',
     credential: 'delegated',
-    size: { cpu_millis: 1000, memory_mib: 2048 },
+    size: index === 0 ? undefined : { cpu_millis: 1000, memory_mib: 2048 },
     record_tool_bodies: false,
     skills: [],
   },
@@ -61,8 +61,147 @@ const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
   conforms_to: [
     'https://spec.chrono-ai.fun/cma/1.0/conf/core',
     'https://spec.chrono-ai.fun/cma/1.0/conf/conversation',
+    'https://spec.chrono-ai.fun/cma/1.0/conf/usage',
+    'https://spec.chrono-ai.fun/cma/1.0/conf/resources',
   ],
+  agent: { size: { cpu_millis: 2000, memory_mib: 4096 } },
 }));
+
+const CHAT_SESSIONS = [
+  {
+    id: 'chat_alpha',
+    kernel: 'codex',
+    status: 'ready',
+    cols: 120,
+    rows: 32,
+    last_seq: 4,
+    created_at: '2026-08-20T07:00:00Z',
+    conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/conversation'],
+    creator: { display_name: 'Ada Lovelace' },
+    chat: {
+      worktree_name: 'chat-alpha',
+      worktree_path: '/work/chat-alpha',
+      title: 'Release readiness',
+      paused_notice: null,
+    },
+  },
+  {
+    id: 'chat_paused',
+    kernel: 'codex',
+    status: 'idle',
+    stop_reason: 'idle_timeout',
+    cols: 120,
+    rows: 32,
+    last_seq: 8,
+    created_at: '2026-08-20T06:30:00Z',
+    conforms_to: ['https://spec.chrono-ai.fun/cma/1.0/conf/conversation'],
+    chat: {
+      worktree_name: 'chat-paused',
+      worktree_path: '/work/chat-paused',
+      title: null,
+      paused_notice: 'Your current chat session has been idle for 15min and has been auto-paused.',
+    },
+  },
+];
+
+const CHAT_ALPHA_ITEMS = {
+  object: 'list',
+  data: [
+    {
+      id: 'msg_chat_alpha_1',
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text: 'The release checks passed.',
+          annotations: [],
+          logprobs: [],
+        },
+      ],
+    },
+    {
+      id: 'tool_chat_alpha_3',
+      type: 'cma_chat.tool_activity',
+      call_id: 'call-release-checks',
+      kind: 'shell',
+      target: 'npm test',
+      status: 'completed',
+      duration_ms: 1450,
+      arguments: { text: '{"cwd":"/work/chat-alpha"}', truncated: false },
+      result: { text: 'All checks passed', truncated: false },
+    },
+    {
+      id: 'msg_chat_alpha_2',
+      type: 'message',
+      status: 'completed',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'Check release readiness.' }],
+    },
+  ],
+  first_id: 'msg_chat_alpha_1',
+  last_id: 'msg_chat_alpha_2',
+  has_more: false,
+};
+
+const BOUNDED_SETUP_FAILURE_OUTPUT = [
+  'toolchain installation failed',
+  ...Array.from(
+    { length: 400 },
+    (_, index) => `diagnostic line ${String(index + 1).padStart(3, '0')}`,
+  ),
+  'final setup diagnostic',
+].join('\n');
+
+const CHAT_HOSTS = [
+  {
+    id: 'chho_0123456789abcdef0123456789abcdef',
+    owner: 'subject-chat-owner',
+    status: 'paused',
+    thread_count: 3,
+    runtime_version: 'runtime-v2',
+    paused_at: '2026-09-01T01:00:00Z',
+    checkpoint_captured_at: '2026-09-01T00:59:58Z',
+    last_failure: {
+      phase: 'workspace_setup',
+      command_index: 1,
+      output_excerpt: BOUNDED_SETUP_FAILURE_OUTPUT,
+      retryable: true,
+      cleanup_pending: false,
+      occurred_at: '2026-09-01T01:00:01Z',
+    },
+    settings_revision: 17,
+    created_at: '2026-08-31T23:00:00Z',
+  },
+  {
+    id: 'chho_fedcba9876543210fedcba9876543210',
+    owner: 'subject-paused-owner',
+    status: 'paused',
+    thread_count: 1,
+    paused_at: '2026-09-01T01:00:00Z',
+    checkpoint_captured_at: '2026-09-01T00:59:58Z',
+    settings_revision: 16,
+    created_at: '2026-08-31T22:00:00Z',
+  },
+];
+
+const RESOURCE_READING = {
+  cpuMillisUsed: 100,
+  cpuMillisLimit: 2000,
+  memoryBytesUsed: 435 * 1024 ** 2,
+  memoryBytesLimit: 4096 * 1024 ** 2,
+  memoryBytesPeak: 512 * 1024 ** 2,
+  stallPermille: 0,
+  ceilingHits: 0,
+  allocationFailures: 0,
+  kills: 0,
+  receivedBytes: 18 * 1024,
+  sentBytes: Math.round(8.9 * 1024),
+  receivedBytesPerSecond: 0,
+  sentBytesPerSecond: 0,
+  intervalMs: 2000,
+};
 
 /**
  * Answer as a control plane would for a signed-in owner who may also operate.
@@ -75,7 +214,8 @@ const SESSIONS = ['sesn_alpha', 'sesn_beta'].map((id, index) => ({
 async function stub(page) {
   await page.setRequestInterception(true);
   page.on('request', (request) => {
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
     const json = (body) =>
       request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
@@ -90,20 +230,468 @@ async function stub(page) {
           'use_own_sessions',
           'manage_own_environment_profiles',
           'read_all_sessions',
+          'control_any_session',
           'read_user_directory',
+          'read_activity_log',
+          'read_runtime_inventory',
+          'configure_platform',
         ],
       });
     }
-    if (path === '/api/v1/sessions') return void json({ sessions: SESSIONS });
+    if (path === '/api/v1/agui/capabilities') {
+      return void json({
+        protocol: 'ag-ui',
+        features: { custom: { 'cma:chat': { enabled: true } } },
+      });
+    }
+    if (path === '/api/v1/sessions') {
+      const surface = url.searchParams.get('surface');
+      return void json({ sessions: surface === 'chat' ? CHAT_SESSIONS : SESSIONS });
+    }
+    if (path === '/api/v1/conversations/chat_alpha/items') {
+      return void json(CHAT_ALPHA_ITEMS);
+    }
+    if (path === '/api/v1/conversations/chat_paused/items') {
+      return void json({
+        object: 'list',
+        data: [],
+        first_id: null,
+        last_id: null,
+        has_more: false,
+      });
+    }
     if (path === '/api/v1/kernels') {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
     }
     if (path === '/api/v1/environment-profiles') return void json(PROFILES);
-    if (path.endsWith('/events')) {
-      return void request.respond({ status: 200, contentType: 'text/event-stream', body: ':\n\n' });
+    if (path === '/api/v1/admin/settings') {
+      return void json({
+        revision: 4,
+        settings: {
+          chat: {
+            enabled: true,
+            workspace: {
+              repository_url: 'https://github.com/the-omega-institute/trureturing',
+              branch: 'dev',
+            },
+            agent: {
+              model: null,
+              reasoning_effort: 'high',
+              instructions: '',
+              record_tool_bodies: true,
+            },
+            message_prefixes: ['/codex-formalize'],
+            inactivity: { pause_after_seconds: 900 },
+            setup: { commands: [] },
+            host: { size: null, max_threads: 10 },
+          },
+        },
+      });
+    }
+    if (path === '/api/v1/admin/chat/hosts') return void json(CHAT_HOSTS);
+    if (path === '/api/v1/agui/events') {
+      const threadId = url.searchParams.get('thread_id') ?? 'sesn_alpha';
+      const frame = {
+        type: 'STATE_DELTA',
+        threadId,
+        runId: 'run_surface_metrics',
+        seq: 5,
+        delta: [
+          { op: 'replace', path: '/usage/inputTokens', value: 1800 },
+          { op: 'replace', path: '/usage/outputTokens', value: 510 },
+          { op: 'replace', path: '/usage/contextUsed', value: 42100 },
+          { op: 'replace', path: '/usage/contextWindow', value: 200000 },
+          { op: 'replace', path: '/resources', value: RESOURCE_READING },
+        ],
+      };
+      const body = `id: 5\nevent: STATE_DELTA\ndata: ${JSON.stringify(frame)}\n\n`;
+      return void request.respond({ status: 200, contentType: 'text/event-stream', body });
+    }
+    if (/\/api\/v1\/sessions\/[^/]+\/resources$/u.test(path)) {
+      return void json({ reading: null, observed_at: null, reason: 'no_reading_yet' });
     }
     return void request.continue();
   });
+}
+
+/** The capability-gated collection switch replaces both the rail and its create action. */
+async function chatSurfaceSwitches(page) {
+  const problems = [];
+  const initial = await page.evaluate(() => {
+    const group = document.querySelector('.sidebar__surfaces');
+    const segments = group === null ? [] : [...group.querySelectorAll('button')];
+    return {
+      role: group?.getAttribute('role'),
+      labels: segments.map((segment) => segment.textContent?.trim()),
+      pressed: segments.map((segment) => segment.getAttribute('aria-pressed')),
+    };
+  });
+  if (initial.role !== 'group') {
+    return ['chat surface: the declared switch is not reachable as a group'];
+  }
+  if (JSON.stringify(initial.labels) !== JSON.stringify(['Chat', 'Agent'])) {
+    problems.push(`chat surface: segments are ${JSON.stringify(initial.labels)}`);
+  }
+  if (JSON.stringify(initial.pressed) !== JSON.stringify(['false', 'true'])) {
+    problems.push(`chat surface: Agent is not the initial selected segment`);
+  }
+
+  if (!(await press(page, 'Chat'))) {
+    return [...problems, 'chat surface: the Chat segment cannot be pressed'];
+  }
+  try {
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.rail__label')?.textContent?.trim() === 'Chats' &&
+        document.querySelector('.sidebar__new')?.textContent?.trim() === 'New Chat',
+      { polling: 'raf', timeout: 5000 },
+    );
+  } catch {
+    problems.push('chat surface: switching did not replace the rail and primary action');
+  }
+  await page.evaluate(() => {
+    document.querySelector('[aria-label="Paused, 1 chat"]')?.click();
+  });
+  await settle(250);
+  const chat = await page.evaluate(() => ({
+    subjects: [...document.querySelectorAll('.row-item__subject')].map((row) =>
+      row.textContent?.trim(),
+    ),
+    active: document.querySelector('[aria-label="Active, 1 chat"]') !== null,
+    paused: document.querySelector('[aria-label="Paused, 1 chat"]') !== null,
+  }));
+  if (
+    JSON.stringify(chat.subjects.sort()) !==
+    JSON.stringify(['Release readiness', 'chat-paused'].sort())
+  ) {
+    problems.push(`chat surface: row subjects are ${JSON.stringify(chat.subjects)}`);
+  }
+  if (!chat.active || !chat.paused) {
+    problems.push('chat surface: the rail is not grouped into one Active and one Paused chat');
+  }
+
+  const selected = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.row-item')].find((candidate) =>
+      candidate.textContent?.includes('Release readiness'),
+    );
+    row?.click();
+    return row !== undefined;
+  });
+  if (!selected) {
+    problems.push('chat surface: the durable chat row cannot be opened');
+  } else {
+    try {
+      await ready(page, '.chat-surface[data-surface="chat"]', {
+        label: 'the Responses-backed Chat conversation',
+      });
+      await page.waitForFunction(
+        () =>
+          document.querySelector('.chat-surface')?.textContent?.includes('release checks passed'),
+        { polling: 'raf', timeout: 5000 },
+      );
+    } catch {
+      problems.push('chat surface: durable Responses history did not render');
+    }
+
+    await page.setViewport({ width: 1440, height: 900 });
+    await settle(250);
+    if (!(await press(page, 'Details'))) {
+      problems.push('chat surface: Details is not reachable from the header');
+    } else {
+      await settle(250);
+      const details = await page.evaluate(() => {
+        const drawer = document.querySelector('.drawer--chat');
+        const frame = document.querySelector('.frame');
+        return {
+          open: frame?.hasAttribute('data-details-collapsed') === false,
+          sections:
+            drawer === null
+              ? []
+              : [...drawer.querySelectorAll('.facts__title')].map((title) =>
+                  title.textContent?.trim(),
+                ),
+          text: drawer?.textContent ?? '',
+          pathControl:
+            drawer?.querySelector('[aria-label="Copy local path /work/chat-alpha"]') !== null,
+        };
+      });
+      if (!details.open) problems.push('chat surface: Details did not open the drawer column');
+      if (JSON.stringify(details.sections) !== JSON.stringify(['Worktree'])) {
+        problems.push(`chat surface: drawer sections are ${JSON.stringify(details.sections)}`);
+      }
+      for (const expected of [
+        'ready',
+        'Started',
+        'Ada Lovelace',
+        'Release readiness',
+        'chat-alpha',
+        '/work/chat-alpha',
+      ]) {
+        if (!details.text.includes(expected)) {
+          problems.push(`chat surface: drawer is missing "${expected}"`);
+        }
+      }
+      for (const omitted of [
+        'Agent',
+        'Skills',
+        'Reaches',
+        'Trigger repository',
+        'Runtime',
+        'Identifier',
+      ]) {
+        if (details.text.includes(omitted)) {
+          problems.push(`chat surface: drawer exposes omitted "${omitted}" facts`);
+        }
+      }
+      if (!details.pathControl) {
+        problems.push('chat surface: the local worktree path is not copyable');
+      }
+      await press(page, 'Details');
+      await settle(250);
+    }
+
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: width === 390 ? 844 : 900 });
+      await settle(250);
+      const reduced = await page.evaluate(() => {
+        const surface = document.querySelector('.chat-surface[data-surface="chat"]');
+        const actions = [...document.querySelectorAll('.sessionheader .actions button')].map(
+          (button) => button.textContent?.trim(),
+        );
+        const box = surface?.getBoundingClientRect();
+        return {
+          mounted: surface !== null,
+          visible: box !== undefined && box.width > 0 && box.height > 0,
+          actions,
+          text: surface?.textContent ?? '',
+          hiddenRows:
+            surface?.querySelector(
+              '.usage, .context, .resources, .resources__pressure, .stage, .stage__mode, .turn--tool, .commandmenu',
+            ) !== null,
+          thinking: surface?.querySelector('.thinking') !== null,
+          finalMessage:
+            surface
+              ?.querySelector('.turn[data-role="assistant"]')
+              ?.textContent?.includes('The release checks passed.') ?? false,
+          horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+        };
+      });
+      if (!reduced.mounted || !reduced.visible) {
+        problems.push(`chat surface at ${String(width)}px: the conversation is not visible`);
+      }
+      if (JSON.stringify(reduced.actions) !== JSON.stringify(['Details'])) {
+        problems.push(
+          `chat surface at ${String(width)}px: header actions are ${JSON.stringify(reduced.actions)}`,
+        );
+      }
+      if (reduced.hiddenRows || /\b(?:Usage|Context|Resources)\b/u.test(reduced.text)) {
+        problems.push(`chat surface at ${String(width)}px: Agent instrumentation remains in Chat`);
+      }
+      if (!reduced.thinking || !reduced.finalMessage) {
+        problems.push(
+          `chat surface at ${String(width)}px: the Thinking fold or final message is absent`,
+        );
+      }
+      if (reduced.horizontal) {
+        problems.push(`chat surface at ${String(width)}px: the page overflows horizontally`);
+      }
+    }
+    await page.setViewport({ width: 1440, height: 900 });
+    await settle(250);
+  }
+
+  const pausedSelected = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.row-item')].find((candidate) =>
+      candidate.textContent?.includes('chat-paused'),
+    );
+    row?.click();
+    return row !== undefined;
+  });
+  if (!pausedSelected) {
+    problems.push('chat surface: the paused chat row cannot be opened');
+  } else {
+    try {
+      await page.waitForFunction(
+        () => {
+          const surface = document.querySelector('.chat-surface[data-surface="chat"]');
+          const field = surface?.querySelector('textarea[aria-label="Message"]');
+          return (
+            surface?.textContent?.includes(
+              'Your current chat session has been idle for 15min and has been auto-paused.',
+            ) === true &&
+            field?.getAttribute('placeholder') ===
+              'Send a message to continue with your previous chat session.'
+          );
+        },
+        { polling: 'raf', timeout: 5000 },
+      );
+    } catch {
+      problems.push('chat surface: paused notice and composer copy did not render');
+    }
+
+    const pausedView = await page.evaluate(() => {
+      const surface = document.querySelector('.chat-surface[data-surface="chat"]');
+      const notice = surface?.querySelector('.chat-surface__pause[role="status"]');
+      const field = surface?.querySelector('textarea[aria-label="Message"]');
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const box = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return (
+          box.width > 0 &&
+          box.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden'
+        );
+      };
+      return {
+        notice: notice?.textContent?.trim() ?? '',
+        noticeVisible: visible(notice),
+        placeholder: field?.getAttribute('placeholder') ?? '',
+        fieldVisible: visible(field),
+        fieldEnabled: field instanceof HTMLTextAreaElement && !field.disabled,
+      };
+    });
+    if (
+      pausedView.notice !==
+        'Your current chat session has been idle for 15min and has been auto-paused.' ||
+      !pausedView.noticeVisible
+    ) {
+      problems.push(`chat surface: paused notice is not visibly exact (${pausedView.notice})`);
+    }
+    if (
+      pausedView.placeholder !== 'Send a message to continue with your previous chat session.' ||
+      !pausedView.fieldVisible ||
+      !pausedView.fieldEnabled
+    ) {
+      problems.push(
+        `chat surface: paused composer is not visibly enabled with exact copy (${pausedView.placeholder})`,
+      );
+    }
+  }
+
+  if (!(await press(page, 'Agent'))) {
+    return [...problems, 'chat surface: the Agent segment cannot be pressed'];
+  }
+  try {
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.rail__label')?.textContent?.trim() === 'Sessions' &&
+        document.querySelector('.sidebar__new')?.textContent?.trim() === 'New session',
+      { polling: 'raf', timeout: 5000 },
+    );
+  } catch {
+    problems.push('chat surface: switching back did not restore Agent');
+  }
+  return problems;
+}
+
+/** The compact session instrumentation remains two rows at every console width. */
+async function conversationMetricsStayInTwoRows(page) {
+  const problems = [];
+  const picked = await page.evaluate(() => {
+    const row = document.querySelector('.row-item');
+    row?.click();
+    return row !== null;
+  });
+  if (!picked) {
+    return ['metrics: no session row is available to open'];
+  }
+  await settle(300);
+  for (const width of [1440, 390]) {
+    await page.setViewport({ width, height: 900 });
+    try {
+      await ready(page, '.resources', { label: 'the live session resource readings' });
+    } catch {
+      const visible = await page.evaluate(() => document.body.innerText.slice(0, 240));
+      problems.push(
+        `metrics at ${String(width)}px: the conversation resource row did not mount (${visible})`,
+      );
+      continue;
+    }
+    try {
+      await page.waitForFunction(
+        () => document.querySelector('.resources')?.textContent?.includes('4096 MiB') ?? false,
+        { polling: 'raf', timeout: 5000 },
+      );
+    } catch {
+      problems.push(`metrics at ${String(width)}px: the bounded reading never arrived`);
+      continue;
+    }
+
+    const seen = await page.evaluate(() => {
+      const summary = document.querySelector('.conversation__usage-context');
+      const usage = summary?.querySelector('.usage');
+      const context = summary?.querySelector('.context');
+      const resources = document.querySelector('.resources');
+      const rows =
+        resources === null ? [] : [...resources.querySelectorAll(':scope > .resources__row')];
+      if (
+        !(summary instanceof HTMLElement) ||
+        !(usage instanceof HTMLElement) ||
+        !(context instanceof HTMLElement) ||
+        !(resources instanceof HTMLElement) ||
+        rows.some((row) => !(row instanceof HTMLElement))
+      ) {
+        return { missing: true };
+      }
+      const boxes = rows.map((row) => row.getBoundingClientRect());
+      const summaryBoxes = [usage, context].map((item) => item.getBoundingClientRect());
+      const sameTop = (rectangles) =>
+        rectangles.every((rectangle) => Math.abs(rectangle.top - rectangles[0].top) <= 1);
+      const noHorizontalOverlap = (rectangles) =>
+        rectangles.every(
+          (rectangle, index) => index === 0 || rectangle.left >= rectangles[index - 1].right - 1,
+        );
+      return {
+        missing: false,
+        summaryGrid: getComputedStyle(summary).display === 'grid',
+        resourcesGrid: getComputedStyle(resources).display === 'grid',
+        summarySameTop: sameTop(summaryBoxes),
+        resourcesSameTop: sameTop(boxes),
+        summaryNoOverlap: noHorizontalOverlap(summaryBoxes),
+        resourcesNoOverlap: noHorizontalOverlap(boxes),
+        rowCount: rows.length,
+        text: `${summary.textContent ?? ''} ${resources.textContent ?? ''}`,
+        horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+      };
+    });
+
+    if (seen.missing) {
+      problems.push(`metrics at ${String(width)}px: the two rows are incomplete`);
+      continue;
+    }
+    if (!seen.summaryGrid || !seen.summarySameTop || !seen.summaryNoOverlap) {
+      problems.push(`metrics at ${String(width)}px: tokens and context do not share one fixed row`);
+    }
+    if (
+      !seen.resourcesGrid ||
+      !seen.resourcesSameTop ||
+      !seen.resourcesNoOverlap ||
+      seen.rowCount !== 3
+    ) {
+      problems.push(
+        `metrics at ${String(width)}px: memory, CPU, and network do not share three columns`,
+      );
+    }
+    for (const expected of [
+      '2.3K tokens',
+      '42.1K / 200K context',
+      'Memory · 435 MiB / 4096 MiB',
+      'CPU · 100m / 2000m',
+      'Network · ↓ 18 KiB · ↑ 8.9 KiB',
+    ]) {
+      if (!seen.text.includes(expected)) {
+        problems.push(`metrics at ${String(width)}px: missing "${expected}"`);
+      }
+    }
+    if (seen.horizontal) {
+      problems.push(`metrics at ${String(width)}px: the page overflows horizontally`);
+    }
+  }
+  await page.setViewport({ width: 1440, height: 900 });
+  await settle(500);
+  return problems;
 }
 
 /** Click the first button whose visible text is exactly `text`. */
@@ -308,6 +896,181 @@ async function selectingLeavesOperations(page) {
   return stuck ? ['operations: choosing a session left the operator panel on screen'] : [];
 }
 
+/** The capability-gated Chat editor is reachable and carries its complete section contract. */
+async function chatSettingsDiscoverable(page) {
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
+  if (!(await press(page, 'Operations'))) {
+    return ['chat settings: Operations was not offered to a configure_platform caller'];
+  }
+  await ready(page, '.operator__tabs', { label: 'the Operations view switch' });
+  const opened = await page.evaluate(() => {
+    const tab = [...document.querySelectorAll('[role="tab"]')].find(
+      (candidate) => candidate.textContent?.trim() === 'Chat',
+    );
+    tab?.click();
+    return tab !== undefined;
+  });
+  if (!opened) {
+    return ['chat settings: no Chat tab under configure_platform'];
+  }
+  await ready(page, 'form.chat-settings', { label: 'the Chat settings form' });
+
+  const expected = [
+    'Workspace',
+    'Agent',
+    'Messages',
+    'Setup',
+    'Lifetime',
+    'Host resources',
+    'Enabled',
+  ];
+  const seen = await page.evaluate(() => ({
+    sections: [...document.querySelectorAll('.chat-settings__section > h3')].map((heading) =>
+      heading.textContent?.trim(),
+    ),
+    repositoryField:
+      document.querySelector('form.chat-settings')?.textContent?.includes('Repository URL') ===
+      true,
+    fixedAccess:
+      document
+        .querySelector('form.chat-settings')
+        ?.textContent?.includes('Chat sessions run with full access (unrestricted).') === true,
+  }));
+  const problems = [];
+  if (JSON.stringify(seen.sections) !== JSON.stringify(expected)) {
+    problems.push(`chat settings: section order is ${JSON.stringify(seen.sections)}`);
+  }
+  if (!seen.repositoryField) {
+    problems.push('chat settings: the public repository field is absent');
+  }
+  if (!seen.fixedAccess) {
+    problems.push('chat settings: the fixed unrestricted-access fact is absent');
+  }
+
+  // Leave Operations so the remaining signed-in checks begin on the ordinary session surface.
+  await page.evaluate(() => {
+    document.querySelector('.row-item')?.click();
+  });
+  await settle();
+  return problems;
+}
+
+/** Chat-host rows and their inline retirement question fit both supported layouts. */
+async function chatHostInventoryFits(page) {
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
+  if (!(await press(page, 'Operations'))) {
+    return ['chat hosts: Operations was not offered to a session operator'];
+  }
+  await ready(page, '.operator__tabs', { label: 'the Operations view switch' });
+  const opened = await page.evaluate(() => {
+    const tab = [...document.querySelectorAll('[role="tab"]')].find(
+      (candidate) => candidate.textContent?.trim() === 'Chat hosts',
+    );
+    tab?.click();
+    return tab !== undefined;
+  });
+  if (!opened) {
+    return ['chat hosts: the inventory tab is absent'];
+  }
+  await ready(page, '[aria-label="Every chat host"] .record__row', {
+    label: 'the chat-host inventory',
+  });
+
+  const problems = [];
+  for (const width of [1440, 390]) {
+    await page.setViewport({ width, height: width === 390 ? 844 : 900 });
+    await settle(250);
+    if (width === 390 && !(await press(page, 'Retire'))) {
+      problems.push('chat hosts at 390px: retirement cannot be opened');
+    }
+    await settle();
+    const seen = await page.evaluate(() => {
+      const row = document.querySelector('[aria-label="Every chat host"] .record__row');
+      const text = row?.querySelector('.record__text');
+      const actions = row?.querySelector('.record__actions');
+      const tabs = document.querySelector('.operator__tabs');
+      const confirm = row?.querySelector('.confirm');
+      const failure = row?.querySelector('.chat-host__failure-output');
+      if (row === null || text === null || actions === null || tabs === null) {
+        return { missing: true };
+      }
+      const rowBox = row.getBoundingClientRect();
+      const textBox = text.getBoundingClientRect();
+      const actionBox = actions.getBoundingClientRect();
+      const confirmBox = confirm?.getBoundingClientRect();
+      const failureBox = failure?.getBoundingClientRect();
+      return {
+        missing: false,
+        columns: getComputedStyle(row).gridTemplateColumns,
+        horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+        rowOffscreen: rowBox.left < -1 || rowBox.right > window.innerWidth + 1,
+        actionsBelow: actionBox.top >= textBox.bottom - 1,
+        confirmation: confirm?.textContent?.includes('Retire this chat host?') === true,
+        confirmationOffscreen:
+          confirmBox !== undefined &&
+          (confirmBox.left < rowBox.left - 1 || confirmBox.right > rowBox.right + 1),
+        failureBounded:
+          failureBox !== undefined &&
+          failureBox.height <= 145 &&
+          failureBox.left >= rowBox.left - 1 &&
+          failureBox.right <= rowBox.right + 1,
+        failureScrollable:
+          failure !== null &&
+          getComputedStyle(failure).overflowY === 'auto' &&
+          failure.scrollHeight > failure.clientHeight,
+        tabsScrollable:
+          getComputedStyle(tabs).overflowX === 'auto' && tabs.scrollWidth > tabs.clientWidth,
+        text: row.textContent ?? '',
+      };
+    });
+    if (seen.missing) {
+      problems.push(`chat hosts at ${String(width)}px: the first row is incomplete`);
+      continue;
+    }
+    if (!seen.text.includes('subject-chat-owner') || !seen.text.includes('3 threads')) {
+      problems.push(`chat hosts at ${String(width)}px: required row facts are absent`);
+    }
+    if (
+      !seen.text.includes('failure workspace_setup, command index 1') ||
+      !seen.failureBounded ||
+      !seen.failureScrollable
+    ) {
+      problems.push(`chat hosts at ${String(width)}px: setup failure evidence is not bounded`);
+    }
+    if (seen.horizontal || seen.rowOffscreen || seen.confirmationOffscreen) {
+      problems.push(`chat hosts at ${String(width)}px: the inventory widens the viewport`);
+    }
+    if (width === 390) {
+      if (!seen.actionsBelow || !seen.confirmation) {
+        problems.push('chat hosts at 390px: controls do not stack below the row metadata');
+      }
+      if (!seen.tabsScrollable) {
+        problems.push('chat hosts at 390px: the seven-tab strip is not horizontally scrollable');
+      }
+    } else if (seen.columns.split(' ').length < 3) {
+      problems.push('chat hosts at 1440px: the compact row lost its three-column geometry');
+    }
+  }
+
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    const keep = [...document.querySelectorAll('.confirm button')].find(
+      (button) => button.textContent?.trim() === 'Keep it',
+    );
+    keep?.click();
+    document.querySelector('.row-item')?.click();
+  });
+  await settle();
+  return problems;
+}
+
 /** Wait for AppFrame's observed width and animated tracks to reach a new viewport. */
 async function waitForDeveloperFrame(page, width, phoneControls) {
   try {
@@ -401,7 +1164,9 @@ async function developerSurface(page) {
     const articleBox = article.getBoundingClientRect();
     return {
       missing: false,
-      guides: document.querySelectorAll('.developer__document').length,
+      guides: [...document.querySelectorAll('.developer__document')].map((guide) =>
+        guide.textContent?.trim(),
+      ),
       heading: article.querySelector('h1')?.textContent?.trim(),
       base: preface.querySelector('code')?.textContent?.trim(),
       origin: window.location.origin,
@@ -414,10 +1179,13 @@ async function developerSurface(page) {
   if (desktop.missing) {
     return ['developer: the surface is incomplete'];
   }
-  if (desktop.guides !== EXPECTED_DEVELOPER_GUIDES) {
+  if (desktop.guides.length !== EXPECTED_DEVELOPER_GUIDES.typescript) {
     problems.push(
-      `developer: TypeScript draws ${String(desktop.guides)} guides, expected ${String(EXPECTED_DEVELOPER_GUIDES)}`,
+      `developer: TypeScript draws ${String(desktop.guides.length)} guides, expected ${String(EXPECTED_DEVELOPER_GUIDES.typescript)}`,
     );
+  }
+  if (!desktop.guides.includes('Sponsorships')) {
+    problems.push('developer: TypeScript omits its Sponsorships guide');
   }
   if (desktop.heading !== 'CMA TypeScript SDK') {
     problems.push(`developer: the first bundled heading is ${String(desktop.heading)}`);
@@ -443,11 +1211,22 @@ async function developerSurface(page) {
     problems.push('developer: the Rust SDK control is absent');
   } else {
     await settle(250);
-    const rustHeading = await page.evaluate(
-      () => document.querySelector('.developer__article h1')?.textContent?.trim() ?? '',
-    );
-    if (rustHeading !== 'CMA Rust SDK') {
-      problems.push(`developer: switching to Rust showed "${rustHeading}"`);
+    const rust = await page.evaluate(() => ({
+      heading: document.querySelector('.developer__article h1')?.textContent?.trim() ?? '',
+      guides: [...document.querySelectorAll('.developer__document')].map((guide) =>
+        guide.textContent?.trim(),
+      ),
+    }));
+    if (rust.heading !== 'CMA Rust SDK') {
+      problems.push(`developer: switching to Rust showed "${rust.heading}"`);
+    }
+    if (rust.guides.length !== EXPECTED_DEVELOPER_GUIDES.rust) {
+      problems.push(
+        `developer: Rust draws ${String(rust.guides.length)} guides, expected ${String(EXPECTED_DEVELOPER_GUIDES.rust)}`,
+      );
+    }
+    if (rust.guides.includes('Sponsorships')) {
+      problems.push('developer: Rust draws the TypeScript-only Sponsorships guide');
     }
   }
 
@@ -676,6 +1455,60 @@ async function accountMenuReads(page) {
   return problems;
 }
 
+/** A deployment-owned size must still look like a machine specification. */
+async function profileResourcesAreDiscoverable(page) {
+  const problems = [];
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle(250);
+  if (!(await press(page, 'Environment profiles'))) {
+    return ['profile resources: no Environment profiles action'];
+  }
+  await ready(page, '.profiles__row', { label: 'an environment profile row' });
+  const summary = await page.evaluate(
+    () => document.body.textContent?.includes('Session resources: deployment default') ?? false,
+  );
+  if (!(await press(page, 'Edit'))) {
+    return ['profile resources: no Edit action'];
+  }
+  await ready(page, '.editor__resources', { label: 'the session resource controls' });
+
+  const seen = await page.evaluate((listNamesResources) => {
+    const fieldFor = (wanted) => {
+      const label = [...document.querySelectorAll('label')].find(
+        (candidate) => candidate.textContent?.trim() === wanted,
+      );
+      return label instanceof HTMLLabelElement && label.htmlFor !== ''
+        ? document.getElementById(label.htmlFor)
+        : null;
+    };
+    const group = document.querySelector('.editor__resources');
+    const cpu = fieldFor('CPU (millicores)');
+    const memory = fieldFor('Memory (MiB)');
+    const useDefault = group?.querySelector('input[type="checkbox"]');
+    return {
+      heading: group?.textContent?.includes('Session resources') ?? false,
+      cpu: cpu instanceof HTMLInputElement,
+      cpuDisabled: cpu instanceof HTMLInputElement && cpu.disabled,
+      memory: memory instanceof HTMLInputElement,
+      memoryDisabled: memory instanceof HTMLInputElement && memory.disabled,
+      defaultChecked: useDefault instanceof HTMLInputElement && useDefault.checked,
+      summary: listNamesResources,
+    };
+  }, summary);
+
+  if (!seen.summary) problems.push('profile resources: the list does not name the session size');
+  if (!seen.heading) problems.push('profile resources: the editor does not name Session resources');
+  if (!seen.cpu || !seen.memory) problems.push('profile resources: CPU or memory is absent');
+  if (!seen.cpuDisabled || !seen.memoryDisabled || !seen.defaultChecked) {
+    problems.push('profile resources: deployment-owned CPU and memory are not visibly disabled');
+  }
+  await page.keyboard.press('Escape');
+  await settle(250);
+  return problems;
+}
+
 async function main() {
   const { page, close } = await open({ port: PORT });
   try {
@@ -688,12 +1521,17 @@ async function main() {
     await settle(400);
 
     const problems = [
+      ...(await conversationMetricsStayInTwoRows(page)),
+      ...(await chatSurfaceSwitches(page)),
       ...(await pickerReachable(page)),
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
+      ...(await chatSettingsDiscoverable(page)),
+      ...(await chatHostInventoryFits(page)),
       ...(await developerSurface(page)),
       ...(await everyMenuLands(page)),
       ...(await accountMenuReads(page)),
+      ...(await profileResourcesAreDiscoverable(page)),
     ];
 
     if (problems.length > 0) {
@@ -706,7 +1544,9 @@ async function main() {
     }
     console.log(
       'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
-        'Developer fits both layouts, and every menu lands inside the window',
+        'Developer fits both layouts, session metrics keep two rows, every menu lands inside the window, ' +
+        'the Chat surface switches rails and stays reduced at desktop and phone widths, ' +
+        'Chat settings and host inventory are reachable, and profile resources remain visible',
     );
   } finally {
     await close();

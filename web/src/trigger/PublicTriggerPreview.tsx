@@ -18,6 +18,31 @@ interface PreviewFailure {
   readonly detail: string;
 }
 
+function unavailableFor(reason: NonNullable<TriggerPreview['unavailable_reason']>): PreviewFailure {
+  switch (reason) {
+    case 'upstream_not_forkable':
+      return {
+        title: 'This repository is not currently forkable',
+        detail: "The upstream repository no longer meets this Trigger's public fork policy.",
+      };
+    case 'upstream_unavailable':
+      return {
+        title: 'This repository is unavailable',
+        detail: 'CMA cannot find or access the upstream repository.',
+      };
+    case 'upstream_identity_changed':
+      return {
+        title: 'This Trigger no longer matches its repository',
+        detail: 'The upstream repository identity changed after this Trigger was published.',
+      };
+    case 'repository_policy_unavailable':
+      return {
+        title: 'Repository policy cannot be verified',
+        detail: "CMA cannot safely verify the upstream repository's current fork policy.",
+      };
+  }
+}
+
 function failureFor(cause: unknown): PreviewFailure {
   if (cause instanceof ApiError) {
     if (cause.status === 404) {
@@ -224,6 +249,18 @@ function PublicTriggerPreviewRoute({ publicId, authError, onSignIn }: PublicTrig
                       <p className="notice__title">This Trigger is retired</p>
                       <p className="notice__detail">
                         Existing Launches remain available to their owners.
+                      </p>
+                    </div>
+                  </div>
+                ) : preview.availability === 'unavailable' ? (
+                  <div className="notice notice--quiet" role="status">
+                    <IconWarningOutline16 />
+                    <div>
+                      <p className="notice__title">
+                        {unavailableFor(preview.unavailable_reason).title}
+                      </p>
+                      <p className="notice__detail">
+                        {unavailableFor(preview.unavailable_reason).detail}
                       </p>
                     </div>
                   </div>

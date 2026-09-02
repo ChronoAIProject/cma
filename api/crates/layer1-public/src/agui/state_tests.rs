@@ -51,6 +51,9 @@ fn every_durable_kind() -> Vec<EventKind> {
         EventKind::OwnerMessage {
             content: "owner input".into(),
         },
+        EventKind::TurnMetadata {
+            metadata: [("responses-only".into(), "not AG-UI state".into())].into(),
+        },
         EventKind::ToolCallStarted {
             call_id: "call_state_contract".into(),
             title: "read a file".into(),
@@ -116,6 +119,17 @@ fn every_durable_kind() -> Vec<EventKind> {
             runtime_id: "runtime_example".into(),
             cause: None,
         },
+        EventKind::CpuPressureOpened {
+            used_millis: 900,
+            limit_millis: 1_000,
+            occupancy_permille: 900,
+        },
+        EventKind::CpuPressureClosed {
+            peak_millis: 950,
+            limit_millis: 1_000,
+            peak_permille: 950,
+            duration_seconds: 8,
+        },
         EventKind::MemoryPressureOpened {
             used_bytes: 900,
             limit_bytes: 1_000,
@@ -145,6 +159,7 @@ fn every_durable_kind() -> Vec<EventKind> {
             | EventKind::ConversationOpened { .. }
             | EventKind::MessageCommitted { .. }
             | EventKind::OwnerMessage { .. }
+            | EventKind::TurnMetadata { .. }
             | EventKind::ToolCallStarted { .. }
             | EventKind::ToolCallUpdated { .. }
             | EventKind::UsageReported { .. }
@@ -161,6 +176,8 @@ fn every_durable_kind() -> Vec<EventKind> {
             | EventKind::ApprovalResolved { .. }
             | EventKind::PlaneChanged { .. }
             | EventKind::RuntimeLost { .. }
+            | EventKind::CpuPressureOpened { .. }
+            | EventKind::CpuPressureClosed { .. }
             | EventKind::MemoryPressureOpened { .. }
             | EventKind::MemoryPressureClosed { .. }
             | EventKind::RuntimeHandoverStarted

@@ -147,6 +147,7 @@ impl SessionService {
         // runtime, so this is needed twice and computing it twice would be two
         // places for the translation to drift.
         let mut options = runtime_options(&spec.options);
+        options.conversation_slot = Some(id.0.clone());
         /*
          * Read from the session rather than from the profile, exactly as the
          * credential's own scope is: a session keeps what it was granted when
@@ -171,6 +172,8 @@ impl SessionService {
             .as_ref()
             .and_then(|record| record.trigger_origin.as_ref());
         let runtime_policy_required = trigger_origin.is_some();
+        let sponsored_model_required = trigger_origin
+            .is_some_and(|origin| origin.billing_mode == crate::BillingMode::Sponsored);
         options.restricted_service_gateway = runtime_policy_required;
         let trigger_timeout_seconds =
             trigger_origin.map(|origin| u64::from(origin.timeout_seconds));
@@ -233,6 +236,7 @@ impl SessionService {
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
+                chat_host: None,
                 generation: reservation.as_ref().map(|reserved| reserved.generation),
                 reservation_token: reservation.as_ref().map(|reserved| reserved.token.clone()),
                 size: TermSize {
@@ -258,6 +262,9 @@ impl SessionService {
                 platform_briefing: platform_briefing.to_string(),
                 reaches,
                 runtime_policy_required,
+                sponsored_model_required,
+                workspace_source_required: false,
+                conversation_slots_required: None,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })
@@ -919,6 +926,7 @@ impl SessionService {
         let entry = SessionEntry {
             session: seeded,
             trigger_origin: durable.trigger_origin.clone(),
+            chat_origin: durable.chat_origin.clone(),
             initial_prompt: durable.initial_prompt.clone(),
             event_log,
             // Evidence means the adapter acknowledged this exact value, not
@@ -938,6 +946,7 @@ impl SessionService {
             live_frames: live_frames.clone(),
             resources,
             last_reading: None,
+            cpu_pressure: Default::default(),
             memory_pressure: Default::default(),
             readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),

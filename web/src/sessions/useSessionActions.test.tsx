@@ -3,13 +3,16 @@ import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 import {
+  ApiError,
   changePlane,
   createSession,
   deleteSession,
   DeploymentAtCapacity,
+  readSession,
   reviveSession,
   SessionLimitReached,
   stopSession,
+  terminateSession,
 } from '../api/client';
 import type { Session, SessionLifecycle } from './types';
 import { useSessionActions, type FailureNotice } from './useSessionActions';
@@ -21,8 +24,10 @@ vi.mock('../api/client', async (importOriginal) => {
     changePlane: vi.fn(),
     createSession: vi.fn(),
     deleteSession: vi.fn(),
+    readSession: vi.fn(),
     reviveSession: vi.fn(),
     stopSession: vi.fn(),
+    terminateSession: vi.fn(),
   };
 });
 
@@ -76,21 +81,24 @@ function renderActions() {
 beforeEach(() => {
   vi.mocked(createSession).mockReset().mockResolvedValue(STARTING);
   vi.mocked(stopSession).mockReset().mockResolvedValue();
+  vi.mocked(terminateSession).mockReset().mockResolvedValue();
   vi.mocked(reviveSession).mockReset().mockResolvedValue(STARTING);
   vi.mocked(deleteSession).mockReset().mockResolvedValue();
+  vi.mocked(readSession).mockReset().mockResolvedValue(PAUSED);
   vi.mocked(changePlane)
     .mockReset()
     .mockResolvedValue({ ...PAUSED, lifecycle: 'rotating' });
 });
 
 describe('refreshing the live-session allowance', () => {
-  it('refreshes after create, stop, revive and delete have each settled', async () => {
+  it('refreshes after create, stop, revive, terminate and delete have each settled', async () => {
     const { result, refreshAllowance } = renderActions();
     await act(() => result.current.actions.start());
     await act(() => result.current.actions.endSession(PAUSED.id));
     await act(() => result.current.actions.reviveSessionById(PAUSED.id));
+    await act(() => result.current.actions.terminateSessionById(PAUSED.id));
     await act(() => result.current.actions.removeSession(PAUSED.id));
-    expect(refreshAllowance).toHaveBeenCalledTimes(4);
+    expect(refreshAllowance).toHaveBeenCalledTimes(5);
   });
 
   it('does not refresh until a creation attempt settles', async () => {
@@ -121,6 +129,35 @@ describe('refreshing the live-session allowance', () => {
     const { result, refreshAllowance } = renderActions();
     await act(() => result.current.actions.changeSessionPlane(PAUSED.id, 'conversation'));
     expect(refreshAllowance).not.toHaveBeenCalled();
+  });
+});
+
+describe('retained termination', () => {
+  it('terminates without deleting and keeps the session selected and listed', async () => {
+    const { result } = renderActions();
+
+    await act(() => result.current.actions.terminateSessionById(PAUSED.id));
+
+    expect(terminateSession).toHaveBeenCalledWith(PAUSED.id);
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(result.current.sessions).toEqual([{ ...PAUSED, lifecycle: 'terminated' }]);
+    expect(result.current.activeId).toBe(PAUSED.id);
+    expect(result.current.focusHistory).toEqual([PAUSED.id]);
+  });
+
+  it('reports a refusal without inventing a terminated lifecycle', async () => {
+    const refusal = new ApiError(409, 'runtime cleanup was refused');
+    vi.mocked(terminateSession).mockRejectedValueOnce(refusal);
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.terminateSessionById(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([PAUSED]);
+    expect(report).toHaveBeenCalledWith(
+      refusal,
+      'Terminating the session failed.',
+      'The session remains available in its current state.',
+    );
   });
 });
 
@@ -162,5 +199,56 @@ describe('a revive refused at the live-session limit', () => {
     });
     expect(report).not.toHaveBeenCalled();
     expect(refreshAllowance).toHaveBeenCalledOnce();
+  });
+});
+
+describe('permanent deletion convergence', () => {
+  it('keeps a partially deleted session and refreshes it into terminated', async () => {
+    const refusal = new ApiError(503, 'cleanup is still pending');
+    const terminated: Session = {
+      ...PAUSED,
+      lifecycle: 'terminated',
+      stopReason: 'other',
+    };
+    vi.mocked(deleteSession).mockRejectedValueOnce(refusal);
+    vi.mocked(readSession).mockResolvedValueOnce(terminated);
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.removeSession(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([terminated]);
+    expect(report).toHaveBeenCalledWith(
+      refusal,
+      'Deleting the session failed.',
+      'The session is terminated and its history remains available.',
+    );
+  });
+
+  it('does not flash a delete error when an authoritative read confirms it is gone', async () => {
+    vi.mocked(deleteSession).mockRejectedValueOnce(new Error('response connection closed'));
+    vi.mocked(readSession).mockRejectedValueOnce(new ApiError(404, 'session not found'));
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.removeSession(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([]);
+    expect(result.current.activeId).toBeNull();
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('reports uncertainty without claiming a failed delete changed nothing', async () => {
+    const refusal = new Error('request failed');
+    vi.mocked(deleteSession).mockRejectedValueOnce(refusal);
+    vi.mocked(readSession).mockRejectedValueOnce(new Error('refresh failed'));
+    const { result, report } = renderActions();
+
+    await act(() => result.current.actions.removeSession(PAUSED.id));
+
+    expect(result.current.sessions).toEqual([PAUSED]);
+    expect(report).toHaveBeenCalledWith(
+      refusal,
+      'Deleting the session failed.',
+      'Its current state could not be confirmed. Refresh before trying again.',
+    );
   });
 });

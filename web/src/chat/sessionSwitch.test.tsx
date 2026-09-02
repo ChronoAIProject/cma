@@ -59,7 +59,13 @@ beforeEach(() => {
             headers: { 'Content-Type': 'text/event-stream' },
           }),
         );
-      if (url.endsWith('/api/v1/sessions')) return json({ sessions: SESSIONS });
+      if (url.includes('/api/v1/agui/capabilities')) {
+        return json({
+          protocol: 'ag-ui',
+          features: { custom: { 'cma:chat': { enabled: false } } },
+        });
+      }
+      if (url.endsWith('/api/v1/sessions?surface=agent')) return json({ sessions: SESSIONS });
       if (url.includes('/api/v1/kernels')) return json({ kernels: [] });
       if (url.includes('/environment-profiles')) return json([]);
       if (url.includes('/api/v1/agui/events')) return events(!url.includes('follow=false'));

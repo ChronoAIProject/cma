@@ -62,6 +62,9 @@ fn one_of_every_kind() -> Vec<EventKind> {
         EventKind::OwnerMessage {
             content: "hello back".into(),
         },
+        EventKind::TurnMetadata {
+            metadata: [("trace".into(), "one".into())].into(),
+        },
         EventKind::ToolCallStarted {
             call_id: "call-1".into(),
             title: "read a file".into(),
@@ -123,6 +126,17 @@ fn one_of_every_kind() -> Vec<EventKind> {
             request_id: "r-1".into(),
             allowed: true,
         },
+        EventKind::CpuPressureOpened {
+            used_millis: 850,
+            limit_millis: 1_000,
+            occupancy_permille: 850,
+        },
+        EventKind::CpuPressureClosed {
+            peak_millis: 970,
+            limit_millis: 1_000,
+            peak_permille: 970,
+            duration_seconds: 181,
+        },
         EventKind::MemoryPressureOpened {
             used_bytes: 850,
             limit_bytes: 1_000,
@@ -168,6 +182,7 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::ConversationOpened { .. }
             | EventKind::MessageCommitted { .. }
             | EventKind::OwnerMessage { .. }
+            | EventKind::TurnMetadata { .. }
             | EventKind::ToolCallStarted { .. }
             | EventKind::ToolCallUpdated { .. }
             | EventKind::UsageReported { .. }
@@ -182,6 +197,8 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::TerminalResized { .. }
             | EventKind::ApprovalRequested { .. }
             | EventKind::ApprovalResolved { .. }
+            | EventKind::CpuPressureOpened { .. }
+            | EventKind::CpuPressureClosed { .. }
             | EventKind::MemoryPressureOpened { .. }
             | EventKind::MemoryPressureClosed { .. }
             | EventKind::RuntimeHandoverStarted

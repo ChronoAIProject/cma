@@ -14,6 +14,7 @@
 //!   profile reads back honestly, and again on resolve so a profile written
 //!   before the platform mandated something still gets it.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::authz::{Caller, Capability};
@@ -23,7 +24,7 @@ use crate::environment::{
     EnvironmentProfileSpec, ResolvedEnvironment, ServiceAvailability, SkillCatalog, SkillId,
 };
 use crate::error::CoreError;
-use crate::ids::{EnvironmentProfileId, SubjectId};
+use crate::ids::{EnvironmentProfileId, KernelId, SubjectId};
 use crate::platform_service::PlatformSettingsService;
 use crate::store::{EnvironmentProfileStore, Page, PageRequest, StoreError};
 
@@ -52,6 +53,12 @@ pub struct EnvironmentProfileService {
     catalog: Option<Arc<dyn SkillCatalog>>,
     /// Deployment policy consulted only to warn about a stated profile size.
     settings: Arc<PlatformSettingsService>,
+    /// Runtime identities reserved for control-plane-owned session flows.
+    ///
+    /// Public profile authoring cannot select one. Internal flows use their
+    /// dedicated reconciliation methods and therefore never need a public
+    /// profile to smuggle an internal runtime into ordinary session admission.
+    reserved_kernels: HashSet<KernelId>,
 }
 
 impl EnvironmentProfileService {
@@ -64,6 +71,27 @@ impl EnvironmentProfileService {
         default_agent: AgentConfiguration,
         settings: Arc<PlatformSettingsService>,
     ) -> Arc<Self> {
+        Self::new_with_reserved_kernels(
+            store,
+            baseline,
+            catalog,
+            services,
+            default_agent,
+            settings,
+            std::iter::empty(),
+        )
+    }
+
+    /// Build the service while reserving deployment-owned runtime identities.
+    pub fn new_with_reserved_kernels(
+        store: Arc<dyn EnvironmentProfileStore>,
+        baseline: Baseline,
+        catalog: Option<Arc<dyn SkillCatalog>>,
+        services: Option<Arc<dyn crate::environment::ServiceCatalog>>,
+        default_agent: AgentConfiguration,
+        settings: Arc<PlatformSettingsService>,
+        reserved_kernels: impl IntoIterator<Item = KernelId>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             baseline,
@@ -71,7 +99,17 @@ impl EnvironmentProfileService {
             services,
             default_agent,
             settings,
+            reserved_kernels: reserved_kernels.into_iter().collect(),
         })
+    }
+
+    fn refuse_reserved_kernel(&self, kernel: &KernelId) -> Result<(), CoreError> {
+        if self.reserved_kernels.contains(kernel) {
+            return Err(CoreError::InvalidRequest(format!(
+                "runtime {kernel} is reserved for a managed session flow"
+            )));
+        }
+        Ok(())
     }
 
     /// Services this caller may allow a session to reach.
@@ -300,6 +338,7 @@ impl EnvironmentProfileService {
         spec.validate_with_baseline(&self.baseline)?;
         self.baseline.apply(&mut spec);
         self.settle_kernel(&mut spec);
+        self.refuse_reserved_kernel(&spec.agent.kernel)?;
 
         let now = now_rfc3339();
         let profile = EnvironmentProfile {
@@ -469,7 +508,11 @@ impl EnvironmentProfileService {
             return Err(CoreError::Forbidden);
         }
         let selected = match id {
-            Some(wanted) => Some(self.owned(caller, wanted).await?),
+            Some(wanted) => {
+                let selected = self.owned(caller, wanted).await?;
+                self.refuse_reserved_kernel(&selected.agent.kernel)?;
+                Some(selected)
+            }
             None => None,
         };
         let previous = self
@@ -519,6 +562,7 @@ impl EnvironmentProfileService {
         let mut normalized_spec = spec.clone();
         self.apply_deployment_defaults(&mut normalized_spec);
         normalized_spec.name = normalized_spec.name.trim().to_string();
+        self.refuse_reserved_kernel(&normalized_spec.agent.kernel)?;
 
         // PUT remains a full replacement, but replacing a resource with its
         // current normalized contents changes nothing. Compare before bounded

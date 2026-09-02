@@ -6,7 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::ConnectionSnapshot;
+use super::{ConnectionSnapshot, SponsorshipPolicyId};
 use crate::{
     format_usd, AgentConfiguration, CredentialMode, KernelId, PermissionMode, SessionMode,
     SessionSize, SubjectId, CURRENCY,
@@ -24,6 +24,7 @@ pub const MAX_CAPABILITIES: usize = 32;
 pub const CMA_TRIGGER_SANDBOX_PROFILE_V1: &str = "cma-trigger-v1";
 pub const CMA_TRIGGER_ZERO_COST_POLICY_V1: &str = "public-zero-cost-v1";
 pub const CMA_TRIGGER_CONTRIBUTOR_POLICY_V1: &str = "platform-rate-card-v1";
+pub const CMA_TRIGGER_SPONSORED_POLICY_V1: &str = "sponsored-grant-v1";
 
 /// A deployment-owned Trigger execution policy understood by this binary.
 ///
@@ -308,6 +309,18 @@ pub enum RequiredCapability {
     CredentialRevocation,
 }
 
+/// Closed capability inventory required by the public Trigger product. The
+/// selected runtime route is a separate composition concern; this list remains
+/// provider- and kernel-neutral.
+pub const CMA_TRIGGER_REQUIRED_CAPABILITIES: [RequiredCapability; 6] = [
+    RequiredCapability::Conversation,
+    RequiredCapability::DurableConversation,
+    RequiredCapability::WorkspaceCheckpoint,
+    RequiredCapability::RestrictedServiceGateway,
+    RequiredCapability::CredentialRefresh,
+    RequiredCapability::CredentialRevocation,
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourcePolicy {
@@ -413,11 +426,26 @@ pub enum BillingMode {
     Sponsored,
 }
 
+/// Immutable tenant and policy authority selected by a sponsoring publisher.
+///
+/// This is separate from `policy_reference`: the latter names the closed CMA
+/// billing contract, while this binding names one owner-controlled policy.
+/// Keeping both typed prevents a policy UUID from being reinterpreted as a
+/// deployment configuration identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SponsoredPolicyBinding {
+    pub tenant_id: String,
+    pub policy_id: SponsorshipPolicyId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommercialPolicy {
     pub billing_mode: BillingMode,
     pub policy_reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sponsorship: Option<SponsoredPolicyBinding>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -548,18 +576,55 @@ impl TriggerRevisionContent {
                 "must not contain the reserved CMA marker prefix",
             ));
         }
-        if self.commercial_policy.billing_mode == BillingMode::Sponsored
-            || self.repository_access.credential_route == CredentialRoute::SponsoredGrant
-        {
+        if self.repository_access.credential_route == CredentialRoute::SponsoredGrant {
             return Err(TriggerValidationError::field(
-                "commercial_policy",
-                "sponsored credentials are disabled in the public MVP",
+                "repository_access.credential_route",
+                "GitHub authority must remain the contributor's selected connection",
             ));
         }
         let expected_pricing_policy = match self.commercial_policy.billing_mode {
-            BillingMode::ZeroCost => CMA_TRIGGER_ZERO_COST_POLICY_V1,
-            BillingMode::Contributor => CMA_TRIGGER_CONTRIBUTOR_POLICY_V1,
-            BillingMode::Sponsored => unreachable!("sponsorship is refused above"),
+            BillingMode::ZeroCost => {
+                if self.commercial_policy.sponsorship.is_some() {
+                    return Err(TriggerValidationError::field(
+                        "commercial_policy.sponsorship",
+                        "must be absent for zero-cost billing",
+                    ));
+                }
+                CMA_TRIGGER_ZERO_COST_POLICY_V1
+            }
+            BillingMode::Contributor => {
+                if self.commercial_policy.sponsorship.is_some() {
+                    return Err(TriggerValidationError::field(
+                        "commercial_policy.sponsorship",
+                        "must be absent for contributor billing",
+                    ));
+                }
+                CMA_TRIGGER_CONTRIBUTOR_POLICY_V1
+            }
+            BillingMode::Sponsored => {
+                let binding = self.commercial_policy.sponsorship.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "commercial_policy.sponsorship",
+                        "is required for sponsored billing",
+                    )
+                })?;
+                if binding.tenant_id.trim().is_empty()
+                    || binding.tenant_id.len() > 255
+                    || binding.tenant_id.chars().any(char::is_control)
+                {
+                    return Err(TriggerValidationError::field(
+                        "commercial_policy.sponsorship.tenant_id",
+                        "must contain 1-255 printable bytes",
+                    ));
+                }
+                SponsorshipPolicyId::parse(binding.policy_id.0.clone()).map_err(|_| {
+                    TriggerValidationError::field(
+                        "commercial_policy.sponsorship.policy_id",
+                        "must be a canonical sponsorship policy UUID",
+                    )
+                })?;
+                CMA_TRIGGER_SPONSORED_POLICY_V1
+            }
         };
         if self.commercial_policy.policy_reference != expected_pricing_policy {
             return Err(TriggerValidationError::field(
@@ -670,14 +735,13 @@ fn validate_task(task: &TriggerTask) -> Result<(), TriggerValidationError> {
             InputFieldKind::Text {
                 min_bytes,
                 max_bytes,
-            } => {
-                if min_bytes > max_bytes || *max_bytes as usize > MAX_FIELD_TEXT_BYTES {
-                    return Err(TriggerValidationError::field(
-                        format!("task.input_fields.{}", field.key),
-                        "has invalid text bounds",
-                    ));
-                }
+            } if min_bytes > max_bytes || *max_bytes as usize > MAX_FIELD_TEXT_BYTES => {
+                return Err(TriggerValidationError::field(
+                    format!("task.input_fields.{}", field.key),
+                    "has invalid text bounds",
+                ));
             }
+            InputFieldKind::Text { .. } => {}
             InputFieldKind::Integer { minimum, maximum } if minimum > maximum => {
                 return Err(TriggerValidationError::field(
                     format!("task.input_fields.{}", field.key),
@@ -754,14 +818,7 @@ fn validate_session(session: &TriggerSessionPolicy) -> Result<(), TriggerValidat
         ));
     }
     let required: BTreeSet<_> = session.required_capabilities.iter().copied().collect();
-    for capability in [
-        RequiredCapability::Conversation,
-        RequiredCapability::DurableConversation,
-        RequiredCapability::WorkspaceCheckpoint,
-        RequiredCapability::RestrictedServiceGateway,
-        RequiredCapability::CredentialRefresh,
-        RequiredCapability::CredentialRevocation,
-    ] {
+    for capability in CMA_TRIGGER_REQUIRED_CAPABILITIES {
         if !required.contains(&capability) {
             return Err(TriggerValidationError::field(
                 "session.required_capabilities",
@@ -841,6 +898,36 @@ pub enum TriggerAvailability {
     Retired,
 }
 
+/// Current, public-safe availability of a Trigger preview.
+///
+/// Unlike [`TriggerAvailability`], this value includes repository policy
+/// observed after publication and is never persisted into an immutable
+/// revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPreviewAvailability {
+    Published,
+    Retired,
+    Unavailable,
+}
+
+/// Public-safe reason a published Trigger cannot currently start a Launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPreviewUnavailableReason {
+    UpstreamNotForkable,
+    UpstreamUnavailable,
+    UpstreamIdentityChanged,
+    RepositoryPolicyUnavailable,
+}
+
+/// Current provider observation used to derive public preview availability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerPreviewRepositoryPolicy {
+    pub repository: RepositoryIdentity,
+    pub public_forkable: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PublisherRepositoryRole {
@@ -910,7 +997,7 @@ impl TriggerRevision {
         }
         authority
             .connection
-            .validate_for(&self.content.repository_access.required_scope_classes)?;
+            .validate_historical_for(&self.content.repository_access.required_scope_classes)?;
         match self.availability {
             TriggerAvailability::Published if self.retired_at.is_some() => {
                 Err(TriggerValidationError::field(
@@ -937,7 +1024,8 @@ impl TriggerRevision {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TriggerPreview {
     pub public_id: PublicTriggerId,
-    pub availability: TriggerAvailability,
+    pub availability: TriggerPreviewAvailability,
+    pub unavailable_reason: Option<TriggerPreviewUnavailableReason>,
     pub publisher_display_identity: String,
     pub repository_id: u64,
     pub repository_owner: String,
@@ -1001,7 +1089,11 @@ impl From<&TriggerRevision> for TriggerPreview {
         let content = &revision.content;
         Self {
             public_id: revision.public_id.clone(),
-            availability: revision.availability,
+            availability: match revision.availability {
+                TriggerAvailability::Published => TriggerPreviewAvailability::Published,
+                TriggerAvailability::Retired => TriggerPreviewAvailability::Retired,
+            },
+            unavailable_reason: None,
             publisher_display_identity: content.publisher_display_identity.clone(),
             repository_id: content.upstream.repository.repository_id,
             repository_owner: content.upstream.repository.canonical_owner.clone(),

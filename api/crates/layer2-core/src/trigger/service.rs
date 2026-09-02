@@ -7,11 +7,12 @@ use super::{
     AuthorityProvenance, Confirmation, ConnectedAccount, ConnectionSnapshot, ConnectionState,
     Launch, LaunchEvent, LaunchId, LaunchOverrides, LaunchQuery, LaunchReviewAdmission,
     LaunchState, LaunchStore, PublicTriggerId, PublishedRevision, PublisherAuthority,
-    StartAdmissionSnapshot, TriggerAvailability, TriggerDraft, TriggerId, TriggerPage,
-    TriggerPageRequest, TriggerPreview, TriggerPreviewCost, TriggerRevision,
-    TriggerRevisionContent, TriggerRevisionId, TriggerRolloutDenial, TriggerRolloutPolicy,
-    TriggerStore, TriggerStoreError, TriggerSupportLookup, TriggerSupportSnapshot,
-    TriggerValidationError, WorkerLease,
+    SponsoredPolicyBinding, StartAdmissionSnapshot, TriggerAvailability, TriggerDraft, TriggerId,
+    TriggerPage, TriggerPageRequest, TriggerPreview, TriggerPreviewAvailability,
+    TriggerPreviewCost, TriggerPreviewRepositoryPolicy, TriggerPreviewUnavailableReason,
+    TriggerRevision, TriggerRevisionContent, TriggerRevisionId, TriggerRolloutDenial,
+    TriggerRolloutPolicy, TriggerStore, TriggerStoreError, TriggerSupportLookup,
+    TriggerSupportSnapshot, TriggerValidationError, WorkerLease,
 };
 use crate::{clock::now_rfc3339, BillingMode, Caller, Capability, SessionId, SubjectId};
 
@@ -84,6 +85,17 @@ pub trait TriggerAuthorityVerifier: Send + Sync {
         selected_service_id: &str,
         previous: Option<&ConnectionSnapshot>,
     ) -> Result<LaunchAuthority, TriggerServiceError>;
+
+    /// Resolve current repository policy through a credential-free public
+    /// observer. Implementations must not exercise publisher/contributor
+    /// authority or propagate a subject, bearer, connection ID, or provider
+    /// credential for this side-effect-free anonymous preview check.
+    async fn resolve_preview_repository_policy(
+        &self,
+        _revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        Err(TriggerAuthorityError::ProviderAuthenticationUnavailable.into())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -96,6 +108,8 @@ pub enum TriggerAdmissionError {
     PriceChanged,
     #[error("the reviewed price expired")]
     QuoteExpired,
+    #[error("the contributor has not accepted the current sponsored terms")]
+    SponsoredTermsNotAccepted,
     #[error("session quota or deployment capacity is exhausted: {0}")]
     QuotaExceeded(String),
     #[error("the pinned runtime does not support required capability {capability}")]
@@ -129,6 +143,73 @@ pub trait TriggerLaunchAdmission: Send + Sync {
         launch: &Launch,
         now: &str,
     ) -> Result<StartAdmissionSnapshot, TriggerAdmissionError>;
+}
+
+/// Deployment composition that proves a publisher controls one sponsored
+/// policy before its immutable Trigger revision can name that policy.
+#[async_trait]
+pub trait TriggerSponsorshipVerifier: Send + Sync {
+    async fn verify_policy_binding(
+        &self,
+        publisher: &SubjectId,
+        binding: &SponsoredPolicyBinding,
+    ) -> Result<(), TriggerAdmissionError>;
+
+    /// Prove the durable acceptance still matches the exact draft Launch and
+    /// current policy generation before Start mutates that Launch.
+    async fn verify_start_acceptance(
+        &self,
+        _contributor: &SubjectId,
+        _launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        Err(TriggerAdmissionError::SponsoredTermsNotAccepted)
+    }
+}
+
+#[async_trait]
+impl TriggerSponsorshipVerifier for super::SponsorshipService {
+    async fn verify_policy_binding(
+        &self,
+        publisher: &SubjectId,
+        binding: &SponsoredPolicyBinding,
+    ) -> Result<(), TriggerAdmissionError> {
+        self.verify_publisher_policy_binding(publisher, binding)
+            .await
+            .map_err(|_| {
+                TriggerAdmissionError::PricingUnavailable(
+                    "the sponsored policy authority is unavailable".into(),
+                )
+            })
+    }
+
+    async fn verify_start_acceptance(
+        &self,
+        contributor: &SubjectId,
+        launch_id: &LaunchId,
+    ) -> Result<(), TriggerAdmissionError> {
+        self.verify_current_start_acceptance(contributor, launch_id)
+            .await
+            .map_err(|error| match error {
+                super::SponsorshipError::TermsNotAccepted
+                | super::SponsorshipError::TermsChanged
+                | super::SponsorshipError::Forbidden
+                | super::SponsorshipError::NotFound => {
+                    TriggerAdmissionError::SponsoredTermsNotAccepted
+                }
+                super::SponsorshipError::Disabled
+                | super::SponsorshipError::KillSwitch
+                | super::SponsorshipError::CapabilityEvidenceMissing
+                | super::SponsorshipError::InvalidGate
+                | super::SponsorshipError::PolicyUnavailable => {
+                    TriggerAdmissionError::PricingUnavailable(
+                        "the sponsored policy authority is unavailable".into(),
+                    )
+                }
+                _ => TriggerAdmissionError::Unavailable(
+                    "the sponsored acceptance authority could not be verified".into(),
+                ),
+            })
+    }
 }
 
 /// Settles the private initial-prompt reservation after a Launch cancellation.
@@ -291,6 +372,8 @@ pub enum TriggerAuthorityError {
     ReauthorizationRequired,
     #[error("the selected connection does not satisfy required scope class {required}")]
     InsufficientScope { required: String },
+    #[error("the selected connection grants an unapproved GitHub scope: {scope}")]
+    UnapprovedScope { scope: String },
     #[error("the selected authority changed since the retained preflight")]
     AuthorityDrift,
     #[error("the provider refused this subject or exact connection")]
@@ -321,6 +404,8 @@ pub enum TriggerServiceError {
     Forbidden,
     #[error("Launch progress cursor {cursor} is beyond the durable event head {head}")]
     CursorBeyondEnd { cursor: u64, head: u64 },
+    #[error("the retained Launch runtime route is unavailable at {field}")]
+    RuntimeRouteUnavailable { field: String },
     #[error("trigger input is invalid: {0}")]
     Validation(#[from] TriggerValidationError),
     #[error("trigger persistence failed: {0}")]
@@ -339,6 +424,7 @@ pub struct TriggerService {
     authority: Arc<dyn TriggerAuthorityVerifier>,
     launch_admission: Arc<dyn TriggerLaunchAdmission>,
     session_cancellation: Option<Arc<dyn TriggerSessionCancellation>>,
+    sponsorship: Option<Arc<dyn TriggerSponsorshipVerifier>>,
     rollout: Arc<TriggerRolloutPolicy>,
 }
 
@@ -354,6 +440,7 @@ impl TriggerService {
             authority,
             launch_admission: Arc::new(UnavailableTriggerLaunchAdmission),
             session_cancellation: None,
+            sponsorship: None,
             rollout: Arc::new(TriggerRolloutPolicy::allow_all()),
         }
     }
@@ -376,8 +463,64 @@ impl TriggerService {
         self
     }
 
+    pub fn with_sponsorship_verifier(
+        mut self,
+        verifier: Arc<dyn TriggerSponsorshipVerifier>,
+    ) -> Self {
+        self.sponsorship = Some(verifier);
+        self
+    }
+
     pub fn rollout_policy(&self) -> Arc<TriggerRolloutPolicy> {
         Arc::clone(&self.rollout)
+    }
+
+    async fn verify_sponsored_policy(
+        &self,
+        publisher: &SubjectId,
+        content: &TriggerRevisionContent,
+    ) -> Result<(), TriggerServiceError> {
+        if content.commercial_policy.billing_mode != BillingMode::Sponsored {
+            return Ok(());
+        }
+        let binding = content
+            .commercial_policy
+            .sponsorship
+            .as_ref()
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "commercial_policy.sponsorship",
+                    "is required for sponsored billing",
+                )
+            })?;
+        let verifier = self.sponsorship.as_ref().ok_or_else(|| {
+            TriggerAdmissionError::PricingUnavailable(
+                "sponsored policy verification is not configured".into(),
+            )
+        })?;
+        verifier
+            .verify_policy_binding(publisher, binding)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn verify_sponsored_start_acceptance(
+        &self,
+        contributor: &SubjectId,
+        launch: &Launch,
+    ) -> Result<(), TriggerServiceError> {
+        if launch.revision.content.commercial_policy.billing_mode != BillingMode::Sponsored {
+            return Ok(());
+        }
+        let verifier = self.sponsorship.as_ref().ok_or_else(|| {
+            TriggerAdmissionError::PricingUnavailable(
+                "sponsored acceptance verification is not configured".into(),
+            )
+        })?;
+        verifier
+            .verify_start_acceptance(contributor, &launch.id)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn create_draft(
@@ -394,6 +537,7 @@ impl TriggerService {
         content.publisher_subject_id = owner.clone();
         content.revision_number = 1;
         content.validate()?;
+        self.verify_sponsored_policy(&owner, &content).await?;
         let now = now.into();
         let draft = TriggerDraft {
             id,
@@ -454,6 +598,7 @@ impl TriggerService {
         content.publisher_subject_id = current.owner.clone();
         content.revision_number = current.next_revision_number;
         content.validate()?;
+        self.verify_sponsored_policy(owner, &content).await?;
         let mut replacement = current;
         replacement.version = replacement.version.checked_add(1).ok_or_else(|| {
             TriggerValidationError::field("version", "the draft revision counter is exhausted")
@@ -497,6 +642,7 @@ impl TriggerService {
         }
         draft.content.revision_number = draft.next_revision_number;
         draft.content.validate()?;
+        self.verify_sponsored_policy(owner, &draft.content).await?;
         let verified = self
             .authority
             .verify_publisher(owner, &draft.content, selected_service_id)
@@ -541,6 +687,41 @@ impl TriggerService {
             .await?
             .ok_or(TriggerServiceError::NotFound)?;
         let mut preview = TriggerPreview::from(&revision);
+        if revision.availability == TriggerAvailability::Published {
+            match self
+                .authority
+                .resolve_preview_repository_policy(&revision)
+                .await
+            {
+                Ok(policy) => {
+                    preview.repository_owner = policy.repository.canonical_owner.clone();
+                    preview.repository_name = policy.repository.canonical_name.clone();
+                    preview.visibility = policy.repository.visibility;
+                    preview.allow_forking = policy.repository.allow_forking;
+                    if !policy.public_forkable {
+                        preview.availability = TriggerPreviewAvailability::Unavailable;
+                        preview.unavailable_reason =
+                            Some(TriggerPreviewUnavailableReason::UpstreamNotForkable);
+                    }
+                }
+                Err(error) => {
+                    preview.availability = TriggerPreviewAvailability::Unavailable;
+                    preview.unavailable_reason = Some(match error {
+                        TriggerServiceError::Authority(
+                            TriggerAuthorityError::UpstreamNotForkable,
+                        ) => TriggerPreviewUnavailableReason::UpstreamNotForkable,
+                        TriggerServiceError::Authority(TriggerAuthorityError::ResourceNotFound)
+                        | TriggerServiceError::NotFound => {
+                            TriggerPreviewUnavailableReason::UpstreamUnavailable
+                        }
+                        TriggerServiceError::Authority(TriggerAuthorityError::AuthorityDrift) => {
+                            TriggerPreviewUnavailableReason::UpstreamIdentityChanged
+                        }
+                        _ => TriggerPreviewUnavailableReason::RepositoryPolicyUnavailable,
+                    });
+                }
+            }
+        }
         if revision.content.commercial_policy.billing_mode == BillingMode::Contributor {
             preview.estimated_cost = self
                 .launch_admission
@@ -687,6 +868,30 @@ impl TriggerService {
             .await?
             .ok_or(TriggerServiceError::NotFound)?;
         require_owner(owner, &launch.owner)?;
+        Ok(launch)
+    }
+
+    /// Inspect the current Launch selected by a public Trigger re-click before
+    /// the caller enters the create-or-resume mutation. This deliberately does
+    /// not repair or replace retained state; the composition boundary decides
+    /// whether that durable runtime route is still eligible for public use.
+    pub async fn get_current_launch_for_public_trigger(
+        &self,
+        owner: &SubjectId,
+        public_id: &PublicTriggerId,
+    ) -> Result<Option<Launch>, TriggerServiceError> {
+        let revision = self
+            .triggers
+            .get_public_revision(public_id)
+            .await?
+            .ok_or(TriggerServiceError::NotFound)?;
+        let launch = self
+            .launches
+            .get_current_launch(owner, &revision.id)
+            .await?;
+        if let Some(launch) = launch.as_ref() {
+            require_owner(owner, &launch.owner)?;
+        }
         Ok(launch)
     }
 
@@ -909,6 +1114,8 @@ impl TriggerService {
         } = command;
         let mut launch = self.get_launch(owner, id).await?;
         self.fence_pre_start(expected_revision, &mut launch, &now, &correlation_id)
+            .await?;
+        self.verify_sponsored_start_acceptance(owner, &launch)
             .await?;
         if let Err(denial) = self.rollout.launch_orchestration(&launch) {
             if launch.blocked_reason.is_none() {
@@ -1312,6 +1519,9 @@ fn verify_authoritative_identity(
     verified: &PublisherAuthority,
 ) -> Result<(), TriggerServiceError> {
     let expected = &content.upstream.repository;
+    verified
+        .connection
+        .validate_for(&content.repository_access.required_scope_classes)?;
     if content.publisher_subject_id != verified.subject
         || expected.repository_id != verified.repository.repository_id
         || expected.repository_node_id != verified.repository.repository_node_id

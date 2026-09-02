@@ -32,6 +32,23 @@ pub(super) enum TriggerAvailability {
 
 #[derive(serde::Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
+pub(super) enum TriggerPreviewAvailability {
+    Published,
+    Retired,
+    Unavailable,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum TriggerPreviewUnavailableReason {
+    UpstreamNotForkable,
+    UpstreamUnavailable,
+    UpstreamIdentityChanged,
+    RepositoryPolicyUnavailable,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub(super) enum PublisherRepositoryRole {
     Owner,
     Admin,
@@ -221,9 +238,16 @@ pub(super) enum BillingMode {
 }
 
 #[derive(serde::Serialize, ToSchema)]
+pub(super) struct SponsoredPolicyBinding {
+    tenant_id: String,
+    policy_id: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
 pub(super) struct CommercialPolicy {
     billing_mode: BillingMode,
     policy_reference: String,
+    sponsorship: Option<SponsoredPolicyBinding>,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -404,9 +428,14 @@ pub(super) struct Rate {
 }
 
 #[derive(serde::Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
 pub(super) enum TriggerKernel {
+    /// Historical pre-versioned route retained for inspection, cancellation,
+    /// session access, and fenced cleanup only.
+    #[serde(rename = "codex")]
     Codex,
+    /// Current dedicated Trigger runtime route admitted for new work.
+    #[serde(rename = "codex-trigger-native-v1")]
+    CodexTriggerNativeV1,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -461,6 +490,12 @@ pub(super) struct SessionLink {
     environment_profile_id: String,
     runtime_generation: u64,
     created_at: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct SessionCredentialRetirement {
+    session_id: String,
+    settled_at: String,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -666,6 +701,10 @@ pub(super) struct DiffFile {
     new_provider_object_id: Option<String>,
     old_bytes: u64,
     new_bytes: u64,
+    #[schema(required = true, nullable = true, minimum = 0)]
+    additions: Option<u64>,
+    #[schema(required = true, nullable = true, minimum = 0)]
+    deletions: Option<u64>,
     patch: Option<String>,
     patch_complete: bool,
 }

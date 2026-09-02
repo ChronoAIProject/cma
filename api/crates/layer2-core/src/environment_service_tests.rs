@@ -26,6 +26,21 @@ fn environments_with_baseline(
     )
 }
 
+fn environments_reserving(
+    store: Arc<FakeProfileStore>,
+    kernel: &str,
+) -> Arc<EnvironmentProfileService> {
+    EnvironmentProfileService::new_with_reserved_kernels(
+        store,
+        Baseline::default(),
+        None,
+        None,
+        fake_agent(),
+        unconfigured_settings(),
+        [KernelId::new(kernel)],
+    )
+}
+
 fn caller(subject: &str) -> Caller {
     Caller::new(
         SubjectId(subject.to_string()),
@@ -84,6 +99,57 @@ async fn a_profile_name_is_stored_trimmed() {
 
     let created = service.create(&owner, spec).await.expect("creates");
     assert_eq!(created.name, "padded");
+}
+
+#[tokio::test]
+async fn public_profile_writes_and_preference_cannot_select_a_reserved_kernel() {
+    let store = Arc::new(FakeProfileStore::default());
+    let ordinary = environments(Arc::clone(&store));
+    let owner = caller("subject-a");
+    let created = ordinary
+        .create(&owner, profile_spec("ordinary"))
+        .await
+        .expect("the ordinary fixture creates a profile");
+    let service = environments_reserving(Arc::clone(&store), "managed-kernel");
+
+    let mut reserved = profile_spec("reserved");
+    reserved.agent.kernel = KernelId::new("managed-kernel");
+    assert!(matches!(
+        service.create(&owner, reserved.clone()).await,
+        Err(CoreError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        service.update(&owner, &created.id, reserved).await,
+        Err(CoreError::InvalidRequest(_))
+    ));
+
+    store
+        .profiles
+        .lock()
+        .await
+        .get_mut(created.id.as_str())
+        .expect("the fixture profile remains")
+        .agent
+        .kernel = KernelId::new("managed-kernel");
+    assert!(matches!(
+        service.prefer(&owner, Some(&created.id)).await,
+        Err(CoreError::InvalidRequest(_))
+    ));
+    assert_eq!(
+        store
+            .preference_writes
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    assert!(
+        !store
+            .profiles
+            .lock()
+            .await
+            .get(created.id.as_str())
+            .expect("the refused preference changes nothing")
+            .preferred
+    );
 }
 
 #[tokio::test]

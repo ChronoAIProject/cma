@@ -398,6 +398,23 @@ impl SandboxClient {
             .await
     }
 
+    /// Post one bounded JSON control request to a sandbox listener.
+    pub async fn post_json_to_sandbox_with_response(
+        &self,
+        endpoint: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, SandboxError> {
+        self.post_to_sandbox_with_bounded_response_as(
+            endpoint,
+            path,
+            body,
+            64 * 1024,
+            "application/json",
+        )
+        .await
+    }
+
     /// Post bytes and stream a response only up to the caller's explicit
     /// artifact bound. Used for sealed workspace archives, whose response is
     /// intentionally much larger than a control acknowledgement.
@@ -408,12 +425,30 @@ impl SandboxClient {
         body: Vec<u8>,
         max_response_bytes: usize,
     ) -> Result<Vec<u8>, SandboxError> {
+        self.post_to_sandbox_with_bounded_response_as(
+            endpoint,
+            path,
+            body,
+            max_response_bytes,
+            "application/octet-stream",
+        )
+        .await
+    }
+
+    async fn post_to_sandbox_with_bounded_response_as(
+        &self,
+        endpoint: &str,
+        path: &str,
+        body: Vec<u8>,
+        max_response_bytes: usize,
+        content_type: &'static str,
+    ) -> Result<Vec<u8>, SandboxError> {
         let url = self.sandbox_url(endpoint, path);
         let resp = self
             .http
             .post(&url)
             .header(API_KEY_HEADER, &self.api_key)
-            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .header(reqwest::header::CONTENT_TYPE, content_type)
             .body(body)
             .send()
             .await
@@ -444,6 +479,29 @@ impl SandboxClient {
             bytes.extend_from_slice(&chunk);
         }
         Ok(bytes)
+    }
+
+    /// Delete one resource exposed by a sandbox listener.
+    pub async fn delete_from_sandbox(
+        &self,
+        endpoint: &str,
+        path: &str,
+    ) -> Result<(), SandboxError> {
+        let url = self.sandbox_url(endpoint, path);
+        let response = self
+            .http
+            .delete(&url)
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|error| SandboxError::Unreachable(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(SandboxError::Rejected {
+                status: response.status().as_u16(),
+                detail: format!("{path} on the sandbox refused the request"),
+            });
+        }
+        Ok(())
     }
 
     /// Every sandbox this key can see.

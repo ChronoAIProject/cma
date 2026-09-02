@@ -1,3 +1,9 @@
+import type {
+  ChatHostFailure as SdkChatHostFailure,
+  ChatSettings,
+  StoredChatSettings,
+} from '@chronoai/cma-sdk';
+
 /**
  * The operator surface, as the console models it.
  *
@@ -89,6 +95,23 @@ export interface AdminSession {
   readonly kernel: string;
   readonly createdAt?: number;
   readonly runtimeVersion?: string;
+}
+
+/** One deployment-managed shared chat runtime in the operator inventory. */
+export type ChatHostFailure = SdkChatHostFailure;
+
+export interface ChatHost {
+  readonly id: string;
+  readonly owner: string;
+  readonly status: 'provisioning' | 'active' | 'pausing' | 'paused' | 'reviving' | 'retired';
+  readonly threadCount: number;
+  readonly runtimeVersion?: string;
+  readonly pausedAt?: number;
+  readonly revivedAt?: number;
+  readonly checkpointCapturedAt?: number;
+  readonly lastFailure?: ChatHostFailure;
+  readonly settingsRevision: number;
+  readonly createdAt: number;
 }
 
 /** One runtime in service. */
@@ -210,10 +233,14 @@ export interface OperatorStore {
   runtimes(): Promise<RuntimeInventory>;
   /** Every session, whoever owns it. */
   sessions(): Promise<readonly AdminSession[]>;
+  /** Every deployment-managed shared chat host, newest first. */
+  chatHosts(): Promise<readonly ChatHost[]>;
   /** Release a session's runtime, keeping the session. */
   stopSession(id: string): Promise<void>;
   /** End a session. */
   terminateSession(id: string): Promise<void>;
+  /** Retire a shared chat host without deleting its retained histories. */
+  retireChatHost(id: string): Promise<void>;
   /** Read deployment-wide settings and their conditional-write revision. */
   readPlatformSettings(): Promise<StoredPlatformSettings>;
   /** Replace all settings, provided nobody has written the named revision. */
@@ -221,6 +248,15 @@ export interface OperatorStore {
     expectedRevision: number,
     settings: PlatformSettings,
   ): Promise<StoredPlatformSettings>;
-  /** Restore shipped briefing prose without changing another setting. */
-  resetPlatformBriefing(expectedRevision: number): Promise<StoredPlatformSettings>;
+  /** Restore shipped briefing prose and remove Chat, preserving sealed and capacity policy. */
+  resetPlatformSettings(expectedRevision: number): Promise<StoredPlatformSettings>;
+  /** Read deployment-owned chat settings and their conditional-write revision. */
+  readChatSettings(): Promise<StoredChatSettings>;
+  /** Replace or remove only chat settings under the platform revision CAS. */
+  changeChatSettings(
+    expectedRevision: number,
+    settings: ChatSettings | null,
+  ): Promise<StoredChatSettings>;
 }
+
+export type { ChatSettings, StoredChatSettings };

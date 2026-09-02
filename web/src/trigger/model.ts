@@ -108,10 +108,20 @@ export function upstreamRepository(launch: Launch) {
 export function triggerKernelLabel(launch: Launch): string | undefined {
   switch (launch.runtime_admission?.kernel) {
     case 'codex':
+      return 'Codex (historical, read-only)';
+    case 'codex-trigger-native-v1':
       return 'Codex';
     default:
       return undefined;
   }
+}
+
+export function isCurrentTriggerRuntime(launch: Launch): boolean {
+  return launch.runtime_admission?.kernel === 'codex-trigger-native-v1';
+}
+
+export function isLegacyTriggerRuntime(launch: Launch): boolean {
+  return launch.runtime_admission?.kernel === 'codex';
 }
 
 export function sessionId(launch: Launch): string | undefined {

@@ -37,6 +37,8 @@ pub fn wire_name(capability: Capability) -> &'static str {
         Capability::ControlAnySession => "control_any_session",
         Capability::ConfigurePlatform => "configure_platform",
         Capability::ExceedSessionLimit => "exceed_session_limit",
+        Capability::ManageOwnSponsorships => "manage_own_sponsorships",
+        Capability::ReconcileSponsoredUsage => "reconcile_sponsored_usage",
     }
 }
 
@@ -77,6 +79,8 @@ mod tests {
             Capability::ControlAnySession,
             Capability::ConfigurePlatform,
             Capability::ExceedSessionLimit,
+            Capability::ManageOwnSponsorships,
+            Capability::ReconcileSponsoredUsage,
         ];
         let mut names: Vec<&str> = all.iter().copied().map(wire_name).collect();
         names.sort_unstable();

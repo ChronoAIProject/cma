@@ -4,7 +4,7 @@ import { parse } from '../chat/markdown';
 export const SDK_LANGUAGES = ['typescript', 'rust'] as const;
 export type SdkLanguage = (typeof SDK_LANGUAGES)[number];
 
-export const SDK_DOCUMENT_FILENAMES = [
+const SHARED_SDK_DOCUMENT_FILENAMES = [
   'README.md',
   'quickstart.md',
   'authentication.md',
@@ -16,7 +16,12 @@ export const SDK_DOCUMENT_FILENAMES = [
   'reference.md',
 ] as const;
 
-export type SdkDocumentFilename = (typeof SDK_DOCUMENT_FILENAMES)[number];
+export const SDK_DOCUMENT_FILENAMES = {
+  typescript: [...SHARED_SDK_DOCUMENT_FILENAMES, 'sponsorships.md'],
+  rust: SHARED_SDK_DOCUMENT_FILENAMES,
+} as const satisfies Readonly<Record<SdkLanguage, readonly string[]>>;
+
+export type SdkDocumentFilename = (typeof SDK_DOCUMENT_FILENAMES)[SdkLanguage][number];
 
 export interface SdkDocument {
   readonly sdk: SdkLanguage;
@@ -140,10 +145,10 @@ export function compileSdkDocuments(sources: RawSdkDocuments): SdkDocumentSets {
   const output = {} as Record<SdkLanguage, readonly SdkDocument[]>;
   for (const sdk of SDK_LANGUAGES) {
     const found = bySdk[sdk];
-    const missing = SDK_DOCUMENT_FILENAMES.filter((filename) => !found.has(filename));
-    const extra = [...found.keys()].filter(
-      (filename) => !SDK_DOCUMENT_FILENAMES.includes(filename as SdkDocumentFilename),
-    );
+    const filenames: readonly SdkDocumentFilename[] = SDK_DOCUMENT_FILENAMES[sdk];
+    const expected = new Set<string>(filenames);
+    const missing = filenames.filter((filename) => !found.has(filename));
+    const extra = [...found.keys()].filter((filename) => !expected.has(filename));
     if (missing.length > 0 || extra.length > 0) {
       const details = [
         missing.length === 0 ? '' : `missing ${missing.join(', ')}`,
@@ -154,9 +159,9 @@ export function compileSdkDocuments(sources: RawSdkDocuments): SdkDocumentSets {
       return fail(`${sdk} guide set is incomplete: ${details}`);
     }
 
-    const documents = SDK_DOCUMENT_FILENAMES.map((filename) =>
-      compileDocument(sdk, filename, found.get(filename) ?? ''),
-    ).sort((left, right) => left.order - right.order);
+    const documents = filenames
+      .map((filename) => compileDocument(sdk, filename, found.get(filename) ?? ''))
+      .sort((left, right) => left.order - right.order);
     const orders = new Set<number>();
     const labels = new Set<string>();
     for (const document of documents) {

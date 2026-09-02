@@ -1,5 +1,7 @@
 //! Installing opaque authenticated policy on one exact live runtime.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::{CapabilityRefusal, CoreError, SessionId, SessionService};
 
 /// Exact non-secret policy state observed under one session lifecycle fence.
@@ -23,6 +25,14 @@ pub struct RuntimeGatewayReachabilityReceipt {
     pub runtime_audience: String,
     pub policy: layer3_adapter::RuntimePolicyReceipt,
     pub probe_version: u32,
+}
+
+/// Read-only proof that an exact previously admitted policy remains installed
+/// and that its restricted gateway route is currently reachable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeGatewayReconciliationReceipt {
+    pub reachability: RuntimeGatewayReachabilityReceipt,
+    pub expires_at_epoch_seconds: u64,
 }
 
 /// Closed failure vocabulary for the pre-prompt runtime proof.
@@ -63,7 +73,7 @@ impl SessionService {
             CoreError::RuntimeUnavailable("the session has no live runtime entry".into())
         })?;
         if entry.trigger_origin.is_none() {
-            return Err(CoreError::InvalidState);
+            return Err(CoreError::invalid_state());
         }
         entry
             .runtime
@@ -90,7 +100,7 @@ impl SessionService {
                 CoreError::RuntimeUnavailable("the session has no live runtime entry".into())
             })?;
             if entry.trigger_origin.is_none() {
-                return Err(CoreError::InvalidState);
+                return Err(CoreError::invalid_state());
             }
             let runtime = entry.runtime.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("the session has no current runtime".into())
@@ -139,7 +149,7 @@ impl SessionService {
                 CoreError::RuntimeUnavailable("the session has no live runtime entry".into())
             })?;
             if entry.trigger_origin.is_none() {
-                return Err(CoreError::InvalidState);
+                return Err(CoreError::invalid_state());
             }
             let runtime = entry.runtime.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("the session has no current runtime".into())
@@ -204,6 +214,141 @@ impl SessionService {
             .await
     }
 
+    /// Reconcile a prior policy-install boundary without installing policy again.
+    ///
+    /// The session lifecycle guard spans current credential verification, policy
+    /// observation, and the gateway probe. The original generation and fence are
+    /// caller-supplied immutable evidence; a replacement worker gains no policy
+    /// write authority through this API.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn reconcile_runtime_policy_and_probe_with_credential_authority(
+        &self,
+        id: &SessionId,
+        request: layer3_adapter::RuntimeGatewayProbeRequest,
+        expected_credential: &crate::SessionCredentialAuthority,
+        expected_launch_id: &str,
+        expected_generation: u64,
+        expected_fence: u64,
+    ) -> Result<RuntimeGatewayReconciliationReceipt, RuntimeGatewayReachabilityError> {
+        if request.version != layer3_adapter::RUNTIME_GATEWAY_PROBE_VERSION
+            || request.resource_id == 0
+            || expected_launch_id.trim().is_empty()
+            || expected_generation == 0
+            || expected_fence == 0
+        {
+            return Err(RuntimeGatewayReachabilityError::ProtocolViolation);
+        }
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let (runtime, kernel, credential_acknowledged) = {
+            let entries = self.entries.read().await;
+            let entry = entries
+                .get(id)
+                .ok_or(RuntimeGatewayReachabilityError::RuntimeUnavailable)?;
+            let origin = entry
+                .trigger_origin
+                .as_ref()
+                .ok_or(RuntimeGatewayReachabilityError::ProtocolViolation)?;
+            if origin.github_service_id != request.service_id
+                || origin.github_binding().ok()
+                    != Some((
+                        request.service_id.as_str(),
+                        request.catalog_service_id.as_str(),
+                        request.user_service_slug.as_str(),
+                    ))
+            {
+                return Err(RuntimeGatewayReachabilityError::ProtocolViolation);
+            }
+            let runtime = entry
+                .runtime
+                .clone()
+                .ok_or(RuntimeGatewayReachabilityError::RuntimeUnavailable)?;
+            (
+                runtime,
+                entry.session.kernel.clone(),
+                entry.subject_credential.is_some(),
+            )
+        };
+        if !credential_acknowledged || expected_credential.session_id != *id {
+            return Err(RuntimeGatewayReachabilityError::CredentialAuthorityDrift);
+        }
+        let source = self
+            .credentials
+            .as_ref()
+            .ok_or(RuntimeGatewayReachabilityError::CredentialAuthorityDrift)?;
+        let current = source
+            .credential_authority(id)
+            .await
+            .map_err(|_| RuntimeGatewayReachabilityError::TransientBrokerFailure)?;
+        if current.as_ref() != Some(expected_credential) {
+            return Err(RuntimeGatewayReachabilityError::CredentialAuthorityDrift);
+        }
+
+        let adapter = self
+            .adapters
+            .get(&kernel)
+            .ok_or(RuntimeGatewayReachabilityError::ProtocolUnsupported)?;
+        let observation = adapter
+            .observe_runtime_policy(&runtime)
+            .await
+            .map_err(map_policy_adapter_error)?;
+        let expires_at_epoch_seconds = observation
+            .expires_at_epoch_seconds
+            .ok_or(RuntimeGatewayReachabilityError::PolicyDenied)?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if !observation.required
+            || !observation.supported
+            || !observation.installed
+            || observation.revoked
+            || observation.launch_id.as_deref() != Some(expected_launch_id)
+            || observation.generation != Some(expected_generation)
+            || observation.fence != Some(expected_fence)
+            || expires_at_epoch_seconds <= now
+        {
+            return Err(RuntimeGatewayReachabilityError::PolicyDenied);
+        }
+        let probe = adapter
+            .probe_runtime_gateway(&runtime, &request)
+            .await
+            .map_err(map_probe_adapter_error)?;
+        if probe.version != request.version {
+            return Err(RuntimeGatewayReachabilityError::ProtocolViolation);
+        }
+        match probe.outcome {
+            layer3_adapter::RuntimeGatewayProbeOutcome::Allowed => {
+                Ok(RuntimeGatewayReconciliationReceipt {
+                    reachability: RuntimeGatewayReachabilityReceipt {
+                        runtime_audience: runtime.0,
+                        policy: layer3_adapter::RuntimePolicyReceipt {
+                            generation: expected_generation,
+                            fence: expected_fence,
+                            revoked: false,
+                        },
+                        probe_version: probe.version,
+                    },
+                    expires_at_epoch_seconds,
+                })
+            }
+            layer3_adapter::RuntimeGatewayProbeOutcome::CommandSandboxInitializationFailed => {
+                Err(RuntimeGatewayReachabilityError::CommandSandboxInitialization)
+            }
+            layer3_adapter::RuntimeGatewayProbeOutcome::GatewayNetworkInitializationFailed => {
+                Err(RuntimeGatewayReachabilityError::GatewayNetworkInitialization)
+            }
+            layer3_adapter::RuntimeGatewayProbeOutcome::PolicyDenied => {
+                Err(RuntimeGatewayReachabilityError::PolicyDenied)
+            }
+            layer3_adapter::RuntimeGatewayProbeOutcome::ProviderDenied => {
+                Err(RuntimeGatewayReachabilityError::ProviderDenied)
+            }
+            layer3_adapter::RuntimeGatewayProbeOutcome::TransientBrokerFailure => {
+                Err(RuntimeGatewayReachabilityError::TransientBrokerFailure)
+            }
+        }
+    }
+
     async fn install_runtime_policy_and_probe_inner<F>(
         &self,
         id: &SessionId,
@@ -229,7 +374,14 @@ impl SessionService {
                 .trigger_origin
                 .as_ref()
                 .ok_or(RuntimeGatewayReachabilityError::ProtocolViolation)?;
-            if origin.github_service_id != request.service_id {
+            if origin.github_service_id != request.service_id
+                || origin.github_binding().ok()
+                    != Some((
+                        request.service_id.as_str(),
+                        request.catalog_service_id.as_str(),
+                        request.user_service_slug.as_str(),
+                    ))
+            {
                 return Err(RuntimeGatewayReachabilityError::ProtocolViolation);
             }
             let runtime = entry

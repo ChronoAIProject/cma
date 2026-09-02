@@ -13,8 +13,8 @@ use async_trait::async_trait;
 use futures_util::{stream, StreamExt as _};
 use layer2_core::{
     rfc3339_at, ActivityAction, ActivityOutcome, ActivityService, CoreError, DetailKey, Launch,
-    LaunchId, SessionService, TriggerLifecycleCheckpointOutcome, TriggerPage, TriggerPageRequest,
-    TriggerService, TriggerServiceError, WorkspaceCheckpointPurpose,
+    LaunchId, SessionId, SessionService, TriggerLifecycleCheckpointOutcome, TriggerPage,
+    TriggerPageRequest, TriggerService, TriggerServiceError, WorkspaceCheckpointPurpose,
 };
 use tokio::time::MissedTickBehavior;
 use tracing::Instrument as _;
@@ -174,11 +174,33 @@ trait SchedulerBackend: Send + Sync {
     ) -> Result<CandidateOutcome, TriggerServiceError>;
 }
 
+#[async_trait]
+trait WorkspaceCheckpointer: Send + Sync {
+    async fn checkpoint_trigger_lifecycle(
+        &self,
+        session_id: &SessionId,
+        purpose: WorkspaceCheckpointPurpose,
+        now: &str,
+    ) -> Result<TriggerLifecycleCheckpointOutcome, CoreError>;
+}
+
+#[async_trait]
+impl WorkspaceCheckpointer for SessionService {
+    async fn checkpoint_trigger_lifecycle(
+        &self,
+        session_id: &SessionId,
+        purpose: WorkspaceCheckpointPurpose,
+        now: &str,
+    ) -> Result<TriggerLifecycleCheckpointOutcome, CoreError> {
+        SessionService::checkpoint_trigger_lifecycle(self, session_id, purpose, now).await
+    }
+}
+
 struct ProductionBackend {
     triggers: Arc<TriggerService>,
     effects: Arc<EffectWorker>,
     capabilities: Arc<CapabilityWorker>,
-    sessions: Arc<SessionService>,
+    workspaces: Arc<dyn WorkspaceCheckpointer>,
     cleanup: Arc<CleanupPlanner>,
     cleanup_mode: TriggerCleanupMode,
 }
@@ -221,11 +243,17 @@ impl SchedulerBackend for ProductionBackend {
                 .await?
                 .into()),
             SchedulerLane::Workspaces => {
+                if !workspace_runtime_admission_permitted(&launch) {
+                    return Ok(CandidateOutcome::NoWork);
+                }
+                if !workspace_checkpoint_permitted(&self.triggers, &launch) {
+                    return Ok(CandidateOutcome::Paused);
+                }
                 let Some(session) = launch.session.as_ref() else {
                     return Ok(CandidateOutcome::NoWork);
                 };
                 match self
-                    .sessions
+                    .workspaces
                     .checkpoint_trigger_lifecycle(
                         &session.session_id,
                         WorkspaceCheckpointPurpose::Periodic,
@@ -264,6 +292,17 @@ impl SchedulerBackend for ProductionBackend {
             },
         }
     }
+}
+
+fn workspace_runtime_admission_permitted(launch: &Launch) -> bool {
+    super::has_current_trigger_runtime_admission(launch)
+}
+
+fn workspace_checkpoint_permitted(triggers: &TriggerService, launch: &Launch) -> bool {
+    triggers
+        .rollout_policy()
+        .launch_orchestration(launch)
+        .is_ok()
 }
 
 struct TriggerScheduler {
@@ -682,7 +721,7 @@ pub(crate) fn spawn(
             triggers,
             effects,
             capabilities,
-            sessions,
+            workspaces: sessions,
             cleanup,
             cleanup_mode: config.cleanup_mode,
         }),

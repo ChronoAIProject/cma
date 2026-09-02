@@ -83,6 +83,13 @@ pub struct SessionBriefing {
 /// ignored. The struct grows; nothing here is a map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlatformSettings {
+    /// Chat policy, absent until an administrator explicitly configures it.
+    ///
+    /// Absence is deliberately stronger than `enabled: false`: old stored
+    /// documents remain dark without Serde manufacturing an object that an
+    /// operator never reviewed.
+    #[serde(default)]
+    pub chat: Option<crate::ChatSettings>,
     #[serde(default)]
     pub briefing: SessionBriefing,
     /// The total reservation this deployment is prepared to promise.
@@ -92,6 +99,12 @@ pub struct PlatformSettings {
     /// compares a request with everything durable records already promise.
     #[serde(default)]
     pub deployment_capacity: DeploymentCapacity,
+    /// When a session's processor use counts as being under pressure.
+    ///
+    /// Kept independently editable from memory because the two limits describe
+    /// different constraints even though their policy invariants are the same.
+    #[serde(default)]
+    pub cpu_pressure: crate::CpuPressurePolicy,
     /// When a session's memory counts as being under pressure.
     ///
     /// A setting rather than process configuration so an administrator can
@@ -146,27 +159,37 @@ impl PlatformSettings {
     /// where its audit name must be chosen.
     pub fn changed_from(&self, previous: &Self) -> Vec<&'static str> {
         let Self {
+            chat,
             briefing,
             deployment_capacity,
+            cpu_pressure,
             memory_pressure,
             pricing,
             size_bounds,
             live_sessions,
         } = self;
         let Self {
+            chat: previous_chat,
             briefing: previous_briefing,
             deployment_capacity: previous_deployment_capacity,
+            cpu_pressure: previous_cpu_pressure,
             memory_pressure: previous_memory_pressure,
             pricing: previous_pricing,
             size_bounds: previous_size_bounds,
             live_sessions: previous_live_sessions,
         } = previous;
         let mut changed = Vec::new();
+        if chat != previous_chat {
+            changed.push("chat");
+        }
         if briefing != previous_briefing {
             changed.push("briefing");
         }
         if deployment_capacity != previous_deployment_capacity {
             changed.push("deployment_capacity");
+        }
+        if cpu_pressure != previous_cpu_pressure {
+            changed.push("cpu_pressure");
         }
         if memory_pressure != previous_memory_pressure {
             changed.push("memory_pressure");
@@ -461,6 +484,8 @@ mod tests {
         let mut changed = previous.clone();
         changed.briefing.before.push("Different prose".into());
         changed.deployment_capacity.cpu_millis = Some(20_000);
+        changed.cpu_pressure =
+            crate::CpuPressurePolicy::new(825, 675, 6, 18, 180).expect("valid policy");
         changed.memory_pressure =
             crate::MemoryPressurePolicy::new(850, 650, 6, 18, 180).expect("valid policy");
         changed.pricing = changed.pricing.appended(
@@ -478,6 +503,7 @@ mod tests {
             [
                 "briefing",
                 "deployment_capacity",
+                "cpu_pressure",
                 "memory_pressure",
                 "pricing",
                 "size_bounds",

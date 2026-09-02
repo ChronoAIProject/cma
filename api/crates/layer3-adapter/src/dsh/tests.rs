@@ -24,10 +24,14 @@ fn conversation() -> RuntimeSpec {
         skills: Vec::new(),
         reaches: Vec::new(),
         runtime_policy_required: false,
+        sponsored_model_required: false,
+        workspace_source_required: false,
+        conversation_slots_required: None,
         platform_briefing: String::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),
         session_id: "sesn_x".into(),
+        chat_host: None,
         generation: None,
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
@@ -45,6 +49,19 @@ fn conversation() -> RuntimeSpec {
 #[test]
 fn the_kernel_is_named_for_diagnostics_only() {
     assert_eq!(adapter("http://p").kernel_name(), "dsh");
+}
+
+#[test]
+fn a_conversation_working_directory_passes_through_verbatim() {
+    let requested = "/workspace/worktrees/chat 3/#literal?";
+    let options = RuntimeOptions {
+        working_directory: Some(requested.into()),
+        ..RuntimeOptions::default()
+    };
+    assert_eq!(
+        adapter("http://p").conversation_working_directory(&options),
+        requested
+    );
 }
 
 #[test]

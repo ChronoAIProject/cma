@@ -127,7 +127,10 @@ async fn an_ended_bridge_retains_authority_over_a_live_descendant() {
 
     assert_eq!(bridge.writer_session_root(), Some(root));
     let writer_count = tokio::task::spawn_blocking(move || {
-        let mut fence = crate::writer_fence::WriterFence::quiesce([root])?;
+        let mut fence = crate::writer_fence::WriterFence::quiesce(
+            [root],
+            crate::writer_fence::SupervisorBoundary::default(),
+        )?;
         let count = fence.writer_count()?;
         fence.resume()?;
         Ok::<_, String>(count)

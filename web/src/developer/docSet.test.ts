@@ -14,7 +14,7 @@ function guide(order: number, label: string, sdk: SdkLanguage): string {
 function completeSources(): Record<string, string> {
   const sources: Record<string, string> = {};
   for (const sdk of SDK_LANGUAGES) {
-    SDK_DOCUMENT_FILENAMES.forEach((filename, index) => {
+    SDK_DOCUMENT_FILENAMES[sdk].forEach((filename, index) => {
       const label = filename === 'README.md' ? 'Overview' : filename.replace('.md', '');
       sources[`../../../sdk/${sdk}/docs/${filename}`] = guide((index + 1) * 10, label, sdk);
     });
@@ -25,12 +25,14 @@ function completeSources(): Record<string, string> {
 describe('compileSdkDocuments', () => {
   it('orders both complete guide sets by nav metadata and removes only that metadata', () => {
     const sources = completeSources();
-    sources['../../../sdk/typescript/docs/README.md'] = guide(95, 'Overview', 'typescript');
+    sources['../../../sdk/typescript/docs/README.md'] = guide(105, 'Overview', 'typescript');
 
     const compiled = compileSdkDocuments(sources);
 
     expect(compiled.typescript.at(-1)?.filename).toBe('README.md');
-    expect(compiled.rust.map((document) => document.filename)).toEqual(SDK_DOCUMENT_FILENAMES);
+    expect(compiled.typescript).toHaveLength(10);
+    expect(compiled.typescript.map((document) => document.filename)).toContain('sponsorships.md');
+    expect(compiled.rust.map((document) => document.filename)).toEqual(SDK_DOCUMENT_FILENAMES.rust);
     expect(compiled.rust[0]?.markdown).toContain('# rust Overview');
     expect(compiled.rust[0]?.markdown).not.toContain('<!-- nav:');
   });

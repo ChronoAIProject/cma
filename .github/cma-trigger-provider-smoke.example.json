@@ -1,10 +1,14 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "base_url": "https://cma.example.invalid",
   "expected_build_sha": "0000000000000000000000000000000000000000",
   "runtime_image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "runtime_image_ids": [
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  ],
   "expected_runtime_version": "registry.example.invalid/cma-runtime@sha256:unprovisioned",
   "configuration_revision": "unprovisioned-example",
+  "trigger_sandbox_namespace": "trigger-workloads",
   "public_id": "00000000-0000-4000-8000-000000000000",
   "revision_digest": "0000000000000000000000000000000000000000000000000000000000000000",
   "source_sha": "0000000000000000000000000000000000000000",
@@ -29,7 +33,8 @@
     "lifecycle": "persistent_public_fixture",
     "secrets": "forbidden",
     "github_cleanup": "preserve",
-    "session_cleanup": "stop_runtime_preserve_session"
+    "cma_state_cleanup": "destroy_with_terminal_ephemeral_environment",
+    "session_cleanup": "stop_runtime_before_terminal_ephemeral_teardown"
   },
   "timeouts": {
     "launch_seconds": 2400,

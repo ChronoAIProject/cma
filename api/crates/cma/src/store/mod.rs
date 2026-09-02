@@ -6,6 +6,7 @@
 
 pub mod activity;
 pub mod auth;
+pub mod chat;
 pub mod context;
 pub mod directory;
 mod durability;
@@ -16,19 +17,25 @@ pub mod mongo;
 pub mod operation;
 pub mod settings;
 pub mod skill_packs;
+pub mod sponsorship;
+mod sponsorship_encryption;
 pub mod tickets;
 pub mod token;
 pub mod trigger;
 pub mod trigger_workspace;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use layer2_core::store::StoreError;
+use layer2_core::{
+    store::StoreError, SponsorshipGateFence, SponsorshipOperationalPseudonymizer,
+    SponsorshipStoreError,
+};
 use mongodb::Client;
 
 pub use activity::MongoActivityStore;
 pub use auth::MongoAuthStore;
+pub use chat::MongoChatHostStore;
 pub use context::ChronoStorageContextStore;
 pub use directory::MongoUserDirectoryStore;
 pub use environment::MongoEnvironmentProfileStore;
@@ -36,11 +43,14 @@ pub use mongo::MongoSessionStore;
 pub use operation::MongoOperationStore;
 pub use settings::MongoPlatformSettingsStore;
 pub use skill_packs::ChronoStorageSkillPackStore;
+pub use sponsorship::MongoSponsorshipStore;
 pub use tickets::MongoTerminalTicketStore;
 pub use trigger::MongoTriggerStore;
 pub use trigger_workspace::ChronoStorageTriggerWorkspaceStore;
 
 pub(crate) use encryption::AuthEncryptionKey;
+
+use sponsorship_encryption::{SponsorshipKeyring, SponsorshipOperationalKeyring};
 
 /// Everything this deployment keeps in MongoDB.
 ///
@@ -58,6 +68,8 @@ pub struct MongoStores {
     pub users: MongoUserDirectoryStore,
     /// Deployment-wide settings changed by administrators.
     pub settings: MongoPlatformSettingsStore,
+    /// One deployment-managed shared chat runtime per owner.
+    pub chat_hosts: MongoChatHostStore,
     /// One-time grants used to authenticate terminal upgrades.
     pub tickets: MongoTerminalTicketStore,
     /// Browser, OAuth, provider-token, and session-credential authority.
@@ -66,6 +78,21 @@ pub struct MongoStores {
     pub operations: MongoOperationStore,
     /// Publisher revisions and contributor Launch aggregates.
     pub triggers: MongoTriggerStore,
+    client: Client,
+}
+
+impl MongoStores {
+    /// The one Mongo client shared by every authority composed in this process.
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+}
+
+/// Validated sponsorship persistence plus composition-only rotation material.
+pub(crate) struct OpenedSponsorshipStore {
+    pub store: Arc<MongoSponsorshipStore>,
+    pub operational: Arc<SponsorshipOperationalPseudonymizer>,
+    pub retiring_encryption_key_ids: Vec<String>,
 }
 
 #[async_trait]
@@ -140,12 +167,51 @@ pub async fn connect(
         activity: MongoActivityStore::open(&client, database, activity_retention).await?,
         users: MongoUserDirectoryStore::open(&client, database).await?,
         settings: MongoPlatformSettingsStore::open(&client, database).await?,
+        chat_hosts: MongoChatHostStore::open(&client, database).await?,
         tickets: MongoTerminalTicketStore::open(&client, database).await?,
         auth: MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         operations: MongoOperationStore::open(&client, database).await?,
         triggers: MongoTriggerStore::open(&client, database)
             .await
             .map_err(|error| StoreError::Unavailable(format!("open trigger store: {error}")))?,
+        client,
+    })
+}
+
+/// Open sponsorship persistence over the control plane's existing Mongo pool.
+///
+/// Parsing happens only after binary composition has selected an enabled
+/// runtime. Raw secret payloads are borrowed, never formatted into an error,
+/// and remain owned by their zeroizing configuration wrapper.
+pub(crate) async fn open_sponsorship(
+    client: &Client,
+    database: &str,
+    deployment: &str,
+    encryption_keyring_json: &str,
+    operational_keyring_json: &str,
+    initial_gate: SponsorshipGateFence,
+) -> Result<OpenedSponsorshipStore, SponsorshipStoreError> {
+    let encryption_keyring = SponsorshipKeyring::from_json(encryption_keyring_json)
+        .map_err(SponsorshipStoreError::Malformed)?;
+    let retiring_encryption_key_ids = encryption_keyring.retiring_key_ids();
+    let operational_keyring = SponsorshipOperationalKeyring::from_json(operational_keyring_json)
+        .map_err(SponsorshipStoreError::Malformed)?;
+    let operational = Arc::new(operational_keyring.pseudonymizer(deployment)?);
+    let store = Arc::new(
+        MongoSponsorshipStore::open(
+            client,
+            database,
+            deployment,
+            encryption_keyring,
+            operational_keyring,
+            initial_gate,
+        )
+        .await?,
+    );
+    Ok(OpenedSponsorshipStore {
+        store,
+        operational,
+        retiring_encryption_key_ids,
     })
 }
 

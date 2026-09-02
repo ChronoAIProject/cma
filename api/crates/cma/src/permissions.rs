@@ -57,6 +57,10 @@ pub mod permission {
     /// monitoring role would hand unlimited session creation to somebody who
     /// asked to watch the service.
     pub const ADMIN_UNLIMITED_SESSIONS: &str = "cma:admin:unlimited-sessions";
+    /// Register credentials and manage sponsorships owned by this subject.
+    pub const SPONSORSHIP_MANAGE: &str = "cma:sponsorship:manage";
+    /// Reconcile trusted provider usage for sponsored requests.
+    pub const ADMIN_SPONSORSHIP_METERING: &str = "cma:admin:sponsorship-metering";
 }
 
 /// Exact grants issued before the CMA permission vocabulary was introduced.
@@ -138,7 +142,9 @@ const fn product_wildcard_reaches(capability: Capability) -> bool {
         | Capability::ReadUserDirectory
         | Capability::ConfigurePlatform
         | Capability::ControlAnySession
-        | Capability::ExceedSessionLimit => true,
+        | Capability::ExceedSessionLimit
+        | Capability::ManageOwnSponsorships
+        | Capability::ReconcileSponsoredUsage => true,
     }
 }
 
@@ -209,6 +215,10 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::ADMIN_UNLIMITED_SESSIONS | legacy_permission::ADMIN_UNLIMITED_SESSIONS => {
                 granted.push(Capability::ExceedSessionLimit)
             }
+            permission::SPONSORSHIP_MANAGE => granted.push(Capability::ManageOwnSponsorships),
+            permission::ADMIN_SPONSORSHIP_METERING => {
+                granted.push(Capability::ReconcileSponsoredUsage)
+            }
             _ => {}
         }
     }
@@ -267,6 +277,8 @@ mod tests {
         );
         assert!(!a.allows(Capability::ReadAllSessions));
         assert!(!a.allows(Capability::ReadRuntimeInventory));
+        assert!(!a.allows(Capability::ManageOwnSponsorships));
+        assert!(!a.allows(Capability::ReconcileSponsoredUsage));
     }
 
     #[test]
@@ -439,6 +451,8 @@ mod tests {
             Capability::ReadActivityLog,
             Capability::ReadUserDirectory,
             Capability::ControlAnySession,
+            Capability::ManageOwnSponsorships,
+            Capability::ReconcileSponsoredUsage,
         ] {
             assert!(!a.allows(c), "the provider's wildcard must not grant {c:?}");
         }
@@ -451,6 +465,44 @@ mod tests {
             OWN_WORK.len(),
             "the provider's wildcard reaches a caller's own work and stops there"
         );
+    }
+
+    #[test]
+    fn sponsorship_permissions_are_exact_and_have_no_aliases() {
+        for (permission, expected) in [
+            (
+                permission::SPONSORSHIP_MANAGE,
+                Capability::ManageOwnSponsorships,
+            ),
+            (
+                permission::ADMIN_SPONSORSHIP_METERING,
+                Capability::ReconcileSponsoredUsage,
+            ),
+        ] {
+            let authorization = capabilities_from_permissions([permission]);
+            for capability in Capability::ALL {
+                assert_eq!(
+                    authorization.allows(capability),
+                    capability == expected,
+                    "{permission} granted {capability:?} incorrectly"
+                );
+            }
+            assert_eq!(authorization.capabilities().count(), 1);
+        }
+
+        for alias in [
+            "chrono-bot:sponsorship:manage",
+            "chrono-bot:admin:sponsorship-metering",
+            "cma:sponsorships:manage",
+            "cma:admin:sponsorship:metering",
+        ] {
+            assert_eq!(
+                capabilities_from_permissions([alias])
+                    .capabilities()
+                    .count(),
+                0
+            );
+        }
     }
 
     #[test]

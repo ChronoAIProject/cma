@@ -132,6 +132,16 @@
   line-height: 1.55;
 }
 
+.drawer__chattitle {
+  margin: 8px 0 0;
+  padding-right: 32px;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .facts__face {
   display: inline-flex;
   flex: none;
@@ -383,6 +393,41 @@
 
 .drawer__mono {
   font-family: var(--ds-font-family-code);
+  font-size: 12px;
+}
+
+.drawer__path {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+
+.drawer__path:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.drawer__path:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.drawer__path .drawer__mono {
+  overflow-wrap: anywhere;
+}
+
+.drawer__pathhint {
+  align-self: flex-end;
+  color: var(--dsw-alias-label-secondary);
   font-size: 12px;
 }
 

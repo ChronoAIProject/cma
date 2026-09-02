@@ -196,7 +196,7 @@ describe('conditional settings writes', () => {
     expect((onSettingsChange.mock.calls[0]?.[0] as PlatformSettings).liveSessions).toBe(6);
   });
 
-  it('resets only briefing prose and preserves capacity, bounds, and concurrency', async () => {
+  it('resets briefing and Chat while preserving capacity, bounds, and concurrency', async () => {
     const user = userEvent.setup();
     const onBriefingReset = vi.fn();
     const custom = changedSettings({
@@ -233,6 +233,7 @@ describe('conditional settings writes', () => {
     expect(stored.settings.sizeBounds).toEqual(custom.sizeBounds);
     expect(stored.settings.deploymentCapacity).toEqual(custom.deploymentCapacity);
     expect(stored.settings.liveSessions).toBe(8);
+    expect((await store.readChatSettings()).chat).toBeNull();
     expect(screen.getByLabelText('Maximum CPU')).toHaveValue(6000);
     expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
   });
