@@ -5,6 +5,13 @@ import { ProtocolError, ValidationError } from './errors.js';
 import { request, requestBytes, type OperationOptions } from './http.js';
 
 const TRIGGER_AVAILABILITIES = ['published', 'retired'] as const;
+const TRIGGER_PREVIEW_AVAILABILITIES = ['published', 'retired', 'unavailable'] as const;
+const TRIGGER_PREVIEW_UNAVAILABLE_REASONS = [
+  'upstream_not_forkable',
+  'upstream_unavailable',
+  'upstream_identity_changed',
+  'repository_policy_unavailable',
+] as const;
 const REPOSITORY_VISIBILITIES = ['public', 'private', 'internal'] as const;
 const REQUIRED_CAPABILITIES = [
   'conversation',
@@ -14,7 +21,7 @@ const REQUIRED_CAPABILITIES = [
   'credential_refresh',
   'credential_revocation',
 ] as const;
-const TRIGGER_KERNELS = ['codex'] as const;
+const TRIGGER_KERNELS = ['codex', 'codex-trigger-native-v1'] as const;
 const PERMISSION_CEILINGS = ['guarded', 'autonomous'] as const;
 const BILLING_MODES = ['contributor', 'zero_cost', 'sponsored'] as const;
 const TRIGGER_PREVIEW_COST_KINDS = [
@@ -57,6 +64,7 @@ const LAUNCH_STATES = [
   'failed_terminal',
   'cancelled',
 ] as const;
+const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const BLOCKED_REASONS = [
   'feature_paused',
   'owner_credential_unavailable',
@@ -246,9 +254,10 @@ export type TriggerPreviewCost =
       readonly kind: 'quote_unavailable';
     };
 
-export interface TriggerPreview {
+export type TriggerPreviewUnavailableReason = (typeof TRIGGER_PREVIEW_UNAVAILABLE_REASONS)[number];
+
+interface TriggerPreviewFields {
   readonly public_id: string;
-  readonly availability: 'published' | 'retired';
   readonly publisher_display_identity: string;
   readonly repository_id: number;
   readonly repository_owner: string;
@@ -267,6 +276,18 @@ export interface TriggerPreview {
   readonly estimated_cost: TriggerPreviewCost;
   readonly revision_digest: string;
 }
+
+export type TriggerPreview = TriggerPreviewFields &
+  (
+    | {
+        readonly availability: 'published' | 'retired';
+        readonly unavailable_reason: null;
+      }
+    | {
+        readonly availability: 'unavailable';
+        readonly unavailable_reason: TriggerPreviewUnavailableReason;
+      }
+  );
 
 export interface RepositoryIdentity {
   readonly repository_id: number;
@@ -335,7 +356,12 @@ export type TriggerRequiredCapability =
   | 'credential_refresh'
   | 'credential_revocation';
 
-/** Closed kernel identity admitted for a Trigger-owned session. */
+/**
+ * Closed kernel identity for a Trigger-owned session. `codex-trigger-native-v1`
+ * is current; `codex` is a historical, read-only Launch route that may be
+ * inspected, cancelled, followed to its session, or used to download a
+ * retained artifact, but may not authorize new Trigger work.
+ */
 export type TriggerKernel = (typeof TRIGGER_KERNELS)[number];
 
 /** The public Trigger contract deliberately excludes unrestricted sessions. */
@@ -393,9 +419,15 @@ export interface TriggerContributionPolicy {
 
 export type TriggerBillingMode = 'contributor' | 'zero_cost' | 'sponsored';
 
+export interface TriggerSponsoredPolicyBinding {
+  readonly tenant_id: string;
+  readonly policy_id: string;
+}
+
 export interface TriggerCommercialPolicy {
   readonly billing_mode: TriggerBillingMode;
   readonly policy_reference: string;
+  readonly sponsorship?: TriggerSponsoredPolicyBinding;
 }
 
 export type TriggerEditableField = 'task_input' | 'work_label' | 'resource_size' | 'timeout';
@@ -644,6 +676,12 @@ export interface LaunchReachStatus {
   readonly agent_key_revocation_confirmed: boolean;
 }
 
+/** Positive durable evidence that CMA retired credentials bound to this Launch session. */
+export interface LaunchSessionCredentialRetirement {
+  readonly session_id: string;
+  readonly settled_at: string;
+}
+
 export interface LaunchOverrides {
   readonly task_inputs: Readonly<Record<string, JsonValue>>;
   readonly work_label?: string;
@@ -743,6 +781,10 @@ export interface DiffFile {
   readonly new_provider_object_id?: string;
   readonly old_bytes: number;
   readonly new_bytes: number;
+  /** Exact inserted text lines, or null when binary line counts are unavailable. */
+  readonly additions: number | null;
+  /** Exact deleted text lines, with availability paired to additions. */
+  readonly deletions: number | null;
   readonly patch?: string;
   readonly patch_complete: boolean;
 }
@@ -924,6 +966,7 @@ export interface Launch {
   readonly branch: BranchRecord | null;
   readonly workspace: JsonObject | null;
   readonly session: JsonObject | null;
+  readonly session_credential_retirement: LaunchSessionCredentialRetirement | null;
   readonly reach: LaunchReachStatus | null;
   readonly delivery: PromptDelivery | null;
   readonly contribution_checkpoint_version: number | null;
@@ -1646,7 +1689,22 @@ async function command(
 function decodeTriggerPreview(raw: unknown): TriggerPreview {
   const body = safeObject(raw, 'Trigger preview');
   requireText(body, 'public_id', 'Trigger preview');
-  requireEnum(body, 'availability', TRIGGER_AVAILABILITIES, 'Trigger preview');
+  const availability = requireEnum(
+    body,
+    'availability',
+    TRIGGER_PREVIEW_AVAILABILITIES,
+    'Trigger preview',
+  );
+  if (!('unavailable_reason' in body)) {
+    throw new ProtocolError('Trigger preview omitted unavailable_reason');
+  }
+  if (availability === 'unavailable') {
+    requireEnum(body, 'unavailable_reason', TRIGGER_PREVIEW_UNAVAILABLE_REASONS, 'Trigger preview');
+  } else if (body.unavailable_reason !== null) {
+    throw new ProtocolError(
+      'Trigger preview carried an unavailable_reason while it was available or retired',
+    );
+  }
   requireText(body, 'publisher_display_identity', 'Trigger preview');
   requireInteger(body, 'repository_id', 'Trigger preview');
   requireText(body, 'repository_owner', 'Trigger preview');
@@ -1825,6 +1883,9 @@ export function decodeLaunch(raw: unknown): Launch {
   }
   if (body.delivery !== undefined && body.delivery !== null) decodePromptDelivery(body.delivery);
   if (body.connection !== undefined && body.connection !== null) decodeConnection(body.connection);
+  if (body.session_credential_retirement !== null) {
+    decodeLaunchSessionCredentialRetirement(body.session_credential_retirement);
+  }
   if (body.reach !== undefined && body.reach !== null) decodeLaunchReach(body.reach);
   if (body.diff !== undefined && body.diff !== null) decodeDiffArtifact(body.diff);
   if (body.contribution !== undefined && body.contribution !== null) {
@@ -1976,6 +2037,11 @@ function decodeCommercialPolicy(raw: unknown, label: string): TriggerCommercialP
   const policy = safeObject(raw, label);
   requireEnum(policy, 'billing_mode', BILLING_MODES, label);
   requireText(policy, 'policy_reference', label);
+  if (policy.sponsorship !== undefined) {
+    const sponsorship = safeObject(policy.sponsorship, `${label} sponsorship`);
+    requireText(sponsorship, 'tenant_id', `${label} sponsorship`);
+    requireText(sponsorship, 'policy_id', `${label} sponsorship`);
+  }
   return policy as unknown as TriggerCommercialPolicy;
 }
 
@@ -2043,6 +2109,13 @@ function decodeLaunchReach(raw: unknown): LaunchReachStatus {
   return reach as unknown as LaunchReachStatus;
 }
 
+function decodeLaunchSessionCredentialRetirement(raw: unknown): LaunchSessionCredentialRetirement {
+  const retirement = safeObject(raw, 'Launch session credential retirement');
+  requireText(retirement, 'session_id', 'Launch session credential retirement');
+  requireTimestamp(retirement, 'settled_at', 'Launch session credential retirement');
+  return retirement as unknown as LaunchSessionCredentialRetirement;
+}
+
 function decodeDiffArtifact(raw: unknown): DiffArtifact {
   const artifact = safeObject(raw, 'Launch diff artifact');
   requireEnum(artifact, 'validation', DIFF_VALIDATION_OUTCOMES, 'Launch diff artifact');
@@ -2052,6 +2125,16 @@ function decodeDiffArtifact(raw: unknown): DiffArtifact {
   for (const rawFile of artifact.files) {
     const file = safeObject(rawFile, 'Launch diff file');
     requireEnum(file, 'change', DIFF_CHANGE_KINDS, 'Launch diff file');
+    const binary = requireBoolean(file, 'binary', 'Launch diff file');
+    const additions = requireNullableInteger(file, 'additions', 'Launch diff file');
+    const deletions = requireNullableInteger(file, 'deletions', 'Launch diff file');
+    if (
+      binary ? additions !== null || deletions !== null : additions === null || deletions === null
+    ) {
+      throw new ProtocolError(
+        'Launch diff file carried line statistics inconsistent with its binary state',
+      );
+    }
   }
   return artifact as unknown as DiffArtifact;
 }
@@ -2347,6 +2430,19 @@ function requireText(body: Record<string, unknown>, field: string, name: string)
   const value = body[field];
   if (typeof value !== 'string' || value.trim() === '')
     throw new ProtocolError(`${name} carried no ${field}`);
+  return value;
+}
+
+function requireTimestamp(body: Record<string, unknown>, field: string, name: string): string {
+  const value = requireText(body, field, name);
+  const parsed = Date.parse(value);
+  const canonical = Number.isNaN(parsed) ? '' : new Date(parsed).toISOString();
+  if (
+    !UTC_TIMESTAMP.test(value) ||
+    (value !== canonical && value !== canonical.replace('.000Z', 'Z'))
+  ) {
+    throw new ProtocolError(`${name} carried an invalid ${field}`);
+  }
   return value;
 }
 

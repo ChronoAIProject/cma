@@ -54,6 +54,13 @@ const DOCUMENTS: SdkDocumentSets = {
       '# TypeScript Authentication\n\n## Credentials\n\nRotate them.\n',
       20,
     ),
+    document(
+      'typescript',
+      'sponsorships.md',
+      'Sponsorships',
+      '# TypeScript Sponsorships\n\nRead secret-free pages.\n',
+      30,
+    ),
   ],
   rust: [
     document('rust', 'README.md', 'Overview', '# Rust Overview\n\nBackend client.\n', 10),
@@ -117,6 +124,19 @@ describe('DeveloperSurface', () => {
     ).toBeInTheDocument();
   });
 
+  it('falls back to the first guide when the selected guide is unavailable in another SDK', async () => {
+    const user = userEvent.setup();
+    render(<DeveloperSurface documents={DOCUMENTS} />);
+
+    await user.click(screen.getByRole('button', { name: 'Sponsorships' }));
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'TypeScript Sponsorships' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Rust' }));
+    expect(screen.getByRole('heading', { level: 1, name: 'Rust Overview' })).toBeInTheDocument();
+  });
+
   it('uses the narrow document selector for the same ordered guide state', async () => {
     const user = userEvent.setup();
     render(<DeveloperSurface documents={DOCUMENTS} />);
@@ -152,9 +172,10 @@ describe('DeveloperSurface', () => {
   });
 
   it('loads the complete real repository sets through the raw Vite glob', () => {
-    expect(SDK_DOCUMENTS.typescript).toHaveLength(9);
+    expect(SDK_DOCUMENTS.typescript).toHaveLength(10);
     expect(SDK_DOCUMENTS.rust).toHaveLength(9);
     expect(SDK_DOCUMENTS.typescript[0]?.label).toBe('Overview');
+    expect(SDK_DOCUMENTS.typescript.map((document) => document.label)).toContain('Sponsorships');
     expect(SDK_DOCUMENTS.rust.at(-1)?.label).toBe('Reference');
   });
 

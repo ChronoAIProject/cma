@@ -142,9 +142,9 @@ impl GithubBroker {
         let repository = self.current_branch_fork(&context.branch).await?;
         let source = &context.branch.source_sha;
         let tree: Observed<GithubTreeWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.branch.owner,
-                &context.branch.connection.service_id,
+                &context.branch.connection,
                 Method::GET,
                 &[
                     "repos",
@@ -172,9 +172,9 @@ impl GithubBroker {
         let repository = self.current_branch_fork(&context.branch).await?;
         let object_id = &expected.provider_object_id;
         let blob: Observed<GithubBlobWire> = self
-            .github_json(
+            .github_json_with_connection(
                 &context.branch.owner,
-                &context.branch.connection.service_id,
+                &context.branch.connection,
                 Method::GET,
                 &[
                     "repos",

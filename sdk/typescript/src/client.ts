@@ -11,12 +11,17 @@
  */
 
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
+import * as aguiCapabilities from './agui/capabilities.js';
+import * as chatHosts from './chat-hosts.js';
 import * as discovery from './discovery.js';
 import * as environment from './environment.js';
 import * as events from './events.js';
 import * as operations from './operations.js';
 import * as resources from './resources.js';
+import * as responses from './responses.js';
 import * as sessions from './sessions.js';
+import * as settings from './settings.js';
+import * as sponsorships from './sponsorships.js';
 import * as triggers from './triggers.js';
 import type { SessionResourceStatus } from './resources.js';
 import type {
@@ -24,6 +29,7 @@ import type {
   PricingQuote,
   SessionAllowance,
   SessionPageRequest,
+  SessionListRequest,
   SessionSpend,
 } from './sessions.js';
 import type { OperationOptions, Page, PageWalkOptions } from './http.js';
@@ -44,6 +50,13 @@ import type {
 } from './operations.js';
 import type { KernelOffer, Session, SessionPlane } from './types.js';
 import type { Conformance } from './discovery.js';
+import type { ChatSettings, StoredChatSettings } from './settings.js';
+import type {
+  SponsoredGrant,
+  SponsorshipCredential,
+  SponsorshipPageRequest,
+  SponsorshipPolicy,
+} from './sponsorships.js';
 
 /**
  * A configured CMA client.
@@ -70,6 +83,82 @@ export class Cma {
   /** Public protocol and build discovery; no configured bearer is presented. */
   readConformance(options: OperationOptions = {}): Promise<Conformance> {
     return discovery.readConformance(this.#config, options);
+  }
+
+  /** Deployment-level AG-UI features, including live custom surface gates. */
+  readAguiCapabilities(
+    options: OperationOptions = {},
+  ): Promise<aguiCapabilities.AguiCapabilityDocument> {
+    return aguiCapabilities.readAguiCapabilities(this.#config, options);
+  }
+
+  /** Create a deployment-managed chat conversation through the Responses API. */
+  createConversation(options: OperationOptions = {}): Promise<responses.ResponsesConversation> {
+    return responses.createConversation(this.#config, options);
+  }
+
+  /** Read one caller-owned Responses conversation. */
+  readConversation(
+    id: string,
+    options: OperationOptions = {},
+  ): Promise<responses.ResponsesConversation> {
+    return responses.readConversation(this.#config, id, options);
+  }
+
+  /** Read one newest-first page of durable Responses conversation items. */
+  listConversationItems(
+    id: string,
+    page: responses.ConversationItemsRequest = {},
+    options: OperationOptions = {},
+  ): Promise<responses.ResponsesConversationItemList> {
+    return responses.listConversationItems(this.#config, id, page, options);
+  }
+
+  /** Retrieve one durable Responses response. */
+  readResponse(id: string, options: OperationOptions = {}): Promise<responses.ResponsesResponse> {
+    return responses.readResponse(this.#config, id, options);
+  }
+
+  /** Admit one chat turn and open its folding Responses stream. */
+  createResponse(
+    request: responses.CreateResponseRequest,
+    options: OperationOptions = {},
+  ): Promise<responses.ResponsesConnection> {
+    return responses.createResponse(this.#config, request, options);
+  }
+
+  /** Read the deployment-owned chat setting and its write revision. */
+  readChatSettings(options: OperationOptions = {}): Promise<StoredChatSettings> {
+    return settings.readChatSettings(this.#config, options);
+  }
+
+  /** Read one bounded page of deployment-managed chat hosts. */
+  listChatHostsPage(
+    page: chatHosts.ChatHostPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<chatHosts.ChatHost>> {
+    return chatHosts.listChatHostsPage(this.#config, page, options);
+  }
+
+  /** List every deployment-managed chat host within explicit walk ceilings. */
+  listChatHosts(
+    options: chatHosts.ChatHostListRequest = {},
+  ): Promise<readonly chatHosts.ChatHost[]> {
+    return chatHosts.listChatHosts(this.#config, options);
+  }
+
+  /** Retire one active or paused chat host. */
+  retireChatHost(id: string, options: OperationOptions = {}): Promise<chatHosts.ChatHost> {
+    return chatHosts.retireChatHost(this.#config, id, options);
+  }
+
+  /** Replace only the chat setting under the platform revision CAS. */
+  changeChatSettings(
+    expectedRevision: number,
+    chat: ChatSettings | null,
+    options: OperationOptions = {},
+  ): Promise<StoredChatSettings> {
+    return settings.changeChatSettings(this.#config, expectedRevision, chat, options);
   }
 
   /** Read one public, side-effect-free README Trigger preview. */
@@ -396,6 +485,38 @@ export class Cma {
     return triggers.downloadDiffArtifact(this.#config, launchId, artifactId, options);
   }
 
+  /** One bounded page of secret-free credentials controlled by this owner. */
+  listSponsorshipCredentialsPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsorshipCredential>> {
+    return sponsorships.listSponsorshipCredentialsPage(this.#config, page, options);
+  }
+
+  /** One bounded page of policies and accounting controlled by this owner. */
+  listSponsorshipPoliciesPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsorshipPolicy>> {
+    return sponsorships.listSponsorshipPoliciesPage(this.#config, page, options);
+  }
+
+  /** One bounded page of grants attributed to this contributor. */
+  listContributorSponsorshipGrantsPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsoredGrant>> {
+    return sponsorships.listContributorSponsorshipGrantsPage(this.#config, page, options);
+  }
+
+  /** One bounded page of grants controlled by this sponsor. */
+  listSponsorSponsorshipGrantsPage(
+    page: SponsorshipPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<SponsoredGrant>> {
+    return sponsorships.listSponsorSponsorshipGrantsPage(this.#config, page, options);
+  }
+
   /** Every environment profile owned by the authenticated subject. */
   listEnvironmentProfiles(options: PageWalkOptions = {}): Promise<readonly EnvironmentProfile[]> {
     return environment.listEnvironmentProfiles(this.#config, options);
@@ -455,7 +576,7 @@ export class Cma {
   }
 
   /** Sessions belonging to the authenticated subject, newest first. */
-  listSessions(options: PageWalkOptions = {}): Promise<readonly Session[]> {
+  listSessions(options: SessionListRequest = {}): Promise<readonly Session[]> {
     return sessions.listSessions(this.#config, options);
   }
 

@@ -39,7 +39,7 @@ pub(crate) struct OwnerGuards {
 }
 
 impl OwnerGuards {
-    async fn lock(&self, owner: &SubjectId) -> OwnedMutexGuard<()> {
+    pub(crate) async fn lock(&self, owner: &SubjectId) -> OwnedMutexGuard<()> {
         let lock = {
             let mut held = self.held.lock().await;
             held.retain(|_, lock| lock.strong_count() > 0);
@@ -53,6 +53,25 @@ impl OwnerGuards {
             }
         };
         lock.lock_owned().await
+    }
+
+    /// Take an owner's local mutation guard only when it is immediately free.
+    /// Opportunistic maintenance uses this to avoid waiting while it already
+    /// holds per-session admission fences.
+    pub(crate) async fn try_lock(&self, owner: &SubjectId) -> Option<OwnedMutexGuard<()>> {
+        let lock = {
+            let mut held = self.held.lock().await;
+            held.retain(|_, lock| lock.strong_count() > 0);
+            match held.get(owner).and_then(Weak::upgrade) {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(Mutex::new(()));
+                    held.insert(owner.clone(), Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
+        lock.try_lock_owned().ok()
     }
 }
 

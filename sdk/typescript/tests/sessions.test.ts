@@ -98,6 +98,12 @@ describe('the shared session fixture', () => {
       cols: 120,
       rows: 40,
       plane: 'conversation',
+      chat: {
+        worktreeName: 'chat-3',
+        worktreePath: '/workspace/chat-3',
+        title: 'Fixture chat',
+        pausedNotice: 'Paused after inactivity',
+      },
       creator: {
         displayName: 'Fixture User',
         avatarUrl: 'https://images.example.test/fixture.png',
@@ -233,6 +239,45 @@ describe('the shared session fixture', () => {
     ]);
   });
 
+  it('walks one exact surface and preserves the filter in every continuation', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'chat_newer' })]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/sessions?surface=chat&cursor=older>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([sessionFixture({ id: 'chat_older' })]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    const sessions = await listSessions(config, { surface: 'chat' });
+
+    expect(sessions.map(({ id }) => id)).toEqual(['chat_newer', 'chat_older']);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/sessions?surface=chat',
+      '/api/v1/sessions?surface=chat&cursor=older',
+    ]);
+  });
+
+  it('refuses an unknown complete-walk surface before transport', async () => {
+    const fetch = vi.fn();
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    await expect(listSessions(config, { surface: 'workspace' as 'chat' })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('exposes bounded status pages whose opaque next target can be followed manually', async () => {
     const fetch = vi
       .fn()
@@ -241,7 +286,7 @@ describe('the shared session fixture', () => {
           status: 200,
           headers: {
             'content-type': 'application/json',
-            link: '</api/v1/sessions?status=running&limit=1&cursor=opaque-next>; rel="next"',
+            link: '</api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque-next>; rel="next"',
           },
         }),
       )
@@ -255,6 +300,7 @@ describe('the shared session fixture', () => {
 
     const first = await listSessionPage(config, {
       status: 'running',
+      surface: 'chat',
       limit: 1,
       cursor: 'opaque start',
     });
@@ -267,13 +313,16 @@ describe('the shared session fixture', () => {
     await expect(listSessionPage(config, { next, status: 'running' })).rejects.toBeInstanceOf(
       ValidationError,
     );
+    await expect(listSessionPage(config, { next, surface: 'agent' })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
     expect(fetch).toHaveBeenCalledTimes(1);
     const second = await listSessionPage(config, { next });
     expect(second.items.map(({ id }) => id)).toEqual(['sesn_running_older']);
     expect(second.next).toBeUndefined();
     expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
-      '/api/v1/sessions?status=running&limit=1&cursor=opaque+start',
-      '/api/v1/sessions?status=running&limit=1&cursor=opaque-next',
+      '/api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque+start',
+      '/api/v1/sessions?status=running&surface=chat&limit=1&cursor=opaque-next',
     ]);
   });
 
@@ -303,6 +352,9 @@ describe('the shared session fixture', () => {
       await expect(listSessionPage(config, { limit })).rejects.toBeInstanceOf(ValidationError);
     }
     await expect(listSessionPage(config, { cursor: '' })).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      listSessionPage(config, { surface: 'workspace' as 'chat' }),
+    ).rejects.toBeInstanceOf(ValidationError);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -686,6 +738,32 @@ describe('capacity pricing', () => {
       environment_profile: 'envp_1',
       quoted_rate_card: 'rate_exact',
     });
+  });
+
+  it('serializes chat creation and reads the exact worktree projection', async () => {
+    const { fetch, calls } = answering(fixture('session.json'), 201);
+
+    await expect(
+      createSession(resolveConfig({ fetch }), { surface: 'chat' }),
+    ).resolves.toMatchObject({
+      chat: {
+        worktreeName: 'chat-3',
+        worktreePath: '/workspace/chat-3',
+        title: 'Fixture chat',
+        pausedNotice: 'Paused after inactivity',
+      },
+    });
+    const [, init] = calls.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ surface: 'chat' });
+  });
+
+  it('refuses malformed required chat worktree facts', () => {
+    expect(() =>
+      toSession(sessionFixture({ chat: { worktree_name: '', worktree_path: '/w' } })),
+    ).toThrow(/worktree name/i);
+    expect(() =>
+      toSession(sessionFixture({ chat: { worktree_name: 'chat-1', worktree_path: '' } })),
+    ).toThrow(/worktree path/i);
   });
 
   it('reads spend without coercing either monetary integer through a number', async () => {

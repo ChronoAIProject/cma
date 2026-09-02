@@ -1,6 +1,7 @@
 {
   "public_id": "33333333-3333-4333-8333-333333333333",
   "availability": "published",
+  "unavailable_reason": null,
   "publisher_display_identity": "Chrono Maintainer",
   "repository_id": 10,
   "repository_owner": "upstream-owner",

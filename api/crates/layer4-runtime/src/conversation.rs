@@ -15,9 +15,9 @@
 //! by the adapter that started it, because the layer that knows a kernel's name
 //! is the layer that owns that kernel.
 //!
-//! Only the newest rollout is carried. A pod hosts one session, so any older
-//! ones belong to conversations that already ended, and sending them would
-//! grow every subsequent handover without adding anything resumable.
+//! Without an identifier, only the newest rollout is carried for compatibility
+//! with single-conversation callers. A caller hosting keyed conversations can
+//! instead name the rollout's recorded identifier and carry exactly that one.
 //!
 //! What *is* known, and now travels with the bytes, is where the file was
 //! found. Not what it says — where it was. A store laid out as a keyed tree
@@ -25,7 +25,7 @@
 //! is not found at all: the agent starts a fresh one and reports success. The
 //! envelope that carries it lives in `carry`.
 
-use std::io::Write;
+use std::io::{BufRead as _, Read as _, Write};
 use std::path::{Path, PathBuf};
 
 use crate::carry;
@@ -36,6 +36,7 @@ use crate::carry;
 /// hop and land on a pod's disk, and an unbounded read is a way to run either
 /// of those out. Generous enough that no real conversation reaches it.
 const MAX_ROLLOUT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_OPENING_RECORD_BYTES: u64 = 64 * 1024;
 
 /// The agent's most recent conversation, if it has had one.
 ///
@@ -46,23 +47,40 @@ pub fn capture(home: &Path, sessions_dir: &str) -> std::io::Result<Option<Vec<u8
     let Some(newest) = newest_rollout(&root)? else {
         return Ok(None);
     };
-    let size = std::fs::metadata(&newest)?.len();
+    capture_rollout(&root, &newest).map(Some)
+}
+
+/// The newest rollout whose opening record names `conversation_id`.
+pub fn capture_by_id(
+    home: &Path,
+    sessions_dir: &str,
+    conversation_id: &str,
+) -> std::io::Result<Option<Vec<u8>>> {
+    let root = home.join(sessions_dir);
+    let Some(selected) = newest_rollout_with_id(&root, conversation_id)? else {
+        return Ok(None);
+    };
+    capture_rollout(&root, &selected).map(Some)
+}
+
+fn capture_rollout(root: &Path, rollout: &Path) -> std::io::Result<Vec<u8>> {
+    let size = std::fs::metadata(rollout)?.len();
     if size > MAX_ROLLOUT_BYTES {
         return Err(std::io::Error::other(format!(
             "conversation is {size} bytes, beyond the {MAX_ROLLOUT_BYTES} that can be carried"
         )));
     }
-    let bytes = std::fs::read(&newest)?;
+    let bytes = std::fs::read(rollout)?;
     // Relative to the directory the adapter nominated, because that is the
     // only part a replacement pod can reproduce: its home is its own, and the
     // directory is what it was told.
-    let relative = newest.strip_prefix(&root).unwrap_or(&newest);
+    let relative = rollout.strip_prefix(root).unwrap_or(rollout);
     tracing::info!(
-        path = %newest.display(),
+        path = %rollout.display(),
         bytes = bytes.len(),
         "captured the conversation"
     );
-    Ok(Some(carry::seal(relative, &bytes)))
+    Ok(carry::seal(relative, &bytes))
 }
 
 /// A conversation laid down for the agent to continue.
@@ -80,6 +98,15 @@ pub struct Restored {
     /// then finds nothing, starts a fresh one, and reports success — so a
     /// missing identifier here is silent data loss, not a failure.
     pub session_id: Option<String>,
+}
+
+/// Read the identifier from a carried conversation without writing it.
+///
+/// Runtime admission uses this before restore so a named slot conflict cannot
+/// leave an unowned rollout on disk after returning `409 Conflict`.
+pub fn carried_conversation_id(carried: &[u8]) -> Option<String> {
+    let (_, bytes) = carry::open(carried);
+    conversation_id_of(bytes)
 }
 
 /// Lay a captured conversation down where the agent will find it.
@@ -104,7 +131,7 @@ pub fn restore(
     let mut file = std::fs::File::create(&path)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    let session_id = conversation_id(bytes);
+    let session_id = conversation_id_of(bytes);
     match session_id.as_deref() {
         Some(id) => tracing::info!(
             path = %path.display(),
@@ -135,7 +162,7 @@ pub fn restore(
 /// is not text at all, simply has no identifier to give. Whether that matters
 /// is decided by whoever asked, not here: it matters only to a kernel that has
 /// to be told by name which conversation to continue.
-fn conversation_id(bytes: &[u8]) -> Option<String> {
+fn conversation_id_of(bytes: &[u8]) -> Option<String> {
     let first = bytes.split(|b| *b == b'\n').next()?;
     let value: serde_json::Value = serde_json::from_slice(first).ok()?;
     value
@@ -147,6 +174,27 @@ fn conversation_id(bytes: &[u8]) -> Option<String> {
 
 /// The most recently modified rollout under a directory tree.
 fn newest_rollout(root: &Path) -> std::io::Result<Option<PathBuf>> {
+    newest_rollout_where(root, |_| Ok(true))
+}
+
+fn newest_rollout_with_id(root: &Path, conversation_id: &str) -> std::io::Result<Option<PathBuf>> {
+    newest_rollout_where(root, |path| {
+        let file = std::fs::File::open(path)?;
+        let mut opening = Vec::new();
+        std::io::BufReader::new(file)
+            .take(MAX_OPENING_RECORD_BYTES + 1)
+            .read_until(b'\n', &mut opening)?;
+        if opening.len() as u64 > MAX_OPENING_RECORD_BYTES {
+            return Ok(false);
+        }
+        Ok(conversation_id_of(&opening).as_deref() == Some(conversation_id))
+    })
+}
+
+fn newest_rollout_where(
+    root: &Path,
+    mut accepts: impl FnMut(&Path) -> std::io::Result<bool>,
+) -> std::io::Result<Option<PathBuf>> {
     if !root.exists() {
         return Ok(None);
     }
@@ -171,6 +219,9 @@ fn newest_rollout(root: &Path) -> std::io::Result<Option<PathBuf>> {
                 continue;
             }
             if !kind.is_file() {
+                continue;
+            }
+            if !accepts(&path)? {
                 continue;
             }
             let modified = entry.metadata()?.modified()?;

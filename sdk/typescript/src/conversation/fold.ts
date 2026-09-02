@@ -86,11 +86,17 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
        * rotating session taking the failure ink, and §18.6 already says how
        * the boundary itself is drawn. The turn really has ended either way.
        */
+      // Cursorless RUN_ERROR is also the shape used for admission refusal and
+      // does not report a lifecycle edge. Durable projections come from a
+      // noninteractive SessionStatus and definitively end current pressure.
+      const lifecycleEnded = event.seq > 0;
       if (event.returns) {
         return {
           ...state,
           turnInFlight: false,
           sessionInteractive: false,
+          cpuPressure: lifecycleEnded ? undefined : state.cpuPressure,
+          memoryPressure: lifecycleEnded ? undefined : state.memoryPressure,
           live: undefined,
           reasoning: undefined,
         };
@@ -99,6 +105,8 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
         ...state,
         turnInFlight: false,
         sessionInteractive: false,
+        cpuPressure: lifecycleEnded ? undefined : state.cpuPressure,
+        memoryPressure: lifecycleEnded ? undefined : state.memoryPressure,
         live: undefined,
         reasoning: undefined,
         error: { message: event.message, capability: event.capability },

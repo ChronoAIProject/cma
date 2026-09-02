@@ -300,7 +300,7 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
     }
   }
 
-  async function resetBriefing(): Promise<void> {
+  async function resetSettings(): Promise<void> {
     if (editor.kind !== 'ready' || busy) {
       return;
     }
@@ -309,11 +309,15 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
     setStatus(undefined);
     setConflict(undefined);
     try {
-      const stored = await store.resetPlatformBriefing(editor.revision);
-      accept(stored, `Restored shipped briefing in revision ${String(stored.revision)}.`, {
-        ...editor.draft,
-        briefing: copyBriefing(stored.settings.briefing),
-      });
+      const stored = await store.resetPlatformSettings(editor.revision);
+      accept(
+        stored,
+        `Restored shipped briefing and removed Chat settings in revision ${String(stored.revision)}.`,
+        {
+          ...editor.draft,
+          briefing: copyBriefing(stored.settings.briefing),
+        },
+      );
     } catch (cause) {
       if (cause instanceof PlatformSettingsConflict) {
         await recoverConflict(cause, 'reset');
@@ -387,7 +391,9 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
       <div className="notice notice--quiet platform-settings__notice">
         <p className="notice__detail">
           Only Codex currently reads the session briefing. Clearing its prose removes the guidance
-          that a session is already authenticated and that <code>nyxid login</code> will fail.
+          that a session is already authenticated and that <code>nyxid login</code> will fail. Reset
+          briefing and Chat also removes the optional Chat configuration, returning it to the
+          shipped off state.
         </p>
       </div>
 
@@ -856,10 +862,10 @@ export function PlatformSettingsView({ store }: PlatformSettingsViewProps) {
             variant="outline"
             disabled={busy}
             onClick={() => {
-              void resetBriefing();
+              void resetSettings();
             }}
           >
-            {operation === 'reset' ? 'Resetting…' : 'Reset briefing'}
+            {operation === 'reset' ? 'Resetting…' : 'Reset briefing and Chat'}
           </Button>
           {!dirty ? <span className="platform-settings__unchanged">No unsaved changes</span> : null}
         </div>

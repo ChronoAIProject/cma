@@ -54,6 +54,8 @@ spec:
       # frame is held by the runtime's bridge while nothing is attached and
       # delivered to the next process that attaches, which is the same path a
       # lost control plane already relies on.
+      # CMA bounds concurrent HTTP/worker drain to 15s and cancels recovery
+      # lanes after 10s, leaving five seconds for runtime and kubelet teardown.
       terminationGracePeriodSeconds: 20
       # The sandbox key is delivered by the platform's secret provider, which
       # identifies the workload by its service account. Running as "default"
@@ -82,7 +84,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api:v0.7.0
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api:v0.9.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -137,6 +139,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # Sponsorship is dormant: there is deliberately no encryption-keyring
+            # or audit-HMAC mount until separately reviewed Secret Manager
+            # resources, IAM, and real store/adapter composition exist.
             # Read-only so a compromised process cannot rewrite the credential
             # it authenticates with.
             - name: opensandbox-api-key
@@ -145,6 +150,9 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        # Do not add sponsorship files to this existing provider authority. Its
+        # future keyring and audit-HMAC projections must be separate read-only
+        # volumes so neither secret class can alias this provider credential.
         # The OpenSandbox API key arrives as a file rather than an environment
         # variable, keeping it out of the pod spec and the process environment.
         # It is delivered by the cluster's secret provider straight from the

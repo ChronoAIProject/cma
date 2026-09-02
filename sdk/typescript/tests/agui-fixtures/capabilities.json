@@ -58,6 +58,9 @@
       "cma:changePlane": false,
       "cma:planeChangeObserved": true,
       "cma:resources": true,
+      "cma:chat": {
+        "enabled": false
+      },
       "cma:liveFrames": true,
       "cma:trigger": {
         "preview": true,

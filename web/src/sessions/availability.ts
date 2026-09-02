@@ -59,6 +59,8 @@ export interface SessionAbilities {
   readonly canReconnect: boolean;
   /** Whether the sandbox can be released, keeping the session. */
   readonly canStop: boolean;
+  /** Whether the session can be ended while retaining its history. */
+  readonly canTerminate: boolean;
   /** Whether a released session can be given a sandbox again. */
   readonly canRevive: boolean;
   /** Whether the session and its history can be removed. */
@@ -84,6 +86,7 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         interactive: false,
         canReconnect: false,
         canStop: true,
+        canTerminate: true,
         canRevive: false,
         canDelete: true,
         listed: true,
@@ -103,6 +106,7 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         interactive: true,
         canReconnect: true,
         canStop: true,
+        canTerminate: true,
         canRevive: false,
         canDelete: true,
         listed: true,
@@ -115,6 +119,7 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         interactive: false,
         canReconnect: false,
         canStop: false,
+        canTerminate: false,
         canRevive: false,
         canDelete: false,
         listed: true,
@@ -133,6 +138,7 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         interactive: false,
         canReconnect: false,
         canStop: false,
+        canTerminate: true,
         canRevive: !waitingForClient,
         canDelete: true,
         listed: true,
@@ -146,13 +152,13 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         interactive: false,
         canReconnect: false,
         canStop: false,
+        canTerminate: false,
         canRevive: false,
         canDelete: true,
-        // Ended sessions leave the list, because a list of everything anyone
-        // has ever run is not a list of their sessions. The exception is one
-        // that ended by failing: hiding those would answer "where did my
-        // session go" by silently removing the evidence.
-        listed: session.stopReason === 'error',
+        // Terminated has its own rail group. Hiding ordinary terminations before
+        // grouping makes that group contain only failures and makes a partial
+        // permanent-delete failure look as though the session was deleted.
+        listed: true,
         reason:
           session.stopReason === 'error'
             ? 'This session ended because it failed.'
@@ -163,6 +169,7 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         interactive: false,
         canReconnect: false,
         canStop: false,
+        canTerminate: false,
         canRevive: false,
         canDelete: false,
         listed: true,

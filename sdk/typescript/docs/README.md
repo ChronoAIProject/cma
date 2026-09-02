@@ -3,11 +3,12 @@
 <!-- nav: 10 Overview -->
 
 `@chronoai/cma-sdk` is the typed browser and Node client for CMA. It covers the
-REST session API, the reconnecting durable event stream, the AG-UI conversation
-transport, anonymous deployment conformance discovery, environment profiles,
-usage, resources, pricing, request correlation, and the operations needed to drive
-a session. The CMA dashboard consumes this package rather than a private client
-implementation.
+REST session API, the stateful Responses chat API and folding stream, the
+reconnecting durable event stream, the AG-UI conversation transport, anonymous
+deployment conformance discovery, environment profiles, usage, resources,
+pricing, request correlation, four secret-free sponsorship page reads, and the
+operations needed to drive a session. The CMA dashboard consumes this package
+rather than a private client implementation.
 
 This package is repository-only, deliberately marked private, and is not published
 to npm. CMA's web application consumes it through its local file dependency. A
@@ -60,6 +61,7 @@ check requires unique orders and labels and compiles every TypeScript fence.
 | [Streaming](streaming.md)           | Cursors, reconnects, events, and forward compatibility        |
 | [Triggers](triggers.md)             | Publish repository Triggers and run contribution Launches     |
 | [Operations](operations.md)         | Input, approvals, control, terminal REST, profiles, and usage |
+| [Sponsorships](sponsorships.md)     | Secret-free credential, policy, and grant page reads          |
 | [Errors](errors.md)                 | Typed failures and retry decisions                            |
 | [Reference](reference.md)           | Generated declarations and public entry points                |
 
@@ -68,6 +70,7 @@ check requires unique orders and labels and compiles every TypeScript fence.
 These guides explain how to use the SDK. The wire contracts remain authoritative:
 
 - [REST interface](../../../docs/API_REST.md)
+- [Responses interface](../../../docs/API_Responses.md)
 - [AG-UI interface](../../../docs/API_AGUI.md)
 - [PTY interface](../../../docs/API_PTY.md)
 - [API overview](../../../docs/API_Overview.md)

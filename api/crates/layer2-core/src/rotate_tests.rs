@@ -1585,7 +1585,7 @@ async fn an_approval_wait_is_not_rotated_away_from_its_runtime_local_request() {
                     crate::options::SessionMode::Conversation,
                 )
                 .await,
-            Err(crate::error::CoreError::InvalidState)
+            Err(crate::error::CoreError::InvalidState { .. })
         ),
         "a plane handover must wait for the runtime-local request to resolve"
     );
@@ -3003,7 +3003,7 @@ async fn a_session_already_being_moved_refuses_a_second_move() {
         .expect_err("a session mid-handover cannot be handed over again");
 
     assert!(
-        matches!(refusal, crate::error::CoreError::InvalidState),
+        matches!(refusal, crate::error::CoreError::InvalidState { .. }),
         "got {refusal:?}"
     );
 }
@@ -3027,7 +3027,7 @@ async fn a_session_with_no_runtime_refuses() {
         .expect_err("a stopped session has nothing to move");
 
     assert!(
-        matches!(refusal, crate::error::CoreError::InvalidState),
+        matches!(refusal, crate::error::CoreError::InvalidState { .. }),
         "got {refusal:?}"
     );
 }

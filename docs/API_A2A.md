@@ -1,6 +1,6 @@
 # A2A Interface
 
-**Priority 5 — for agent clients.**
+**Priority 6 — for agent clients.**
 
 **This interface is not built yet.** Nothing below is served today; it is the design the implementation will be held to, and the endpoint refuses with `501` until then.
 

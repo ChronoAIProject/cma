@@ -566,6 +566,8 @@ describe('Trigger response validation', () => {
     const diffTransport = responder(fixture('diff_review.json'), 200);
     const diff = await readLaunchDiff(resolveConfig({ fetch: diffTransport.fetch }), launch.id);
     expect(diff.artifact?.files).toHaveLength(1);
+    expect(diff.artifact?.files[0]?.additions).toBe(1);
+    expect(diff.artifact?.files[0]?.deletions).toBe(0);
     expect(diff.pull_request?.status_failure?.code).toBe('github_status_unavailable');
     expect(diff.pull_request?.provider_request_id).toBe('github-request-fixture');
     expect(diff.pull_request?.head_matches_launch).toBe(false);
@@ -579,6 +581,83 @@ describe('Trigger response validation', () => {
       'open',
     );
     expect(pullRequest.operation).toBe('open');
+  });
+
+  it('decodes an optional typed sponsorship binding and rejects malformed present bindings', () => {
+    const raw = structuredClone(LAUNCH);
+    const content = raw.revision_content as Record<string, unknown>;
+    const sponsoredPolicy = {
+      billing_mode: 'sponsored',
+      policy_reference: 'sponsored-grant-v1',
+      sponsorship: {
+        tenant_id: 'tenant-sponsored',
+        policy_id: '11111111-1111-4111-8111-111111111111',
+      },
+    };
+    const sponsored = decodeLaunch({
+      ...raw,
+      revision_content: { ...content, commercial_policy: sponsoredPolicy },
+    });
+    expect(sponsored.revision_content.commercial_policy.sponsorship).toEqual(
+      sponsoredPolicy.sponsorship,
+    );
+
+    for (const sponsorship of [
+      null,
+      {},
+      { tenant_id: 'tenant-sponsored' },
+      { policy_id: '11111111-1111-4111-8111-111111111111' },
+      { tenant_id: 7, policy_id: '11111111-1111-4111-8111-111111111111' },
+    ]) {
+      expect(() =>
+        decodeLaunch({
+          ...raw,
+          revision_content: {
+            ...content,
+            commercial_policy: { ...sponsoredPolicy, sponsorship },
+          },
+        }),
+      ).toThrow(ProtocolError);
+    }
+  });
+
+  it('requires paired authoritative line statistics on every diff file', async () => {
+    const raw = fixture('diff_review.json') as Record<string, unknown>;
+    const artifact = raw.artifact as Record<string, unknown>;
+    const [source] = artifact.files as Record<string, unknown>[];
+    if (source === undefined) throw new Error('diff fixture omitted its file');
+
+    const decodeFile = (file: Record<string, unknown>) =>
+      readLaunchDiff(
+        resolveConfig({
+          fetch: responder({ ...raw, artifact: { ...artifact, files: [file] } }, 200).fetch,
+        }),
+        'launch_fixture',
+      );
+
+    await expect(
+      decodeFile(withoutPath(source, ['additions']) as Record<string, unknown>),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    await expect(decodeFile({ ...source, additions: null, deletions: 0 })).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+    await expect(
+      decodeFile({ ...source, binary: false, additions: null, deletions: null }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    await expect(
+      decodeFile({ ...source, binary: true, additions: 0, deletions: 0 }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+
+    const binary = await decodeFile({
+      ...source,
+      binary: true,
+      additions: null,
+      deletions: null,
+      patch: undefined,
+      patch_complete: false,
+    });
+    expect(binary.artifact?.files[0]?.additions).toBeNull();
+    expect(binary.artifact?.files[0]?.deletions).toBeNull();
   });
 
   it('keeps public Trigger cost states closed and validates quoted amounts', async () => {
@@ -627,6 +706,39 @@ describe('Trigger response validation', () => {
           resolveConfig({
             fetch: responder({ ...raw, estimated_cost: estimatedCost }, 200).fetch,
           }),
+          'public_fixture',
+        ),
+      ).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
+  it('keeps dynamic preview availability and unavailable reasons paired', async () => {
+    const raw = fixture('trigger_preview.json') as Record<string, unknown>;
+    const unavailable = await readTriggerPreview(
+      resolveConfig({
+        fetch: responder(
+          {
+            ...raw,
+            availability: 'unavailable',
+            unavailable_reason: 'upstream_not_forkable',
+          },
+          200,
+        ).fetch,
+      }),
+      'public_fixture',
+    );
+    expect(unavailable.availability).toBe('unavailable');
+    expect(unavailable.unavailable_reason).toBe('upstream_not_forkable');
+
+    for (const fields of [
+      { availability: 'published', unavailable_reason: 'upstream_not_forkable' },
+      { availability: 'retired', unavailable_reason: 'upstream_unavailable' },
+      { availability: 'unavailable', unavailable_reason: null },
+      { availability: 'unavailable', unavailable_reason: 'future_reason' },
+    ]) {
+      await expect(
+        readTriggerPreview(
+          resolveConfig({ fetch: responder({ ...raw, ...fields }, 200).fetch }),
           'public_fixture',
         ),
       ).rejects.toBeInstanceOf(ProtocolError);
@@ -808,6 +920,39 @@ describe('Trigger response validation', () => {
     }
   });
 
+  it('decodes only a bound and timestamped Launch session credential retirement', () => {
+    const raw = fixture('launch.json') as Record<string, unknown>;
+    const retirement = {
+      session_id: 'sesn_provider_smoke',
+      settled_at: '2026-08-28T01:02:45Z',
+    };
+
+    const launch = decodeLaunch({
+      ...raw,
+      state: 'completed',
+      session_credential_retirement: retirement,
+    });
+    expect(launch.session_credential_retirement).toEqual(retirement);
+
+    for (const malformed of [
+      {},
+      { ...retirement, session_id: '' },
+      { ...retirement, session_id: 42 },
+      { ...retirement, settled_at: '' },
+      { ...retirement, settled_at: '2026-08-28' },
+      { ...retirement, settled_at: '2026-02-31T01:02:45Z' },
+      { ...retirement, settled_at: 'not-a-timestamp' },
+      { ...retirement, settled_at: 42 },
+    ]) {
+      expect(() => decodeLaunch({ ...raw, session_credential_retirement: malformed })).toThrow(
+        ProtocolError,
+      );
+    }
+    expect(() => decodeLaunch(withoutPath(raw, ['session_credential_retirement']))).toThrow(
+      ProtocolError,
+    );
+  });
+
   it('admits only the public pull-request provider correlation field', () => {
     const pullRequest = {
       operation: 'open',
@@ -944,6 +1089,21 @@ describe('Trigger response validation', () => {
     cases.push(diff);
 
     for (const raw of cases) expect(() => decodeLaunch(raw)).toThrow(ProtocolError);
+  });
+
+  it('decodes only the current and exact historical Trigger kernel routes', () => {
+    const current = decodeLaunch(fixture('launch.json'));
+    expect(current.runtime_admission?.kernel).toBe('codex-trigger-native-v1');
+
+    const legacy = fixture('launch.json') as Record<string, unknown>;
+    (legacy.runtime_admission as Record<string, unknown>).kernel = 'codex';
+    expect(decodeLaunch(legacy).runtime_admission?.kernel).toBe('codex');
+
+    for (const kernel of ['', 'Codex', 'codex-trigger-native', 'future_kernel']) {
+      const unknown = fixture('launch.json') as Record<string, unknown>;
+      (unknown.runtime_admission as Record<string, unknown>).kernel = kernel;
+      expect(() => decodeLaunch(unknown)).toThrow(ProtocolError);
+    }
   });
 
   it('normalizes identical duplicates and rejects ambiguous Launch progress', async () => {

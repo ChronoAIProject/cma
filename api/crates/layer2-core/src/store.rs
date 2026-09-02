@@ -25,10 +25,11 @@ use serde::{Deserialize, Serialize};
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::capabilities::SessionCapabilities;
 use crate::coordination::{
-    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
-    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
-    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
+    ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, RuntimeAuthority,
+    RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
+    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest,
 };
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
@@ -95,6 +96,9 @@ pub struct SessionRecord {
     /// Kept off the public `Session`: clients receive the Launch/session link,
     /// while only the control plane may resolve the machine-owned object.
     pub trigger_origin: Option<TriggerSessionOrigin>,
+    /// Shared-host and worktree authority for a deployment-managed chat thread.
+    /// Kept private so a public session cannot authorize host lifecycle work.
+    pub chat_origin: Option<ChatOrigin>,
     /// Durable initial Trigger prompt reservation, absent on ordinary sessions.
     pub initial_prompt: Option<InitialPromptDispatch>,
     /// Unique owner of an in-progress runtime handover.
@@ -148,6 +152,7 @@ impl SessionRecord {
             runtime_id: None,
             context_ref: None,
             trigger_origin: None,
+            chat_origin: None,
             initial_prompt: None,
             rotation_claim: None,
             pending_handover: None,
@@ -183,6 +188,140 @@ impl SessionRecord {
             crate::PromptDeliveryState::Completed | crate::PromptDeliveryState::Failed
         ))
         .then_some(state)
+    }
+}
+
+/// Durable private provenance for one chat thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatOrigin {
+    pub host_id: crate::ChatHostId,
+    pub worktree_name: String,
+    pub worktree_path: String,
+    /// Server-owned thread title written once after the first completed turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Server-composed lifecycle notice retained while the shared host is paused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_notice: Option<String>,
+}
+
+impl ChatOrigin {
+    pub fn public_projection(&self) -> crate::ChatSession {
+        crate::ChatSession {
+            worktree_name: self.worktree_name.clone(),
+            worktree_path: self.worktree_path.clone(),
+            title: self.title.clone(),
+            paused_notice: self.paused_notice.clone(),
+        }
+    }
+}
+
+/// One bounded durable transcript sample used to name a chat thread.
+///
+/// This deliberately has no `Debug` implementation: both fields are private
+/// conversation content and must never become convenient logging material.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct ChatTitleTranscript {
+    pub owner_message: Option<String>,
+    pub assistant_message: Option<String>,
+    pub turn_completed: bool,
+}
+
+/// Whether a newly acquired title claim may spend one logical model request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatTitleClaimMode {
+    Generate,
+    FallbackOnly,
+}
+
+/// One idempotent request for independent, durable title-generation authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatTitleClaimRequest {
+    session_id: SessionId,
+    holder: String,
+    token: String,
+    ttl: Duration,
+}
+
+impl ChatTitleClaimRequest {
+    pub fn new(session_id: SessionId, holder: impl Into<String>, ttl: Duration) -> Self {
+        Self {
+            session_id,
+            holder: holder.into(),
+            token: format!("title_claim_{}", uuid::Uuid::new_v4().simple()),
+            ttl,
+        }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn holder(&self) -> &str {
+        &self.holder
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    pub fn ttl(&self) -> Duration {
+        self.ttl
+    }
+}
+
+/// Exact lease token that fences a title write from every predecessor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatTitleClaim {
+    request: ChatTitleClaimRequest,
+    mode: ChatTitleClaimMode,
+}
+
+impl ChatTitleClaim {
+    /// Construct the exact claim returned by a durable store acquisition.
+    pub fn acquired(request: ChatTitleClaimRequest, mode: ChatTitleClaimMode) -> Self {
+        Self { request, mode }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        self.request.session_id()
+    }
+
+    pub fn holder(&self) -> &str {
+        self.request.holder()
+    }
+
+    pub fn token(&self) -> &str {
+        self.request.token()
+    }
+
+    pub fn mode(&self) -> ChatTitleClaimMode {
+        self.mode
+    }
+}
+
+/// A validated title value whose content is intentionally redacted from Debug.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ChatThreadTitle(String);
+
+impl ChatThreadTitle {
+    /// Construct a non-empty, trimmed, control-free title of at most 64 characters.
+    pub fn new(value: String) -> Option<Self> {
+        (!value.is_empty()
+            && value.trim() == value
+            && value.chars().count() <= 64
+            && !value.chars().any(char::is_control))
+        .then_some(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for ChatThreadTitle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ChatThreadTitle(<redacted>)")
     }
 }
 
@@ -462,12 +601,31 @@ pub struct SessionListQuery {
     pub page: PageRequest,
     /// Exact lifecycle state to retain, or every state when absent.
     pub status: Option<SessionStatus>,
+    /// Surface family to retain, or both ordinary and chat sessions when absent.
+    pub surface: Option<SessionSurfaceFilter>,
+}
+
+/// Public listing families. `Agent` is the absence of a managed surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSurfaceFilter {
+    Chat,
+    Agent,
 }
 
 impl SessionListQuery {
     /// Build one bounded session listing request.
     pub fn new(page: PageRequest, status: Option<SessionStatus>) -> Self {
-        Self { page, status }
+        Self {
+            page,
+            status,
+            surface: None,
+        }
+    }
+
+    pub fn with_surface(mut self, surface: Option<SessionSurfaceFilter>) -> Self {
+        self.surface = surface;
+        self
     }
 }
 
@@ -1157,7 +1315,7 @@ pub trait SessionStore: Send + Sync {
             .scan_for(owner)
             .await?
             .into_iter()
-            .filter(|record| record.session.wants_runtime())
+            .filter(|record| record.chat_origin.is_none() && record.session.wants_runtime())
             .count() as u32)
     }
 
@@ -1173,6 +1331,101 @@ pub trait SessionStore: Send + Sync {
     /// As with [`Self::list_for`], staged skill bytes may be represented by
     /// [`SkillPackState::StagedSummary`] and must be reloaded before mutation.
     async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError>;
+
+    /// One bounded walk over titleless chat threads whose first turn is durable.
+    ///
+    /// The continuation belongs to the raw chat page rather than only to rows
+    /// returned as candidates. Consequently a page may legitimately contain no
+    /// candidates and still carry `next`; maintenance callers must continue it.
+    async fn chat_title_candidates(
+        &self,
+        page: PageRequest,
+    ) -> Result<Page<SessionId>, StoreError> {
+        let raw = self
+            .list_all(
+                &SessionListQuery::new(page, None).with_surface(Some(SessionSurfaceFilter::Chat)),
+            )
+            .await?;
+        let mut candidates = Vec::new();
+        for record in raw.items {
+            if record
+                .chat_origin
+                .as_ref()
+                .is_some_and(|origin| origin.title.is_none())
+                && self
+                    .chat_title_transcript(&record.session.id)
+                    .await?
+                    .turn_completed
+            {
+                candidates.push(record.session.id);
+            }
+        }
+        Ok(Page {
+            items: candidates,
+            next: raw.next,
+        })
+    }
+
+    /// The first owner and assistant messages plus completed-turn evidence.
+    ///
+    /// Production stores should override this with indexed first-event reads.
+    /// The default remains correct for simple stores and test doubles.
+    async fn chat_title_transcript(
+        &self,
+        id: &SessionId,
+    ) -> Result<ChatTitleTranscript, StoreError> {
+        let mut transcript = ChatTitleTranscript::default();
+        for event in self.events_since(id, 0).await? {
+            let crate::event::StoredEventKind::Known(kind) = event.kind else {
+                continue;
+            };
+            match kind {
+                crate::EventKind::OwnerMessage { content }
+                    if transcript.owner_message.is_none() =>
+                {
+                    transcript.owner_message = Some(content);
+                }
+                crate::EventKind::MessageCommitted { content }
+                    if transcript.assistant_message.is_none() =>
+                {
+                    transcript.assistant_message = Some(content);
+                }
+                crate::EventKind::TurnCompleted => transcript.turn_completed = true,
+                _ => {}
+            }
+            if transcript.turn_completed
+                && transcript.owner_message.is_some()
+                && transcript.assistant_message.is_some()
+            {
+                break;
+            }
+        }
+        Ok(transcript)
+    }
+
+    /// Acquire independent title-generation authority for one completed chat.
+    ///
+    /// The first durable acquisition returns `Generate`. A takeover after that
+    /// lease expires must return `FallbackOnly`, which closes the crash window
+    /// without issuing a second model request.
+    async fn acquire_chat_title_claim(
+        &self,
+        _request: &ChatTitleClaimRequest,
+    ) -> Result<Option<ChatTitleClaim>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Write a title once while the exact independent claim is still current.
+    ///
+    /// `true` includes an idempotent retry of this claim's already committed
+    /// title. `false` means another claim or a completed title fenced it.
+    async fn complete_chat_title(
+        &self,
+        _claim: &ChatTitleClaim,
+        _title: &ChatThreadTitle,
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
 
     /// Remove a session and its history permanently.
     ///
@@ -1255,6 +1508,44 @@ pub trait SessionStore: Send + Sync {
         Err(StoreError::CoordinationDisabled)
     }
 
+    /// Atomically move one chat thread onto its host's replacement runtime.
+    ///
+    /// The exact old status/runtime authority and chat-host provenance are
+    /// predicates. A coordinated implementation must update its separate
+    /// runtime authority and fence conversation/interaction writers in the
+    /// same transaction, without creating provider cleanup debt. Stores with
+    /// no coordination metadata fall back to their revision-checked ordinary
+    /// commit after validating the durable record boundary.
+    async fn commit_chat_runtime_transition_idempotent(
+        &self,
+        write_id: &str,
+        transition: &ChatRuntimeTransition,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        transition.validate_for(record)?;
+        let current =
+            self.get(&record.session.id)
+                .await?
+                .ok_or_else(|| StoreError::SessionDeleted {
+                    id: record.session.id.clone(),
+                })?;
+        if current.revision != record.revision
+            || current
+                .chat_origin
+                .as_ref()
+                .is_none_or(|origin| origin.host_id != transition.host_id)
+            || SessionBoundary::for_record(&current, transition.previous.authority.generation)
+                != transition.previous
+        {
+            return Err(StoreError::SessionAuthorityChanged {
+                id: record.session.id.clone(),
+            });
+        }
+        self.commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
     /// Atomically create a session and its initial events.
     ///
     /// Separate from update so a stale writer can never recreate a session
@@ -1280,6 +1571,22 @@ pub trait SessionStore: Send + Sync {
             .map(|event| event.seq)
             .max()
             .unwrap_or(0))
+    }
+
+    /// The newest durable event, when the session has any history.
+    ///
+    /// Implementations should override this with an indexed descending read.
+    /// The default remains correct for simple and compatibility stores.
+    async fn newest_event(&self, id: &SessionId) -> Result<Option<StoredEvent>, StoreError> {
+        let tail = self.event_tail(id).await?;
+        if tail == 0 {
+            return Ok(None);
+        }
+        Ok(self
+            .events_since(id, tail.saturating_sub(1))
+            .await?
+            .into_iter()
+            .max_by_key(|event| event.seq))
     }
 
     /// Events after a cursor, in sequence order.
@@ -1515,9 +1822,10 @@ pub trait CredentialSource: Send + Sync {
         services: &[ServiceId],
         caller_credential: Option<&crate::session::CallerCredential>,
         _target: &crate::CredentialDeliveryTarget,
-    ) -> Result<Option<String>, StoreError> {
+    ) -> Result<Option<layer3_adapter::RuntimeCredential>, StoreError> {
         self.credential_for(session, subject, services, caller_credential)
             .await
+            .map(|credential| credential.map(layer3_adapter::RuntimeCredential::new))
     }
 
     /// Confirm a correlated acknowledgement for an exact runtime target.
@@ -1743,6 +2051,59 @@ pub trait HandoverStore: Send + Sync {
     async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
+/// Verified result of staging one logical generation at a stable chat key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatCheckpointObjectReceipt {
+    pub object_reference: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+/// Stable object custody for complete chat-host recovery points.
+///
+/// A stable physical key may carry the currently committed generation plus one
+/// staged replacement. Reads select by digest, so a crash before host CAS leaves
+/// the previous checkpoint usable. Pruning is deliberately post-commit.
+#[async_trait::async_trait]
+pub trait ChatCheckpointStore: Send + Sync {
+    async fn stage_conversation(
+        &self,
+        id: &SessionId,
+        retain_sha256: Option<&str>,
+        snapshot: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError>;
+
+    async fn read_conversation(
+        &self,
+        id: &SessionId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
+
+    async fn prune_conversation(&self, id: &SessionId, keep_sha256: &str)
+        -> Result<(), StoreError>;
+
+    async fn stage_workspace(
+        &self,
+        host: &crate::ChatHostId,
+        retain_sha256: Option<&str>,
+        archive: Vec<u8>,
+    ) -> Result<ChatCheckpointObjectReceipt, StoreError>;
+
+    async fn read_workspace(
+        &self,
+        host: &crate::ChatHostId,
+        object_reference: &str,
+        sha256: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
+
+    async fn prune_workspace(
+        &self,
+        host: &crate::ChatHostId,
+        keep_sha256: &str,
+    ) -> Result<(), StoreError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1753,6 +2114,7 @@ mod tests {
 
     fn session() -> Session {
         Session {
+            chat: None,
             id: SessionId("sesn_1".into()),
             owner: SubjectId("subject-a".into()),
             kernel: KernelId::new("example-runtime"),
@@ -2054,6 +2416,50 @@ pub struct StoredSettings {
     /// One step and no more: this exists so a mistake can be undone in the
     /// moment, not so the service keeps a history nobody asked it to keep.
     pub previous: Option<crate::PlatformSettings>,
+}
+
+/// Durable ownership of deployment-managed shared chat runtimes.
+///
+/// Every mutation is an optimistic replacement of one complete aggregate.
+/// Provider work is authorized only by a transition claim already present in
+/// the expected revision, so a stale worker cannot publish over its successor.
+#[async_trait::async_trait]
+pub trait ChatHostStore: Send + Sync {
+    /// Insert the deterministic owner record or return the record that won.
+    async fn create_if_absent(
+        &self,
+        candidate: &crate::ChatHostRecord,
+    ) -> Result<crate::ChatHostRecord, StoreError>;
+
+    async fn get(
+        &self,
+        id: &crate::ChatHostId,
+    ) -> Result<Option<crate::ChatHostRecord>, StoreError>;
+
+    async fn get_for_owner(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<crate::ChatHostRecord>, StoreError>;
+
+    /// Replace the complete record only while its revision is unchanged.
+    async fn update_if_revision(
+        &self,
+        expected: u64,
+        replacement: &crate::ChatHostRecord,
+    ) -> Result<Option<crate::ChatHostRecord>, StoreError>;
+
+    /// Bounded newest-first inventory for administrative reads.
+    async fn list(
+        &self,
+        query: &crate::ChatHostListQuery,
+    ) -> Result<Page<crate::ChatHostRecord>, StoreError>;
+
+    /// Bounded worker candidates. Kept distinct so a concrete store cannot
+    /// accidentally serve reconciliation with an unbounded admin scan.
+    async fn list_candidates(
+        &self,
+        query: &crate::ChatHostListQuery,
+    ) -> Result<Page<crate::ChatHostRecord>, StoreError>;
 }
 
 /// One skill, fetched and ready to be written.

@@ -3,7 +3,9 @@ import type { Session } from '../sessions/types';
 import type { Arrangement } from '../sessions/arrangement';
 import type { CreationAbility } from '../sessions/availability';
 import { lastActivity } from '../sessions/lastActivity';
+import { railSubject } from '../sessions/SessionRail';
 import { tabLabel } from '../sessions/sessionTime';
+import type { SurfaceMode } from './surfaceMode';
 import { setAppearance, type Appearance } from '../theme/appearance';
 import { PlateScrim, usePlateFocus } from '../ui/plate';
 import './CommandBar.css';
@@ -23,6 +25,7 @@ import './CommandBar.css';
 
 interface CommandBarProps {
   readonly sessions: readonly Session[];
+  readonly surface?: SurfaceMode;
   readonly creation: CreationAbility;
   readonly onClose: () => void;
   readonly onSelectSession: (id: string) => void;
@@ -48,6 +51,7 @@ const APPEARANCES: readonly { readonly value: Appearance; readonly label: string
 
 export function CommandBar({
   sessions,
+  surface = 'agent',
   creation,
   onClose,
   onSelectSession,
@@ -62,10 +66,11 @@ export function CommandBar({
   usePlateFocus(panelRef, onClose);
 
   const commands = useMemo<readonly Command[]>(() => {
+    const collection = surface === 'chat' ? 'chats' : 'sessions';
     const all: Command[] = [
       {
         id: 'new-session',
-        label: 'New session',
+        label: surface === 'chat' ? 'New Chat' : 'New session',
         detail: creation.reason,
         disabled: !creation.canCreate,
         run: () => {
@@ -75,7 +80,10 @@ export function CommandBar({
       },
       ...sessions.map((session) => ({
         id: `session:${session.id}`,
-        label: `Session ${tabLabel(session.createdAt)}`,
+        label:
+          surface === 'chat'
+            ? railSubject(session, surface)
+            : `Session ${tabLabel(session.createdAt)}`,
         detail: lastActivity(session),
         run: () => {
           onClose();
@@ -84,7 +92,7 @@ export function CommandBar({
       })),
       {
         id: 'arrange-list',
-        label: 'Arrange sessions as a list',
+        label: `Arrange ${collection} as a list`,
         run: () => {
           onClose();
           onArrange('list');
@@ -96,7 +104,7 @@ export function CommandBar({
         ? [
             {
               id: 'arrange-canvas',
-              label: 'Arrange sessions on the canvas',
+              label: `Arrange ${collection} on the canvas`,
               run: () => {
                 onClose();
                 onArrange('canvas');
@@ -114,7 +122,16 @@ export function CommandBar({
       })),
     ];
     return all;
-  }, [sessions, creation, canvasAvailable, onArrange, onClose, onNewSession, onSelectSession]);
+  }, [
+    sessions,
+    surface,
+    creation,
+    canvasAvailable,
+    onArrange,
+    onClose,
+    onNewSession,
+    onSelectSession,
+  ]);
 
   const matched = useMemo(() => {
     const needle = query.trim().toLowerCase();

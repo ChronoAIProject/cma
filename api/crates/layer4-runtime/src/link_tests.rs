@@ -8,6 +8,7 @@ use super::*;
 use crate::bridge::Outbound;
 use crate::conversation_link::{gap, outbound};
 use crate::lanes::{LANE_CONVERSATION, LANE_CONVERSATION_GAP};
+use crate::SlotId;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -65,6 +66,7 @@ fn params(wire: Option<u32>, lanes: Option<&str>) -> AttachParams {
         rows: Some(40),
         wire,
         lanes: lanes.map(str::to_string),
+        conversation: None,
         telemetry: None,
     }
 }
@@ -102,6 +104,17 @@ fn the_conversation_lane_is_asked_for_by_name() {
     let p = params(Some(1), Some("conv"));
     assert!(p.framed());
     assert!(p.conversational());
+    assert!(matches!(SlotId::from_query(p.conversation), SlotId::Legacy));
+}
+
+#[test]
+fn a_named_conversation_query_selects_an_opaque_slot() {
+    let mut p = params(Some(1), Some("conv"));
+    p.conversation = Some("thread/session:opaque".into());
+    assert_eq!(
+        SlotId::from_query(p.conversation),
+        SlotId::Named("thread/session:opaque".into())
+    );
 }
 
 #[test]
@@ -151,7 +164,34 @@ fn the_control_vocabulary_still_parses_from_its_tag() {
     let signal: ControlFrame =
         serde_json::from_str(r#"{"t":"signal","sig":"INT"}"#).expect("signal parses");
     assert!(matches!(signal, ControlFrame::Signal { .. }));
+    let sponsored: ControlFrame = serde_json::from_value(serde_json::json!({
+        "t": "sponsored_model_authority",
+        "operation_id": "operation-1",
+        "authority": sponsored_authority("sbx_model"),
+    }))
+    .expect("sponsored model authority parses");
+    assert!(matches!(
+        sponsored,
+        ControlFrame::SponsoredModelAuthority { .. }
+    ));
     assert!(serde_json::from_str::<ControlFrame>(r#"{"t":"nope"}"#).is_err());
+}
+
+fn sponsored_authority(runtime: &str) -> serde_json::Value {
+    serde_json::json!({
+        "version": crate::sponsored_model::AUTHORITY_VERSION,
+        "gateway_origin": "https://cma.internal.example",
+        "runtime_audience": runtime,
+        "session_id": "sesn_trg_123456781234123412341234567890ab",
+        "session_credential_generation": 7,
+        "launch_id": "11111111-1111-4111-8111-111111111111",
+        "grant_id": "22222222-2222-4222-8222-222222222222",
+        "grant_generation": 3,
+        "policy_generation": 4,
+        "maximum_output_tokens_per_request": 16,
+        "expires_at": "2027-01-02T03:04:05Z",
+        "capability_fingerprint": "a".repeat(64),
+    })
 }
 
 #[tokio::test]
@@ -180,6 +220,51 @@ async fn a_correlated_credential_is_installed_before_its_matching_result() {
 }
 
 #[tokio::test]
+async fn sponsored_credential_control_frames_require_forward_generation_pairs() {
+    let mut state = AppState::for_test(&["/bin/echo"]);
+    state.sponsored_model = crate::sponsored_model::SponsoredModelGate::new(
+        true,
+        "sesn_trg_123456781234123412341234567890ab".into(),
+    )
+    .unwrap();
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    control(
+        r#"{"t":"credential","operation_id":"missing","value":"secret"}"#,
+        "sbx_credential",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+    let missing: serde_json::Value = serde_json::from_str(&answers.recv().await.unwrap()).unwrap();
+    assert_eq!(missing["installed"], false);
+    assert!(!state.credential.is_set().await);
+
+    control(
+        r#"{"t":"credential","operation_id":"current","value":"secret-7","custody_generation":7}"#,
+        "sbx_credential",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+    let current: serde_json::Value = serde_json::from_str(&answers.recv().await.unwrap()).unwrap();
+    assert_eq!(current["installed"], true);
+
+    control(
+        r#"{"t":"credential","operation_id":"rollback","value":"secret-6","custody_generation":6}"#,
+        "sbx_credential",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+    let rollback: serde_json::Value = serde_json::from_str(&answers.recv().await.unwrap()).unwrap();
+    assert_eq!(rollback["installed"], false);
+}
+
+#[tokio::test]
 async fn a_legacy_credential_installs_without_an_unsolicited_result() {
     let state = AppState::for_test(&["/bin/echo"]);
     let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
@@ -198,6 +283,47 @@ async fn a_legacy_credential_installs_without_an_unsolicited_result() {
         answers.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
     ));
+}
+
+#[tokio::test]
+async fn sponsored_model_authority_is_installed_before_its_exact_receipt() {
+    let mut state = AppState::for_test(&["/bin/echo"]);
+    state.sponsored_model = crate::sponsored_model::SponsoredModelGate::new(
+        true,
+        "sesn_trg_123456781234123412341234567890ab".into(),
+    )
+    .unwrap();
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+    let frame = serde_json::json!({
+        "t": "sponsored_model_authority",
+        "operation_id": "sponsored-operation-17",
+        "authority": sponsored_authority("sbx_model"),
+    })
+    .to_string();
+
+    control(&frame, "sbx_model", &state, None, &replies).await;
+
+    let answer: serde_json::Value = serde_json::from_str(
+        &answers
+            .recv()
+            .await
+            .expect("authority installation is acknowledged"),
+    )
+    .unwrap();
+    assert_eq!(answer["t"], SPONSORED_MODEL_AUTHORITY_RESULT);
+    assert_eq!(answer["operation_id"], "sponsored-operation-17");
+    assert_eq!(answer["accepted"], true);
+    assert_eq!(answer["runtime_audience"], "sbx_model");
+    assert_eq!(
+        answer["session_id"],
+        "sesn_trg_123456781234123412341234567890ab"
+    );
+    assert_eq!(answer["session_credential_generation"], 7);
+    assert_eq!(answer["launch_id"], "11111111-1111-4111-8111-111111111111");
+    assert_eq!(answer["grant_id"], "22222222-2222-4222-8222-222222222222");
+    assert_eq!(answer["grant_generation"], 3);
+    assert_eq!(answer["policy_generation"], 4);
+    assert_eq!(answer["capability_fingerprint"], "a".repeat(64));
 }
 
 #[test]
@@ -330,12 +456,112 @@ async fn terminal_link(address: std::net::SocketAddr, id: &str) -> ClientSocket 
         .0
 }
 
+async fn conversation_link(
+    address: std::net::SocketAddr,
+    id: &str,
+    conversation: Option<&str>,
+) -> ClientSocket {
+    let mut url = format!("ws://{address}/runtime/{id}/terminal?wire=1&lanes=conv");
+    if let Some(conversation) = conversation {
+        url.push('&');
+        url.push_str(lanes::CONVERSATION_QUERY_PARAMETER);
+        url.push('=');
+        url.push_str(conversation);
+    }
+    tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the conversation link opens")
+        .0
+}
+
 async fn next_client_message(socket: &mut ClientSocket) -> tokio_tungstenite::tungstenite::Message {
     tokio::time::timeout(Duration::from_secs(5), socket.next())
         .await
         .expect("the runtime link answers in time")
         .expect("the runtime link remains open")
         .expect("the runtime frame is readable")
+}
+
+async fn expect_ready(socket: &mut ClientSocket) {
+    let tokio_tungstenite::tungstenite::Message::Text(ready) = next_client_message(socket).await
+    else {
+        panic!("the lane declaration must be the first frame");
+    };
+    let ready: serde_json::Value = serde_json::from_str(&ready).expect("the declaration is JSON");
+    assert_eq!(ready["t"], "ready");
+    assert_eq!(ready["lanes"], serde_json::json!(["ctl", "conv"]));
+}
+
+async fn send_conversation(socket: &mut ClientSocket, payload: &[u8]) {
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_CONVERSATION, payload),
+        ))
+        .await
+        .expect("the conversation frame reaches the runtime");
+}
+
+async fn next_conversation_payload(socket: &mut ClientSocket) -> Vec<u8> {
+    let tokio_tungstenite::tungstenite::Message::Binary(bytes) = next_client_message(socket).await
+    else {
+        panic!("the bridge output must be a binary lane frame");
+    };
+    let (lane, payload) = lanes::unframe(&bytes).expect("bridge output has a lane");
+    assert_eq!(lane, LANE_CONVERSATION);
+    payload.to_vec()
+}
+
+async fn expect_conversation_close(socket: &mut ClientSocket) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match socket.next().await {
+                None
+                | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))
+                | Some(Err(_)) => break,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await
+    .expect("the ended slot closes its link");
+}
+
+#[tokio::test]
+async fn named_conversation_links_isolate_bytes_crashes_and_restarts() {
+    let state = AppState::for_test(&["/bin/sh"]);
+    let (address, server) = serve(state).await;
+    let mut first = conversation_link(address, "sbx_slots", Some("slot-a")).await;
+    let mut second = conversation_link(address, "sbx_slots", Some("slot-b")).await;
+    expect_ready(&mut first).await;
+    expect_ready(&mut second).await;
+
+    send_conversation(&mut first, b"printf 'from-a\\n'").await;
+    assert_eq!(next_conversation_payload(&mut first).await, b"from-a");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), second.next())
+            .await
+            .is_err(),
+        "slot A output crossed into slot B"
+    );
+
+    send_conversation(&mut second, b"printf 'from-b\\n'").await;
+    assert_eq!(next_conversation_payload(&mut second).await, b"from-b");
+    send_conversation(&mut first, b"exit 0").await;
+    expect_conversation_close(&mut first).await;
+
+    send_conversation(&mut second, b"printf 'still-b\\n'").await;
+    assert_eq!(next_conversation_payload(&mut second).await, b"still-b");
+
+    let mut restarted = conversation_link(address, "sbx_slots", Some("slot-a")).await;
+    expect_ready(&mut restarted).await;
+    send_conversation(&mut restarted, b"printf 'restarted-a\\n'").await;
+    assert_eq!(
+        next_conversation_payload(&mut restarted).await,
+        b"restarted-a"
+    );
+    send_conversation(&mut restarted, b"exit 0").await;
+    send_conversation(&mut second, b"exit 0").await;
+    server.abort();
 }
 
 async fn terminal_output_until_exit(socket: &mut ClientSocket) -> (Vec<u8>, serde_json::Value) {

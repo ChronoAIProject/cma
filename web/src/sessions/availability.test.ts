@@ -7,7 +7,7 @@ import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
  * The promise a session owner is given, as assertions.
  *
  * A session you did not stop stays usable; one you stopped stays readable and
- * can be brought back; one that ended leaves the list. Each of those is a
+ * can be brought back; one that ended remains readable under Terminated. Each is a
  * sentence someone said about how this should behave, and each is one that a
  * plausible refactor could quietly break.
  */
@@ -78,9 +78,19 @@ describe('what a session allows', () => {
     const can = abilitiesFor(session('rotating'));
     expect(can.interactive).toBe(false);
     expect(can.canStop).toBe(false);
+    expect(can.canTerminate).toBe(false);
     expect(can.canDelete).toBe(false);
     expect(can.canRevive).toBe(false);
     expect(can.reason).toMatch(/being moved/i);
+  });
+
+  it('offers retained termination only before a session has ended', () => {
+    for (const lifecycle of ['provisioning', 'ready', 'running', 'idle'] as const) {
+      expect(abilitiesFor(session(lifecycle)).canTerminate, lifecycle).toBe(true);
+    }
+    for (const lifecycle of ['rotating', 'terminated', 'unknown'] as const) {
+      expect(abilitiesFor(session(lifecycle)).canTerminate, lifecycle).toBe(false);
+    }
   });
 
   it('lets a session that is still starting be abandoned', () => {
@@ -148,9 +158,10 @@ describe('whether another session may be created', () => {
 });
 
 describe('which sessions are listed', () => {
-  it('drops sessions the owner ended', () => {
-    // Asked for directly: an ended session must not stay in the left list.
-    expect(abilitiesFor(session('terminated', 'other')).listed).toBe(false);
+  it('keeps sessions the owner ended in the terminated group', () => {
+    // Terminating keeps the record and history. Only permanent delete removes
+    // it from the rail, so a normal termination remains discoverable.
+    expect(abilitiesFor(session('terminated', 'other')).listed).toBe(true);
   });
 
   it('keeps a session that ended by failing', () => {
@@ -161,9 +172,9 @@ describe('which sessions are listed', () => {
     expect(failed.reason).toMatch(/failed/i);
   });
 
-  it('lists everything that is not ended', () => {
-    const live = ALL.filter((l) => l !== 'terminated').map((l) => session(l));
-    expect(listable(live)).toHaveLength(live.length);
+  it('lists every lifecycle that still has a session record', () => {
+    const records = ALL.map((l) => session(l));
+    expect(listable(records)).toHaveLength(records.length);
   });
 
   it('filters a mixed list without reordering it', () => {
@@ -173,7 +184,12 @@ describe('which sessions are listed', () => {
       session('idle'),
       session('provisioning'),
     ];
-    expect(listable(sessions).map((s) => s.lifecycle)).toEqual(['running', 'idle', 'provisioning']);
+    expect(listable(sessions).map((s) => s.lifecycle)).toEqual([
+      'running',
+      'terminated',
+      'idle',
+      'provisioning',
+    ]);
   });
 
   it('handles an empty list', () => {

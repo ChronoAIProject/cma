@@ -35,7 +35,8 @@ void consume;
 Two package entry points are public:
 
 - `@chronoai/cma-sdk` is the production client, types, errors, event parser, AG-UI
-  connection, and conversation fold.
+  connection, Responses stream fold, secret-free sponsorship projections, and
+  conversation fold.
 - `@chronoai/cma-sdk/testing` contains deterministic builders, mock transports, and
   transcripts for consumer tests. It is not imported by the production entry point.
 
@@ -43,6 +44,14 @@ Unknown runtime identifiers, event discriminators, recovery states, and future
 session lifecycle values cross the boundary according to the forward-compatibility
 rules in [Sessions](sessions.md) and [Streaming](streaming.md). Other malformed
 known shapes fail closed as `ProtocolError`.
+
+The sponsorship exports intentionally provide only four secret-free page reads:
+owner credentials, owner policies with accounting, contributor grants, and sponsor
+grants. They include exact allowlist decoders and role-bound continuation checks,
+but no mutation client. CMA can compose the complete sponsorship service when a
+reviewed enabled deployment tuple is supplied; the checked-in production tuple is
+still dormant and kill-switched, so these contract-first reads remain unavailable
+there. See [Sponsorships](sponsorships.md) for the complete boundary.
 
 ## Request correlation
 

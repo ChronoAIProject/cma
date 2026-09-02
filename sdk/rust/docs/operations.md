@@ -66,3 +66,30 @@ Resize and screen snapshot are REST projections. This crate does not expose the
 live bidirectional PTY WebSocket, transcript download, pricing, resource readings,
 or environment administration. The live terminal contract is
 [API_PTY.md](../../../docs/API_PTY.md).
+
+## Administrative chat hosts
+
+Callers with the deployment's administrative session-read capability can walk
+the bounded, newest-first shared-host inventory. Retirement additionally needs
+cross-owner session control:
+
+```rust,no_run
+use cma_sdk::{ChatHostId, Client};
+
+async fn retire_owner_host(client: &Client) -> cma_sdk::Result<()> {
+    let hosts = client.list_chat_hosts().await?;
+    if let Some(host) = hosts.first() {
+        let id = ChatHostId::new(host.id.as_str())?;
+        let retired = client.retire_chat_host(&id).await?;
+        assert_eq!(retired.id, id);
+    }
+    Ok(())
+}
+```
+
+Use `list_chat_host_page` for manual continuation and
+`list_chat_hosts_with_limits` to choose finite page and retained-row ceilings.
+Continuation links are bound to `/api/v1/admin/chat/hosts`; the client refuses
+an absolute, cross-origin, or different-collection target before sending a
+credential. Repeating `retire_chat_host` after retirement remains a `200`
+success.

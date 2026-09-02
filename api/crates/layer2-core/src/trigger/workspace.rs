@@ -491,6 +491,14 @@ pub struct DiffFile {
     pub new_provider_object_id: Option<String>,
     pub old_bytes: u64,
     pub new_bytes: u64,
+    /// Measured inserted text lines, independent of whether a rendered patch
+    /// is retained. `None` means line statistics are unavailable for binary
+    /// content; it must never be interpreted as zero.
+    #[serde(default)]
+    pub additions: Option<u64>,
+    /// Measured deleted text lines. Availability is paired with `additions`.
+    #[serde(default)]
+    pub deletions: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch: Option<String>,
     /// False for binary/oversized content and for a Launch summary whose full
@@ -523,6 +531,25 @@ impl DiffFile {
             return Err(TriggerValidationError::field(
                 "diff.files.patch_complete",
                 "a retained patch must be complete",
+            ));
+        }
+        if self.additions.is_some() != self.deletions.is_some() {
+            return Err(TriggerValidationError::field(
+                "diff.files.additions",
+                "line-stat availability must match deletions",
+            ));
+        }
+        if self.binary {
+            if self.additions.is_some() {
+                return Err(TriggerValidationError::field(
+                    "diff.files.additions",
+                    "binary content cannot carry text-line statistics",
+                ));
+            }
+        } else if self.additions.is_none() {
+            return Err(TriggerValidationError::field(
+                "diff.files.additions",
+                "non-binary content requires measured text-line statistics",
             ));
         }
 
@@ -571,6 +598,98 @@ impl DiffFile {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod diff_file_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn text_file() -> DiffFile {
+        DiffFile {
+            path: "src/lib.rs".into(),
+            change: DiffChangeKind::Modified,
+            binary: false,
+            old_mode: Some(0o100644),
+            new_mode: Some(0o100644),
+            old_sha256: Some("a".repeat(64)),
+            new_sha256: Some("b".repeat(64)),
+            old_provider_object_id: Some("c".repeat(40)),
+            new_provider_object_id: Some("d".repeat(40)),
+            old_bytes: 100,
+            new_bytes: 120,
+            additions: Some(7),
+            deletions: Some(3),
+            patch: None,
+            patch_complete: false,
+        }
+    }
+
+    #[test]
+    fn measured_text_stats_survive_without_a_retained_patch() {
+        let file = text_file();
+        file.validate()
+            .expect("patch retention does not control measured line statistics");
+
+        let wire = serde_json::to_value(&file).expect("the diff file serializes");
+        assert_eq!(wire["additions"], 7);
+        assert_eq!(wire["deletions"], 3);
+        assert!(wire.get("patch").is_none());
+        assert_eq!(wire["patch_complete"], false);
+        assert_eq!(
+            serde_json::from_value::<DiffFile>(wire).expect("the diff file round trips"),
+            file
+        );
+    }
+
+    #[test]
+    fn binary_line_stats_are_explicitly_unavailable() {
+        let mut file = text_file();
+        file.binary = true;
+        file.additions = None;
+        file.deletions = None;
+        file.validate()
+            .expect("binary content has explicit unavailable line statistics");
+
+        let wire = serde_json::to_value(&file).expect("the binary diff file serializes");
+        assert_eq!(wire["additions"], serde_json::Value::Null);
+        assert_eq!(wire["deletions"], serde_json::Value::Null);
+
+        file.additions = Some(0);
+        file.deletions = Some(0);
+        assert!(
+            file.validate().is_err(),
+            "zero is a measured value, not unknown"
+        );
+    }
+
+    #[test]
+    fn line_stat_availability_is_paired_and_required_for_text() {
+        let mut file = text_file();
+        file.deletions = None;
+        assert!(file.validate().is_err());
+
+        file.additions = None;
+        assert!(file.validate().is_err());
+    }
+
+    #[test]
+    fn legacy_missing_stats_default_to_unavailable_without_fabricating_zero() {
+        let current = serde_json::to_value(text_file()).expect("the current shape serializes");
+        let mut legacy = current.as_object().expect("a diff-file object").clone();
+        legacy.remove("additions");
+        legacy.remove("deletions");
+
+        let file = serde_json::from_value::<DiffFile>(json!(legacy))
+            .expect("legacy diff files remain readable");
+        assert_eq!(file.additions, None);
+        assert_eq!(file.deletions, None);
+        assert!(
+            file.validate().is_err(),
+            "an unmeasured legacy text diff cannot authorize publication"
+        );
     }
 }
 

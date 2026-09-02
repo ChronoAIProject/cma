@@ -4,10 +4,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProtocolError, TransportError } from '@chronoai/cma-sdk';
 import {
   ApiError,
+  createChatSession,
+  createResponsesTurn,
   followSession,
+  listResponsesConversationItems,
   listKernels,
+  listSessions,
   listTriggerRevisions,
   listTriggers,
+  readChatSurfaceEnabled,
+  readResponsesConversation,
+  readResponsesResponse,
   toSession,
 } from './client';
 
@@ -108,6 +115,173 @@ describe('ApiError', () => {
     expect(new ApiError(401, 'nope').isUnauthenticated).toBe(true);
     expect(new ApiError(500, 'boom').isUnauthenticated).toBe(false);
     expect(new TransportError('offline')).toBeInstanceOf(TransportError);
+  });
+});
+
+describe('the Chat surface client boundary', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function capability(custom: Record<string, unknown>): Response {
+    return new Response(JSON.stringify({ protocol: 'ag-ui', features: { custom } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  it('enables Chat only for the exact live capability declaration', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(capability({ 'cma:chat': { enabled: true } }))
+      .mockResolvedValueOnce(capability({ 'cma:chat': { enabled: false } }))
+      .mockResolvedValueOnce(capability({ 'cma:chat': { enabled: 'true' } }))
+      .mockResolvedValueOnce(capability({}))
+      .mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(readChatSurfaceEnabled()).resolves.toBe(true);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+    await expect(readChatSurfaceEnabled()).resolves.toBe(false);
+  });
+
+  it('passes an exact surface filter through the reference SDK', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ sessions: [valid] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(listSessions('agent')).resolves.toHaveLength(1);
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/sessions?surface=agent',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('creates Chat directly with no profile, geometry, or price fields', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...valid,
+          id: 'chat-new',
+          chat: { worktree_name: 'chat-new', worktree_path: '/work/chat-new', title: null },
+        }),
+        { status: 201, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(createChatSession()).resolves.toMatchObject({
+      id: 'chat-new',
+      chat: { worktreeName: 'chat-new', worktreePath: '/work/chat-new' },
+    });
+    const request = fetch.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(request?.method).toBe('POST');
+    expect(JSON.parse(String(request?.body))).toEqual({ surface: 'chat' });
+  });
+
+  it('binds every Chat Responses operation to the public same-origin SDK routes', async () => {
+    const durableResponse = JSON.parse(
+      readFileSync(
+        resolve(
+          process.cwd(),
+          '../api/crates/layer1-public/tests/fixtures/responses-sdk/response.json',
+        ),
+        'utf8',
+      ),
+    ) as Record<string, unknown>;
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/v1/conversations/chat%2Fowner') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'chat/owner',
+              object: 'conversation',
+              created_at: 1_788_228_800,
+              metadata: {},
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+        );
+      }
+      if (url === '/api/v1/conversations/chat%2Fowner/items?after=msg%2F2&limit=25') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              object: 'list',
+              data: [],
+              first_id: null,
+              last_id: null,
+              has_more: false,
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+        );
+      }
+      if (url === '/api/v1/responses/resp%2Fowner') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ...durableResponse, id: 'resp/owner' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      }
+      if (url === '/api/v1/responses' && init?.method === 'POST') {
+        return Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+          }),
+        );
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const controller = new AbortController();
+
+    await expect(readResponsesConversation('chat/owner', controller.signal)).resolves.toMatchObject(
+      {
+        id: 'chat/owner',
+        object: 'conversation',
+      },
+    );
+    await expect(
+      listResponsesConversationItems(
+        'chat/owner',
+        { after: 'msg/2', limit: 25 },
+        controller.signal,
+      ),
+    ).resolves.toMatchObject({ object: 'list', data: [] });
+    await expect(readResponsesResponse('resp/owner', controller.signal)).resolves.toMatchObject({
+      id: 'resp/owner',
+      object: 'response',
+    });
+    const connection = await createResponsesTurn(
+      { conversation: 'chat/owner', input: 'Inspect the release' },
+      { signal: controller.signal },
+    );
+
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/v1/conversations/chat%2Fowner',
+      '/api/v1/conversations/chat%2Fowner/items?after=msg%2F2&limit=25',
+      '/api/v1/responses/resp%2Fowner',
+      '/api/v1/responses',
+    ]);
+    expect(JSON.parse(String(fetch.mock.calls[3]?.[1]?.body))).toEqual({
+      conversation: 'chat/owner',
+      input: 'Inspect the release',
+      stream: true,
+    });
+    for (const [, init] of fetch.mock.calls) {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
+    connection.cancel('test complete');
   });
 });
 
