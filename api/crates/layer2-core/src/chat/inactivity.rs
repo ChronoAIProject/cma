@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::RuntimeIdentity;
+use layer3_adapter::{RuntimeHandle, RuntimeIdentity};
 
 use super::checkpoints::{live_session_ids, ChatCaptureRefusal};
 use super::host::generation_for;
@@ -433,7 +433,22 @@ impl crate::SessionService {
             return Ok(true);
         }
 
-        let records = self.chat_thread_records(&current).await?;
+        let records = self.retirement_thread_records(&current).await?;
+        if records.is_empty() {
+            self.terminate_orphaned_chat_runtime_for_retirement(&current)
+                .await?;
+            {
+                let mut entries = self.entries.write().await;
+                for session_id in &session_ids {
+                    entries.remove(session_id);
+                }
+            }
+            self.finish_chat_retirement(&hosts, &current, &claim, None)
+                .await?;
+            drop(owner_guard);
+            drop(input_fences);
+            return Ok(true);
+        }
         let captured_at = current.transition_started_at.clone().ok_or_else(|| {
             CoreError::RuntimeUnavailable("chat retirement claim has no start time".into())
         })?;
@@ -535,14 +550,13 @@ impl crate::SessionService {
             .await
             .map_err(|_| pause_host_store_unavailable())?
             .filter(|host| {
-                host.status == ChatHostStatus::Paused
-                    && host
-                        .last_transition_claim
-                        .as_deref()
-                        .is_some_and(|claim| claim.starts_with(CHAT_RETIREMENT_CLAIM_PREFIX))
-                    && host.checkpoint.as_ref().is_some_and(|checkpoint| {
-                        checkpoint.checkpoint_version == host.checkpoint_sequence
-                    })
+                matches!(
+                    host.status,
+                    ChatHostStatus::Pausing | ChatHostStatus::Paused
+                ) && host
+                    .last_transition_claim
+                    .as_deref()
+                    .is_some_and(|claim| claim.starts_with(CHAT_RETIREMENT_CLAIM_PREFIX))
             })
         else {
             return Ok(false);
@@ -562,8 +576,12 @@ impl crate::SessionService {
             .await
             .map_err(|_| pause_host_store_unavailable())?
             .filter(|current| {
-                current.status == ChatHostStatus::Paused
-                    && current.last_transition_claim.as_deref() == Some(claim.as_str())
+                matches!(
+                    current.status,
+                    ChatHostStatus::Pausing | ChatHostStatus::Paused
+                ) && current.last_transition_claim.as_deref() == Some(claim.as_str())
+                    && current.owner == observed.owner
+                    && current.runtime_id == observed.runtime_id
                     && current.checkpoint == observed.checkpoint
                     && live_session_ids(current) == session_ids
             })
@@ -573,6 +591,25 @@ impl crate::SessionService {
                 )
             })?;
         let records = self.retirement_thread_records(&current).await?;
+        if records.is_empty() {
+            {
+                let mut entries = self.entries.write().await;
+                for session_id in &session_ids {
+                    entries.remove(session_id);
+                }
+            }
+            self.finish_chat_retirement(&hosts, &current, &claim, None)
+                .await?;
+            drop(owner_guard);
+            drop(input_fences);
+            return Ok(true);
+        }
+        let Some(checkpoint) = current.checkpoint.clone().filter(|checkpoint| {
+            current.status == ChatHostStatus::Paused
+                && checkpoint.checkpoint_version == current.checkpoint_sequence
+        }) else {
+            return Ok(false);
+        };
         for record in records {
             self.revoke_chat_thread_for_retirement(record).await?;
         }
@@ -582,10 +619,6 @@ impl crate::SessionService {
                 entries.remove(session_id);
             }
         }
-        let checkpoint = current
-            .checkpoint
-            .clone()
-            .expect("the torn-down retirement predicate proved a checkpoint");
         self.finish_chat_retirement(&hosts, &current, &claim, Some(&checkpoint))
             .await?;
         drop(owner_guard);
@@ -599,18 +632,24 @@ impl crate::SessionService {
     ) -> Result<Vec<SessionRecord>, CoreError> {
         let mut records = Vec::new();
         for slot in host.threads.iter().filter(|slot| !slot.removed) {
-            let record = self
+            let Some(record) = self
                 .store
                 .get(&slot.session_id)
                 .await
                 .map_err(pause_session_store_error)?
-                .ok_or_else(|| {
-                    CoreError::RuntimeUnavailable(
-                        "a retained chat host slot has no durable session".into(),
-                    )
-                })?;
+            else {
+                // Conversation creation reserves its slot before committing the
+                // session. An interrupted legacy request can therefore leave no
+                // history to revoke or checkpoint; retirement still has to
+                // fence-delete that orphaned runtime authority.
+                continue;
+            };
             let matches = record.session.owner == host.owner
                 && record.session.kernel == host.kernel
+                && host
+                    .runtime_id
+                    .as_deref()
+                    .is_none_or(|runtime| record.runtime_id.as_deref() == Some(runtime))
                 && record.chat_origin.as_ref().is_some_and(|origin| {
                     origin.host_id == host.id
                         && origin.worktree_name == slot.worktree_name
@@ -625,6 +664,34 @@ impl crate::SessionService {
         }
         records.sort_by(|left, right| left.session.id.as_str().cmp(right.session.id.as_str()));
         Ok(records)
+    }
+
+    async fn terminate_orphaned_chat_runtime_for_retirement(
+        &self,
+        host: &ChatHostRecord,
+    ) -> Result<(), CoreError> {
+        let runtime = host.runtime_id.as_deref().ok_or_else(|| {
+            CoreError::RuntimeUnavailable(
+                "the orphaned chat retirement lost its runtime identity".into(),
+            )
+        })?;
+        let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
+            CoreError::RuntimeUnavailable(
+                "the configured chat retirement adapter is unavailable".into(),
+            )
+        })?;
+        adapter
+            .terminate_if_identity(&RuntimeIdentity {
+                handle: RuntimeHandle(runtime.to_string()),
+                session: host.id.0.clone(),
+                generation: Some(generation_for(host)),
+            })
+            .await
+            .map_err(|_| {
+                CoreError::RuntimeUnavailable(
+                    "the orphaned chat runtime could not be fenced-deleted for retirement".into(),
+                )
+            })
     }
 
     async fn revoke_chat_thread_for_retirement(
