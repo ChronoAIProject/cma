@@ -224,7 +224,7 @@ cma_test_run_case() {
     export CMA_FINAL_DEPLOYMENT_UID=deployment-uid
     export CMA_FINAL_REPLICA_SET=cma-api-abc123
     export CMA_FINAL_REPLICA_SET_UID=replica-set-uid
-    export CMA_FINAL_POD_IMAGE=us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api:v0.9.0
+    export CMA_FINAL_POD_IMAGE=us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api:v0.10.0@sha256:88c87b3625d193712d2f0fb5bda057f1d7a5cd570ea9159d3bf78cf1fcbc65d4
     export CMA_FINAL_POD_IMAGE_ID=us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     export CMA_GATEWAY_TOKEN_FD=8
     exec 8<<<"test-release-token"
@@ -1900,7 +1900,7 @@ cma_final_pod_ip=10.0.0.8
 cma_final_deployment_uid=deployment-uid
 cma_final_replica_set=cma-api-abc123
 cma_final_replica_set_uid=replica-set-uid
-cma_final_pod_image=us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api:v0.9.0
+cma_final_pod_image=us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api:v0.10.0@sha256:88c87b3625d193712d2f0fb5bda057f1d7a5cd570ea9159d3bf78cf1fcbc65d4
 cma_final_pod_image_id=us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 jq -n \
