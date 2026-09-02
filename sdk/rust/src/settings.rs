@@ -68,11 +68,31 @@ impl Default for ChatInactivity {
 }
 
 /// Ordered, idempotent workspace preparation commands.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChatSetup {
     /// Shell commands run after provision and every revive.
     pub commands: Vec<String>,
+}
+
+impl Default for ChatSetup {
+    fn default() -> Self {
+        Self {
+            commands: vec![
+                concat!(
+                    "set -eu; ",
+                    "test -f skills/codex-formal-answer/SKILL.md; ",
+                    "mkdir -p \"$HOME/.agents/skills/codex-formal-answer\" ",
+                    "\"$HOME/.codex/skills/codex-formal-answer\"; ",
+                    "cp -R skills/codex-formal-answer/. ",
+                    "\"$HOME/.agents/skills/codex-formal-answer/\"; ",
+                    "cp -R skills/codex-formal-answer/. ",
+                    "\"$HOME/.codex/skills/codex-formal-answer/\""
+                )
+                .into(),
+            ],
+        }
+    }
 }
 
 /// Shared host reservation and thread cap.
@@ -120,7 +140,7 @@ impl Default for ChatSettings {
             enabled: false,
             workspace: ChatWorkspaceSource::default(),
             agent: ChatAgentSettings::default(),
-            message_prefixes: vec!["/codex-formalize".into()],
+            message_prefixes: vec!["$codex-formal-answer".into()],
             inactivity: ChatInactivity::default(),
             setup: ChatSetup::default(),
             host: ChatHostSettings::default(),

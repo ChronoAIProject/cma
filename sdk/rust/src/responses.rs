@@ -106,7 +106,7 @@ pub struct ResponseOutputText {
     pub logprobs: Vec<Value>,
 }
 
-/// One completed assistant message in a response output.
+/// One assistant message in a response output, including partial durable output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResponseOutputMessage {
     /// Stable message identifier derived from the durable turn.
@@ -114,11 +114,11 @@ pub struct ResponseOutputMessage {
     /// Standard item discriminator. CMA emits `message`.
     #[serde(rename = "type")]
     pub kind: String,
-    /// Item status. Durable response messages are completed.
+    /// Item status. In-progress responses may expose partial durable output.
     pub status: String,
     /// Message role. CMA response output is assistant-authored.
     pub role: String,
-    /// Completed output-text parts.
+    /// Current output-text parts.
     pub content: Vec<ResponseOutputText>,
 }
 
@@ -192,7 +192,7 @@ impl ResponsesResponse {
             if output.id.is_empty()
                 || output.kind != "message"
                 || output.role != "assistant"
-                || output.status != "completed"
+                || !matches!(output.status.as_str(), "in_progress" | "completed")
                 || output.content.iter().any(|part| part.kind != "output_text")
             {
                 return Err(Error::protocol(
@@ -975,5 +975,18 @@ mod tests {
             .is_err()
         );
         assert!(validate_response_id("resp_not-a-session_1").is_err());
+    }
+
+    #[test]
+    fn in_progress_responses_accept_partial_output_messages() {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../../api/crates/layer1-public/tests/fixtures/responses-sdk/response.json"
+        ))
+        .unwrap();
+        value["status"] = serde_json::json!("in_progress");
+        value["usage"] = Value::Null;
+        value["output"][0]["status"] = serde_json::json!("in_progress");
+        let response: ResponsesResponse = serde_json::from_value(value).unwrap();
+        assert_eq!(response.validate().unwrap().output[0].status, "in_progress");
     }
 }
