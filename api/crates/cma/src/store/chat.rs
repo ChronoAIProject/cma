@@ -317,6 +317,7 @@ mod tests {
             runtime_id: None,
             runtime_version: None,
             runtime_generation: 1,
+            credential_generation: 0,
             workspace_authority: None,
             threads: Vec::new(),
             threads_created: 0,
