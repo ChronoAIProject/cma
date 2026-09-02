@@ -171,8 +171,8 @@ pub use chat::{
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{
     ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage,
-    CONVERSATION_ADVANCED_DETAIL, MAX_TURN_METADATA_KEY_CHARS, MAX_TURN_METADATA_PAIRS,
-    MAX_TURN_METADATA_VALUE_CHARS,
+    CONVERSATION_ADVANCED_DETAIL, CONVERSATION_IN_PROGRESS_DETAIL, MAX_TURN_METADATA_KEY_CHARS,
+    MAX_TURN_METADATA_PAIRS, MAX_TURN_METADATA_VALUE_CHARS,
 };
 pub use coordination::{
     ChatRuntimeTransition, ConversationLink, ConversationOpeningLease,

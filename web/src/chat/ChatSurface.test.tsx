@@ -11,6 +11,7 @@ import type {
   ResponseToolActivity,
 } from '@chronoai/cma-sdk';
 import { describe, expect, it, vi } from 'vitest';
+import type { ComponentProps } from 'react';
 import type { Session } from '../sessions/types';
 import {
   ChatSurface,
@@ -146,6 +147,15 @@ function response(
     metadata: {},
     ...extra,
   };
+}
+
+function TestChatSurface(props: ComponentProps<typeof ChatSurface>) {
+  return (
+    <ChatSurface
+      readResponse={(id) => Promise.resolve(response('completed', undefined, { id }))}
+      {...props}
+    />
+  );
 }
 
 class ControlledConnection implements ChatResponsesConnection {
@@ -342,7 +352,7 @@ describe('the reduced Chat surface', () => {
   it('reconstructs committed messages and durable tool work, but never reasoning, on reload', async () => {
     const user = userEvent.setup();
     const listItems = vi.fn().mockResolvedValue(page(historyItems()));
-    const { container } = render(<ChatSurface session={session()} listItems={listItems} />);
+    const { container } = render(<TestChatSurface session={session()} listItems={listItems} />);
 
     expect(await screen.findByText('Everything is ready.')).toBeInTheDocument();
     expect(screen.getByText('Check the release.')).toBeInTheDocument();
@@ -370,7 +380,7 @@ describe('the reduced Chat surface', () => {
   it('asserts every hidden row of the Chat reduction and keeps only the empty-state title', async () => {
     const user = userEvent.setup();
     const { container } = render(
-      <ChatSurface session={session()} listItems={vi.fn().mockResolvedValue(page([]))} />,
+      <TestChatSurface session={session()} listItems={vi.fn().mockResolvedValue(page([]))} />,
     );
     expect(await screen.findByText('Ready when you are.')).toBeInTheDocument();
     expect(screen.queryByText(/press/i)).toBeNull();
@@ -396,7 +406,7 @@ describe('the reduced Chat surface', () => {
     const listItems = vi.fn().mockImplementation(() => Promise.resolve(page(currentItems)));
     const createTurn = vi.fn().mockResolvedValue(connection);
     const { container } = render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={listItems}
         createTurn={createTurn}
@@ -493,7 +503,7 @@ describe('the reduced Chat surface', () => {
     const connection = new ControlledConnection();
     const createTurn = vi.fn().mockResolvedValue(connection);
     render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={vi.fn().mockResolvedValue(page(historyItems()))}
         createTurn={createTurn}
@@ -510,6 +520,105 @@ describe('the reduced Chat surface', () => {
       },
       expect.anything(),
     );
+  });
+
+  it('recovers an in-flight response after switching away and back without cancelling it', async () => {
+    const user = userEvent.setup();
+    const connection = new ControlledConnection();
+    const createTurn = vi.fn().mockResolvedValue(connection);
+    const chatOne = session({ id: 'chat_one' });
+    const chatTwo = session({
+      id: 'chat_two',
+      chat: {
+        worktreeName: 'chat-2',
+        worktreePath: '/home/chrono/project/worktrees/chat-2',
+        title: 'Second chat',
+      },
+    });
+    let chatOneItems: readonly ResponsesConversationItem[] = [];
+    const listItems = vi.fn((id: string) =>
+      Promise.resolve(page(id === 'chat_one' ? chatOneItems : [])),
+    );
+    const running = response('in_progress', '', {
+      id: 'resp_chat_one_1',
+      previous_response_id: null,
+    });
+    const completed = response('completed', 'Recovered answer', {
+      id: 'resp_chat_one_1',
+      previous_response_id: null,
+      output: [
+        {
+          id: 'msg_chat_one_1',
+          type: 'message',
+          status: 'completed',
+          role: 'assistant',
+          content: [
+            { type: 'output_text', text: 'Recovered answer', annotations: [], logprobs: [] },
+          ],
+        },
+      ],
+    });
+    const readResponse = vi
+      .fn()
+      .mockResolvedValueOnce(running)
+      .mockImplementationOnce(() => {
+        chatOneItems = [
+          message('msg_chat_one_1', 'assistant', 'Recovered answer'),
+          message('msg_chat_one_2', 'user', 'Keep working'),
+        ];
+        return Promise.resolve(completed);
+      });
+    const view = render(
+      <TestChatSurface
+        session={chatOne}
+        listItems={listItems}
+        createTurn={createTurn}
+        readResponse={readResponse}
+      />,
+    );
+
+    const field = await screen.findByRole('textbox', { name: 'Message' });
+    await user.type(field, 'Keep working');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(createTurn).toHaveBeenCalledOnce());
+    await act(async () => {
+      connection.advance(createdEvent(running), {
+        outputText: '',
+        reasoningText: '',
+        toolActivities: [],
+        response: running,
+      });
+    });
+    chatOneItems = [message('msg_chat_one_2', 'user', 'Keep working')];
+
+    view.rerender(
+      <TestChatSurface
+        session={chatTwo}
+        listItems={listItems}
+        createTurn={createTurn}
+        readResponse={readResponse}
+      />,
+    );
+    await screen.findByText('Ready when you are.');
+    expect(connection.cancelled).toBe(false);
+
+    view.rerender(
+      <TestChatSurface
+        session={chatOne}
+        listItems={listItems}
+        createTurn={createTurn}
+        readResponse={readResponse}
+      />,
+    );
+    await waitFor(() =>
+      expect(readResponse).toHaveBeenCalledWith('resp_chat_one_1', expect.any(AbortSignal)),
+    );
+    expect(screen.getByRole('status')).toHaveTextContent("Checking this chat's latest response.");
+    expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+    expect(await screen.findByText('Recovered answer', {}, { timeout: 2_500 })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
+    expect(screen.getAllByText('Keep working')).toHaveLength(1);
+    connection.cancel();
   });
 
   it('retrieves and durably reloads a terminal response after the stream throws', async () => {
@@ -533,7 +642,7 @@ describe('the reduced Chat surface', () => {
       );
     const readResponse = vi.fn().mockResolvedValue(recovered);
     render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={listItems}
         createTurn={vi.fn().mockResolvedValue(connection)}
@@ -556,7 +665,7 @@ describe('the reduced Chat surface', () => {
   it('keeps a refused draft and reports history and admission failures explicitly', async () => {
     const user = userEvent.setup();
     const failedHistory = render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={vi.fn().mockRejectedValue(new Error('offline'))}
       />,
@@ -569,7 +678,7 @@ describe('the reduced Chat surface', () => {
 
     const createTurn = vi.fn().mockRejectedValue(new Error('admission refused'));
     render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={vi.fn().mockResolvedValue(page([]))}
         createTurn={createTurn}
@@ -590,7 +699,7 @@ describe('the reduced Chat surface', () => {
     let currentItems: readonly ResponsesConversationItem[] = [];
     const listItems = vi.fn().mockImplementation(() => Promise.resolve(page(currentItems)));
     const view = render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={listItems}
         createTurn={vi.fn().mockResolvedValue(connection)}
@@ -621,7 +730,7 @@ describe('the reduced Chat surface', () => {
 
     const live = new ControlledConnection();
     const liveView = render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={vi.fn().mockResolvedValue(page([]))}
         createTurn={vi.fn().mockResolvedValue(live)}
@@ -633,7 +742,7 @@ describe('the reduced Chat surface', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(screen.getByText('keep running')).toBeInTheDocument());
     liveView.unmount();
-    expect(live.cancelled).toBe(true);
+    expect(live.cancelled).toBe(false);
   });
 
   it('keeps paused history visible and accepts a revive only when its created stream progresses', async () => {
@@ -654,7 +763,7 @@ describe('the reduced Chat surface', () => {
     const listItems = vi.fn().mockImplementation(() => Promise.resolve(page(currentItems)));
     const createTurn = vi.fn().mockResolvedValue(connection);
     const view = render(
-      <ChatSurface session={paused} listItems={listItems} createTurn={createTurn} />,
+      <TestChatSurface session={paused} listItems={listItems} createTurn={createTurn} />,
     );
 
     expect(await screen.findByText('Everything is ready.')).toBeInTheDocument();
@@ -753,7 +862,7 @@ describe('the reduced Chat surface', () => {
     expect(screen.getAllByText('Restored answer')).toHaveLength(1);
 
     view.rerender(
-      <ChatSurface session={session()} listItems={listItems} createTurn={createTurn} />,
+      <TestChatSurface session={session()} listItems={listItems} createTurn={createTurn} />,
     );
     expect(screen.queryByText(notice)).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute(
@@ -781,7 +890,7 @@ describe('the reduced Chat surface', () => {
       .mockResolvedValueOnce(timedOutConnection)
       .mockResolvedValueOnce(retryConnection);
     const view = render(
-      <ChatSurface session={paused} listItems={listItems} createTurn={createTurn} />,
+      <TestChatSurface session={paused} listItems={listItems} createTurn={createTurn} />,
     );
     const field = await screen.findByRole('textbox', { name: 'Message' });
     const draft = '  Keep this exact.\nSecond line  ';
@@ -843,7 +952,7 @@ describe('the reduced Chat surface', () => {
   it('does not apply paused affordances to another idle stop reason', async () => {
     const notice = 'This sentence must not be inferred from metadata alone.';
     render(
-      <ChatSurface
+      <TestChatSurface
         session={session({
           lifecycle: 'idle',
           stopReason: 'end_turn',
@@ -868,7 +977,7 @@ describe('the reduced Chat surface', () => {
   it('keeps an approval in the input seat and rejects a non-chat session', async () => {
     const listItems = vi.fn().mockResolvedValue(page([]));
     const approval = render(
-      <ChatSurface
+      <TestChatSurface
         session={session()}
         listItems={listItems}
         approval={<div role="status">Approval required</div>}
@@ -879,7 +988,7 @@ describe('the reduced Chat surface', () => {
     expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
     approval.unmount();
 
-    render(<ChatSurface session={session({ chat: undefined })} listItems={listItems} />);
+    render(<TestChatSurface session={session({ chat: undefined })} listItems={listItems} />);
     expect(screen.getByRole('alert')).toHaveTextContent('This session is not a chat thread.');
   });
 });

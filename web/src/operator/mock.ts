@@ -102,7 +102,7 @@ export const MOCK_CHAT_SETTINGS: StoredChatSettings = {
       instructions: '',
       recordToolBodies: true,
     },
-    messagePrefixes: ['/codex-formalize'],
+    messagePrefixes: ['$codex-formal-answer'],
     inactivity: { pauseAfterSeconds: 900 },
     setup: { commands: [] },
     host: { size: null, maxThreads: 10 },

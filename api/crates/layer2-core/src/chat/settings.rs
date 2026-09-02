@@ -7,7 +7,23 @@ use crate::{ReasoningEffort, SessionSize};
 
 const DEFAULT_REPOSITORY_URL: &str = "https://github.com/the-omega-institute/trureturing";
 const DEFAULT_BRANCH: &str = "dev";
-const DEFAULT_MESSAGE_PREFIX: &str = concat!("/", "co", "dex-formalize");
+const DEFAULT_MESSAGE_PREFIX: &str = concat!("$", "co", "dex-formal-answer");
+const DEFAULT_SKILL_SETUP: &str = concat!(
+    "set -eu; ",
+    "test -f skills/co",
+    "dex-formal-answer/SKILL.md; ",
+    "mkdir -p \"$HOME/.agents/skills/co",
+    "dex-formal-answer\" \"$HOME/.co",
+    "dex/skills/co",
+    "dex-formal-answer\"; ",
+    "cp -R skills/co",
+    "dex-formal-answer/. \"$HOME/.agents/skills/co",
+    "dex-formal-answer/\"; ",
+    "cp -R skills/co",
+    "dex-formal-answer/. \"$HOME/.co",
+    "dex/skills/co",
+    "dex-formal-answer/\""
+);
 
 /// The repository prepared once for an owner's shared chat host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,10 +79,18 @@ impl Default for ChatInactivity {
 }
 
 /// Ordered, idempotent workspace preparation commands.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ChatSetup {
     pub commands: Vec<String>,
+}
+
+impl Default for ChatSetup {
+    fn default() -> Self {
+        Self {
+            commands: vec![DEFAULT_SKILL_SETUP.into()],
+        }
+    }
 }
 
 /// Resource bounds for one shared host.
