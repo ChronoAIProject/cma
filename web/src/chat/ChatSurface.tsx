@@ -30,6 +30,7 @@ import './ChatSurface.css';
 const HISTORY_PAGE_SIZE = 100;
 const HISTORY_MAX_PAGES = 100;
 const HISTORY_MAX_ITEMS = HISTORY_PAGE_SIZE * HISTORY_MAX_PAGES;
+const RESPONSE_RECOVERY_POLL_MS = 1_000;
 
 export const PAUSED_CHAT_PLACEHOLDER =
   'Send a message to continue with your previous chat session.';
@@ -78,6 +79,7 @@ interface LocalTurn {
 
 interface HistorySnapshot {
   readonly predecessor: string | null;
+  readonly items: readonly ResponsesConversationItem[];
 }
 
 interface ReviveGate {
@@ -281,6 +283,32 @@ function responseOutputText(response: ResponsesResponse): string {
   return response.output.flatMap((message) => message.content.map((part) => part.text)).join('');
 }
 
+function newestUserText(items: readonly ResponsesConversationItem[]): string {
+  const item = items.find(
+    (candidate): candidate is Extract<ResponsesConversationItem, { readonly type: 'message' }> =>
+      candidate.type === 'message' && candidate.role === 'user',
+  );
+  return item === undefined ? '' : textOf(item);
+}
+
+function waitForResponsePoll(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new RequestAborted('response recovery was stopped'));
+      return;
+    }
+    const timer = window.setTimeout(resolve, RESPONSE_RECOVERY_POLL_MS);
+    signal.addEventListener(
+      'abort',
+      () => {
+        window.clearTimeout(timer);
+        reject(new RequestAborted('response recovery was stopped'));
+      },
+      { once: true },
+    );
+  });
+}
+
 function stateIntoTurn(current: LocalTurn, state: ResponsesConnectionState): LocalTurn {
   return {
     ...current,
@@ -379,6 +407,7 @@ function ChatSurfaceThread({
   const [historyFailure, setHistoryFailure] = useState<string | undefined>(undefined);
   const [turnFailure, setTurnFailure] = useState<string | undefined>(undefined);
   const [admitting, setAdmitting] = useState(false);
+  const [checkingLatest, setCheckingLatest] = useState(true);
   const [turn, setTurn] = useState<LocalTurn | undefined>(undefined);
   const readGeneration = useRef(0);
   const turnToken = useRef(0);
@@ -401,7 +430,7 @@ function ChatSurfaceThread({
         setPredecessor(previous);
         setHistoryLoaded(true);
         setHistoryFailure(undefined);
-        return { predecessor: previous };
+        return { predecessor: previous, items };
       } catch (cause) {
         if (signal?.aborted === true || generation !== readGeneration.current) return undefined;
         setHistoryLoaded(false);
@@ -412,20 +441,96 @@ function ChatSurfaceThread({
     [listItems, session.id],
   );
 
+  const readUntilTerminal = useCallback(
+    async (
+      responseId: string,
+      signal: AbortSignal,
+      onProgress?: (response: ResponsesResponse) => void,
+    ): Promise<ResponsesResponse> => {
+      for (;;) {
+        const response = await readResponse(responseId, signal);
+        onProgress?.(response);
+        if (response.status !== 'in_progress') return response;
+        await waitForResponsePoll(signal);
+      }
+    },
+    [readResponse],
+  );
+
+  const recoverLatest = useCallback(
+    async (snapshot: HistorySnapshot, signal: AbortSignal): Promise<void> => {
+      if (snapshot.predecessor === null) return;
+      const token = ++turnToken.current;
+      const userText = newestUserText(snapshot.items);
+      let observedInProgress = false;
+      const terminal = await readUntilTerminal(snapshot.predecessor, signal, (response) => {
+        if (response.status !== 'in_progress') return;
+        observedInProgress = true;
+        setTurn({
+          token,
+          userText,
+          responseId: response.id,
+          outputText: responseOutputText(response),
+          reasoningText: '',
+          activities: [],
+          userVisible: true,
+          durable: true,
+        });
+      });
+      if (!observedInProgress) return;
+
+      setPredecessor(terminal.id);
+      setTurn((current) =>
+        current?.token === token
+          ? {
+              ...current,
+              responseId: terminal.id,
+              outputText: responseOutputText(terminal),
+              terminal,
+            }
+          : current,
+      );
+      const durable = await refreshHistory(signal);
+      if (durable?.predecessor === terminal.id) {
+        setTurn((current) => {
+          if (current?.token !== token) return current;
+          return terminal.status === 'completed' ? undefined : { ...current, durable: true };
+        });
+      }
+    },
+    [readUntilTerminal, refreshHistory],
+  );
+
   useEffect(() => {
     const controller = new AbortController();
     queueMicrotask(() => {
-      if (!controller.signal.aborted) void refreshHistory(controller.signal);
+      if (controller.signal.aborted) return;
+      void (async () => {
+        try {
+          const snapshot = await refreshHistory(controller.signal);
+          if (snapshot !== undefined) await recoverLatest(snapshot, controller.signal);
+        } catch (cause) {
+          if (!controller.signal.aborted && !(cause instanceof RequestAborted)) {
+            setHistoryLoaded(false);
+            setHistoryFailure(
+              `This chat's latest response could not be read: ${errorMessage(cause)}`,
+            );
+          }
+        } finally {
+          if (!controller.signal.aborted) setCheckingLatest(false);
+        }
+      })();
     });
     return () => {
       controller.abort();
     };
-  }, [refreshHistory]);
+  }, [recoverLatest, refreshHistory]);
 
   useEffect(
     () => () => {
       activeTurnController.current?.abort();
-      activeConnection.current?.cancel('chat surface unmounted');
+      // Response creation is server-owned after admission. Navigation stops
+      // this observer, while remount recovery reads the durable response.
     },
     [],
   );
@@ -471,8 +576,18 @@ function ChatSurfaceThread({
           const responseId = connection.state.response?.id;
           if (responseId !== undefined) {
             try {
-              const recovered = await readResponse(responseId, controller.signal);
-              if (recovered.status !== 'in_progress') terminal = recovered;
+              terminal = await readUntilTerminal(responseId, controller.signal, (recovered) => {
+                if (recovered.status !== 'in_progress') return;
+                setTurn((current) =>
+                  current?.token === token
+                    ? {
+                        ...current,
+                        responseId: recovered.id,
+                        outputText: responseOutputText(recovered),
+                      }
+                    : current,
+                );
+              });
             } catch (cause) {
               if (controller.signal.aborted || cause instanceof RequestAborted) return;
               if (streamFailure === undefined) throw cause;
@@ -528,13 +643,14 @@ function ChatSurfaceThread({
         if (activeTurnController.current === controller) activeTurnController.current = null;
       }
     },
-    [readResponse, refreshHistory],
+    [readUntilTerminal, refreshHistory],
   );
 
   const send = useCallback(
     async (text: string): Promise<boolean> => {
       if (
         !historyLoaded ||
+        checkingLatest ||
         predecessor === undefined ||
         (turn !== undefined && turn.terminal === undefined) ||
         admitting
@@ -584,6 +700,7 @@ function ChatSurfaceThread({
       consume,
       createTurn,
       historyLoaded,
+      checkingLatest,
       paused,
       predecessor,
       refreshHistory,
@@ -609,11 +726,13 @@ function ChatSurfaceThread({
   const failure = turnFailure ?? historyFailure;
   const refusedReason = !historyLoaded
     ? (historyFailure ?? 'Loading this chat history.')
-    : predecessor === undefined
-      ? "This chat's latest response could not be identified."
-      : state.interactive || paused
-        ? undefined
-        : state.reason;
+    : checkingLatest
+      ? "Checking this chat's latest response."
+      : predecessor === undefined
+        ? "This chat's latest response could not be identified."
+        : state.interactive || paused
+          ? undefined
+          : state.reason;
   const capabilities: SessionCapabilities = {
     ...session.capabilities,
     steer: false,

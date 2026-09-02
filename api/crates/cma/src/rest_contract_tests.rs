@@ -6879,6 +6879,19 @@ async fn rest_routing_failures_are_scoped_problem_documents() {
     assert_eq!(body["code"], "method_not_allowed");
 
     let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/conversations")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let response = assert_status(response, StatusCode::METHOD_NOT_ALLOWED).await;
+    let body = assert_problem(response, StatusCode::METHOD_NOT_ALLOWED).await;
+    assert_eq!(body["code"], "method_not_allowed");
+
+    let response = app
         .oneshot(
             Request::get("/auth/not-a-browser-route")
                 .body(Body::empty())

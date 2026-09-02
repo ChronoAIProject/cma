@@ -1740,6 +1740,38 @@ async fn a_stale_linear_predecessor_is_refused_before_runtime_delivery() {
 }
 
 #[tokio::test]
+async fn a_second_linear_prompt_names_the_live_response_instead_of_a_stale_predecessor() {
+    let (service, owner, id, adapter) = conversation().await;
+    let turn = service
+        .send_linear_prompt(&owner, &id, "first".into(), None, BTreeMap::new())
+        .await
+        .expect("the first response starts");
+    let error = service
+        .send_linear_prompt(&owner, &id, "must wait".into(), Some(turn), BTreeMap::new())
+        .await
+        .expect_err("linear input cannot steer the live response");
+    assert_eq!(
+        error,
+        crate::CoreError::InvalidState {
+            detail: Some(crate::CONVERSATION_IN_PROGRESS_DETAIL.into())
+        }
+    );
+    assert_eq!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation is open")
+            .sent()
+            .await
+            .len(),
+        1,
+        "the refused input never reaches the runtime"
+    );
+}
+
+#[tokio::test]
 async fn simultaneous_linear_prompts_cannot_fork_one_conversation_end() {
     let (service, owner, id, _) = conversation().await;
     let first =

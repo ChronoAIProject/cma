@@ -31,9 +31,10 @@ pub(super) mod turn;
 mod evidence_tests;
 
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read as _, Write};
 use std::path::{Component, Path, PathBuf};
 
+use flate2::read::ZlibDecoder;
 use sha2::{Digest as _, Sha256};
 use tokio::sync::{mpsc, oneshot};
 
@@ -195,10 +196,12 @@ const WORKSPACE_VERSION: u64 = 2;
 const WORKSPACE_HOLD_VERSION: u64 = 4;
 const WORKSPACE_COMPLETE_GIT_VERSION: u64 = 5;
 const WORKSPACE_SOURCE_RECEIPT_VERSION: u64 = 2;
-const WORKSPACE_ARCHIVE_VERSION: u32 = 1;
-const MAX_WORKSPACE_FILES: usize = 100_000;
+const WORKSPACE_ARCHIVE_VERSION: u32 = 2;
+const LEGACY_WORKSPACE_ARCHIVE_VERSION: u32 = 1;
+const MAX_WORKSPACE_FILES: usize = 750_000;
 const MAX_WORKSPACE_BYTES: usize = 2 * 1024 * 1024 * 1024;
 const MAX_WORKSPACE_HEADER_BYTES: usize = 128 * 1024 * 1024;
+const MAX_WORKSPACE_INLINE_BYTES: u64 = 1_024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize =
     MAX_WORKSPACE_BYTES + MAX_WORKSPACE_HEADER_BYTES + 128 * 1024;
 const HELD_CHECKPOINT_RECOVERY_ERROR: &str =
@@ -1773,12 +1776,16 @@ impl HostedKernel {
                 MAX_WORKSPACE_RESPONSE_BYTES,
             )
             .await?;
-        let checkpoint = match parse_workspace_checkpoint(&wire, request) {
+        let held_resume_token = (request.disposition
+            == WorkspaceCheckpointDisposition::HoldForTeardown)
+            .then(|| held_checkpoint_resume_token(&wire))
+            .flatten();
+        let checkpoint = match parse_workspace_checkpoint(wire, request) {
             Ok(checkpoint) => checkpoint,
             Err(original @ AdapterError::Rejected(_))
                 if request.disposition == WorkspaceCheckpointDisposition::HoldForTeardown =>
             {
-                let resume_token = held_checkpoint_resume_token(&wire).ok_or_else(|| {
+                let resume_token = held_resume_token.ok_or_else(|| {
                     AdapterError::Unavailable(HELD_CHECKPOINT_RECOVERY_ERROR.into())
                 })?;
                 if self
@@ -2576,6 +2583,13 @@ enum CheckpointArchiveEntryKind {
     Submodule,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CheckpointContentCompression {
+    Identity,
+    Zlib,
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckpointArchiveEntry {
@@ -2586,22 +2600,29 @@ struct CheckpointArchiveEntry {
     content_sha256: String,
     provider_object_id: Option<String>,
     offset: u64,
+    #[serde(default)]
+    stored_size: Option<u64>,
+    #[serde(default)]
+    compression: Option<CheckpointContentCompression>,
 }
 
 fn parse_workspace_checkpoint(
-    wire: &[u8],
+    mut wire: Vec<u8>,
     request: &WorkspaceCheckpointRequest,
 ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
     let (acknowledgement_bytes, archive) =
-        open_length_delimited(wire, 64 * 1024, "workspace checkpoint acknowledgement")?;
+        open_length_delimited(&wire, 64 * 1024, "workspace checkpoint acknowledgement")?;
+    let archive_offset = wire.len().saturating_sub(archive.len());
     let acknowledgement: CheckpointAcknowledgement = serde_json::from_slice(acknowledgement_bytes)
         .map_err(|_| {
             AdapterError::Rejected("runtime checkpoint acknowledgement is malformed".into())
         })?;
     let (writer_state, writer_resume_token) =
         validate_checkpoint_writer_receipt(&acknowledgement, request.disposition)?;
-    if acknowledgement.cma_checkpoint != WORKSPACE_ARCHIVE_VERSION
-        || acknowledgement.workspace_epoch != request.epoch
+    if !matches!(
+        acknowledgement.cma_checkpoint,
+        LEGACY_WORKSPACE_ARCHIVE_VERSION | WORKSPACE_ARCHIVE_VERSION
+    ) || acknowledgement.workspace_epoch != request.epoch
         || acknowledgement.checkpoint_version != request.version
         || !acknowledgement
             .source_revision
@@ -2625,7 +2646,7 @@ fn parse_workspace_checkpoint(
     let header: CheckpointArchiveHeader = serde_json::from_slice(header_bytes).map_err(|_| {
         AdapterError::Rejected("runtime checkpoint archive header is malformed".into())
     })?;
-    if header.cma_workspace != WORKSPACE_ARCHIVE_VERSION
+    if header.cma_workspace != acknowledgement.cma_checkpoint
         || header.workspace_epoch != request.epoch
         || header.checkpoint_version != request.version
         || header.quiesced_writers != acknowledgement.quiesced_writers
@@ -2641,11 +2662,11 @@ fn parse_workspace_checkpoint(
         ));
     }
 
-    let mut expected_offset = 0_u64;
-    let mut entries = Vec::with_capacity(header.entries.len());
-    for entry in header.entries {
-        if entry.offset != expected_offset
-            || !is_hex(&entry.content_sha256, 64)
+    let mut ranges = BTreeMap::<u64, (u64, usize)>::new();
+    let mut legacy_expected_offset = 0_u64;
+    let mut logical_bytes = 0_u64;
+    for (index, entry) in header.entries.iter().enumerate() {
+        if !is_hex(&entry.content_sha256, 64)
             || entry
                 .provider_object_id
                 .as_deref()
@@ -2655,36 +2676,90 @@ fn parse_workspace_checkpoint(
                 "runtime checkpoint archive entry metadata is invalid".into(),
             ));
         }
-        expected_offset = expected_offset.checked_add(entry.size).ok_or_else(|| {
+        logical_bytes = logical_bytes.checked_add(entry.size).ok_or_else(|| {
             AdapterError::Rejected("runtime checkpoint archive size overflowed".into())
         })?;
-        let start = usize::try_from(entry.offset).map_err(|_| {
-            AdapterError::Rejected("runtime checkpoint archive offset is unsupported".into())
-        })?;
-        let end = usize::try_from(expected_offset).map_err(|_| {
-            AdapterError::Rejected("runtime checkpoint archive size is unsupported".into())
-        })?;
-        let bytes = payload.get(start..end).ok_or_else(|| {
-            AdapterError::Rejected("runtime checkpoint archive entry is truncated".into())
-        })?;
-        if hex(&Sha256::digest(bytes)) != entry.content_sha256 {
+        if logical_bytes > MAX_WORKSPACE_BYTES as u64 {
             return Err(AdapterError::Rejected(
-                "runtime checkpoint archive entry failed integrity verification".into(),
+                "runtime checkpoint archive exceeds its byte bound".into(),
             ));
         }
+        let (stored_size, compression) = checkpoint_entry_storage(header.cma_workspace, entry)?;
+        let end_offset = entry.offset.checked_add(stored_size).ok_or_else(|| {
+            AdapterError::Rejected("runtime checkpoint archive size overflowed".into())
+        })?;
+        if end_offset > MAX_WORKSPACE_BYTES as u64 {
+            return Err(AdapterError::Rejected(
+                "runtime checkpoint archive exceeds its byte bound".into(),
+            ));
+        }
+        let verify_block = if header.cma_workspace == LEGACY_WORKSPACE_ARCHIVE_VERSION {
+            if entry.offset != legacy_expected_offset {
+                return Err(AdapterError::Rejected(
+                    "runtime checkpoint archive entry metadata is invalid".into(),
+                ));
+            }
+            legacy_expected_offset = end_offset;
+            true
+        } else if stored_size == 0 {
+            true
+        } else {
+            match ranges.insert(entry.offset, (end_offset, index)) {
+                Some((existing_end, existing_index)) => {
+                    let existing = &header.entries[existing_index];
+                    if existing_end != end_offset
+                        || existing.size != entry.size
+                        || existing.content_sha256 != entry.content_sha256
+                        || existing.compression != entry.compression
+                        || existing.stored_size != entry.stored_size
+                    {
+                        return Err(AdapterError::Rejected(
+                            "runtime checkpoint archive content ranges conflict".into(),
+                        ));
+                    }
+                    false
+                }
+                None => true,
+            }
+        };
+        let stored = checkpoint_stored_bytes(header.cma_workspace, entry, payload)?;
+        if verify_block {
+            verify_checkpoint_content(stored, compression, entry.size, &entry.content_sha256)?;
+        }
+    }
+    let physical_bytes = if header.cma_workspace == LEGACY_WORKSPACE_ARCHIVE_VERSION {
+        legacy_expected_offset
+    } else {
+        let mut expected = 0_u64;
+        for (start, (end, _)) in ranges {
+            if start != expected {
+                return Err(AdapterError::Rejected(
+                    "runtime checkpoint archive content ranges are invalid".into(),
+                ));
+            }
+            expected = end;
+        }
+        expected
+    };
+    if usize::try_from(physical_bytes).ok() != Some(payload.len())
+        || logical_bytes != acknowledgement.bytes
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint archive payload length is invalid".into(),
+        ));
+    }
+
+    let mut entries = Vec::with_capacity(header.entries.len());
+    for entry in header.entries {
         let (kind, symlink_target) = match entry.kind {
             CheckpointArchiveEntryKind::Regular => (WorkspaceEntryKind::Regular, None),
             CheckpointArchiveEntryKind::Symlink => (
                 WorkspaceEntryKind::Symlink,
-                Some(
-                    std::str::from_utf8(bytes)
-                        .map_err(|_| {
-                            AdapterError::Rejected(
-                                "runtime checkpoint symlink target is not UTF-8".into(),
-                            )
-                        })?
-                        .to_string(),
-                ),
+                Some(decode_checkpoint_inline(
+                    header.cma_workspace,
+                    &entry,
+                    payload,
+                )?),
             ),
             CheckpointArchiveEntryKind::Submodule => {
                 return Err(AdapterError::Rejected(
@@ -2702,13 +2777,7 @@ fn parse_workspace_checkpoint(
             symlink_target,
         });
     }
-    if usize::try_from(expected_offset).ok() != Some(payload.len())
-        || expected_offset != acknowledgement.bytes
-    {
-        return Err(AdapterError::Rejected(
-            "runtime checkpoint archive payload length is invalid".into(),
-        ));
-    }
+    wire.drain(..archive_offset);
     Ok(WorkspaceCheckpointPackage {
         epoch: request.epoch,
         version: request.version,
@@ -2721,7 +2790,163 @@ fn parse_workspace_checkpoint(
         writer_state,
         writer_resume_token,
         includes_git_metadata: acknowledgement.includes_git_metadata,
-        archive: archive.to_vec(),
+        archive: wire,
+    })
+}
+
+fn checkpoint_entry_storage(
+    archive_version: u32,
+    entry: &CheckpointArchiveEntry,
+) -> Result<(u64, CheckpointContentCompression), AdapterError> {
+    match archive_version {
+        LEGACY_WORKSPACE_ARCHIVE_VERSION => {
+            if entry.stored_size.is_some() || entry.compression.is_some() {
+                return Err(AdapterError::Rejected(
+                    "legacy runtime checkpoint contains v2 content metadata".into(),
+                ));
+            }
+            Ok((entry.size, CheckpointContentCompression::Identity))
+        }
+        WORKSPACE_ARCHIVE_VERSION => {
+            let stored_size = entry.stored_size.ok_or_else(|| {
+                AdapterError::Rejected("runtime checkpoint archive content size is missing".into())
+            })?;
+            let compression = entry.compression.ok_or_else(|| {
+                AdapterError::Rejected("runtime checkpoint archive compression is missing".into())
+            })?;
+            match compression {
+                CheckpointContentCompression::Identity if stored_size == entry.size => {}
+                CheckpointContentCompression::Zlib if stored_size < entry.size => {}
+                _ => {
+                    return Err(AdapterError::Rejected(
+                        "runtime checkpoint archive content encoding is non-canonical".into(),
+                    ))
+                }
+            }
+            Ok((stored_size, compression))
+        }
+        _ => Err(AdapterError::Rejected(
+            "runtime checkpoint archive version is unsupported".into(),
+        )),
+    }
+}
+
+fn checkpoint_stored_bytes<'a>(
+    archive_version: u32,
+    entry: &CheckpointArchiveEntry,
+    payload: &'a [u8],
+) -> Result<&'a [u8], AdapterError> {
+    let (stored_size, _) = checkpoint_entry_storage(archive_version, entry)?;
+    let start = usize::try_from(entry.offset).map_err(|_| {
+        AdapterError::Rejected("runtime checkpoint archive offset is unsupported".into())
+    })?;
+    let size = usize::try_from(stored_size).map_err(|_| {
+        AdapterError::Rejected("runtime checkpoint archive size is unsupported".into())
+    })?;
+    let end = start.checked_add(size).ok_or_else(|| {
+        AdapterError::Rejected("runtime checkpoint archive size overflowed".into())
+    })?;
+    payload.get(start..end).ok_or_else(|| {
+        AdapterError::Rejected("runtime checkpoint archive entry is truncated".into())
+    })
+}
+
+fn verify_checkpoint_content(
+    stored: &[u8],
+    compression: CheckpointContentCompression,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<(), AdapterError> {
+    let actual_sha256 = match compression {
+        CheckpointContentCompression::Identity => hash_checkpoint_content(stored, expected_size)?,
+        CheckpointContentCompression::Zlib => {
+            let mut decoder = ZlibDecoder::new(stored);
+            let digest = hash_checkpoint_content(&mut decoder, expected_size)?;
+            if decoder.total_in() != stored.len() as u64 {
+                return Err(AdapterError::Rejected(
+                    "runtime checkpoint archive content has trailing compressed bytes".into(),
+                ));
+            }
+            digest
+        }
+    };
+    if actual_sha256 != expected_sha256 {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint archive entry failed integrity verification".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn hash_checkpoint_content(
+    mut reader: impl std::io::Read,
+    expected_size: u64,
+) -> Result<String, AdapterError> {
+    let mut digest = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).map_err(|_| {
+            AdapterError::Rejected("runtime checkpoint archive content could not be decoded".into())
+        })?;
+        if read == 0 {
+            break;
+        }
+        total = total.checked_add(read as u64).ok_or_else(|| {
+            AdapterError::Rejected("runtime checkpoint archive size overflowed".into())
+        })?;
+        if total > expected_size {
+            return Err(AdapterError::Rejected(
+                "runtime checkpoint archive content exceeds its declared size".into(),
+            ));
+        }
+        digest.update(&buffer[..read]);
+    }
+    if total != expected_size {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint archive content has the wrong decoded size".into(),
+        ));
+    }
+    Ok(hex(&digest.finalize()))
+}
+
+fn decode_checkpoint_inline(
+    archive_version: u32,
+    entry: &CheckpointArchiveEntry,
+    payload: &[u8],
+) -> Result<String, AdapterError> {
+    if entry.size > MAX_WORKSPACE_INLINE_BYTES {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint symlink target exceeds its bound".into(),
+        ));
+    }
+    let (stored_size, compression) = checkpoint_entry_storage(archive_version, entry)?;
+    let stored = checkpoint_stored_bytes(archive_version, entry, payload)?;
+    let mut decoded = Vec::with_capacity(entry.size as usize);
+    match compression {
+        CheckpointContentCompression::Identity => decoded.extend_from_slice(stored),
+        CheckpointContentCompression::Zlib => {
+            let mut decoder = ZlibDecoder::new(stored);
+            decoder.read_to_end(&mut decoded).map_err(|_| {
+                AdapterError::Rejected(
+                    "runtime checkpoint symlink target could not be decoded".into(),
+                )
+            })?;
+            if decoder.total_in() != stored_size {
+                return Err(AdapterError::Rejected(
+                    "runtime checkpoint archive content has trailing compressed bytes".into(),
+                ));
+            }
+        }
+    }
+    if decoded.len() as u64 != entry.size || hex(&Sha256::digest(&decoded)) != entry.content_sha256
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint symlink target failed integrity verification".into(),
+        ));
+    }
+    String::from_utf8(decoded).map_err(|_| {
+        AdapterError::Rejected("runtime checkpoint symlink target is not UTF-8".into())
     })
 }
 

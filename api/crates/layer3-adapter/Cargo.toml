@@ -8,6 +8,7 @@ publish = false
 agent-client-protocol-schema = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
+flate2 = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 reqwest = { workspace = true }
