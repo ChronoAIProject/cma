@@ -1244,6 +1244,10 @@ impl SessionService {
                     "the chat host no longer contains this thread allocation".into(),
                 )
             })?;
+        let has_other_retained_threads = host
+            .threads
+            .iter()
+            .any(|slot| slot.session_id != id && !slot.removed);
         if !slot_removed {
             match host.status {
                 crate::ChatHostStatus::Active | crate::ChatHostStatus::Pausing => {
@@ -1255,25 +1259,30 @@ impl SessionService {
                             "the chat thread does not name its host's current runtime".into(),
                         ));
                     }
-                    let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
-                        CoreError::ChatUnavailable(
-                            crate::ChatUnavailableCause::CapabilityUnsupported(
-                                "configured chat kernel".into(),
-                            ),
-                        )
-                    })?;
-                    adapter
-                        .remove_workspace_tree(&RuntimeHandle(runtime_id), &origin.worktree_name)
-                        .await
-                        .map_err(|_| {
+                    if has_other_retained_threads {
+                        let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
                             CoreError::ChatUnavailable(
-                                crate::ChatUnavailableCause::ProvisioningFailed {
-                                    phase: crate::ChatProvisioningPhase::Cleanup,
-                                    command_index: None,
-                                    retryable: true,
-                                },
+                                crate::ChatUnavailableCause::CapabilityUnsupported(
+                                    "configured chat kernel".into(),
+                                ),
                             )
                         })?;
+                        adapter
+                            .remove_workspace_tree(
+                                &RuntimeHandle(runtime_id),
+                                &origin.worktree_name,
+                            )
+                            .await
+                            .map_err(|_| {
+                                CoreError::ChatUnavailable(
+                                    crate::ChatUnavailableCause::ProvisioningFailed {
+                                        phase: crate::ChatProvisioningPhase::Cleanup,
+                                        command_index: None,
+                                        retryable: true,
+                                    },
+                                )
+                            })?;
+                    }
                 }
                 crate::ChatHostStatus::Paused => {}
                 crate::ChatHostStatus::Reviving => {

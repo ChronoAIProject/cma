@@ -1544,19 +1544,9 @@ impl crate::service::SessionService {
                     ))
                 })?;
                 let handle = RuntimeHandle(runtime_id.clone());
-                for thread in &host.threads {
-                    if let Err(error) = adapter
-                        .remove_workspace_tree(&handle, &thread.worktree_name)
-                        .await
-                    {
-                        tracing::warn!(
-                            chat_host = %host.id,
-                            worktree = %thread.worktree_name,
-                            %error,
-                            "chat worktree cleanup was not confirmed before retirement"
-                        );
-                    }
-                }
+                // Every thread is already removed and the exact sandbox is the
+                // cleanup boundary. Per-tree mutation would be redundant and
+                // can deadlock retirement behind a failed checkpoint writer.
                 let identity = RuntimeIdentity {
                     handle,
                     session: host.id.0.clone(),

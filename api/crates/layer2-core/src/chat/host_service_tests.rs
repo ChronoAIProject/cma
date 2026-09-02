@@ -872,6 +872,93 @@ async fn operator_controls_only_the_thread_and_owner_delete_retires_the_last_hos
         fixture.adapter.terminated.lock().await.as_slice(),
         &[runtime]
     );
+    assert!(
+        fixture
+            .adapter
+            .removed_workspace_trees
+            .lock()
+            .await
+            .is_empty(),
+        "retiring the whole sandbox does not need a per-tree mutation"
+    );
+}
+
+#[tokio::test]
+async fn deleting_from_a_shared_host_removes_only_worktrees_that_stay_live() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-shared-chat-delete");
+    let first = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let second = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let host = stored_host(&fixture, &caller.subject).await;
+    let runtime = host.runtime_id.clone().unwrap();
+
+    fixture
+        .service
+        .delete_session(&caller, &first.id)
+        .await
+        .expect("one thread can leave a shared host running");
+
+    assert_eq!(
+        fixture
+            .adapter
+            .removed_workspace_trees
+            .lock()
+            .await
+            .as_slice(),
+        &[(runtime.clone(), "chat-1".into())]
+    );
+    assert!(fixture.adapter.running.lock().await.contains_key(&runtime));
+    assert_eq!(
+        stored_host(&fixture, &caller.subject).await.status,
+        ChatHostStatus::Active
+    );
+
+    let mut pausing = stored_host(&fixture, &caller.subject).await;
+    pausing.status = ChatHostStatus::Pausing;
+    pausing.last_transition_claim = Some("chro_stuck_legacy_checkpoint".into());
+    pausing.transition_started_at = Some("2026-09-02T20:04:31Z".into());
+    pausing.revive_cause = Some(ChatReviveCause::ImageDrift);
+    pausing.checkpoint_sequence += 1;
+    fixture
+        .hosts
+        .update_if_revision(pausing.revision, &pausing)
+        .await
+        .unwrap()
+        .unwrap();
+
+    fixture
+        .service
+        .delete_session(&caller, &second.id)
+        .await
+        .expect("the last thread supersedes a stuck image-rotation claim");
+
+    assert_eq!(
+        fixture
+            .adapter
+            .removed_workspace_trees
+            .lock()
+            .await
+            .as_slice(),
+        &[(runtime.clone(), "chat-1".into())],
+        "the final worktree disappears with its sandbox"
+    );
+    assert!(!fixture.adapter.running.lock().await.contains_key(&runtime));
+    assert_eq!(
+        stored_host(&fixture, &caller.subject).await.status,
+        ChatHostStatus::Retired
+    );
 }
 
 #[tokio::test]
