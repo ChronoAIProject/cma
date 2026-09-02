@@ -2412,6 +2412,7 @@ fn chat_host_record(sequence: usize, owner: SubjectId, status: ChatHostStatus) -
             .then(|| "internal-runtime-authority".into()),
         runtime_version: Some("runtime-v2".into()),
         runtime_generation: 4,
+        credential_generation: 0,
         workspace_authority: None,
         threads: vec![
             ChatThreadSlot {

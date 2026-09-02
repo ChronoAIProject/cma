@@ -13,6 +13,13 @@ use layer3_adapter::RuntimeHandle;
 use crate::error::CoreError;
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::SessionService;
+use crate::{ChatHostId, ChatHostRecord, ChatHostStatus};
+
+enum ChatCredentialLookup {
+    NotChat,
+    Missing,
+    Current(Box<ChatHostRecord>),
+}
 
 /// Exact runtime generation selected for one credential installation attempt.
 ///
@@ -28,6 +35,28 @@ pub struct CredentialDeliveryTarget {
 }
 
 impl SessionService {
+    async fn chat_credential_host(
+        &self,
+        id: &SessionId,
+    ) -> Result<ChatCredentialLookup, crate::store::StoreError> {
+        let Some((host_id, credential_generation)) = ChatHostId::from_credential_session_id(id)
+        else {
+            return Ok(ChatCredentialLookup::NotChat);
+        };
+        let Some(store) = self.chat_hosts.as_ref() else {
+            return Ok(ChatCredentialLookup::Missing);
+        };
+        let Some(host) = store.get(&host_id).await? else {
+            return Ok(ChatCredentialLookup::Missing);
+        };
+        if host.credential_generation != credential_generation
+            || host.credential_session_id() != *id
+        {
+            return Ok(ChatCredentialLookup::Missing);
+        }
+        Ok(ChatCredentialLookup::Current(Box::new(host)))
+    }
+
     /// Hand a running runtime the credential it should present from now on.
     ///
     /// Asked of the adapter rather than pushed down the terminal channel. The
@@ -257,6 +286,13 @@ impl SessionService {
         &self,
         id: &SessionId,
     ) -> Result<bool, crate::store::StoreError> {
+        match self.chat_credential_host(id).await? {
+            ChatCredentialLookup::Current(host) => {
+                return Ok(host.status != ChatHostStatus::Retired);
+            }
+            ChatCredentialLookup::Missing => return Ok(false),
+            ChatCredentialLookup::NotChat => {}
+        }
         Ok(self
             .store
             .get(id)
@@ -277,6 +313,13 @@ impl SessionService {
         id: &SessionId,
         tracked_values: &[&str],
     ) -> Result<bool, crate::store::StoreError> {
+        match self.chat_credential_host(id).await? {
+            ChatCredentialLookup::Current(host) => {
+                return Ok(host.status == ChatHostStatus::Retired || host.runtime_id.is_none());
+            }
+            ChatCredentialLookup::Missing => return Ok(true),
+            ChatCredentialLookup::NotChat => {}
+        }
         let Some(record) = self.store.get(id).await? else {
             return Ok(true);
         };
@@ -303,6 +346,16 @@ impl SessionService {
         id: &SessionId,
     ) -> Result<Option<(SubjectId, Vec<crate::environment::ServiceId>)>, crate::store::StoreError>
     {
+        match self.chat_credential_host(id).await? {
+            ChatCredentialLookup::Current(host) if host.status != ChatHostStatus::Retired => {
+                return Ok(Some((
+                    host.owner,
+                    self.environments.baseline().services().to_vec(),
+                )));
+            }
+            ChatCredentialLookup::Current(_) | ChatCredentialLookup::Missing => return Ok(None),
+            ChatCredentialLookup::NotChat => {}
+        }
         let Some(record) = self.store.get(id).await? else {
             return Ok(None);
         };
@@ -328,10 +381,9 @@ impl SessionService {
         // deliberately collapsed into this compatibility wrapper's bool; a
         // fallible caller must use `push_session_credential_with` instead.
         let credential = layer3_adapter::RuntimeCredential::new(credential);
-        self.push_credential_with(
+        self.push_session_credential_with(
             id,
-            None,
-            &credential,
+            credential,
             |_target| async { Ok::<bool, crate::store::StoreError>(true) },
             |_target| async { Ok::<bool, crate::store::StoreError>(true) },
         )
@@ -361,8 +413,93 @@ impl SessionService {
         CFut: Future<Output = Result<bool, crate::store::StoreError>> + Send + 'static,
     {
         let credential = credential.into();
-        self.push_credential_with(id, None, &credential, prepare, commit)
+        match self.chat_credential_host(id).await? {
+            ChatCredentialLookup::Current(host) => {
+                self.push_chat_credential_with(id, *host, &credential, prepare, commit)
+                    .await
+            }
+            ChatCredentialLookup::Missing => Ok(false),
+            ChatCredentialLookup::NotChat => {
+                self.push_credential_with(id, None, &credential, prepare, commit)
+                    .await
+            }
+        }
+    }
+
+    async fn push_chat_credential_with<P, PFut, C, CFut>(
+        self: &Arc<Self>,
+        id: &SessionId,
+        observed: ChatHostRecord,
+        credential: &layer3_adapter::RuntimeCredential,
+        prepare: P,
+        commit: C,
+    ) -> Result<bool, crate::store::StoreError>
+    where
+        P: FnOnce(CredentialDeliveryTarget) -> PFut + Send + 'static,
+        PFut: Future<Output = Result<bool, crate::store::StoreError>> + Send + 'static,
+        C: FnOnce(CredentialDeliveryTarget) -> CFut + Send + 'static,
+        CFut: Future<Output = Result<bool, crate::store::StoreError>> + Send + 'static,
+    {
+        let Some(store) = self.chat_hosts.as_ref().cloned() else {
+            return Ok(false);
+        };
+        let _owner_guard = self.chat_host_guards.lock(&observed.owner).await;
+        let Some(current) = store.get(&observed.id).await? else {
+            return Ok(false);
+        };
+        if current.status != ChatHostStatus::Active || current.credential_session_id() != *id {
+            return Ok(false);
+        }
+        let Some(runtime_id) = current.runtime_id.clone() else {
+            return Ok(false);
+        };
+        let Some(adapter) = self.adapter_for(&current.kernel) else {
+            tracing::warn!(session_id = %id, kernel = %current.kernel, "no adapter to give a chat credential through");
+            return Ok(false);
+        };
+        let target = CredentialDeliveryTarget {
+            runtime_generation: crate::chat::generation_for(&current).get(),
+            runtime_id,
+        };
+        if !prepare(target.clone()).await? {
+            return Ok(false);
+        }
+
+        let still_exact = store.get(&current.id).await?.is_some_and(|host| {
+            host.status == ChatHostStatus::Active
+                && host.credential_session_id() == *id
+                && host.kernel == current.kernel
+                && host.runtime_id.as_deref() == Some(target.runtime_id.as_str())
+                && crate::chat::generation_for(&host).get() == target.runtime_generation
+        });
+        if !still_exact {
+            return Ok(false);
+        }
+
+        if let Err(error) = adapter
+            .refresh_credential(&RuntimeHandle(target.runtime_id.clone()), credential)
             .await
+        {
+            tracing::warn!(session_id = %id, %error, "could not confirm chat credential delivery");
+            return Ok(false);
+        }
+
+        let committed_target = target.clone();
+        let finalization = tokio::spawn(async move { commit(committed_target).await });
+        if !finalization.await.map_err(|error| {
+            crate::store::StoreError::Unavailable(format!(
+                "chat credential delivery finalization task failed: {error}"
+            ))
+        })?? {
+            return Ok(false);
+        }
+
+        Ok(store.get(&current.id).await?.is_some_and(|host| {
+            host.status == ChatHostStatus::Active
+                && host.credential_session_id() == *id
+                && host.runtime_id.as_deref() == Some(target.runtime_id.as_str())
+                && crate::chat::generation_for(&host).get() == target.runtime_generation
+        }))
     }
 
     /// Push a shared subject credential only while this subject still owns the

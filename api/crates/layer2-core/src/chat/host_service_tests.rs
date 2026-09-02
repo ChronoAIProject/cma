@@ -1333,6 +1333,10 @@ async fn runtime_spec_carries_pinned_chat_policy_and_deployment_baseline() {
     assert_eq!(spec.session_id, host.id.0);
     assert_eq!(spec.chat_host.as_deref(), Some(host.id.as_str()));
     assert_eq!(spec.generation.unwrap().get(), 1);
+    assert!(spec
+        .reservation_token
+        .as_deref()
+        .is_some_and(|token| token.starts_with("chcl_") && token.len() == 37));
     assert!(spec.workspace_source_required);
     assert_eq!(spec.conversation_slots_required, Some(7));
     assert_eq!(spec.options.model.as_deref(), Some("chat-model"));
@@ -1601,6 +1605,213 @@ async fn credential_delivery_is_bound_to_the_active_host_generation() {
     assert_eq!(
         *fixture.adapter.credentials.lock().await,
         ["host-credential"]
+    );
+}
+
+#[tokio::test]
+async fn credential_maintenance_recognizes_only_the_current_chat_incarnation() {
+    let baseline = Baseline::new(
+        std::iter::empty::<SoftwarePackage>(),
+        std::iter::empty::<SkillId>(),
+        [ServiceId::new("model-service")],
+    );
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        baseline,
+    );
+    let owner = SubjectId("owner-credential-maintenance".into());
+    let host = fixture
+        .service
+        .ensure_chat_host(&owner, None)
+        .await
+        .unwrap();
+    let credential_id = host.credential_session_id();
+
+    assert!(fixture
+        .service
+        .session_claims_credential(&credential_id)
+        .await
+        .unwrap());
+    assert_eq!(
+        fixture
+            .service
+            .session_credential_context(&credential_id)
+            .await
+            .unwrap(),
+        Some((owner.clone(), vec![ServiceId::new("model-service")]))
+    );
+    assert!(!fixture
+        .service
+        .can_reclaim_untracked_credential(&credential_id, &["tracked"])
+        .await
+        .unwrap());
+
+    let stale_id = host
+        .id
+        .credential_session_id(host.credential_generation.saturating_add(1));
+    assert!(!fixture
+        .service
+        .session_claims_credential(&stale_id)
+        .await
+        .unwrap());
+    assert_eq!(
+        fixture
+            .service
+            .session_credential_context(&stale_id)
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(fixture
+        .service
+        .can_reclaim_untracked_credential(&stale_id, &[])
+        .await
+        .unwrap());
+
+    fixture
+        .service
+        .retire_chat_host_if_empty(&host.id)
+        .await
+        .unwrap();
+    assert!(!fixture
+        .service
+        .session_claims_credential(&credential_id)
+        .await
+        .unwrap());
+    assert!(fixture
+        .service
+        .can_reclaim_untracked_credential(&credential_id, &[])
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+async fn recurring_credential_delivery_targets_the_exact_active_chat_runtime() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let host = fixture
+        .service
+        .ensure_chat_host(&SubjectId("owner-chat-renewal".into()), None)
+        .await
+        .unwrap();
+    let credential_id = host.credential_session_id();
+    let expected_runtime = host.runtime_id.clone().unwrap();
+    let prepare_runtime = expected_runtime.clone();
+    let commit_runtime = expected_runtime.clone();
+
+    assert!(fixture
+        .service
+        .push_session_credential_with(
+            &credential_id,
+            "renewed-chat-credential",
+            move |target| async move {
+                assert_eq!(target.runtime_id, prepare_runtime);
+                assert_eq!(target.runtime_generation, 1);
+                Ok(true)
+            },
+            move |target| async move {
+                assert_eq!(target.runtime_id, commit_runtime);
+                assert_eq!(target.runtime_generation, 1);
+                Ok(true)
+            },
+        )
+        .await
+        .unwrap());
+    assert_eq!(
+        *fixture.adapter.credentials.lock().await,
+        ["renewed-chat-credential"]
+    );
+
+    fixture
+        .service
+        .retire_chat_host_if_empty(&host.id)
+        .await
+        .unwrap();
+    assert!(!fixture
+        .service
+        .push_session_credential_with(
+            &credential_id,
+            "must-not-deliver",
+            |_target| async { Ok(true) },
+            |_target| async { Ok(true) },
+        )
+        .await
+        .unwrap());
+    assert_eq!(fixture.adapter.credentials.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn legacy_permanent_credential_failure_moves_to_one_fresh_incarnation_once() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let owner = SubjectId("owner-legacy-credential-recovery".into());
+    let mut failed = ChatHostRecord::new(
+        owner.clone(),
+        ChatSettingsSnapshot::new(1, enabled_chat()).unwrap(),
+        "Pinned platform briefing\n".into(),
+        KernelId::new("fake"),
+        "2026-09-02T07:39:32Z".into(),
+        "claim-from-failed-process".into(),
+    );
+    let legacy_credential_id = failed.credential_session_id();
+    failed.last_transition_claim = None;
+    failed.transition_started_at = None;
+    failed.last_failure = Some(ChatHostFailure {
+        phase: ChatProvisioningPhase::Credential,
+        command_index: None,
+        output_excerpt: None,
+        retryable: false,
+        cleanup_pending: false,
+        occurred_at: "2026-09-02T07:40:55Z".into(),
+    });
+    fixture.hosts.create_if_absent(&failed).await.unwrap();
+
+    let recovered = fixture
+        .service
+        .ensure_chat_host(&owner, None)
+        .await
+        .expect("the one legacy credential failure is recovered");
+    assert_eq!(recovered.status, ChatHostStatus::Active);
+    assert_eq!(recovered.credential_generation, 1);
+    assert_ne!(recovered.credential_session_id(), legacy_credential_id);
+    assert!(recovered.credential_session_id().as_str().ends_with("_cg1"));
+
+    let mut failed_again = recovered.clone();
+    failed_again.status = ChatHostStatus::Provisioning;
+    failed_again.runtime_id = None;
+    failed_again.last_transition_claim = None;
+    failed_again.transition_started_at = None;
+    failed_again.last_failure = failed.last_failure;
+    fixture
+        .hosts
+        .update_if_revision(recovered.revision, &failed_again)
+        .await
+        .unwrap()
+        .unwrap();
+    let calls_before = fixture.adapter.provision_calls.load(Ordering::SeqCst);
+
+    assert!(matches!(
+        fixture.service.ensure_chat_host(&owner, None).await,
+        Err(CoreError::ChatUnavailable(
+            ChatUnavailableCause::ProvisioningFailed {
+                phase: ChatProvisioningPhase::Credential,
+                retryable: false,
+                ..
+            }
+        ))
+    ));
+    let retained = stored_host(&fixture, &owner).await;
+    assert_eq!(retained.credential_generation, 1);
+    assert_eq!(
+        fixture.adapter.provision_calls.load(Ordering::SeqCst),
+        calls_before
     );
 }
 
