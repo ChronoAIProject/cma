@@ -1204,8 +1204,8 @@ impl SessionService {
         observed: SessionRecord,
     ) -> Result<Option<String>, CoreError> {
         let id = observed.session.id.clone();
-        let lifecycle = self.lock_lifecycle(&id).await;
         self.preempt_pausing_final_chat_runtime(&observed).await?;
+        let lifecycle = self.lock_lifecycle(&id).await;
         let input_fence = self.input_gates.gate(&id).write_owned().await;
         let ordering = self.conversation_order_gates.gate(&id);
         let ordered = ordering.lock().await;

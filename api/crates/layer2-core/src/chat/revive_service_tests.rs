@@ -958,6 +958,7 @@ async fn deleting_the_final_thread_preempts_a_held_image_rotation_checkpoint() {
     .unwrap()
     .forget();
     assert_eq!(host(&fixture).await.status, ChatHostStatus::Pausing);
+    let held_lifecycle = fixture.service.lock_lifecycle(&fixture.threads[0].id).await;
 
     let service = Arc::clone(&fixture.service);
     let caller = fixture.caller.clone();
@@ -992,6 +993,11 @@ async fn deleting_the_final_thread_preempts_a_held_image_rotation_checkpoint() {
             .unwrap(),
         Err(CoreError::RuntimeRefused(_))
     ));
+    assert!(
+        !deletion.is_finished(),
+        "durable deletion still waits for its session lifecycle fence"
+    );
+    drop(held_lifecycle);
     tokio::time::timeout(Duration::from_secs(2), deletion)
         .await
         .expect("deletion finishes after checkpoint capture releases its locks")
