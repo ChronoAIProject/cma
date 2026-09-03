@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{KernelAdapter, RuntimeHandle};
+use layer3_adapter::{KernelAdapter, RuntimeHandle, RuntimeIdentity};
 
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
@@ -1205,6 +1205,7 @@ impl SessionService {
     ) -> Result<Option<String>, CoreError> {
         let id = observed.session.id.clone();
         let lifecycle = self.lock_lifecycle(&id).await;
+        self.preempt_pausing_final_chat_runtime(&observed).await?;
         let input_fence = self.input_gates.gate(&id).write_owned().await;
         let ordering = self.conversation_order_gates.gate(&id);
         let ordered = ordering.lock().await;
@@ -1354,5 +1355,76 @@ impl SessionService {
         drop(input_fence);
         drop(lifecycle);
         Ok(context_ref)
+    }
+
+    /// Break a checkpoint/delete lock cycle without risking a successor runtime.
+    ///
+    /// Image rotation holds every thread input fence and the owner guard while
+    /// its runtime checkpoint is in flight. Deleting the final retained thread
+    /// is allowed to tear down that whole host, so terminate its exact provider
+    /// identity before waiting for either lock. Provider-side identity matching
+    /// makes a stale observation harmless if rotation already installed a
+    /// successor.
+    async fn preempt_pausing_final_chat_runtime(
+        &self,
+        observed: &SessionRecord,
+    ) -> Result<(), CoreError> {
+        let Some(origin) = observed.chat_origin.as_ref() else {
+            return Ok(());
+        };
+        let hosts = self.chat_hosts.as_ref().ok_or({
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+        })?;
+        let Some(host) = hosts.get(&origin.host_id).await.map_err(|_| {
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+        })?
+        else {
+            return Ok(());
+        };
+        let target_is_retained = host
+            .threads
+            .iter()
+            .any(|slot| slot.session_id == observed.session.id && !slot.removed);
+        let has_other_retained_threads = host
+            .threads
+            .iter()
+            .any(|slot| slot.session_id != observed.session.id && !slot.removed);
+        if host.status != crate::ChatHostStatus::Pausing
+            || !target_is_retained
+            || has_other_retained_threads
+        {
+            return Ok(());
+        }
+        let Some(runtime_id) = host.runtime_id.as_ref() else {
+            return Ok(());
+        };
+        if observed.runtime_id.as_deref() != Some(runtime_id.as_str()) {
+            return Ok(());
+        }
+        let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::CapabilityUnsupported(
+                "configured chat kernel".into(),
+            ))
+        })?;
+        tracing::info!(
+            chat_host = %host.id,
+            runtime = %runtime_id,
+            session_id = %observed.session.id,
+            "preempting a pausing chat runtime before final-thread deletion"
+        );
+        adapter
+            .terminate_if_identity(&RuntimeIdentity {
+                handle: RuntimeHandle(runtime_id.clone()),
+                session: host.id.0.clone(),
+                generation: Some(crate::chat::generation_for(&host)),
+            })
+            .await
+            .map_err(|_| {
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::ProvisioningFailed {
+                    phase: crate::ChatProvisioningPhase::Cleanup,
+                    command_index: None,
+                    retryable: true,
+                })
+            })
     }
 }
