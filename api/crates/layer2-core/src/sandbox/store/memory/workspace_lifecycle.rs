@@ -20,6 +20,9 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
             .validate_for_admission(sandbox, admission.kind.allowed_status())
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         validate_fresh(&workspace, admission.kind)?;
+        if !workspace.origin_matches_sandbox_profile(sandbox) {
+            return Err(SandboxStoreError::WorkspaceOriginConflict);
+        }
 
         if admission.kind == WorkspaceAdmissionKind::SandboxProfile {
             if let Some(existing) = state.workspaces.values().find(|stored| {

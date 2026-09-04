@@ -130,7 +130,7 @@ impl WorkspaceProfileContent {
                 .map_err(|_| ProfileError::new("invalid_repository", "location.url"))?;
             parsed
                 .path_segments()
-                .and_then(|segments| segments.filter(|part| !part.is_empty()).next_back())
+                .and_then(|mut segments| segments.rfind(|part| !part.is_empty()))
                 .map(|name| name.strip_suffix(".git").unwrap_or(name).to_string())
                 .ok_or_else(|| ProfileError::new("invalid_repository", "location.url"))?
         };

@@ -54,6 +54,21 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Bind profile-origin admission to the exact slot in the parent snapshot.
+    pub fn origin_matches_sandbox_profile(&self, sandbox: &Sandbox) -> bool {
+        let WorkspaceOrigin::SandboxProfile { index } = &self.origin else {
+            return true;
+        };
+        sandbox
+            .profile
+            .content
+            .workspace_profiles
+            .get(usize::from(*index))
+            .is_some_and(|reference| {
+                reference.id == self.profile.id && reference.revision == self.profile.revision
+            })
+    }
+
     pub fn validate_prerequisites(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         self.validate_for_admission(sandbox, super::SandboxStatus::Active)
     }
