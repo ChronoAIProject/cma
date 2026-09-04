@@ -178,6 +178,16 @@ impl ProfileAdminStore for MongoProfileStore {
         locator: &ProfileLocator,
         retired_at: String,
     ) -> Result<ProfileAdminSummary, ProfileStoreError> {
+        let protected = match locator {
+            ProfileLocator::Agent(id) => id.as_str() == layer2_core::DEFAULT_AGENT_PROFILE_ID,
+            ProfileLocator::Workspace(id) => {
+                id.as_str() == layer2_core::DEFAULT_WORKSPACE_PROFILE_ID
+            }
+            ProfileLocator::Sandbox(id) => id.as_str() == layer2_core::DEFAULT_SANDBOX_PROFILE_ID,
+        };
+        if protected {
+            return Err(ProfileStoreError::Protected);
+        }
         let (collection, decode): (
             &Collection<Document>,
             fn(&Document) -> Result<ProfileAdminSummary, ProfileStoreError>,

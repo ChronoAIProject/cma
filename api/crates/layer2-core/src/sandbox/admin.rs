@@ -50,10 +50,7 @@ impl SandboxAdminSummary {
             owner: sandbox.owner.clone(),
             name: sandbox.name.clone(),
             status: sandbox.status,
-            runtime_version: sandbox
-                .runtime
-                .as_ref()
-                .map(|runtime| runtime.runtime_version.clone()),
+            runtime_version: sandbox.runtime.as_ref().map(|r| r.runtime_version.clone()),
             agent_count,
             last_activity_at: sandbox.last_activity_at.clone(),
             retired_at: sandbox.retired_at.clone(),
@@ -228,6 +225,8 @@ pub enum OperatorError {
     InvalidRequest(String),
     #[error("operator action conflicts with current state: {0}")]
     InvalidState(String),
+    #[error("deployment-owned profile is protected")]
+    ProtectedProfile,
     #[error("operator dependency unavailable: {0}")]
     Unavailable(String),
 }
@@ -253,6 +252,7 @@ impl OperatorError {
             ProfileStoreError::Conflict
             | ProfileStoreError::Duplicate
             | ProfileStoreError::ReferenceUnavailable => Self::InvalidState(error.to_string()),
+            ProfileStoreError::Protected => Self::ProtectedProfile,
             ProfileStoreError::Validation(_) => Self::InvalidRequest(error.to_string()),
             ProfileStoreError::Unavailable(_) | ProfileStoreError::Corrupt(_) => {
                 Self::Unavailable(error.to_string())
@@ -408,6 +408,9 @@ impl SandboxOperatorService {
         locator: &ProfileLocator,
     ) -> Result<ProfileAdminSummary, OperatorError> {
         require(caller, Capability::ControlAnySandbox)?;
+        if deployment_profile(locator) {
+            return Err(OperatorError::ProtectedProfile);
+        }
         let summary = self
             .profiles
             .retire_profile(locator, now_rfc3339())
@@ -432,6 +435,14 @@ impl SandboxOperatorService {
             .record(&record)
             .await
             .map_err(|error| OperatorError::Unavailable(error.to_string()))
+    }
+}
+
+fn deployment_profile(locator: &ProfileLocator) -> bool {
+    match locator {
+        ProfileLocator::Agent(id) => id.as_str() == crate::DEFAULT_AGENT_PROFILE_ID,
+        ProfileLocator::Workspace(id) => id.as_str() == crate::DEFAULT_WORKSPACE_PROFILE_ID,
+        ProfileLocator::Sandbox(id) => id.as_str() == crate::DEFAULT_SANDBOX_PROFILE_ID,
     }
 }
 

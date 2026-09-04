@@ -62,6 +62,14 @@ impl ProfileAdminStore for InMemoryProfileStore {
         locator: &ProfileLocator,
         retired_at: String,
     ) -> Result<ProfileAdminSummary, ProfileStoreError> {
+        let protected = match locator {
+            ProfileLocator::Agent(id) => id.as_str() == crate::DEFAULT_AGENT_PROFILE_ID,
+            ProfileLocator::Workspace(id) => id.as_str() == crate::DEFAULT_WORKSPACE_PROFILE_ID,
+            ProfileLocator::Sandbox(id) => id.as_str() == crate::DEFAULT_SANDBOX_PROFILE_ID,
+        };
+        if protected {
+            return Err(ProfileStoreError::Protected);
+        }
         let mut state = self.lock();
         match locator {
             ProfileLocator::Agent(id) => {

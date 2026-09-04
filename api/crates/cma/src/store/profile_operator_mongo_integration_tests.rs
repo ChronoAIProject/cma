@@ -180,6 +180,21 @@ async fn profile_retirement_is_cross_kind_owner_independent_idempotent_and_schem
     store.create_sandbox_profile(sandbox.clone()).await.unwrap();
 
     for locator in [
+        ProfileLocator::Agent(AgentProfileId(layer2_core::DEFAULT_AGENT_PROFILE_ID.into())),
+        ProfileLocator::Workspace(WorkspaceProfileId(
+            layer2_core::DEFAULT_WORKSPACE_PROFILE_ID.into(),
+        )),
+        ProfileLocator::Sandbox(SandboxProfileId(
+            layer2_core::DEFAULT_SANDBOX_PROFILE_ID.into(),
+        )),
+    ] {
+        assert_eq!(
+            store.retire_profile(&locator, T2.into()).await,
+            Err(ProfileStoreError::Protected)
+        );
+    }
+
+    for locator in [
         ProfileLocator::Agent(agent.id.clone()),
         ProfileLocator::Workspace(workspace.id.clone()),
         ProfileLocator::Sandbox(sandbox.id.clone()),
