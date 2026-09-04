@@ -25,7 +25,10 @@ async fn store() -> MongoAuthStore {
 fn subject_state(tokens: Option<DurableSubjectTokens>) -> SubjectAuthState {
     SubjectAuthState {
         subject: SubjectId::new("subject-a"),
-        authorization: Authorization::new([Capability::ReadOwnResources, Capability::ReadActivity]),
+        authorization: Authorization::new([
+            Capability::UseOwnSandboxes,
+            Capability::ReadActivityLog,
+        ]),
         profile: Profile {
             display_name: Some("Example Person".into()),
             email: Some("person@example.test".into()),

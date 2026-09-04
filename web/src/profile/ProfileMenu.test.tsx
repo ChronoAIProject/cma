@@ -9,6 +9,7 @@ const user = {
   displayName: 'Ada Lovelace',
   email: 'ada@example.test',
   capabilities: [],
+  visitor: false,
 } as const;
 
 it('keeps appearance and sign out in the account menu', async () => {

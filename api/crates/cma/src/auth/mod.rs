@@ -156,7 +156,14 @@ impl AuthState {
     }
 
     pub fn trusted_authorization() -> Authorization {
-        Authorization::new([Capability::ReadOwnResources, Capability::ManageOwnResources])
+        Authorization::new([
+            Capability::CreateSandbox,
+            Capability::UseOwnSandboxes,
+            Capability::DeleteOwnSandbox,
+            Capability::ManageOwnProfiles,
+            Capability::PublishTriggers,
+            Capability::LaunchTriggers,
+        ])
     }
 
     pub(super) async fn resolve_request(
@@ -317,9 +324,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(resolved.subject.as_str(), "developer");
-        assert!(resolved
-            .authorization
-            .allows(Capability::ManageOwnResources));
+        assert!(resolved.authorization.allows(Capability::UseOwnSandboxes));
         assert!(!resolved.authorization.allows(Capability::ConfigurePlatform));
     }
 
