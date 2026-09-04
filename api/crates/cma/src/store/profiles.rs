@@ -12,7 +12,7 @@ use super::sandbox_mongo::{
     require_version, signed, unsigned, MongoProfileStore, DOCUMENT_SCHEMA_VERSION,
 };
 
-const MAX_PROFILE_PAGE: u16 = 200;
+pub(super) const MAX_PROFILE_PAGE: u16 = 200;
 
 pub(super) fn profile_indexes(prefix: &str) -> Vec<IndexModel> {
     vec![
