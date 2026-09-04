@@ -64,6 +64,11 @@ pub trait AgentProfileStore: Send + Sync {
         id: &AgentProfileId,
         revision: u32,
     ) -> Result<Option<AgentProfileRevision>, ProfileStoreError>;
+    async fn list_agent_profile_revisions(
+        &self,
+        id: &AgentProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<AgentProfileRevision>, ProfileStoreError>;
     async fn list_agent_profiles(
         &self,
         owner: Option<&SubjectId>,
@@ -100,6 +105,11 @@ pub trait WorkspaceProfileStore: Send + Sync {
         id: &WorkspaceProfileId,
         revision: u32,
     ) -> Result<Option<WorkspaceProfileRevision>, ProfileStoreError>;
+    async fn list_workspace_profile_revisions(
+        &self,
+        id: &WorkspaceProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<WorkspaceProfileRevision>, ProfileStoreError>;
     async fn list_workspace_profiles(
         &self,
         owner: Option<&SubjectId>,
@@ -138,6 +148,11 @@ pub trait SandboxProfileStore: Send + Sync {
         id: &SandboxProfileId,
         revision: u32,
     ) -> Result<Option<SandboxProfileRevision>, ProfileStoreError>;
+    async fn list_sandbox_profile_revisions(
+        &self,
+        id: &SandboxProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<SandboxProfileRevision>, ProfileStoreError>;
     async fn list_sandbox_profiles(
         &self,
         owner: Option<&SubjectId>,
@@ -190,6 +205,31 @@ fn profile_page<T: Clone>(
     values.truncate(usize::from(request.limit));
     let next = has_more
         .then(|| values.last().map(|(key, _)| key.clone()))
+        .flatten();
+    Ok(ProfilePage {
+        items: values.into_iter().map(|(_, value)| value).collect(),
+        next,
+    })
+}
+
+fn revision_page<T: Clone>(
+    mut values: Vec<(u32, T)>,
+    request: &ProfilePageRequest,
+) -> Result<ProfilePage<T>, ProfileStoreError> {
+    if request.limit == 0 || request.limit > 200 {
+        return Err(ProfileError::new("invalid_page", "limit").into());
+    }
+    values.sort_by_key(|row| std::cmp::Reverse(row.0));
+    if let Some(cursor) = &request.cursor {
+        let cursor = cursor
+            .parse::<u32>()
+            .map_err(|_| ProfileError::new("invalid_page", "cursor"))?;
+        values.retain(|(revision, _)| *revision < cursor);
+    }
+    let has_more = values.len() > usize::from(request.limit);
+    values.truncate(usize::from(request.limit));
+    let next = has_more
+        .then(|| values.last().map(|(revision, _)| revision.to_string()))
         .flatten();
     Ok(ProfilePage {
         items: values.into_iter().map(|(_, value)| value).collect(),

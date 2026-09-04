@@ -145,6 +145,7 @@ fn agent() -> Agent {
         },
         title: None,
         created_at: NOW.into(),
+        updated_at: NOW.into(),
         ready_at: None,
         stopped_at: None,
         stop_reason: None,

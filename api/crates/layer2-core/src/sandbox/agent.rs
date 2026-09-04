@@ -58,6 +58,7 @@ pub struct Agent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub created_at: String,
+    pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -111,6 +112,7 @@ impl Agent {
         }
         self.status = self.status.transition(next)?;
         self.stop_reason = reason;
+        self.updated_at = at.clone();
         match next {
             AgentStatus::Ready if self.ready_at.is_none() => self.ready_at = Some(at),
             AgentStatus::Stopped => self.stopped_at = Some(at),

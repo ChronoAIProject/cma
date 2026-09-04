@@ -85,6 +85,26 @@ impl AgentProfileStore for InMemoryProfileStore {
             .cloned())
     }
 
+    async fn list_agent_profile_revisions(
+        &self,
+        id: &AgentProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<AgentProfileRevision>, ProfileStoreError> {
+        let state = self.lock();
+        if !state.agents.contains_key(id) {
+            return Err(ProfileStoreError::NotFound);
+        }
+        revision_page(
+            state
+                .agent_revisions
+                .iter()
+                .filter(|((stored, _), _)| stored == id)
+                .map(|((_, number), revision)| (*number, revision.clone()))
+                .collect(),
+            page,
+        )
+    }
+
     async fn list_agent_profiles(
         &self,
         owner: Option<&SubjectId>,
@@ -189,6 +209,26 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
             .workspace_revisions
             .get(&(id.clone(), revision))
             .cloned())
+    }
+
+    async fn list_workspace_profile_revisions(
+        &self,
+        id: &WorkspaceProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<WorkspaceProfileRevision>, ProfileStoreError> {
+        let state = self.lock();
+        if !state.workspaces.contains_key(id) {
+            return Err(ProfileStoreError::NotFound);
+        }
+        revision_page(
+            state
+                .workspace_revisions
+                .iter()
+                .filter(|((stored, _), _)| stored == id)
+                .map(|((_, number), revision)| (*number, revision.clone()))
+                .collect(),
+            page,
+        )
     }
 
     async fn list_workspace_profiles(
@@ -307,6 +347,26 @@ impl SandboxProfileStore for InMemoryProfileStore {
             .sandbox_revisions
             .get(&(id.clone(), revision))
             .cloned())
+    }
+
+    async fn list_sandbox_profile_revisions(
+        &self,
+        id: &SandboxProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<SandboxProfileRevision>, ProfileStoreError> {
+        let state = self.lock();
+        if !state.sandboxes.contains_key(id) {
+            return Err(ProfileStoreError::NotFound);
+        }
+        revision_page(
+            state
+                .sandbox_revisions
+                .iter()
+                .filter(|((stored, _), _)| stored == id)
+                .map(|((_, number), revision)| (*number, revision.clone()))
+                .collect(),
+            page,
+        )
     }
 
     async fn list_sandbox_profiles(
