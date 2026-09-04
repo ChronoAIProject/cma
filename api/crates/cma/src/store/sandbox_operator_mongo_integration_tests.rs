@@ -1,0 +1,308 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use layer2_core::ids::{
+    AgentId, AgentProfileId, SandboxId, SandboxProfileId, SubjectId, WorkspaceId,
+    WorkspaceProfileId, WorktreeId,
+};
+use layer2_core::profiles::{
+    AgentProfileContent, AgentProfileSnapshot, AgentProvider, ModelAccess, PermissionLevel,
+    SandboxProfileContent, SandboxProfileSnapshot, ThinkingEffort, WorkspaceLocation,
+    WorkspaceProfileContent, WorkspaceProfileSnapshot,
+};
+use layer2_core::sandbox::store::{
+    AgentStore, PageRequest, SandboxEventStore, SandboxStore, SandboxStoreError, WorkspaceStore,
+};
+use layer2_core::sandbox::{
+    Agent, AgentOrigin, AgentStatus, ConversationState, RuntimeBinding, Sandbox, SandboxAdminQuery,
+    SandboxAdminStore, SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxRetirement,
+    SandboxStatus, StoredSandboxRetirement, Workspace, WorkspaceSource, WorkspaceStatus,
+};
+use mongodb::Client;
+
+use super::sandbox_mongo::MongoSandboxStore;
+
+const NOW: &str = "2026-09-05T00:00:00Z";
+static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+async fn database(prefix: &str) -> (Client, String, MongoSandboxStore) {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(uri)
+        .await
+        .expect("test Mongo connects");
+    let sequence = DATABASE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let name = format!("cma_814_sandbox_{prefix}_{}_{sequence}", std::process::id());
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    (client, name, store)
+}
+
+fn sandbox(
+    id: &str,
+    owner: &str,
+    name: &str,
+    status: SandboxStatus,
+    runtime_version: &str,
+) -> Sandbox {
+    Sandbox {
+        id: SandboxId(id.into()),
+        owner: SubjectId(owner.into()),
+        name: name.into(),
+        profile: SandboxProfileSnapshot {
+            id: SandboxProfileId("sbp_operator".into()),
+            revision: 1,
+            digest: "a".repeat(64),
+            content: SandboxProfileContent {
+                cpu_millis: 1_000,
+                memory_mib: 2_048,
+                nyxid_services: vec![],
+                agent_provider: AgentProvider::Codex,
+                model_access: ModelAccess::ChronoaiManaged,
+                max_workspaces: 4,
+                max_agents_per_workspace: 4,
+                workspace_profiles: vec![],
+                software_install_commands: vec![],
+                environment_variables: vec![],
+            },
+        },
+        status,
+        failure: None,
+        runtime: Some(RuntimeBinding {
+            runtime_id: format!("runtime-{id}"),
+            runtime_version: runtime_version.into(),
+            bound_at: NOW.into(),
+        }),
+        credential: SandboxCredentialState {
+            reaches: vec![],
+            key_generation: 1,
+            delivered: true,
+        },
+        limits: SandboxLimits {
+            max_workspaces: 4,
+            max_agents_per_workspace: 4,
+        },
+        checkpoint: None,
+        last_activity_at: NOW.into(),
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        retired_at: None,
+        revision: 1,
+    }
+}
+
+fn workspace(sandbox: &Sandbox) -> Workspace {
+    Workspace {
+        id: WorkspaceId(format!("wks_{}", sandbox.id.as_str())),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        profile: WorkspaceProfileSnapshot {
+            id: WorkspaceProfileId("wkp_operator".into()),
+            revision: 1,
+            digest: "b".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory {
+                    name: "project".into(),
+                },
+                name: "project".into(),
+                setup_commands: vec![],
+                agent_profiles: vec![],
+            },
+        },
+        name: "project".into(),
+        path: "/home/cma/project".into(),
+        source: WorkspaceSource::Empty,
+        status: WorkspaceStatus::Ready,
+        created_at: NOW.into(),
+        ready_at: Some(NOW.into()),
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    }
+}
+
+fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
+    Agent {
+        id: AgentId(id.into()),
+        worktree_id: WorktreeId(format!("wkt_{id}")),
+        workspace_id: WorkspaceId(format!("wks_{}", sandbox.id.as_str())),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        profile: AgentProfileSnapshot {
+            id: AgentProfileId("agp_operator".into()),
+            revision: 1,
+            digest: "c".repeat(64),
+            content: AgentProfileContent {
+                model: None,
+                thinking_effort: ThinkingEffort::Medium,
+                permission_level: PermissionLevel::Guarded,
+                skills: vec![],
+                system_prompt: String::new(),
+            },
+        },
+        status,
+        conversation: ConversationState {
+            conversation_id: None,
+            last_seq: 0,
+            first_message: None,
+        },
+        title: Some(format!("Agent {id}")),
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        ready_at: None,
+        stopped_at: None,
+        stop_reason: None,
+        deleted_at: (status == AgentStatus::Deleted).then(|| NOW.into()),
+        origin: AgentOrigin::Manual,
+        revision: 1,
+    }
+}
+
+fn query(limit: u16, cursor: Option<String>) -> SandboxAdminQuery {
+    SandboxAdminQuery {
+        page: PageRequest { limit, cursor },
+        ..SandboxAdminQuery::default()
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_operator_inventory_filters_pages_counts_and_reads_details() {
+    let (client, name, store) = database("inventory").await;
+    let first = sandbox(
+        "sbx_admin_a",
+        "owner-a",
+        "alpha",
+        SandboxStatus::Active,
+        "v1",
+    );
+    let second = sandbox(
+        "sbx_admin_b",
+        "owner-b",
+        "beta",
+        SandboxStatus::Paused,
+        "v2",
+    );
+    let third = sandbox(
+        "sbx_admin_c",
+        "owner-a",
+        "gamma",
+        SandboxStatus::Paused,
+        "v1",
+    );
+    for value in [&first, &second, &third] {
+        store.create_sandbox(value.clone()).await.unwrap();
+    }
+    store.create_workspace(workspace(&first)).await.unwrap();
+    store
+        .create_agent(agent(&first, "agt_admin_live", AgentStatus::Working))
+        .await
+        .unwrap();
+    store
+        .create_agent(agent(&first, "agt_admin_deleted", AgentStatus::Deleted))
+        .await
+        .unwrap();
+
+    let page = store.list_admin_sandboxes(&query(1, None)).await.unwrap();
+    assert_eq!(page.items[0].id, first.id);
+    assert_eq!(page.items[0].agent_count, 1);
+    assert_eq!(page.next.as_deref(), Some("sbx_admin_a"));
+    let page = store
+        .list_admin_sandboxes(&query(1, page.next))
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].id, second.id);
+    assert_eq!(page.next.as_deref(), Some("sbx_admin_b"));
+
+    let mut filtered = query(10, None);
+    filtered.owner = Some(SubjectId("owner-a".into()));
+    assert_eq!(
+        store
+            .list_admin_sandboxes(&filtered)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        2
+    );
+    filtered.status = Some(SandboxStatus::Paused);
+    assert_eq!(
+        store.list_admin_sandboxes(&filtered).await.unwrap().items[0].id,
+        third.id
+    );
+    filtered.status = None;
+    filtered.runtime_version = Some("v1".into());
+    assert_eq!(
+        store
+            .list_admin_sandboxes(&filtered)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        2
+    );
+
+    let view = store.read_admin_sandbox(&first.id).await.unwrap().unwrap();
+    assert_eq!(view.workspaces.len(), 1);
+    assert_eq!(view.workspaces[0].profile_id, "wkp_operator");
+    assert_eq!(view.agents.len(), 2);
+    assert_eq!(view.agents[0].id.as_str(), "agt_admin_deleted");
+    let event = store
+        .append_sandbox_event(&first.id, NOW.into(), SandboxEventKind::Created)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .read_admin_sandbox_events(&first.id, 0, 10)
+            .await
+            .unwrap(),
+        vec![event]
+    );
+    assert_eq!(
+        store
+            .read_admin_sandbox_events(&SandboxId("sbx_missing".into()), 0, 10)
+            .await,
+        Err(SandboxStoreError::NotFound)
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn operator_retirement_uses_the_shared_transaction_and_leaves_agents_for_teardown() {
+    let (client, name, store) = database("retirement").await;
+    let target = sandbox(
+        "sbx_retire",
+        "another-owner",
+        "retire",
+        SandboxStatus::Active,
+        "v1",
+    );
+    store.create_sandbox(target.clone()).await.unwrap();
+    let working = agent(&target, "agt_still_working", AgentStatus::Working);
+    store.create_agent(working.clone()).await.unwrap();
+    let retirement = StoredSandboxRetirement::new(Arc::new(store.clone()));
+
+    let result = retirement.retire(&target.id, NOW.into()).await.unwrap();
+    assert!(result.changed);
+    assert_eq!(result.sandbox.status, SandboxStatus::Retiring);
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap().unwrap().status,
+        AgentStatus::Working
+    );
+    let events = store.sandbox_events(&target.id, 0, 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].kind,
+        SandboxEventKind::StatusChanged {
+            from: SandboxStatus::Active,
+            to: SandboxStatus::Retiring,
+        }
+    );
+    let repeated = retirement.retire(&target.id, NOW.into()).await.unwrap();
+    assert!(!repeated.changed);
+    assert_eq!(
+        store.sandbox_events(&target.id, 0, 10).await.unwrap().len(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}

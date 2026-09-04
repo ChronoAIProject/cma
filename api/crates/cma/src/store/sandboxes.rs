@@ -35,6 +35,19 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        IndexModel::builder()
+            .keys(doc! {
+                "owner": 1,
+                "status": 1,
+                "runtime_version": 1,
+                "_id": 1,
+            })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_operator_inventory".to_string())
+                    .build(),
+            )
+            .build(),
     ]
 }
 
@@ -61,6 +74,9 @@ pub(super) fn sandbox_document(
         "owner": sandbox.owner.as_str(),
         "name": &sandbox.name,
         "status": record_bson(&sandbox.status).map_err(SandboxStoreError::Corrupt)?,
+        "runtime_version": nullable(
+            sandbox.runtime.as_ref().map(|runtime| &runtime.runtime_version)
+        ),
         "updated_at": &sandbox.updated_at,
         "retired_at": nullable(sandbox.retired_at.as_ref()),
         "revision": signed(sandbox.revision, "sandbox revision")
@@ -79,10 +95,17 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
     let revision =
         signed(sandbox.revision, "sandbox revision").map_err(SandboxStoreError::Corrupt)?;
     let status = record_bson(&sandbox.status).map_err(SandboxStoreError::Corrupt)?;
+    let runtime_version = nullable(
+        sandbox
+            .runtime
+            .as_ref()
+            .map(|runtime| &runtime.runtime_version),
+    );
     if !string_field_matches(document, "_id", sandbox.id.as_str())
         || !string_field_matches(document, "owner", sandbox.owner.as_str())
         || !string_field_matches(document, "name", &sandbox.name)
         || document.get("status") != Some(&status)
+        || document.get("runtime_version") != Some(&runtime_version)
         || !string_field_matches(document, "updated_at", &sandbox.updated_at)
         || !i64_field_matches(document, "revision", revision)
         || document.get("retired_at") != Some(&nullable(sandbox.retired_at.as_ref()))
@@ -247,6 +270,19 @@ mod tests {
         assert_eq!(
             indexes[1].keys,
             doc! { "owner": 1, "status": 1, "updated_at": -1 }
+        );
+        assert_eq!(
+            indexes[2].keys,
+            doc! {
+                "owner": 1,
+                "status": 1,
+                "runtime_version": 1,
+                "_id": 1,
+            }
+        );
+        assert_eq!(
+            indexes[2].options.as_ref().unwrap().name.as_deref(),
+            Some("sandboxes_operator_inventory")
         );
     }
 }

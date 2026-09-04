@@ -20,6 +20,7 @@ use axum::{
     Router,
 };
 use layer1_public::rest::HttpProblem;
+use layer2_core::sandbox::{SandboxOperatorService, StoredSandboxRetirement};
 use layer2_core::{ActivityService, OperationStore, PlatformSettingsService, UserDirectory};
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -74,10 +75,15 @@ async fn serve() -> Result<(), String> {
     );
     let activity = ActivityService::new(stores.activity.clone());
     let users = UserDirectory::new(stores.users.clone());
-    // #809 composes these into the Sandbox application services. Opening them
-    // here already enforces indexes and schema compatibility before serving.
-    let _sandbox_model_store = stores.sandbox_model.clone();
-    let _sandbox_profile_store = stores.sandbox_profiles.clone();
+    // #809 composes the owner-facing Sandbox services. Opening the stores here
+    // already enforces indexes and schema compatibility before serving.
+    let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
+    let _sandbox_operators = SandboxOperatorService::new(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+        retirement,
+        Arc::clone(&activity),
+    );
     let _settings = PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity));
     let _operations: Arc<dyn OperationStore> = stores.operations.clone();
     let recorder = ActivityRecorder::new(Arc::clone(&activity));

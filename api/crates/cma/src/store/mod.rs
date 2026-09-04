@@ -19,14 +19,20 @@ mod marketplace_support;
 mod marketplace_visibility;
 pub mod mongo;
 pub mod operation;
+mod operator_profiles;
+mod operator_sandboxes;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
+#[cfg(test)]
+mod profile_operator_mongo_integration_tests;
 mod profiles;
 mod sandbox_events;
 mod sandbox_mongo;
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;
+#[cfg(test)]
+mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_transactions;
 mod sandboxes;
