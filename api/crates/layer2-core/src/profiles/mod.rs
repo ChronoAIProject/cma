@@ -3,6 +3,7 @@
 mod agent;
 mod common;
 mod digest;
+mod marketplace;
 mod sandbox;
 mod validation;
 mod workspace;
@@ -17,6 +18,11 @@ pub use common::{
     AgentProfileRef, ProfileError, ProfileVisibility, SandboxProfileRef, WorkspaceProfileRef,
 };
 pub use digest::content_digest;
+pub use marketplace::{
+    require_trust_confirmation, ForkedProfile, MarketplaceEntry, MarketplaceError, MarketplaceKind,
+    MarketplaceLocator, MarketplacePage, MarketplaceQuery, MarketplaceRevision, MarketplaceService,
+    MarketplaceStore, MarketplaceSummary, ResolvedProfileName, TrustConfirmation,
+};
 pub use sandbox::{
     AgentProvider, EnvironmentVariable, ModelAccess, ProfileCapacityBounds, SandboxProfile,
     SandboxProfileContent, SandboxProfileRevision, SandboxProfileSnapshot,

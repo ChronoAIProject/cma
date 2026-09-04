@@ -12,6 +12,8 @@ fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentP
         name: "Research agent".into(),
         description: "A careful research assistant".into(),
         visibility,
+        forked_from: None,
+        uses_count: 0,
         draft: AgentProfileContent {
             model: Some("gpt-5".into()),
             thinking_effort: ThinkingEffort::High,
@@ -33,6 +35,8 @@ fn workspace_profile(id: &str, owner: &str, agent: AgentProfileRef) -> Workspace
         name: "Research workspace".into(),
         description: String::new(),
         visibility: ProfileVisibility::Private,
+        forked_from: None,
+        uses_count: 0,
         draft: WorkspaceProfileContent {
             location: WorkspaceLocation::GitRepository {
                 url: "https://github.com/the-omega-institute/trureturing".into(),
@@ -56,6 +60,8 @@ fn sandbox_profile(id: &str, owner: &str, workspace: WorkspaceProfileRef) -> San
         name: "Lean research".into(),
         description: String::new(),
         visibility: ProfileVisibility::Public,
+        forked_from: None,
+        uses_count: 0,
         draft: SandboxProfileContent {
             cpu_millis: 2_000,
             memory_mib: 4_096,
@@ -251,5 +257,182 @@ async fn sandbox_publication_resolves_workspace_and_checks_secrets() {
             "secret_like_environment_value",
             "environment_variables"
         ))
+    );
+}
+
+#[tokio::test]
+async fn marketplace_lists_searches_reads_and_pages_public_profiles() {
+    let store = InMemoryProfileStore::default();
+    for (id, name, published_at) in [
+        ("agp_one", "Alpha research", "2026-09-05T00:00:00Z"),
+        ("agp_two", "Beta coding", "2026-09-05T01:00:00Z"),
+    ] {
+        let mut profile = agent_profile(id, "publisher", ProfileVisibility::Public);
+        profile.name = name.into();
+        store.create_agent_profile(profile.clone()).await.unwrap();
+        store
+            .publish_agent_profile(&profile.id, 1, published_at.into())
+            .await
+            .unwrap();
+    }
+    let first = store
+        .list_marketplace(&MarketplaceQuery {
+            limit: 1,
+            ..MarketplaceQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(first.items[0].name, "Beta coding");
+    let second = store
+        .list_marketplace(&MarketplaceQuery {
+            cursor: first.next,
+            limit: 1,
+            ..MarketplaceQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(second.items[0].name, "Alpha research");
+
+    let search = store
+        .list_marketplace(&MarketplaceQuery {
+            text: Some("alpha".into()),
+            ..MarketplaceQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(search.items.len(), 1);
+    let entry = store
+        .read_marketplace(&MarketplaceLocator::Agent(AgentProfileId("agp_one".into())))
+        .await
+        .unwrap();
+    assert!(matches!(entry.revision, MarketplaceRevision::Agent(_)));
+}
+
+#[tokio::test]
+async fn visibility_requires_a_published_valid_revision() {
+    let store = InMemoryProfileStore::default();
+    let profile = agent_profile("agp_one", "owner", ProfileVisibility::Private);
+    store.create_agent_profile(profile.clone()).await.unwrap();
+    let error = store
+        .set_profile_visibility(
+            &profile.owner,
+            &MarketplaceLocator::Agent(profile.id.clone()),
+            ProfileVisibility::Public,
+            NOW.into(),
+            bounds(),
+            &[],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, MarketplaceError::Unpublished);
+    store
+        .publish_agent_profile(&profile.id, 1, NOW.into())
+        .await
+        .unwrap();
+    store
+        .set_profile_visibility(
+            &profile.owner,
+            &MarketplaceLocator::Agent(profile.id.clone()),
+            ProfileVisibility::Public,
+            NOW.into(),
+            bounds(),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .list_marketplace(&MarketplaceQuery::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn fork_copies_revision_into_private_draft_with_provenance() {
+    let store = InMemoryProfileStore::default();
+    let source = agent_profile("agp_source", "publisher", ProfileVisibility::Public);
+    store.create_agent_profile(source.clone()).await.unwrap();
+    store
+        .publish_agent_profile(&source.id, 1, NOW.into())
+        .await
+        .unwrap();
+    let forked = store
+        .fork_profile(
+            &SubjectId("consumer".into()),
+            &MarketplaceLocator::Agent(source.id.clone()),
+            1,
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let ForkedProfile::Agent(forked) = forked else {
+        panic!("wrong fork kind");
+    };
+    assert_eq!(forked.owner, SubjectId("consumer".into()));
+    assert_eq!(forked.visibility, ProfileVisibility::Private);
+    assert_eq!(forked.draft, source.draft);
+    assert_eq!(forked.forked_from, Some(AgentProfileRef::new(source.id, 1)));
+}
+
+#[test]
+fn trust_confirmation_is_bound_to_the_displayed_revision_digest() {
+    let publisher = SubjectId("publisher".into());
+    let consumer = SubjectId("consumer".into());
+    assert_eq!(
+        require_trust_confirmation(&publisher, &consumer, true, "digest-one", None),
+        Err(MarketplaceError::TrustConfirmationRequired {
+            commands_digest: "digest-one".into()
+        })
+    );
+    assert_eq!(
+        require_trust_confirmation(
+            &publisher,
+            &consumer,
+            true,
+            "digest-one",
+            Some("digest-two")
+        ),
+        Err(MarketplaceError::TrustConfirmationMismatch)
+    );
+    assert!(require_trust_confirmation(
+        &publisher,
+        &consumer,
+        true,
+        "digest-one",
+        Some("digest-one")
+    )
+    .is_ok());
+    assert_eq!(
+        require_trust_confirmation(&publisher, &publisher, true, "digest-one", None),
+        Ok(None)
+    );
+}
+
+#[tokio::test]
+async fn retirement_hides_marketplace_but_preserves_revision_snapshot() {
+    let store = InMemoryProfileStore::default();
+    let source = agent_profile("agp_source", "publisher", ProfileVisibility::Public);
+    store.create_agent_profile(source.clone()).await.unwrap();
+    let revision = store
+        .publish_agent_profile(&source.id, 1, NOW.into())
+        .await
+        .unwrap();
+    store
+        .retire_agent_profile(&source.id, &source.owner, "2026-09-06T00:00:00Z".into())
+        .await
+        .unwrap();
+    assert!(store
+        .list_marketplace(&MarketplaceQuery::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(
+        store.agent_profile_revision(&source.id, 1).await.unwrap(),
+        Some(revision)
     );
 }

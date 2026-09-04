@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{SubjectId, WorkspaceProfileId};
 
-use super::common::{validate_metadata, AgentProfileRef, ProfileError, ProfileVisibility};
+use super::common::{
+    validate_metadata, AgentProfileRef, ProfileError, ProfileVisibility, WorkspaceProfileRef,
+};
 use super::content_digest;
 use super::validation::{validate_commands, validate_workspace_name};
 
@@ -109,6 +111,10 @@ pub struct WorkspaceProfile {
     pub name: String,
     pub description: String,
     pub visibility: ProfileVisibility,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<WorkspaceProfileRef>,
+    #[serde(default)]
+    pub uses_count: u64,
     pub draft: WorkspaceProfileContent,
     pub draft_version: u64,
     pub created_at: String,

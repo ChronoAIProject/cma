@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{SandboxProfileId, ServiceId, SubjectId};
 
-use super::common::{validate_metadata, ProfileError, ProfileVisibility, WorkspaceProfileRef};
+use super::common::{
+    validate_metadata, ProfileError, ProfileVisibility, SandboxProfileRef, WorkspaceProfileRef,
+};
 use super::content_digest;
 use super::validation::validate_commands;
 
@@ -168,6 +170,10 @@ pub struct SandboxProfile {
     pub name: String,
     pub description: String,
     pub visibility: ProfileVisibility,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<SandboxProfileRef>,
+    #[serde(default)]
+    pub uses_count: u64,
     pub draft: SandboxProfileContent,
     pub draft_version: u64,
     pub created_at: String,

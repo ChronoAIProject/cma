@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentProfileId, SkillId, SubjectId};
 
-use super::common::{validate_metadata, ProfileError, ProfileVisibility};
+use super::common::{validate_metadata, AgentProfileRef, ProfileError, ProfileVisibility};
 use super::content_digest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +80,10 @@ pub struct AgentProfile {
     pub name: String,
     pub description: String,
     pub visibility: ProfileVisibility,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<AgentProfileRef>,
+    #[serde(default)]
+    pub uses_count: u64,
     pub draft: AgentProfileContent,
     pub draft_version: u64,
     pub created_at: String,
