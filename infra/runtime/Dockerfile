@@ -5,7 +5,7 @@
 # 4 supervisor. The image supplies the one supported agent provider, the tools
 # needed to prepare git workspaces, and the NyxID CLI used through the local
 # credential proxy.
-FROM rust:1.96.1-alpine AS build
+FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY api/ ./
@@ -13,7 +13,7 @@ COPY api/ ./
 RUN cargo build --release --locked --bin layer4-runtime
 
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
-FROM debian:trixie-slim AS runtime
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
 ARG CHRONO_BUILD_SHA=local-unpinned
 LABEL org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
