@@ -10,8 +10,16 @@ mod checkpoints;
 pub mod directory;
 mod durability;
 mod encryption;
+mod marketplace;
+#[cfg(test)]
+mod marketplace_mongo_integration_tests;
+mod marketplace_mutations;
+mod marketplace_query;
+mod marketplace_support;
+mod marketplace_visibility;
 pub mod mongo;
 pub mod operation;
+mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
 mod profiles;

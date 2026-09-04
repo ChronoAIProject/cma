@@ -134,6 +134,10 @@ pub enum MarketplaceError {
     TrustConfirmationMismatch,
     #[error("invalid marketplace page")]
     InvalidPage,
+    #[error("marketplace store unavailable: {0}")]
+    Unavailable(String),
+    #[error("stored marketplace data is not usable: {0}")]
+    Corrupt(String),
 }
 
 #[async_trait]
