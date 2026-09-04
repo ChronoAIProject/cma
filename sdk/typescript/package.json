@@ -14,10 +14,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./testing": {
-      "types": "./dist/testing.d.ts",
-      "import": "./dist/testing.js"
     }
   },
   "scripts": {
@@ -30,9 +26,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
-  "dependencies": {
-    "eventsource-parser": "^4.1.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@eslint/js": "^9.39.0",
     "@types/node": "^22.20.1",

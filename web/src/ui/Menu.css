@@ -30,8 +30,8 @@
   border-radius: 12px;
   box-shadow: var(--dsw-shadow-lv3);
 
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --cma-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --cma-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
 /*

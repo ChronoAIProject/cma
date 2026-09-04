@@ -1,202 +1,212 @@
-//! The record of who has used the service, in MongoDB.
-//!
-//! Keyed by subject, so a person has one entry however many times they sign
-//! in. The write is an update rather than a replace for one reason: the first
-//! time somebody was seen is the fact this collection exists to hold, and a
-//! replace would overwrite it on every sign-in and make everybody look new.
-//!
-//! Nothing here logs a name or an email address. They are details about a
-//! person, and the process log is not where those belong.
+//! MongoDB persistence for the retained public user directory.
 
-use futures_util::TryStreamExt;
+use futures_util::TryStreamExt as _;
 use layer2_core::{
-    store::{StoreError, UserDirectoryStore},
-    DirectoryQuery, RegisteredUser, SubjectId,
+    DirectoryQuery, Page, PublicIdentity, RegisteredUser, StoreError, SubjectId, UserDirectoryStore,
 };
-use mongodb::bson::doc;
-use mongodb::options::{IndexOptions, UpdateOptions};
-use mongodb::{Client, Collection, IndexModel};
+use mongodb::{
+    bson::{doc, DateTime, Document},
+    options::UpdateOptions,
+    Client, Collection, IndexModel,
+};
 use serde::{Deserialize, Serialize};
+
+use super::durability::majority_collection;
 
 const USERS: &str = "users";
 
-/// How a person is shaped on the wire.
-///
-/// A distinct type from the core's model on purpose: the core owns its model
-/// and this owns how it is written. `_id` carries the subject, so the database
-/// enforces one entry per person rather than the application.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserDoc {
     #[serde(rename = "_id")]
     subject: String,
-    #[serde(default)]
     display_name: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-    #[serde(default)]
     avatar_url: Option<String>,
-    first_seen: String,
-    last_seen: String,
+    first_seen_at: String,
+    last_seen_at: String,
+    observed_at: DateTime,
 }
 
-fn from_doc(d: UserDoc) -> RegisteredUser {
-    RegisteredUser {
-        subject: SubjectId(d.subject),
-        display_name: d.display_name,
-        email: d.email,
-        avatar_url: d.avatar_url,
-        first_seen: d.first_seen,
-        last_seen: d.last_seen,
+impl UserDoc {
+    fn into_record(self) -> RegisteredUser {
+        RegisteredUser {
+            identity: PublicIdentity {
+                subject: SubjectId::new(self.subject),
+                display_name: self.display_name,
+                avatar_url: self.avatar_url,
+            },
+            first_seen_at: self.first_seen_at,
+            last_seen_at: self.last_seen_at,
+        }
+    }
+
+    fn cursor(&self) -> String {
+        format!("{}:{}", self.observed_at.timestamp_millis(), self.subject)
     }
 }
 
-/// A MongoDB-backed directory of subjects.
+/// Durable directory adapter keyed by identity-provider subject.
 pub struct MongoUserDirectoryStore {
     users: Collection<UserDoc>,
 }
 
 impl MongoUserDirectoryStore {
-    /// Open the store over an existing connection, ensuring its index exists.
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+        let database = client.database(database);
         let store = Self {
-            users: client.database(database).collection(USERS),
+            users: majority_collection(&database, USERS),
         };
-        store.ensure_indexes().await?;
-        tracing::info!(database, "user directory ready");
-        Ok(store)
-    }
-
-    async fn ensure_indexes(&self) -> Result<(), StoreError> {
-        // The only listing this collection serves: everybody, most recently
-        // seen first.
-        let recent = IndexModel::builder()
-            .keys(doc! { "last_seen": -1 })
-            .options(IndexOptions::builder().build())
-            .build();
-        self.users
-            .create_index(recent)
+        store
+            .users
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "observed_at": -1, "_id": -1 })
+                    .build(),
+            )
             .await
-            .map_err(|e| StoreError::Unavailable(format!("user index: {e}")))?;
-        Ok(())
+            .map_err(|error| StoreError::Unavailable(format!("directory index: {error}")))?;
+        Ok(store)
     }
 }
 
 #[async_trait::async_trait]
 impl UserDirectoryStore for MongoUserDirectoryStore {
-    async fn record_sign_in(&self, user: &RegisteredUser) -> Result<(), StoreError> {
-        // The details the provider released now, and the earliest arrival we
-        // have ever recorded. Splitting the write this way is what keeps
-        // `first_seen` meaning what it says: it is set when the document is
-        // created and never touched again.
-        let update = doc! {
-            "$set": {
-                "display_name": user.display_name.as_deref(),
-                "email": user.email.as_deref(),
-                "avatar_url": user.avatar_url.as_deref(),
-                "last_seen": &user.last_seen,
-            },
-            "$setOnInsert": { "first_seen": &user.first_seen },
-        };
+    async fn observe(&self, identity: &PublicIdentity) -> Result<(), StoreError> {
+        let at = layer2_core::now_rfc3339();
+        let observed_at = DateTime::now();
         self.users
-            .update_one(doc! { "_id": &user.subject.0 }, update)
+            .update_one(
+                doc! { "_id": identity.subject.as_str() },
+                doc! {
+                    "$set": {
+                        "display_name": identity.display_name.as_deref(),
+                        "avatar_url": identity.avatar_url.as_deref(),
+                        "last_seen_at": &at,
+                        "observed_at": observed_at,
+                    },
+                    "$setOnInsert": { "first_seen_at": &at },
+                },
+            )
             .with_options(UpdateOptions::builder().upsert(true).build())
             .await
-            .map_err(|e| StoreError::Unavailable(format!("record sign-in: {e}")))?;
+            .map_err(|error| StoreError::Unavailable(format!("observe directory user: {error}")))?;
         Ok(())
     }
 
-    async fn recent(&self, query: &DirectoryQuery) -> Result<Vec<RegisteredUser>, StoreError> {
-        // The limit goes to the server. Reading the collection and truncating
-        // here would leave the cost this bound exists to remove.
-        let cursor = self
-            .users
-            .find(doc! {})
-            .sort(doc! { "last_seen": -1 })
-            .limit(i64::try_from(query.limit).unwrap_or(i64::MAX))
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("list users: {e}")))?;
-        collect(cursor).await
-    }
-
-    async fn by_subjects(&self, subjects: &[SubjectId]) -> Result<Vec<RegisteredUser>, StoreError> {
-        if subjects.is_empty() {
-            return Ok(Vec::new());
+    async fn list(&self, query: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError> {
+        query
+            .validate()
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        let mut clauses = Vec::<Document>::new();
+        if let Some(text) = query
+            .text
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            let expression = regex_literal(text);
+            clauses.push(doc! {
+                "$or": [
+                    { "_id": { "$regex": &expression, "$options": "i" } },
+                    { "display_name": { "$regex": &expression, "$options": "i" } },
+                ]
+            });
         }
-        // Bounded by what was asked about, and served from the `_id` index the
-        // collection already has.
-        let ids: Vec<&str> = subjects.iter().map(SubjectId::as_str).collect();
-        let cursor = self
+        if let Some(cursor) = query.page.cursor.as_deref() {
+            let (observed_at, subject) = decode_cursor(cursor)?;
+            clauses.push(doc! {
+                "$or": [
+                    { "observed_at": { "$lt": observed_at } },
+                    { "observed_at": observed_at, "_id": { "$lt": subject } },
+                ]
+            });
+        }
+        let filter = match clauses.len() {
+            0 => doc! {},
+            1 => clauses.pop().expect("one clause exists"),
+            _ => doc! { "$and": clauses },
+        };
+        let mut cursor = self
             .users
-            .find(doc! { "_id": { "$in": ids } })
+            .find(filter)
+            .sort(doc! { "observed_at": -1, "_id": -1 })
+            .limit(i64::from(query.page.limit.saturating_add(1)))
             .await
-            .map_err(|e| StoreError::Unavailable(format!("name users: {e}")))?;
-        collect(cursor).await
+            .map_err(|error| StoreError::Unavailable(format!("list directory: {error}")))?;
+        let mut rows = Vec::new();
+        while let Some(row) = cursor
+            .try_next()
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("list directory cursor: {error}")))?
+        {
+            rows.push(row);
+        }
+        let has_more = rows.len() > query.page.limit as usize;
+        if has_more {
+            rows.pop();
+        }
+        let next_cursor = has_more.then(|| {
+            rows.last()
+                .expect("a non-empty overfull page has a retained row")
+                .cursor()
+        });
+        Ok(Page::new(
+            rows.into_iter().map(UserDoc::into_record).collect(),
+            next_cursor,
+        ))
     }
 }
 
-/// Drain a cursor into the core's model.
-async fn collect(mut cursor: mongodb::Cursor<UserDoc>) -> Result<Vec<RegisteredUser>, StoreError> {
-    let mut out = Vec::new();
-    while let Some(d) = cursor
-        .try_next()
-        .await
-        .map_err(|e| StoreError::Unavailable(format!("user cursor: {e}")))?
-    {
-        out.push(from_doc(d));
+fn regex_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(
+            character,
+            '\\' | '.' | '^' | '$' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{' | '}'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
     }
-    Ok(out)
+    escaped
+}
+
+fn decode_cursor(raw: &str) -> Result<(DateTime, &str), StoreError> {
+    let (millis, subject) = raw
+        .split_once(':')
+        .filter(|(_, subject)| !subject.is_empty())
+        .ok_or_else(|| StoreError::Malformed("directory cursor is invalid".into()))?;
+    let millis = millis
+        .parse::<i64>()
+        .map_err(|_| StoreError::Malformed("directory cursor is invalid".into()))?;
+    Ok((DateTime::from_millis(millis), subject))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn doc_for(subject: &str) -> UserDoc {
-        UserDoc {
-            subject: subject.to_string(),
-            display_name: Some("Ada Lovelace".into()),
-            email: Some("ada@example.com".into()),
-            avatar_url: Some("https://pictures.example/ada.png".into()),
-            first_seen: "2026-08-01T00:00:00Z".into(),
-            last_seen: "2026-08-14T00:00:00Z".into(),
-        }
-    }
-
     #[test]
-    fn a_person_reads_back_with_everything_a_surface_needs_to_name_them() {
-        let user = from_doc(doc_for("76fe9d91"));
-        assert_eq!(user.subject, SubjectId("76fe9d91".into()));
-        assert_eq!(user.label(), Some("Ada Lovelace"));
-        assert_eq!(user.first_seen, "2026-08-01T00:00:00Z");
-    }
-
-    #[test]
-    fn a_document_written_before_a_field_existed_still_reads() {
-        // A provider that released no details leaves them absent, and an entry
-        // stored by an older build must not become unreadable.
-        let doc: UserDoc = serde_json::from_str(
-            r#"{"_id":"76fe9d91","first_seen":"2026-01-01T00:00:00Z",
-                "last_seen":"2026-01-02T00:00:00Z"}"#,
-        )
-        .expect("parses");
-        let user = from_doc(doc);
-        assert!(user.display_name.is_none());
-        assert!(user.email.is_none());
-        // Every entry written before pictures were captured is in this shape.
-        // They gain one when their subject next signs in, and until then the
-        // surface draws them without — which is why absence has to read as
-        // absence rather than fail the document.
-        assert!(user.avatar_url.is_none());
-        assert_eq!(user.label(), None);
-    }
-
-    #[test]
-    fn the_subject_is_the_key_so_one_person_has_one_entry() {
-        let json = serde_json::to_value(doc_for("76fe9d91")).expect("serialises");
-        assert_eq!(json["_id"], "76fe9d91");
-        assert!(
-            json.get("subject").is_none(),
-            "the subject is the key, not a second field to disagree with it: {json}"
+    fn storage_shape_preserves_public_identity_and_cursor() {
+        let row = UserDoc {
+            subject: "subject-a".into(),
+            display_name: Some("Ada".into()),
+            avatar_url: None,
+            first_seen_at: "2026-01-01T00:00:00Z".into(),
+            last_seen_at: "2026-01-02T00:00:00Z".into(),
+            observed_at: DateTime::from_millis(42),
+        };
+        let cursor = row.cursor();
+        assert_eq!(
+            decode_cursor(&cursor).unwrap(),
+            (row.observed_at, "subject-a")
         );
+        let record = row.into_record();
+        assert_eq!(record.identity.subject.as_str(), "subject-a");
+        assert_eq!(record.identity.display_name.as_deref(), Some("Ada"));
+    }
+
+    #[test]
+    fn text_search_is_literal() {
+        assert_eq!(regex_literal("a.*[b]"), "a\\.\\*\\[b\\]");
     }
 }

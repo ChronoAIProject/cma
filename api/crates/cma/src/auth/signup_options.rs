@@ -157,7 +157,7 @@ mod tests {
                 .await
                 .expect("serve fake provider");
         });
-        let auth = AuthState::new(
+        let auth = AuthState::in_memory(
             AuthMode::Provider {
                 base_url,
                 client_id: "client".into(),

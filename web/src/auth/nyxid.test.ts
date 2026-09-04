@@ -46,23 +46,21 @@ describe('handleFor', () => {
 describe('what the control plane says a caller may do', () => {
   it('keeps the capabilities it recognises', () => {
     expect(
-      capabilitiesFrom(['read_all_sessions', 'control_any_session', 'configure_platform']),
-    ).toEqual(['read_all_sessions', 'control_any_session', 'configure_platform']);
+      capabilitiesFrom(['read_own_resources', 'manage_own_resources', 'configure_platform']),
+    ).toEqual(['read_own_resources', 'manage_own_resources', 'configure_platform']);
   });
 
   it('drops a name this client does not model', () => {
     // A capability the frontend has no behaviour for is not worth carrying, and
     // keeping the string would invite a comparison that never matches.
-    expect(capabilitiesFrom(['read_all_sessions', 'read_the_future', 7])).toEqual([
-      'read_all_sessions',
-    ]);
+    expect(capabilitiesFrom(['read_activity', 'read_the_future', 7])).toEqual(['read_activity']);
   });
 
   it('reports none when the field is missing or not a list', () => {
     // Fails closed. The worst outcome is a control that is not offered; the
     // alternative is offering one the control plane will refuse.
     expect(capabilitiesFrom(undefined)).toEqual([]);
-    expect(capabilitiesFrom('read_all_sessions')).toEqual([]);
+    expect(capabilitiesFrom('read_activity')).toEqual([]);
     expect(capabilitiesFrom(null)).toEqual([]);
   });
 });
@@ -76,7 +74,7 @@ describe('the identity adapter', () => {
         display_name: 'Shining Wang',
         email: 'shining@aelf.io',
         avatar_url: 'https://example/a.png',
-        capabilities: ['use_own_sessions', 'read_activity_log'],
+        capabilities: ['read_own_resources', 'read_activity'],
       }),
     );
     const state = await createNyxidAuthProvider().current();
@@ -87,7 +85,7 @@ describe('the identity adapter', () => {
       expect(state.user.handle).toBe('Shining Wang');
       expect(state.user.email).toBe('shining@aelf.io');
       expect(state.user.avatarUrl).toBe('https://example/a.png');
-      expect(state.user.capabilities).toEqual(['use_own_sessions', 'read_activity_log']);
+      expect(state.user.capabilities).toEqual(['read_own_resources', 'read_activity']);
     }
   });
 
@@ -135,7 +133,7 @@ describe('the identity adapter', () => {
   });
 
   it('treats a 200 that names no subject as signed out', async () => {
-    // Never an authenticated session with a blank identity.
+    // Never an authenticated identity with a blank subject.
     stubFetch(() => jsonResponse(200, { authenticated: true, subject: '' }));
     expect((await createNyxidAuthProvider().current()).status).toBe('anonymous');
 

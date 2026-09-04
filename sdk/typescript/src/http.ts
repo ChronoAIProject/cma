@@ -9,66 +9,30 @@ import {
 } from './config.js';
 import {
   ApiError,
-  CapabilityRefused,
   CmaError,
-  DeploymentAtCapacity,
   ProtocolError,
   RequestAborted,
-  SessionLimitReached,
   TimeoutError,
   TransportError,
   ValidationError,
 } from './errors.js';
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const DEFAULT_MAX_PAGES = 100;
-const DEFAULT_MAX_ITEMS = 20_000;
-
-/** Smallest page a bounded collection accepts. */
-export const MIN_PAGE_SIZE = 1;
-
-/** Largest page a bounded collection accepts. */
-export const MAX_PAGE_SIZE = 200;
 
 /** Deadline and cancellation controls shared by every operation. */
 export interface OperationOptions {
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
-  /** Correlation id for this complete operation, including pages and reconnects. */
+  /** Correlation id for the complete caller-visible operation. */
   readonly requestId?: string;
 }
 
+/** Options for one HTTP request. */
 export interface RequestOptions extends OperationOptions {
   readonly method?: string;
   readonly body?: unknown;
   readonly headers?: HeadersInit;
   readonly expectedStatus?: number | readonly number[];
-}
-
-declare const continuationBrand: unique symbol;
-
-/** Opaque, route-bound target for the next page returned by CMA. */
-export type PageContinuation = string & { readonly [continuationBrand]: true };
-
-/** Caller-controlled position within one bounded collection. */
-export interface PageRequest {
-  readonly limit?: number;
-  readonly cursor?: string;
-  readonly next?: PageContinuation;
-}
-
-/** One bounded collection response. */
-export interface Page<T> {
-  readonly items: readonly T[];
-  readonly next?: PageContinuation;
-}
-
-/** Resource ceilings for a compatibility operation that aggregates every page. */
-export interface PageWalkOptions extends OperationOptions {
-  /** Maximum responses to accept before refusing an unexpectedly long walk. */
-  readonly maxPages?: number;
-  /** Maximum decoded rows to retain across the complete operation. */
-  readonly maxItems?: number;
 }
 
 interface CompletedResponse {
@@ -89,7 +53,7 @@ export async function requestResponse(
   });
 }
 
-/** Make one JSON request and validate that its body is JSON. */
+/** Make one request whose successful body is JSON. */
 export async function request(
   config: ResolvedConfig,
   path: string,
@@ -101,126 +65,15 @@ export async function request(
     if (response.status === 204) {
       return null;
     }
-    const text = await readText(response, signal);
-    if (text.trim() === '') {
+    const body = await readText(response, signal);
+    if (body.trim() === '') {
       return null;
     }
     try {
-      return JSON.parse(text) as unknown;
+      return JSON.parse(body) as unknown;
     } catch (cause) {
       throw new ProtocolError('success response was not valid JSON', { cause });
     }
-  });
-}
-
-/**
- * Build a bounded collection target without interpreting an opaque continuation.
- *
- * A continuation is already a complete route-bound target and therefore cannot
- * be combined with first-page filters. The server owns everything inside it.
- */
-export function pageTarget(
-  collectionPath: string,
-  page: PageRequest = {},
-  filters: Readonly<Record<string, string | undefined>> = {},
-): string {
-  validateCollectionPath(collectionPath);
-  const hasFilters = Object.values(filters).some((value) => value !== undefined);
-  if (page.next !== undefined) {
-    if (page.limit !== undefined || page.cursor !== undefined || hasFilters) {
-      throw new ValidationError('a pagination continuation cannot be combined with page filters');
-    }
-    return validatePageTarget(page.next, collectionPath);
-  }
-
-  const params = new URLSearchParams();
-  for (const [name, value] of Object.entries(filters)) {
-    if (value !== undefined) {
-      params.set(name, value);
-    }
-  }
-  if (page.limit !== undefined) {
-    if (
-      !Number.isSafeInteger(page.limit) ||
-      page.limit < MIN_PAGE_SIZE ||
-      page.limit > MAX_PAGE_SIZE
-    ) {
-      throw new ValidationError(
-        `page limit must be an integer from ${String(MIN_PAGE_SIZE)} through ${String(MAX_PAGE_SIZE)}`,
-      );
-    }
-    params.set('limit', String(page.limit));
-  }
-  if (page.cursor !== undefined) {
-    if (page.cursor === '') {
-      throw new ValidationError('page cursor must not be empty');
-    }
-    params.set('cursor', page.cursor);
-  }
-  const query = params.toString();
-  return query === '' ? collectionPath : `${collectionPath}?${query}`;
-}
-
-/** Fetch and validate exactly one bounded collection page. */
-export async function requestPage<T>(
-  config: ResolvedConfig,
-  collectionPath: string,
-  target: string,
-  decodePage: (body: unknown) => readonly T[],
-  options: OperationOptions = {},
-): Promise<Page<T>> {
-  validateCollectionPath(collectionPath);
-  const checkedTarget = validatePageTarget(target, collectionPath);
-  return withDeadline(config, options, (signal, requestId) =>
-    fetchPage(config, collectionPath, checkedTarget, decodePage, signal, requestId),
-  );
-}
-
-/** Walk one array collection through the server's RFC 8288 next links. */
-export async function requestPages<T>(
-  config: ResolvedConfig,
-  path: string,
-  decodePage: (body: unknown) => readonly T[],
-  options: PageWalkOptions = {},
-): Promise<readonly T[]> {
-  const collectionPath = path.split('?', 1)[0];
-  if (collectionPath === undefined) {
-    throw new ValidationError('paginated request paths must begin with a slash');
-  }
-  validateCollectionPath(collectionPath);
-  const first = validatePageTarget(path, collectionPath);
-  const maxPages = walkBoundary(options.maxPages, DEFAULT_MAX_PAGES, 'maxPages');
-  const maxItems = walkBoundary(options.maxItems, DEFAULT_MAX_ITEMS, 'maxItems');
-
-  return withDeadline(config, options, async (signal, requestId) => {
-    const visited = new Set<string>();
-    const items: T[] = [];
-    let pages = 0;
-    let next: string | undefined = first;
-    while (next !== undefined) {
-      if (pages >= maxPages) {
-        throw new ProtocolError(`pagination exceeded its ${String(maxPages)}-page boundary`);
-      }
-      if (visited.has(next)) {
-        throw new ProtocolError('pagination repeated a continuation link');
-      }
-      visited.add(next);
-      const page: Page<T> = await fetchPage(
-        config,
-        collectionPath,
-        next,
-        decodePage,
-        signal,
-        requestId,
-      );
-      pages += 1;
-      if (page.items.length > maxItems - items.length) {
-        throw new ProtocolError(`pagination exceeded its ${String(maxItems)}-item boundary`);
-      }
-      items.push(...page.items);
-      next = page.next;
-    }
-    return items;
   });
 }
 
@@ -233,8 +86,8 @@ export async function requestVoid(
   await withDeadline(config, options, async (signal, requestId) => {
     const { response, metadata } = await send(config, path, options, signal, requestId);
     await requireSuccess(response, options.expectedStatus, signal, metadata.requestId);
-    const text = await readText(response, signal);
-    if (text.trim() !== '') {
+    const body = await readText(response, signal);
+    if (body.trim() !== '') {
       throw new ProtocolError(`HTTP ${String(response.status)} unexpectedly carried a body`);
     }
   });
@@ -253,7 +106,7 @@ export async function requestBytes(
   });
 }
 
-/** Execute a fetch-backed operation under one caller-visible deadline. */
+/** Execute a request under one caller-visible deadline and correlation id. */
 export async function withDeadline<T>(
   config: ResolvedConfig,
   options: OperationOptions,
@@ -310,7 +163,11 @@ export async function withOperationDeadline<T>(
   }
 }
 
-/** Race one async boundary against a transport signal without starting it after abort. */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+/** Race one asynchronous boundary against an abort signal. */
 export async function raceWithAbortSignal<T>(
   signal: AbortSignal,
   operation: () => Promise<T>,
@@ -336,15 +193,11 @@ export async function raceWithAbortSignal<T>(
   }
 }
 
-/** Stop a losing async hook before it can advance to the next transport stage. */
+/** Stop work before it can cross another boundary after cancellation. */
 export function throwIfSignalAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw abortError(signal);
   }
-}
-
-function isAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true;
 }
 
 async function send(
@@ -379,58 +232,6 @@ async function send(
   const metadata = await observeResponse(config, response);
   throwIfSignalAborted(signal);
   return { response, metadata };
-}
-
-async function responseJson(response: Response, signal: AbortSignal): Promise<unknown> {
-  const text = await readText(response, signal);
-  if (text.trim() === '') {
-    return null;
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch (cause) {
-    throw new ProtocolError('success response was not valid JSON', { cause });
-  }
-}
-
-function nextPagePath(link: string | null, collectionPath: string): PageContinuation | undefined {
-  if (link === null) {
-    return undefined;
-  }
-  for (const entry of link.split(',')) {
-    const match = /^\s*<([^>]*)>(.*)$/.exec(entry);
-    if (match === null) {
-      if (linkRelations(entry)?.includes('next') === true) {
-        throw new ProtocolError('pagination next link was malformed');
-      }
-      continue;
-    }
-    const target = match[1];
-    const parameters = match[2] ?? '';
-    if (linkRelations(parameters)?.includes('next') !== true) {
-      continue;
-    }
-    if (target === undefined || !target.startsWith(`${collectionPath}?`) || target.includes('#')) {
-      throw new ProtocolError('pagination next link left its collection');
-    }
-    return target as PageContinuation;
-  }
-  return undefined;
-}
-
-function linkRelations(parameters: string): readonly string[] | undefined {
-  const marker = /(?:^|;)\s*rel\s*=/i.exec(parameters);
-  if (marker === null) {
-    return undefined;
-  }
-  const relation = /(?:^|;)\s*rel\s*=\s*(?:"([^"]*)"|([^";\s]+))\s*(?=;|$)/i.exec(parameters);
-  if (relation === null) {
-    throw new ProtocolError('pagination Link header carried a malformed relation');
-  }
-  return (relation[1] ?? relation[2] ?? '')
-    .split(/\s+/)
-    .filter((name) => name !== '')
-    .map((name) => name.toLowerCase());
 }
 
 async function requireSuccess(
@@ -481,59 +282,26 @@ export async function errorFromResponse(
   }
   const code = nonEmptyText(body.code);
   const detail = nonEmptyText(body.detail) ?? nonEmptyText(body.title);
-  const retryAfterMs = retryAfterMilliseconds(response);
   if (detail === undefined) {
     return new ProtocolError(`HTTP ${String(response.status)} problem document carried no detail`);
   }
-
-  if (code === 'capability_unsupported') {
-    const capability = nonEmptyText(body.capability);
-    return capability === undefined
-      ? new ProtocolError('capability_unsupported problem omitted its typed capability field')
-      : new CapabilityRefused(response.status, detail, capability, requestId, retryAfterMs);
-  }
-  if (code === 'session_limit_reached') {
-    return new SessionLimitReached(
-      response.status,
-      detail,
-      nonNegativeInteger(body.limit),
-      nonNegativeInteger(body.live),
-      requestId,
-      retryAfterMs,
-    );
-  }
-  if (code === 'deployment_at_capacity') {
-    return new DeploymentAtCapacity(
-      response.status,
-      detail,
-      nonNegativeInteger(body.requested_cpu_millis),
-      nonNegativeInteger(body.requested_memory_mib),
-      nonNegativeInteger(body.free_cpu_millis),
-      nonNegativeInteger(body.free_memory_mib),
-      requestId,
-      retryAfterMs,
-    );
-  }
-  return new ApiError(response.status, detail, code, requestId, retryAfterMs);
+  return new ApiError(response.status, detail, code, requestId, retryAfterMilliseconds(response));
 }
 
 const MAX_RETRY_AFTER_MS = 2_147_483_647;
 
-/** Parse only a positive RFC Retry-After value that a JavaScript timer can represent. */
 function retryAfterMilliseconds(response: Response): number | undefined {
   const value = response.headers.get('retry-after')?.trim();
   if (value === undefined || value === '') return undefined;
   if (/^[0-9]+$/.test(value)) {
-    const seconds = Number(value);
-    const milliseconds = seconds * 1_000;
+    const milliseconds = Number(value) * 1_000;
     return Number.isSafeInteger(milliseconds) &&
       milliseconds > 0 &&
       milliseconds <= MAX_RETRY_AFTER_MS
       ? milliseconds
       : undefined;
   }
-  const deadline = Date.parse(value);
-  const milliseconds = Math.ceil(deadline - Date.now());
+  const milliseconds = Math.ceil(Date.parse(value) - Date.now());
   return Number.isFinite(milliseconds) && milliseconds > 0 && milliseconds <= MAX_RETRY_AFTER_MS
     ? milliseconds
     : undefined;
@@ -563,9 +331,7 @@ async function readBytes(response: Response, signal?: AbortSignal): Promise<Uint
   try {
     while (true) {
       const { done, value } = await readChunk(reader, signal);
-      if (done) {
-        break;
-      }
+      if (done) break;
       size += value.byteLength;
       if (size > MAX_RESPONSE_BYTES) {
         await reader.cancel();
@@ -617,56 +383,6 @@ async function readChunk(
   });
 }
 
-async function fetchPage<T>(
-  config: ResolvedConfig,
-  collectionPath: string,
-  target: string,
-  decodePage: (body: unknown) => readonly T[],
-  signal: AbortSignal,
-  requestId: string,
-): Promise<Page<T>> {
-  const { response, metadata } = await send(
-    config,
-    target,
-    { expectedStatus: 200 },
-    signal,
-    requestId,
-  );
-  await requireSuccess(response, 200, signal, metadata.requestId);
-  const items = decodePage(await responseJson(response, signal));
-  if (items.length > MAX_PAGE_SIZE) {
-    throw new ProtocolError(
-      `pagination page exceeded the ${String(MAX_PAGE_SIZE)}-item server boundary`,
-    );
-  }
-  const next = nextPagePath(response.headers.get('link'), collectionPath);
-  return next === undefined ? { items } : { items, next };
-}
-
-function validateCollectionPath(path: string): void {
-  if (!path.startsWith('/') || path.startsWith('//') || path.includes('?') || path.includes('#')) {
-    throw new ValidationError('paginated collection paths must be absolute paths without a query');
-  }
-}
-
-function validatePageTarget(target: string, collectionPath: string): string {
-  if (
-    (target !== collectionPath && !target.startsWith(`${collectionPath}?`)) ||
-    target.includes('#')
-  ) {
-    throw new ValidationError('pagination target left its collection');
-  }
-  return target;
-}
-
-function walkBoundary(value: number | undefined, fallback: number, name: string): number {
-  const chosen = value ?? fallback;
-  if (!Number.isSafeInteger(chosen) || chosen <= 0) {
-    throw new ValidationError(`${name} must be a positive safe integer`);
-  }
-  return chosen;
-}
-
 function abortError(signal: AbortSignal): Error {
   return signal.reason instanceof Error
     ? signal.reason
@@ -675,19 +391,13 @@ function abortError(signal: AbortSignal): Error {
 
 function contentLength(response: Response): number | undefined {
   const raw = response.headers.get('content-length');
-  if (raw === null) {
-    return undefined;
-  }
+  if (raw === null) return undefined;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function nonEmptyText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
-function nonNegativeInteger(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function messageOf(cause: unknown): string {

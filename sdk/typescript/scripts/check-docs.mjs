@@ -13,14 +13,10 @@ const expectedRustDocuments = [
   'README.md',
   'authentication.md',
   'errors.md',
-  'operations.md',
   'quickstart.md',
   'reference.md',
-  'sessions.md',
-  'streaming.md',
-  'triggers.md',
 ];
-const expectedTypeScriptDocuments = [...expectedRustDocuments, 'sponsorships.md'].sort();
+const expectedTypeScriptDocuments = [...expectedRustDocuments].sort();
 
 await access(declarations).catch(() => {
   throw new Error('dist/index.d.ts is absent; run npm run build before checking documentation');
@@ -81,8 +77,8 @@ for (const document of rustDocuments) {
   rustNavLabels.add(label);
 }
 
-if (examples.length < 8) {
-  throw new Error(`expected at least eight TypeScript examples, found ${String(examples.length)}`);
+if (examples.length < 4) {
+  throw new Error(`expected at least four TypeScript examples, found ${String(examples.length)}`);
 }
 
 const scratch = await mkdtemp(join(tmpdir(), 'cma-sdk-docs-'));
@@ -107,7 +103,6 @@ try {
     baseUrl: packageRoot,
     paths: {
       '@chronoai/cma-sdk': ['./dist/index.d.ts'],
-      '@chronoai/cma-sdk/testing': ['./dist/testing.d.ts'],
     },
     types: ['node'],
     typeRoots: [join(packageRoot, 'node_modules', '@types')],

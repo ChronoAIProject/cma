@@ -26,7 +26,7 @@ describe('browser compatibility observer', () => {
     const { BROWSER_COMPATIBILITY_COUNTERS } = await subject();
     const paths = BROWSER_COMPATIBILITY_COUNTERS.map(({ path }) => path);
 
-    expect(BROWSER_COMPATIBILITY_COUNTERS).toHaveLength(30);
+    expect(BROWSER_COMPATIBILITY_COUNTERS).toHaveLength(5);
     expect(new Set(paths).size).toBe(paths.length);
     for (const { path } of BROWSER_COMPATIBILITY_COUNTERS) {
       expect(path).toMatch(/^\/__bc\/v1\/[a-z-]+\/[a-z-]+\/[a-z]+$/);
@@ -69,7 +69,7 @@ describe('browser compatibility observer', () => {
     window.__cmaBrowserCompatibilityQueue = [
       ['appearance', 'canonical', 'read-ok'],
       ['appearance', 'canonical', 'read-ok'],
-      ['pending-turn', 'historical-key', 'consumed'],
+      ['retired-preference', 'historical-key', 'consumed'],
       ['appearance', 'historical-key', 'fallback-used', 'stored-value'],
       ['appearance', 'historical-key', 'write-ok'],
       { key: 'appearance', generation: 'canonical', outcome: 'read-ok' },
@@ -82,7 +82,6 @@ describe('browser compatibility observer', () => {
 
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
       '/__bc/v1/appearance/canonical/ro',
-      '/__bc/v1/pending-turn/historical-key/c',
     ]);
     expect('__cmaBrowserCompatibilityQueue' in window).toBe(false);
   });

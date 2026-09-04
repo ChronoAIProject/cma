@@ -2,11 +2,11 @@ import type { ResolvedConfig } from './config.js';
 import { ProtocolError } from './errors.js';
 import { request, type OperationOptions } from './http.js';
 
-/** Protocol classes and exact build served by one CMA deployment. */
+/** Public state exposed while the replacement CMA interfaces are rebuilt. */
 export interface Conformance {
-  readonly conformsTo: readonly string[];
-  readonly version: string;
-  readonly buildSha: string;
+  readonly service: string;
+  readonly status: string;
+  readonly interfaces: readonly string[];
 }
 
 /**
@@ -25,27 +25,24 @@ export async function readConformance(
   );
 }
 
-/** Decode the public discovery document without accepting partial build identity. */
+/** Decode the public discovery document without accepting ambiguous fields. */
 export function toConformance(raw: unknown): Conformance {
   const body = objectOf(raw, 'conformance document');
-  const allowed = new Set(['conformsTo', 'version', 'build_sha']);
+  const allowed = new Set(['service', 'status', 'interfaces']);
   const unexpected = Object.keys(body).find((key) => !allowed.has(key));
   if (unexpected !== undefined) {
     throw new ProtocolError(`conformance document carried unexpected field '${unexpected}'`);
   }
-  if (!Array.isArray(body.conformsTo)) {
-    throw new ProtocolError('conformance document conformsTo was not an array');
+  if (!Array.isArray(body.interfaces)) {
+    throw new ProtocolError('conformance document interfaces was not an array');
   }
-  if (body.conformsTo.length === 0) {
-    throw new ProtocolError('conformance document conformsTo was empty');
-  }
-  const conformsTo = body.conformsTo.map((entry, index) =>
-    nonEmptyText(entry, `conformance document conformsTo[${String(index)}]`),
+  const interfaces = body.interfaces.map((entry, index) =>
+    nonEmptyText(entry, `conformance document interfaces[${String(index)}]`),
   );
   return {
-    conformsTo,
-    version: nonEmptyText(body.version, 'conformance document version'),
-    buildSha: nonEmptyText(body.build_sha, 'conformance document build_sha'),
+    service: nonEmptyText(body.service, 'conformance document service'),
+    status: nonEmptyText(body.status, 'conformance document status'),
+    interfaces,
   };
 }
 

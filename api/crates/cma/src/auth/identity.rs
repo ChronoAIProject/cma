@@ -1,67 +1,72 @@
-//! Accepting an identity another service minted.
-//!
-//! Split from the state so that file is about this service's own sign-in flow
-//! and this one about the other way a caller arrives: holding a token issued
-//! elsewhere in the platform. Its grants, display claims, and delegated value
-//! stay attached to that one request; they are never promoted into renewable
-//! browser state merely because another credential names the same subject.
-//!
-//! The distinction is worth a file because the trust is different. A session
-//! cookie is something this service issued and can revoke; a bearer token is
-//! somebody else's assertion, verified against their keys, and adopted only on
-//! terms this service sets.
+//! Provider verification for credentials CMA did not issue.
 
-use layer2_core::store::StoreError;
+use layer2_core::StoreError;
 
-use super::{AuthState, RequestAuth};
+use super::{permissions, profile::Profile, AuthState, ProviderMetadata, RequestAuth};
 
-impl AuthState {
-    /// Who a bearer token belongs to, asking the provider when necessary.
-    ///
-    /// The provider is the only thing that can answer this. Decoding the token
-    /// here would accept anything shaped like one, and would keep accepting it
-    /// after it had been revoked.
-    pub(super) async fn request_for_bearer(
-        &self,
-        token: String,
-    ) -> Result<Option<RequestAuth>, StoreError> {
-        if let Some((subject, authorization, profile)) = self.bearer.get(&token).await {
-            return Ok(Some(RequestAuth {
-                subject,
-                authorization,
-                profile,
-                delegated_credential: Some(token),
-                credential_is_request_bound: true,
-            }));
-        }
-        let Ok(meta) = self.metadata().await else {
+pub(super) async fn request_for_bearer(
+    auth: &AuthState,
+    token: String,
+) -> Result<Option<RequestAuth>, StoreError> {
+    let metadata = match auth.metadata().await {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            tracing::warn!(error = %error, "could not discover identity provider for bearer verification");
             return Ok(None);
-        };
-        match crate::auth::flow::resolve_subject(self, &meta, &token).await {
-            Ok((subject, permissions, profile)) => {
-                let authorization = crate::permissions::capabilities_from_permissions(&permissions);
-                self.bearer
-                    .remember(
-                        &token,
-                        subject.clone(),
-                        authorization.clone(),
-                        profile.clone(),
-                    )
-                    .await;
-                Ok(Some(RequestAuth {
-                    subject,
-                    authorization,
-                    profile,
-                    delegated_credential: Some(token),
-                    credential_is_request_bound: true,
-                }))
-            }
-            Err(e) => {
-                // Not an error worth a stack trace: an expired or withdrawn
-                // token is an ordinary thing for a client to present.
-                tracing::debug!(error = %e, "a bearer token was not accepted");
-                Ok(None)
-            }
+        }
+    };
+    match resolve_subject(auth, &metadata, &token).await {
+        Ok((subject, permission_names, profile)) => Ok(Some(RequestAuth {
+            subject,
+            authorization: crate::permissions::capabilities_from_permissions(permission_names),
+            profile,
+            delegated_credential: Some(token),
+        })),
+        Err(error) => {
+            tracing::debug!(error = %error, "bearer credential was not accepted");
+            Ok(None)
         }
     }
+}
+
+pub(super) async fn resolve_subject(
+    auth: &AuthState,
+    metadata: &ProviderMetadata,
+    access_token: &str,
+) -> Result<(layer2_core::SubjectId, Vec<String>, Profile), String> {
+    let endpoint = metadata
+        .userinfo_endpoint
+        .as_ref()
+        .ok_or_else(|| "identity provider advertises no userinfo endpoint".to_string())?;
+    let response = auth
+        .http
+        .get(endpoint)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|error| format!("userinfo request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "userinfo returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| format!("userinfo response is invalid: {error}"))?;
+    let subject = body
+        .get("sub")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|subject| !subject.is_empty())
+        .ok_or_else(|| "userinfo response has no subject".to_string())?;
+    let permissions = permissions::introspect_permissions(auth, metadata, access_token)
+        .await?
+        .unwrap_or_else(|| permissions::permissions_claim(&body));
+    Ok((
+        layer2_core::SubjectId::new(subject),
+        permissions,
+        Profile::from_userinfo(&body),
+    ))
 }

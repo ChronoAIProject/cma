@@ -27,57 +27,7 @@ export class ApiError extends CmaError {
 
   /** Whether a later request could plausibly receive a different answer. */
   get isRetryable(): boolean {
-    return (
-      (this.status === 409 && this.code === 'session_rotating') ||
-      this.status === 429 ||
-      this.status >= 500
-    );
-  }
-}
-
-/** The session permanently lacks the named capability. */
-export class CapabilityRefused extends ApiError {
-  constructor(
-    status: number,
-    message: string,
-    readonly capability: string,
-    requestId?: string,
-    retryAfterMs?: number,
-  ) {
-    super(status, message, 'capability_unsupported', requestId, retryAfterMs);
-    this.name = 'CapabilityRefused';
-  }
-}
-
-/** The owner already holds the deployment's maximum live sessions. */
-export class SessionLimitReached extends ApiError {
-  constructor(
-    status: number,
-    message: string,
-    readonly limit?: number,
-    readonly live?: number,
-    requestId?: string,
-    retryAfterMs?: number,
-  ) {
-    super(status, message, 'session_limit_reached', requestId, retryAfterMs);
-    this.name = 'SessionLimitReached';
-  }
-}
-
-/** The deployment has less declared capacity than a creation requests. */
-export class DeploymentAtCapacity extends ApiError {
-  constructor(
-    status: number,
-    message: string,
-    readonly requestedCpuMillis?: number,
-    readonly requestedMemoryMib?: number,
-    readonly freeCpuMillis?: number,
-    readonly freeMemoryMib?: number,
-    requestId?: string,
-    retryAfterMs?: number,
-  ) {
-    super(status, message, 'deployment_at_capacity', requestId, retryAfterMs);
-    this.name = 'DeploymentAtCapacity';
+    return this.status === 429 || this.status >= 500;
   }
 }
 

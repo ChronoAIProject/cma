@@ -1,11 +1,11 @@
 //! Wall-clock timestamps in the one format the model uses.
 //!
-//! Kept separate so the service module stays about sessions, and so the date
+//! Kept separate so service modules stay focused, and so the date
 //! arithmetic is testable on its own. A dedicated date crate would be a
 //! dependency earned by one format string.
 
 /// The current time as RFC 3339 in UTC.
-pub(crate) fn now_rfc3339() -> String {
+pub fn now_rfc3339() -> String {
     rfc3339_at(std::time::SystemTime::now())
 }
 

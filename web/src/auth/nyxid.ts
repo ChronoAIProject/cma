@@ -2,7 +2,7 @@
  * The real identity provider adapter.
  *
  * Sign-in is a full-page navigation to the control plane, which begins the
- * OIDC exchange and comes back having set a session cookie. The browser never
+ * OIDC exchange and comes back having set an identity cookie. The browser never
  * sees a token, which is the property the auth contract exists to preserve:
  * there is no value here that could be written to storage, so no code path can
  * grow into doing it.
@@ -14,8 +14,8 @@
 import type { AuthProvider, AuthState, Capability } from './types';
 import { isCapability } from './types';
 
-/** Where the control plane answers questions about the current session. */
-const SESSION_ENDPOINT = '/auth/session';
+/** Where the control plane answers questions about the current browser identity. */
+const IDENTITY_ENDPOINT = '/auth/session';
 
 /**
  * How long the identity check may take before it is called a failure.
@@ -31,7 +31,7 @@ const LOGIN_ENDPOINT = '/auth/login';
 const LOGOUT_ENDPOINT = '/auth/logout';
 
 /** What the control plane reports for the current cookie. */
-interface SessionResponse {
+interface IdentityResponse {
   authenticated?: unknown;
   subject?: unknown;
   display_name?: unknown;
@@ -85,7 +85,7 @@ export function createNyxidAuthProvider(): AuthProvider {
       let response: Response;
       const timeout = AbortSignal.timeout(IDENTITY_TIMEOUT_MS);
       try {
-        response = await fetch(SESSION_ENDPOINT, {
+        response = await fetch(IDENTITY_ENDPOINT, {
           credentials: 'include',
           signal: timeout,
         });
@@ -108,16 +108,16 @@ export function createNyxidAuthProvider(): AuthProvider {
         return { status: 'error', message: `identity check failed with ${response.status}` };
       }
 
-      let body: SessionResponse;
+      let body: IdentityResponse;
       try {
-        body = (await response.json()) as SessionResponse;
+        body = (await response.json()) as IdentityResponse;
       } catch {
         return { status: 'error', message: 'identity response was not readable' };
       }
 
       if (body.authenticated !== true || typeof body.subject !== 'string' || body.subject === '') {
         // A 200 that does not actually name a subject is treated as signed
-        // out, never as an anonymous session with a blank identity.
+        // out, never as an anonymous identity with a blank subject.
         return { status: 'anonymous' };
       }
 

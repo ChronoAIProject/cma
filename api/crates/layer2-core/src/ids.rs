@@ -1,26 +1,21 @@
-//! Opaque identifiers used across the core.
-//!
-//! Every id is a newtype over a string so that callers cannot accidentally
-//! substitute one kind of id for another.
+//! Opaque identifiers shared by the retained core foundations.
 
 use serde::{Deserialize, Serialize};
 
-macro_rules! opaque_id {
-    ($name:ident, $prefix:literal) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+macro_rules! string_id {
+    ($name:ident, $description:literal) => {
+        #[doc = $description]
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
         pub struct $name(pub String);
 
         impl $name {
-            /// Mint a fresh identifier with a resource-specific prefix.
-            pub fn generate() -> Self {
-                Self(format!(
-                    concat!($prefix, "{}"),
-                    uuid::Uuid::new_v4().simple()
-                ))
+            /// Wrap an identifier supplied by an authoritative upstream.
+            pub fn new(value: impl Into<String>) -> Self {
+                Self(value.into())
             }
 
-            /// Borrow the identifier exactly as it appears on the wire.
+            /// Borrow the underlying identifier.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -34,226 +29,81 @@ macro_rules! opaque_id {
     };
 }
 
-opaque_id!(SandboxId, "sbx_");
-opaque_id!(WorkspaceId, "wks_");
-opaque_id!(WorktreeId, "wkt_");
-opaque_id!(AgentId, "agt_");
-opaque_id!(AgentProfileId, "agp_");
-opaque_id!(WorkspaceProfileId, "wkp_");
-opaque_id!(SandboxProfileId, "sbp_");
+string_id!(SubjectId, "Identifier asserted by the identity provider.");
+string_id!(
+    ServiceId,
+    "Identifier of a service exposed by the identity platform."
+);
+string_id!(
+    SkillId,
+    "Identifier of a skill exposed by the skill catalogue."
+);
 
-/// A service named by the external service catalogue.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ServiceId(pub String);
+macro_rules! generated_id {
+    ($name:ident, $prefix:literal, $description:literal) => {
+        #[doc = $description]
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(pub String);
 
-impl ServiceId {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
+        impl $name {
+            /// Mint a fresh identifier with a resource-specific prefix.
+            pub fn generate() -> Self {
+                Self(format!(
+                    concat!($prefix, "{}"),
+                    uuid::Uuid::new_v4().simple()
+                ))
+            }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
+            /// Borrow the underlying identifier.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
 }
 
-impl std::fmt::Display for ServiceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// A skill named by the external skill catalogue.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SkillId(pub String);
-
-impl SkillId {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for SkillId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Identifier of a session. Stable across an idle to revive cycle.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SessionId(pub String);
-
-impl SessionId {
-    /// Mint a fresh identifier.
-    pub fn generate() -> Self {
-        Self(format!("sesn_{}", uuid::Uuid::new_v4().simple()))
-    }
-
-    /// Borrow the underlying string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Whether this identifier belongs to CMA's deterministic Trigger lane.
-    pub fn is_trigger_managed(&self) -> bool {
-        self.0.starts_with("sesn_trg_")
-    }
-}
-
-impl std::fmt::Display for SessionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// The authenticated principal that owns a session. The core never models a
-/// user directory of its own; this is whatever the identity provider asserts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SubjectId(pub String);
-
-impl SubjectId {
-    /// Borrow the underlying string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for SubjectId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Identifier of a reusable environment bundle.
-///
-/// Minted here rather than by the store so a caller never has to write a
-/// record before it can be referred to, and so two stores cannot disagree on
-/// what an identifier looks like.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EnvironmentProfileId(pub String);
-
-impl EnvironmentProfileId {
-    /// Mint a fresh identifier.
-    pub fn generate() -> Self {
-        Self(format!("envp_{}", uuid::Uuid::new_v4().simple()))
-    }
-
-    /// Borrow the underlying string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Whether this identifier belongs to CMA's deterministic Trigger lane.
-    pub fn is_trigger_managed(&self) -> bool {
-        self.0.starts_with("envp_trg_")
-    }
-}
-
-impl std::fmt::Display for EnvironmentProfileId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Identifier of one sealed price card.
-///
-/// Minted before storage for the same reason as an environment profile id: a
-/// mis-routed identifier is obvious in a log rather than becoming a lookup in
-/// the wrong collection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RateCardId(pub String);
-
-impl RateCardId {
-    /// Mint a fresh identifier.
-    pub fn generate() -> Self {
-        Self(format!("rate_{}", uuid::Uuid::new_v4().simple()))
-    }
-
-    /// Borrow the underlying string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for RateCardId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Selects which runtime implementation backs a session.
-///
-/// Deliberately opaque: the core stores and forwards this value but never
-/// interprets it. Interpretation belongs to the process that wires concrete
-/// runtime implementations together.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct KernelId(pub String);
-
-impl KernelId {
-    /// Whether this names nothing.
-    ///
-    /// The default is empty rather than a kernel, because which kernels exist
-    /// is not this layer's to know. Something that does know fills it in.
-    pub fn is_unset(&self) -> bool {
-        self.0.trim().is_empty()
-    }
-
-    /// Wrap a selector string.
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// Borrow the underlying string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for KernelId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
+generated_id!(SandboxId, "sbx_", "Identifier of a CMA Sandbox.");
+generated_id!(WorkspaceId, "wks_", "Identifier of a CMA Workspace.");
+generated_id!(WorktreeId, "wkt_", "Identifier of a CMA Worktree.");
+generated_id!(AgentId, "agt_", "Identifier of a CMA Agent.");
+generated_id!(AgentProfileId, "agp_", "Identifier of an Agent Profile.");
+generated_id!(
+    WorkspaceProfileId,
+    "wkp_",
+    "Identifier of a Workspace Profile."
+);
+generated_id!(SandboxProfileId, "sbp_", "Identifier of a Sandbox Profile.");
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn generated_session_ids_are_unique_and_prefixed() {
-        let a = SessionId::generate();
-        let b = SessionId::generate();
-        assert_ne!(a, b, "two generated ids must differ");
-        assert!(a.as_str().starts_with("sesn_"), "got {a}");
+    fn identifiers_keep_their_type_and_wire_value() {
+        let subject = SubjectId::new("subject-a");
+        let service = ServiceId::new("api-github");
+        let skill = SkillId::new("lean-research");
+
+        assert_eq!(subject.as_str(), "subject-a");
+        assert_eq!(service.to_string(), "api-github");
+        assert_eq!(serde_json::to_string(&skill).unwrap(), "\"lean-research\"");
     }
 
     #[test]
-    fn selector_round_trips_through_its_accessor() {
-        let id = KernelId::new("example-runtime");
-        assert_eq!(id.as_str(), "example-runtime");
-        assert_eq!(id.to_string(), "example-runtime");
-    }
-
-    #[test]
-    fn generated_profile_ids_are_unique_and_prefixed() {
-        // The prefix is what makes a mis-routed identifier obvious in a log
-        // rather than a silent lookup against the wrong collection.
-        let a = EnvironmentProfileId::generate();
-        let b = EnvironmentProfileId::generate();
-        assert_ne!(a, b, "two generated ids must differ");
-        assert!(a.as_str().starts_with("envp_"), "got {a}");
-    }
-
-    #[test]
-    fn generated_rate_card_ids_are_unique_and_prefixed() {
-        let a = RateCardId::generate();
-        let b = RateCardId::generate();
-        assert_ne!(a, b, "two generated ids must differ");
-        assert!(a.as_str().starts_with("rate_"), "got {a}");
+    fn generated_resource_identifiers_use_distinct_prefixes() {
+        assert!(SandboxId::generate().as_str().starts_with("sbx_"));
+        assert!(WorkspaceId::generate().as_str().starts_with("wks_"));
+        assert!(WorktreeId::generate().as_str().starts_with("wkt_"));
+        assert!(AgentId::generate().as_str().starts_with("agt_"));
+        assert!(AgentProfileId::generate().as_str().starts_with("agp_"));
+        assert!(WorkspaceProfileId::generate().as_str().starts_with("wkp_"));
+        assert!(SandboxProfileId::generate().as_str().starts_with("sbp_"));
     }
 }
