@@ -38,6 +38,7 @@ import {
   readSessionResources,
   readSessionSpend,
   resetChatEnvironment as requestChatEnvironmentReset,
+  TimeoutError,
 } from './api/client';
 import {
   abilitiesFor,
@@ -93,7 +94,7 @@ interface ConsoleProps {
 }
 
 const CHAT_CREATE_GATEWAY_TIMEOUT = 524;
-const CHAT_CREATE_RECOVERY_WINDOW_MS = 90_000;
+const CHAT_CREATE_RECOVERY_WINDOW_MS = 300_000;
 const CHAT_CREATE_RECOVERY_POLL_MS = 2_000;
 
 type PendingChatCreation =
@@ -114,10 +115,10 @@ function omitSessionIds<T>(
 }
 
 /**
- * Cloudflare can stop waiting before a cold Chat host finishes provisioning,
- * while the admitted origin request continues and durably creates its thread.
- * Reconcile that one ambiguous gateway outcome against the owner's Chat list
- * so the UI never reports that nothing was created when the thread exists.
+ * A browser or gateway can stop waiting before a cold Chat host finishes
+ * provisioning, while the admitted origin request continues and durably
+ * creates its thread. Reconcile that ambiguous outcome against the owner's
+ * Chat list so the UI never reports that nothing was created when it exists.
  */
 async function recoverTimedOutChat(knownIds: ReadonlySet<string>): Promise<Session | null> {
   const deadline = Date.now() + CHAT_CREATE_RECOVERY_WINDOW_MS;
@@ -129,7 +130,7 @@ async function recoverTimedOutChat(knownIds: ReadonlySet<string>): Promise<Sessi
         return created;
       }
     } catch {
-      // The original 524 remains the useful error if reconciliation also fails.
+      // The original timeout remains the useful error if reconciliation also fails.
     }
     await wait(CHAT_CREATE_RECOVERY_POLL_MS);
   }
@@ -541,7 +542,10 @@ export function Console({
       setSessions((previous) => [session, ...previous]);
       select(session.id);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === CHAT_CREATE_GATEWAY_TIMEOUT) {
+      const creationOutcomeIsAmbiguous =
+        cause instanceof TimeoutError ||
+        (cause instanceof ApiError && cause.status === CHAT_CREATE_GATEWAY_TIMEOUT);
+      if (creationOutcomeIsAmbiguous) {
         setPendingChatCreation({
           kind: 'preparing',
           message: 'The sandbox is taking longer than usual. Checking for your new Chat.',
@@ -566,6 +570,14 @@ export function Console({
                 ? 'The timed-out request could not be reconciled with your Chats.'
                 : 'No Chat was created.',
             code: cause.code ?? (cause.status > 0 ? `HTTP ${String(cause.status)}` : undefined),
+          },
+        });
+      } else if (cause instanceof TimeoutError) {
+        setPendingChatCreation({
+          kind: 'failed',
+          notice: {
+            failed: `Starting a Chat timed out. ${cause.message}`,
+            unchanged: 'The timed-out request could not be reconciled with your Chats.',
           },
         });
       } else {

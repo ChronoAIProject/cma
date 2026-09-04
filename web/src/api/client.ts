@@ -67,6 +67,7 @@ export {
   CapabilityRefused,
   DeploymentAtCapacity,
   SessionLimitReached,
+  TimeoutError,
   TransportError,
   toSession,
 } from '@chronoai/cma-sdk';

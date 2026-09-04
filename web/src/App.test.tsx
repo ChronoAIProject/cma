@@ -8,6 +8,7 @@ import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
 import { capturePendingTurn } from './auth/pendingTurn';
 import type { AuthProvider } from './auth/types';
+import { TimeoutError } from '@chronoai/cma-sdk';
 
 /**
  * The console talks to the control plane, so these tests stand one up.
@@ -146,6 +147,7 @@ let allowanceReads = 0;
 let reviveProblem: { readonly status: number; readonly body: unknown } | null = null;
 let chatCapability = false;
 let chatProblem: { readonly status: number; readonly body: Record<string, unknown> } | null = null;
+let chatTimesOut = false;
 let chatCreatedDespiteProblem = false;
 let chatCreateWaiter: Promise<void> | null = null;
 let chatRecoveryListWaiter: Promise<void> | null = null;
@@ -213,6 +215,7 @@ beforeEach(() => {
   reviveProblem = null;
   chatCapability = false;
   chatProblem = null;
+  chatTimesOut = false;
   chatCreatedDespiteProblem = false;
   chatCreateWaiter = null;
   chatRecoveryListWaiter = null;
@@ -355,6 +358,13 @@ beforeEach(() => {
         creationBodies.push(body);
         if (body.surface === 'chat' && chatCreateWaiter !== null) {
           await chatCreateWaiter;
+        }
+        if (body.surface === 'chat' && chatTimesOut) {
+          if (chatCreatedDespiteProblem) {
+            created += 1;
+            listing = [chatSession(`chat_${String(created)}`, 'ready'), ...listing];
+          }
+          throw new TimeoutError(30_000);
         }
         if (body.surface === 'chat' && chatProblem !== null) {
           if (chatCreatedDespiteProblem) {
@@ -666,6 +676,31 @@ describe('App', () => {
     expect(await screen.findByRole('tab', { name: /chat_1-worktree/ })).toBeInTheDocument();
     expect(screen.queryByText(/timed-out request could not be reconciled/i)).toBeNull();
     expect(screen.queryByText(/origin did not return a complete response/i)).toBeNull();
+    expect(creationBodies).toEqual([{ surface: 'chat' }]);
+    expect(sessionListSurfaces.filter((surface) => surface === 'chat')).toHaveLength(2);
+  });
+
+  it('recovers a Chat whose cold start outlives the browser SDK timeout', async () => {
+    chatCapability = true;
+    chatTimesOut = true;
+    chatCreatedDespiteProblem = true;
+    let releaseRecovery!: () => void;
+    chatRecoveryListWaiter = new Promise((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+    await user.click(screen.getByRole('button', { name: 'New Chat' }));
+
+    expect(await screen.findByText(/sandbox is taking longer than usual/i)).toBeInTheDocument();
+    expect(screen.getByText('New Chat / Preparing')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New Chat' })).toBeDisabled();
+    releaseRecovery();
+    expect(await screen.findByRole('tab', { name: /chat_1-worktree/ })).toBeInTheDocument();
+    expect(screen.queryByText(/timed-out request could not be reconciled/i)).toBeNull();
+    expect(screen.queryByText(/request exceeded its 30000ms timeout/i)).toBeNull();
     expect(creationBodies).toEqual([{ surface: 'chat' }]);
     expect(sessionListSurfaces.filter((surface) => surface === 'chat')).toHaveLength(2);
   });
