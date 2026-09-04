@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::profiles::store::{ProfileStoreError, WorkspaceProfileStore};
+use crate::profiles::store::{ProfileStoreError, ProfileUseRecorder, WorkspaceProfileStore};
 use crate::profiles::{
-    content_digest, require_trust_confirmation, MarketplaceError, MarketplaceLocator,
-    MarketplaceStore, ProfileVisibility, WorkspaceLocation, WorkspaceProfileRef,
-    WorkspaceProfileRevision, WorkspaceProfileSnapshot,
+    require_trust_confirmation, MarketplaceError, MarketplaceLocator, ProfileVisibility,
+    WorkspaceLocation, WorkspaceProfileRef, WorkspaceProfileRevision, WorkspaceProfileSnapshot,
 };
 use crate::{now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
 
+use super::service_trust::{validate_workspace_profile, validate_workspace_revision};
 use super::store::{
     Page, PageRequest, SandboxStoreError, WorkspaceAdmission, WorkspaceAdmissionKind,
     WorkspaceAdmissionResult, WorkspaceServiceStore,
@@ -45,8 +45,6 @@ pub enum WorkspaceServiceError {
     HasLiveAgents,
     #[error("trust confirmation required for digest {digest}")]
     TrustConfirmationRequired { digest: String },
-    #[error("trust confirmation does not match the workspace profile revision")]
-    TrustConfirmationMismatch,
     #[error("workspace profile is invalid: {0}")]
     InvalidProfile(String),
     #[error("workspace provisioning origin conflicts with an existing workspace")]
@@ -68,7 +66,6 @@ impl WorkspaceServiceError {
             Self::LimitReached { .. } => "workspace_limit_reached",
             Self::HasLiveAgents => "workspace_has_live_agents",
             Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
-            Self::TrustConfirmationMismatch => "trust_confirmation_mismatch",
             Self::InvalidProfile(_) => "workspace_profile_invalid",
             Self::OriginConflict => "workspace_origin_conflict",
             Self::Corrupt(_) => "stored_workspace_corrupt",
@@ -77,22 +74,36 @@ impl WorkspaceServiceError {
     }
 }
 
-pub trait WorkspaceProfileServiceStore: WorkspaceProfileStore + MarketplaceStore {}
-
-impl<T> WorkspaceProfileServiceStore for T where T: WorkspaceProfileStore + MarketplaceStore {}
-
 pub struct WorkspaceService {
     store: Arc<dyn WorkspaceServiceStore>,
-    profiles: Arc<dyn WorkspaceProfileServiceStore>,
+    profiles: Arc<dyn WorkspaceProfileStore>,
+    profile_uses: Arc<dyn ProfileUseRecorder>,
 }
 
 impl WorkspaceService {
     pub fn new<S, P>(store: Arc<S>, profiles: Arc<P>) -> Arc<Self>
     where
         S: WorkspaceServiceStore + 'static,
-        P: WorkspaceProfileServiceStore + 'static,
+        P: WorkspaceProfileStore + ProfileUseRecorder + 'static,
     {
-        Arc::new(Self { store, profiles })
+        let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
+        let profile_uses: Arc<dyn ProfileUseRecorder> = profiles;
+        Self::with_dependencies(store, workspace_profiles, profile_uses)
+    }
+
+    pub(crate) fn with_dependencies<S>(
+        store: Arc<S>,
+        profiles: Arc<dyn WorkspaceProfileStore>,
+        profile_uses: Arc<dyn ProfileUseRecorder>,
+    ) -> Arc<Self>
+    where
+        S: WorkspaceServiceStore + 'static,
+    {
+        Arc::new(Self {
+            store,
+            profiles,
+            profile_uses,
+        })
     }
 
     pub async fn create(
@@ -209,14 +220,14 @@ impl WorkspaceService {
         match result {
             WorkspaceAdmissionResult::Existing(workspace) => Ok(workspace),
             WorkspaceAdmissionResult::Created(workspace) => {
-                if let Err(error) = self
-                    .profiles
-                    .increment_profile_use(&MarketplaceLocator::Workspace(
-                        workspace.profile.id.clone(),
-                    ))
-                    .await
-                {
-                    tracing::warn!(workspace_id = %workspace.id, %error, "workspace profile use count update deferred");
+                let locator = MarketplaceLocator::Workspace(workspace.profile.id.clone());
+                if let Err(error) = self.profile_uses.record_profile_use(&locator).await {
+                    tracing::warn!(
+                        workspace_id = %workspace.id,
+                        profile_id = locator.as_str(),
+                        %error,
+                        "workspace profile use was not recorded"
+                    );
                 }
                 Ok(workspace)
             }
@@ -233,12 +244,13 @@ impl WorkspaceService {
             .workspace_profile(&reference.id)
             .await
             .map_err(profile_error)?
-            .filter(|profile| {
-                profile.retired_at.is_none()
-                    && (&profile.owner == consumer
-                        || profile.visibility == ProfileVisibility::Public)
-            })
             .ok_or(WorkspaceServiceError::ProfileNotFound)?;
+        validate_workspace_profile(reference, &profile).map_err(profile_error)?;
+        if profile.retired_at.is_some()
+            || (&profile.owner != consumer && profile.visibility != ProfileVisibility::Public)
+        {
+            return Err(WorkspaceServiceError::ProfileNotFound);
+        }
         let revision = self.exact_revision(reference).await?;
         Ok((profile.owner, revision))
     }
@@ -253,20 +265,7 @@ impl WorkspaceService {
             .await
             .map_err(profile_error)?
             .ok_or(WorkspaceServiceError::ProfileNotFound)?;
-        let digest = content_digest(&revision.content)
-            .map_err(|error| WorkspaceServiceError::Corrupt(error.to_string()))?;
-        if revision.profile_id != reference.id
-            || revision.revision != reference.revision
-            || revision.digest != digest
-        {
-            return Err(WorkspaceServiceError::Corrupt(
-                "workspace profile revision identity or digest does not match".into(),
-            ));
-        }
-        revision
-            .content
-            .validate()
-            .map_err(|error| WorkspaceServiceError::Corrupt(error.to_string()))?;
+        validate_workspace_revision(reference, &revision).map_err(profile_error)?;
         Ok(revision)
     }
 
@@ -353,9 +352,6 @@ fn trust_error(error: MarketplaceError) -> WorkspaceServiceError {
                 digest: commands_digest,
             }
         }
-        MarketplaceError::TrustConfirmationMismatch => WorkspaceServiceError::Unavailable(
-            "trust confirmation does not match the current workspace profile digest".into(),
-        ),
         other => WorkspaceServiceError::Unavailable(other.to_string()),
     }
 }
