@@ -7,6 +7,7 @@ mod health;
 mod permissions;
 mod profile_policy;
 mod rate_limit;
+mod sandbox;
 mod store;
 
 use std::{net::SocketAddr, sync::Arc};
@@ -21,8 +22,10 @@ use axum::{
     Router,
 };
 use layer1_public::rest::{profiles_router, HttpProblem, ProfilesState};
-use layer2_core::sandbox::{SandboxOperatorService, StoredSandboxRetirement};
-use layer2_core::{ActivityService, OperationStore, PlatformSettingsService, UserDirectory};
+use layer2_core::{
+    sandbox::{SandboxOperatorService, SandboxService, StoredSandboxRetirement},
+    ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
+};
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -31,10 +34,11 @@ use tracing::Level;
 
 use crate::{
     activity::ActivityRecorder,
-    auth::{AuthState, SignInRecords},
+    auth::{keys::KeyIssuer, AuthMode, AuthState, SignInRecords},
     config::Config,
     profile_policy::profile_route_policy,
     rate_limit::RateLimiters,
+    sandbox::{LiveSandboxPolicy, ManagedSandboxCredentials},
     store::{DefaultProfileSpec, MongoStores},
 };
 
@@ -105,6 +109,15 @@ async fn serve() -> Result<(), String> {
         stores.settings.clone(),
         Arc::clone(&activity),
     ));
+    let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
+        Arc::clone(&settings),
+        config.baseline_services.clone(),
+    ));
+    let _sandbox_service = SandboxService::with_policy_source(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+        sandbox_policy,
+    );
     let admin = layer1_public::rest::admin::AdminState::new(
         Arc::clone(&settings),
         sandbox_operators,
@@ -124,6 +137,22 @@ async fn serve() -> Result<(), String> {
         stores.auth.clone(),
         config.nyxid_public_url.clone(),
     );
+    let _sandbox_credentials = match &config.auth_mode {
+        AuthMode::Provider { base_url, .. } => Some(ManagedSandboxCredentials::new(
+            Arc::new(KeyIssuer::new(
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(15))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .expect("the rustls HTTP client builds"),
+                base_url,
+                &config.deployment_id,
+            )),
+            Arc::clone(&auth),
+            Arc::clone(&stores.sandbox_credentials),
+        )),
+        AuthMode::Trusted { .. } => None,
+    };
     if !auth.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; this mode is for local development only"

@@ -37,8 +37,13 @@ impl SandboxStatus {
                     Self::Active,
                     Self::Pausing | Self::Rotating | Self::Retiring
                 )
+                | (Self::Provisioning | Self::Installing, Self::Retiring)
                 | (Self::Pausing, Self::Paused)
                 | (Self::Paused, Self::Reviving | Self::Retiring)
+                | (
+                    Self::Pausing | Self::Reviving | Self::Rotating,
+                    Self::Retiring
+                )
                 | (Self::Reviving | Self::Rotating, Self::Active)
                 | (Self::Retiring, Self::Retired)
         ) || (!matches!(self, Self::Failed | Self::Retired) && next == Self::Failed)

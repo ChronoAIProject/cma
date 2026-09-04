@@ -147,6 +147,26 @@ impl AuthState {
         matches!(self.mode, AuthMode::Provider { .. })
     }
 
+    /// Resolve and, when possible, refresh the owner's bearer for background
+    /// resource credential operations. The value never enters a resource aggregate.
+    pub(crate) async fn delegated_credential_for(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Option<persistence::SecretValue>, StoreError> {
+        let Some(mut state) = self.store.subject(subject).await? else {
+            return Ok(None);
+        };
+        if &state.subject != subject {
+            return Err(StoreError::Malformed(
+                "subject credential crossed its identity boundary".into(),
+            ));
+        }
+        refresh::refresh_if_needed(self, &mut state).await?;
+        Ok(state.tokens.and_then(|tokens| {
+            (tokens.expires_at > SystemTime::now()).then_some(tokens.access_token)
+        }))
+    }
+
     pub(super) fn secure_cookies(&self) -> bool {
         matches!(
             &self.mode,

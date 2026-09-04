@@ -69,3 +69,37 @@ fn secret_diagnostics_do_not_reveal_new_key_values() {
     .unwrap();
     assert!(!format!("{minted:?}").contains("secret-value"));
 }
+
+#[test]
+fn revocation_accepts_only_provider_confirmed_success() {
+    assert!(revoke_status(204).is_ok());
+    assert!(matches!(
+        revoke_status(404),
+        Err(KeyIssuerError::Refused(404))
+    ));
+    assert!(matches!(
+        revoke_status(401),
+        Err(KeyIssuerError::Refused(401))
+    ));
+    assert!(matches!(
+        revoke_status(503),
+        Err(KeyIssuerError::Refused(503))
+    ));
+}
+
+#[test]
+fn provider_key_ids_cannot_escape_the_revoke_path() {
+    assert!(valid_provider_key_id("key_123.example"));
+    for invalid in ["", "../key", "key?admin=true", "key/value", " key"] {
+        assert!(!valid_provider_key_id(invalid));
+    }
+
+    let mut response = valid_response();
+    response.id = "key/another-path".into();
+    assert!(minted_key_from_response(
+        response,
+        &["service-a".into(), "service-b".into()],
+        SystemTime::UNIX_EPOCH,
+    )
+    .is_none());
+}

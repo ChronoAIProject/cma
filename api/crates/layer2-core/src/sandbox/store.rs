@@ -52,6 +52,8 @@ pub enum SandboxStoreError {
     Conflict,
     #[error("event sequence would not be gap-free")]
     SequenceConflict,
+    #[error("sandbox limit reached: {live} of {limit}")]
+    LimitReached { limit: u16, live: u16 },
     #[error("invalid page request")]
     InvalidPage,
     #[error("transaction invariant failed: {0}")]
@@ -143,6 +145,52 @@ pub trait SandboxEventStore: Send + Sync {
     ) -> Result<Vec<SandboxEvent>, SandboxStoreError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxAdmissionName {
+    Exact(String),
+    Allocate(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct SandboxAdmission {
+    pub sandbox: Sandbox,
+    pub name: SandboxAdmissionName,
+    pub live_limit: u16,
+    pub event_at: String,
+}
+
+/// Atomic live-limit admission, name allocation, aggregate insert and Created event.
+#[async_trait]
+pub trait SandboxAdmissionStore: Send + Sync {
+    async fn admit_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<Sandbox, SandboxStoreError>;
+}
+
+/// Durable lifecycle work discovery, lease fencing and terminal purge.
+#[async_trait]
+pub trait SandboxWorkerStore: Send + Sync {
+    async fn due_sandbox_work(
+        &self,
+        now: &str,
+        limit: u16,
+    ) -> Result<Vec<SandboxId>, SandboxStoreError>;
+    async fn claim_sandbox_work(
+        &self,
+        id: &SandboxId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Sandbox>, SandboxStoreError>;
+    async fn purge_sandbox(
+        &self,
+        id: &SandboxId,
+        expected_revision: u64,
+        now: &str,
+    ) -> Result<(), SandboxStoreError>;
+}
+
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
     async fn append_agent_log(
@@ -162,14 +210,14 @@ pub trait AgentLogStore: Send + Sync {
 #[derive(Debug, Clone)]
 pub enum SandboxTransaction {
     CreateWorktreeAndAgent {
-        worktree: Worktree,
-        agent: Agent,
+        worktree: Box<Worktree>,
+        agent: Box<Agent>,
         event_at: String,
         event: SandboxEventKind,
     },
     SaveSandboxAndAppend {
         expected_revision: u64,
-        sandbox: Sandbox,
+        sandbox: Box<Sandbox>,
         event_at: String,
         event: SandboxEventKind,
     },
@@ -178,6 +226,26 @@ pub enum SandboxTransaction {
 #[async_trait]
 pub trait SandboxTransactionStore: Send + Sync {
     async fn commit(&self, transaction: SandboxTransaction) -> Result<(), SandboxStoreError>;
+}
+
+pub trait SandboxServiceStore:
+    SandboxStore + SandboxEventStore + SandboxAdmissionStore + SandboxTransactionStore
+{
+}
+
+impl<T> SandboxServiceStore for T where
+    T: SandboxStore + SandboxEventStore + SandboxAdmissionStore + SandboxTransactionStore
+{
+}
+
+pub trait SandboxLifecycleStore:
+    SandboxStore + SandboxEventStore + SandboxTransactionStore + SandboxWorkerStore
+{
+}
+
+impl<T> SandboxLifecycleStore for T where
+    T: SandboxStore + SandboxEventStore + SandboxTransactionStore + SandboxWorkerStore
+{
 }
 
 #[derive(Clone, Default)]

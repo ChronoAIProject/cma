@@ -13,11 +13,14 @@ use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
 use super::persistence::SecretValue;
+pub(crate) use identifiers::valid_provider_key_id;
+use identifiers::{credential_of, key_name, validate_credential_id};
+
+mod identifiers;
 
 const KEYS_PATH: &str = "/api/v1/api-keys";
 const SERVICES_PATH: &str = "/api/v1/services";
 const USER_SERVICES_PATH: &str = "/api/v1/user-services";
-const KEY_NAME_PREFIX: &str = "cma";
 const KEY_SCOPES: &str = "proxy read";
 const KEY_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const PROVIDER_KEY_LIST_MAX_BYTES: usize = 1024 * 1024;
@@ -217,6 +220,9 @@ impl KeyIssuer {
 
     /// Revoke a provider key using the authority of its owning account.
     pub async fn revoke(&self, id: &str, owner_token: &str) -> Result<(), KeyIssuerError> {
+        if !valid_provider_key_id(id) {
+            return Err(KeyIssuerError::UnexpectedAuthority);
+        }
         let response = self
             .http
             .delete(format!("{}{KEYS_PATH}/{id}", self.base_url))
@@ -227,11 +233,7 @@ impl KeyIssuer {
                 // Transport diagnostics can contain the provider key in the URL.
                 KeyIssuerError::Unavailable("key revocation request failed".into())
             })?;
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(KeyIssuerError::Refused(response.status().as_u16()))
-        }
+        revoke_status(response.status().as_u16())
     }
 
     /// List the platform catalogue as the owner who will use it.
@@ -305,10 +307,13 @@ impl KeyIssuer {
         Ok(rows
             .into_iter()
             .filter_map(|row| {
-                credential_of(&self.deployment, &row.name).map(|credential_id| OwnedKey {
-                    id: row.id,
-                    credential_id,
-                })
+                (valid_provider_key_id(&row.id))
+                    .then(|| credential_of(&self.deployment, &row.name))
+                    .flatten()
+                    .map(|credential_id| OwnedKey {
+                        id: row.id,
+                        credential_id,
+                    })
             })
             .collect())
     }
@@ -365,31 +370,12 @@ impl KeyIssuer {
     }
 }
 
-fn validate_credential_id(value: &str) -> Result<(), KeyIssuerError> {
-    if value.is_empty()
-        || value.len() > 128
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
-        Err(KeyIssuerError::InvalidCredentialId)
-    } else {
+fn revoke_status(status: u16) -> Result<(), KeyIssuerError> {
+    if (200..300).contains(&status) {
         Ok(())
+    } else {
+        Err(KeyIssuerError::Refused(status))
     }
-}
-
-fn key_name(deployment: &str, credential_id: &str) -> Result<String, KeyIssuerError> {
-    validate_credential_id(deployment)?;
-    validate_credential_id(credential_id)?;
-    Ok(format!("{KEY_NAME_PREFIX}:{deployment}:{credential_id}"))
-}
-
-fn credential_of(deployment: &str, name: &str) -> Option<String> {
-    let prefix = format!("{KEY_NAME_PREFIX}:{deployment}:");
-    let credential_id = name.strip_prefix(&prefix)?;
-    validate_credential_id(credential_id)
-        .is_ok()
-        .then(|| credential_id.to_owned())
 }
 
 fn key_expiry(now: SystemTime) -> SystemTime {
@@ -461,7 +447,7 @@ fn minted_key_from_response(
 ) -> Option<MintedKey> {
     let expected = normalized_identifiers(expected_service_ids)?;
     let returned = normalized_identifiers(&response.allowed_service_ids)?;
-    if response.id.trim().is_empty()
+    if !valid_provider_key_id(&response.id)
         || response.full_key.trim().is_empty()
         || response.scopes != KEY_SCOPES
         || response.state_version <= 0

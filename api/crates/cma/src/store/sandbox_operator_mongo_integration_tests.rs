@@ -15,8 +15,9 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{
     Agent, AgentOrigin, AgentStatus, ConversationState, RuntimeBinding, Sandbox, SandboxAdminQuery,
-    SandboxAdminStore, SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxRetirement,
-    SandboxStatus, StoredSandboxRetirement, Workspace, WorkspaceSource, WorkspaceStatus,
+    SandboxAdminStore, SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxOrigin,
+    SandboxRetirement, SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
+    StoredSandboxRetirement, Workspace, WorkspaceSource, WorkspaceStatus,
 };
 use mongodb::Client;
 
@@ -48,6 +49,7 @@ fn sandbox(
         id: SandboxId(id.into()),
         owner: SubjectId(owner.into()),
         name: name.into(),
+        origin: SandboxOrigin::Manual,
         profile: SandboxProfileSnapshot {
             id: SandboxProfileId("sbp_operator".into()),
             revision: 1,
@@ -74,9 +76,14 @@ fn sandbox(
         }),
         credential: SandboxCredentialState {
             reaches: vec![],
-            key_generation: 1,
-            delivered: true,
+            key_generation: 0,
+            delivered: false,
+            current: None,
+            pending: None,
+            revoke_debt: Vec::new(),
+            sign_in: SandboxSignInState::NotRequired,
         },
+        work: SandboxWorkState::new(SandboxWorkStep::WaitForCredentialRotation, NOW.into()),
         limits: SandboxLimits {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
@@ -86,6 +93,7 @@ fn sandbox(
         created_at: NOW.into(),
         updated_at: NOW.into(),
         retired_at: None,
+        purge_after: None,
         revision: 1,
     }
 }

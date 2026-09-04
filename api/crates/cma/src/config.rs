@@ -4,10 +4,11 @@
 //! infrastructure, or request protection. Resource, provider, and workflow
 //! configuration returns with the issue that owns the replacement model.
 
-use std::{net::SocketAddr, num::NonZeroU32, time::Duration};
+use std::{collections::BTreeSet, net::SocketAddr, num::NonZeroU32, time::Duration};
 
 use axum::http::HeaderValue;
 use ipnet::IpNet;
+use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
@@ -21,6 +22,7 @@ const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
 const DEFAULT_DEPLOYMENT_ID: &str = "cma";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
+const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
 const MINIMUM_HEALTH_REQUESTS_PER_MINUTE: u32 = 30;
@@ -132,6 +134,7 @@ pub struct Config {
     pub mongodb_uri: String,
     pub mongodb_database: String,
     pub deployment_id: String,
+    pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
     pub default_profiles: DefaultProfileConfig,
@@ -151,6 +154,7 @@ impl std::fmt::Debug for Config {
             .field("mongodb_uri", &"<redacted>")
             .field("mongodb_database", &self.mongodb_database)
             .field("deployment_id", &self.deployment_id)
+            .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
             .field("default_profiles", &self.default_profiles)
@@ -218,6 +222,14 @@ impl Config {
                     .into(),
             );
         }
+        let baseline_services = parse_service_ids(
+            "CHRONO_BASELINE_SERVICES",
+            &value_or(
+                &mut lookup,
+                "CHRONO_BASELINE_SERVICES",
+                DEFAULT_BASELINE_SERVICES,
+            )?,
+        )?;
         let auth_encryption_key =
             AuthEncryptionKey::from_base64(&required(&mut lookup, "CHRONO_AUTH_ENCRYPTION_KEY")?)?;
         let activity_retention_days = parse_u64(
@@ -281,6 +293,7 @@ impl Config {
             mongodb_uri,
             mongodb_database,
             deployment_id,
+            baseline_services,
             auth_encryption_key,
             activity_retention,
             default_profiles,
@@ -369,6 +382,29 @@ fn parse_networks(key: &str, raw: &str) -> Result<Vec<IpNet>, String> {
     networks.sort_by_key(ToString::to_string);
     networks.dedup();
     Ok(networks)
+}
+
+fn parse_service_ids(key: &str, raw: &str) -> Result<Vec<ServiceId>, String> {
+    let values = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            if value.len() > 128
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            {
+                Err(format!("{key} contains invalid service {value:?}"))
+            } else {
+                Ok(value.to_owned())
+            }
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if values.is_empty() || values.len() > 64 {
+        return Err(format!("{key} must contain between 1 and 64 services"));
+    }
+    Ok(values.into_iter().map(ServiceId::new).collect())
 }
 
 fn validate_cloudflare_networks(gfe: &[IpNet], cloudflare: &[IpNet]) -> Result<(), String> {

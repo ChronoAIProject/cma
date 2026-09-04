@@ -23,8 +23,33 @@ fn retained_defaults_form_a_complete_configuration() {
     assert_eq!(config.activity_retention, Duration::from_secs(90 * 86_400));
     assert_eq!(config.default_profiles.cpu_millis, 1_000);
     assert_eq!(config.default_profiles.memory_mib, 1_024);
+    assert_eq!(
+        config
+            .baseline_services
+            .iter()
+            .map(ServiceId::as_str)
+            .collect::<Vec<_>>(),
+        ["chrono-llm", "ornn", "ornn-api"]
+    );
     assert_eq!(config.auth_mode_name(), "trusted");
     assert!(!format!("{config:?}").contains("mongodb://localhost"));
+}
+
+#[test]
+fn baseline_services_are_nonempty_valid_and_deduplicated() {
+    let config = configured(&[("CHRONO_BASELINE_SERVICES", " model,api-github,model ")])
+        .expect("valid services");
+    assert_eq!(
+        config
+            .baseline_services
+            .iter()
+            .map(ServiceId::as_str)
+            .collect::<Vec<_>>(),
+        ["api-github", "model"]
+    );
+    for value in ["", ",,", "service with spaces", "bad/service"] {
+        assert!(configured(&[("CHRONO_BASELINE_SERVICES", value)]).is_err());
+    }
 }
 
 #[test]

@@ -73,6 +73,7 @@ fn sandbox() -> Sandbox {
         id: SandboxId("sbx_test".into()),
         owner: SubjectId("owner".into()),
         name: "research".into(),
+        origin: SandboxOrigin::Manual,
         profile: sandbox_snapshot(),
         status: SandboxStatus::Active,
         failure: None,
@@ -81,7 +82,19 @@ fn sandbox() -> Sandbox {
             reaches: vec![],
             key_generation: 1,
             delivered: true,
+            current: Some(SandboxCredentialAuthority {
+                generation: 1,
+                provider_key_id: "provider-key".into(),
+                provider_state_version: 1,
+                issued_at: NOW.into(),
+                expires_at: "2026-10-05T00:00:00Z".into(),
+                grant_fingerprint: "a".repeat(64),
+            }),
+            pending: None,
+            revoke_debt: vec![],
+            sign_in: SandboxSignInState::NotRequired,
         },
+        work: SandboxWorkState::new(SandboxWorkStep::WaitForCredentialRotation, NOW.into()),
         limits: SandboxLimits {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
@@ -91,6 +104,7 @@ fn sandbox() -> Sandbox {
         created_at: NOW.into(),
         updated_at: NOW.into(),
         retired_at: None,
+        purge_after: None,
         revision: 1,
     }
 }
@@ -171,15 +185,20 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
     ];
     let expected = [
         (SandboxStatus::Provisioning, SandboxStatus::Installing),
+        (SandboxStatus::Provisioning, SandboxStatus::Retiring),
         (SandboxStatus::Installing, SandboxStatus::Active),
+        (SandboxStatus::Installing, SandboxStatus::Retiring),
         (SandboxStatus::Active, SandboxStatus::Pausing),
         (SandboxStatus::Active, SandboxStatus::Rotating),
         (SandboxStatus::Active, SandboxStatus::Retiring),
         (SandboxStatus::Pausing, SandboxStatus::Paused),
+        (SandboxStatus::Pausing, SandboxStatus::Retiring),
         (SandboxStatus::Paused, SandboxStatus::Reviving),
         (SandboxStatus::Paused, SandboxStatus::Retiring),
         (SandboxStatus::Reviving, SandboxStatus::Active),
+        (SandboxStatus::Reviving, SandboxStatus::Retiring),
         (SandboxStatus::Rotating, SandboxStatus::Active),
+        (SandboxStatus::Rotating, SandboxStatus::Retiring),
         (SandboxStatus::Failed, SandboxStatus::Retiring),
         (SandboxStatus::Retiring, SandboxStatus::Retired),
     ];
@@ -427,8 +446,8 @@ async fn worktree_and_agent_transaction_is_atomic() {
     let agent = agent();
     store
         .commit(SandboxTransaction::CreateWorktreeAndAgent {
-            worktree: worktree.clone(),
-            agent: agent.clone(),
+            worktree: Box::new(worktree.clone()),
+            agent: Box::new(agent.clone()),
             event_at: NOW.into(),
             event: SandboxEventKind::AgentCreated {
                 workspace_id: workspace().id,
@@ -461,5 +480,60 @@ async fn duplicate_resource_ids_do_not_replace_existing_records() {
     assert_eq!(
         store.get_sandbox(&original.id).await.unwrap(),
         Some(original)
+    );
+}
+
+#[test]
+fn workspace_limits_count_only_live_children_of_the_sandbox() {
+    let mut sandbox = sandbox();
+    sandbox.limits.max_workspaces = 1;
+    let live = workspace();
+    assert_eq!(
+        enforce_workspace_limit(&sandbox, std::slice::from_ref(&live)),
+        Err(SandboxLimitError::WorkspaceLimitReached { limit: 1, live: 1 })
+    );
+
+    let mut removed = live.clone();
+    removed.status = WorkspaceStatus::Removed;
+    removed.removed_at = Some(NOW.into());
+    let mut foreign = live;
+    foreign.id = WorkspaceId("wks_foreign".into());
+    foreign.sandbox_id = SandboxId("sbx_foreign".into());
+    assert_eq!(
+        enforce_workspace_limit(&sandbox, &[removed, foreign]),
+        Ok(())
+    );
+}
+
+#[test]
+fn agent_limits_count_only_live_agents_in_the_selected_workspace() {
+    let mut sandbox = sandbox();
+    sandbox.limits.max_agents_per_workspace = 2;
+    let first = agent();
+    let mut second = first.clone();
+    second.id = AgentId("agt_second".into());
+    second.status = AgentStatus::WaitingApproval;
+    assert_eq!(
+        enforce_agent_limit(&sandbox, &first.workspace_id, &[first.clone(), second]),
+        Err(SandboxLimitError::AgentLimitReached { limit: 2, live: 2 })
+    );
+
+    let mut stopped = first.clone();
+    stopped.status = AgentStatus::Stopped;
+    stopped.stopped_at = Some(NOW.into());
+    let mut deleted = first.clone();
+    deleted.id = AgentId("agt_deleted".into());
+    deleted.status = AgentStatus::Deleted;
+    deleted.deleted_at = Some(NOW.into());
+    let mut other_workspace = first;
+    other_workspace.id = AgentId("agt_other".into());
+    other_workspace.workspace_id = WorkspaceId("wks_other".into());
+    assert_eq!(
+        enforce_agent_limit(
+            &sandbox,
+            &WorkspaceId("wks_test".into()),
+            &[stopped, deleted, other_workspace],
+        ),
+        Ok(())
     );
 }

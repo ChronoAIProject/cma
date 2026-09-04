@@ -292,6 +292,13 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
 
 #[async_trait]
 impl SandboxProfileStore for InMemoryProfileStore {
+    async fn sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+    ) -> Result<Option<SandboxProfile>, ProfileStoreError> {
+        Ok(self.lock().sandboxes.get(id).cloned())
+    }
+
     async fn create_sandbox_profile(
         &self,
         profile: SandboxProfile,
@@ -305,13 +312,6 @@ impl SandboxProfileStore for InMemoryProfileStore {
         }
         state.sandboxes.insert(profile.id.clone(), profile);
         Ok(())
-    }
-
-    async fn sandbox_profile(
-        &self,
-        id: &SandboxProfileId,
-    ) -> Result<Option<SandboxProfile>, ProfileStoreError> {
-        Ok(self.lock().sandboxes.get(id).cloned())
     }
 
     async fn save_sandbox_draft(
