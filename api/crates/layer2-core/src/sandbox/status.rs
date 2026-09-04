@@ -82,7 +82,7 @@ impl WorkspaceStatus {
     pub fn transition(self, next: Self) -> Result<Self, SandboxModelError> {
         let allowed = matches!(
             (self, next),
-            (Self::Preparing, Self::Ready | Self::Failed | Self::Removing)
+            (Self::Preparing, Self::Ready | Self::Failed)
                 | (Self::Ready | Self::Failed, Self::Removing)
                 | (Self::Removing, Self::Removed)
         );
@@ -116,7 +116,7 @@ impl WorktreeStatus {
     pub fn transition(self, next: Self) -> Result<Self, SandboxModelError> {
         let allowed = matches!(
             (self, next),
-            (Self::Creating, Self::Ready | Self::Failed | Self::Removing)
+            (Self::Creating, Self::Ready | Self::Failed)
                 | (Self::Ready | Self::Failed, Self::Removing)
                 | (Self::Removing, Self::Removed)
         );

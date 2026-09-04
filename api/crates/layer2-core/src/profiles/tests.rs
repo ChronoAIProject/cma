@@ -266,6 +266,62 @@ async fn duplicate_profile_ids_do_not_replace_existing_records() {
 }
 
 #[tokio::test]
+async fn draft_cas_preserves_profile_control_fields_and_handles_overflow() {
+    let store = InMemoryProfileStore::default();
+    let original = agent_profile("agp_one", "owner", ProfileVisibility::Private);
+    store.create_agent_profile(original.clone()).await.unwrap();
+
+    let mut candidates = Vec::new();
+    let mut candidate = original.clone();
+    candidate.owner = SubjectId("other".into());
+    candidates.push(candidate);
+    let mut candidate = original.clone();
+    candidate.visibility = ProfileVisibility::Public;
+    candidates.push(candidate);
+    let mut candidate = original.clone();
+    candidate.forked_from = Some(AgentProfileRef::new(AgentProfileId("agp_source".into()), 1));
+    candidates.push(candidate);
+    let mut candidate = original.clone();
+    candidate.uses_count = 1;
+    candidates.push(candidate);
+    let mut candidate = original.clone();
+    candidate.created_at = "changed".into();
+    candidates.push(candidate);
+    let mut candidate = original.clone();
+    candidate.retired_at = Some("changed".into());
+    candidates.push(candidate);
+
+    for mut candidate in candidates {
+        candidate.draft_version = 2;
+        assert_eq!(
+            store.save_agent_draft(1, candidate).await.unwrap_err(),
+            ProfileStoreError::Conflict
+        );
+    }
+
+    let mut updated = original.clone();
+    updated.draft.system_prompt = "Updated".into();
+    updated.draft_version = 2;
+    store.save_agent_draft(1, updated.clone()).await.unwrap();
+    let stored = store
+        .list_agent_profiles(Some(&original.owner), false, &ProfilePageRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(stored.items, vec![updated]);
+
+    let mut saturated = agent_profile("agp_max", "owner", ProfileVisibility::Private);
+    saturated.draft_version = u64::MAX;
+    store.create_agent_profile(saturated.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .save_agent_draft(u64::MAX, saturated)
+            .await
+            .unwrap_err(),
+        ProfileStoreError::Conflict
+    );
+}
+
+#[tokio::test]
 async fn revision_pages_are_bounded_and_newest_first() {
     let store = InMemoryProfileStore::default();
     let mut profile = agent_profile("agp_one", "owner", ProfileVisibility::Private);
@@ -565,6 +621,12 @@ async fn retirement_hides_marketplace_but_preserves_revision_snapshot() {
         .unwrap();
     assert!(store
         .list_marketplace(&MarketplaceQuery::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(store
+        .list_agent_profiles(None, true, &ProfilePageRequest::default())
         .await
         .unwrap()
         .items
