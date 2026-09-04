@@ -5,7 +5,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -24,11 +24,16 @@ use tower::ServiceExt;
 
 use crate::{
     config::TrustedProxyConfig,
-    rate_limit::{self, RateLimiters},
+    rate_limit::{self, visitor_quota_key, QuotaResource, RateLimiters},
     with_cors, with_sponsorship_privacy, REST_LINKS,
 };
 
 const SUBJECT: &str = "subject-rate-limit";
+const TEST_UTC_DAY: u64 = 20_000;
+
+fn time_on_test_day(seconds: u64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(TEST_UTC_DAY * 86_400 + seconds)
+}
 
 fn quota(burst: u32, replenish_one_every: Duration) -> Quota {
     Quota::with_period(replenish_one_every)
@@ -240,6 +245,85 @@ async fn status(app: &Router, request: Request<Body>) -> StatusCode {
         .await
         .expect("router answers")
         .status()
+}
+
+#[test]
+fn visitor_launches_use_the_named_subject_key_and_exact_daily_limit() {
+    let limiters = RateLimiters::for_test(generous(), generous(), generous());
+    let subject = SubjectId("visitor-a".into());
+    let now = time_on_test_day(12 * 60 * 60);
+    assert_eq!(visitor_quota_key(&subject), "trigger-visitor:visitor-a");
+
+    for _ in 0..5 {
+        limiters
+            .admit_visitor_launch(&subject, 5, now)
+            .expect("five visitor launches fit");
+    }
+    let exhausted = limiters
+        .admit_visitor_launch(&subject, 5, now)
+        .expect_err("the sixth visitor launch is refused");
+    assert_eq!(exhausted.code(), "resource_quota");
+    assert_eq!(exhausted.resource, QuotaResource::VisitorLaunches);
+    assert_eq!(exhausted.resource.as_str(), "visitor_launches");
+    assert_eq!(exhausted.limit, 5);
+    assert_eq!(exhausted.reset_at, time_on_test_day(86_400));
+    assert_eq!(exhausted.retry_after_seconds(now), 12 * 60 * 60);
+
+    limiters
+        .admit_visitor_launch(&SubjectId("visitor-b".into()), 5, now)
+        .expect("another subject has an independent count");
+}
+
+#[test]
+fn visitor_launch_admission_is_atomic_under_concurrency() {
+    let limiters = RateLimiters::for_test(generous(), generous(), generous());
+    let now = time_on_test_day(1);
+    let admitted = std::thread::scope(|scope| {
+        let handles = (0..32)
+            .map(|_| {
+                let limiters = Arc::clone(&limiters);
+                scope.spawn(move || {
+                    limiters
+                        .admit_visitor_launch(&SubjectId("visitor-race".into()), 5, now)
+                        .is_ok()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("admission thread completes"))
+            .filter(|admitted| *admitted)
+            .count()
+    });
+    assert_eq!(admitted, 5);
+}
+
+#[test]
+fn visitor_launch_limit_is_live_and_resets_at_utc_midnight() {
+    let limiters = RateLimiters::for_test(generous(), generous(), generous());
+    let subject = SubjectId("visitor-dynamic".into());
+    let before_midnight = time_on_test_day(86_399);
+
+    for _ in 0..3 {
+        limiters
+            .admit_visitor_launch(&subject, 5, before_midnight)
+            .expect("initial launches fit");
+    }
+    let reduced = limiters
+        .admit_visitor_launch(&subject, 2, before_midnight)
+        .expect_err("a reduced live limit applies immediately");
+    assert_eq!(reduced.limit, 2);
+    assert_eq!(reduced.retry_after_seconds(before_midnight), 1);
+    limiters
+        .admit_visitor_launch(&subject, 4, before_midnight)
+        .expect("raising the live limit admits the next launch");
+    assert!(limiters
+        .admit_visitor_launch(&subject, 4, before_midnight)
+        .is_err());
+
+    limiters
+        .admit_visitor_launch(&subject, 1, time_on_test_day(86_400))
+        .expect("the next UTC day starts a fresh count");
 }
 
 #[tokio::test]

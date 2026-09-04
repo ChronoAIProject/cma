@@ -253,6 +253,38 @@ These rules govern the four served implementations and are obligations for futur
 5. **Concurrent input has one answer.** A second turn arriving while one is in flight must resolve identically on every implemented interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
 6. **Identity is NyxID.** Every implemented interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.
 
+### Browser sign-in and registration
+
+`GET /auth/login` starts the same browser-bound authorization-code flow for
+both sign-in and account creation. `screen=register` first sends the browser to
+NyxID's register page with the complete authorization URL nested in its
+`return_to` parameter. State, PKCE, browser binding, expiry, and callback
+handling are identical to an ordinary sign-in. No account or CMA resource is
+created by the GET itself.
+
+The optional `return_to` is a same-application path, never an arbitrary URL.
+The accepted routes are `/`, a public trigger at `/t/{public_id}` with an
+optional placement id, the trigger-management routes, an owned agent or
+sandbox, and the profile or marketplace routes. Queries, fragments, encoded
+separators, dot segments, and unknown route shapes are rejected.
+
+`GET /auth/signup-options` is anonymous and returns only:
+
+```json
+{
+  "social_providers": ["github", "google", "apple"],
+  "email_signup": false,
+  "invite_code_required": true,
+  "register_available": true
+}
+```
+
+CMA derives that projection from NyxID's public configuration and caches one
+answer for 300 seconds. An upstream timeout, refusal, or malformed response is
+a successful closed projection with no providers, email signup disabled,
+`invite_code_required: true`, and `register_available: false`. Ambient browser
+credentials are neither resolved nor forwarded for this endpoint.
+
 ---
 
 ## 7. Literal identifier stability

@@ -69,6 +69,9 @@ data:
   # replica. Scaling out without shared state multiplies effective allowances.
   # NyxID identity provider base URL. Endpoints are discovered, never hard-coded.
   CHRONO_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
+  # Browser-facing NyxID origin for guided account creation. This is distinct
+  # from the API base URL and must be one canonical HTTPS origin.
+  CHRONO_NYXID_PUBLIC_URL: "https://nyx.chrono-ai.fun"
   # OAuth client identifier registered with NyxID. Not a secret.
   #
   # The provider issues this identifier; it is not a name we choose. The

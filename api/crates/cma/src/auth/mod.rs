@@ -324,8 +324,12 @@ impl CredentialDeliveryAttempt {
 /// Auth state shared across handlers.
 pub struct AuthState {
     mode: AuthMode,
+    /// Browser-facing NyxID origin. Back-channel calls continue to use the
+    /// provider mode's independently configured API base URL.
+    nyxid_public_url: String,
     http: reqwest::Client,
     metadata: RwLock<Option<ProviderMetadata>>,
+    signup_options_cache: signup_options::SignupOptionsCache,
     /// Durable authority shared by every replica.
     store: Arc<dyn AuthStore>,
     /// Mints and reclaims the credential each session presents.
@@ -418,13 +422,36 @@ impl AuthState {
     }
 
     /// Build auth state over the durable authority shared by this deployment.
+    #[cfg(test)]
     pub fn with_store(
         mode: AuthMode,
         records: Option<records::SignInRecords>,
         store: Arc<dyn AuthStore>,
     ) -> Arc<Self> {
+        let nyxid_public_url = match &mode {
+            AuthMode::Provider { base_url, .. } => Some(base_url.clone()),
+            AuthMode::Trusted { .. } => None,
+        };
+        Self::with_store_and_nyxid_public_url(mode, records, store, nyxid_public_url)
+    }
+
+    /// Build auth state with distinct NyxID back-channel and browser origins.
+    pub(crate) fn with_store_and_nyxid_public_url(
+        mode: AuthMode,
+        records: Option<records::SignInRecords>,
+        store: Arc<dyn AuthStore>,
+        nyxid_public_url: Option<String>,
+    ) -> Arc<Self> {
+        let nyxid_public_url = match (&mode, nyxid_public_url) {
+            (AuthMode::Provider { .. }, Some(url)) => url,
+            (AuthMode::Provider { .. }, None) => {
+                panic!("provider auth requires a configured NyxID public URL")
+            }
+            (AuthMode::Trusted { .. }, _) => String::new(),
+        };
         Arc::new(Self {
             mode,
+            nyxid_public_url,
             records,
             store,
             http: reqwest::Client::builder()
@@ -432,6 +459,7 @@ impl AuthState {
                 .build()
                 .expect("http client builds"),
             metadata: RwLock::new(None),
+            signup_options_cache: signup_options::SignupOptionsCache::default(),
             issuer: RwLock::new(None),
             credential_delivery_cutoffs: Mutex::new(HashMap::new()),
             credential_sweep: Mutex::new(()),
@@ -1834,6 +1862,7 @@ mod permissions;
 pub mod records;
 pub mod refresh;
 mod session_routes;
+mod signup_options;
 mod sponsored_model;
 mod token;
 

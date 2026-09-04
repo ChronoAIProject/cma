@@ -1259,6 +1259,11 @@ pub struct Config {
     pub bind: String,
     /// This service's public origin, used to build redirect URIs.
     pub public_url: String,
+    /// NyxID's browser-facing origin, used only for registration handoffs.
+    ///
+    /// `None` is valid only in trusted mode, where no external authentication
+    /// or account creation takes place.
+    pub nyxid_public_url: Option<String>,
     /// Origins permitted to call this API from a browser.
     pub cors_origins: Vec<HeaderValue>,
     /// Per-key request budgets enforced by this process.
@@ -1658,20 +1663,30 @@ impl Config {
 
         // Trusted mode has to be asked for by name. Defaulting to it would mean
         // a missing provider configuration silently disables authentication.
-        let auth_mode = match var_or("CHRONO_AUTH_MODE", "provider").as_str() {
-            "trusted" => AuthMode::Trusted {
-                subject: var_or("CHRONO_TRUSTED_SUBJECT", "local-developer"),
-            },
+        let (auth_mode, nyxid_public_url) = match var_or("CHRONO_AUTH_MODE", "provider").as_str() {
+            "trusted" => (
+                AuthMode::Trusted {
+                    subject: var_or("CHRONO_TRUSTED_SUBJECT", "local-developer"),
+                },
+                None,
+            ),
             "provider" => {
                 let base_url = require("CHRONO_NYXID_BASE_URL")?;
                 let client_id = require("CHRONO_NYXID_CLIENT_ID")?;
                 let client_secret = require("CHRONO_NYXID_CLIENT_SECRET")?;
-                AuthMode::Provider {
-                    base_url,
-                    client_id,
-                    client_secret,
-                    public_url: public_url.clone(),
-                }
+                let nyxid_public_url = parse_canonical_https_origin(
+                    "CHRONO_NYXID_PUBLIC_URL",
+                    &require("CHRONO_NYXID_PUBLIC_URL")?,
+                )?;
+                (
+                    AuthMode::Provider {
+                        base_url,
+                        client_id,
+                        client_secret,
+                        public_url: public_url.clone(),
+                    },
+                    Some(nyxid_public_url),
+                )
             }
             other => {
                 return Err(format!(
@@ -1683,6 +1698,7 @@ impl Config {
         Ok(Self {
             bind,
             public_url,
+            nyxid_public_url,
             cors_origins,
             rate_limits,
             trusted_proxies,
@@ -2171,6 +2187,7 @@ impl Config {
         Config {
             bind: "0.0.0.0:8080".into(),
             public_url: "http://x".into(),
+            nyxid_public_url: None,
             cors_origins: vec![],
             rate_limits: RateLimitConfig::sample(),
             trusted_proxies: TrustedProxyConfig::sample(),
@@ -3628,6 +3645,33 @@ mod tests {
                 manifest.lines().any(|line| line == declaration),
                 "fixed ConfigMap is missing {declaration}"
             );
+        }
+    }
+
+    #[test]
+    fn nyxid_browser_origin_is_pinned_and_requires_canonical_https() {
+        let manifest = include_str!("../../../../infra/api/configmap.yaml");
+        assert!(manifest
+            .lines()
+            .any(|line| line == "  CHRONO_NYXID_PUBLIC_URL: \"https://nyx.chrono-ai.fun\""));
+        assert_eq!(
+            parse_canonical_https_origin("CHRONO_NYXID_PUBLIC_URL", "https://nyx.chrono-ai.fun",)
+                .as_deref(),
+            Ok("https://nyx.chrono-ai.fun")
+        );
+        for invalid in [
+            "http://nyx.chrono-ai.fun",
+            "https://Nyx.chrono-ai.fun",
+            "https://nyx.chrono-ai.fun/",
+            "https://user@nyx.chrono-ai.fun",
+            "https://nyx.chrono-ai.fun/register",
+            "https://nyx.chrono-ai.fun?tenant=other",
+            "https://nyx.chrono-ai.fun#register",
+        ] {
+            let error = parse_canonical_https_origin("CHRONO_NYXID_PUBLIC_URL", invalid)
+                .expect_err("provider mode must reject a noncanonical browser origin");
+            assert!(error.contains("CHRONO_NYXID_PUBLIC_URL"), "got {error}");
+            assert!(!error.contains(invalid), "the value must not be reflected");
         }
     }
 
