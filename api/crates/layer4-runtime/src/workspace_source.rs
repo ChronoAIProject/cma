@@ -225,6 +225,9 @@ impl WorkspaceSources {
 
         let args = vec![
             OsString::from("clone"),
+            OsString::from("--depth"),
+            OsString::from("1"),
+            OsString::from("--no-tags"),
             OsString::from("--branch"),
             OsString::from(&request.reference),
             OsString::from("--single-branch"),

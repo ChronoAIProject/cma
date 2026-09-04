@@ -137,6 +137,10 @@ async fn local_clone_is_idempotent_and_worktrees_round_trip() {
         std::fs::read(workspace.join("repository/README.md")).unwrap(),
         b"fixture\n"
     );
+    assert!(
+        workspace.join("repository/.git/shallow").is_file(),
+        "Chat sources must not fetch branch history into every sandbox"
+    );
 
     sources.prepare(&workspace, request).await.unwrap();
     let receipt = sources
