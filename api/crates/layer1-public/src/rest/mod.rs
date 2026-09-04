@@ -1,5 +1,7 @@
 //! REST infrastructure retained while replacement resource routes are rebuilt.
 
+use std::sync::Arc;
+
 use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -8,15 +10,25 @@ use axum::{
 };
 use layer2_core::StoreError;
 
+mod badge;
+mod badge_mark;
+#[cfg(test)]
+mod badge_tests;
+mod embed;
+#[cfg(test)]
+mod embed_tests;
 pub mod openapi;
 mod openapi_shapes;
 pub mod pagination;
 mod problems;
+#[cfg(test)]
+mod trigger_assets_test_support;
 
 // Kept compiled and tested for the resource routes introduced after #802.
 #[allow(dead_code)]
 mod idempotency;
 
+pub use embed::{EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
 
@@ -124,6 +136,79 @@ impl InterfaceProfile for RestInterface {
     fn operations(&self) -> &'static [Operation] {
         &[Operation::Discover]
     }
+}
+
+/// State shared by the anonymous badge and owner-only embed descriptor.
+#[derive(Clone)]
+pub struct TriggerAssetsState {
+    pub triggers: Arc<dyn layer2_core::trigger_domain::TriggerStore>,
+    public_origin: url::Url,
+}
+
+impl TriggerAssetsState {
+    /// Validate and retain the deployment's exact public HTTP(S) origin.
+    pub fn new(
+        triggers: Arc<dyn layer2_core::trigger_domain::TriggerStore>,
+        public_origin: &str,
+    ) -> Result<Self, InvalidPublicOrigin> {
+        let parsed = url::Url::parse(public_origin).map_err(|_| InvalidPublicOrigin)?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.path() != "/"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(InvalidPublicOrigin);
+        }
+        let canonical = parsed.origin().ascii_serialization();
+        let public_origin =
+            url::Url::parse(&canonical).expect("an HTTP(S) origin is itself an absolute URL");
+        Ok(Self {
+            triggers,
+            public_origin,
+        })
+    }
+
+    pub fn public_origin(&self) -> &url::Url {
+        &self.public_origin
+    }
+}
+
+/// The configured Trigger asset origin was not an exact HTTP(S) origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidPublicOrigin;
+
+impl std::fmt::Display for InvalidPublicOrigin {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "the public Trigger origin must be an HTTP(S) origin without credentials, path, query, or fragment",
+        )
+    }
+}
+
+impl std::error::Error for InvalidPublicOrigin {}
+
+/// Compose the Trigger assets independently of the remaining resource routes.
+pub fn trigger_assets_router(state: TriggerAssetsState) -> Router {
+    Router::new()
+        .route(
+            "/api/v1/triggers/public/{public_id}/badge.svg",
+            get(badge::read),
+        )
+        .route(
+            "/api/v1/triggers/{id}/embed",
+            get(embed::read).layer(axum::middleware::from_fn(embed::private_headers)),
+        )
+        .with_state(state)
+}
+
+pub(crate) fn is_embed_identifier(value: &str) -> bool {
+    (1..=128).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 #[utoipa::path(

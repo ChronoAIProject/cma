@@ -30,6 +30,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
+# Builds public Trigger and badge URLs without hand-joining path or query text.
+url = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what an attach ticket is drawn
 # from. Already a workspace dependency.
 uuid = { workspace = true }
