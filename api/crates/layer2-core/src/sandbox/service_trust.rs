@@ -1,9 +1,44 @@
 use crate::ids::SubjectId;
 use crate::profiles::store::{ProfileStoreError, WorkspaceProfileStore};
 use crate::profiles::{
-    content_digest, SandboxProfile, SandboxProfileRef, SandboxProfileRevision, WorkspaceProfile,
-    WorkspaceProfileRef, WorkspaceProfileRevision,
+    content_digest, AgentProfile, AgentProfileRef, AgentProfileRevision, SandboxProfile,
+    SandboxProfileRef, SandboxProfileRevision, WorkspaceProfile, WorkspaceProfileRef,
+    WorkspaceProfileRevision,
 };
+
+pub(super) fn validate_agent_profile(
+    reference: &AgentProfileRef,
+    profile: &AgentProfile,
+) -> Result<(), ProfileStoreError> {
+    if profile.id != reference.id {
+        return Err(corrupt_dependency(
+            "agent profile aggregate identity does not match",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_agent_revision(
+    reference: &AgentProfileRef,
+    revision: &AgentProfileRevision,
+) -> Result<(), ProfileStoreError> {
+    let digest = content_digest(&revision.content)
+        .map_err(|error| corrupt_dependency(&error.to_string()))?;
+    if revision.profile_id != reference.id
+        || revision.revision != reference.revision
+        || revision.digest != digest
+    {
+        return Err(corrupt_dependency(
+            "agent profile revision identity or digest does not match",
+        ));
+    }
+    revision.content.validate().map_err(|error| {
+        corrupt_dependency(&format!(
+            "agent profile revision content is invalid: {error}"
+        ))
+    })?;
+    Ok(())
+}
 
 pub(super) fn validate_sandbox_profile(
     reference: &SandboxProfileRef,
