@@ -30,6 +30,7 @@ pub mod pressure_service;
 pub mod profiles;
 pub mod sandbox;
 pub mod sequence;
+pub mod trigger_domain;
 
 pub use activity::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityTarget,

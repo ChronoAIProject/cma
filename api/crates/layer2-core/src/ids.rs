@@ -80,6 +80,13 @@ generated_id!(
     "Identifier of a Workspace Profile."
 );
 generated_id!(SandboxProfileId, "sbp_", "Identifier of a Sandbox Profile.");
+generated_id!(TriggerId, "trg_", "Identifier of a CMA Trigger.");
+generated_id!(
+    PublicTriggerId,
+    "pub_",
+    "Stable public identifier of a CMA Trigger."
+);
+generated_id!(PlacementId, "plc_", "Identifier of a Trigger placement.");
 
 #[cfg(test)]
 mod tests {
@@ -105,5 +112,8 @@ mod tests {
         assert!(AgentProfileId::generate().as_str().starts_with("agp_"));
         assert!(WorkspaceProfileId::generate().as_str().starts_with("wkp_"));
         assert!(SandboxProfileId::generate().as_str().starts_with("sbp_"));
+        assert!(TriggerId::generate().as_str().starts_with("trg_"));
+        assert!(PublicTriggerId::generate().as_str().starts_with("pub_"));
+        assert!(PlacementId::generate().as_str().starts_with("plc_"));
     }
 }
