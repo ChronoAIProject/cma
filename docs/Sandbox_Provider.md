@@ -333,3 +333,249 @@ writing. The provider proxy used a 180-second HTTP client timeout and exposed
 no filesystem pause, freeze, or atomic-volume operation. Any future use must
 define its own size limit, deadline, integrity check, and writer-consistency
 boundary.
+
+## 8. Agent home evidence
+
+This record was captured on 2026-09-05 Asia/Singapore against the contract-2
+runtime. It establishes the per-agent Codex home capability; it does not rely
+on the older production-provider observations above.
+
+| Component | Pinned value |
+|---|---|
+| Runtime image | `cma-runtime:m16-arm64` |
+| Runtime image ID | `sha256:0fc5383fa451ca16f024951d29813f6fa06a7ddcb368ebc4dd54bbae48dd5152` |
+| Architecture | `arm64` |
+| Runtime contract label | `2` |
+| Codex | `@openai/codex` 0.147.0 |
+| ACP bridge | `@agentclientprotocol/codex-acp` 1.4.0 |
+| Codex launcher SHA-256 | `134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477` |
+| ACP distribution SHA-256 | `ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf` |
+
+The runtime's revision label was
+`08b0ddae7b69cfe086da3e1be6eea72b9b2a77d5`, which did not resolve to a
+commit in the local repository used for this audit. This record therefore
+pins the immutable image ID and executable hashes rather than claiming source
+provenance from that label. The final release evidence must pin the rebuilt
+release image digest and final CMA commit independently.
+
+The probe spoke newline-delimited ACP JSON-RPC over bridge stdio, correlated
+request IDs, enforced a deadline, and redacted session IDs and credential
+values. The redacted source report and harness have these hashes:
+
+```text
+report SHA-256:  e1a75eb6fe0fad6c71f936d84c40d3a8e04ae6333ba3f166259f61094db217a5
+harness SHA-256: 09cb4a6aef1fb8e8faac893a57cc6a3ba61d863caa9b6ce8e4fcf2e23f36fc7f
+```
+
+No API key, authorization-header value, or unredacted conversation ID is in
+this record.
+
+### Gate verdicts
+
+| Gate | Verdict | Demonstrated contract |
+|---|---|---|
+| G-A1 | Pass | Two concurrent bridges in one sandbox use different `CODEX_HOME` configuration. |
+| G-A2 | Pass | Home `AGENTS.md` and repository `AGENTS.md` are both applied, in that order. |
+| G-A3 | Corrected by #835 | Initial skills are discovered, and added skills are hot-reloaded in the same bridge. |
+| G-A4 | Pass | The shared auth symlink and the managed loopback-provider path both work. |
+| G-A5 | Pass | Conversation data lives in the agent home and survives exact capture and restore. |
+
+The adapter advertises `per_agent_home` for runtime contract 2 on the strength
+of these results. A future Codex, ACP, or runtime-contract version does not
+inherit this evidence automatically.
+
+### G-A1: distinct homes
+
+Two bridges ran concurrently in one container. Alpha used model `gpt-5.2`
+with low effort; beta used `gpt-5.5` with high effort. Each process received a
+different home beneath `/home/cma/.cma/agents`.
+
+```text
+CODEX_HOME=/home/cma/.cma/agents/alpha/home
+CODEX_HOME=/home/cma/.cma/agents/beta/home
+```
+
+The redacted `session/new` results were:
+
+```json
+{
+  "bridgesConcurrentInOneContainer": true,
+  "agentA": {
+    "sessionId": "<session sha256:90e2e0bfae28 length:36>",
+    "model": "gpt-5.2[low]",
+    "configOptions": {"model":"gpt-5.2","reasoning_effort":"low"}
+  },
+  "agentB": {
+    "sessionId": "<session sha256:a77464c25107 length:36>",
+    "model": "gpt-5.5[high]",
+    "configOptions": {"model":"gpt-5.5","reasoning_effort":"high"}
+  }
+}
+```
+
+This proves that `CODEX_HOME` selects process-local configuration for
+simultaneous agents in one sandbox.
+
+### G-A2: profile and repository instructions
+
+The selected home and git worktree carried independent sentinels:
+
+```text
+<CODEX_HOME>/AGENTS.md: CMA808_GLOBAL_PROFILE_SENTINEL
+<worktree>/AGENTS.md:  CMA808_REPOSITORY_INSTRUCTION_SENTINEL
+```
+
+`codex debug prompt-input` rendered this model-visible order:
+
+```text
+# AGENTS.md instructions for /workspace
+
+<INSTRUCTIONS>
+CMA808_GLOBAL_PROFILE_SENTINEL
+
+The global agent profile instruction must be presented before repository instructions.
+
+--- project-doc ---
+
+CMA808_REPOSITORY_INSTRUCTION_SENTINEL
+
+The repository instruction must be presented after the global profile instruction.
+</INSTRUCTIONS>
+```
+
+The contract is therefore "profile prompt + repository instructions." CMA
+writes the profile prompt to the agent home and does not edit repository
+files. The fallback worktree `.cma/AGENTS.md` was neither required nor used.
+
+### G-A3: skill discovery and hot reload
+
+`cma-808-start-skill` existed under `<CODEX_HOME>/skills` before bridge start.
+Only after the first `session/new` completed, the harness created
+`cma-808-late-skill/SKILL.md`, invoked `/skills` in that session, and then
+opened another session on the same still-running bridge.
+
+```json
+{
+  "bridgePidStayedConstant": true,
+  "firstSession": {
+    "id": "<session sha256:b2596e7a4d99 length:36>",
+    "startSkillSeenInInboundFrames": true,
+    "lateSkillSeenInInboundFramesAtCreation": false
+  },
+  "sameSessionSlashSkills": {
+    "stopReason": "end_turn",
+    "error": null,
+    "startSkillSeenInInboundFrames": true,
+    "lateSkillSeenInInboundFrames": true,
+    "inboundMethods": ["session/update"]
+  },
+  "secondSessionSameBridge": {
+    "id": "<session sha256:4ee65e2f4793 length:36>",
+    "lateSkillSeenInInboundFrames": true
+  }
+}
+```
+
+This contradicts #808's original negative assertion that a post-start skill
+would remain invisible. [Issue #835](https://github.com/ChronoAIProject/cma/issues/835)
+corrects that contract: the pinned bridge discovers the added skill through
+same-session `/skills`, and a later `session/new` on the same bridge discovers
+it as well. No cache was added to manufacture the old result.
+
+CMA still installs every configured skill beneath the individual agent home
+before first use, and an unavailable archive fails creation with typed
+`skill_unavailable { id }`. Agent Profile immutability remains a CMA product
+and audit rule; it is not justified by a Codex kernel cache boundary.
+
+### G-A4: shared auth and managed loopback
+
+For own-credential access, the literal layout was:
+
+```text
+/home/cma/.cma/provider/codex/auth.json
+/home/cma/.cma/agents/own/home/auth.json -> ../../../provider/codex/auth.json
+```
+
+The provider auth file was mounted read-only from the host into a disposable
+container. The status transcript was fully redacted:
+
+```text
+../../../provider/codex/auth.json
+Logged in using an API key - <fully redacted>
+exit 0
+```
+
+ACP initialization advertised `api-key`, and `session/new` succeeded with
+model `gpt-5.2[low]`.
+
+After the new renderer landed, the managed path was repeated against its exact
+configuration rather than relying on the earlier port-18080 probe:
+
+```toml
+model_provider = "cma"
+
+[model_providers.cma]
+name = "CMA Loopback"
+base_url = "http://127.0.0.1:9091"
+env_key = "CHRONO_UPSTREAM_PLACEHOLDER_KEY"
+wire_api = "responses"
+```
+
+The fake loopback server recorded only structural evidence and deliberately
+returned an error after receipt:
+
+```json
+{
+  "method": "POST",
+  "path": "/responses",
+  "authorizationHeaderPresent": true,
+  "contentType": "application/json",
+  "bodyBytes": 44391,
+  "configuredModel": "gpt-5.2",
+  "markerReachedProxy": true
+}
+```
+
+No header value was logged. This proves both own-credential and
+ChronoAI-managed access modes.
+
+### G-A5: home-local conversation capture and restore
+
+A real ACP turn containing marker `CMA808_HISTORY_SENTINEL_20260905` completed
+under `/home/cma/.cma/agents/own/home`. The exact-ID inspector found one
+rollout below that home's `sessions/` tree:
+
+```json
+{
+  "sessionId": "<session sha256:c31611975065 length:36>",
+  "relativePath": "2026/09/04/rollout-2026-09-04T18-19-45-<session-id>.jsonl",
+  "bytes": 46088,
+  "lines": 9,
+  "sha256": "8ec8485c97268a3f1a8e2e708c2d84ef581a8991e521fed8606d726b6cb6ebcf",
+  "openingRecordType": "session_meta",
+  "openingCwd": "/workspace"
+}
+```
+
+Layer 4 captured that exact conversation as a 46,204-byte carry stream with
+SHA-256
+`af2707696166648670ee56c26d80560599afaf6ba947e97b62dcd6ad24a75ad6`.
+Restoring it into a fresh agent home reproduced the same rollout path, byte
+count, line count, and JSONL hash. ACP `session/load` then returned without an
+RPC error and replayed the unique marker:
+
+```json
+{
+  "requestedSessionId": "<session sha256:c31611975065 length:36>",
+  "loadError": null,
+  "markerSeenInReplayedInboundFrames": true,
+  "inboundFrameCount": 5,
+  "inboundMethods": ["session/update"],
+  "loadedConfig": {"model":"gpt-5.2[low]"}
+}
+```
+
+A second exact-ID capture after restore produced another 46,204-byte carry
+stream with the same SHA-256; byte comparison exited zero. This proves that
+conversation records live under the selected agent home and remain findable
+by conversation ID after whole-home transport.

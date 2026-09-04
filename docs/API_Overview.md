@@ -13,6 +13,21 @@ This document defines the shared vocabulary. The six interface documents describ
 | 5 | MCP — designed, not yet served | agent clients | [API_MCP.md](./API_MCP.md) |
 | 6 | A2A — designed, not yet served | agent clients | [API_A2A.md](./API_A2A.md) |
 
+### Agent profile instructions
+
+An Agent Profile's system prompt is that agent's standing instruction set.
+CMA writes it verbatim to `AGENTS.md` in the agent's own `CODEX_HOME`; CMA
+never edits the workspace repository to install profile instructions. If the
+repository contains its own `AGENTS.md`, Codex applies the profile prompt first
+and the repository instructions afterward. The combined semantics are
+"profile prompt + repository instructions."
+
+Skills are likewise installed below the individual agent home before the
+agent's first use. Profile immutability is a CMA product rule: it does not
+depend on Codex keeping an in-process cache of skills. The pinned Codex bridge
+can discover later filesystem changes, as recorded in the agent-home evidence
+in [Sandbox_Provider.md](./Sandbox_Provider.md#8-agent-home-evidence).
+
 ---
 
 ## 1. The core operation set
