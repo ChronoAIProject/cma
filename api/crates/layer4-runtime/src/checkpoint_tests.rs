@@ -27,6 +27,18 @@ fn fixture(config: &RuntimeConfig) {
     )
     .unwrap();
     std::fs::write(config.home.join(".cache/disposable"), "skip").unwrap();
+    std::fs::create_dir_all(config.home.join(".cma/preparing/wks-preparing")).unwrap();
+    std::fs::create_dir_all(config.home.join(".cma/removing/wks-removing")).unwrap();
+    std::fs::write(
+        config.home.join(".cma/preparing/wks-preparing/partial"),
+        "must not checkpoint",
+    )
+    .unwrap();
+    std::fs::write(
+        config.home.join(".cma/removing/wks-removing/tombstone"),
+        "must not checkpoint",
+    )
+    .unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink("README.md", config.home.join("project/readme-link")).unwrap();
 }
@@ -44,6 +56,7 @@ fn manifest_is_deterministic_and_exclusions_are_exact_paths() {
     assert_eq!(
         paths,
         vec![
+            ".cma",
             "project",
             "project/.worktrees",
             "project/.worktrees/a",
@@ -56,9 +69,37 @@ fn manifest_is_deterministic_and_exclusions_are_exact_paths() {
         ]
     );
     let json = serde_json::to_string(&manifest).unwrap();
-    assert!(json.starts_with("{\"version\":1,\"entries\":[{\"path\":\"project\""));
+    assert!(json.starts_with("{\"version\":1,\"entries\":[{\"path\":\".cma\""));
     assert!(!json.contains("disposable"));
+    assert!(!json.contains("wks-preparing"));
+    assert!(!json.contains("wks-removing"));
     assert!(json.contains("node_modules"));
+    std::fs::remove_dir_all(config.home).unwrap();
+    let _ = std::fs::remove_dir_all(config.checkpoint_root);
+}
+
+#[test]
+fn restore_validation_refuses_runtime_workspace_transition_paths() {
+    use crate::checkpoint_manifest::{EntryKind, Manifest, ManifestEntry};
+
+    let config = config("transient-restore");
+    for path in [".cma/preparing", ".cma/removing/wks-removing"] {
+        let manifest = Manifest {
+            version: crate::checkpoint_manifest::FORMAT_VERSION,
+            entries: vec![ManifestEntry {
+                path: path.into(),
+                kind: EntryKind::Directory,
+                mode: 0o700,
+                size: 0,
+                sha256: None,
+                target: None,
+                offset: None,
+            }],
+        };
+        let error = crate::checkpoint_manifest::validate(&manifest, &config.home, 0).unwrap_err();
+        assert_eq!(error.code, "checkpoint_invalid");
+        assert!(error.detail.contains("transition state"));
+    }
     std::fs::remove_dir_all(config.home).unwrap();
     let _ = std::fs::remove_dir_all(config.checkpoint_root);
 }
