@@ -5,6 +5,85 @@
 
 use serde::{Deserialize, Serialize};
 
+macro_rules! opaque_id {
+    ($name:ident, $prefix:literal) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(pub String);
+
+        impl $name {
+            /// Mint a fresh identifier with a resource-specific prefix.
+            pub fn generate() -> Self {
+                Self(format!(
+                    concat!($prefix, "{}"),
+                    uuid::Uuid::new_v4().simple()
+                ))
+            }
+
+            /// Borrow the identifier exactly as it appears on the wire.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
+}
+
+opaque_id!(SandboxId, "sbx_");
+opaque_id!(WorkspaceId, "wks_");
+opaque_id!(WorktreeId, "wkt_");
+opaque_id!(AgentId, "agt_");
+opaque_id!(AgentProfileId, "agp_");
+opaque_id!(WorkspaceProfileId, "wkp_");
+opaque_id!(SandboxProfileId, "sbp_");
+
+/// A service named by the external service catalogue.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ServiceId(pub String);
+
+impl ServiceId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ServiceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A skill named by the external skill catalogue.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SkillId(pub String);
+
+impl SkillId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for SkillId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Identifier of a session. Stable across an idle to revive cycle.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(pub String);
