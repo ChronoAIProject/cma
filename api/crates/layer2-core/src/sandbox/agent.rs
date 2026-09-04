@@ -3,25 +3,25 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use crate::profiles::AgentProfileSnapshot;
 
-use super::{AgentStatus, SandboxModelError, Worktree, WorktreeStatus};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FirstMessageDelivery {
-    Pending,
-    Delivering,
-    Delivered,
-    Failed,
-}
+use super::{
+    AgentStatus, AgentWorkState, FirstMessageRecord, QueuedAgentMessage, SandboxModelError,
+    TypedFailure, Worktree, WorktreeStatus, MAX_QUEUED_AGENT_MESSAGES,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_generation: Option<u64>,
     pub last_seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub first_message: Option<FirstMessageDelivery>,
+    pub first_message: Option<FirstMessageRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_turn: Option<u64>,
+    #[serde(default)]
+    pub queued_messages: Vec<QueuedAgentMessage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,9 +52,13 @@ pub struct Agent {
     pub workspace_id: WorkspaceId,
     pub sandbox_id: SandboxId,
     pub owner: SubjectId,
+    pub creation_key: String,
     pub profile: AgentProfileSnapshot,
     pub status: AgentStatus,
     pub conversation: ConversationState,
+    pub work: AgentWorkState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<TypedFailure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub created_at: String,
@@ -72,31 +76,97 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn validate_prerequisites(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
-        if worktree.id != self.worktree_id
-            || worktree.workspace_id != self.workspace_id
-            || worktree.sandbox_id != self.sandbox_id
-            || worktree.owner != self.owner
+    pub fn validate_for_admission(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
+        self.validate_lineage(worktree)?;
+        if worktree.status != WorktreeStatus::Creating
+            || worktree.agent_id.as_ref() != Some(&self.id)
+            || self.status != AgentStatus::Starting
+            || self.revision != 1
+            || self.creation_key.trim().is_empty()
+            || self.creation_key.len() > 256
+            || self.failure.is_some()
+            || self.conversation.conversation_id.is_some()
+            || self.conversation.runtime_generation.is_some()
+            || self.conversation.last_seq != 0
+            || self.conversation.active_turn.is_some()
+            || !self.conversation.queued_messages.is_empty()
+            || self.work.next_fence == 0
         {
-            return Err(SandboxModelError::Prerequisite {
-                resource: "agent",
-                detail: "worktree lineage does not match",
-            });
+            return Err(SandboxModelError::invalid_value("agent.admission"));
         }
+        if let Some(first_message) = self.conversation.first_message.as_ref() {
+            first_message.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_prerequisites(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
+        self.validate_lineage(worktree)?;
         if worktree.status != WorktreeStatus::Ready {
             return Err(SandboxModelError::Prerequisite {
                 resource: "agent",
                 detail: "worktree is not ready",
             });
         }
-        if worktree.agent_id.as_ref().is_some_and(|id| id != &self.id) {
+        if worktree.agent_id.as_ref() != Some(&self.id) {
             return Err(SandboxModelError::Prerequisite {
                 resource: "agent",
                 detail: "worktree is already assigned",
             });
         }
-        if self.revision == 0 {
+        if self.revision == 0 || self.work.next_fence == 0 {
             return Err(SandboxModelError::invalid_value("agent.revision"));
+        }
+        self.validate_conversation()?;
+        Ok(())
+    }
+
+    pub fn validate_conversation(&self) -> Result<(), SandboxModelError> {
+        let identity_shape = match (
+            self.conversation.conversation_id.as_deref(),
+            self.conversation.runtime_generation,
+        ) {
+            (None, None) => true,
+            (Some(id), Some(generation)) => {
+                !id.trim().is_empty() && id.len() <= 512 && generation > 0
+            }
+            _ => false,
+        };
+        let requires_identity = matches!(
+            self.status,
+            AgentStatus::Ready
+                | AgentStatus::Working
+                | AgentStatus::WaitingApproval
+                | AgentStatus::Paused
+                | AgentStatus::Stopped
+                | AgentStatus::Deleted
+        );
+        let queue_is_valid = self.conversation.queued_messages.len() <= MAX_QUEUED_AGENT_MESSAGES
+            && self
+                .conversation
+                .queued_messages
+                .iter()
+                .enumerate()
+                .all(|(index, message)| {
+                    message.validate().is_ok()
+                        && (index == 0
+                            || self.conversation.queued_messages[index - 1].sequence
+                                < message.sequence)
+                });
+        if !identity_shape
+            || (requires_identity && self.conversation.conversation_id.is_none())
+            || self
+                .conversation
+                .active_turn
+                .is_some_and(|turn| turn == 0 || self.status == AgentStatus::Ready)
+            || !queue_is_valid
+            || self
+                .conversation
+                .first_message
+                .as_ref()
+                .is_some_and(|record| record.validate().is_err())
+        {
+            return Err(SandboxModelError::invalid_value("agent.conversation"));
         }
         Ok(())
     }
@@ -111,6 +181,12 @@ impl Agent {
             return Err(SandboxModelError::invalid_value("agent.stop_reason"));
         }
         let status = self.status.transition(next)?;
+        if next == AgentStatus::Ready
+            && (self.conversation.conversation_id.is_none()
+                || self.conversation.runtime_generation.is_none())
+        {
+            return Err(SandboxModelError::invalid_value("agent.conversation_id"));
+        }
         let revision = self
             .revision
             .checked_add(1)
@@ -125,6 +201,41 @@ impl Agent {
             _ => {}
         }
         self.revision = revision;
+        Ok(())
+    }
+
+    pub fn fail(&mut self, failure: TypedFailure, at: String) -> Result<(), SandboxModelError> {
+        if self.status != AgentStatus::Starting
+            || failure.class.trim().is_empty()
+            || failure.detail.trim().is_empty()
+        {
+            return Err(SandboxModelError::invalid_value("agent.failure"));
+        }
+        self.status = self.status.transition(AgentStatus::Failed)?;
+        self.failure = Some(failure);
+        self.updated_at = at;
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
+        Ok(())
+    }
+
+    pub fn operation_id(&self, step: super::AgentWorkStep) -> String {
+        format!("agent:{}:{}:v1", self.id, step.operation_name())
+    }
+
+    fn validate_lineage(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
+        if worktree.id != self.worktree_id
+            || worktree.workspace_id != self.workspace_id
+            || worktree.sandbox_id != self.sandbox_id
+            || worktree.owner != self.owner
+        {
+            return Err(SandboxModelError::Prerequisite {
+                resource: "agent",
+                detail: "worktree lineage does not match",
+            });
+        }
         Ok(())
     }
 }

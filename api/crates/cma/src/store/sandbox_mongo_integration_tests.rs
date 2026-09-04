@@ -22,12 +22,12 @@ use layer2_core::sandbox::store::{
     WorktreeStore,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogKind, AgentOrigin, AgentStatus, ConversationState, CreateWorkspace, Sandbox,
-    SandboxCredentialAuthority, SandboxCredentialState, SandboxEvent, SandboxEventKind,
-    SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState,
-    SandboxWorkStep, TypedFailure, Workspace, WorkspaceOrigin, WorkspaceService,
-    WorkspaceServiceError, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
-    Worktree, WorktreeStatus,
+    Agent, AgentLogKind, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep,
+    ConversationState, CreateWorkspace, Sandbox, SandboxCredentialAuthority,
+    SandboxCredentialState, SandboxEvent, SandboxEventKind, SandboxLimits, SandboxOrigin,
+    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, TypedFailure, Workspace,
+    WorkspaceOrigin, WorkspaceService, WorkspaceServiceError, WorkspaceSource, WorkspaceStatus,
+    WorkspaceWorkState, WorkspaceWorkStep, Worktree, WorktreeStatus,
 };
 use layer2_core::{Authorization, Caller, Capability};
 use mongodb::bson::{doc, Document};
@@ -239,6 +239,7 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         workspace_id: worktree.workspace_id.clone(),
         sandbox_id: sandbox_id.clone(),
         owner: worktree.owner.clone(),
+        creation_key: "create-atomic".into(),
         profile: AgentProfileSnapshot {
             id: AgentProfileId("agp_test".into()),
             revision: 1,
@@ -248,9 +249,14 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         status: AgentStatus::Starting,
         conversation: ConversationState {
             conversation_id: None,
+            runtime_generation: None,
             last_seq: 0,
             first_message: None,
+            active_turn: None,
+            queued_messages: vec![],
         },
+        work: AgentWorkState::new(AgentWorkStep::AddWorktree, NOW.into()),
+        failure: None,
         title: None,
         created_at: NOW.into(),
         updated_at: NOW.into(),
@@ -287,6 +293,7 @@ fn workspace(sandbox: &Sandbox, id: &str, name: &str) -> Workspace {
         resolved_commit: None,
         status: WorkspaceStatus::Preparing,
         work: WorkspaceWorkState::new(WorkspaceWorkStep::Prepare, NOW.into()),
+        next_worktree_number: 1,
         created_at: NOW.into(),
         ready_at: None,
         failed: None,

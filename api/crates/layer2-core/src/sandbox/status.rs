@@ -174,7 +174,7 @@ impl AgentStatus {
                 )
                 | (Self::WaitingApproval, Self::Working | Self::Paused)
                 | (Self::Paused, Self::Ready)
-                | (Self::Stopped, Self::Deleted)
+                | (Self::Stopped | Self::Failed, Self::Deleted)
         ) || (live && next == Self::Stopped);
         allowed
             .then_some(next)

@@ -329,6 +329,7 @@ fn workspace(
         resolved_commit: None,
         status: WorkspaceStatus::Preparing,
         work: WorkspaceWorkState::new(WorkspaceWorkStep::Prepare, now.clone()),
+        next_worktree_number: 1,
         created_at: now,
         ready_at: None,
         failed: None,

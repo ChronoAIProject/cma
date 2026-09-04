@@ -122,6 +122,7 @@ fn workspace() -> Workspace {
         resolved_commit: Some("a".repeat(40)),
         status: WorkspaceStatus::Ready,
         work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
+        next_worktree_number: 1,
         created_at: NOW.into(),
         ready_at: Some(NOW.into()),
         failed: None,
@@ -141,7 +142,7 @@ fn worktree() -> Worktree {
         branch: "cma/wt-1".into(),
         base_commit: "0123456789abcdef".into(),
         status: WorktreeStatus::Ready,
-        agent_id: None,
+        agent_id: Some(AgentId("agt_test".into())),
         revision: 1,
     }
 }
@@ -153,13 +154,19 @@ fn agent() -> Agent {
         workspace_id: WorkspaceId("wks_test".into()),
         sandbox_id: SandboxId("sbx_test".into()),
         owner: SubjectId("owner".into()),
+        creation_key: "create-test-agent".into(),
         profile: agent_snapshot(),
         status: AgentStatus::Starting,
         conversation: ConversationState {
             conversation_id: None,
+            runtime_generation: None,
             last_seq: 0,
             first_message: None,
+            active_turn: None,
+            queued_messages: vec![],
         },
+        work: AgentWorkState::new(AgentWorkStep::AddWorktree, NOW.into()),
+        failure: None,
         title: None,
         created_at: NOW.into(),
         updated_at: NOW.into(),
@@ -292,6 +299,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (AgentStatus::WaitingApproval, AgentStatus::Paused),
         (AgentStatus::Paused, AgentStatus::Ready),
         (AgentStatus::Stopped, AgentStatus::Deleted),
+        (AgentStatus::Failed, AgentStatus::Deleted),
     ];
     for from in agent_statuses {
         for to in agent_statuses {
