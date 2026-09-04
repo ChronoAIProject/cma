@@ -58,6 +58,7 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
     };
 
     let document = store.login_to_doc(original.clone()).unwrap();
+    assert_eq!(document.document_schema_version, DOCUMENT_SCHEMA_VERSION);
     assert!(!format!("{document:?}").contains(original.verifier.expose()));
 
     let restored = store.login_from_doc(document).unwrap();
@@ -80,6 +81,7 @@ async fn subject_secrets_and_metadata_round_trip() {
     let store = store().await;
     let original = subject_state(Some(subject_tokens()));
     let document = store.subject_to_doc(original.clone()).unwrap();
+    assert_eq!(document.document_schema_version, DOCUMENT_SCHEMA_VERSION);
     let diagnostic = format!("{document:?}");
     assert!(!diagnostic.contains(ACCESS_SECRET));
     assert!(!diagnostic.contains(REFRESH_SECRET));
@@ -93,6 +95,16 @@ async fn subject_secrets_and_metadata_round_trip() {
     assert_eq!(restored_tokens.access_token, original_tokens.access_token);
     assert_eq!(restored_tokens.refresh_token, original_tokens.refresh_token);
     assert_eq!(restored_tokens.expires_at, original_tokens.expires_at);
+}
+
+#[test]
+fn browser_login_documents_are_explicitly_schema_v1() {
+    let document = MongoAuthStore::browser_login_to_doc(BrowserLogin {
+        id: SecretDigest::identify("browser", "login"),
+        subject: SubjectId::new("subject-a"),
+        expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(20),
+    });
+    assert_eq!(document.document_schema_version, DOCUMENT_SCHEMA_VERSION);
 }
 
 #[tokio::test]

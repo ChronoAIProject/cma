@@ -21,11 +21,13 @@ use crate::auth::{
 use super::{
     durability::majority_collection,
     encryption::{AuthCipher, AuthEncryptionKey, CipherEnvelope},
+    schema::{self, DOCUMENT_SCHEMA_VERSION},
 };
 
-const BROWSER_LOGINS: &str = "auth_browser_logins";
-const LOGIN_ATTEMPTS: &str = "auth_login_attempts";
-const SUBJECTS: &str = "auth_subjects";
+pub(super) const BROWSER_LOGINS: &str = "auth_browser_logins";
+pub(super) const LOGIN_ATTEMPTS: &str = "auth_login_attempts";
+pub(super) const SUBJECTS: &str = "auth_subjects";
+pub(super) const AUTH_COLLECTIONS: &[&str] = &[BROWSER_LOGINS, LOGIN_ATTEMPTS, SUBJECTS];
 const EXPIRY_INDEX: &str = "expires_at_ttl";
 const LOGIN_KIND: &str = "login-attempt";
 const SUBJECT_KIND: &str = "subject-auth";
@@ -34,6 +36,7 @@ const SUBJECT_KIND: &str = "subject-auth";
 struct BrowserLoginDoc {
     #[serde(rename = "_id")]
     id: Binary,
+    document_schema_version: i64,
     subject: String,
     expires_at: DateTime,
 }
@@ -42,6 +45,7 @@ struct BrowserLoginDoc {
 struct LoginAttemptDoc {
     #[serde(rename = "_id")]
     id: Binary,
+    document_schema_version: i64,
     browser_binding: Binary,
     verifier: CipherEnvelope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,6 +57,7 @@ struct LoginAttemptDoc {
 struct SubjectDoc {
     #[serde(rename = "_id")]
     subject: String,
+    document_schema_version: i64,
     authorization: Authorization,
     profile: Profile,
     access_token: Option<CipherEnvelope>,
@@ -77,6 +82,7 @@ impl MongoAuthStore {
         encryption_key: &AuthEncryptionKey,
     ) -> Result<Self, StoreError> {
         let database = client.database(database);
+        schema::refuse_unknown_versions(&database, AUTH_COLLECTIONS).await?;
         let store = Self {
             browser_logins: majority_collection(&database, BROWSER_LOGINS),
             login_attempts: majority_collection(&database, LOGIN_ATTEMPTS),
@@ -111,6 +117,7 @@ impl MongoAuthStore {
         let id = *attempt.id.as_bytes();
         Ok(LoginAttemptDoc {
             id: binary(id),
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
             browser_binding: binary(*attempt.browser_binding.as_bytes()),
             verifier: self
                 .cipher
@@ -120,7 +127,17 @@ impl MongoAuthStore {
         })
     }
 
+    fn browser_login_to_doc(login: BrowserLogin) -> BrowserLoginDoc {
+        BrowserLoginDoc {
+            id: binary(*login.id.as_bytes()),
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
+            subject: login.subject.0,
+            expires_at: DateTime::from_system_time(login.expires_at),
+        }
+    }
+
     fn login_from_doc(&self, document: LoginAttemptDoc) -> Result<LoginAttempt, StoreError> {
+        schema::require_current(document.document_schema_version)?;
         let id = digest(&document.id, "login attempt")?;
         let browser_binding = digest(&document.browser_binding, "login browser binding")?;
         let verifier =
@@ -159,6 +176,7 @@ impl MongoAuthStore {
         };
         Ok(SubjectDoc {
             subject: state.subject.0,
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
             authorization: state.authorization,
             profile: state.profile,
             access_token,
@@ -168,6 +186,7 @@ impl MongoAuthStore {
     }
 
     fn subject_from_doc(&self, document: SubjectDoc) -> Result<SubjectAuthState, StoreError> {
+        schema::require_current(document.document_schema_version)?;
         let id = document.subject.as_bytes();
         let tokens = match (
             document.access_token,
@@ -221,6 +240,7 @@ impl AuthStore for MongoAuthStore {
         self.login_attempts
             .find_one_and_delete(doc! {
                 "_id": binary(*id.as_bytes()),
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "browser_binding": binary(*browser_binding.as_bytes()),
             })
             .await
@@ -230,14 +250,14 @@ impl AuthStore for MongoAuthStore {
     }
 
     async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError> {
+        let id = binary(*login.id.as_bytes());
         self.browser_logins
             .replace_one(
-                doc! { "_id": binary(*login.id.as_bytes()) },
-                BrowserLoginDoc {
-                    id: binary(*login.id.as_bytes()),
-                    subject: login.subject.0,
-                    expires_at: DateTime::from_system_time(login.expires_at),
+                doc! {
+                    "_id": &id,
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 },
+                Self::browser_login_to_doc(login),
             )
             .upsert(true)
             .await
@@ -251,6 +271,7 @@ impl AuthStore for MongoAuthStore {
             .await
             .map_err(|error| StoreError::Unavailable(format!("read browser login: {error}")))?
             .map(|document| {
+                schema::require_current(document.document_schema_version)?;
                 Ok(BrowserLogin {
                     id: digest(&document.id, "browser login")?,
                     subject: SubjectId::new(document.subject),
@@ -262,7 +283,10 @@ impl AuthStore for MongoAuthStore {
 
     async fn delete_browser_login(&self, id: &SecretDigest) -> Result<(), StoreError> {
         self.browser_logins
-            .delete_one(doc! { "_id": binary(*id.as_bytes()) })
+            .delete_one(doc! {
+                "_id": binary(*id.as_bytes()),
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            })
             .await
             .map_err(|error| StoreError::Unavailable(format!("delete browser login: {error}")))?;
         Ok(())
@@ -271,7 +295,13 @@ impl AuthStore for MongoAuthStore {
     async fn put_subject(&self, state: SubjectAuthState) -> Result<(), StoreError> {
         let subject = state.subject.0.clone();
         self.subjects
-            .replace_one(doc! { "_id": &subject }, self.subject_to_doc(state)?)
+            .replace_one(
+                doc! {
+                    "_id": &subject,
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                },
+                self.subject_to_doc(state)?,
+            )
             .upsert(true)
             .await
             .map_err(|error| StoreError::Unavailable(format!("store subject auth: {error}")))?;

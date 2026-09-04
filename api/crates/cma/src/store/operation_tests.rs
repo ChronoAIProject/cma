@@ -50,6 +50,7 @@ fn the_compound_identity_and_fingerprint_round_trip() {
         SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000),
     );
     let stored = to_doc(&held);
+    assert_eq!(stored.document_schema_version, DOCUMENT_SCHEMA_VERSION);
     assert_eq!(stored.id, operation_id(&held));
     assert_eq!(stored.claim_id.as_deref(), Some(held.claim_id()));
     assert_eq!(stored.expires_at, None);
