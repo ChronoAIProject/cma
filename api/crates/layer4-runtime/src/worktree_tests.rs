@@ -21,10 +21,12 @@ async fn preexisting_worktree_branch_is_preserved() {
     let workspace = crate::workspace_source::prepare(
         &home,
         true,
-        &WorkspaceRequest {
-            name: "project".into(),
-            source: WorkspaceSource::Init,
-        },
+        &WorkspaceRequest::new(
+            "workspace:wks_project_one:prepare:v1",
+            "wks_project_one",
+            "project",
+            WorkspaceSource::Init,
+        ),
     )
     .await
     .unwrap();
@@ -62,10 +64,12 @@ async fn real_git_worktrees_use_the_contract_path_and_branch() {
     let workspace = crate::workspace_source::prepare(
         &home,
         true,
-        &WorkspaceRequest {
-            name: "project".into(),
-            source: WorkspaceSource::Init,
-        },
+        &WorkspaceRequest::new(
+            "workspace:wks_project_two:prepare:v1",
+            "wks_project_two",
+            "project",
+            WorkspaceSource::Init,
+        ),
     )
     .await
     .unwrap();

@@ -39,10 +39,12 @@ async fn init_creates_a_real_initial_commit_and_excludes_worktrees() {
     let receipt = prepare(
         &home,
         true,
-        &WorkspaceRequest {
-            name: "notes".into(),
-            source: WorkspaceSource::Init,
-        },
+        &WorkspaceRequest::new(
+            "workspace:wks_notes:prepare:v1",
+            "wks_notes",
+            "notes",
+            WorkspaceSource::Init,
+        ),
     )
     .await
     .unwrap();
@@ -65,13 +67,15 @@ async fn clone_uses_a_real_local_repository_in_test_mode() {
     let receipt = prepare(
         &home,
         true,
-        &WorkspaceRequest {
-            name: "copy".into(),
-            source: WorkspaceSource::Clone {
+        &WorkspaceRequest::new(
+            "workspace:wks_copy:prepare:v1",
+            "wks_copy",
+            "copy",
+            WorkspaceSource::Clone {
                 url: source.to_string_lossy().into_owned(),
                 reference: Some("trunk".into()),
             },
-        },
+        ),
     )
     .await
     .unwrap();
@@ -89,6 +93,7 @@ fn production_clone_urls_are_public_github_repositories_only() {
     for value in [
         "http://github.com/owner/repository",
         "https://user@github.com/owner/repository",
+        "https://github.com:443/owner/repository",
         "https://example.com/owner/repository",
         "https://github.com/owner/repository/issues",
         "file:///tmp/repository",

@@ -12,6 +12,15 @@ pub enum ProfileVisibility {
     Public,
 }
 
+impl ProfileVisibility {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Public => "public",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef<I> {

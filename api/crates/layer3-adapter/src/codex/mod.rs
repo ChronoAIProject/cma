@@ -20,7 +20,8 @@ use crate::{
     CheckpointReceipt, CheckpointRequest, ConversationChannel, ConversationSnapshot,
     ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest, ResourceReading,
     RestoreRequest, RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
+    WorktreeRequest,
 };
 
 /// Configuration for Codex inside a hosted sandbox.
@@ -119,8 +120,12 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.run_workspace_setup(handle, request).await
     }
 
-    async fn remove_workspace(&self, handle: &RuntimeHandle, name: &str) -> crate::Result<()> {
-        self.hosted.remove_workspace(handle, name).await
+    async fn remove_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceRemoveRequest,
+    ) -> crate::Result<()> {
+        self.hosted.remove_workspace(handle, request).await
     }
 
     async fn add_worktree(

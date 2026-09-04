@@ -34,7 +34,7 @@ struct AgentProcess {
 pub(crate) struct Supervisor {
     config: RuntimeConfig,
     phase: RwLock<Phase>,
-    operation_gate: Mutex<()>,
+    operation_gate: Arc<Mutex<()>>,
     credential: CredentialHolder,
     agents: RwLock<BTreeMap<AgentSlot, AgentProcess>>,
     checkpoint: CheckpointStore,
@@ -62,7 +62,7 @@ impl Supervisor {
         Ok(Arc::new(Self {
             config,
             phase: RwLock::new(Phase::Provisioned),
-            operation_gate: Mutex::new(()),
+            operation_gate: Arc::new(Mutex::new(())),
             credential: CredentialHolder::new(),
             agents: RwLock::new(BTreeMap::new()),
             checkpoint,
@@ -81,6 +81,44 @@ impl Supervisor {
 
     pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {
         let operation = request.operation();
+        if matches!(
+            request,
+            RequestFrame::PrepareWorkspace(_)
+                | RequestFrame::WorkspaceSetup(_)
+                | RequestFrame::RemoveWorkspace(_)
+        ) {
+            if let Err(error) = self.require_credentialed().await {
+                return error.response(operation);
+            }
+            if let RequestFrame::RemoveWorkspace(reference) = &request {
+                if let Err(error) = self.ensure_workspace_idle(&reference.name).await {
+                    return error.response(operation);
+                }
+            }
+            return match crate::workspace_runtime::dispatch(
+                self.config.clone(),
+                Arc::clone(&self.operation_gate),
+                request,
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => error.response(operation),
+            };
+        }
+        if !matches!(
+            request,
+            RequestFrame::Install(_) | RequestFrame::Credential(_) | RequestFrame::Resources
+        ) {
+            if let Err(error) = crate::workspace_runtime::recover(
+                self.config.clone(),
+                Arc::clone(&self.operation_gate),
+            )
+            .await
+            {
+                return error.response(operation);
+            }
+        }
         let _operation = self.operation_gate.lock().await;
         match self.execute(request).await {
             Ok(response) => response,
@@ -98,23 +136,9 @@ impl Supervisor {
         match request {
             RequestFrame::Install(request) => self.install(request).await,
             RequestFrame::Credential(frame) => self.credential(frame).await,
-            RequestFrame::PrepareWorkspace(request) => {
-                let receipt = crate::workspace_source::prepare(
-                    &self.config.home,
-                    self.config.allow_local_git,
-                    &request,
-                )
-                .await?;
-                Ok(ResponseFrame::PrepareWorkspace(receipt))
-            }
-            RequestFrame::WorkspaceSetup(request) => Ok(ResponseFrame::WorkspaceSetup(
-                crate::workspace_setup::run(&self.config, &request).await?,
-            )),
-            RequestFrame::RemoveWorkspace(reference) => {
-                self.ensure_workspace_idle(&reference.name).await?;
-                crate::workspace_source::remove(&self.config.home, &reference.name)?;
-                Ok(ResponseFrame::RemoveWorkspace(Acknowledgement::default()))
-            }
+            RequestFrame::PrepareWorkspace(_)
+            | RequestFrame::WorkspaceSetup(_)
+            | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
             RequestFrame::AddWorktree(request) => Ok(ResponseFrame::AddWorktree(
                 crate::worktree::add(&self.config.home, self.config.allow_local_git, &request)
                     .await?,

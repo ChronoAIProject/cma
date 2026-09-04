@@ -17,7 +17,8 @@ use layer2_core::sandbox::{
     Agent, AgentOrigin, AgentStatus, ConversationState, RuntimeBinding, Sandbox, SandboxAdminQuery,
     SandboxAdminStore, SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxOrigin,
     SandboxRetirement, SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
-    StoredSandboxRetirement, Workspace, WorkspaceSource, WorkspaceStatus,
+    StoredSandboxRetirement, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus,
+    WorkspaceWorkState, WorkspaceWorkStep,
 };
 use mongodb::Client;
 
@@ -103,6 +104,7 @@ fn workspace(sandbox: &Sandbox) -> Workspace {
         id: WorkspaceId(format!("wks_{}", sandbox.id.as_str())),
         sandbox_id: sandbox.id.clone(),
         owner: sandbox.owner.clone(),
+        origin: WorkspaceOrigin::Manual,
         profile: WorkspaceProfileSnapshot {
             id: WorkspaceProfileId("wkp_operator".into()),
             revision: 1,
@@ -119,7 +121,9 @@ fn workspace(sandbox: &Sandbox) -> Workspace {
         name: "project".into(),
         path: "/home/cma/project".into(),
         source: WorkspaceSource::Empty,
+        resolved_commit: Some("0123456789abcdef0123456789abcdef01234567".into()),
         status: WorkspaceStatus::Ready,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
         created_at: NOW.into(),
         ready_at: Some(NOW.into()),
         failed: None,

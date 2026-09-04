@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::CommandReceipt;
+use crate::{DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS};
 
 /// How a workspace root is created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,14 +20,59 @@ pub enum WorkspaceSource {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRequest {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub workspace_id: String,
     pub name: String,
     pub source: WorkspaceSource,
+}
+
+impl WorkspaceRequest {
+    pub fn new(
+        operation_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        name: impl Into<String>,
+        source: WorkspaceSource,
+    ) -> Self {
+        let mut request = Self {
+            operation_id: operation_id.into(),
+            request_sha256: String::new(),
+            workspace_id: workspace_id.into(),
+            name: name.into(),
+            source,
+        };
+        request.request_sha256 = request.computed_sha256();
+        request
+    }
+
+    pub fn computed_sha256(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"chrono.workspace.prepare.v1\0");
+        field(&mut digest, &self.workspace_id);
+        field(&mut digest, &self.name);
+        match &self.source {
+            WorkspaceSource::Clone { url, reference } => {
+                digest.update([1]);
+                field(&mut digest, url);
+                optional_field(&mut digest, reference.as_deref());
+            }
+            WorkspaceSource::Init => digest.update([2]),
+        }
+        hex(&digest.finalize())
+    }
+
+    pub fn has_valid_sha256(&self) -> bool {
+        self.request_sha256 == self.computed_sha256()
+    }
 }
 
 /// The canonical workspace facts resolved by the runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub workspace_id: String,
     pub name: String,
     pub path: String,
     pub resolved_commit: String,
@@ -35,17 +82,161 @@ pub struct WorkspaceReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceSetupRequest {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub workspace_id: String,
     pub name: String,
     #[serde(default)]
     pub commands: Vec<String>,
+    #[serde(rename = "timeout_s")]
+    pub timeout_seconds: u64,
+    #[serde(rename = "output_limit")]
+    pub output_limit_bytes: u32,
+}
+
+impl WorkspaceSetupRequest {
+    pub fn new(
+        operation_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        name: impl Into<String>,
+        commands: Vec<String>,
+    ) -> Self {
+        Self::bounded(
+            operation_id,
+            workspace_id,
+            name,
+            commands,
+            DEFAULT_COMMAND_TIMEOUT_SECONDS,
+            DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+        )
+    }
+
+    pub fn bounded(
+        operation_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        name: impl Into<String>,
+        commands: Vec<String>,
+        timeout_seconds: u64,
+        output_limit_bytes: u32,
+    ) -> Self {
+        let mut request = Self {
+            operation_id: operation_id.into(),
+            request_sha256: String::new(),
+            workspace_id: workspace_id.into(),
+            name: name.into(),
+            commands,
+            timeout_seconds,
+            output_limit_bytes,
+        };
+        request.request_sha256 = request.computed_sha256();
+        request
+    }
+
+    pub fn computed_sha256(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"chrono.workspace.setup.v1\0");
+        field(&mut digest, &self.workspace_id);
+        field(&mut digest, &self.name);
+        digest.update(self.timeout_seconds.to_be_bytes());
+        digest.update(self.output_limit_bytes.to_be_bytes());
+        digest.update(
+            u32::try_from(self.commands.len())
+                .unwrap_or(u32::MAX)
+                .to_be_bytes(),
+        );
+        for command in &self.commands {
+            field(&mut digest, command);
+        }
+        hex(&digest.finalize())
+    }
+
+    pub fn has_valid_sha256(&self) -> bool {
+        self.request_sha256 == self.computed_sha256()
+    }
 }
 
 /// Proof that every setup command completed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetupReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub workspace_id: String,
     #[serde(default)]
     pub commands: Vec<CommandReceipt>,
+}
+
+/// Remove one workspace using an aggregate-specific replay identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRemoveRequest {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub workspace_id: String,
+    pub name: String,
+}
+
+impl WorkspaceRemoveRequest {
+    pub fn new(
+        operation_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
+        let mut request = Self {
+            operation_id: operation_id.into(),
+            request_sha256: String::new(),
+            workspace_id: workspace_id.into(),
+            name: name.into(),
+        };
+        request.request_sha256 = request.computed_sha256();
+        request
+    }
+
+    pub fn computed_sha256(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"chrono.workspace.remove.v1\0");
+        field(&mut digest, &self.workspace_id);
+        field(&mut digest, &self.name);
+        hex(&digest.finalize())
+    }
+
+    pub fn has_valid_sha256(&self) -> bool {
+        self.request_sha256 == self.computed_sha256()
+    }
+}
+
+/// Correlated proof that workspace removal completed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRemoveReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub workspace_id: String,
+}
+
+fn field(digest: &mut Sha256, value: &str) {
+    digest.update(u32::try_from(value.len()).unwrap_or(u32::MAX).to_be_bytes());
+    digest.update(value.as_bytes());
+}
+
+fn optional_field(digest: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            digest.update([1]);
+            field(digest, value);
+        }
+        None => digest.update([0]),
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 /// Add one independently writable Git worktree.

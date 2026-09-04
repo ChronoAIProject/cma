@@ -9,13 +9,14 @@ use super::reply::{
     validate_command_receipts,
 };
 use super::{HostedAgentRuntime, HostedBackend, HostedDeployment};
-use crate::wire::{AgentRef, CredentialReceipt, RequestFrame, ResponseFrame, WorkspaceRef};
+use crate::wire::{AgentRef, CredentialReceipt, RequestFrame, ResponseFrame};
 use crate::{
     AdapterCapabilities, AdapterError, AgentHomeRequest, AgentOpenRequest, AgentSlot,
     CheckpointReceipt, CheckpointRequest, ConversationChannel, ConversationSnapshot,
     ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest, ResourceReading,
     RestoreRequest, RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
+    WorktreeRequest,
 };
 
 #[path = "adapter_install.rs"]
@@ -243,12 +244,24 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorkspaceRequest,
     ) -> crate::Result<WorkspaceReceipt> {
-        self.require_credential(handle).await?;
+        self.known_state(handle).await?;
+        validate_workspace_operation(
+            &request.operation_id,
+            &request.request_sha256,
+            request.has_valid_sha256(),
+        )?;
         match self
             .exchange(handle, RequestFrame::PrepareWorkspace(request.clone()))
             .await?
         {
-            ResponseFrame::PrepareWorkspace(receipt) if receipt.name == request.name => Ok(receipt),
+            ResponseFrame::PrepareWorkspace(receipt)
+                if receipt.name == request.name
+                    && receipt.workspace_id == request.workspace_id
+                    && receipt.operation_id == request.operation_id
+                    && receipt.request_sha256 == request.request_sha256 =>
+            {
+                Ok(receipt)
+            }
             ResponseFrame::PrepareWorkspace(_) => Err(AdapterError::Rejected(
                 "workspace receipt names a different workspace".into(),
             )),
@@ -261,12 +274,30 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorkspaceSetupRequest,
     ) -> crate::Result<SetupReceipt> {
-        self.require_credential(handle).await?;
+        self.known_state(handle).await?;
+        validate_workspace_operation(
+            &request.operation_id,
+            &request.request_sha256,
+            request.has_valid_sha256(),
+        )?;
+        if request.timeout_seconds == 0 || request.output_limit_bytes == 0 {
+            return Err(AdapterError::Rejected(
+                "workspace setup command bounds are invalid".into(),
+            ));
+        }
         match self
             .exchange(handle, RequestFrame::WorkspaceSetup(request.clone()))
             .await?
         {
             ResponseFrame::WorkspaceSetup(receipt) => {
+                if receipt.operation_id != request.operation_id
+                    || receipt.request_sha256 != request.request_sha256
+                    || receipt.workspace_id != request.workspace_id
+                {
+                    return Err(AdapterError::Rejected(
+                        "runtime returned a receipt for another workspace setup operation".into(),
+                    ));
+                }
                 validate_command_receipts(&receipt.commands, request.commands.len())?;
                 Ok(receipt)
             }
@@ -274,15 +305,33 @@ impl SandboxAdapter for HostedAdapter {
         }
     }
 
-    async fn remove_workspace(&self, handle: &RuntimeHandle, name: &str) -> crate::Result<()> {
-        self.require_credential(handle).await?;
-        expect_ack(
-            self.exchange(
-                handle,
-                RequestFrame::RemoveWorkspace(WorkspaceRef { name: name.into() }),
-            )
-            .await?,
-        )
+    async fn remove_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceRemoveRequest,
+    ) -> crate::Result<()> {
+        self.known_state(handle).await?;
+        validate_workspace_operation(
+            &request.operation_id,
+            &request.request_sha256,
+            request.has_valid_sha256(),
+        )?;
+        match self
+            .exchange(handle, RequestFrame::RemoveWorkspace(request.clone()))
+            .await?
+        {
+            ResponseFrame::RemoveWorkspace(receipt)
+                if receipt.operation_id == request.operation_id
+                    && receipt.request_sha256 == request.request_sha256
+                    && receipt.workspace_id == request.workspace_id =>
+            {
+                Ok(())
+            }
+            ResponseFrame::RemoveWorkspace(_) => Err(AdapterError::Rejected(
+                "runtime returned a receipt for another workspace removal operation".into(),
+            )),
+            _ => unreachable!("exchange verifies response operation"),
+        }
     }
 
     async fn add_worktree(
@@ -452,4 +501,23 @@ impl SandboxAdapter for HostedAdapter {
         self.states.lock().await.remove(handle);
         Ok(())
     }
+}
+
+fn validate_workspace_operation(
+    operation_id: &str,
+    request_sha256: &str,
+    digest_matches: bool,
+) -> crate::Result<()> {
+    if operation_id.trim().is_empty()
+        || operation_id.len() > 256
+        || operation_id.chars().any(char::is_control)
+        || request_sha256.len() != 64
+        || !request_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !digest_matches
+    {
+        return Err(AdapterError::Rejected(
+            "workspace operation id or request digest is invalid".into(),
+        ));
+    }
+    Ok(())
 }

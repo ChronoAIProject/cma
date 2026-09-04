@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::profiles::{
     ProfileAdminQuery, ProfileAdminStore, ProfileAdminSummary, ProfileLocator, ProfilePage,
-    ProfileStoreError, ProfileVisibility,
+    ProfileStoreError,
 };
 use crate::{
     now_rfc3339, ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget,
@@ -240,6 +240,11 @@ impl OperatorError {
             | SandboxStoreError::Duplicate
             | SandboxStoreError::SequenceConflict
             | SandboxStoreError::LimitReached { .. }
+            | SandboxStoreError::SandboxNotReady
+            | SandboxStoreError::WorkspaceNameConflict
+            | SandboxStoreError::WorkspaceLimitReached { .. }
+            | SandboxStoreError::WorkspaceHasLiveAgents
+            | SandboxStoreError::WorkspaceOriginConflict
             | SandboxStoreError::InvalidTransaction(_) => Self::InvalidState(error.to_string()),
             SandboxStoreError::Unavailable(_) | SandboxStoreError::Corrupt(_) => {
                 Self::Unavailable(error.to_string())
@@ -376,7 +381,7 @@ impl SandboxOperatorService {
         if let Some(visibility) = query.visibility {
             record
                 .detail
-                .record(DetailKey::Visibility, visibility_name(visibility));
+                .record(DetailKey::Visibility, visibility.as_str());
         }
         self.append(record).await?;
         Ok(page)
@@ -426,7 +431,7 @@ impl SandboxOperatorService {
             .record(DetailKey::ProfileKind, summary.kind.as_str());
         record
             .detail
-            .record(DetailKey::Visibility, visibility_name(summary.visibility));
+            .record(DetailKey::Visibility, summary.visibility.as_str());
         self.append(record).await?;
         Ok(summary)
     }
@@ -486,13 +491,6 @@ fn sandbox_events_target(id: &SandboxId) -> String {
 
 fn profile_target(locator: &ProfileLocator) -> String {
     format!("profile:{}:{}", locator.kind().as_str(), locator.as_str())
-}
-
-fn visibility_name(visibility: ProfileVisibility) -> &'static str {
-    match visibility {
-        ProfileVisibility::Private => "private",
-        ProfileVisibility::Public => "public",
-    }
 }
 
 #[cfg(test)]

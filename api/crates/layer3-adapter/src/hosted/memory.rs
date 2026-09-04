@@ -15,7 +15,7 @@ use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointReceipt, CommandReceipt,
     ConversationChannel, ConversationInputSender, ConversationSnapshot, ConversationUpdate,
     InstallReceipt, ResourceReading, RuntimeHandle, SetupReceipt, WorkspaceReceipt,
-    WorkspaceSource, WorktreeReceipt, WriterState,
+    WorkspaceRemoveReceipt, WorkspaceSource, WorktreeReceipt, WriterState,
 };
 
 /// Observable in-memory state used by Layer 2 lifecycle tests.
@@ -44,6 +44,7 @@ struct MemoryRuntime {
     install: Option<((String, String), InstallReceipt)>,
     credential_delivered: bool,
     workspaces: BTreeMap<String, WorkspaceReceipt>,
+    workspace_operations: BTreeMap<String, (String, ResponseFrame)>,
     worktrees: BTreeMap<(String, String), WorktreeReceipt>,
     homes: BTreeMap<AgentSlot, AgentHomePlan>,
     agents: BTreeMap<AgentSlot, MemoryAgent>,
@@ -158,6 +159,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 install: None,
                 credential_delivered: false,
                 workspaces: BTreeMap::new(),
+                workspace_operations: BTreeMap::new(),
                 worktrees: BTreeMap::new(),
                 homes: BTreeMap::new(),
                 agents: BTreeMap::new(),
@@ -232,6 +234,17 @@ impl HostedBackend for InMemoryHostedBackend {
             }
             RequestFrame::PrepareWorkspace(request) => {
                 require_credential(runtime, operation)?;
+                if !request.has_valid_sha256() || request.operation_id.trim().is_empty() {
+                    return refused(operation, "workspace_request_invalid");
+                }
+                if let Some(response) = replay_workspace_operation(
+                    runtime,
+                    &request.operation_id,
+                    &request.request_sha256,
+                    operation,
+                )? {
+                    return Ok(response);
+                }
                 if !safe_name(&request.name) || runtime.workspaces.contains_key(&request.name) {
                     return refused(operation, "invalid_or_existing_workspace");
                 }
@@ -242,35 +255,91 @@ impl HostedBackend for InMemoryHostedBackend {
                     WorkspaceSource::Init => format!("init:{}", request.name),
                 };
                 let receipt = WorkspaceReceipt {
+                    operation_id: request.operation_id.clone(),
+                    request_sha256: request.request_sha256.clone(),
+                    workspace_id: request.workspace_id.clone(),
                     name: request.name.clone(),
                     path: format!("/home/cma/{}", request.name),
                     resolved_commit: digest(commit_source.as_bytes()),
                 };
                 runtime.workspaces.insert(request.name, receipt.clone());
-                Ok(ResponseFrame::PrepareWorkspace(receipt))
+                let response = ResponseFrame::PrepareWorkspace(receipt);
+                remember_workspace_operation(
+                    runtime,
+                    request.operation_id,
+                    request.request_sha256,
+                    response.clone(),
+                );
+                Ok(response)
             }
             RequestFrame::WorkspaceSetup(request) => {
                 require_credential(runtime, operation)?;
-                if !runtime.workspaces.contains_key(&request.name) {
-                    return refused(operation, "workspace_not_found");
+                if !request.has_valid_sha256() || request.operation_id.trim().is_empty() {
+                    return refused(operation, "workspace_request_invalid");
                 }
-                Ok(ResponseFrame::WorkspaceSetup(SetupReceipt {
+                if let Some(response) = replay_workspace_operation(
+                    runtime,
+                    &request.operation_id,
+                    &request.request_sha256,
+                    operation,
+                )? {
+                    return Ok(response);
+                }
+                let Some(workspace) = runtime.workspaces.get(&request.name) else {
+                    return refused(operation, "workspace_not_found");
+                };
+                if workspace.workspace_id != request.workspace_id {
+                    return refused(operation, "workspace_identity_mismatch");
+                }
+                let response = ResponseFrame::WorkspaceSetup(SetupReceipt {
+                    operation_id: request.operation_id.clone(),
+                    request_sha256: request.request_sha256.clone(),
+                    workspace_id: request.workspace_id.clone(),
                     commands: successful_commands(&request.commands),
-                }))
+                });
+                remember_workspace_operation(
+                    runtime,
+                    request.operation_id,
+                    request.request_sha256,
+                    response.clone(),
+                );
+                Ok(response)
             }
-            RequestFrame::RemoveWorkspace(reference) => {
+            RequestFrame::RemoveWorkspace(request) => {
                 require_credential(runtime, operation)?;
-                if runtime
-                    .worktrees
-                    .keys()
-                    .any(|(workspace, _)| workspace == &reference.name)
-                {
-                    return refused(operation, "workspace_has_worktrees");
+                if !request.has_valid_sha256() || request.operation_id.trim().is_empty() {
+                    return refused(operation, "workspace_request_invalid");
                 }
-                if runtime.workspaces.remove(&reference.name).is_none() {
+                if let Some(response) = replay_workspace_operation(
+                    runtime,
+                    &request.operation_id,
+                    &request.request_sha256,
+                    operation,
+                )? {
+                    return Ok(response);
+                }
+                let Some(workspace) = runtime.workspaces.get(&request.name) else {
                     return refused(operation, "workspace_not_found");
+                };
+                if workspace.workspace_id != request.workspace_id {
+                    return refused(operation, "workspace_identity_mismatch");
                 }
-                Ok(ResponseFrame::RemoveWorkspace(Acknowledgement::default()))
+                runtime.workspaces.remove(&request.name);
+                runtime
+                    .worktrees
+                    .retain(|(workspace, _), _| workspace != &request.name);
+                let response = ResponseFrame::RemoveWorkspace(WorkspaceRemoveReceipt {
+                    operation_id: request.operation_id.clone(),
+                    request_sha256: request.request_sha256.clone(),
+                    workspace_id: request.workspace_id.clone(),
+                });
+                remember_workspace_operation(
+                    runtime,
+                    request.operation_id,
+                    request.request_sha256,
+                    response.clone(),
+                );
+                Ok(response)
             }
             RequestFrame::AddWorktree(request) => {
                 require_credential(runtime, operation)?;
@@ -450,6 +519,32 @@ fn require_credential(runtime: &MemoryRuntime, operation: WireOperation) -> crat
             "{operation:?}: credential_not_delivered"
         )))
     }
+}
+
+fn replay_workspace_operation(
+    runtime: &MemoryRuntime,
+    operation_id: &str,
+    request_sha256: &str,
+    operation: WireOperation,
+) -> crate::Result<Option<ResponseFrame>> {
+    let Some((stored_digest, response)) = runtime.workspace_operations.get(operation_id) else {
+        return Ok(None);
+    };
+    if stored_digest != request_sha256 {
+        return refused(operation, "workspace_replay_mismatch");
+    }
+    Ok(Some(response.clone()))
+}
+
+fn remember_workspace_operation(
+    runtime: &mut MemoryRuntime,
+    operation_id: String,
+    request_sha256: String,
+    response: ResponseFrame,
+) {
+    runtime
+        .workspace_operations
+        .insert(operation_id, (request_sha256, response));
 }
 
 fn refused<T>(operation: WireOperation, code: &str) -> crate::Result<T> {

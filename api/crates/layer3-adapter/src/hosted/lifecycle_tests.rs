@@ -4,8 +4,9 @@ use crate::wire::{RequestFrame, WireOperation};
 use crate::{
     AdapterError, AgentHomeRequest, AgentOpenRequest, AgentSlot, CheckpointRequest,
     CredentialFrame, InstallRequest, PermissionLevel, ReasoningEffort, RestoreRequest,
-    RuntimeCredential, RuntimeImage, RuntimeOptions, SandboxAdapter, SandboxSpec, WorkspaceRequest,
-    WorkspaceSetupRequest, WorkspaceSource, WorktreeRef, WorktreeRequest, RUNTIME_CONTRACT_LABEL,
+    RuntimeCredential, RuntimeImage, RuntimeOptions, SandboxAdapter, SandboxSpec,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeRef,
+    WorktreeRequest, RUNTIME_CONTRACT_LABEL,
 };
 
 fn sandbox_spec(own_credential: bool) -> SandboxSpec {
@@ -233,33 +234,39 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let workspace_a = adapter
         .prepare_workspace(
             &handle,
-            &WorkspaceRequest {
-                name: "alpha".into(),
-                source: WorkspaceSource::Clone {
+            &WorkspaceRequest::new(
+                "workspace:wks-alpha:prepare:v1",
+                "wks-alpha",
+                "alpha",
+                WorkspaceSource::Clone {
                     url: "https://github.com/example/alpha".into(),
                     reference: None,
                 },
-            },
+            ),
         )
         .await
         .expect("first workspace");
     let workspace_b = adapter
         .prepare_workspace(
             &handle,
-            &WorkspaceRequest {
-                name: "beta".into(),
-                source: WorkspaceSource::Init,
-            },
+            &WorkspaceRequest::new(
+                "workspace:wks-beta:prepare:v1",
+                "wks-beta",
+                "beta",
+                WorkspaceSource::Init,
+            ),
         )
         .await
         .expect("second workspace");
     adapter
         .run_workspace_setup(
             &handle,
-            &WorkspaceSetupRequest {
-                name: "alpha".into(),
-                commands: vec!["make setup".into()],
-            },
+            &WorkspaceSetupRequest::new(
+                "workspace:wks-alpha:setup:v1",
+                "wks-alpha",
+                "alpha",
+                vec!["make setup".into()],
+            ),
         )
         .await
         .expect("workspace setup");
@@ -438,15 +445,89 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
         .await
         .expect("second worktree removes");
     adapter
-        .remove_workspace(&handle, "alpha")
+        .remove_workspace(
+            &handle,
+            &WorkspaceRemoveRequest::new("workspace:wks-alpha:remove:v1", "wks-alpha", "alpha"),
+        )
         .await
         .expect("first workspace removes");
     adapter
-        .remove_workspace(&handle, "beta")
+        .remove_workspace(
+            &handle,
+            &WorkspaceRemoveRequest::new("workspace:wks-beta:remove:v1", "wks-beta", "beta"),
+        )
         .await
         .expect("second workspace removes");
     adapter.teardown(&handle).await.expect("sandbox tears down");
     assert!(backend.snapshot(&handle).await.is_err());
+}
+
+#[tokio::test]
+async fn stale_workspace_operations_cannot_act_on_a_reused_name() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let handle = adapter.provision(&sandbox_spec(false)).await.unwrap();
+    adapter
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:workspace-lineage", Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(&handle, credential())
+        .await
+        .unwrap();
+
+    let old_prepare = WorkspaceRequest::new(
+        "workspace:wks-old:prepare:v1",
+        "wks-old",
+        "shared",
+        WorkspaceSource::Init,
+    );
+    adapter
+        .prepare_workspace(&handle, &old_prepare)
+        .await
+        .unwrap();
+    let completed_old_remove =
+        WorkspaceRemoveRequest::new("workspace:wks-old:remove:v1", "wks-old", "shared");
+    adapter
+        .remove_workspace(&handle, &completed_old_remove)
+        .await
+        .unwrap();
+
+    let successor = WorkspaceRequest::new(
+        "workspace:wks-new:prepare:v1",
+        "wks-new",
+        "shared",
+        WorkspaceSource::Init,
+    );
+    adapter
+        .prepare_workspace(&handle, &successor)
+        .await
+        .unwrap();
+    let stale_setup = WorkspaceSetupRequest::new(
+        "workspace:wks-old:setup:v1",
+        "wks-old",
+        "shared",
+        vec!["make setup".into()],
+    );
+    assert!(matches!(
+        adapter.run_workspace_setup(&handle, &stale_setup).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    let unseen_old_remove =
+        WorkspaceRemoveRequest::new("workspace:wks-old:remove:v2", "wks-old", "shared");
+    assert!(matches!(
+        adapter.remove_workspace(&handle, &unseen_old_remove).await,
+        Err(AdapterError::Rejected(_))
+    ));
+
+    adapter
+        .remove_workspace(&handle, &completed_old_remove)
+        .await
+        .expect("a terminal old replay returns its original acknowledgement");
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert_eq!(snapshot.workspaces["shared"].workspace_id, "wks-new");
 }
 
 #[tokio::test]

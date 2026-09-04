@@ -3,7 +3,19 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{SandboxId, SubjectId, WorkspaceId};
 use crate::profiles::{validate_workspace_name, WorkspaceProfileSnapshot};
 
-use super::{Sandbox, SandboxModelError, TypedFailure, WorkspaceStatus};
+use super::{
+    Sandbox, SandboxModelError, TypedFailure, WorkspaceStatus, WorkspaceWorkState,
+    WorkspaceWorkStep,
+};
+
+/// Why this workspace was admitted. Profile entries use the stable index as
+/// their replay identity; a sandbox worker fence is deliberately excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkspaceOrigin {
+    Manual,
+    SandboxProfile { index: u16 },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -12,8 +24,6 @@ pub enum WorkspaceSource {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reference: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        resolved_commit: Option<String>,
     },
     Empty,
 }
@@ -24,11 +34,15 @@ pub struct Workspace {
     pub id: WorkspaceId,
     pub sandbox_id: SandboxId,
     pub owner: SubjectId,
+    pub origin: WorkspaceOrigin,
     pub profile: WorkspaceProfileSnapshot,
     pub name: String,
     pub path: String,
     pub source: WorkspaceSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_commit: Option<String>,
     pub status: WorkspaceStatus,
+    pub work: WorkspaceWorkState,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_at: Option<String>,
@@ -41,13 +55,21 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn validate_prerequisites(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
+        self.validate_for_admission(sandbox, super::SandboxStatus::Active)
+    }
+
+    pub fn validate_for_admission(
+        &self,
+        sandbox: &Sandbox,
+        allowed_status: super::SandboxStatus,
+    ) -> Result<(), SandboxModelError> {
         if sandbox.id != self.sandbox_id || sandbox.owner != self.owner {
             return Err(SandboxModelError::Prerequisite {
                 resource: "workspace",
                 detail: "sandbox lineage does not match",
             });
         }
-        if !sandbox.status.accepts_work() {
+        if sandbox.status != allowed_status {
             return Err(SandboxModelError::Prerequisite {
                 resource: "workspace",
                 detail: "sandbox is not active",
@@ -58,6 +80,24 @@ impl Workspace {
         if self.path != format!("/home/cma/{}", self.name) || self.revision == 0 {
             return Err(SandboxModelError::invalid_value("workspace.path"));
         }
+        if self.work.next_fence == 0 {
+            return Err(SandboxModelError::invalid_value("workspace.work"));
+        }
+        Ok(())
+    }
+
+    pub fn operation_id(&self, step: WorkspaceWorkStep) -> String {
+        format!("workspace:{}:{}:v1", self.id, step.operation_name())
+    }
+
+    pub fn record_resolved_commit(&mut self, commit: String) -> Result<(), SandboxModelError> {
+        if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(SandboxModelError::invalid_value(
+                "workspace.resolved_commit",
+            ));
+        }
+        self.resolved_commit = Some(commit.to_ascii_lowercase());
         Ok(())
     }
 
@@ -71,6 +111,11 @@ impl Workspace {
             return Err(SandboxModelError::invalid_value("workspace.failed"));
         }
         let status = self.status.transition(next)?;
+        if next == WorkspaceStatus::Ready && self.resolved_commit.is_none() {
+            return Err(SandboxModelError::invalid_value(
+                "workspace.resolved_commit",
+            ));
+        }
         let revision = self
             .revision
             .checked_add(1)
@@ -78,7 +123,9 @@ impl Workspace {
         self.status = status;
         self.failed = failure;
         match next {
-            WorkspaceStatus::Ready => self.ready_at = Some(at.clone()),
+            WorkspaceStatus::Ready => {
+                self.ready_at = Some(at.clone());
+            }
             WorkspaceStatus::Removed => self.removed_at = Some(at.clone()),
             _ => {}
         }

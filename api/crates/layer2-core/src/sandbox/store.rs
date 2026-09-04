@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 
 use super::{
-    Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, Workspace,
-    Worktree,
+    Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus,
+    Workspace, Worktree,
 };
 
 pub const MAX_PAGE_SIZE: u16 = 200;
@@ -54,6 +54,16 @@ pub enum SandboxStoreError {
     SequenceConflict,
     #[error("sandbox limit reached: {live} of {limit}")]
     LimitReached { limit: u16, live: u16 },
+    #[error("sandbox is not ready for workspace admission")]
+    SandboxNotReady,
+    #[error("workspace name is already live in the sandbox")]
+    WorkspaceNameConflict,
+    #[error("workspace limit reached: {live} of {limit}")]
+    WorkspaceLimitReached { limit: u8, live: u8 },
+    #[error("workspace still has live agents")]
+    WorkspaceHasLiveAgents,
+    #[error("workspace provisioning origin is already occupied")]
+    WorkspaceOriginConflict,
     #[error("invalid page request")]
     InvalidPage,
     #[error("transaction invariant failed: {0}")]
@@ -95,6 +105,68 @@ pub trait WorkspaceStore: Send + Sync {
         sandbox_id: &SandboxId,
         page: &PageRequest,
     ) -> Result<Page<Workspace>, SandboxStoreError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceAdmissionKind {
+    Manual,
+    SandboxProfile,
+}
+
+impl WorkspaceAdmissionKind {
+    pub const fn allowed_status(self) -> SandboxStatus {
+        match self {
+            Self::Manual => SandboxStatus::Active,
+            Self::SandboxProfile => SandboxStatus::Installing,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceAdmission {
+    pub workspace: Workspace,
+    pub kind: WorkspaceAdmissionKind,
+    pub event_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceAdmissionResult {
+    Created(Workspace),
+    Existing(Workspace),
+}
+
+/// Atomic sandbox readiness, lineage/name/limit admission and Created event.
+#[async_trait]
+pub trait WorkspaceAdmissionStore: Send + Sync {
+    async fn admit_workspace(
+        &self,
+        admission: WorkspaceAdmission,
+    ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
+
+    /// Lock and rewrite the workspace row while checking that no agent is live.
+    async fn begin_workspace_removal(
+        &self,
+        id: &WorkspaceId,
+        owner: &SubjectId,
+        now: String,
+    ) -> Result<Workspace, SandboxStoreError>;
+}
+
+/// Durable workspace lifecycle discovery and lease fencing.
+#[async_trait]
+pub trait WorkspaceWorkerStore: Send + Sync {
+    async fn due_workspace_work(
+        &self,
+        now: &str,
+        limit: u16,
+    ) -> Result<Vec<WorkspaceId>, SandboxStoreError>;
+    async fn claim_workspace_work(
+        &self,
+        id: &WorkspaceId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Workspace>, SandboxStoreError>;
 }
 
 #[async_trait]
@@ -221,6 +293,12 @@ pub enum SandboxTransaction {
         event_at: String,
         event: SandboxEventKind,
     },
+    SaveWorkspaceAndAppend {
+        expected_revision: u64,
+        workspace: Box<Workspace>,
+        event_at: String,
+        event: SandboxEventKind,
+    },
 }
 
 #[async_trait]
@@ -245,6 +323,26 @@ pub trait SandboxLifecycleStore:
 
 impl<T> SandboxLifecycleStore for T where
     T: SandboxStore + SandboxEventStore + SandboxTransactionStore + SandboxWorkerStore
+{
+}
+
+pub trait WorkspaceServiceStore:
+    SandboxStore + WorkspaceStore + WorkspaceAdmissionStore + SandboxEventStore
+{
+}
+
+impl<T> WorkspaceServiceStore for T where
+    T: SandboxStore + WorkspaceStore + WorkspaceAdmissionStore + SandboxEventStore
+{
+}
+
+pub trait WorkspaceLifecycleStore:
+    SandboxStore + WorkspaceStore + WorkspaceWorkerStore + SandboxTransactionStore
+{
+}
+
+impl<T> WorkspaceLifecycleStore for T where
+    T: SandboxStore + WorkspaceStore + WorkspaceWorkerStore + SandboxTransactionStore
 {
 }
 

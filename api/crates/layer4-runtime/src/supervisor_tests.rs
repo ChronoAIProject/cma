@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use layer3_adapter::wire::{AgentRef, ResponseFrame, WorkspaceRef};
+use layer3_adapter::wire::{AgentRef, ResponseFrame};
 use layer3_adapter::{
     AgentHomePlan, AgentLaunch, AgentSlot, CheckpointRequest, CredentialFrame, HomeFile,
-    InstallRequest, RestoreRequest, RuntimeCredential, WorkspaceRequest, WorkspaceSetupRequest,
-    WorkspaceSource, WorktreeRef, WorktreeRequest,
+    InstallRequest, RestoreRequest, RuntimeCredential, WorkspaceRemoveRequest, WorkspaceRequest,
+    WorkspaceSetupRequest, WorkspaceSource, WorktreeRef, WorktreeRequest,
 };
 
 use super::*;
@@ -195,23 +195,27 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
     ));
 
     let workspace = match supervisor
-        .dispatch(RequestFrame::PrepareWorkspace(WorkspaceRequest {
-            name: "project".into(),
-            source: WorkspaceSource::Init,
-        }))
+        .dispatch(RequestFrame::PrepareWorkspace(WorkspaceRequest::new(
+            "workspace:wks_project:prepare:v1",
+            "wks_project",
+            "project",
+            WorkspaceSource::Init,
+        )))
         .await
     {
         ResponseFrame::PrepareWorkspace(receipt) => receipt,
         other => panic!("workspace preparation failed: {other:?}"),
     };
     let setup = supervisor
-        .dispatch(RequestFrame::WorkspaceSetup(WorkspaceSetupRequest {
-            name: "project".into(),
-            commands: vec![
+        .dispatch(RequestFrame::WorkspaceSetup(WorkspaceSetupRequest::new(
+            "workspace:wks_project:setup:v1",
+            "wks_project",
+            "project",
+            vec![
                 r#"printf '%s|%s|%s' "$CHRONO_POST_CREDENTIAL" "$NYXID_POST_CREDENTIAL" "$CMA_TEST_ENV" > setup-env"#
                     .into(),
             ],
-        }))
+        )))
         .await;
     assert!(
         matches!(setup, ResponseFrame::WorkspaceSetup(_)),
@@ -364,9 +368,11 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
         "{removed:?}"
     );
     let removed = supervisor
-        .dispatch(RequestFrame::RemoveWorkspace(WorkspaceRef {
-            name: "project".into(),
-        }))
+        .dispatch(RequestFrame::RemoveWorkspace(WorkspaceRemoveRequest::new(
+            "workspace:wks_project:remove:v1",
+            "wks_project",
+            "project",
+        )))
         .await;
     assert!(
         matches!(removed, ResponseFrame::RemoveWorkspace(_)),

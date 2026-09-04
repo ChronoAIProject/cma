@@ -1,24 +1,28 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use layer2_core::ids::{
-    AgentId, AgentProfileId, SandboxId, SandboxProfileId, SubjectId, WorkspaceId, WorktreeId,
+    AgentId, AgentProfileId, SandboxId, SandboxProfileId, SubjectId, WorkspaceId,
+    WorkspaceProfileId, WorktreeId,
 };
 use layer2_core::profiles::store::{AgentProfileStore, ProfilePageRequest, ProfileStoreError};
 use layer2_core::profiles::{
     AgentProfile, AgentProfileContent, AgentProfileSnapshot, AgentProvider, ModelAccess,
     PermissionLevel, ProfileVisibility, SandboxProfileContent, SandboxProfileSnapshot,
-    ThinkingEffort,
+    ThinkingEffort, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
 };
 use layer2_core::sandbox::store::{
     AgentLogStore, AgentStore, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore,
     SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
-    SandboxTransactionStore, SandboxWorkerStore, WorktreeStore,
+    SandboxTransactionStore, SandboxWorkerStore, WorkspaceAdmission, WorkspaceAdmissionKind,
+    WorkspaceAdmissionResult, WorkspaceAdmissionStore, WorkspaceStore, WorkspaceWorkerStore,
+    WorktreeStore,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentOrigin, AgentStatus, ConversationState, Sandbox,
     SandboxCredentialAuthority, SandboxCredentialState, SandboxEvent, SandboxEventKind,
     SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState,
-    SandboxWorkStep, Worktree, WorktreeStatus,
+    SandboxWorkStep, TypedFailure, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus,
+    WorkspaceWorkState, WorkspaceWorkStep, Worktree, WorktreeStatus,
 };
 use mongodb::bson::{doc, Document};
 use mongodb::Client;
@@ -232,6 +236,45 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
     (worktree, agent)
 }
 
+fn workspace(sandbox: &Sandbox, id: &str, name: &str) -> Workspace {
+    Workspace {
+        id: WorkspaceId(id.into()),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        origin: WorkspaceOrigin::Manual,
+        profile: WorkspaceProfileSnapshot {
+            id: WorkspaceProfileId("wkp_mongo".into()),
+            revision: 1,
+            digest: "d".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory { name: name.into() },
+                name: name.into(),
+                setup_commands: vec![],
+                agent_profiles: vec![],
+            },
+        },
+        name: name.into(),
+        path: format!("/home/cma/{name}"),
+        source: WorkspaceSource::Empty,
+        resolved_commit: None,
+        status: WorkspaceStatus::Preparing,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::Prepare, NOW.into()),
+        created_at: NOW.into(),
+        ready_at: None,
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    }
+}
+
+fn workspace_admission(workspace: Workspace) -> WorkspaceAdmission {
+    WorkspaceAdmission {
+        workspace,
+        kind: WorkspaceAdmissionKind::Manual,
+        event_at: NOW.into(),
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn fresh_database_initializes_every_schema_v1_collection_and_index() {
@@ -327,6 +370,316 @@ async fn concurrent_admission_serializes_the_limit_and_default_name_allocation()
         assert_eq!(events[0].seq, 1);
         assert_eq!(events[0].kind, SandboxEventKind::Created);
     }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn concurrent_workspace_admission_serializes_limits_and_live_names() {
+    let (client, name) = database("workspace_admission").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut parent = sandbox("sbx_workspace_admission");
+    parent.limits.max_workspaces = 2;
+    store.create_sandbox(parent.clone()).await.unwrap();
+
+    let results = futures_util::future::join_all((0..6).map(|index| {
+        let store = store.clone();
+        let admission = workspace_admission(workspace(
+            &parent,
+            &format!("wks_concurrent_{index}"),
+            &format!("project-{index}"),
+        ));
+        async move { store.admit_workspace(admission).await }
+    }))
+    .await;
+    let mut admitted = Vec::new();
+    for result in results {
+        match result {
+            Ok(WorkspaceAdmissionResult::Created(workspace)) => admitted.push(workspace),
+            Err(SandboxStoreError::WorkspaceLimitReached { limit: 2, live: 2 }) => {}
+            other => panic!("unexpected workspace admission result: {other:?}"),
+        }
+    }
+    assert_eq!(admitted.len(), 2);
+    assert_eq!(
+        store
+            .list_workspaces(&parent.id, &Default::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        2
+    );
+    assert_eq!(
+        store.sandbox_events(&parent.id, 0, 10).await.unwrap().len(),
+        2
+    );
+
+    let mut other = sandbox("sbx_workspace_name");
+    other.name = "workspace-name-race".into();
+    store.create_sandbox(other.clone()).await.unwrap();
+    let left = store.admit_workspace(workspace_admission(workspace(
+        &other,
+        "wks_name_left",
+        "same-name",
+    )));
+    let right = store.admit_workspace(workspace_admission(workspace(
+        &other,
+        "wks_name_right",
+        "same-name",
+    )));
+    let (left, right) = tokio::join!(left, right);
+    let results = [left, right];
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Ok(WorkspaceAdmissionResult::Created(_))))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Err(SandboxStoreError::WorkspaceNameConflict)))
+            .count(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_profile_workspace_origin_replays_the_existing_admission() {
+    let (client, name) = database("workspace_origin").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut parent = sandbox("sbx_workspace_origin");
+    parent.status = SandboxStatus::Installing;
+    store.create_sandbox(parent.clone()).await.unwrap();
+
+    let mut first = workspace(&parent, "wks_origin_first", "profile-project");
+    first.origin = WorkspaceOrigin::SandboxProfile { index: 3 };
+    let created = store
+        .admit_workspace(WorkspaceAdmission {
+            workspace: first.clone(),
+            kind: WorkspaceAdmissionKind::SandboxProfile,
+            event_at: NOW.into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(created, WorkspaceAdmissionResult::Created(first.clone()));
+
+    let mut replay = first.clone();
+    replay.id = WorkspaceId("wks_origin_replay".into());
+    let replayed = store
+        .admit_workspace(WorkspaceAdmission {
+            workspace: replay,
+            kind: WorkspaceAdmissionKind::SandboxProfile,
+            event_at: "2026-09-05T00:00:01Z".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(replayed, WorkspaceAdmissionResult::Existing(first));
+    assert_eq!(
+        store.sandbox_events(&parent.id, 0, 10).await.unwrap().len(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn workspace_admission_and_terminal_event_failures_roll_back_the_aggregate() {
+    let (client, name) = database("workspace_rollback").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let parent = sandbox("sbx_workspace_rollback");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let conflicting = SandboxEvent {
+        sandbox_id: parent.id.clone(),
+        seq: 1,
+        appended_at: NOW.into(),
+        kind: SandboxEventKind::Created,
+    };
+    store
+        .sandbox_events
+        .insert_one(event_document(&conflicting).unwrap())
+        .await
+        .unwrap();
+
+    let candidate = workspace(&parent, "wks_admission_rollback", "admission-rollback");
+    assert_eq!(
+        store
+            .admit_workspace(workspace_admission(candidate.clone()))
+            .await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(store.get_workspace(&candidate.id).await.unwrap(), None);
+    let parent_row = store
+        .sandboxes
+        .find_one(doc! { "_id": parent.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(parent_row.get_i64("last_seq").unwrap(), 0);
+    assert!(!parent_row.contains_key("workspace_admission_fence"));
+
+    let original = workspace(&parent, "wks_terminal_rollback", "terminal-rollback");
+    store.create_workspace(original.clone()).await.unwrap();
+    let failure = TypedFailure {
+        class: "setup_failed".into(),
+        detail: "command failed".into(),
+    };
+    let mut failed = original.clone();
+    failed.work.schedule(WorkspaceWorkStep::None, NOW.into());
+    failed
+        .transition(WorkspaceStatus::Failed, NOW.into(), Some(failure.clone()))
+        .unwrap();
+    assert_eq!(
+        store
+            .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+                expected_revision: original.revision,
+                workspace: Box::new(failed),
+                event_at: NOW.into(),
+                event: SandboxEventKind::WorkspaceFailed {
+                    workspace_id: original.id.clone(),
+                    failure,
+                },
+            })
+            .await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(
+        store.get_workspace(&original.id).await.unwrap(),
+        Some(original)
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn workspace_claims_survive_reopen_and_fence_out_an_expired_worker() {
+    let (client, name) = database("workspace_claims").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let parent = sandbox("sbx_workspace_claims");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let candidate = workspace(&parent, "wks_claims", "claims-project");
+    store.create_workspace(candidate.clone()).await.unwrap();
+    drop(store);
+
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        store.due_workspace_work(NOW, 10).await.unwrap(),
+        vec![candidate.id.clone()]
+    );
+    let first = store.claim_workspace_work(
+        &candidate.id,
+        "worker-a",
+        NOW.into(),
+        "2026-09-05T00:01:00Z".into(),
+    );
+    let second = store.claim_workspace_work(
+        &candidate.id,
+        "worker-b",
+        NOW.into(),
+        "2026-09-05T00:01:00Z".into(),
+    );
+    let (first, second) = tokio::join!(first, second);
+    let claims = [first.unwrap(), second.unwrap()];
+    assert_eq!(claims.iter().filter(|claim| claim.is_some()).count(), 1);
+    let mut stale = claims.into_iter().flatten().next().unwrap();
+    let stale_holder = stale.work.lease.as_ref().unwrap().holder.clone();
+    let stale_fence = stale.work.lease.as_ref().unwrap().fence;
+    assert_eq!(stale_fence, 1);
+
+    let takeover = store
+        .claim_workspace_work(
+            &candidate.id,
+            "worker-c",
+            "2026-09-05T00:01:00Z".into(),
+            "2026-09-05T00:02:00Z".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(takeover.work.lease.as_ref().unwrap().fence, 2);
+    let expected = stale.revision;
+    stale
+        .work
+        .advance(
+            &stale_holder,
+            stale_fence,
+            WorkspaceWorkStep::Setup,
+            NOW.into(),
+        )
+        .unwrap();
+    stale.revision += 1;
+    assert_eq!(
+        store.save_workspace(expected, stale).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store
+            .get_workspace(&candidate.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .work
+            .lease
+            .unwrap()
+            .holder,
+        "worker-c"
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn workspace_removal_locks_the_row_and_rejects_only_live_agents() {
+    let (client, name) = database("workspace_removal").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let parent = sandbox("sbx_workspace_removal");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let candidate = workspace(&parent, "wks_atomic", "removal-project");
+    store.create_workspace(candidate.clone()).await.unwrap();
+    let (_, mut agent) = worktree_and_agent(&parent.id);
+    agent.workspace_id = candidate.id.clone();
+    store.create_agent(agent.clone()).await.unwrap();
+
+    assert_eq!(
+        store
+            .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
+            .await,
+        Err(SandboxStoreError::WorkspaceHasLiveAgents)
+    );
+    assert_eq!(
+        store.get_workspace(&candidate.id).await.unwrap(),
+        Some(candidate.clone())
+    );
+    let raw = store
+        .workspaces
+        .find_one(doc! { "_id": candidate.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!raw.contains_key("removal_lock_fence"));
+
+    let expected = agent.revision;
+    agent.status = agent.status.transition(AgentStatus::Stopped).unwrap();
+    agent.revision += 1;
+    store.save_agent(expected, agent).await.unwrap();
+    let removing = store
+        .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
+        .await
+        .unwrap();
+    assert_eq!(removing.status, WorkspaceStatus::Removing);
+    assert_eq!(removing.work.step, WorkspaceWorkStep::Remove);
+    assert_eq!(removing.revision, 2);
+    assert_eq!(
+        store
+            .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
+            .await
+            .unwrap(),
+        removing
+    );
     client.database(&name).drop().await.unwrap();
 }
 

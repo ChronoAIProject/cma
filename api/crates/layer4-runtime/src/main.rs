@@ -23,6 +23,8 @@ mod supervisor;
 mod upstream;
 mod upstream_guard;
 mod upstream_target;
+mod workspace_journal;
+mod workspace_runtime;
 mod workspace_setup;
 mod workspace_source;
 mod worktree;

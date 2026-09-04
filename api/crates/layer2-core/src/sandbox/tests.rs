@@ -114,11 +114,14 @@ fn workspace() -> Workspace {
         id: WorkspaceId("wks_test".into()),
         sandbox_id: SandboxId("sbx_test".into()),
         owner: SubjectId("owner".into()),
+        origin: WorkspaceOrigin::Manual,
         profile: workspace_snapshot(),
         name: "project".into(),
         path: "/home/cma/project".into(),
         source: WorkspaceSource::Empty,
+        resolved_commit: Some("a".repeat(40)),
         status: WorkspaceStatus::Ready,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
         created_at: NOW.into(),
         ready_at: Some(NOW.into()),
         failed: None,
@@ -227,9 +230,11 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
     let workspace_expected = [
         (WorkspaceStatus::Preparing, WorkspaceStatus::Ready),
         (WorkspaceStatus::Preparing, WorkspaceStatus::Failed),
+        (WorkspaceStatus::Preparing, WorkspaceStatus::Removing),
         (WorkspaceStatus::Ready, WorkspaceStatus::Removing),
         (WorkspaceStatus::Failed, WorkspaceStatus::Removing),
         (WorkspaceStatus::Removing, WorkspaceStatus::Removed),
+        (WorkspaceStatus::Removing, WorkspaceStatus::Failed),
     ];
     for from in workspace_statuses {
         for to in workspace_statuses {

@@ -12,6 +12,11 @@ mod scheduler;
     reason = "composed when the production hosted-control transport supplies an adapter"
 )]
 mod worker;
+#[allow(
+    dead_code,
+    reason = "composed when the production hosted-control transport supplies an adapter"
+)]
+mod workspace_worker;
 
 pub(crate) use credential::{
     CredentialCustodyError, CredentialMaterial, CredentialRevocation, ManagedSandboxCredentials,

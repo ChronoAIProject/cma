@@ -121,6 +121,23 @@ fn canonical_digests_are_stable_for_every_profile_kind() {
 }
 
 #[test]
+fn workspace_git_urls_reject_an_explicit_default_port() {
+    let mut profile = workspace_profile(
+        "wkp_port",
+        "owner",
+        AgentProfileRef::new(AgentProfileId("agp_port".into()), 1),
+    );
+    profile.draft.location = WorkspaceLocation::GitRepository {
+        url: "https://github.com:443/example/repository".into(),
+        reference: None,
+    };
+    assert_eq!(
+        profile.validate(),
+        Err(ProfileError::new("invalid_repository", "location.url"))
+    );
+}
+
+#[test]
 fn validation_refuses_reserved_environment_names_and_secret_like_values() {
     let mut profile = sandbox_profile(
         "sbp_one",

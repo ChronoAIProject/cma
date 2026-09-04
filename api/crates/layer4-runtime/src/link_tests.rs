@@ -163,10 +163,12 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     let supervisor = supervisor(home.clone());
     install_and_credential(&supervisor).await;
     let workspace = match supervisor
-        .dispatch(RequestFrame::PrepareWorkspace(WorkspaceRequest {
-            name: "project".into(),
-            source: WorkspaceSource::Init,
-        }))
+        .dispatch(RequestFrame::PrepareWorkspace(WorkspaceRequest::new(
+            "workspace:wks_link:prepare:v1",
+            "wks_link",
+            "project",
+            WorkspaceSource::Init,
+        )))
         .await
     {
         ResponseFrame::PrepareWorkspace(receipt) => receipt,

@@ -32,6 +32,10 @@ impl WorkspaceLocation {
                     .map_err(|_| ProfileError::new("invalid_repository", "location.url"))?;
                 if parsed.scheme() != "https"
                     || parsed.host_str() != Some("github.com")
+                    || github_authority(url) != Some("github.com")
+                    || !parsed.username().is_empty()
+                    || parsed.password().is_some()
+                    || parsed.port().is_some()
                     || parsed.query().is_some()
                     || parsed.fragment().is_some()
                 {
@@ -46,10 +50,14 @@ impl WorkspaceLocation {
                 if components.len() != 2 {
                     return Err(ProfileError::new("invalid_repository", "location.url"));
                 }
-                if reference
-                    .as_ref()
-                    .is_some_and(|value| value.trim().is_empty())
-                {
+                if reference.as_ref().is_some_and(|value| {
+                    value.is_empty()
+                        || value.len() > 255
+                        || value.starts_with('-')
+                        || value.contains('\0')
+                        || value.chars().any(char::is_whitespace)
+                        || value.bytes().any(|byte| byte.is_ascii_control())
+                }) {
                     return Err(ProfileError::new(
                         "invalid_repository_reference",
                         "location.reference",
@@ -59,6 +67,10 @@ impl WorkspaceLocation {
             }
         }
     }
+}
+
+fn github_authority(url: &str) -> Option<&str> {
+    url.strip_prefix("https://")?.split(['/', '?', '#']).next()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,7 +87,11 @@ pub struct WorkspaceProfileContent {
 impl WorkspaceProfileContent {
     pub fn validate(&self) -> Result<(), ProfileError> {
         self.location.validate()?;
-        validate_workspace_name(&self.name)?;
+        if !self.name.is_empty() {
+            validate_workspace_name(&self.name)?;
+        } else if !matches!(self.location, WorkspaceLocation::GitRepository { .. }) {
+            return Err(ProfileError::new("invalid_workspace_name", "name"));
+        }
         validate_commands(&self.setup_commands, 16)?;
         if self.agent_profiles.len() > 8 {
             return Err(ProfileError::new(
@@ -100,6 +116,26 @@ impl WorkspaceProfileContent {
             ));
         }
         Ok(())
+    }
+
+    /// Resolve the canonical directory component from the profile snapshot.
+    pub fn workspace_name(&self) -> Result<String, ProfileError> {
+        let name = if !self.name.is_empty() {
+            self.name.clone()
+        } else {
+            let WorkspaceLocation::GitRepository { url, .. } = &self.location else {
+                return Err(ProfileError::new("invalid_workspace_name", "name"));
+            };
+            let parsed = url::Url::parse(url)
+                .map_err(|_| ProfileError::new("invalid_repository", "location.url"))?;
+            parsed
+                .path_segments()
+                .and_then(|segments| segments.filter(|part| !part.is_empty()).next_back())
+                .map(|name| name.strip_suffix(".git").unwrap_or(name).to_string())
+                .ok_or_else(|| ProfileError::new("invalid_repository", "location.url"))?
+        };
+        validate_workspace_name(&name)?;
+        Ok(name)
     }
 }
 
