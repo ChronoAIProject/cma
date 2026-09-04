@@ -38,7 +38,7 @@ fn input(profile: &WorkspaceProfile) -> ProfileDocumentInput<'_, WorkspaceProfil
     }
 }
 
-fn document(profile: &WorkspaceProfile) -> Result<Document, ProfileStoreError> {
+pub(super) fn document(profile: &WorkspaceProfile) -> Result<Document, ProfileStoreError> {
     profile_document(&input(profile))
 }
 

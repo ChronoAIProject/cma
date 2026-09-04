@@ -35,7 +35,7 @@ use crate::{
     config::Config,
     profile_policy::profile_route_policy,
     rate_limit::RateLimiters,
-    store::MongoStores,
+    store::{DefaultProfileSpec, MongoStores},
 };
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
@@ -77,6 +77,21 @@ async fn serve() -> Result<(), String> {
     );
     let activity = ActivityService::new(stores.activity.clone());
     let users = UserDirectory::new(stores.users.clone());
+    let profile_policy = profile_route_policy();
+    stores
+        .sandbox_profiles
+        .seed_default_profiles(
+            &DefaultProfileSpec {
+                cpu_millis: config.default_profiles.cpu_millis,
+                memory_mib: config.default_profiles.memory_mib,
+                agent_model: config.default_profiles.agent_model.clone(),
+                agent_effort: config.default_profiles.agent_effort,
+            },
+            profile_policy.capacity_bounds,
+            &profile_policy.secret_patterns,
+        )
+        .await
+        .map_err(|error| format!("default profiles are not usable: {error}"))?;
     // #809 composes the owner-facing Sandbox services. Opening the stores here
     // already enforces indexes and schema compatibility before serving.
     let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
@@ -95,7 +110,7 @@ async fn serve() -> Result<(), String> {
         stores.sandbox_profiles.clone(),
         operations,
         Arc::clone(&settings),
-        profile_route_policy(),
+        profile_policy,
     );
     let recorder = ActivityRecorder::new(Arc::clone(&activity));
     let auth = AuthState::with_store_and_nyxid_public_url(

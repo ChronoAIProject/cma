@@ -43,7 +43,7 @@ fn input(profile: &SandboxProfile) -> ProfileDocumentInput<'_, SandboxProfile> {
     }
 }
 
-fn document(profile: &SandboxProfile) -> Result<Document, ProfileStoreError> {
+pub(super) fn document(profile: &SandboxProfile) -> Result<Document, ProfileStoreError> {
     profile_document(&input(profile))
 }
 

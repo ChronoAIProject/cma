@@ -38,7 +38,7 @@ fn input(profile: &AgentProfile) -> ProfileDocumentInput<'_, AgentProfile> {
     }
 }
 
-fn document(profile: &AgentProfile) -> Result<Document, ProfileStoreError> {
+pub(super) fn document(profile: &AgentProfile) -> Result<Document, ProfileStoreError> {
     profile_document(&input(profile))
 }
 

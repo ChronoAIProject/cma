@@ -28,6 +28,7 @@ use super::sandbox_mongo::{
     SANDBOX_PROFILE_REVISIONS, WORKSPACES, WORKSPACE_PROFILES, WORKSPACE_PROFILE_REVISIONS,
     WORKTREES,
 };
+use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -198,6 +199,49 @@ async fn fresh_database_initializes_every_schema_v1_collection_and_index() {
         .await
         .unwrap()
         .contains(&"agent_profile_revisions_profile_revision".to_string()));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn default_profiles_seed_idempotently_and_refuse_configuration_drift() {
+    let (client, name) = database("default_profiles").await;
+    let store = MongoProfileStore::open(&client, &name).await.unwrap();
+    let bounds = layer2_core::profiles::ProfileCapacityBounds {
+        min_cpu_millis: 100,
+        max_cpu_millis: 8_000,
+        min_memory_mib: 128,
+        max_memory_mib: 16_384,
+    };
+    let spec = DefaultProfileSpec {
+        cpu_millis: 1_000,
+        memory_mib: 1_024,
+        agent_model: "model-a".into(),
+        agent_effort: ThinkingEffort::High,
+    };
+    store
+        .seed_default_profiles(&spec, bounds, &[])
+        .await
+        .unwrap();
+    store
+        .seed_default_profiles(&spec, bounds, &[])
+        .await
+        .unwrap();
+
+    let mut changed = spec;
+    changed.agent_model = "model-b".into();
+    assert!(matches!(
+        store.seed_default_profiles(&changed, bounds, &[]).await,
+        Err(layer2_core::StoreError::Malformed(_))
+    ));
+    assert_eq!(
+        store
+            .agent_revisions
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
     client.database(&name).drop().await.unwrap();
 }
 
