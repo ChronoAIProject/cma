@@ -303,6 +303,7 @@ fn request_tier(request: &Request) -> RequestTier {
 fn uses_client_operation_key(path: &str) -> bool {
     path == "/openapi.json"
         || path == "/api/v1/conformance"
+        || is_public_trigger_preview(path)
         || path == "/.well-known/agent-card.json"
         || path == "/auth"
         || path.starts_with("/auth/")
@@ -320,6 +321,20 @@ fn is_rest_path(path: &str) -> bool {
         && path != "/api/v1/mcp"
         && path != "/api/v1/a2a"
         && path != "/api/v1/responses"
+}
+
+fn is_public_trigger_preview(path: &str) -> bool {
+    exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
+        || exact_path_segments(path, &["api", "v1", "triggers", "public", "*", "badge.svg"])
+}
+
+fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    expected.iter().all(|expected| {
+        segments
+            .next()
+            .is_some_and(|actual| *expected == "*" || actual == *expected)
+    }) && segments.next().is_none()
 }
 
 fn resolve_client(request: &Request, trusted: &TrustedProxyConfig) -> ClientKey {

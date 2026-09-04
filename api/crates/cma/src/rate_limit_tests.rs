@@ -57,12 +57,20 @@ fn public_discovery_and_auth_keep_network_scoped_budgets() {
     for path in [
         "/openapi.json",
         "/api/v1/conformance",
+        "/api/v1/triggers/public/pub_example",
+        "/api/v1/triggers/public/pub_example/badge.svg",
         "/.well-known/agent-card.json",
         "/auth/login",
     ] {
         assert!(uses_client_operation_key(path), "{path}");
     }
-    assert!(!uses_client_operation_key("/api/v1/resources"));
+    for path in [
+        "/api/v1/resources",
+        "/api/v1/triggers/public/pub_example/launches",
+        "/api/v1/triggers/public/pub_example/badge.svg/extra",
+    ] {
+        assert!(!uses_client_operation_key(path), "{path}");
+    }
 }
 
 #[test]
