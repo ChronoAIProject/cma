@@ -25,15 +25,17 @@
 //! numbers must remain deployment-wide.
 
 use std::{
-    collections::HashMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc,
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{
+    config::{RateLimitConfig, TrustedProxyConfig},
+    is_cors_preflight, REST_LINKS,
+};
 use axum::{
     extract::{ConnectInfo, MatchedPath, Request, State},
     http::{header, HeaderMap, Method},
@@ -42,16 +44,12 @@ use axum::{
 };
 use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
-use layer2_core::SubjectId;
 
-use crate::{
-    config::{RateLimitConfig, TrustedProxyConfig},
-    is_cors_preflight, REST_LINKS,
-};
+mod visitor;
+
+use visitor::VisitorLaunchQuota;
 
 const RETAIN_RECENT_EVERY: u64 = 1024;
-const UTC_DAY_SECONDS: u64 = 24 * 60 * 60;
-const VISITOR_QUOTA_KEY_PREFIX: &str = "trigger-visitor:";
 
 type KeyedLimiter = DefaultKeyedRateLimiter<RateKey>;
 
@@ -145,37 +143,6 @@ impl RateLimiters {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_test(default: Quota, create: Quota, input: Quota) -> Arc<Self> {
-        Self::for_test_complete(
-            generous_test_quota(),
-            generous_test_quota(),
-            default,
-            create,
-            input,
-            TrustedProxyConfig::sample(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test_complete(
-        admission: Quota,
-        health: Quota,
-        default: Quota,
-        create: Quota,
-        input: Quota,
-        trusted_proxies: TrustedProxyConfig,
-    ) -> Arc<Self> {
-        Arc::new(Self::from_quotas(
-            admission,
-            health,
-            default,
-            create,
-            input,
-            trusted_proxies,
-        ))
-    }
-
     fn check(&self, budget: Budget, key: &RateKey) -> Result<(), u64> {
         let limiter = match budget {
             Budget::Admission => &self.admission,
@@ -219,116 +186,6 @@ impl RateLimiters {
             );
         }
     }
-
-    /// Charge one newly-created visitor Launch against the current daily limit.
-    ///
-    /// The launch command calls this only after idempotency has distinguished a
-    /// new aggregate from an exact replay. Keeping it out of request middleware
-    /// prevents retries and the later Start command from consuming a second
-    /// unit. The limit is supplied per call because platform settings are live.
-    #[allow(dead_code)] // Wired by the post-refactor Launch service from #821.
-    pub(crate) fn admit_visitor_launch(
-        &self,
-        subject: &SubjectId,
-        limit: u32,
-        now: SystemTime,
-    ) -> Result<(), ResourceQuotaExceeded> {
-        self.visitor_launches.admit(subject, limit, now)
-    }
-}
-
-/// The resource whose count has reached a configured boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum QuotaResource {
-    VisitorLaunches,
-}
-
-impl QuotaResource {
-    #[allow(dead_code)] // Consumed by the #821 HTTP problem projection.
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::VisitorLaunches => "visitor_launches",
-        }
-    }
-}
-
-/// Typed information needed to render a `resource_quota` refusal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ResourceQuotaExceeded {
-    pub(crate) resource: QuotaResource,
-    pub(crate) limit: u32,
-    pub(crate) reset_at: SystemTime,
-}
-
-impl ResourceQuotaExceeded {
-    #[allow(dead_code)] // Consumed by the #821 HTTP problem projection.
-    pub(crate) const fn code(&self) -> &'static str {
-        "resource_quota"
-    }
-
-    #[allow(dead_code)] // Consumed by the #821 HTTP problem projection.
-    pub(crate) fn retry_after_seconds(&self, now: SystemTime) -> u64 {
-        self.reset_at
-            .duration_since(now)
-            .map(retry_after_seconds)
-            .unwrap_or(1)
-    }
-}
-
-#[derive(Default)]
-struct VisitorLaunchQuota {
-    usage: Mutex<VisitorDayUsage>,
-}
-
-#[derive(Default)]
-struct VisitorDayUsage {
-    utc_day: u64,
-    launches: HashMap<String, u32>,
-}
-
-impl VisitorLaunchQuota {
-    fn admit(
-        &self,
-        subject: &SubjectId,
-        limit: u32,
-        now: SystemTime,
-    ) -> Result<(), ResourceQuotaExceeded> {
-        let (utc_day, reset_at) = utc_day_window(now);
-        let mut usage = self
-            .usage
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if usage.utc_day != utc_day {
-            usage.utc_day = utc_day;
-            usage.launches.clear();
-        }
-
-        let key = visitor_quota_key(subject);
-        let used = usage.launches.entry(key).or_default();
-        if *used >= limit {
-            return Err(ResourceQuotaExceeded {
-                resource: QuotaResource::VisitorLaunches,
-                limit,
-                reset_at,
-            });
-        }
-        *used += 1;
-        Ok(())
-    }
-}
-
-pub(crate) fn visitor_quota_key(subject: &SubjectId) -> String {
-    format!("{VISITOR_QUOTA_KEY_PREFIX}{}", subject.as_str())
-}
-
-fn utc_day_window(now: SystemTime) -> (u64, SystemTime) {
-    let elapsed = now.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let utc_day = elapsed.as_secs() / UTC_DAY_SECONDS;
-    let reset_seconds = utc_day.saturating_add(1).saturating_mul(UTC_DAY_SECONDS);
-    let reset_at = UNIX_EPOCH
-        .checked_add(Duration::from_secs(reset_seconds))
-        .unwrap_or(now);
-    (utc_day, reset_at)
 }
 
 /// Bound work before authentication or request-body capture occurs.
@@ -433,54 +290,10 @@ fn request_tier(request: &Request) -> RequestTier {
     if request.method() != Method::POST {
         return RequestTier::Default;
     }
-    if path == "/api/v1/sessions"
-        || path == "/api/v1/conversations"
-        || path == "/api/v1/agui/run"
-        || is_session_operation(path, "plane")
-        || is_session_operation(path, "revive")
-        || is_launch_operation(path, "start")
-    {
-        return RequestTier::Create;
-    }
-    if path == "/api/v1/responses"
-        || is_session_operation(path, "input")
-        || is_session_operation(path, "steer")
-    {
+    if path.split('/').rfind(|segment| !segment.is_empty()) == Some("input") {
         return RequestTier::Input;
     }
-    RequestTier::Default
-}
-
-fn is_session_operation(path: &str, operation: &str) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    matches!(
-        (
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-        ),
-        (Some("api"), Some("v1"), Some("sessions"), Some(_), Some(found), None)
-            if found == operation
-    )
-}
-
-fn is_launch_operation(path: &str, operation: &str) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    matches!(
-        (
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-        ),
-        (Some("api"), Some("v1"), Some("launches"), Some(_), Some(found), None)
-            if found == operation
-    )
+    RequestTier::Create
 }
 
 /// Routes that never require identity keep a network budget even when a
@@ -490,11 +303,6 @@ fn is_launch_operation(path: &str, operation: &str) -> bool {
 fn uses_client_operation_key(path: &str) -> bool {
     path == "/openapi.json"
         || path == "/api/v1/conformance"
-        || path == "/api/v1/agui/capabilities"
-        || path == "/api/v1/mcp"
-        || path == "/api/v1/a2a"
-        || is_public_trigger_preview(path)
-        || is_agui_trigger_preview(path)
         || path == "/.well-known/agent-card.json"
         || path == "/auth"
         || path.starts_with("/auth/")
@@ -511,27 +319,7 @@ fn is_rest_path(path: &str) -> bool {
         && !path.starts_with("/api/v1/agui/")
         && path != "/api/v1/mcp"
         && path != "/api/v1/a2a"
-        && path
-            .strip_prefix("/api/v1/sessions/")
-            .and_then(|tail| tail.split_once('/'))
-            .is_none_or(|(id, tail)| id.is_empty() || tail != "terminal")
-}
-
-fn is_public_trigger_preview(path: &str) -> bool {
-    exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
-}
-
-fn is_agui_trigger_preview(path: &str) -> bool {
-    exact_path_segments(path, &["api", "v1", "agui", "triggers", "*"])
-}
-
-fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    expected.iter().all(|expected| {
-        segments
-            .next()
-            .is_some_and(|actual| *expected == "*" || actual == *expected)
-    }) && segments.next().is_none()
+        && path != "/api/v1/responses"
 }
 
 fn resolve_client(request: &Request, trusted: &TrustedProxyConfig) -> ClientKey {
@@ -640,6 +428,5 @@ fn retry_after_seconds(wait: std::time::Duration) -> u64 {
 }
 
 #[cfg(test)]
-fn generous_test_quota() -> Quota {
-    Quota::per_second(std::num::NonZeroU32::new(1_000_000).unwrap())
-}
+#[path = "rate_limit_tests.rs"]
+mod tests;

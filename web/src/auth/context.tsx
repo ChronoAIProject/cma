@@ -43,7 +43,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         if (live) {
           setState({
             status: 'error',
-            message: error instanceof Error ? error.message : 'Could not verify your session.',
+            message: error instanceof Error ? error.message : 'Could not verify your identity.',
           });
         }
       });

@@ -1,0 +1,71 @@
+use super::*;
+
+fn valid_response() -> MintedKeyResponse {
+    MintedKeyResponse {
+        id: "provider-key".into(),
+        full_key: "secret-value".into(),
+        scopes: KEY_SCOPES.into(),
+        state_version: 7,
+        allowed_service_ids: vec!["service-b".into(), "service-a".into()],
+        allowed_node_ids: Vec::new(),
+        allow_all_services: false,
+        allow_all_nodes: false,
+    }
+}
+
+#[test]
+fn deployment_key_names_round_trip_only_valid_resource_identifiers() {
+    let name = key_name("production", "sbx_1234").unwrap();
+    assert_eq!(name, "cma:production:sbx_1234");
+    assert_eq!(
+        credential_of("production", &name).as_deref(),
+        Some("sbx_1234")
+    );
+    assert_eq!(credential_of("staging", &name), None);
+    assert!(key_name("production", "bad:id").is_err());
+}
+
+#[test]
+fn mint_body_closes_both_provider_wildcards() {
+    let body = mint_request_body(
+        "production",
+        "resource_1",
+        &["service-a".into()],
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
+    )
+    .unwrap();
+    assert_eq!(body["allow_all_services"], false);
+    assert_eq!(body["allow_all_nodes"], false);
+    assert_eq!(body["scopes"], KEY_SCOPES);
+}
+
+#[test]
+fn mint_response_must_exactly_match_requested_authority() {
+    let expiry = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+    let minted = minted_key_from_response(
+        valid_response(),
+        &["service-a".into(), "service-b".into()],
+        expiry,
+    )
+    .unwrap();
+    assert_eq!(minted.id, "provider-key");
+    assert_eq!(minted.value.expose(), "secret-value");
+    assert_eq!(minted.expires_at, expiry);
+    assert_eq!(minted.state_version, 7);
+    assert!(!minted.grant_fingerprint.is_empty());
+
+    let mut open = valid_response();
+    open.allow_all_services = true;
+    assert!(minted_key_from_response(open, &["service-a".into()], expiry).is_none());
+}
+
+#[test]
+fn secret_diagnostics_do_not_reveal_new_key_values() {
+    let minted = minted_key_from_response(
+        valid_response(),
+        &["service-a".into(), "service-b".into()],
+        SystemTime::UNIX_EPOCH,
+    )
+    .unwrap();
+    assert!(!format!("{minted:?}").contains("secret-value"));
+}

@@ -21,7 +21,7 @@ import './Menu.css';
  * **The list always goes on the body, positioned from the anchor's box.** It
  * used to be a choice, defaulting to rendering in place, and every caller that
  * took the default was placed wrongly: a picker inside a dialog was cut off by
- * the dialog's scrollport, and the session list's own options menu opened 53px
+ * the dialog's scrollport, and a resource list's own options menu opened 53px
  * to the left of the window. A trigger cannot know what encloses it or how
  * near an edge it sits, so the in-place default asked each caller a question
  * none of them could answer. On the body, `placeMenu` reads the anchor and the

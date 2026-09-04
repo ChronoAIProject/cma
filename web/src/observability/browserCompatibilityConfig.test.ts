@@ -41,24 +41,14 @@ describe('browser compatibility Nginx collector', () => {
 
   it('logs only the three bounded dimensions from fixed map values', () => {
     const entries = counterMap();
-    const allowedKeys = new Set([
-      'appearance',
-      'terminal-theme',
-      'view-mode',
-      'pending-turn',
-      'rail-collapsed',
-    ]);
-    const allowedGenerations = new Set(['canonical', 'historical-key', 'historical-id']);
+    const allowedKeys = new Set(['appearance']);
+    const allowedGenerations = new Set(['canonical', 'historical-key']);
     const allowedOutcomes = new Set([
       'read-ok',
       'read-blocked',
       'write-ok',
       'write-blocked',
-      'clear-ok',
-      'clear-blocked',
       'fallback-used',
-      'consumed',
-      'normalized',
     ]);
 
     for (const value of entries.values()) {

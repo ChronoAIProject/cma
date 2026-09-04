@@ -1,7 +1,7 @@
 //! Authenticated encryption for durable authentication secrets.
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use layer2_core::store::StoreError;
+use layer2_core::StoreError;
 use mongodb::bson::{spec::BinarySubtype, Binary};
 use ring::{
     aead::{self, Aad, LessSafeKey, Nonce, UnboundKey},

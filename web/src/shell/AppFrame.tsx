@@ -205,7 +205,7 @@ export function AppFrame({
       <DragHandle
         side="sidebar"
         at={columns.sidebar}
-        label="Resize the session list"
+        label="Resize navigation"
         onDrag={(dx) => {
           onSidebarDrag(sidebarDragStart.current + dx);
         }}
@@ -242,7 +242,7 @@ export function AppFrame({
           aria-expanded={!effectiveSidebarCollapsed}
           onClick={toggleSidebar}
         >
-          {effectiveSidebarCollapsed ? 'Show sessions' : 'Hide sessions'}
+          {effectiveSidebarCollapsed ? 'Show navigation' : 'Hide navigation'}
         </button>
       ) : null}
     </div>

@@ -1,14 +1,8 @@
-import { Suspense, lazy } from 'react';
-import { Landing } from './landing/Landing';
+import { Console } from './Console';
 import { useAuth } from './auth/context';
-import { PublicTriggerPreview } from './trigger/PublicTriggerPreview';
-import { routePath, useAppRouter } from './routing/routes';
-/*
- * Mount order matters — `docs/Web_Style.md` §2. The palette sheets must be
- * parsed before anything reads an alias off them, and `tokens.css` first
- * because the others reference the font stacks and the easing curve it
- * declares.
- */
+import lockup from './assets/brand/cma-lockup-horizontal.svg';
+import { useAppRouter } from './routing/routes';
+import { Button } from './ui/Button';
 import './styles/tokens.css';
 import './styles/design-platform.css';
 import './styles/effects-typography.css';
@@ -18,95 +12,38 @@ import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
 
-/*
- * The console pulls in xterm.js, roughly 400KB before compression. A visitor
- * who never signs in should never download it, so it is split out and fetched
- * only once there is an identity. The landing page is the first impression and
- * is frequently the whole visit.
- */
-const Console = lazy(async () => {
-  const module = await import('./Console');
-  return { default: module.Console };
-});
-
-/**
- * One page frame, two states.
- *
- * Unauthenticated it is a terminal that introduces itself and takes a prompt;
- * authenticated it is the same frame carrying the three views docs/Web_Style.md
- * §1 admits — sessions, operations and Developer.
- *
- * A deliberately small workflow router owns the canonical CMA Trigger deep
- * links. Account-menu utility views remain transient and do not create more
- * routes. A utility view is where somebody is right now, so it does not
- * persist; an arrangement is a setting about how a list is drawn, and that
- * does.
- */
 export function App() {
   const { state, signIn, signOut } = useAuth();
   const router = useAppRouter();
 
-  switch (state.status) {
-    case 'checking':
-      // Deliberately empty rather than a spinner: the check resolves against a
-      // cookie in a few milliseconds, and a flash of loading chrome is worse
-      // than a frame of nothing.
-      return <div className="app-checking" aria-busy="true" />;
-
-    case 'authenticated':
-      return (
-        // Web_Style.md forbids a full-page spinner; the console arrives from
-        // cache or a same-origin chunk, so an empty frame is the honest wait.
-        <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
-          <Console
-            user={state.user}
-            route={router.route}
-            onNavigate={router.navigate}
-            onSignOut={() => void signOut()}
-          />
-        </Suspense>
-      );
-
-    case 'error':
-      return (
-        <main className="app-error" role="alert">
-          <p className="app-error__what">{state.message}</p>
-          <p className="app-error__next">Reload the page to try again.</p>
-        </main>
-      );
-
-    case 'anonymous': {
-      if (router.route.kind === 'trigger') {
-        const returnTo = routePath(router.route);
-        return (
-          <PublicTriggerPreview
-            publicId={router.route.publicId}
-            authError={router.route.authError}
-            onSignIn={() => void signIn(returnTo)}
-          />
-        );
-      }
-      const returnTo =
-        router.route.kind === 'trigger_recovery' ||
-        router.route.kind === 'launch' ||
-        router.route.kind === 'contribute' ||
-        router.route.kind === 'session'
-          ? routePath(router.route)
-          : undefined;
-      return (
-        /*
-         * No frame at all. §9's frame is three columns of session, and a
-         * visitor has no sessions — wrapping the landing in an empty sidebar
-         * and an empty details column would draw two panels that say nothing
-         * and cannot be opened.
-         */
-        <Landing returnTo={returnTo} />
-      );
-    }
-
-    default: {
-      const exhaustive: never = state;
-      return exhaustive;
-    }
+  if (state.status === 'checking') {
+    return <div className="app-checking" aria-busy="true" />;
   }
+  if (state.status === 'error') {
+    return (
+      <main className="app-error" role="alert">
+        <p className="app-error__what">{state.message}</p>
+        <p className="app-error__next">Reload the page to try again.</p>
+      </main>
+    );
+  }
+  if (state.status === 'anonymous') {
+    return (
+      <main className="auth-gate">
+        <img className="auth-gate__brand" src={lockup} alt="CMA" />
+        <Button variant="primary" onClick={() => void signIn(window.location.pathname)}>
+          Sign in
+        </Button>
+      </main>
+    );
+  }
+  return (
+    <Console
+      user={state.user}
+      route={router.route}
+      onSignOut={() => {
+        void signOut();
+      }}
+    />
+  );
 }

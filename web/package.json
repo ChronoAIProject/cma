@@ -13,21 +13,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check:styles": "node scripts/computed-styles.mjs",
-    "check:surfaces": "node scripts/signed-in-surfaces.mjs",
-    "check:trigger-journey": "node scripts/trigger-journey.mjs",
     "check:css": "node scripts/css-collisions.mjs"
   },
   "dependencies": {
-    "@chronoai/cma-sdk": "file:../sdk/typescript",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "mdast-util-from-markdown": "^2.0.3",
-    "mdast-util-gfm": "^3.1.0",
-    "micromark": "^4.0.2",
-    "micromark-extension-gfm": "^3.0.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "three": "0.184.0"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
@@ -38,7 +28,6 @@
     "@types/node": "^22.20.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@types/three": "0.184.0",
     "@vitejs/plugin-react": "^5.1.0",
     "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^9.39.0",

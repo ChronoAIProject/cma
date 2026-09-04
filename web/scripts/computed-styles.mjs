@@ -27,13 +27,7 @@ const DIST = 'dist/assets';
  * is the same failure as no check at all, and each of these is a decision
  * somebody made rather than a name that happened to be absent.
  */
-const EXEMPT = new Map([
-  [
-    '--canvas-columns',
-    'set inline from JavaScript by SessionCanvas; the CSS fallback is deliberate',
-  ],
-  ['--vscode-scrollbar-shadow', "xterm's own, carried with a #000 fallback"],
-]);
+const EXEMPT = new Map();
 
 /** Every custom property the built sheets reference. */
 function referenced() {
@@ -103,12 +97,12 @@ async function fills(page) {
 /**
  * Does a focused control draw exactly one focus indicator?
  *
- * A surface that relocates the global ring — the terminal prompt does, and
- * §7 permits it — has to cancel what it relocated. Cancelling the wrong
- * property leaves both painted, and the suite cannot see it because jsdom
- * neither focuses nor computes a shadow. The check is structural rather than
- * a list of surfaces: anything that draws its own indicator on `:focus-within`
- * must not contain a focused element still carrying the global one.
+ * A surface that relocates the global ring has to cancel what it relocated.
+ * Cancelling the wrong property leaves both painted, and the suite cannot see
+ * it because jsdom neither focuses nor computes a shadow. The check is
+ * structural rather than a list of surfaces: anything that draws its own
+ * indicator on `:focus-within` must not contain a focused element still
+ * carrying the global one.
  */
 async function oneIndicator(page) {
   return page.evaluate(() => {
@@ -152,8 +146,7 @@ async function oneIndicator(page) {
  * still pointed at the wrong page.
  *
  * Driven deliberately here rather than left to a stub failing by chance: the
- * check answers `/auth/session` with a 401 so it can measure the landing, and
- * that same stub is what stops this state ever appearing again.
+ * identity request is aborted so the error state is rendered intentionally.
  */
 async function errorSurface(page, port) {
   const problems = [];
@@ -194,147 +187,6 @@ async function errorSurface(page, port) {
   return problems;
 }
 
-/** The live character must paint real transparent WebGL pixels at every layout and appearance. */
-async function characterScene(page, port) {
-  const problems = [];
-  const colours = new Map();
-  const modes = [
-    { label: 'desktop light', width: 1440, height: 900, dark: false, reduce: false },
-    { label: 'desktop dark', width: 1440, height: 900, dark: true, reduce: false },
-    { label: 'phone light', width: 390, height: 844, dark: false, reduce: false },
-    { label: 'phone dark', width: 390, height: 844, dark: true, reduce: false },
-    { label: 'reduced motion', width: 1440, height: 900, dark: false, reduce: true },
-  ];
-
-  for (const mode of modes) {
-    await page.setViewport({ width: mode.width, height: mode.height });
-    await page.emulateMediaFeatures([
-      { name: 'prefers-reduced-motion', value: mode.reduce ? 'reduce' : 'no-preference' },
-    ]);
-    await visit(page, port, 'networkidle0');
-    await ready(page, '.landing__character[data-ready] canvas', {
-      label: `${mode.label} character canvas`,
-    });
-    const seen = await page.evaluate(async (dark) => {
-      document.body.toggleAttribute('data-ds-dark-theme', dark);
-      const stage = document.querySelector('.landing__character');
-      const canvas = stage?.querySelector('canvas');
-      const fallback = stage?.querySelector('.landing__character-fallback');
-      const word = document.querySelector('.landing__word');
-      if (!(stage instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
-        return { absent: true };
-      }
-
-      const gl = canvas.getContext('webgl2');
-      if (gl === null) {
-        return { noContext: true };
-      }
-
-      const width = gl.drawingBufferWidth;
-      const height = gl.drawingBufferHeight;
-      const pixels = await new Promise((resolve) => {
-        // The scene's resize listener queues its render first. Sampling in the
-        // following callback reads that frame before the compositor clears a
-        // non-preserved WebGL buffer, including under reduced motion where the
-        // scene deliberately does not request another frame.
-        window.dispatchEvent(new Event('resize'));
-        requestAnimationFrame(() => {
-          const frame = new Uint8Array(width * height * 4);
-          gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-          resolve(frame);
-        });
-      });
-      let painted = 0;
-      let red = 0;
-      let green = 0;
-      let blue = 0;
-      for (let index = 0; index < pixels.length; index += 4) {
-        const alpha = pixels[index + 3] ?? 0;
-        if (alpha <= 8) continue;
-        painted += 1;
-        red += pixels[index] ?? 0;
-        green += pixels[index + 1] ?? 0;
-        blue += pixels[index + 2] ?? 0;
-      }
-      const stageBox = stage.getBoundingClientRect();
-      const canvasBox = canvas.getBoundingClientRect();
-      const wordBox = word?.getBoundingClientRect();
-      const total = width * height;
-      return {
-        absent: false,
-        paintedRatio: painted / total,
-        transparentRatio: (total - painted) / total,
-        colour: painted === 0 ? [0, 0, 0] : [red / painted, green / painted, blue / painted],
-        stageWidth: Math.round(stageBox.width),
-        stageHeight: Math.round(stageBox.height),
-        canvasWidth: Math.round(canvasBox.width),
-        canvasHeight: Math.round(canvasBox.height),
-        overlapsWord: wordBox === undefined ? true : stageBox.bottom > wordBox.top,
-        fallbackVisible:
-          fallback === null ? true : getComputedStyle(fallback).visibility !== 'hidden',
-        motion: stage.hasAttribute('data-motion'),
-        disabled: stage instanceof HTMLButtonElement && stage.disabled,
-      };
-    }, mode.dark);
-
-    if (seen.absent) {
-      problems.push(`${mode.label}: the landing has no character canvas`);
-      continue;
-    }
-    if (seen.noContext) {
-      problems.push(`${mode.label}: the canvas has no WebGL2 context`);
-      continue;
-    }
-    if (seen.paintedRatio < 0.05) {
-      problems.push(
-        `${mode.label}: only ${(seen.paintedRatio * 100).toFixed(1)}% of canvas pixels are painted`,
-      );
-    }
-    if (seen.transparentRatio < 0.25) {
-      problems.push(`${mode.label}: the character canvas is not meaningfully transparent`);
-    }
-    if (
-      Math.abs(seen.stageWidth - seen.stageHeight) > 1 ||
-      seen.stageWidth !== seen.canvasWidth ||
-      seen.stageHeight !== seen.canvasHeight
-    ) {
-      problems.push(
-        `${mode.label}: stage ${String(seen.stageWidth)}x${String(seen.stageHeight)} and canvas ` +
-          `${String(seen.canvasWidth)}x${String(seen.canvasHeight)} do not share one square`,
-      );
-    }
-    if (seen.overlapsWord) problems.push(`${mode.label}: the character overlaps the CMA wordmark`);
-    if (seen.fallbackVisible)
-      problems.push(`${mode.label}: the fallback remains over the live scene`);
-    if (mode.reduce && seen.motion) {
-      problems.push('reduced motion: the character still advertises an animated interaction');
-    }
-    if (mode.reduce && !seen.disabled) {
-      problems.push('reduced motion: the spin control remains enabled');
-    }
-    if (!mode.reduce && !seen.motion) {
-      problems.push(`${mode.label}: the live character lost its motion state`);
-    }
-    if (!mode.reduce && seen.disabled) {
-      problems.push(`${mode.label}: the live character spin control remains disabled`);
-    }
-    if (!mode.reduce && mode.width === 1440) colours.set(mode.dark ? 'dark' : 'light', seen.colour);
-  }
-
-  const light = colours.get('light');
-  const dark = colours.get('dark');
-  if (light === undefined || dark === undefined) {
-    problems.push('character: the desktop appearance colours were not measured');
-  } else {
-    const distance = Math.hypot(light[0] - dark[0], light[1] - dark[1], light[2] - dark[2]);
-    if (distance < 30) problems.push('character: light and dark paint resolve to the same palette');
-  }
-
-  await page.setViewport({ width: 1440, height: 900 });
-  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
-  return problems;
-}
-
 async function main() {
   const names = referenced();
   const { page, close } = await open({ port: PORT });
@@ -345,19 +197,31 @@ async function main() {
      * comes back as the index HTML and the app renders its error state. That
      * would leave every check below measuring a two-line alert rather than a
      * surface. 401 is what a signed-out visitor actually receives in
-     * production, so answering with it renders the real landing.
+     * production, so answering with it renders the real sign-in gate.
      */
     await page.setRequestInterception(true);
     /*
-     * How the control plane answers, for the page being measured. `signedOut`
-     * is the landing; `unreachable` is the error surface, which renders for
-     * nobody in development and for everybody at the worst possible moment.
+     * How the control plane answers for the page being measured. The retained
+     * sign-in gate, authenticated shell, and unreachable state are all checked.
      */
     let identity = 'signedOut';
     page.on('request', (request) => {
       if (new URL(request.url()).pathname === '/auth/session') {
         if (identity === 'unreachable') {
           void request.abort('failed');
+          return;
+        }
+        if (identity === 'authenticated') {
+          void request.respond({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              authenticated: true,
+              subject: 'style-check',
+              display_name: 'Style Check',
+              capabilities: [],
+            }),
+          });
           return;
         }
         void request.respond({ status: 401, contentType: 'application/json', body: '{}' });
@@ -402,9 +266,15 @@ async function main() {
       }
     }
 
-    problems.push(...(await fills(page)));
-    problems.push(...(await oneIndicator(page)));
-    problems.push(...(await characterScene(page, PORT)));
+    for (const problem of await fills(page)) problems.push(`signed out ${problem}`);
+    for (const problem of await oneIndicator(page)) problems.push(`signed out: ${problem}`);
+
+    identity = 'authenticated';
+    await visit(page, PORT);
+    await ready(page, '.frame', { label: 'authenticated shell' });
+    for (const problem of await fills(page)) problems.push(`authenticated ${problem}`);
+    for (const problem of await oneIndicator(page)) problems.push(`authenticated: ${problem}`);
+
     identity = 'unreachable';
     problems.push(...(await errorSurface(page, PORT)));
     identity = 'signedOut';

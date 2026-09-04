@@ -1,94 +1,51 @@
-/*
- * The sidebar — `docs/Web_Style.md` §10.
- *
- * Its own scrollbar elevation, because it sits above the surface beside it:
- * a thumb tinted for the page reads as the wrong weight here. The properties
- * inherit down to whichever descendant actually scrolls, which is the session
- * list rather than this element.
- */
-
 .sidebar {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   height: 100%;
-  padding: 6px 12px;
+  padding: 10px 12px;
   color: var(--dsw-alias-label-primary);
-  font-size: 14px;
   background: var(--dsw-specific-sidebar-fill);
+  border-right: 1px solid var(--dsw-alias-border-l1);
 
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --cma-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --cma-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
-/* The rail: 36px controls centred in 56px, with a 10px side padding. */
 .sidebar--collapsed {
-  padding: 18px 10px 6px;
+  padding-inline: 10px;
 }
 
-.sidebar__logorow {
+.sidebar__head {
   display: flex;
-  flex: none;
   gap: 8px;
   align-items: center;
   justify-content: space-between;
-  box-sizing: border-box;
-  height: 60px;
-  margin-bottom: 8px;
-  padding: 8px 0 8px 4px;
-  overflow: hidden;
+  min-height: 44px;
 }
 
-/*
- * Closed, the mark and the toggle stack rather than sharing a row.
- *
- * `justify-content: space-between` in a 56px column put a 36px control beside
- * a 24px mark with nowhere to go: they overlapped, the mark was squeezed to
- * zero width, and the toggle sat 8px right of every other icon — so the one
- * column where alignment is the only thing holding the rail together was the
- * one place nothing lined up.
- */
-.sidebar--collapsed .sidebar__logorow {
+.sidebar--collapsed .sidebar__head {
   flex-direction: column;
-  gap: 6px;
+}
+
+.sidebar__brand,
+.sidebar__toggle {
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  height: auto;
-  margin-bottom: 12px;
-  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
 }
 
-/*
- * Every closed control on one axis. The icons are 36px squares in a 56px
- * column, so centring is what puts them on it — and the mark centres with
- * them rather than hugging the padding edge it had when it had a label.
- */
-.sidebar--collapsed .sidebar__brand,
-.sidebar--collapsed .sidebar__new,
-.sidebar--collapsed .sidebar__icon {
-  align-self: center;
-  justify-content: center;
-  width: 36px;
-  padding: 0;
+.sidebar__brand {
+  gap: 8px;
+  min-width: 0;
+  text-decoration: none;
 }
 
-.sidebar--collapsed .sidebar__brand {
-  height: 36px;
-}
-
-/*
- * The mark keeps its box whether or not the asset has landed, so the row does
- * not jump on a cold load. Square, because the file is.
- *
- * 32px rather than 24: the row is 60px tall with 44px of content box, so the
- * smaller mark was sitting in more than its own height of empty space and read
- * as an icon beside the name rather than as the product's mark. It still
- * clears the 36px square the collapsed rail gives it.
- */
 .sidebar__mark {
-  flex: none;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   color: var(--dsw-alias-brand-primary);
 }
 
@@ -98,296 +55,42 @@
   height: 100%;
 }
 
-/*
- * A button in behaviour only. The pointer is the whole affordance — a hover
- * fill on a wordmark reads as the product's name being a control.
- */
-.sidebar__brand {
-  display: inline-flex;
-  flex: 1;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
+.sidebar__name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.sidebar__toggle {
+  justify-content: center;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  color: inherit;
-  background: transparent;
-  border: none;
+  border-radius: 50%;
   cursor: pointer;
 }
 
-.sidebar__brand:disabled,
-.sidebar__new:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.sidebar__toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/*
- * The wordmark, set the way the brand sets it — §21.
- *
- * -0.035em and the shipped lockup's -1.6 on a 54px face (-0.030em) are the same
- * letterform spacing, so the name in chrome and the name on the lockup are one
- * wordmark rather than two. It was on +0.04em, which is the opposite sign — the
- * letters were being held apart, which is a treatment for small caps and label
- * runs, not for a three-letter name set at reading size.
- *
- * 700 for the same reason: the lockup is 700, and this is the same word.
- */
-.sidebar__name {
-  overflow: hidden;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 24px;
-  letter-spacing: -0.035em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sidebar__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .sidebar__build {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
   align-self: flex-start;
-  height: 20px;
-  margin-bottom: 8px;
-  padding: 0 6px;
-  color: var(--dsw-alias-state-business-primary);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 14px;
-  background: transparent;
-  border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 999px;
-}
-
-.sidebar__icon {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  color: var(--dsw-alias-label-secondary);
-  background: transparent;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.sidebar__icon:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.sidebar__icon:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.sidebar__surfaces {
-  display: grid;
-  flex: none;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  height: 36px;
-  margin: 0 2px 8px;
-  padding: 2px;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-}
-
-.sidebar__surfaces button {
-  min-width: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  background: none;
-  border: 0;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.sidebar__surfaces button:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-specific-sidebar-nav-item-hover);
-}
-
-.sidebar__surfaces button[aria-pressed='true'] {
-  color: var(--dsw-alias-label-primary);
-  font-weight: 600;
-  background: var(--dsw-specific-sidebar-nav-item-active);
-}
-
-.sidebar__surfaces button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.sidebar--collapsed .sidebar__icon {
-  width: 36px;
-  height: 36px;
-  color: var(--dsw-alias-label-primary);
-}
-
-.sidebar__new {
-  display: flex;
-  flex: none;
-  gap: 6px;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  height: 40px;
-  margin: 0 2px 8px;
-  padding: 8px 16px;
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 22px;
-  background: var(--dsw-alias-button-elevated-fill);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.sidebar__new:hover:not(:disabled) {
-  background: var(--dsw-alias-button-floating-hover);
-}
-
-.sidebar--collapsed .sidebar__new {
-  align-self: flex-start;
-  gap: 0;
-  width: 36px;
-  height: 36px;
-  margin: 0 0 12px;
-  padding: 0;
-  background: transparent;
-  border-color: transparent;
-}
-
-.sidebar--collapsed .sidebar__new:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.sidebar__newlabel {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/*
- * The command trigger is a field-shaped button rather than a field: nothing
- * is typed here, it opens a plate.
- */
-.sidebar__search {
-  gap: 8px;
-  justify-content: flex-start;
-  width: 100%;
-  height: 30px;
-  margin-bottom: 8px;
-  padding: 0 8px;
-  border-radius: 10px;
-}
-
-.sidebar--collapsed .sidebar__search {
-  width: 36px;
-  padding: 0;
-  border-radius: 50%;
-}
-
-.sidebar__searchlabel {
-  flex: 1;
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-  line-height: 20px;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar__key {
-  flex: none;
+  margin-top: 8px;
   color: var(--dsw-alias-label-tertiary);
   font-family: var(--ds-font-family-code);
   font-size: 11px;
 }
 
-/*
- * The list is the only thing that scrolls. The column itself must not, or the
- * foot rows scroll away with it.
- */
-.sidebar__list {
-  display: flex;
+.sidebar__space {
   flex: 1;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.sidebar__status {
-  flex: none;
-  margin: 0;
-  padding: 6px 8px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.sidebar__foot {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 2px;
-  padding-top: 6px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
-
-.sidebar__footrow {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 14px;
-  line-height: 22px;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.sidebar__footrow[aria-pressed='true'] {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-button-ghost-active-fill);
-}
-
-.sidebar__footrow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.sidebar__footrow:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.sidebar--collapsed .sidebar__footrow {
-  justify-content: center;
-  width: 36px;
-  padding: 0;
 }
 
 .sidebar__account {
-  display: flex;
-  align-items: center;
   min-width: 0;
-}
-
-.sidebar--collapsed .sidebar__account {
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  color: var(--dsw-alias-label-primary);
 }
