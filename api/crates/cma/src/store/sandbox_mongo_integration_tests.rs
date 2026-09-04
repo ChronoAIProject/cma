@@ -10,23 +10,34 @@ use layer2_core::profiles::{
     ThinkingEffort,
 };
 use layer2_core::sandbox::store::{
-    AgentLogStore, AgentStore, SandboxEventStore, SandboxStore, SandboxStoreError,
-    SandboxTransaction, SandboxTransactionStore, WorktreeStore,
+    AgentLogStore, AgentStore, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore,
+    SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
+    SandboxTransactionStore, SandboxWorkerStore, WorktreeStore,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentOrigin, AgentStatus, ConversationState, Sandbox,
-    SandboxCredentialState, SandboxEvent, SandboxEventKind, SandboxLimits, SandboxStatus, Worktree,
-    WorktreeStatus,
+    SandboxCredentialAuthority, SandboxCredentialState, SandboxEvent, SandboxEventKind,
+    SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState,
+    SandboxWorkStep, Worktree, WorktreeStatus,
 };
 use mongodb::bson::{doc, Document};
 use mongodb::Client;
 
+use crate::auth::persistence::SecretValue;
+use crate::sandbox::{
+    CredentialCustodyError, CredentialMaterial, CredentialRevocation, SandboxCredentialCustody,
+};
+
+use super::encryption::AuthEncryptionKey;
+use super::sandbox_credentials::{
+    MongoSandboxCredentialStore, SANDBOX_CREDENTIALS, SANDBOX_CREDENTIAL_REVOCATIONS,
+};
 use super::sandbox_events::event_document;
 use super::sandbox_mongo::{
     MongoProfileStore, MongoSandboxStore, AGENTS, AGENT_LOG, AGENT_PROFILES,
-    AGENT_PROFILE_REVISIONS, CHECKPOINTS, SANDBOXES, SANDBOX_EVENTS, SANDBOX_PROFILES,
-    SANDBOX_PROFILE_REVISIONS, WORKSPACES, WORKSPACE_PROFILES, WORKSPACE_PROFILE_REVISIONS,
-    WORKTREES,
+    AGENT_PROFILE_REVISIONS, CHECKPOINTS, SANDBOXES, SANDBOX_ADMISSIONS, SANDBOX_EVENTS,
+    SANDBOX_PROFILES, SANDBOX_PROFILE_REVISIONS, WORKSPACES, WORKSPACE_PROFILES,
+    WORKSPACE_PROFILE_REVISIONS, WORKTREES,
 };
 use super::DefaultProfileSpec;
 
@@ -49,6 +60,7 @@ fn sandbox(id: &str) -> Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId("owner".into()),
         name: "research".into(),
+        origin: SandboxOrigin::Manual,
         profile: SandboxProfileSnapshot {
             id: SandboxProfileId("sbp_test".into()),
             revision: 1,
@@ -73,7 +85,19 @@ fn sandbox(id: &str) -> Sandbox {
             reaches: vec![],
             key_generation: 1,
             delivered: true,
+            current: Some(SandboxCredentialAuthority {
+                generation: 1,
+                provider_key_id: "provider-key".into(),
+                provider_state_version: 1,
+                issued_at: NOW.into(),
+                expires_at: "2026-10-05T00:00:00Z".into(),
+                grant_fingerprint: "a".repeat(64),
+            }),
+            pending: None,
+            revoke_debt: vec![],
+            sign_in: SandboxSignInState::NotRequired,
         },
+        work: SandboxWorkState::new(SandboxWorkStep::WaitForCredentialRotation, NOW.into()),
         limits: SandboxLimits {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
@@ -83,8 +107,60 @@ fn sandbox(id: &str) -> Sandbox {
         created_at: NOW.into(),
         updated_at: NOW.into(),
         retired_at: None,
+        purge_after: None,
         revision: 1,
     }
+}
+
+fn provisioning_sandbox(id: &str) -> Sandbox {
+    let mut sandbox = sandbox(id);
+    sandbox.status = SandboxStatus::Provisioning;
+    sandbox.credential.key_generation = 0;
+    sandbox.credential.delivered = false;
+    sandbox.credential.current = None;
+    sandbox.work = SandboxWorkState::new(SandboxWorkStep::ProvisionRuntime, NOW.into());
+    sandbox
+}
+
+fn admission(id: &str, limit: u16) -> SandboxAdmission {
+    SandboxAdmission {
+        sandbox: provisioning_sandbox(id),
+        name: SandboxAdmissionName::Allocate("research".into()),
+        live_limit: limit,
+        event_at: NOW.into(),
+    }
+}
+
+fn retired_sandbox(id: &str) -> Sandbox {
+    let mut sandbox = sandbox(id);
+    sandbox.status = SandboxStatus::Retired;
+    sandbox.credential.delivered = false;
+    sandbox.credential.current = None;
+    sandbox.work = SandboxWorkState::new(SandboxWorkStep::Purge, NOW.into());
+    sandbox.retired_at = Some(NOW.into());
+    sandbox.purge_after = Some(NOW.into());
+    sandbox
+}
+
+fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMaterial {
+    CredentialMaterial {
+        sandbox_id: SandboxId(sandbox_id.into()),
+        owner: SubjectId("owner".into()),
+        authority: SandboxCredentialAuthority {
+            generation: 1,
+            provider_key_id: "provider-key".into(),
+            provider_state_version: 1,
+            issued_at: NOW.into(),
+            expires_at: "2026-10-05T00:00:00Z".into(),
+            grant_fingerprint: "c".repeat(64),
+        },
+        value: SecretValue::new(plaintext.into()),
+    }
+}
+
+fn encryption_key() -> AuthEncryptionKey {
+    AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        .expect("test encryption key")
 }
 
 fn agent_profile(id: &str) -> AgentProfile {
@@ -162,6 +238,10 @@ async fn fresh_database_initializes_every_schema_v1_collection_and_index() {
     let (client, name) = database("fresh").await;
     let sandbox_store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let profile_store = MongoProfileStore::open(&client, &name).await.unwrap();
+    let _credential_store =
+        MongoSandboxCredentialStore::open(&client, &name, "test", &encryption_key())
+            .await
+            .unwrap();
     let names = client
         .database(&name)
         .list_collection_names()
@@ -174,6 +254,9 @@ async fn fresh_database_initializes_every_schema_v1_collection_and_index() {
         AGENTS,
         AGENT_LOG,
         SANDBOX_EVENTS,
+        SANDBOX_ADMISSIONS,
+        SANDBOX_CREDENTIALS,
+        SANDBOX_CREDENTIAL_REVOCATIONS,
         CHECKPOINTS,
         AGENT_PROFILES,
         AGENT_PROFILE_REVISIONS,
@@ -199,6 +282,221 @@ async fn fresh_database_initializes_every_schema_v1_collection_and_index() {
         .await
         .unwrap()
         .contains(&"agent_profile_revisions_profile_revision".to_string()));
+    assert!(client
+        .database(&name)
+        .collection::<Document>(SANDBOX_CREDENTIALS)
+        .list_index_names()
+        .await
+        .unwrap()
+        .contains(&"sandbox_credentials_generation".to_string()));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn concurrent_admission_serializes_the_limit_and_default_name_allocation() {
+    let (client, name) = database("admission").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let results = futures_util::future::join_all((0..6).map(|index| {
+        let store = store.clone();
+        async move {
+            store
+                .admit_sandbox(admission(&format!("sbx_admission_{index}"), 3))
+                .await
+        }
+    }))
+    .await;
+    let mut admitted = Vec::new();
+    for result in results {
+        match result {
+            Ok(sandbox) => admitted.push(sandbox),
+            Err(SandboxStoreError::LimitReached { limit: 3, live: 3 }) => {}
+            other => panic!("unexpected concurrent admission result: {other:?}"),
+        }
+    }
+    assert_eq!(admitted.len(), 3);
+    let mut names = admitted
+        .iter()
+        .map(|sandbox| sandbox.name.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    assert_eq!(names, ["research", "research-2", "research-3"]);
+    for sandbox in admitted {
+        let events = store.sandbox_events(&sandbox.id, 0, 10).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].seq, 1);
+        assert_eq!(events[0].kind, SandboxEventKind::Created);
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn claims_are_exclusive_and_an_expired_lease_gets_a_higher_fence() {
+    let (client, name) = database("claims").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let sandbox = provisioning_sandbox("sbx_claims");
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+
+    let first = store.claim_sandbox_work(
+        &sandbox.id,
+        "worker-a",
+        NOW.into(),
+        "2026-09-05T00:01:00Z".into(),
+    );
+    let second = store.claim_sandbox_work(
+        &sandbox.id,
+        "worker-b",
+        NOW.into(),
+        "2026-09-05T00:01:00Z".into(),
+    );
+    let (first, second) = tokio::join!(first, second);
+    let claims = [first.unwrap(), second.unwrap()];
+    assert_eq!(claims.iter().filter(|claim| claim.is_some()).count(), 1);
+    let claimed = claims.into_iter().flatten().next().unwrap();
+    assert_eq!(claimed.work.lease.as_ref().unwrap().fence, 1);
+    assert_eq!(claimed.revision, 2);
+
+    let takeover = store
+        .claim_sandbox_work(
+            &sandbox.id,
+            "worker-c",
+            "2026-09-05T00:01:00Z".into(),
+            "2026-09-05T00:02:00Z".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(takeover.work.lease.as_ref().unwrap().holder, "worker-c");
+    assert_eq!(takeover.work.lease.as_ref().unwrap().fence, 2);
+    assert_eq!(takeover.revision, 3);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn purge_transaction_removes_the_aggregate_hierarchy_events_and_checkpoints() {
+    let (client, name) = database("purge").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let sandbox = retired_sandbox("sbx_purge");
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+    let sandbox_id = sandbox.id.as_str();
+    store
+        .workspaces
+        .insert_one(doc! { "_id": "wks_purge", "sandbox_id": sandbox_id })
+        .await
+        .unwrap();
+    store
+        .worktrees
+        .insert_one(doc! { "_id": "wkt_purge", "sandbox_id": sandbox_id })
+        .await
+        .unwrap();
+    store
+        .agents
+        .insert_one(doc! { "_id": "agt_purge", "sandbox_id": sandbox_id })
+        .await
+        .unwrap();
+    store
+        .agent_log
+        .insert_one(doc! { "_id": "log_purge", "agent_id": "agt_purge" })
+        .await
+        .unwrap();
+    store
+        .sandbox_events
+        .insert_one(doc! { "_id": "evt_purge", "sandbox_id": sandbox_id })
+        .await
+        .unwrap();
+    store
+        .checkpoints
+        .insert_one(doc! { "_id": "chk_purge", "sandbox_id": sandbox_id })
+        .await
+        .unwrap();
+
+    store
+        .purge_sandbox(&sandbox.id, sandbox.revision, NOW)
+        .await
+        .unwrap();
+    for collection in [
+        &store.sandboxes,
+        &store.workspaces,
+        &store.worktrees,
+        &store.agents,
+        &store.agent_log,
+        &store.sandbox_events,
+        &store.checkpoints,
+    ] {
+        assert_eq!(
+            collection.count_documents(Document::new()).await.unwrap(),
+            0
+        );
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn encrypted_credential_round_trip_hides_plaintext_and_rejects_tampering() {
+    use mongodb::bson::{spec::BinarySubtype, Binary, Bson};
+
+    let (client, name) = database("credentials").await;
+    let store =
+        MongoSandboxCredentialStore::open(&client, &name, "test-deployment", &encryption_key())
+            .await
+            .unwrap();
+    let expected = credential("sbx_credential", "credential-plaintext");
+    store.insert(expected.clone()).await.unwrap();
+    let raw = client
+        .database(&name)
+        .collection::<Document>(SANDBOX_CREDENTIALS);
+    let document = raw.find_one(Document::new()).await.unwrap().unwrap();
+    assert!(!format!("{document:?}").contains("credential-plaintext"));
+    let loaded = store
+        .get(&expected.sandbox_id, expected.authority.generation)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.authority, expected.authority);
+    assert_eq!(loaded.owner, expected.owner);
+    assert_eq!(loaded.value.expose(), "credential-plaintext");
+
+    let revocation = CredentialRevocation {
+        sandbox_id: expected.sandbox_id.clone(),
+        owner: expected.owner.clone(),
+        provider_key_id: "provider-key-loser".into(),
+    };
+    store.queue_revocation(revocation.clone()).await.unwrap();
+    store.queue_revocation(revocation.clone()).await.unwrap();
+    assert_eq!(
+        store.revocations(&expected.sandbox_id).await.unwrap(),
+        vec![revocation.clone()]
+    );
+    store
+        .delete_revocation(&expected.sandbox_id, &revocation.provider_key_id)
+        .await
+        .unwrap();
+    assert!(store
+        .revocations(&expected.sandbox_id)
+        .await
+        .unwrap()
+        .is_empty());
+
+    raw.update_one(
+        doc! { "_id": document.get_str("_id").unwrap() },
+        doc! { "$set": {
+            "value.ciphertext": Bson::Binary(Binary {
+                subtype: BinarySubtype::Generic,
+                bytes: vec![1, 2, 3],
+            })
+        } },
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        store
+            .get(&expected.sandbox_id, expected.authority.generation)
+            .await,
+        Err(CredentialCustodyError::Corrupt(_))
+    ));
     client.database(&name).drop().await.unwrap();
 }
 
@@ -327,8 +625,8 @@ async fn injected_event_failure_rolls_back_worktree_agent_and_sequence() {
     let (worktree, agent) = worktree_and_agent(&sandbox.id);
     let error = store
         .commit(SandboxTransaction::CreateWorktreeAndAgent {
-            worktree: worktree.clone(),
-            agent: agent.clone(),
+            worktree: Box::new(worktree.clone()),
+            agent: Box::new(agent.clone()),
             event_at: NOW.into(),
             event: SandboxEventKind::AgentCreated {
                 workspace_id: worktree.workspace_id.clone(),

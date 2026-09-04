@@ -227,8 +227,8 @@ async fn reconcile(
                 .as_ref()
                 .map(read_agent)
                 .transpose()?;
-            Ok(stored_worktree.as_ref() == Some(worktree)
-                && stored_agent.as_ref() == Some(agent)
+            Ok(stored_worktree.as_ref() == Some(worktree.as_ref())
+                && stored_agent.as_ref() == Some(agent.as_ref())
                 && reconcile_event(store, event).await?.is_some())
         }
         (SandboxTransaction::SaveSandboxAndAppend { sandbox, .. }, Receipt::Save(event)) => {
@@ -248,7 +248,7 @@ async fn reconcile(
                 .as_ref()
                 .map(read_event)
                 .transpose()?;
-            Ok(stored.as_ref() == Some(sandbox) && stored_event.as_ref() == Some(event))
+            Ok(stored.as_ref() == Some(sandbox.as_ref()) && stored_event.as_ref() == Some(event))
         }
         _ => Err(SandboxStoreError::Corrupt(
             "transaction receipt kind does not match its command".into(),

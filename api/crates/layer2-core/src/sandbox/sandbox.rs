@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{SandboxId, ServiceId, SubjectId};
+use crate::ids::{SandboxId, SubjectId};
 use crate::profiles::SandboxProfileSnapshot;
 
-use super::{SandboxModelError, SandboxStatus};
+use super::{
+    SandboxCredentialState, SandboxModelError, SandboxOrigin, SandboxStatus, SandboxWorkState,
+    SandboxWorkStep,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11,15 +14,6 @@ pub struct RuntimeBinding {
     pub runtime_id: String,
     pub runtime_version: String,
     pub bound_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SandboxCredentialState {
-    #[serde(default)]
-    pub reaches: Vec<ServiceId>,
-    pub key_generation: u64,
-    pub delivered: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +44,7 @@ pub struct Sandbox {
     pub id: SandboxId,
     pub owner: SubjectId,
     pub name: String,
+    pub origin: SandboxOrigin,
     pub profile: SandboxProfileSnapshot,
     pub status: SandboxStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,6 +52,7 @@ pub struct Sandbox {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<RuntimeBinding>,
     pub credential: SandboxCredentialState,
+    pub work: SandboxWorkState,
     pub limits: SandboxLimits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<SandboxCheckpointRef>,
@@ -65,6 +61,8 @@ pub struct Sandbox {
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retired_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purge_after: Option<String>,
     pub revision: u64,
 }
 
@@ -83,6 +81,17 @@ impl Sandbox {
         }
         if (self.status == SandboxStatus::Failed) != self.failure.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.failure"));
+        }
+        if !self.credential.validate() || self.work.next_fence == 0 {
+            return Err(SandboxModelError::invalid_value(
+                "sandbox.credential_or_work",
+            ));
+        }
+        if (self.status == SandboxStatus::Retired) != self.retired_at.is_some() {
+            return Err(SandboxModelError::invalid_value("sandbox.retired_at"));
+        }
+        if self.purge_after.is_some() && self.retired_at.is_none() {
+            return Err(SandboxModelError::invalid_value("sandbox.purge_after"));
         }
         Ok(())
     }
@@ -108,6 +117,12 @@ impl Sandbox {
             self.retired_at = Some(at);
         }
         self.revision = revision;
+        Ok(())
+    }
+
+    pub fn begin_retirement(&mut self, at: String) -> Result<(), SandboxModelError> {
+        self.transition(SandboxStatus::Retiring, at.clone(), None)?;
+        self.work.schedule(SandboxWorkStep::StopAgents, at);
         Ok(())
     }
 }

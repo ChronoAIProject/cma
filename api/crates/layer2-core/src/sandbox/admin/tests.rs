@@ -9,7 +9,7 @@ use crate::profiles::{
 use crate::sandbox::store::{
     AgentStore, InMemorySandboxStore, SandboxEventStore, SandboxStore, WorkspaceStore,
 };
-use crate::sandbox::RuntimeBinding;
+use crate::sandbox::{RuntimeBinding, SandboxOrigin};
 use crate::{ActivityQuery, ActivityStore, Authorization, Page as ActivityPage, StoreError};
 
 use super::*;
@@ -77,6 +77,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
         id: SandboxId(id.into()),
         owner: SubjectId::new(owner),
         name: format!("sandbox-{id}"),
+        origin: SandboxOrigin::Manual,
         profile: SandboxProfileSnapshot {
             id: crate::SandboxProfileId("sbp_test".into()),
             revision: 1,
@@ -92,9 +93,17 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
         }),
         credential: super::super::SandboxCredentialState {
             reaches: vec![],
-            key_generation: 1,
-            delivered: true,
+            key_generation: 0,
+            delivered: false,
+            current: None,
+            pending: None,
+            revoke_debt: Vec::new(),
+            sign_in: super::super::SandboxSignInState::NotRequired,
         },
+        work: super::super::SandboxWorkState::new(
+            super::super::SandboxWorkStep::WaitForCredentialRotation,
+            NOW.into(),
+        ),
         limits: super::super::SandboxLimits {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
@@ -104,6 +113,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
         created_at: NOW.into(),
         updated_at: NOW.into(),
         retired_at: None,
+        purge_after: None,
         revision: 1,
     }
 }

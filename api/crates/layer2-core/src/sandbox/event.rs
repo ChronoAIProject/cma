@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, SandboxId, WorkspaceId, WorktreeId};
 
-use super::{AgentStatus, SandboxStatus, TypedFailure};
+use super::{AgentStatus, SandboxStatus, SandboxWorkStep, TypedFailure};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -48,6 +48,13 @@ pub struct AgentLogEntry {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SandboxEventKind {
     Created,
+    WorkStepCompleted {
+        step: SandboxWorkStep,
+    },
+    WorkStepFailed {
+        step: SandboxWorkStep,
+        failure: TypedFailure,
+    },
     StatusChanged {
         from: SandboxStatus,
         to: SandboxStatus,

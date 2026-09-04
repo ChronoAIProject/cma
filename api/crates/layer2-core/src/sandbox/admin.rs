@@ -194,12 +194,12 @@ impl SandboxRetirement for StoredSandboxRetirement {
         let expected_revision = sandbox.revision;
         let previous = sandbox.status;
         sandbox
-            .transition(SandboxStatus::Retiring, requested_at.clone(), None)
+            .begin_retirement(requested_at.clone())
             .map_err(|error| OperatorError::InvalidState(error.to_string()))?;
         self.store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 expected_revision,
-                sandbox: sandbox.clone(),
+                sandbox: Box::new(sandbox.clone()),
                 event_at: requested_at,
                 event: SandboxEventKind::StatusChanged {
                     from: previous,
@@ -239,6 +239,7 @@ impl OperatorError {
             SandboxStoreError::Conflict
             | SandboxStoreError::Duplicate
             | SandboxStoreError::SequenceConflict
+            | SandboxStoreError::LimitReached { .. }
             | SandboxStoreError::InvalidTransaction(_) => Self::InvalidState(error.to_string()),
             SandboxStoreError::Unavailable(_) | SandboxStoreError::Corrupt(_) => {
                 Self::Unavailable(error.to_string())

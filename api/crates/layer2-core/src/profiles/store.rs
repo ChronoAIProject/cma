@@ -140,14 +140,14 @@ pub trait WorkspaceProfileStore: Send + Sync {
 
 #[async_trait]
 pub trait SandboxProfileStore: Send + Sync {
-    async fn create_sandbox_profile(
-        &self,
-        profile: SandboxProfile,
-    ) -> Result<(), ProfileStoreError>;
     async fn sandbox_profile(
         &self,
         id: &SandboxProfileId,
     ) -> Result<Option<SandboxProfile>, ProfileStoreError>;
+    async fn create_sandbox_profile(
+        &self,
+        profile: SandboxProfile,
+    ) -> Result<(), ProfileStoreError>;
     async fn save_sandbox_draft(
         &self,
         expected_draft_version: u64,

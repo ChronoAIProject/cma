@@ -15,7 +15,8 @@ use layer2_core::profiles::{
 use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxEventStore, SandboxStore};
 use layer2_core::sandbox::{
     RuntimeBinding, Sandbox, SandboxCredentialState, SandboxEventKind, SandboxLimits,
-    SandboxStatus, StoredSandboxRetirement,
+    SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
+    StoredSandboxRetirement,
 };
 use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, ActivityStore,
@@ -221,6 +222,7 @@ fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId::new(owner),
         name: format!("Sandbox {id}"),
+        origin: SandboxOrigin::Manual,
         profile: SandboxProfileSnapshot {
             id: layer2_core::SandboxProfileId("sbp_test".into()),
             revision: 1,
@@ -247,9 +249,14 @@ fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
         }),
         credential: SandboxCredentialState {
             reaches: vec![],
-            key_generation: 1,
-            delivered: true,
+            key_generation: 0,
+            delivered: false,
+            current: None,
+            pending: None,
+            revoke_debt: Vec::new(),
+            sign_in: SandboxSignInState::NotRequired,
         },
+        work: SandboxWorkState::new(SandboxWorkStep::WaitForCredentialRotation, NOW.into()),
         limits: SandboxLimits {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
@@ -259,6 +266,7 @@ fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
         created_at: NOW.into(),
         updated_at: NOW.into(),
         retired_at: None,
+        purge_after: None,
         revision: 1,
     }
 }

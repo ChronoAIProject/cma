@@ -23,6 +23,7 @@ pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
 pub(super) const AGENT_LOG: &str = "agent_log";
 pub(super) const SANDBOX_EVENTS: &str = "sandbox_events";
+pub(super) const SANDBOX_ADMISSIONS: &str = "sandbox_admissions";
 pub(super) const CHECKPOINTS: &str = "checkpoints";
 pub(super) const AGENT_PROFILES: &str = "agent_profiles";
 pub(super) const AGENT_PROFILE_REVISIONS: &str = "agent_profile_revisions";
@@ -38,6 +39,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     AGENTS,
     AGENT_LOG,
     SANDBOX_EVENTS,
+    SANDBOX_ADMISSIONS,
     CHECKPOINTS,
 ];
 const PROFILE_COLLECTIONS: &[&str] = &[
@@ -60,6 +62,7 @@ pub struct MongoSandboxStore {
     pub(super) agents: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) sandbox_events: Collection<Document>,
+    pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
 }
 
@@ -76,6 +79,7 @@ impl MongoSandboxStore {
             agents: majority_collection(&database, AGENTS),
             agent_log: majority_collection(&database, AGENT_LOG),
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
+            sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;

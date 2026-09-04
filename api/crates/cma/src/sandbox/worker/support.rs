@@ -1,0 +1,381 @@
+use std::time::{Duration, SystemTime};
+
+use layer2_core::sandbox::store::{SandboxLifecycleStore, SandboxStoreError, SandboxTransaction};
+use layer2_core::sandbox::{
+    Sandbox, SandboxCredentialAuthority, SandboxEventKind, SandboxStatus, SandboxWorkStep,
+    TypedFailure,
+};
+use layer2_core::{rfc3339_at, seconds_from_rfc3339};
+use layer3_adapter::{AdapterError, RuntimeHandle};
+
+use crate::sandbox::credential::{CredentialError, CredentialMaterial};
+
+use super::{
+    SandboxDependencyError, SandboxWorker, CREDENTIAL_EXPIRY_MARGIN, CREDENTIAL_ROTATION_AGE,
+};
+
+impl SandboxWorker {
+    pub(super) async fn advance(
+        &self,
+        sandbox: Sandbox,
+        next: SandboxWorkStep,
+        now: SystemTime,
+        event: SandboxEventKind,
+    ) -> Result<(), SandboxStoreError> {
+        self.advance_at(sandbox, next, now, now, event).await
+    }
+
+    pub(super) async fn advance_at(
+        &self,
+        mut sandbox: Sandbox,
+        next: SandboxWorkStep,
+        now: SystemTime,
+        ready_at: SystemTime,
+        event: SandboxEventKind,
+    ) -> Result<(), SandboxStoreError> {
+        let expected_revision = sandbox.revision;
+        let fence = self.claimed_fence(&sandbox)?;
+        sandbox
+            .work
+            .advance(&self.config.holder, fence, next, rfc3339_at(ready_at))
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        sandbox.revision = expected_revision
+            .checked_add(1)
+            .ok_or(SandboxStoreError::Conflict)?;
+        let event_at = rfc3339_at(now);
+        sandbox.updated_at = event_at.clone();
+        commit_advance(
+            &self.dependencies.store,
+            expected_revision,
+            sandbox,
+            event_at,
+            event,
+        )
+        .await
+    }
+
+    pub(super) async fn advance_status(
+        &self,
+        sandbox: Sandbox,
+        status: SandboxStatus,
+        next: SandboxWorkStep,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.advance_status_at(sandbox, status, next, now, now)
+            .await
+    }
+
+    pub(super) async fn advance_status_at(
+        &self,
+        mut sandbox: Sandbox,
+        status: SandboxStatus,
+        next: SandboxWorkStep,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let expected_revision = sandbox.revision;
+        let previous = sandbox.status;
+        let fence = self.claimed_fence(&sandbox)?;
+        sandbox
+            .work
+            .advance(&self.config.holder, fence, next, rfc3339_at(ready_at))
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        let event_at = rfc3339_at(now);
+        sandbox
+            .transition(status, event_at.clone(), None)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        commit_advance(
+            &self.dependencies.store,
+            expected_revision,
+            sandbox,
+            event_at,
+            SandboxEventKind::StatusChanged {
+                from: previous,
+                to: status,
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn handle_failure(
+        &self,
+        mut sandbox: Sandbox,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        if failure.retryable {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
+        let expected_revision = sandbox.revision;
+        let step = sandbox.work.step;
+        let fence = self.claimed_fence(&sandbox)?;
+        let event_at = rfc3339_at(now);
+        sandbox
+            .work
+            .advance(
+                &self.config.holder,
+                fence,
+                SandboxWorkStep::None,
+                event_at.clone(),
+            )
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        let typed = failure.typed();
+        sandbox
+            .transition(SandboxStatus::Failed, event_at.clone(), Some(typed.clone()))
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        commit_advance(
+            &self.dependencies.store,
+            expected_revision,
+            sandbox,
+            event_at,
+            SandboxEventKind::WorkStepFailed {
+                step,
+                failure: typed,
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn retry_failure(
+        &self,
+        mut sandbox: Sandbox,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let expected_revision = sandbox.revision;
+        let step = sandbox.work.step;
+        let fence = self.claimed_fence(&sandbox)?;
+        sandbox
+            .work
+            .retry(
+                &self.config.holder,
+                fence,
+                rfc3339_at(now + self.config.retry_delay),
+            )
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        sandbox.revision = expected_revision
+            .checked_add(1)
+            .ok_or(SandboxStoreError::Conflict)?;
+        let event_at = rfc3339_at(now);
+        sandbox.updated_at = event_at.clone();
+        commit_advance(
+            &self.dependencies.store,
+            expected_revision,
+            sandbox,
+            event_at,
+            SandboxEventKind::WorkStepFailed {
+                step,
+                failure: failure.typed(),
+            },
+        )
+        .await
+    }
+
+    fn claimed_fence(&self, sandbox: &Sandbox) -> Result<u64, SandboxStoreError> {
+        sandbox
+            .work
+            .lease
+            .as_ref()
+            .filter(|lease| lease.holder == self.config.holder)
+            .map(|lease| lease.fence)
+            .ok_or(SandboxStoreError::Conflict)
+    }
+}
+
+async fn commit_advance(
+    store: &std::sync::Arc<dyn SandboxLifecycleStore>,
+    expected_revision: u64,
+    sandbox: Sandbox,
+    event_at: String,
+    event: SandboxEventKind,
+) -> Result<(), SandboxStoreError> {
+    sandbox.validate().map_err(|error| {
+        SandboxStoreError::Corrupt(format!("advanced sandbox is invalid: {error}"))
+    })?;
+    store
+        .commit(SandboxTransaction::SaveSandboxAndAppend {
+            expected_revision,
+            sandbox: Box::new(sandbox),
+            event_at,
+            event,
+        })
+        .await
+}
+
+pub(super) fn runtime(sandbox: &Sandbox) -> Option<RuntimeHandle> {
+    sandbox
+        .runtime
+        .as_ref()
+        .map(|binding| RuntimeHandle(binding.runtime_id.clone()))
+}
+
+pub(super) fn operation_id(sandbox: &Sandbox) -> String {
+    let fence = sandbox.work.lease.as_ref().map_or(0, |lease| lease.fence);
+    format!("{}:{:?}:{fence}", sandbox.id, sandbox.work.step)
+}
+
+pub(super) fn material_matches(
+    sandbox: &Sandbox,
+    pending: &SandboxCredentialAuthority,
+    material: &CredentialMaterial,
+) -> bool {
+    material.sandbox_id == sandbox.id
+        && material.owner == sandbox.owner
+        && &material.authority == pending
+}
+
+pub(super) fn credential_valid_for_delivery(sandbox: &Sandbox, now: SystemTime) -> bool {
+    let now = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    sandbox
+        .credential
+        .pending
+        .as_ref()
+        .and_then(|pending| seconds_from_rfc3339(&pending.expires_at))
+        .is_some_and(|expires| expires > now.saturating_add(CREDENTIAL_EXPIRY_MARGIN.as_secs()))
+}
+
+pub(super) fn credential_rotation_at(sandbox: &Sandbox) -> Option<SystemTime> {
+    let current = sandbox.credential.current.as_ref()?;
+    let issued = seconds_from_rfc3339(&current.issued_at)?;
+    let expires = seconds_from_rfc3339(&current.expires_at)?;
+    let age_due = issued.checked_add(CREDENTIAL_ROTATION_AGE.as_secs())?;
+    let expiry_due = expires.checked_sub(CREDENTIAL_EXPIRY_MARGIN.as_secs())?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(age_due.min(expiry_due)))
+}
+
+pub(super) fn system_time(stamp: &str) -> Option<SystemTime> {
+    seconds_from_rfc3339(stamp).map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct WorkerFailure {
+    class: &'static str,
+    detail: String,
+    retryable: bool,
+}
+
+impl WorkerFailure {
+    pub(super) fn retryable(detail: &str) -> Self {
+        Self::new("retryable_transient", detail, true)
+    }
+
+    fn resource_quota(detail: &str) -> Self {
+        Self::new("resource_quota", detail, false)
+    }
+
+    pub(super) fn terminal_validation(detail: &str) -> Self {
+        Self::new("terminal_validation", detail, false)
+    }
+
+    pub(super) fn terminal_security(detail: &str) -> Self {
+        Self::new("terminal_security", detail, false)
+    }
+
+    fn service_not_granted(service: &str) -> Self {
+        Self::new("service_not_granted", service, false)
+    }
+
+    fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
+        Self {
+            class,
+            detail: safe_detail(detail),
+            retryable,
+        }
+    }
+
+    pub(super) fn typed(&self) -> TypedFailure {
+        TypedFailure {
+            class: self.class.into(),
+            detail: self.detail.clone(),
+        }
+    }
+}
+
+pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
+    match error {
+        AdapterError::Unavailable(_) => WorkerFailure::retryable("runtime dependency unavailable"),
+        AdapterError::AtCapacity(_) => {
+            WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
+        }
+        AdapterError::Rejected(_) | AdapterError::Unsupported(_) => {
+            WorkerFailure::terminal_validation("runtime rejected the lifecycle operation")
+        }
+        AdapterError::RuntimeContractMismatch(_) => {
+            WorkerFailure::terminal_security("runtime image contract was not admitted")
+        }
+    }
+}
+
+pub(super) fn install_failure(error: AdapterError) -> WorkerFailure {
+    match error {
+        AdapterError::Rejected(detail) => {
+            let command = detail
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .find(|parts| parts[0] == "command")
+                .and_then(|parts| {
+                    parts[1]
+                        .trim_matches(|c: char| !c.is_ascii_digit())
+                        .parse()
+                        .ok()
+                });
+            command.map_or_else(
+                || WorkerFailure::terminal_validation("sandbox install command failed"),
+                |index: u32| {
+                    WorkerFailure::terminal_validation(&format!(
+                        "sandbox install command {index} failed"
+                    ))
+                },
+            )
+        }
+        other => adapter_failure(other),
+    }
+}
+
+pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
+    match error {
+        CredentialError::ServiceNotGranted(service) => {
+            WorkerFailure::service_not_granted(service.as_str())
+        }
+        CredentialError::Unavailable(_) => {
+            WorkerFailure::retryable("credential dependency unavailable")
+        }
+        CredentialError::Security(_) => {
+            WorkerFailure::terminal_security("credential authority was refused")
+        }
+    }
+}
+
+pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
+    match error {
+        SandboxDependencyError::Transient(_) => {
+            WorkerFailure::retryable("lifecycle dependency unavailable")
+        }
+        SandboxDependencyError::ResourceQuota(_) => {
+            WorkerFailure::resource_quota("lifecycle dependency has no available capacity")
+        }
+        SandboxDependencyError::Validation(_) => {
+            WorkerFailure::terminal_validation("lifecycle dependency rejected the operation")
+        }
+        SandboxDependencyError::Security(_) => {
+            WorkerFailure::terminal_security("lifecycle dependency refused its authority")
+        }
+    }
+}
+
+fn safe_detail(detail: &str) -> String {
+    let filtered = detail
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(256)
+        .collect::<String>();
+    if filtered.trim().is_empty() {
+        "lifecycle operation failed".into()
+    } else {
+        filtered
+    }
+}

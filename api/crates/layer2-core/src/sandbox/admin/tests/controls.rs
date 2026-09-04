@@ -1,4 +1,5 @@
 use super::*;
+use crate::sandbox::SandboxWorkStep;
 
 #[tokio::test]
 async fn retirement_uses_the_sandbox_transition_and_never_stops_an_agent_directly() {
@@ -26,6 +27,8 @@ async fn retirement_uses_the_sandbox_transition_and_never_stops_an_agent_directl
         .unwrap();
     assert!(retired.changed);
     assert_eq!(retired.sandbox.status, SandboxStatus::Retiring);
+    assert_eq!(retired.sandbox.work.step, SandboxWorkStep::StopAgents);
+    assert!(retired.sandbox.work.lease.is_none());
     assert_eq!(
         fixture
             .sandboxes

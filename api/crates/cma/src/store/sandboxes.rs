@@ -28,6 +28,14 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
             )
             .build(),
         IndexModel::builder()
+            .keys(doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_due_work".to_string())
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
             .keys(doc! { "owner": 1, "status": 1, "updated_at": -1 })
             .options(
                 IndexOptions::builder()
@@ -68,6 +76,7 @@ pub(super) fn sandbox_document(
     sandbox.validate().map_err(|error| {
         SandboxStoreError::Corrupt(format!("sandbox aggregate is invalid: {error}"))
     })?;
+    let lease_expires_at = sandbox.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": sandbox.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -79,6 +88,10 @@ pub(super) fn sandbox_document(
         ),
         "updated_at": &sandbox.updated_at,
         "retired_at": nullable(sandbox.retired_at.as_ref()),
+        "purge_after": nullable(sandbox.purge_after.as_ref()),
+        "work_pending": sandbox.work.step.is_pending(),
+        "work_ready_at": &sandbox.work.ready_at,
+        "work_lease_expires_at": nullable(lease_expires_at),
         "revision": signed(sandbox.revision, "sandbox revision")
             .map_err(SandboxStoreError::Corrupt)?,
         "last_seq": signed(last_seq, "sandbox event sequence")
@@ -109,6 +122,13 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
         || !string_field_matches(document, "updated_at", &sandbox.updated_at)
         || !i64_field_matches(document, "revision", revision)
         || document.get("retired_at") != Some(&nullable(sandbox.retired_at.as_ref()))
+        || document.get("purge_after") != Some(&nullable(sandbox.purge_after.as_ref()))
+        || document.get_bool("work_pending").ok() != Some(sandbox.work.step.is_pending())
+        || !string_field_matches(document, "work_ready_at", &sandbox.work.ready_at)
+        || document.get("work_lease_expires_at")
+            != Some(&nullable(
+                sandbox.work.lease.as_ref().map(|lease| &lease.expires_at),
+            ))
     {
         return Err(SandboxStoreError::Corrupt(
             "sandbox query fields disagree with its aggregate".into(),
@@ -269,10 +289,14 @@ mod tests {
         );
         assert_eq!(
             indexes[1].keys,
-            doc! { "owner": 1, "status": 1, "updated_at": -1 }
+            doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
         );
         assert_eq!(
             indexes[2].keys,
+            doc! { "owner": 1, "status": 1, "updated_at": -1 }
+        );
+        assert_eq!(
+            indexes[3].keys,
             doc! {
                 "owner": 1,
                 "status": 1,
@@ -281,7 +305,7 @@ mod tests {
             }
         );
         assert_eq!(
-            indexes[2].options.as_ref().unwrap().name.as_deref(),
+            indexes[3].options.as_ref().unwrap().name.as_deref(),
             Some("sandboxes_operator_inventory")
         );
     }

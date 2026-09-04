@@ -28,6 +28,8 @@ mod profile_index_tests;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
 mod profiles;
+mod sandbox_admission;
+mod sandbox_credentials;
 mod sandbox_events;
 mod sandbox_mongo;
 #[cfg(test)]
@@ -36,6 +38,7 @@ mod sandbox_mongo_integration_tests;
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_transactions;
+mod sandbox_worker_store;
 mod sandboxes;
 mod schema;
 #[cfg(test)]
@@ -53,6 +56,7 @@ pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
 pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
+pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
 pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
 pub use settings::MongoPlatformSettingsStore;
 pub use trigger_definitions::MongoTriggerDefinitionStore;

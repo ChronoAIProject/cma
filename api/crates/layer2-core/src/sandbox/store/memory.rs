@@ -1,3 +1,4 @@
+use crate::sandbox::SandboxStatus;
 use async_trait::async_trait;
 
 use super::*;
@@ -31,6 +32,8 @@ macro_rules! save_record {
         Ok(())
     }};
 }
+
+mod lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
@@ -302,8 +305,8 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 let sandbox_id = worktree.sandbox_id.clone();
                 let worktree_id = worktree.id.clone();
                 let agent_id = agent.id.clone();
-                create_record!(candidate, worktrees, worktree_id, worktree)?;
-                create_record!(candidate, agents, agent_id, agent)?;
+                create_record!(candidate, worktrees, worktree_id, *worktree)?;
+                create_record!(candidate, agents, agent_id, *agent)?;
                 append_sandbox_event(&mut candidate, &sandbox_id, event_at, event)?;
             }
             SandboxTransaction::SaveSandboxAndAppend {
@@ -313,7 +316,13 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 event,
             } => {
                 let id = sandbox.id.clone();
-                save_record!(candidate, sandboxes, id.clone(), expected_revision, sandbox)?;
+                save_record!(
+                    candidate,
+                    sandboxes,
+                    id.clone(),
+                    expected_revision,
+                    *sandbox
+                )?;
                 append_sandbox_event(&mut candidate, &id, event_at, event)?;
             }
         }
