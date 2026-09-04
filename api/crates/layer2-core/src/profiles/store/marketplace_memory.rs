@@ -2,7 +2,8 @@ use async_trait::async_trait;
 
 use crate::profiles::{
     ForkedProfile, MarketplaceEntry, MarketplaceError, MarketplaceKind, MarketplaceLocator,
-    MarketplacePage, MarketplaceQuery, MarketplaceRevision, MarketplaceStore, ResolvedProfileName,
+    MarketplacePage, MarketplaceQuery, MarketplaceRevision, MarketplaceStore, ProfileStoreError,
+    ProfileUseRecorder,
 };
 
 use super::marketplace_support::*;
@@ -146,6 +147,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     ),
                     revision: MarketplaceRevision::Agent(revision.clone()),
                     resolved_profiles: vec![],
+                    resolved_revisions: vec![],
                 })
             }
             MarketplaceLocator::Workspace(id) => {
@@ -156,21 +158,15 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .ok_or(MarketplaceError::NotFound)?;
                 let revision =
                     latest_workspace_revision(&state, id).ok_or(MarketplaceError::NotFound)?;
-                let resolved_profiles = revision
+                let resolved_revisions = revision
                     .content
                     .agent_profiles
                     .iter()
-                    .filter_map(|reference| {
-                        state
-                            .agents
-                            .get(&reference.id)
-                            .map(|profile| ResolvedProfileName {
-                                kind: MarketplaceKind::Agent,
-                                id: reference.id.to_string(),
-                                revision: reference.revision,
-                                name: profile.name.clone(),
-                            })
-                    })
+                    .map(|reference| resolve_agent_revision(&state, reference))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let resolved_profiles = resolved_revisions
+                    .iter()
+                    .map(|resolved| resolved.resolved_name())
                     .collect();
                 Ok(MarketplaceEntry {
                     owner: profile.owner.clone(),
@@ -186,6 +182,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     ),
                     revision: MarketplaceRevision::Workspace(revision.clone()),
                     resolved_profiles,
+                    resolved_revisions,
                 })
             }
             MarketplaceLocator::Sandbox(id) => {
@@ -196,21 +193,15 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .ok_or(MarketplaceError::NotFound)?;
                 let revision =
                     latest_sandbox_revision(&state, id).ok_or(MarketplaceError::NotFound)?;
-                let resolved_profiles = revision
+                let resolved_revisions = revision
                     .content
                     .workspace_profiles
                     .iter()
-                    .filter_map(|reference| {
-                        state
-                            .workspaces
-                            .get(&reference.id)
-                            .map(|profile| ResolvedProfileName {
-                                kind: MarketplaceKind::Workspace,
-                                id: reference.id.to_string(),
-                                revision: reference.revision,
-                                name: profile.name.clone(),
-                            })
-                    })
+                    .map(|reference| resolve_workspace_revision(&state, reference))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let resolved_profiles = resolved_revisions
+                    .iter()
+                    .map(|resolved| resolved.resolved_name())
                     .collect();
                 Ok(MarketplaceEntry {
                     owner: profile.owner.clone(),
@@ -226,6 +217,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     ),
                     revision: MarketplaceRevision::Sandbox(revision.clone()),
                     resolved_profiles,
+                    resolved_revisions,
                 })
             }
         }
@@ -411,32 +403,35 @@ impl MarketplaceStore for InMemoryProfileStore {
             }
         }
     }
+}
 
-    async fn increment_profile_use(
+#[async_trait]
+impl ProfileUseRecorder for InMemoryProfileStore {
+    async fn record_profile_use(
         &self,
         locator: &MarketplaceLocator,
-    ) -> Result<(), MarketplaceError> {
+    ) -> Result<(), ProfileStoreError> {
         let mut state = self.lock();
         let count = match locator {
             MarketplaceLocator::Agent(id) => {
                 &mut state
                     .agents
                     .get_mut(id)
-                    .ok_or(MarketplaceError::NotFound)?
+                    .ok_or(ProfileStoreError::NotFound)?
                     .uses_count
             }
             MarketplaceLocator::Workspace(id) => {
                 &mut state
                     .workspaces
                     .get_mut(id)
-                    .ok_or(MarketplaceError::NotFound)?
+                    .ok_or(ProfileStoreError::NotFound)?
                     .uses_count
             }
             MarketplaceLocator::Sandbox(id) => {
                 &mut state
                     .sandboxes
                     .get_mut(id)
-                    .ok_or(MarketplaceError::NotFound)?
+                    .ok_or(ProfileStoreError::NotFound)?
                     .uses_count
             }
         };

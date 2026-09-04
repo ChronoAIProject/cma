@@ -1,6 +1,7 @@
 //! MongoDB implementation of the trusted profile marketplace port.
 
 use layer2_core::ids::SubjectId;
+use layer2_core::profiles::store::{ProfileStoreError, ProfileUseRecorder};
 use layer2_core::profiles::{
     ForkedProfile, MarketplaceEntry, MarketplaceError, MarketplaceLocator, MarketplacePage,
     MarketplaceQuery, MarketplaceStore, ProfileCapacityBounds, ProfileVisibility,
@@ -54,11 +55,14 @@ impl MarketplaceStore for MongoProfileStore {
     ) -> Result<ForkedProfile, MarketplaceError> {
         super::marketplace_mutations::fork_profile(self, owner, locator, revision, now).await
     }
+}
 
-    async fn increment_profile_use(
+#[async_trait::async_trait]
+impl ProfileUseRecorder for MongoProfileStore {
+    async fn record_profile_use(
         &self,
         locator: &MarketplaceLocator,
-    ) -> Result<(), MarketplaceError> {
-        super::marketplace_mutations::increment_profile_use(self, locator).await
+    ) -> Result<(), ProfileStoreError> {
+        super::marketplace_mutations::record_profile_use(self, locator).await
     }
 }

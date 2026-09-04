@@ -1,5 +1,7 @@
 use layer2_core::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
-use layer2_core::profiles::store::{AgentProfileStore, SandboxProfileStore, WorkspaceProfileStore};
+use layer2_core::profiles::store::{
+    AgentProfileStore, ProfileStoreError, SandboxProfileStore, WorkspaceProfileStore,
+};
 use layer2_core::profiles::{
     AgentProfile, AgentProfileRef, ForkedProfile, MarketplaceError, MarketplaceLocator,
     ProfileVisibility, SandboxProfile, SandboxProfileRef, WorkspaceProfile, WorkspaceProfileRef,
@@ -7,8 +9,8 @@ use layer2_core::profiles::{
 use mongodb::bson::{doc, Bson};
 
 use super::marketplace_support::{
-    collections_for_locator, decode_profile, driver_error, find_public_profile, find_revision,
-    fork_name, store_error, StoredProfile, StoredRevision,
+    collections_for_locator, find_public_profile, find_revision, fork_name, store_error,
+    StoredProfile, StoredRevision,
 };
 use super::sandbox_mongo::{MongoProfileStore, DOCUMENT_SCHEMA_VERSION};
 
@@ -129,10 +131,10 @@ fn saturating_increment() -> Bson {
     })
 }
 
-pub(super) async fn increment_profile_use(
+pub(super) async fn record_profile_use(
     store: &MongoProfileStore,
     locator: &MarketplaceLocator,
-) -> Result<(), MarketplaceError> {
+) -> Result<(), ProfileStoreError> {
     let target = collections_for_locator(store, locator);
     let result = target
         .profiles
@@ -152,7 +154,7 @@ pub(super) async fn increment_profile_use(
             }],
         )
         .await
-        .map_err(driver_error)?;
+        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?;
     if result.matched_count == 1 {
         return Ok(());
     }
@@ -160,12 +162,33 @@ pub(super) async fn increment_profile_use(
         .profiles
         .find_one(doc! { "_id": locator.as_str() })
         .await
-        .map_err(driver_error)?
+        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?
     else {
-        return Err(MarketplaceError::NotFound);
+        return Err(ProfileStoreError::NotFound);
     };
-    decode_profile(target.kind, &document)?;
-    Err(MarketplaceError::Corrupt(
+    validate_stored_profile(target.kind, &document)?;
+    Err(ProfileStoreError::Corrupt(
         "profile use counters cannot be incremented atomically".into(),
     ))
+}
+
+fn validate_stored_profile(
+    kind: layer2_core::profiles::MarketplaceKind,
+    document: &mongodb::bson::Document,
+) -> Result<(), ProfileStoreError> {
+    let result = match kind {
+        layer2_core::profiles::MarketplaceKind::Agent => {
+            super::agent_profiles::read_profile(document).map(|_| ())
+        }
+        layer2_core::profiles::MarketplaceKind::Workspace => {
+            super::workspace_profiles::read_profile(document).map(|_| ())
+        }
+        layer2_core::profiles::MarketplaceKind::Sandbox => {
+            super::sandbox_profiles::read_profile(document).map(|_| ())
+        }
+    };
+    result.map_err(|error| match error {
+        ProfileStoreError::Corrupt(detail) => ProfileStoreError::Corrupt(detail),
+        other => ProfileStoreError::Corrupt(other.to_string()),
+    })
 }

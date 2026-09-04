@@ -3,15 +3,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use futures_util::future::join_all;
 use layer2_core::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
 use layer2_core::profiles::store::{
-    AgentProfileStore, ProfilePageRequest, ProfileStoreError, SandboxProfileStore,
-    WorkspaceProfileStore,
+    AgentProfileStore, ProfilePageRequest, ProfileStoreError, ProfileUseRecorder,
+    SandboxProfileStore, WorkspaceProfileStore,
 };
 use layer2_core::profiles::{
     AgentProfile, AgentProfileContent, AgentProfileRef, AgentProvider, EnvironmentVariable,
     ForkedProfile, MarketplaceError, MarketplaceKind, MarketplaceLocator, MarketplaceQuery,
-    MarketplaceStore, ModelAccess, PermissionLevel, ProfileCapacityBounds, ProfileVisibility,
-    SandboxProfile, SandboxProfileContent, ThinkingEffort, WorkspaceLocation, WorkspaceProfile,
-    WorkspaceProfileContent, WorkspaceProfileRef,
+    MarketplaceRevision, MarketplaceStore, ModelAccess, PermissionLevel, ProfileCapacityBounds,
+    ProfileVisibility, SandboxProfile, SandboxProfileContent, ThinkingEffort, WorkspaceLocation,
+    WorkspaceProfile, WorkspaceProfileContent, WorkspaceProfileRef,
 };
 use mongodb::bson::doc;
 use mongodb::Client;
@@ -145,7 +145,7 @@ async fn marketplace_workflows_are_durable_and_cross_kind() {
     let mut agent = agent_profile("agp_market", "publisher", "Alpha agent");
     let first_content = agent.draft.clone();
     store.create_agent_profile(agent.clone()).await.unwrap();
-    store
+    let first_revision = store
         .publish_agent_profile(&agent.id, 1, T1.into())
         .await
         .unwrap();
@@ -169,7 +169,7 @@ async fn marketplace_workflows_are_durable_and_cross_kind() {
         .create_workspace_profile(workspace.clone())
         .await
         .unwrap();
-    store
+    let workspace_revision = store
         .publish_workspace_profile(&workspace.id, 1, T3.into())
         .await
         .unwrap();
@@ -229,6 +229,22 @@ async fn marketplace_workflows_are_durable_and_cross_kind() {
         .await
         .unwrap();
     assert_eq!(workspace_entry.resolved_profiles[0].name, agent.name);
+    let MarketplaceRevision::Agent(resolved_agent) =
+        &workspace_entry.resolved_revisions[0].revision
+    else {
+        panic!("workspace resolved another profile kind");
+    };
+    assert_eq!(resolved_agent, &first_revision);
+    let sandbox_entry = store
+        .read_marketplace(&MarketplaceLocator::Sandbox(sandbox.id.clone()))
+        .await
+        .unwrap();
+    let MarketplaceRevision::Workspace(resolved_workspace) =
+        &sandbox_entry.resolved_revisions[0].revision
+    else {
+        panic!("sandbox resolved another profile kind");
+    };
+    assert_eq!(resolved_workspace, &workspace_revision);
     let forked = store
         .fork_profile(
             &SubjectId("consumer".into()),
@@ -249,7 +265,7 @@ async fn marketplace_workflows_are_durable_and_cross_kind() {
     assert_eq!(forked.visibility, ProfileVisibility::Private);
 
     let locator = MarketplaceLocator::Agent(agent.id.clone());
-    join_all((0..32).map(|_| store.increment_profile_use(&locator)))
+    join_all((0..32).map(|_| store.record_profile_use(&locator)))
         .await
         .into_iter()
         .for_each(|result| result.unwrap());
@@ -268,7 +284,7 @@ async fn marketplace_workflows_are_durable_and_cross_kind() {
         )
         .await
         .unwrap();
-    store.increment_profile_use(&locator).await.unwrap();
+    store.record_profile_use(&locator).await.unwrap();
     assert_eq!(
         store
             .read_marketplace(&locator)
@@ -278,6 +294,26 @@ async fn marketplace_workflows_are_durable_and_cross_kind() {
             .uses_count,
         i64::MAX as u64
     );
+    store
+        .agent_profiles
+        .update_one(
+            doc! { "_id": agent.id.as_str() },
+            doc! { "$set": { "record.uses_count": i64::MAX - 1 } },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.record_profile_use(&locator).await,
+        Err(ProfileStoreError::Corrupt(_))
+    ));
+    store
+        .agent_profiles
+        .update_one(
+            doc! { "_id": agent.id.as_str() },
+            doc! { "$set": { "record.uses_count": i64::MAX } },
+        )
+        .await
+        .unwrap();
 
     store
         .retire_agent_profile(&agent.id, &agent.owner, T4.into())
@@ -302,7 +338,7 @@ async fn marketplace_workflows_are_durable_and_cross_kind() {
             .await,
         Err(MarketplaceError::NotFound)
     );
-    store.increment_profile_use(&locator).await.unwrap();
+    store.record_profile_use(&locator).await.unwrap();
     assert!(store
         .agent_profile_revision(&agent.id, 1)
         .await

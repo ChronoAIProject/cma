@@ -89,9 +89,22 @@ mod identifier_tests {
 }
 
 fn entry_view(entry: MarketplaceEntry, consumer: &layer2_core::SubjectId) -> MarketplaceEntryView {
+    let nested_workspace_requires_confirmation = entry.resolved_revisions.iter().any(|resolved| {
+        resolved.owner != *consumer
+            && matches!(
+                &resolved.revision,
+                MarketplaceRevision::Workspace(revision)
+                    if !revision.content.setup_commands.is_empty()
+            )
+    });
     let summary = entry.summary.into();
     let resolved_profiles = entry
         .resolved_profiles
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    let resolved_revisions = entry
+        .resolved_revisions
         .into_iter()
         .map(Into::into)
         .collect();
@@ -100,24 +113,28 @@ fn entry_view(entry: MarketplaceEntry, consumer: &layer2_core::SubjectId) -> Mar
             summary,
             revision: revision.into(),
             resolved_profiles,
+            resolved_revisions,
         },
         MarketplaceRevision::Workspace(revision) => MarketplaceEntryView::Workspace {
             summary,
             revision: revision.into(),
             resolved_profiles,
+            resolved_revisions,
         },
         MarketplaceRevision::Sandbox(revision) => {
             let has_commands_or_environment =
                 !revision.content.software_install_commands.is_empty()
                     || !revision.content.environment_variables.is_empty();
             let trust = SandboxProfileTrustView {
-                requires_confirmation: entry.owner != *consumer && has_commands_or_environment,
+                requires_confirmation: (entry.owner != *consumer && has_commands_or_environment)
+                    || nested_workspace_requires_confirmation,
                 commands_digest: revision.digest.clone(),
             };
             MarketplaceEntryView::Sandbox {
                 summary,
                 revision: revision.into(),
                 resolved_profiles,
+                resolved_revisions,
                 trust,
             }
         }

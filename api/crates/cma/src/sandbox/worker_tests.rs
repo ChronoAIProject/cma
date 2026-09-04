@@ -427,7 +427,7 @@ impl Harness {
                 CreateSandbox {
                     profile: self.reference.clone(),
                     name: None,
-                    trust_confirmed: false,
+                    confirmed_digest: None,
                     origin: SandboxOrigin::Manual,
                 },
             )

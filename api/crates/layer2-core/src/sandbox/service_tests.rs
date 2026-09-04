@@ -1,16 +1,24 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::profiles::store::{InMemoryProfileStore, SandboxProfileStore as _};
+use crate::profiles::store::{
+    InMemoryProfileStore, ProfilePage, ProfilePageRequest, ProfileStoreError, ProfileUseRecorder,
+    SandboxProfileStore, WorkspaceProfileStore,
+};
 use crate::profiles::{
-    AgentProvider, EnvironmentVariable, ModelAccess, ProfileCapacityBounds, ProfileVisibility,
-    SandboxProfile, SandboxProfileContent, SandboxProfileRef,
+    AgentProvider, EnvironmentVariable, MarketplaceLocator, ModelAccess, ProfileCapacityBounds,
+    ProfileVisibility, SandboxProfile, SandboxProfileContent, SandboxProfileRef,
+    SandboxProfileRevision, WorkspaceLocation, WorkspaceProfile, WorkspaceProfileContent,
+    WorkspaceProfileRef, WorkspaceProfileRevision,
 };
 use crate::sandbox::store::{
     PageRequest, SandboxAdmission, SandboxAdmissionStore, SandboxEventStore, SandboxStore as _,
     SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore as _,
 };
-use crate::{Authorization, Caller, Capability, SandboxId, SandboxProfileId, ServiceId, SubjectId};
+use crate::{
+    Authorization, Caller, Capability, SandboxId, SandboxProfileId, ServiceId, SubjectId,
+    WorkspaceProfileId,
+};
 
 use super::service::DEFAULT_RETENTION_GRACE;
 use super::*;
@@ -40,6 +48,223 @@ struct RacingStore {
 impl RacingStore {
     fn block_next_commit(&self) {
         self.block_next_commit.store(true, Ordering::SeqCst);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RevisionCorruption {
+    MissingRevision,
+    AggregateProfileId,
+    RevisionProfileId,
+    RevisionNumber,
+    RevisionDigest,
+}
+
+struct CorruptingWorkspaceProfiles {
+    inner: Arc<InMemoryProfileStore>,
+    corruption: RevisionCorruption,
+}
+
+#[async_trait::async_trait]
+impl WorkspaceProfileStore for CorruptingWorkspaceProfiles {
+    async fn create_workspace_profile(
+        &self,
+        profile: WorkspaceProfile,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner.create_workspace_profile(profile).await
+    }
+
+    async fn workspace_profile(
+        &self,
+        id: &WorkspaceProfileId,
+    ) -> Result<Option<WorkspaceProfile>, ProfileStoreError> {
+        let mut stored = self.inner.workspace_profile(id).await?;
+        if matches!(self.corruption, RevisionCorruption::AggregateProfileId) {
+            if let Some(stored) = &mut stored {
+                stored.id = WorkspaceProfileId("wkp_wrong_aggregate".into());
+            }
+        }
+        Ok(stored)
+    }
+
+    async fn save_workspace_draft(
+        &self,
+        expected_draft_version: u64,
+        profile: WorkspaceProfile,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner
+            .save_workspace_draft(expected_draft_version, profile)
+            .await
+    }
+
+    async fn publish_workspace_profile(
+        &self,
+        id: &WorkspaceProfileId,
+        expected_draft_version: u64,
+        published_at: String,
+    ) -> Result<WorkspaceProfileRevision, ProfileStoreError> {
+        self.inner
+            .publish_workspace_profile(id, expected_draft_version, published_at)
+            .await
+    }
+
+    async fn workspace_profile_revision(
+        &self,
+        id: &WorkspaceProfileId,
+        revision: u32,
+    ) -> Result<Option<WorkspaceProfileRevision>, ProfileStoreError> {
+        let mut stored = self.inner.workspace_profile_revision(id, revision).await?;
+        if matches!(self.corruption, RevisionCorruption::MissingRevision) {
+            return Ok(None);
+        }
+        if let Some(stored) = &mut stored {
+            match self.corruption {
+                RevisionCorruption::MissingRevision => unreachable!(),
+                RevisionCorruption::AggregateProfileId => {}
+                RevisionCorruption::RevisionProfileId => {
+                    stored.profile_id = WorkspaceProfileId("wkp_wrong".into());
+                }
+                RevisionCorruption::RevisionNumber => stored.revision += 1,
+                RevisionCorruption::RevisionDigest => stored.digest = "wrong-digest".into(),
+            }
+        }
+        Ok(stored)
+    }
+
+    async fn list_workspace_profile_revisions(
+        &self,
+        id: &WorkspaceProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<WorkspaceProfileRevision>, ProfileStoreError> {
+        self.inner.list_workspace_profile_revisions(id, page).await
+    }
+
+    async fn list_workspace_profiles(
+        &self,
+        owner: Option<&SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<WorkspaceProfile>, ProfileStoreError> {
+        self.inner
+            .list_workspace_profiles(owner, public_only, page)
+            .await
+    }
+
+    async fn retire_workspace_profile(
+        &self,
+        id: &WorkspaceProfileId,
+        owner: &SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner
+            .retire_workspace_profile(id, owner, retired_at)
+            .await
+    }
+}
+
+struct CorruptingSandboxProfileId {
+    inner: Arc<InMemoryProfileStore>,
+}
+
+#[async_trait::async_trait]
+impl SandboxProfileStore for CorruptingSandboxProfileId {
+    async fn sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+    ) -> Result<Option<SandboxProfile>, ProfileStoreError> {
+        let mut stored = self.inner.sandbox_profile(id).await?;
+        if let Some(stored) = &mut stored {
+            stored.id = SandboxProfileId("sbp_wrong_aggregate".into());
+        }
+        Ok(stored)
+    }
+
+    async fn create_sandbox_profile(
+        &self,
+        profile: SandboxProfile,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner.create_sandbox_profile(profile).await
+    }
+
+    async fn save_sandbox_draft(
+        &self,
+        expected_draft_version: u64,
+        profile: SandboxProfile,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner
+            .save_sandbox_draft(expected_draft_version, profile)
+            .await
+    }
+
+    async fn publish_sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+        expected_draft_version: u64,
+        published_at: String,
+        bounds: ProfileCapacityBounds,
+        secret_patterns: &[String],
+    ) -> Result<SandboxProfileRevision, ProfileStoreError> {
+        self.inner
+            .publish_sandbox_profile(
+                id,
+                expected_draft_version,
+                published_at,
+                bounds,
+                secret_patterns,
+            )
+            .await
+    }
+
+    async fn sandbox_profile_revision(
+        &self,
+        id: &SandboxProfileId,
+        revision: u32,
+    ) -> Result<Option<SandboxProfileRevision>, ProfileStoreError> {
+        self.inner.sandbox_profile_revision(id, revision).await
+    }
+
+    async fn list_sandbox_profile_revisions(
+        &self,
+        id: &SandboxProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<SandboxProfileRevision>, ProfileStoreError> {
+        self.inner.list_sandbox_profile_revisions(id, page).await
+    }
+
+    async fn list_sandbox_profiles(
+        &self,
+        owner: Option<&SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<SandboxProfile>, ProfileStoreError> {
+        self.inner
+            .list_sandbox_profiles(owner, public_only, page)
+            .await
+    }
+
+    async fn retire_sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+        owner: &SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner
+            .retire_sandbox_profile(id, owner, retired_at)
+            .await
+    }
+}
+
+struct FailingUseRecorder;
+
+#[async_trait::async_trait]
+impl ProfileUseRecorder for FailingUseRecorder {
+    async fn record_profile_use(
+        &self,
+        _locator: &MarketplaceLocator,
+    ) -> Result<(), ProfileStoreError> {
+        Err(ProfileStoreError::Unavailable(
+            "test recorder failure".into(),
+        ))
     }
 }
 
@@ -168,6 +393,30 @@ fn profile(
     }
 }
 
+fn workspace_profile(id: &str, owner: &str, setup_commands: Vec<String>) -> WorkspaceProfile {
+    WorkspaceProfile {
+        id: WorkspaceProfileId(id.into()),
+        owner: SubjectId(owner.into()),
+        name: "workspace profile".into(),
+        description: "Sandbox service workspace profile".into(),
+        visibility: ProfileVisibility::Private,
+        forked_from: None,
+        uses_count: 0,
+        draft: WorkspaceProfileContent {
+            location: WorkspaceLocation::Directory {
+                name: "project".into(),
+            },
+            name: "project".into(),
+            setup_commands,
+            agent_profiles: Vec::new(),
+        },
+        draft_version: 1,
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        retired_at: None,
+    }
+}
+
 async fn publish(profiles: &InMemoryProfileStore, profile: SandboxProfile) -> SandboxProfileRef {
     let id = profile.id.clone();
     profiles.create_sandbox_profile(profile).await.unwrap();
@@ -178,6 +427,37 @@ async fn publish(profiles: &InMemoryProfileStore, profile: SandboxProfile) -> Sa
     SandboxProfileRef::new(id, revision.revision)
 }
 
+async fn publish_workspace(
+    profiles: &InMemoryProfileStore,
+    profile: WorkspaceProfile,
+) -> WorkspaceProfileRef {
+    let id = profile.id.clone();
+    profiles.create_workspace_profile(profile).await.unwrap();
+    let revision = profiles
+        .publish_workspace_profile(&id, 1, NOW.into())
+        .await
+        .unwrap();
+    WorkspaceProfileRef::new(id, revision.revision)
+}
+
+async fn sandbox_digest(profiles: &InMemoryProfileStore, reference: &SandboxProfileRef) -> String {
+    profiles
+        .sandbox_profile_revision(&reference.id, reference.revision)
+        .await
+        .unwrap()
+        .unwrap()
+        .digest
+}
+
+async fn sandbox_use_count(profiles: &InMemoryProfileStore, id: &SandboxProfileId) -> u64 {
+    profiles
+        .sandbox_profile(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .uses_count
+}
+
 fn caller(subject: &str, capabilities: impl IntoIterator<Item = Capability>) -> Caller {
     Caller::new(SubjectId(subject.into()), Authorization::new(capabilities))
 }
@@ -186,7 +466,7 @@ fn request(profile: SandboxProfileRef) -> CreateSandbox {
     CreateSandbox {
         profile,
         name: None,
-        trust_confirmed: false,
+        confirmed_digest: None,
         origin: SandboxOrigin::Manual,
     }
 }
@@ -240,7 +520,14 @@ async fn trust_confirmation_is_required_only_for_unsafe_foreign_profiles() {
         ),
     )
     .await;
-    let service = SandboxService::new(store, profiles, policy(10, 10));
+    let expected_digest = profiles
+        .sandbox_profile_revision(&public_unsafe.id, public_unsafe.revision)
+        .await
+        .unwrap()
+        .unwrap()
+        .digest;
+    let unsafe_id = public_unsafe.id.clone();
+    let service = SandboxService::new(store, profiles.clone(), policy(10, 10));
     let caller = caller("caller", [Capability::CreateSandbox]);
 
     service.create(&caller, request(own)).await.unwrap();
@@ -253,11 +540,207 @@ async fn trust_confirmation_is_required_only_for_unsafe_foreign_profiles() {
             .create(&caller, request(public_unsafe.clone()))
             .await
             .unwrap_err(),
-        SandboxServiceError::TrustConfirmationRequired
+        SandboxServiceError::TrustConfirmationRequired {
+            commands_digest: expected_digest.clone(),
+        }
     );
+    let mut stale = request(public_unsafe.clone());
+    stale.confirmed_digest = Some("stale-digest".into());
+    assert_eq!(
+        service.create(&caller, stale).await.unwrap_err(),
+        SandboxServiceError::TrustConfirmationRequired {
+            commands_digest: expected_digest.clone(),
+        }
+    );
+    assert_eq!(sandbox_use_count(&profiles, &unsafe_id).await, 0);
     let mut confirmed = request(public_unsafe);
-    confirmed.trust_confirmed = true;
+    confirmed.confirmed_digest = Some(expected_digest);
     service.create(&caller, confirmed).await.unwrap();
+    assert_eq!(sandbox_use_count(&profiles, &unsafe_id).await, 1);
+}
+
+#[tokio::test]
+async fn foreign_nested_setup_requires_the_outer_digest_for_an_owned_safe_parent() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let mut workspace =
+        workspace_profile("wkp_nested_trust", "publisher", vec!["cargo fetch".into()]);
+    workspace.visibility = ProfileVisibility::Public;
+    let workspace = publish_workspace(&profiles, workspace).await;
+    let mut parent = profile(
+        "sbp_nested_trust",
+        "consumer",
+        "owned safe parent",
+        ProfileVisibility::Private,
+        false,
+    );
+    parent.draft.workspace_profiles = vec![workspace.clone()];
+    let parent = publish(&profiles, parent).await;
+    let digest = sandbox_digest(&profiles, &parent).await;
+    profiles
+        .retire_workspace_profile(&workspace.id, &SubjectId::new("publisher"), LATER.into())
+        .await
+        .unwrap();
+    let service = SandboxService::new(
+        Arc::new(InMemorySandboxStore::default()),
+        profiles.clone(),
+        policy(10, 10),
+    );
+    let consumer = caller("consumer", [Capability::CreateSandbox]);
+
+    assert_eq!(
+        service
+            .create(&consumer, request(parent.clone()))
+            .await
+            .unwrap_err(),
+        SandboxServiceError::TrustConfirmationRequired {
+            commands_digest: digest.clone(),
+        }
+    );
+    let mut stale = request(parent.clone());
+    stale.confirmed_digest = Some("digest-from-an-older-revision".into());
+    assert_eq!(
+        service.create(&consumer, stale).await.unwrap_err(),
+        SandboxServiceError::TrustConfirmationRequired {
+            commands_digest: digest.clone(),
+        }
+    );
+    assert_eq!(sandbox_use_count(&profiles, &parent.id).await, 0);
+
+    let mut confirmed = request(parent.clone());
+    confirmed.confirmed_digest = Some(digest);
+    service.create(&consumer, confirmed).await.unwrap();
+    assert_eq!(sandbox_use_count(&profiles, &parent.id).await, 1);
+}
+
+#[tokio::test]
+async fn missing_or_corrupt_nested_revisions_fail_closed_without_recording_use() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let mut workspace = workspace_profile(
+        "wkp_nested_corrupt",
+        "publisher",
+        vec!["cargo fetch".into()],
+    );
+    workspace.visibility = ProfileVisibility::Public;
+    let workspace = publish_workspace(&profiles, workspace).await;
+    let mut parent = profile(
+        "sbp_nested_corrupt",
+        "consumer",
+        "nested corrupt",
+        ProfileVisibility::Private,
+        false,
+    );
+    parent.draft.workspace_profiles = vec![workspace];
+    let parent = publish(&profiles, parent).await;
+    let digest = sandbox_digest(&profiles, &parent).await;
+    let consumer = caller("consumer", [Capability::CreateSandbox]);
+
+    for corruption in [
+        RevisionCorruption::MissingRevision,
+        RevisionCorruption::AggregateProfileId,
+        RevisionCorruption::RevisionProfileId,
+        RevisionCorruption::RevisionNumber,
+        RevisionCorruption::RevisionDigest,
+    ] {
+        let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
+        let workspace_profiles: Arc<dyn WorkspaceProfileStore> =
+            Arc::new(CorruptingWorkspaceProfiles {
+                inner: profiles.clone(),
+                corruption,
+            });
+        let profile_uses: Arc<dyn ProfileUseRecorder> = profiles.clone();
+        let policy_source: Arc<dyn SandboxPolicySource> = Arc::new(policy(10, 10));
+        let service = SandboxService::with_dependencies(
+            Arc::new(InMemorySandboxStore::default()),
+            sandbox_profiles,
+            workspace_profiles,
+            profile_uses,
+            policy_source,
+        );
+        let mut create = request(parent.clone());
+        create.confirmed_digest = Some(digest.clone());
+        assert!(matches!(
+            service.create(&consumer, create).await,
+            Err(SandboxServiceError::Corrupt(_))
+        ));
+    }
+    assert_eq!(sandbox_use_count(&profiles, &parent.id).await, 0);
+}
+
+#[tokio::test]
+async fn corrupt_outer_profile_aggregate_id_fails_closed_before_owner_is_trusted() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let parent = publish(
+        &profiles,
+        profile(
+            "sbp_outer_corrupt",
+            "owner",
+            "outer corrupt",
+            ProfileVisibility::Private,
+            false,
+        ),
+    )
+    .await;
+    let sandbox_profiles: Arc<dyn SandboxProfileStore> = Arc::new(CorruptingSandboxProfileId {
+        inner: profiles.clone(),
+    });
+    let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
+    let profile_uses: Arc<dyn ProfileUseRecorder> = profiles.clone();
+    let policy_source: Arc<dyn SandboxPolicySource> = Arc::new(policy(10, 10));
+    let service = SandboxService::with_dependencies(
+        Arc::new(InMemorySandboxStore::default()),
+        sandbox_profiles,
+        workspace_profiles,
+        profile_uses,
+        policy_source,
+    );
+
+    assert!(matches!(
+        service
+            .create(
+                &caller("owner", [Capability::CreateSandbox]),
+                request(parent.clone()),
+            )
+            .await,
+        Err(SandboxServiceError::Corrupt(_))
+    ));
+    assert_eq!(sandbox_use_count(&profiles, &parent.id).await, 0);
+}
+
+#[tokio::test]
+async fn recorder_failure_does_not_fail_an_admitted_sandbox() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let parent = publish(
+        &profiles,
+        profile(
+            "sbp_recorder_failure",
+            "owner",
+            "recorder failure",
+            ProfileVisibility::Private,
+            false,
+        ),
+    )
+    .await;
+    let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
+    let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
+    let profile_uses: Arc<dyn ProfileUseRecorder> = Arc::new(FailingUseRecorder);
+    let policy_source: Arc<dyn SandboxPolicySource> = Arc::new(policy(10, 10));
+    let service = SandboxService::with_dependencies(
+        Arc::new(InMemorySandboxStore::default()),
+        sandbox_profiles,
+        workspace_profiles,
+        profile_uses,
+        policy_source,
+    );
+
+    let admitted = service
+        .create(
+            &caller("owner", [Capability::CreateSandbox]),
+            request(parent.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admitted.profile.id, parent.id);
+    assert_eq!(sandbox_use_count(&profiles, &parent.id).await, 0);
 }
 
 #[tokio::test]
@@ -499,18 +982,29 @@ async fn an_explicit_live_name_is_not_silently_renamed() {
         ),
     )
     .await;
-    let service = SandboxService::new(store, profiles, policy(10, 10));
+    let profile_id = reference.id.clone();
+    let service = SandboxService::new(store, profiles.clone(), policy(10, 10));
     let owner = caller("owner", [Capability::CreateSandbox]);
+    let mut invalid = request(reference.clone());
+    invalid.name = Some("invalid\0name".into());
+    assert_eq!(
+        service.create(&owner, invalid).await.unwrap_err(),
+        SandboxServiceError::InvalidName
+    );
+    assert_eq!(sandbox_use_count(&profiles, &profile_id).await, 0);
+
     let mut create = request(reference);
     create.name = Some("chosen".into());
     assert_eq!(
         service.create(&owner, create.clone()).await.unwrap().name,
         "chosen"
     );
+    assert_eq!(sandbox_use_count(&profiles, &profile_id).await, 1);
     assert_eq!(
         service.create(&owner, create).await.unwrap_err(),
         SandboxServiceError::NameConflict
     );
+    assert_eq!(sandbox_use_count(&profiles, &profile_id).await, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -528,7 +1022,8 @@ async fn concurrent_admission_never_exceeds_the_live_limit() {
         ),
     )
     .await;
-    let service = SandboxService::new(store.clone(), profiles, policy(3, 1));
+    let profile_id = reference.id.clone();
+    let service = SandboxService::new(store.clone(), profiles.clone(), policy(3, 1));
     let owner = caller("owner", [Capability::CreateSandbox]);
     let mut tasks = Vec::new();
     for _ in 0..20 {
@@ -550,6 +1045,7 @@ async fn concurrent_admission_never_exceeds_the_live_limit() {
     }
     assert_eq!(admitted.len(), 3);
     assert_eq!(refused, 17);
+    assert_eq!(sandbox_use_count(&profiles, &profile_id).await, 3);
     admitted.sort_by(|left, right| left.name.cmp(&right.name));
     assert_eq!(
         admitted
@@ -845,7 +1341,9 @@ fn service_error_codes_are_stable_typed_refusals() {
     let cases = [
         (SandboxServiceError::Forbidden, "forbidden"),
         (
-            SandboxServiceError::TrustConfirmationRequired,
+            SandboxServiceError::TrustConfirmationRequired {
+                commands_digest: "digest".into(),
+            },
             "trust_confirmation_required",
         ),
         (

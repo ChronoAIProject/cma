@@ -5,10 +5,17 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{SandboxId, ServiceId};
-use crate::profiles::store::{ProfileStoreError, SandboxProfileStore};
-use crate::profiles::{ModelAccess, ProfileVisibility, SandboxProfileRef, SandboxProfileSnapshot};
+use crate::profiles::store::{
+    ProfileStoreError, ProfileUseRecorder, SandboxProfileStore, WorkspaceProfileStore,
+};
+use crate::profiles::{
+    MarketplaceLocator, ModelAccess, ProfileVisibility, SandboxProfileRef, SandboxProfileSnapshot,
+};
 use crate::{now_rfc3339, Caller, Capability, StoreError};
 
+use super::service_trust::{
+    nested_workspaces_require_trust, validate_sandbox_profile, validate_sandbox_revision,
+};
 use super::store::{
     Page, PageRequest, SandboxAdmission, SandboxAdmissionName, SandboxServiceStore,
     SandboxStoreError, SandboxTransaction,
@@ -45,7 +52,7 @@ impl SandboxOrigin {
 pub struct CreateSandbox {
     pub profile: SandboxProfileRef,
     pub name: Option<String>,
-    pub trust_confirmed: bool,
+    pub confirmed_digest: Option<String>,
     pub origin: SandboxOrigin,
 }
 
@@ -93,8 +100,8 @@ pub enum SandboxServiceError {
     ProfileNotFound,
     #[error("sandbox not found")]
     NotFound,
-    #[error("trust confirmation required")]
-    TrustConfirmationRequired,
+    #[error("trust confirmation required for digest {commands_digest}")]
+    TrustConfirmationRequired { commands_digest: String },
     #[error("sandbox limit reached: {live} of {limit}")]
     SandboxLimitReached { limit: u16, live: u16 },
     #[error("sandbox name is invalid")]
@@ -117,7 +124,7 @@ impl SandboxServiceError {
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "sandbox_profile_not_found",
             Self::NotFound => "sandbox_not_found",
-            Self::TrustConfirmationRequired => "trust_confirmation_required",
+            Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
             Self::SandboxLimitReached { .. } => "sandbox_limit_reached",
             Self::InvalidName => "invalid_sandbox_name",
             Self::NameConflict => "sandbox_name_conflict",
@@ -132,6 +139,8 @@ impl SandboxServiceError {
 pub struct SandboxService {
     store: Arc<dyn SandboxServiceStore>,
     profiles: Arc<dyn SandboxProfileStore>,
+    workspace_profiles: Arc<dyn WorkspaceProfileStore>,
+    profile_uses: Arc<dyn ProfileUseRecorder>,
     policy: Arc<dyn SandboxPolicySource>,
 }
 
@@ -139,7 +148,7 @@ impl SandboxService {
     pub fn new<S, P>(store: Arc<S>, profiles: Arc<P>, policy: SandboxPolicy) -> Arc<Self>
     where
         S: SandboxServiceStore + 'static,
-        P: SandboxProfileStore + 'static,
+        P: SandboxProfileStore + WorkspaceProfileStore + ProfileUseRecorder + 'static,
     {
         Self::with_policy_source(store, profiles, Arc::new(policy))
     }
@@ -151,11 +160,35 @@ impl SandboxService {
     ) -> Arc<Self>
     where
         S: SandboxServiceStore + 'static,
-        P: SandboxProfileStore + 'static,
+        P: SandboxProfileStore + WorkspaceProfileStore + ProfileUseRecorder + 'static,
+    {
+        let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
+        let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
+        let profile_uses: Arc<dyn ProfileUseRecorder> = profiles;
+        Self::with_dependencies(
+            store,
+            sandbox_profiles,
+            workspace_profiles,
+            profile_uses,
+            policy,
+        )
+    }
+
+    pub(crate) fn with_dependencies<S>(
+        store: Arc<S>,
+        profiles: Arc<dyn SandboxProfileStore>,
+        workspace_profiles: Arc<dyn WorkspaceProfileStore>,
+        profile_uses: Arc<dyn ProfileUseRecorder>,
+        policy: Arc<dyn SandboxPolicySource>,
+    ) -> Arc<Self>
+    where
+        S: SandboxServiceStore + 'static,
     {
         Arc::new(Self {
             store,
             profiles,
+            workspace_profiles,
+            profile_uses,
             policy,
         })
     }
@@ -193,23 +226,35 @@ impl SandboxService {
             .sandbox_profile(&request.profile.id)
             .await
             .map_err(profile_error)?
-            .filter(|profile| {
-                profile.retired_at.is_none()
-                    && (profile.owner == caller.subject
-                        || profile.visibility == ProfileVisibility::Public)
-            })
             .ok_or(SandboxServiceError::ProfileNotFound)?;
+        validate_sandbox_profile(&request.profile, &profile).map_err(profile_error)?;
+        if profile.retired_at.is_some()
+            || (profile.owner != caller.subject && profile.visibility != ProfileVisibility::Public)
+        {
+            return Err(SandboxServiceError::ProfileNotFound);
+        }
         let revision = self
             .profiles
             .sandbox_profile_revision(&request.profile.id, request.profile.revision)
             .await
             .map_err(profile_error)?
             .ok_or(SandboxServiceError::ProfileNotFound)?;
-        let needs_trust = profile.owner != caller.subject
+        validate_sandbox_revision(&request.profile, &revision).map_err(profile_error)?;
+        let nested_needs_trust = nested_workspaces_require_trust(
+            self.workspace_profiles.as_ref(),
+            &revision.content.workspace_profiles,
+            &caller.subject,
+        )
+        .await
+        .map_err(profile_error)?;
+        let needs_trust = (profile.owner != caller.subject
             && (!revision.content.software_install_commands.is_empty()
-                || !revision.content.environment_variables.is_empty());
-        if needs_trust && !request.trust_confirmed {
-            return Err(SandboxServiceError::TrustConfirmationRequired);
+                || !revision.content.environment_variables.is_empty()))
+            || nested_needs_trust;
+        if needs_trust && request.confirmed_digest.as_deref() != Some(revision.digest.as_str()) {
+            return Err(SandboxServiceError::TrustConfirmationRequired {
+                commands_digest: revision.digest.clone(),
+            });
         }
 
         let name = match request.name {
@@ -268,7 +313,8 @@ impl SandboxService {
         sandbox
             .validate()
             .map_err(|error| SandboxServiceError::Corrupt(error.to_string()))?;
-        self.store
+        let admitted = self
+            .store
             .admit_sandbox(SandboxAdmission {
                 sandbox,
                 name,
@@ -276,7 +322,16 @@ impl SandboxService {
                 event_at: now,
             })
             .await
-            .map_err(store_error)
+            .map_err(store_error)?;
+        let locator = MarketplaceLocator::Sandbox(request.profile.id);
+        if let Err(error) = self.profile_uses.record_profile_use(&locator).await {
+            tracing::warn!(
+                profile_id = locator.as_str(),
+                error = %error,
+                "sandbox profile use was not recorded"
+            );
+        }
+        Ok(admitted)
     }
 
     pub async fn list_own(

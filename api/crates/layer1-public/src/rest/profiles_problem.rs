@@ -48,8 +48,7 @@ impl ProfileProblem {
                 reason,
             },
             MarketplaceError::InvalidPage => Self::InvalidPage,
-            MarketplaceError::TrustConfirmationRequired { .. }
-            | MarketplaceError::TrustConfirmationMismatch => Self::Invalid {
+            MarketplaceError::TrustConfirmationRequired { .. } => Self::Invalid {
                 field: "commands_digest".into(),
                 reason: "trust_confirmation_invalid".into(),
             },

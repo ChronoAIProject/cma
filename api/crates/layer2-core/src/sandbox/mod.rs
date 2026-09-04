@@ -10,6 +10,7 @@ mod provision;
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;
+mod service_trust;
 mod status;
 pub mod store;
 mod workspace;
