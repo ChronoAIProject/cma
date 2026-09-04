@@ -30,6 +30,9 @@ mod sandbox_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_transactions;
 mod sandboxes;
+mod schema;
+#[cfg(test)]
+mod schema_mongo_integration_tests;
 pub mod settings;
 mod workspace_profiles;
 mod workspaces;

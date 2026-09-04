@@ -2,7 +2,6 @@
 
 use std::time::{Duration, SystemTime};
 
-use futures_util::TryStreamExt as _;
 use layer2_core::{OperationClaim, OperationReservation, OperationStore, StoreError};
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime},
@@ -12,14 +11,14 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::durability::majority_collection;
+use super::{
+    durability::majority_collection,
+    schema::{self, DOCUMENT_SCHEMA_VERSION},
+};
 
-const OPERATIONS: &str = "operation_claims";
-const LEGACY_EXPIRY_INDEX: &str = "operation_claim_expiry";
+pub(super) const OPERATIONS: &str = "operation_claims";
 const EXPIRY_INDEX: &str = "operation_outcome_expiry";
 const DUPLICATE_KEY: i32 = 11_000;
-const NAMESPACE_NOT_FOUND: i32 = 26;
-const INDEX_NOT_FOUND: i32 = 27;
 const RESERVATION_RETRIES: usize = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +32,7 @@ struct OperationIdDoc {
 struct OperationDoc {
     #[serde(rename = "_id")]
     id: OperationIdDoc,
+    document_schema_version: i64,
     #[serde(default)]
     claim_id: Option<String>,
     fingerprint: Binary,
@@ -54,6 +54,7 @@ pub struct MongoOperationStore {
 impl MongoOperationStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let database = client.database(database);
+        schema::refuse_unknown_versions(&database, &[OPERATIONS]).await?;
         let store = Self {
             operations: majority_collection(&database, OPERATIONS),
         };
@@ -63,47 +64,18 @@ impl MongoOperationStore {
     }
 
     async fn held(&self, claim: &OperationClaim) -> Result<Option<OperationDoc>, StoreError> {
-        self.operations
+        let document = self
+            .operations
             .find_one(id_filter(claim))
             .await
-            .map_err(|error| StoreError::Unavailable(format!("read operation claim: {error}")))
+            .map_err(|error| StoreError::Unavailable(format!("read operation claim: {error}")))?;
+        if let Some(document) = &document {
+            schema::require_current(document.document_schema_version)?;
+        }
+        Ok(document)
     }
 
     async fn ensure_expiry_index(&self) -> Result<(), StoreError> {
-        let indexes = match self.operations.list_indexes().await {
-            Ok(cursor) => match cursor.try_collect::<Vec<_>>().await {
-                Ok(indexes) => indexes,
-                Err(error) if is_namespace_not_found(&error) => Vec::new(),
-                Err(error) => {
-                    return Err(StoreError::Unavailable(format!(
-                        "read operation claim indexes: {error}"
-                    )))
-                }
-            },
-            // A fresh database has no collection to inspect. Creating the
-            // current index below creates that collection atomically.
-            Err(error) if is_namespace_not_found(&error) => Vec::new(),
-            Err(error) => {
-                return Err(StoreError::Unavailable(format!(
-                    "list operation claim indexes: {error}"
-                )))
-            }
-        };
-        if indexes.iter().any(|index| {
-            index
-                .options
-                .as_ref()
-                .and_then(|options| options.name.as_deref())
-                == Some(LEGACY_EXPIRY_INDEX)
-        }) {
-            if let Err(error) = self.operations.drop_index(LEGACY_EXPIRY_INDEX).await {
-                if !is_index_not_found(&error) {
-                    return Err(StoreError::Unavailable(format!(
-                        "replace legacy operation claim expiry index: {error}"
-                    )));
-                }
-            }
-        }
         self.operations
             .create_index(expiry_index())
             .await
@@ -202,6 +174,7 @@ impl OperationStore for MongoOperationStore {
             .update_one(
                 doc! {
                     "_id": id_bson(claim),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "claim_id": claim.claim_id(),
                     "fingerprint": binary(claim.fingerprint().to_vec()),
                     "outcome": Bson::Null,
@@ -252,6 +225,7 @@ impl OperationStore for MongoOperationStore {
 fn to_doc(claim: &OperationClaim) -> OperationDoc {
     OperationDoc {
         id: operation_id(claim),
+        document_schema_version: DOCUMENT_SCHEMA_VERSION,
         claim_id: Some(claim.claim_id().to_string()),
         fingerprint: binary(claim.fingerprint().to_vec()),
         outcome: None,
@@ -278,12 +252,16 @@ fn id_bson(claim: &OperationClaim) -> Bson {
 }
 
 fn id_filter(claim: &OperationClaim) -> mongodb::bson::Document {
-    doc! { "_id": id_bson(claim) }
+    doc! {
+        "_id": id_bson(claim),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+    }
 }
 
 fn expired_filter(claim: &OperationClaim, now: SystemTime) -> mongodb::bson::Document {
     doc! {
         "_id": id_bson(claim),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "outcome": { "$type": "binData" },
         "expires_at": { "$lte": DateTime::from_system_time(now) },
     }
@@ -292,6 +270,7 @@ fn expired_filter(claim: &OperationClaim, now: SystemTime) -> mongodb::bson::Doc
 fn recovery_filter(claim: &OperationClaim, now: SystemTime) -> mongodb::bson::Document {
     doc! {
         "_id": id_bson(claim),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "fingerprint": binary(claim.fingerprint().to_vec()),
         "outcome": Bson::Null,
         "recovery_required": { "$ne": true },
@@ -337,14 +316,6 @@ fn is_duplicate_key(error: &Error) -> bool {
         error.kind.as_ref(),
         ErrorKind::Write(WriteFailure::WriteError(write)) if write.code == DUPLICATE_KEY
     )
-}
-
-fn is_index_not_found(error: &Error) -> bool {
-    matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == INDEX_NOT_FOUND)
-}
-
-fn is_namespace_not_found(error: &Error) -> bool {
-    matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == NAMESPACE_NOT_FOUND)
 }
 
 #[cfg(test)]

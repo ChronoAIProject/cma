@@ -11,14 +11,18 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::durability::majority_collection;
+use super::{
+    durability::majority_collection,
+    schema::{self, DOCUMENT_SCHEMA_VERSION},
+};
 
-const USERS: &str = "users";
+pub(super) const USERS: &str = "users";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserDoc {
     #[serde(rename = "_id")]
     subject: String,
+    document_schema_version: i64,
     display_name: Option<String>,
     avatar_url: Option<String>,
     first_seen_at: String,
@@ -52,6 +56,7 @@ pub struct MongoUserDirectoryStore {
 impl MongoUserDirectoryStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let database = client.database(database);
+        schema::refuse_unknown_versions(&database, &[USERS]).await?;
         let store = Self {
             users: majority_collection(&database, USERS),
         };
@@ -75,7 +80,10 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
         let observed_at = DateTime::now();
         self.users
             .update_one(
-                doc! { "_id": identity.subject.as_str() },
+                doc! {
+                    "_id": identity.subject.as_str(),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                },
                 doc! {
                     "$set": {
                         "display_name": identity.display_name.as_deref(),
@@ -83,7 +91,10 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
                         "last_seen_at": &at,
                         "observed_at": observed_at,
                     },
-                    "$setOnInsert": { "first_seen_at": &at },
+                    "$setOnInsert": {
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "first_seen_at": &at,
+                    },
                 },
             )
             .with_options(UpdateOptions::builder().upsert(true).build())
@@ -138,6 +149,7 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
             .await
             .map_err(|error| StoreError::Unavailable(format!("list directory cursor: {error}")))?
         {
+            schema::require_current(row.document_schema_version)?;
             rows.push(row);
         }
         let has_more = rows.len() > query.page.limit as usize;
@@ -189,6 +201,7 @@ mod tests {
     fn storage_shape_preserves_public_identity_and_cursor() {
         let row = UserDoc {
             subject: "subject-a".into(),
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
             display_name: Some("Ada".into()),
             avatar_url: None,
             first_seen_at: "2026-01-01T00:00:00Z".into(),
@@ -196,6 +209,7 @@ mod tests {
             observed_at: DateTime::from_millis(42),
         };
         let cursor = row.cursor();
+        assert_eq!(row.document_schema_version, DOCUMENT_SCHEMA_VERSION);
         assert_eq!(
             decode_cursor(&cursor).unwrap(),
             (row.observed_at, "subject-a")

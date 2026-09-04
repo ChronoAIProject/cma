@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use super::durability::majority_collection;
 
-pub(super) const DOCUMENT_SCHEMA_VERSION: i64 = 1;
+pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
 const COMMIT_ATTEMPTS: usize = 5;
 const DUPLICATE_KEY: i32 = 11_000;
@@ -166,44 +166,7 @@ async fn initialize_collections(
             }
         }
     }
-    refuse_unknown_versions(database, collections).await
-}
-
-async fn refuse_unknown_versions(
-    database: &Database,
-    collections: &[&str],
-) -> Result<(), StoreError> {
-    for name in collections {
-        let unsupported = database
-            .collection::<Document>(name)
-            .find_one(unknown_version_filter())
-            .projection(doc! { "_id": 1, "document_schema_version": 1 })
-            .await
-            .map_err(|error| unavailable(&format!("inspect {name} schema version"), error))?;
-        if let Some(document) = unsupported {
-            let id = document.get("_id").unwrap_or(&Bson::Null);
-            let version = document
-                .get("document_schema_version")
-                .unwrap_or(&Bson::Null);
-            return Err(StoreError::Malformed(format!(
-                "collection {name} contains unsupported document {id} with schema version {version}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn unknown_version_filter() -> Document {
-    doc! {
-        "$or": [
-            { "document_schema_version": { "$ne": DOCUMENT_SCHEMA_VERSION } },
-            {
-                "document_schema_version": {
-                    "$not": { "$type": ["int", "long"] }
-                }
-            },
-        ]
-    }
+    super::schema::refuse_unknown_versions(database, collections).await
 }
 
 pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {
@@ -302,7 +265,6 @@ mod tests {
 
     #[test]
     fn unknown_versions_include_missing_wrong_and_non_integer_values() {
-        assert_eq!(unknown_version_filter()["$or"].as_array().unwrap().len(), 2);
         assert!(require_version(&doc! { "document_schema_version": 1_i64 }).is_ok());
         assert!(require_version(&doc! { "document_schema_version": 1_i32 }).is_ok());
         assert!(require_version(&doc! { "document_schema_version": 2_i64 }).is_err());

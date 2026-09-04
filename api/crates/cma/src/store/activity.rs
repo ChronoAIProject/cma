@@ -11,15 +11,19 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::durability::majority_collection;
+use super::{
+    durability::majority_collection,
+    schema::{self, DOCUMENT_SCHEMA_VERSION},
+};
 
-const ACTIVITY: &str = "activity";
+pub(super) const ACTIVITY: &str = "activity";
 const EXPIRY_INDEX: &str = "activity_expiry";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ActivityDoc {
     #[serde(rename = "_id")]
     id: String,
+    document_schema_version: i64,
     recorded_at: DateTime,
     record: ActivityRecord,
 }
@@ -28,6 +32,7 @@ impl ActivityDoc {
     fn from_record(record: &ActivityRecord) -> Self {
         Self {
             id: record.id.0.clone(),
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
             recorded_at: DateTime::now(),
             record: record.clone(),
         }
@@ -51,6 +56,7 @@ impl MongoActivityStore {
         retention: Duration,
     ) -> Result<Self, StoreError> {
         let database = client.database(database);
+        schema::refuse_unknown_versions(&database, &[ACTIVITY]).await?;
         let store = Self {
             entries: majority_collection(&database, ACTIVITY),
             database,
@@ -148,6 +154,7 @@ impl ActivityStore for MongoActivityStore {
             .await
             .map_err(|error| StoreError::Unavailable(format!("read activity cursor: {error}")))?
         {
+            schema::require_current(row.document_schema_version)?;
             rows.push(row);
         }
         let has_more = rows.len() > query.limit as usize;
@@ -193,6 +200,7 @@ mod tests {
         let record = ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded)
             .by(SubjectId::new("subject-a"));
         let stored = ActivityDoc::from_record(&record);
+        assert_eq!(stored.document_schema_version, DOCUMENT_SCHEMA_VERSION);
         let cursor = stored.cursor();
         let (at, id) = decode_cursor(&cursor).unwrap();
         assert_eq!(at, stored.recorded_at);

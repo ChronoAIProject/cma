@@ -9,9 +9,12 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::durability::majority_collection;
+use super::{
+    durability::majority_collection,
+    schema::{self, DOCUMENT_SCHEMA_VERSION},
+};
 
-const SETTINGS: &str = "platform_settings";
+pub(super) const SETTINGS: &str = "platform_settings";
 const SETTINGS_ID: &str = "platform";
 const DUPLICATE_KEY: i32 = 11_000;
 
@@ -19,11 +22,13 @@ const DUPLICATE_KEY: i32 = 11_000;
 struct SettingsDoc {
     #[serde(rename = "_id")]
     id: String,
+    document_schema_version: i64,
     settings: PlatformSettings,
     revision: i64,
 }
 
 fn from_doc(document: SettingsDoc) -> Result<StoredPlatformSettings, StoreError> {
+    schema::require_current(document.document_schema_version)?;
     Ok(StoredPlatformSettings {
         revision: u64::try_from(document.revision).map_err(|_| {
             StoreError::Malformed("platform settings revision must not be negative".into())
@@ -37,6 +42,7 @@ fn update_pipeline(settings: &PlatformSettings) -> Result<Vec<Document>, StoreEr
         .map_err(|error| StoreError::Malformed(format!("platform settings: {error}")))?;
     Ok(vec![doc! {
         "$set": {
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "settings": { "$literal": settings },
             "revision": { "$add": [{ "$ifNull": ["$revision", 0_i64] }, 1_i64] },
         }
@@ -50,8 +56,10 @@ pub struct MongoPlatformSettingsStore {
 
 impl MongoPlatformSettingsStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+        let database = client.database(database);
+        schema::refuse_unknown_versions(&database, &[SETTINGS]).await?;
         Ok(Self {
-            settings: majority_collection(&client.database(database), SETTINGS),
+            settings: majority_collection(&database, SETTINGS),
         })
     }
 
@@ -99,7 +107,11 @@ impl PlatformSettingsStore for MongoPlatformSettingsStore {
         let result = self
             .settings
             .find_one_and_update(
-                doc! { "_id": SETTINGS_ID, "revision": expected },
+                doc! {
+                    "_id": SETTINGS_ID,
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "revision": expected,
+                },
                 update_pipeline(settings)?,
             )
             .return_document(ReturnDocument::After)
@@ -138,12 +150,17 @@ mod tests {
     fn stored_settings_validate_revision_and_quote_the_value() {
         assert!(from_doc(SettingsDoc {
             id: SETTINGS_ID.into(),
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
             settings: PlatformSettings::default(),
             revision: -1,
         })
         .is_err());
         let pipeline = update_pipeline(&PlatformSettings::default()).unwrap();
         let set = pipeline[0].get_document("$set").unwrap();
+        assert_eq!(
+            set.get_i64("document_schema_version").unwrap(),
+            DOCUMENT_SCHEMA_VERSION
+        );
         assert!(set
             .get_document("settings")
             .unwrap()
