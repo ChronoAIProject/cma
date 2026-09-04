@@ -236,12 +236,12 @@ load-bearing rather than stylistic: sheets that style the scrollbar resolve agai
 the tokens are declared on, and an `html`-scoped rule cannot see them.
 
 Inkwell is `light`; Lumen is `dark`. The preference is `light | dark | system`, defaulting to
-`system`, and is stored at `localStorage['cma:appearance']`. During the rename window both the module
-and the inline script read this key first, fall back to a valid value under the historical
-`chrono-bot:appearance` key, and copy that value forward. The inline script immediately after
-`<body>` resolves it before first paint — resolving `system` through `prefers-color-scheme`, setting
-`color-scheme` on the document element and toggling `data-ds-dark-theme` on `body`. Without it the
-first paint is the wrong theme and the correction is visible.
+`system`, and is stored only at `localStorage['cma:appearance']`. Invalid or inaccessible storage
+resolves to `system`; no historical key is read. The inline script immediately after `<body>`
+resolves the canonical value before first paint — resolving `system` through
+`prefers-color-scheme`, setting `color-scheme` on the document element and toggling
+`data-ds-dark-theme` on `body`. Without it the first paint is the wrong theme and the correction is
+visible.
 
 While the preference is `system`, a `change` listener re-applies it, so a session left open across
 sunset follows the machine.
