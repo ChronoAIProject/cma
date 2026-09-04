@@ -11,6 +11,7 @@ use crate::paths::{lexical_target, safe_relative};
 pub(crate) const FORMAT_VERSION: u32 = 1;
 pub(crate) const MAX_ENTRIES: usize = 200_000;
 pub(crate) const MAX_PAYLOAD_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const RUNTIME_TRANSIENT_PATHS: [&str; 2] = [".cma/preparing", ".cma/removing"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,7 +67,7 @@ pub(crate) fn collect(root: &Path, exclusions: &[String]) -> Result<Manifest> {
             let relative = path
                 .strip_prefix(root)
                 .expect("checkpoint entry remains below root");
-            if excluded(relative, &exclusions) {
+            if runtime_transient(relative) || excluded(relative, &exclusions) {
                 continue;
             }
             if entries.len() >= MAX_ENTRIES {
@@ -152,6 +153,11 @@ pub(crate) fn validate(manifest: &Manifest, root: &Path, payload_bytes: u64) -> 
         }
         prior = Some(&entry.path);
         let relative = safe_relative(&entry.path, "checkpoint path")?;
+        if runtime_transient(&relative) {
+            return Err(invalid(
+                "checkpoint contains runtime-owned workspace transition state",
+            ));
+        }
         if entry.mode > 0o777 {
             return Err(invalid(
                 "checkpoint entry mode is outside the portable permission mask",
@@ -241,6 +247,13 @@ fn excluded(path: &Path, exclusions: &[PathBuf]) -> bool {
     exclusions
         .iter()
         .any(|excluded| path == excluded || path.starts_with(excluded))
+}
+
+fn runtime_transient(path: &Path) -> bool {
+    RUNTIME_TRANSIENT_PATHS.iter().any(|transient| {
+        let transient = Path::new(transient);
+        path == transient || path.starts_with(transient)
+    })
 }
 
 fn directory_entry(path: String, mode: u32) -> ManifestEntry {
