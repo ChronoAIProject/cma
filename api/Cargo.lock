@@ -1676,6 +1676,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol-schema",
  "async-trait",
+ "base64",
  "k8s-openapi",
  "kube",
  "reqwest",

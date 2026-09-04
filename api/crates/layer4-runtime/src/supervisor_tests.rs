@@ -21,6 +21,11 @@ fn supervisor(config: RuntimeConfig) -> Arc<Supervisor> {
     Supervisor::new(config, SupervisorBoundary::default()).unwrap()
 }
 
+fn cleanup(home: &Path) {
+    std::fs::remove_dir_all(home).unwrap();
+    let _ = std::fs::remove_dir_all(home.with_extension("checkpoints"));
+}
+
 fn credential(operation_id: &str) -> RequestFrame {
     RequestFrame::Credential(CredentialFrame {
         operation_id: operation_id.into(),
@@ -54,7 +59,54 @@ async fn credential_is_refused_until_install_completes() {
     assert_eq!(rejected.operation, WireOperation::Credential);
     assert_eq!(rejected.code, "install_not_completed");
     assert_eq!(supervisor.phase().await, Phase::Provisioned);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn an_identical_install_replay_returns_the_receipt_without_rerunning_commands() {
+    let home = root("install-replay");
+    let supervisor = supervisor(RuntimeConfig::for_test(home.clone()));
+    let request = InstallRequest::bounded(
+        "install-replay",
+        vec!["printf 'ran\\n' >> install-runs".into()],
+        5,
+        32 * 1024,
+    );
+
+    let first = supervisor
+        .dispatch(RequestFrame::Install(request.clone()))
+        .await;
+    let replay = supervisor
+        .dispatch(RequestFrame::Install(request.clone()))
+        .await;
+    assert_eq!(replay, first);
+    assert_eq!(
+        std::fs::read_to_string(home.join("install-runs")).unwrap(),
+        "ran\n"
+    );
+
+    assert!(matches!(
+        supervisor.dispatch(credential("credential-1")).await,
+        ResponseFrame::Credential(_)
+    ));
+    let credentialed_replay = supervisor
+        .dispatch(RequestFrame::Install(request.clone()))
+        .await;
+    assert_eq!(credentialed_replay, first);
+
+    let mismatch = failure(
+        supervisor
+            .dispatch(RequestFrame::Install(InstallRequest::bounded(
+                "install-replay",
+                vec!["touch must-not-run".into()],
+                5,
+                32 * 1024,
+            )))
+            .await,
+    );
+    assert_eq!(mismatch.code, "install_replay_mismatch");
+    assert!(!home.join("must-not-run").exists());
+    cleanup(&home);
 }
 
 #[tokio::test]
@@ -83,11 +135,12 @@ touch install-complete"#,
         proxy_bind.port()
     );
     let response = supervisor
-        .dispatch(RequestFrame::Install(InstallRequest {
-            commands: vec![command],
-            timeout_seconds: 5,
-            output_limit_bytes: 32 * 1024,
-        }))
+        .dispatch(RequestFrame::Install(InstallRequest::bounded(
+            "install-proxy",
+            vec![command],
+            5,
+            32 * 1024,
+        )))
         .await;
     assert!(
         matches!(response, ResponseFrame::Install(_)),
@@ -108,7 +161,7 @@ touch install-complete"#,
     .await
     .expect("proxy connect completed")
     .expect("proxy listener is bound after credential delivery");
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup(&home);
 }
 
 #[tokio::test]
@@ -125,11 +178,12 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
     let supervisor = supervisor(config);
 
     let response = supervisor
-        .dispatch(RequestFrame::Install(InstallRequest {
-            commands: vec!["touch installed".into()],
-            timeout_seconds: 5,
-            output_limit_bytes: 32 * 1024,
-        }))
+        .dispatch(RequestFrame::Install(InstallRequest::bounded(
+            "install-sequence",
+            vec!["touch installed".into()],
+            5,
+            32 * 1024,
+        )))
         .await;
     assert!(
         matches!(response, ResponseFrame::Install(_)),
@@ -318,5 +372,5 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
         matches!(removed, ResponseFrame::RemoveWorkspace(_)),
         "{removed:?}"
     );
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup(&home);
 }

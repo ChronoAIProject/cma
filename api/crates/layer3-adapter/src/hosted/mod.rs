@@ -18,3 +18,7 @@ pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "provision_tests.rs"]
+mod provision_tests;

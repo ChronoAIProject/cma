@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const DEFAULT_HOME_DIRECTORY: &str = "/home/cma";
 pub const DEFAULT_SUPERVISOR_PROGRAM: &str = "/usr/local/bin/layer4-runtime";
@@ -87,6 +88,8 @@ impl Default for SandboxSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallRequest {
+    pub operation_id: String,
+    pub request_sha256: String,
     #[serde(default)]
     pub commands: Vec<String>,
     #[serde(rename = "timeout_s")]
@@ -97,11 +100,66 @@ pub struct InstallRequest {
 
 impl Default for InstallRequest {
     fn default() -> Self {
-        Self {
-            commands: Vec::new(),
-            timeout_seconds: DEFAULT_COMMAND_TIMEOUT_SECONDS,
-            output_limit_bytes: DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+        Self::bounded(
+            String::new(),
+            Vec::new(),
+            DEFAULT_COMMAND_TIMEOUT_SECONDS,
+            DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+        )
+    }
+}
+
+impl InstallRequest {
+    pub fn new(operation_id: impl Into<String>, commands: Vec<String>) -> Self {
+        Self::bounded(
+            operation_id,
+            commands,
+            DEFAULT_COMMAND_TIMEOUT_SECONDS,
+            DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+        )
+    }
+
+    pub fn bounded(
+        operation_id: impl Into<String>,
+        commands: Vec<String>,
+        timeout_seconds: u64,
+        output_limit_bytes: u32,
+    ) -> Self {
+        let mut request = Self {
+            operation_id: operation_id.into(),
+            request_sha256: String::new(),
+            commands,
+            timeout_seconds,
+            output_limit_bytes,
+        };
+        request.request_sha256 = request.computed_sha256();
+        request
+    }
+
+    /// Digest the exact execution-affecting fields with a versioned encoding.
+    pub fn computed_sha256(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"chrono.install.request.v1\0");
+        digest.update(self.timeout_seconds.to_be_bytes());
+        digest.update(self.output_limit_bytes.to_be_bytes());
+        digest.update(
+            u32::try_from(self.commands.len())
+                .unwrap_or(u32::MAX)
+                .to_be_bytes(),
+        );
+        for command in &self.commands {
+            digest.update(
+                u32::try_from(command.len())
+                    .unwrap_or(u32::MAX)
+                    .to_be_bytes(),
+            );
+            digest.update(command.as_bytes());
         }
+        hex(&digest.finalize())
+    }
+
+    pub fn has_valid_sha256(&self) -> bool {
+        self.request_sha256 == self.computed_sha256()
     }
 }
 
@@ -119,9 +177,25 @@ pub struct CommandReceipt {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
     #[serde(default)]
     pub commands: Vec<CommandReceipt>,
 }
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;
 
 /// Opaque credential bytes. Debug output is always redacted.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

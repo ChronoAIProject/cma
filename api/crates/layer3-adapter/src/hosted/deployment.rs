@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use sha2::{Digest, Sha256};
+
 use crate::provider::{ProviderImage, ProviderSandboxRequest};
 use crate::{
     AdapterCapabilities, AdapterError, RuntimeContract, RuntimeImage, SandboxSpec,
@@ -11,6 +14,15 @@ pub const MODEL_PROXY_BASE_URL: &str = "http://127.0.0.1:9091";
 pub const NYXID_PROXY_BASE_URL: &str = "http://127.0.0.2:9092";
 const MODEL_PROXY_BIND: &str = "127.0.0.1:9091";
 const NYXID_PROXY_BIND: &str = "127.0.0.2:9092";
+pub(super) const SANDBOX_METADATA: &str = "cma/sandbox";
+pub(super) const SPEC_FINGERPRINT_METADATA: &str = "cma/spec-sha256";
+pub(super) const CONTROL_PLANE_METADATA: &str = "cma/control-plane";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProviderIdentity {
+    pub sandbox_id: String,
+    pub spec_fingerprint: String,
+}
 
 /// Deployment-owned hosted runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,17 +127,17 @@ impl HostedDeployment {
         }
 
         let mut metadata = BTreeMap::from([
-            ("cma/sandbox".to_string(), spec.sandbox_id.clone()),
+            (SANDBOX_METADATA.to_string(), spec.sandbox_id.clone()),
             (
                 "cma/runtime-contract".to_string(),
                 RUNTIME_CONTRACT_VERSION.to_string(),
             ),
         ]);
         if let Some(created_by) = &spec.created_by {
-            metadata.insert("cma/control-plane".to_string(), created_by.clone());
+            metadata.insert(CONTROL_PLANE_METADATA.to_string(), created_by.clone());
         }
 
-        Ok(ProviderSandboxRequest {
+        let mut request = ProviderSandboxRequest {
             image: ProviderImage {
                 uri: self.image.uri.clone(),
             },
@@ -140,8 +152,98 @@ impl HostedDeployment {
             ]),
             timeout: spec.timeout_seconds.or(self.default_timeout_seconds),
             metadata,
-        })
+        };
+        request.metadata.insert(
+            SPEC_FINGERPRINT_METADATA.to_string(),
+            provider_request_fingerprint(&request)?,
+        );
+        Ok(request)
     }
+}
+
+pub(super) fn provider_request_fingerprint(
+    request: &ProviderSandboxRequest,
+) -> crate::Result<String> {
+    let ProviderSandboxRequest {
+        image,
+        entrypoint,
+        env,
+        resource_limits,
+        timeout,
+        metadata,
+    } = request;
+    if metadata.contains_key(SPEC_FINGERPRINT_METADATA) {
+        return Err(AdapterError::Rejected(
+            "sandbox specification fingerprint is recursive".into(),
+        ));
+    }
+    let mut digest = Sha256::new();
+    digest.update(b"cma-provider-sandbox-request-v1\0");
+    hash_string(&mut digest, &image.uri);
+    hash_strings(&mut digest, entrypoint);
+    hash_map(&mut digest, env);
+    hash_map(&mut digest, resource_limits);
+    match timeout {
+        Some(timeout) => {
+            digest.update([1]);
+            digest.update(timeout.to_be_bytes());
+        }
+        None => digest.update([0]),
+    }
+    let stable_metadata = metadata
+        .iter()
+        .filter(|(name, _)| name.as_str() != CONTROL_PLANE_METADATA);
+    hash_length(&mut digest, stable_metadata.clone().count());
+    for (name, value) in stable_metadata {
+        hash_string(&mut digest, name);
+        hash_string(&mut digest, value);
+    }
+    Ok(URL_SAFE_NO_PAD.encode(digest.finalize()))
+}
+
+pub(super) fn provider_request_identity(
+    request: &ProviderSandboxRequest,
+) -> crate::Result<ProviderIdentity> {
+    let sandbox_id = request
+        .metadata
+        .get(SANDBOX_METADATA)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AdapterError::Rejected("provider request has no sandbox identity".into()))?;
+    let spec_fingerprint = request
+        .metadata
+        .get(SPEC_FINGERPRINT_METADATA)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AdapterError::Rejected("provider request has no specification identity".into())
+        })?;
+    Ok(ProviderIdentity {
+        sandbox_id: sandbox_id.clone(),
+        spec_fingerprint: spec_fingerprint.clone(),
+    })
+}
+
+fn hash_strings(digest: &mut Sha256, values: &[String]) {
+    hash_length(digest, values.len());
+    for value in values {
+        hash_string(digest, value);
+    }
+}
+
+fn hash_map(digest: &mut Sha256, values: &BTreeMap<String, String>) {
+    hash_length(digest, values.len());
+    for (name, value) in values {
+        hash_string(digest, name);
+        hash_string(digest, value);
+    }
+}
+
+fn hash_string(digest: &mut Sha256, value: &str) {
+    hash_length(digest, value.len());
+    digest.update(value.as_bytes());
+}
+
+fn hash_length(digest: &mut Sha256, length: usize) {
+    digest.update(u64::try_from(length).unwrap_or(u64::MAX).to_be_bytes());
 }
 
 fn validate_spec(spec: &SandboxSpec) -> crate::Result<()> {
@@ -164,3 +266,7 @@ fn validate_spec(spec: &SandboxSpec) -> crate::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "deployment_tests.rs"]
+mod tests;

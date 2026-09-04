@@ -45,7 +45,9 @@ pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
 
 pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
     let detail = format!("{}: {}", failure.code, failure.detail);
-    if failure.code == "at_capacity" {
+    if failure.retryable {
+        AdapterError::Unavailable(detail)
+    } else if failure.code == "at_capacity" {
         AdapterError::AtCapacity(detail)
     } else {
         AdapterError::Rejected(detail)
@@ -92,4 +94,28 @@ pub(super) fn validate_command_receipts(
 
 pub(super) fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_failure_retryability_survives_the_wire() {
+        let retryable = failure_error(WireFailure {
+            operation: WireOperation::Install,
+            code: "install_in_progress".into(),
+            detail: "the first request is still running".into(),
+            retryable: true,
+        });
+        assert!(matches!(retryable, AdapterError::Unavailable(_)));
+
+        let terminal = failure_error(WireFailure {
+            operation: WireOperation::Install,
+            code: "install_replay_mismatch".into(),
+            detail: "the request identity changed".into(),
+            retryable: false,
+        });
+        assert!(matches!(terminal, AdapterError::Rejected(_)));
+    }
 }

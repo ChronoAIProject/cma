@@ -16,6 +16,7 @@ pub(crate) struct ProxyConfig {
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeConfig {
     pub bind: SocketAddr,
+    pub sandbox_id: String,
     pub home: PathBuf,
     pub checkpoint_root: PathBuf,
     pub install_env: BTreeMap<String, String>,
@@ -35,6 +36,11 @@ impl RuntimeConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_HOME));
         validate_home(&home)?;
+        let sandbox_id = process_env
+            .get("CHRONO_SANDBOX_ID")
+            .filter(|value| !value.trim().is_empty() && value.len() <= 256)
+            .cloned()
+            .ok_or_else(|| "CHRONO_SANDBOX_ID must identify this runtime".to_string())?;
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -73,6 +79,7 @@ impl RuntimeConfig {
 
         Ok(Self {
             bind,
+            sandbox_id,
             checkpoint_root: std::env::temp_dir().join("cma-checkpoints"),
             home,
             install_env,
@@ -102,6 +109,7 @@ impl RuntimeConfig {
         ]);
         Self {
             bind: "127.0.0.1:0".parse().unwrap(),
+            sandbox_id: "sandbox-test".into(),
             checkpoint_root: home.with_extension("checkpoints"),
             home,
             install_env: env.clone(),

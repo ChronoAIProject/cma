@@ -25,11 +25,12 @@ fn sha() -> String {
 #[test]
 fn every_contract_2_request_round_trips_with_its_exact_tag() {
     let frames = vec![
-        RequestFrame::Install(InstallRequest {
-            commands: vec!["make tools".into()],
-            timeout_seconds: 600,
-            output_limit_bytes: 32_768,
-        }),
+        RequestFrame::Install(InstallRequest::bounded(
+            "install-1",
+            vec!["make tools".into()],
+            600,
+            32_768,
+        )),
         RequestFrame::PrepareWorkspace(WorkspaceRequest {
             name: "repo".into(),
             source: WorkspaceSource::Clone {
@@ -120,6 +121,8 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
         let json = serde_json::to_value(&frame).expect("request serializes");
         assert_eq!(json["t"], tag);
         if tag == "install" {
+            assert_eq!(json["operation_id"], "install-1");
+            assert_eq!(json["request_sha256"].as_str().unwrap().len(), 64);
             assert_eq!(json["timeout_s"], 600);
             assert_eq!(json["output_limit"], 32_768);
             assert!(json.get("timeout_seconds").is_none());
@@ -141,6 +144,8 @@ fn every_contract_2_reply_round_trips_and_failures_stay_typed() {
     };
     let replies = vec![
         ResponseFrame::Install(InstallReceipt {
+            operation_id: "install-1".into(),
+            request_sha256: sha(),
             commands: vec![command.clone()],
         }),
         ResponseFrame::PrepareWorkspace(WorkspaceReceipt {

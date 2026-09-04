@@ -6,7 +6,7 @@ use layer3_adapter::wire::{
     Acknowledgement, AgentOpenReceipt, CredentialReceipt, RequestFrame, ResponseFrame,
     WireOperation,
 };
-use layer3_adapter::{AgentLaunch, AgentSlot};
+use layer3_adapter::{AgentLaunch, AgentSlot, InstallRequest};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::bridge::Bridge;
@@ -57,6 +57,7 @@ impl Supervisor {
                 "sandbox home is not a directory",
             ));
         }
+        crate::install::recover(&config)?;
         let checkpoint = CheckpointStore::new(&config);
         Ok(Arc::new(Self {
             config,
@@ -95,13 +96,7 @@ impl Supervisor {
             self.require_credentialed().await?;
         }
         match request {
-            RequestFrame::Install(request) => {
-                self.require_phase(Phase::Provisioned, "install_not_allowed")
-                    .await?;
-                let receipt = crate::install::run(&self.config, &request).await?;
-                *self.phase.write().await = Phase::Installed;
-                Ok(ResponseFrame::Install(receipt))
-            }
+            RequestFrame::Install(request) => self.install(request).await,
             RequestFrame::Credential(frame) => self.credential(frame).await,
             RequestFrame::PrepareWorkspace(request) => {
                 let receipt = crate::workspace_source::prepare(
@@ -168,6 +163,15 @@ impl Supervisor {
                 self.resources.sample(std::time::Instant::now()).into(),
             )),
         }
+    }
+
+    async fn install(&self, request: InstallRequest) -> Result<ResponseFrame> {
+        let phase = *self.phase.read().await;
+        let receipt = crate::install::run(&self.config, &request).await?;
+        if phase == Phase::Provisioned {
+            *self.phase.write().await = Phase::Installed;
+        }
+        Ok(ResponseFrame::Install(receipt))
     }
 
     async fn credential(&self, frame: layer3_adapter::CredentialFrame) -> Result<ResponseFrame> {
