@@ -6,8 +6,8 @@ use crate::{
     AdapterCapabilities, AgentHomeRequest, AgentOpenRequest, AgentSlot, CheckpointReceipt,
     CheckpointRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
     CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreRequest, Result,
-    RuntimeHandle, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRequest,
-    WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    RuntimeHandle, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest,
+    WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
@@ -43,7 +43,11 @@ pub trait SandboxAdapter: Send + Sync {
         request: &WorkspaceSetupRequest,
     ) -> Result<SetupReceipt>;
 
-    async fn remove_workspace(&self, handle: &RuntimeHandle, name: &str) -> Result<()>;
+    async fn remove_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceRemoveRequest,
+    ) -> Result<()>;
 
     async fn add_worktree(
         &self,

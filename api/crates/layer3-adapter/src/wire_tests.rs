@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::{
     AgentSkill, CommandReceipt, HomeFile, HomeSymlink, PermissionLevel, ReasoningEffort,
-    RuntimeCredential, RuntimeOptions, WorkspaceSource, WriterState,
+    RuntimeCredential, RuntimeOptions, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
+    WorkspaceSource, WriterState,
 };
 
 fn options() -> RuntimeOptions {
@@ -31,20 +32,26 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
             600,
             32_768,
         )),
-        RequestFrame::PrepareWorkspace(WorkspaceRequest {
-            name: "repo".into(),
-            source: WorkspaceSource::Clone {
+        RequestFrame::PrepareWorkspace(WorkspaceRequest::new(
+            "workspace:wks-repo:prepare:v1",
+            "wks-repo",
+            "repo",
+            WorkspaceSource::Clone {
                 url: "https://github.com/example/repo".into(),
                 reference: Some("main".into()),
             },
-        }),
-        RequestFrame::WorkspaceSetup(WorkspaceSetupRequest {
-            name: "repo".into(),
-            commands: vec!["make setup".into()],
-        }),
-        RequestFrame::RemoveWorkspace(WorkspaceRef {
-            name: "repo".into(),
-        }),
+        )),
+        RequestFrame::WorkspaceSetup(WorkspaceSetupRequest::new(
+            "workspace:wks-repo:setup:v1",
+            "wks-repo",
+            "repo",
+            vec!["make setup".into()],
+        )),
+        RequestFrame::RemoveWorkspace(WorkspaceRemoveRequest::new(
+            "workspace:wks-repo:remove:v1",
+            "wks-repo",
+            "repo",
+        )),
         RequestFrame::AddWorktree(WorktreeRequest {
             workspace: "repo".into(),
             name: "wt-1".into(),
@@ -149,14 +156,24 @@ fn every_contract_2_reply_round_trips_and_failures_stay_typed() {
             commands: vec![command.clone()],
         }),
         ResponseFrame::PrepareWorkspace(WorkspaceReceipt {
+            operation_id: "workspace:wks-repo:prepare:v1".into(),
+            request_sha256: sha(),
+            workspace_id: "wks-repo".into(),
             name: "repo".into(),
             path: "/home/cma/repo".into(),
             resolved_commit: sha(),
         }),
         ResponseFrame::WorkspaceSetup(SetupReceipt {
+            operation_id: "workspace:wks-repo:setup:v1".into(),
+            request_sha256: sha(),
+            workspace_id: "wks-repo".into(),
             commands: vec![command],
         }),
-        ResponseFrame::RemoveWorkspace(Acknowledgement::default()),
+        ResponseFrame::RemoveWorkspace(WorkspaceRemoveReceipt {
+            operation_id: "workspace:wks-repo:remove:v1".into(),
+            request_sha256: sha(),
+            workspace_id: "wks-repo".into(),
+        }),
         ResponseFrame::AddWorktree(WorktreeReceipt {
             workspace: "repo".into(),
             name: "wt-1".into(),

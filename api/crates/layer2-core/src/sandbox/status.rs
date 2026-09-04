@@ -87,9 +87,9 @@ impl WorkspaceStatus {
     pub fn transition(self, next: Self) -> Result<Self, SandboxModelError> {
         let allowed = matches!(
             (self, next),
-            (Self::Preparing, Self::Ready | Self::Failed)
+            (Self::Preparing, Self::Ready | Self::Failed | Self::Removing)
                 | (Self::Ready | Self::Failed, Self::Removing)
-                | (Self::Removing, Self::Removed)
+                | (Self::Removing, Self::Removed | Self::Failed)
         );
         allowed
             .then_some(next)
@@ -155,11 +155,15 @@ pub enum AgentStatus {
 }
 
 impl AgentStatus {
-    pub fn transition(self, next: Self) -> Result<Self, SandboxModelError> {
-        let live = matches!(
+    pub const fn is_live(self) -> bool {
+        matches!(
             self,
             Self::Starting | Self::Ready | Self::Working | Self::WaitingApproval | Self::Paused
-        );
+        )
+    }
+
+    pub fn transition(self, next: Self) -> Result<Self, SandboxModelError> {
+        let live = self.is_live();
         let allowed = matches!(
             (self, next),
             (Self::Starting, Self::Ready | Self::Failed)

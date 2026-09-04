@@ -64,6 +64,7 @@ pub enum SandboxEventKind {
     },
     WorkspaceReady {
         workspace_id: WorkspaceId,
+        resolved_commit: String,
     },
     WorkspaceFailed {
         workspace_id: WorkspaceId,

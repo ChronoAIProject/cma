@@ -13,6 +13,8 @@ mod service;
 mod status;
 pub mod store;
 mod workspace;
+mod workspace_service;
+mod workspace_work;
 mod worktree;
 
 pub use admin::{
@@ -35,7 +37,9 @@ pub use service::{
 };
 pub use status::{AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus};
 pub use store::{InMemorySandboxStore, Page, PageRequest, SandboxStoreError};
-pub use workspace::{Workspace, WorkspaceSource};
+pub use workspace::{Workspace, WorkspaceOrigin, WorkspaceSource};
+pub use workspace_service::{CreateWorkspace, WorkspaceService, WorkspaceServiceError};
+pub use workspace_work::{WorkspaceWorkLease, WorkspaceWorkState, WorkspaceWorkStep};
 pub use worktree::Worktree;
 
 #[cfg(test)]

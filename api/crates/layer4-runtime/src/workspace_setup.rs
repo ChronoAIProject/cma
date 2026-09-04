@@ -14,14 +14,20 @@ pub(crate) async fn run(
     safe_component(&request.name, "workspace name")?;
     let workspace = config.home.join(&request.name);
     require_workspace(&workspace)?;
+    crate::workspace_source::require_workspace_identity(&workspace, &request.workspace_id)?;
     let commands = run_shell_commands(
         &request.commands,
         &workspace,
         &config.process_env,
-        CommandLimits::setup(),
+        CommandLimits::install(request.timeout_seconds, request.output_limit_bytes)?,
     )
     .await?;
-    Ok(SetupReceipt { commands })
+    Ok(SetupReceipt {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
+        workspace_id: request.workspace_id.clone(),
+        commands,
+    })
 }
 
 fn require_workspace(path: &Path) -> Result<()> {

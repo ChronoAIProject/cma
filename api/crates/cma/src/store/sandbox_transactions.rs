@@ -1,7 +1,7 @@
 //! Cross-collection transactions required by the sandbox store contract.
 
 use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, SandboxTransactionStore};
-use layer2_core::sandbox::SandboxEvent;
+use layer2_core::sandbox::{SandboxEvent, SandboxEventKind, WorkspaceStatus};
 use mongodb::bson::doc;
 
 use super::agents::{agent_document, read_agent};
@@ -13,6 +13,7 @@ use super::sandbox_mongo::{
     CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::{read_worktree, worktree_document};
 
 enum ApplyError {
@@ -22,7 +23,8 @@ enum ApplyError {
 
 enum Receipt {
     Create(SandboxEvent),
-    Save(SandboxEvent),
+    SaveSandbox(SandboxEvent),
+    SaveWorkspace(SandboxEvent),
 }
 
 impl From<TransactionEventError> for ApplyError {
@@ -34,27 +36,58 @@ impl From<TransactionEventError> for ApplyError {
     }
 }
 
-fn validate_create(transaction: &SandboxTransaction) -> Result<(), SandboxStoreError> {
-    let SandboxTransaction::CreateWorktreeAndAgent {
-        worktree, agent, ..
-    } = transaction
-    else {
-        return Ok(());
-    };
-    if worktree.revision != 1
-        || agent.revision != 1
-        || agent.conversation.last_seq != 0
-        || agent.worktree_id != worktree.id
-        || agent.workspace_id != worktree.workspace_id
-        || agent.sandbox_id != worktree.sandbox_id
-        || agent.owner != worktree.owner
-        || worktree.agent_id.as_ref() != Some(&agent.id)
-    {
-        return Err(SandboxStoreError::InvalidTransaction(
-            "worktree and agent lineage or initial revisions disagree",
-        ));
+fn validate_transaction(transaction: &SandboxTransaction) -> Result<(), SandboxStoreError> {
+    match transaction {
+        SandboxTransaction::CreateWorktreeAndAgent {
+            worktree, agent, ..
+        } if worktree.revision != 1
+            || agent.revision != 1
+            || agent.conversation.last_seq != 0
+            || agent.worktree_id != worktree.id
+            || agent.workspace_id != worktree.workspace_id
+            || agent.sandbox_id != worktree.sandbox_id
+            || agent.owner != worktree.owner
+            || worktree.agent_id.as_ref() != Some(&agent.id) =>
+        {
+            Err(SandboxStoreError::InvalidTransaction(
+                "worktree and agent lineage or initial revisions disagree",
+            ))
+        }
+        SandboxTransaction::SaveWorkspaceAndAppend {
+            workspace, event, ..
+        } if !workspace_event_matches(workspace, event) => Err(
+            SandboxStoreError::InvalidTransaction("workspace state and event disagree"),
+        ),
+        _ => Ok(()),
     }
-    Ok(())
+}
+
+fn workspace_event_matches(
+    workspace: &layer2_core::sandbox::Workspace,
+    event: &SandboxEventKind,
+) -> bool {
+    match event {
+        SandboxEventKind::WorkspaceReady {
+            workspace_id,
+            resolved_commit,
+        } => {
+            workspace.status == WorkspaceStatus::Ready
+                && workspace_id == &workspace.id
+                && workspace.resolved_commit.as_ref() == Some(resolved_commit)
+        }
+        SandboxEventKind::WorkspaceFailed {
+            workspace_id,
+            failure,
+        } => {
+            workspace.status == WorkspaceStatus::Failed
+                && workspace_id == &workspace.id
+                && workspace.failed.as_ref() == Some(failure)
+        }
+        SandboxEventKind::WorkspaceRemoved { workspace_id } => {
+            workspace.status == WorkspaceStatus::Removed && workspace_id == &workspace.id
+        }
+        _ => false,
+    }
 }
 
 async fn apply_transaction(
@@ -178,7 +211,47 @@ async fn apply_transaction(
                 .session(session)
                 .await
                 .map_err(classify_sequence_write)?;
-            Ok(Receipt::Save(event))
+            Ok(Receipt::SaveSandbox(event))
+        }
+        SandboxTransaction::SaveWorkspaceAndAppend {
+            expected_revision,
+            workspace,
+            event_at,
+            event,
+        } => {
+            let next = expected_revision
+                .checked_add(1)
+                .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+            if workspace.revision != next {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+            let advanced = store
+                .workspaces
+                .update_one(
+                    doc! {
+                        "_id": workspace.id.as_str(),
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "revision": signed(*expected_revision, "expected workspace revision")
+                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                    },
+                    doc! { "$set": workspace_replacement_fields(workspace)
+                    .map_err(ApplyError::Domain)? },
+                )
+                .session(&mut *session)
+                .await
+                .map_err(classify_write)?;
+            if advanced.matched_count != 1 {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+            let event = append_in_transaction(
+                store,
+                session,
+                &workspace.sandbox_id,
+                event_at.clone(),
+                event.clone(),
+            )
+            .await?;
+            Ok(Receipt::SaveWorkspace(event))
         }
     }
 }
@@ -231,7 +304,7 @@ async fn reconcile(
                 && stored_agent.as_ref() == Some(agent.as_ref())
                 && reconcile_event(store, event).await?.is_some())
         }
-        (SandboxTransaction::SaveSandboxAndAppend { sandbox, .. }, Receipt::Save(event)) => {
+        (SandboxTransaction::SaveSandboxAndAppend { sandbox, .. }, Receipt::SaveSandbox(event)) => {
             let stored = store
                 .sandboxes
                 .find_one(doc! { "_id": sandbox.id.as_str() })
@@ -250,6 +323,21 @@ async fn reconcile(
                 .transpose()?;
             Ok(stored.as_ref() == Some(sandbox.as_ref()) && stored_event.as_ref() == Some(event))
         }
+        (
+            SandboxTransaction::SaveWorkspaceAndAppend { workspace, .. },
+            Receipt::SaveWorkspace(event),
+        ) => {
+            let stored = store
+                .workspaces
+                .find_one(doc! { "_id": workspace.id.as_str() })
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                .as_ref()
+                .map(read_workspace)
+                .transpose()?;
+            Ok(stored.as_ref() == Some(workspace.as_ref())
+                && reconcile_event(store, event).await?.is_some())
+        }
         _ => Err(SandboxStoreError::Corrupt(
             "transaction receipt kind does not match its command".into(),
         )),
@@ -259,7 +347,7 @@ async fn reconcile(
 #[async_trait::async_trait]
 impl SandboxTransactionStore for MongoSandboxStore {
     async fn commit(&self, transaction: SandboxTransaction) -> Result<(), SandboxStoreError> {
-        validate_create(&transaction)?;
+        validate_transaction(&transaction)?;
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
             if attempt > 0 {

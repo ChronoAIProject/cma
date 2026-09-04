@@ -1,0 +1,123 @@
+//! Workspace removal admission under a Mongo transaction.
+
+use futures_util::TryStreamExt as _;
+use layer2_core::ids::{SubjectId, WorkspaceId};
+use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::{Workspace, WorkspaceStatus, WorkspaceWorkStep};
+use mongodb::bson::doc;
+
+use super::agents::read_agent;
+use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+use super::workspace_admission::ApplyError;
+use super::workspaces::{read_workspace, workspace_replacement_fields};
+
+pub(super) async fn apply_removal(
+    store: &MongoSandboxStore,
+    id: &WorkspaceId,
+    owner: &SubjectId,
+    now: &str,
+    session: &mut mongodb::ClientSession,
+) -> Result<Workspace, ApplyError> {
+    let document = store
+        .workspaces
+        .find_one(doc! { "_id": id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let mut workspace = read_workspace(&document).map_err(ApplyError::Domain)?;
+    if &workspace.owner != owner {
+        return Err(ApplyError::Domain(SandboxStoreError::NotFound));
+    }
+    if matches!(
+        workspace.status,
+        WorkspaceStatus::Removing | WorkspaceStatus::Removed
+    ) {
+        return Ok(workspace);
+    }
+
+    let expected = workspace.revision;
+    lock_workspace(store, id, expected, session).await?;
+    reject_live_agents(store, id, session).await?;
+    workspace
+        .transition(WorkspaceStatus::Removing, now.to_string(), None)
+        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+    workspace
+        .work
+        .schedule(WorkspaceWorkStep::Remove, now.to_string());
+    let updated = store
+        .workspaces
+        .update_one(
+            workspace_revision_filter(id, expected)?,
+            doc! { "$set": workspace_replacement_fields(&workspace)
+            .map_err(ApplyError::Domain)? },
+        )
+        .session(session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if updated.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(workspace)
+}
+
+async fn lock_workspace(
+    store: &MongoSandboxStore,
+    id: &WorkspaceId,
+    revision: u64,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), ApplyError> {
+    let locked = store
+        .workspaces
+        .update_one(
+            workspace_revision_filter(id, revision)?,
+            doc! { "$inc": { "removal_lock_fence": 1_i64 } },
+        )
+        .session(session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if locked.matched_count == 1 {
+        Ok(())
+    } else {
+        Err(ApplyError::Domain(SandboxStoreError::Conflict))
+    }
+}
+
+async fn reject_live_agents(
+    store: &MongoSandboxStore,
+    id: &WorkspaceId,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), ApplyError> {
+    let mut cursor = store
+        .agents
+        .find(doc! { "workspace_id": id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    let documents = cursor
+        .stream(&mut *session)
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(ApplyError::Driver)?;
+    for document in documents {
+        let agent = read_agent(&document).map_err(ApplyError::Domain)?;
+        if agent.status.is_live() {
+            return Err(ApplyError::Domain(
+                SandboxStoreError::WorkspaceHasLiveAgents,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn workspace_revision_filter(
+    id: &WorkspaceId,
+    revision: u64,
+) -> Result<mongodb::bson::Document, ApplyError> {
+    Ok(doc! {
+        "_id": id.as_str(),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "revision": signed(revision, "workspace removal revision")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+    })
+}

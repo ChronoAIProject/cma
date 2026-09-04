@@ -5,7 +5,7 @@ use layer2_core::ids::{SandboxId, WorkspaceId};
 use layer2_core::sandbox::store::{
     Page, PageRequest, SandboxStoreError, WorkspaceStore, MAX_PAGE_SIZE,
 };
-use layer2_core::sandbox::Workspace;
+use layer2_core::sandbox::{Workspace, WorkspaceOrigin};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
@@ -16,16 +16,36 @@ use super::sandbox_mongo::{
 };
 
 pub(super) fn workspace_indexes() -> Vec<IndexModel> {
-    vec![IndexModel::builder()
-        .keys(doc! { "sandbox_id": 1, "name": 1 })
-        .options(
-            IndexOptions::builder()
-                .name("workspaces_sandbox_name_live".to_string())
-                .unique(true)
-                .partial_filter_expression(doc! { "removed_at": Bson::Null })
-                .build(),
-        )
-        .build()]
+    vec![
+        IndexModel::builder()
+            .keys(doc! { "sandbox_id": 1, "name": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("workspaces_sandbox_name_live".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "removed_at": Bson::Null })
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "sandbox_id": 1, "origin_index": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("workspaces_sandbox_profile_origin".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "origin_type": "sandbox_profile" })
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("workspaces_due_work".to_string())
+                    .build(),
+            )
+            .build(),
+    ]
 }
 
 pub(super) async fn ensure_indexes(
@@ -41,14 +61,21 @@ pub(super) async fn ensure_indexes(
 }
 
 pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, SandboxStoreError> {
+    let (origin_type, origin_index) = origin_fields(&workspace.origin);
+    let lease_expires_at = workspace.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": workspace.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "sandbox_id": workspace.sandbox_id.as_str(),
         "owner": workspace.owner.as_str(),
         "name": &workspace.name,
+        "origin_type": origin_type,
+        "origin_index": origin_index,
         "status": record_bson(&workspace.status).map_err(SandboxStoreError::Corrupt)?,
         "removed_at": nullable(workspace.removed_at.as_ref()),
+        "work_pending": workspace.work.step.is_pending(),
+        "work_ready_at": &workspace.work.ready_at,
+        "work_lease_expires_at": nullable(lease_expires_at),
         "revision": signed(workspace.revision, "workspace revision")
             .map_err(SandboxStoreError::Corrupt)?,
         "record": record_bson(workspace).map_err(SandboxStoreError::Corrupt)?,
@@ -58,14 +85,23 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
 pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxStoreError> {
     let workspace: Workspace = read_record(document).map_err(SandboxStoreError::Corrupt)?;
     let status = record_bson(&workspace.status).map_err(SandboxStoreError::Corrupt)?;
+    let (origin_type, origin_index) = origin_fields(&workspace.origin);
     let revision =
         signed(workspace.revision, "workspace revision").map_err(SandboxStoreError::Corrupt)?;
     if !string_field_matches(document, "_id", workspace.id.as_str())
         || !string_field_matches(document, "sandbox_id", workspace.sandbox_id.as_str())
         || !string_field_matches(document, "owner", workspace.owner.as_str())
         || !string_field_matches(document, "name", &workspace.name)
+        || !string_field_matches(document, "origin_type", origin_type)
+        || document.get("origin_index") != Some(&origin_index)
         || document.get("status") != Some(&status)
         || document.get("removed_at") != Some(&nullable(workspace.removed_at.as_ref()))
+        || document.get_bool("work_pending").ok() != Some(workspace.work.step.is_pending())
+        || !string_field_matches(document, "work_ready_at", &workspace.work.ready_at)
+        || document.get("work_lease_expires_at")
+            != Some(&nullable(
+                workspace.work.lease.as_ref().map(|lease| &lease.expires_at),
+            ))
         || !i64_field_matches(document, "revision", revision)
     {
         return Err(SandboxStoreError::Corrupt(
@@ -75,10 +111,21 @@ pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxSt
     Ok(workspace)
 }
 
-fn replacement_fields(workspace: &Workspace) -> Result<Document, SandboxStoreError> {
+pub(super) fn workspace_replacement_fields(
+    workspace: &Workspace,
+) -> Result<Document, SandboxStoreError> {
     let mut document = workspace_document(workspace)?;
     document.remove("_id");
     Ok(document)
+}
+
+fn origin_fields(origin: &WorkspaceOrigin) -> (&'static str, Bson) {
+    match origin {
+        WorkspaceOrigin::Manual => ("manual", Bson::Null),
+        WorkspaceOrigin::SandboxProfile { index } => {
+            ("sandbox_profile", Bson::Int64(i64::from(*index)))
+        }
+    }
 }
 
 async fn classify_miss(
@@ -152,7 +199,7 @@ impl WorkspaceStore for MongoSandboxStore {
                     "revision": signed(expected_revision, "expected workspace revision")
                         .map_err(|_| SandboxStoreError::Conflict)?,
                 },
-                doc! { "$set": replacement_fields(&workspace)? },
+                doc! { "$set": workspace_replacement_fields(&workspace)? },
             )
             .await
             .map_err(|error| {
@@ -217,14 +264,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_index_is_unique_only_for_unremoved_names() {
-        let index = workspace_indexes().remove(0);
-        assert_eq!(index.keys, doc! { "sandbox_id": 1, "name": 1 });
-        let options = index.options.unwrap();
+    fn workspace_indexes_cover_live_names_profile_slots_and_due_work() {
+        let indexes = workspace_indexes();
+        assert_eq!(indexes[0].keys, doc! { "sandbox_id": 1, "name": 1 });
+        let options = indexes[0].options.as_ref().unwrap();
         assert_eq!(options.unique, Some(true));
         assert_eq!(
-            options.partial_filter_expression,
-            Some(doc! { "removed_at": Bson::Null })
+            options.partial_filter_expression.as_ref(),
+            Some(&doc! { "removed_at": Bson::Null })
+        );
+        assert_eq!(indexes[1].keys, doc! { "sandbox_id": 1, "origin_index": 1 });
+        let options = indexes[1].options.as_ref().unwrap();
+        assert_eq!(options.unique, Some(true));
+        assert_eq!(
+            options.partial_filter_expression.as_ref(),
+            Some(&doc! { "origin_type": "sandbox_profile" })
+        );
+        assert_eq!(
+            indexes[2].keys,
+            doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
+        );
+        assert_eq!(
+            indexes[2].options.as_ref().unwrap().name.as_deref(),
+            Some("workspaces_due_work")
         );
     }
 }

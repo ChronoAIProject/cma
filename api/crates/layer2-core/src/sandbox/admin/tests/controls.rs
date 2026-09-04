@@ -1,4 +1,5 @@
 use super::*;
+use crate::profiles::ProfileVisibility;
 use crate::sandbox::SandboxWorkStep;
 
 #[tokio::test]

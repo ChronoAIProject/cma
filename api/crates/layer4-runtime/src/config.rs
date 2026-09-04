@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_BIND: &str = "0.0.0.0:9090";
 const DEFAULT_HOME: &str = "/home/cma";
+const DEFAULT_STATE_ROOT: &str = "/var/lib/cma-runtime";
 const DEFAULT_PATH: &str = "/home/cma/.local/bin:/usr/local/bin:/usr/bin:/bin";
 
 #[derive(Clone, Debug)]
@@ -18,6 +19,7 @@ pub(crate) struct RuntimeConfig {
     pub bind: SocketAddr,
     pub sandbox_id: String,
     pub home: PathBuf,
+    pub state_root: PathBuf,
     pub checkpoint_root: PathBuf,
     pub install_env: BTreeMap<String, String>,
     pub process_env: BTreeMap<String, String>,
@@ -41,6 +43,11 @@ impl RuntimeConfig {
             .filter(|value| !value.trim().is_empty() && value.len() <= 256)
             .cloned()
             .ok_or_else(|| "CHRONO_SANDBOX_ID must identify this runtime".to_string())?;
+        let state_root = process_env
+            .get("CHRONO_RUNTIME_STATE_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_STATE_ROOT).join(&sandbox_id));
+        validate_state_root(&state_root, &home)?;
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -82,6 +89,7 @@ impl RuntimeConfig {
             sandbox_id,
             checkpoint_root: std::env::temp_dir().join("cma-checkpoints"),
             home,
+            state_root,
             install_env,
             process_env,
             model_proxy,
@@ -102,6 +110,8 @@ impl RuntimeConfig {
     #[cfg(test)]
     pub(crate) fn for_test(home: PathBuf) -> Self {
         let home_text = home.to_string_lossy().into_owned();
+        let checkpoint_root = home.with_extension("checkpoints");
+        let state_root = home.with_extension("runtime-state");
         let env = BTreeMap::from([
             ("HOME".into(), home_text),
             ("PATH".into(), DEFAULT_PATH.into()),
@@ -110,8 +120,9 @@ impl RuntimeConfig {
         Self {
             bind: "127.0.0.1:0".parse().unwrap(),
             sandbox_id: "sandbox-test".into(),
-            checkpoint_root: home.with_extension("checkpoints"),
+            checkpoint_root,
             home,
+            state_root,
             install_env: env.clone(),
             process_env: env,
             model_proxy: None,
@@ -120,6 +131,25 @@ impl RuntimeConfig {
             allow_local_git: true,
         }
     }
+}
+
+fn validate_state_root(state_root: &Path, home: &Path) -> Result<(), String> {
+    if !state_root.is_absolute()
+        || state_root == Path::new("/")
+        || state_root.starts_with(home)
+        || state_root.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(
+            "CHRONO_RUNTIME_STATE_ROOT must be a normalized directory outside the sandbox home"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn validate_home(home: &Path) -> Result<(), String> {

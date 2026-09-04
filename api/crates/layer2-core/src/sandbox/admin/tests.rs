@@ -3,8 +3,8 @@ use std::sync::Mutex;
 use crate::profiles::store::{AgentProfileStore, InMemoryProfileStore};
 use crate::profiles::{
     AgentProfile, AgentProfileContent, AgentProfileSnapshot, AgentProvider, ModelAccess,
-    PermissionLevel, ProfileKind, SandboxProfileContent, SandboxProfileSnapshot, ThinkingEffort,
-    WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
+    PermissionLevel, ProfileKind, ProfileVisibility, SandboxProfileContent, SandboxProfileSnapshot,
+    ThinkingEffort, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
 };
 use crate::sandbox::store::{
     AgentStore, InMemorySandboxStore, SandboxEventStore, SandboxStore, WorkspaceStore,
@@ -138,6 +138,7 @@ fn workspace(sandbox: &Sandbox, id: &str) -> Workspace {
         id: WorkspaceId(id.into()),
         sandbox_id: sandbox.id.clone(),
         owner: sandbox.owner.clone(),
+        origin: super::super::WorkspaceOrigin::Manual,
         profile: WorkspaceProfileSnapshot {
             id: crate::WorkspaceProfileId("wkp_test".into()),
             revision: 2,
@@ -154,7 +155,12 @@ fn workspace(sandbox: &Sandbox, id: &str) -> Workspace {
         name: "project".into(),
         path: "/home/cma/project".into(),
         source: super::super::WorkspaceSource::Empty,
+        resolved_commit: Some("a".repeat(40)),
         status: WorkspaceStatus::Ready,
+        work: super::super::WorkspaceWorkState::new(
+            super::super::WorkspaceWorkStep::None,
+            NOW.into(),
+        ),
         created_at: NOW.into(),
         ready_at: Some(NOW.into()),
         failed: None,

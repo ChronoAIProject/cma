@@ -15,7 +15,8 @@ use super::sandbox_mongo::{
     string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
-const LIVE_STATUSES: &[&str] = &["starting", "ready", "working", "waiting_approval", "paused"];
+pub(super) const LIVE_STATUSES: &[&str] =
+    &["starting", "ready", "working", "waiting_approval", "paused"];
 
 pub(super) fn agent_indexes() -> Vec<IndexModel> {
     vec![
@@ -32,6 +33,14 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
             .options(
                 IndexOptions::builder()
                     .name("agents_sandbox".to_string())
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "workspace_id": 1, "status": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("agents_workspace_status".to_string())
                     .build(),
             )
             .build(),
@@ -255,8 +264,9 @@ mod tests {
             doc! { "owner": 1, "status": 1, "updated_at": -1 }
         );
         assert_eq!(indexes[1].keys, doc! { "sandbox_id": 1 });
-        assert_eq!(indexes[2].keys, doc! { "worktree_id": 1 });
-        let options = indexes[2].options.as_ref().unwrap();
+        assert_eq!(indexes[2].keys, doc! { "workspace_id": 1, "status": 1 });
+        assert_eq!(indexes[3].keys, doc! { "worktree_id": 1 });
+        let options = indexes[3].options.as_ref().unwrap();
         assert_eq!(options.unique, Some(true));
         assert_eq!(
             options.partial_filter_expression,

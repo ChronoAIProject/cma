@@ -17,6 +17,7 @@ pub(crate) async fn prepare(
     allow_local_git: bool,
     request: &WorkspaceRequest,
 ) -> Result<WorkspaceReceipt> {
+    safe_component(&request.workspace_id, "workspace id")?;
     safe_component(&request.name, "workspace name")?;
     ensure_home(home)?;
     let path = home.join(&request.name);
@@ -32,7 +33,7 @@ pub(crate) async fn prepare(
     }
 
     let git = GitRunner::new(allow_local_git);
-    let result = async {
+    let resolved_commit = async {
         match &request.source {
             WorkspaceSource::Clone { url, reference } => {
                 clone_workspace(
@@ -47,52 +48,88 @@ pub(crate) async fn prepare(
             }
             WorkspaceSource::Init => init_workspace(&path, &git).await?,
         }
-        install_worktree_exclude(&path)?;
+        install_worktree_metadata(&path, &request.workspace_id)?;
         resolve_commit(&path, &git, "HEAD").await
     }
-    .await;
-    let resolved_commit = match result {
-        Ok(commit) => commit,
-        Err(error) => {
-            let _ = std::fs::remove_dir_all(&path);
-            return Err(error);
-        }
-    };
+    .await?;
     Ok(WorkspaceReceipt {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
+        workspace_id: request.workspace_id.clone(),
         name: request.name.clone(),
         path: path.to_string_lossy().into_owned(),
         resolved_commit,
     })
 }
 
-pub(crate) fn remove(home: &Path, name: &str) -> Result<()> {
+/// Recover a preparation that completed before its response was durably
+/// recorded. Partial or non-Git directories deliberately fail closed.
+pub(crate) async fn inspect_prepared(
+    home: &Path,
+    allow_local_git: bool,
+    request: &WorkspaceRequest,
+) -> Result<Option<WorkspaceReceipt>> {
+    safe_component(&request.workspace_id, "workspace id")?;
+    safe_component(&request.name, "workspace name")?;
+    let path = home.join(&request.name);
+    if !path.exists() {
+        return Ok(None);
+    }
+    if !path_is_directory(&path) || !path_is_directory(&path.join(".git")) {
+        return Err(RuntimeError::rejected(
+            "workspace_prepare_indeterminate",
+            "workspace preparation stopped with a partial directory",
+        ));
+    }
+    require_workspace_identity(&path, &request.workspace_id)?;
+    let resolved_commit = resolve_commit(&path, &GitRunner::new(allow_local_git), "HEAD").await?;
+    Ok(Some(WorkspaceReceipt {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
+        workspace_id: request.workspace_id.clone(),
+        name: request.name.clone(),
+        path: path.to_string_lossy().into_owned(),
+        resolved_commit,
+    }))
+}
+
+pub(crate) fn remove(home: &Path, workspace_id: &str, name: &str) -> Result<()> {
+    safe_component(workspace_id, "workspace id")?;
     safe_component(name, "workspace name")?;
     let path = home.join(name);
-    if !path_is_directory(&path) {
+    let staging = home.join(".cma").join("preparing").join(workspace_id);
+    let quarantine = home.join(".cma").join("removing");
+    let tombstone = quarantine.join(workspace_id);
+    if path.exists() && staging.exists() {
         return Err(RuntimeError::rejected(
-            "workspace_not_found",
-            "workspace directory was not found",
+            "workspace_incarnation_ambiguous",
+            "workspace has both published and staged directories",
         ));
     }
-    if !path_is_directory(&path.join(".git")) {
-        return Err(RuntimeError::rejected(
-            "workspace_invalid",
-            "workspace is not a main Git checkout",
-        ));
+    if !tombstone.exists() && path.exists() {
+        if !path_is_directory(&path.join(".git")) {
+            return Err(RuntimeError::rejected(
+                "workspace_invalid",
+                "workspace is not a main Git checkout",
+            ));
+        }
+        require_workspace_identity(&path, workspace_id)?;
+        std::fs::create_dir_all(&quarantine)
+            .map_err(|error| io_error("create workspace removal quarantine", error))?;
+        std::fs::rename(&path, &tombstone)
+            .map_err(|error| io_error("quarantine workspace", error))?;
     }
-    let worktrees = path.join(".worktrees");
-    if worktrees.exists()
-        && std::fs::read_dir(&worktrees)
-            .map_err(|error| io_error("inspect workspace worktrees", error))?
-            .next()
-            .is_some()
-    {
-        return Err(RuntimeError::rejected(
-            "workspace_has_worktrees",
-            "workspace still contains worktrees",
-        ));
+    if !tombstone.exists() && staging.exists() {
+        std::fs::create_dir_all(&quarantine)
+            .map_err(|error| io_error("create workspace removal quarantine", error))?;
+        std::fs::rename(&staging, &tombstone)
+            .map_err(|error| io_error("quarantine staged workspace", error))?;
     }
-    std::fs::remove_dir_all(path).map_err(|error| io_error("remove workspace", error))
+    if tombstone.exists() {
+        std::fs::remove_dir_all(tombstone)
+            .map_err(|error| io_error("remove quarantined workspace", error))?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn resolve_commit(
@@ -192,8 +229,10 @@ fn validate_clone_url(value: &str, allow_local: bool) -> Result<()> {
         .unwrap_or_default();
     if url.scheme() != "https"
         || url.host_str() != Some("github.com")
+        || github_authority(value) != Some("github.com")
         || !url.username().is_empty()
         || url.password().is_some()
+        || url.port().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
         || segments.len() != 2
@@ -206,7 +245,14 @@ fn validate_clone_url(value: &str, allow_local: bool) -> Result<()> {
     Ok(())
 }
 
-fn install_worktree_exclude(repository: &Path) -> Result<()> {
+fn github_authority(value: &str) -> Option<&str> {
+    value
+        .strip_prefix("https://")?
+        .split(['/', '?', '#'])
+        .next()
+}
+
+fn install_worktree_metadata(repository: &Path, workspace_id: &str) -> Result<()> {
     let info = repository.join(".git/info");
     std::fs::create_dir_all(&info).map_err(|error| io_error("create Git info directory", error))?;
     let exclude = info.join("exclude");
@@ -221,6 +267,20 @@ fn install_worktree_exclude(repository: &Path) -> Result<()> {
         }
         contents.push_str(".worktrees/\n");
         std::fs::write(exclude, contents).map_err(|error| io_error("write Git excludes", error))?;
+    }
+    std::fs::write(info.join("cma-workspace-id"), workspace_id)
+        .map_err(|error| io_error("write workspace identity", error))?;
+    Ok(())
+}
+
+pub(crate) fn require_workspace_identity(repository: &Path, workspace_id: &str) -> Result<()> {
+    let stored = std::fs::read_to_string(repository.join(".git/info/cma-workspace-id"))
+        .map_err(|error| io_error("read workspace identity", error))?;
+    if stored != workspace_id {
+        return Err(RuntimeError::rejected(
+            "workspace_incarnation_mismatch",
+            "workspace path belongs to another workspace incarnation",
+        ));
     }
     Ok(())
 }

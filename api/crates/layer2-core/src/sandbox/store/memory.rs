@@ -34,6 +34,7 @@ macro_rules! save_record {
 }
 
 mod lifecycle;
+mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
@@ -324,6 +325,17 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                     *sandbox
                 )?;
                 append_sandbox_event(&mut candidate, &id, event_at, event)?;
+            }
+            SandboxTransaction::SaveWorkspaceAndAppend {
+                expected_revision,
+                workspace,
+                event_at,
+                event,
+            } => {
+                let id = workspace.id.clone();
+                let sandbox_id = workspace.sandbox_id.clone();
+                save_record!(candidate, workspaces, id, expected_revision, *workspace)?;
+                append_sandbox_event(&mut candidate, &sandbox_id, event_at, event)?;
             }
         }
         *state = candidate;

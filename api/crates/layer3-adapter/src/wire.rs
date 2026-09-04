@@ -8,16 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AgentHomePlan, AgentLaunch, AgentSlot, CheckpointReceipt, CheckpointRequest,
     ConversationSnapshot, CredentialFrame, InstallReceipt, InstallRequest, ResourceReading,
-    RestoreRequest, SetupReceipt, WorkspaceReceipt, WorkspaceRequest, WorkspaceSetupRequest,
-    WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    RestoreRequest, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
+    WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
-
-/// A stable reference to one workspace.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkspaceRef {
-    pub name: String,
-}
 
 /// A stable reference to one agent slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,7 +86,7 @@ pub enum RequestFrame {
     Install(InstallRequest),
     PrepareWorkspace(WorkspaceRequest),
     WorkspaceSetup(WorkspaceSetupRequest),
-    RemoveWorkspace(WorkspaceRef),
+    RemoveWorkspace(WorkspaceRemoveRequest),
     AddWorktree(WorktreeRequest),
     RemoveWorktree(WorktreeRef),
     MaterializeAgentHome(AgentHomePlan),
@@ -134,7 +127,7 @@ pub enum ResponseFrame {
     Install(InstallReceipt),
     PrepareWorkspace(WorkspaceReceipt),
     WorkspaceSetup(SetupReceipt),
-    RemoveWorkspace(Acknowledgement),
+    RemoveWorkspace(WorkspaceRemoveReceipt),
     AddWorktree(WorktreeReceipt),
     RemoveWorktree(Acknowledgement),
     MaterializeAgentHome(Acknowledgement),

@@ -45,7 +45,10 @@ mod schema;
 mod schema_mongo_integration_tests;
 pub mod settings;
 mod trigger_definitions;
+mod workspace_admission;
 mod workspace_profiles;
+mod workspace_removal;
+mod workspace_worker_store;
 mod workspaces;
 mod worktrees;
 

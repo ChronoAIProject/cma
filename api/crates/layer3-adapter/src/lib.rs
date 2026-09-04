@@ -47,6 +47,7 @@ pub use runtime::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
 };
 pub use workspace::{
-    SetupReceipt, WorkspaceReceipt, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource,
-    WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
+    WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
+    WorktreeRequest,
 };

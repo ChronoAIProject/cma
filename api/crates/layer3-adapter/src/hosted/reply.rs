@@ -3,8 +3,7 @@ use crate::AdapterError;
 
 pub(super) fn expect_ack(response: ResponseFrame) -> crate::Result<()> {
     let acknowledgement = match response {
-        ResponseFrame::RemoveWorkspace(value)
-        | ResponseFrame::RemoveWorktree(value)
+        ResponseFrame::RemoveWorktree(value)
         | ResponseFrame::MaterializeAgentHome(value)
         | ResponseFrame::CloseAgent(value)
         | ResponseFrame::Restore(value) => value,

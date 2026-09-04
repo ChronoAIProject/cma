@@ -45,14 +45,6 @@ impl CommandLimits {
             output_limit: output_limit as usize,
         })
     }
-
-    pub(crate) fn setup() -> Self {
-        Self {
-            timeout: Duration::from_secs(MAX_COMMAND_SECONDS),
-            total_timeout: Duration::from_secs(TOTAL_COMMAND_SECONDS),
-            output_limit: MAX_OUTPUT_BYTES as usize,
-        }
-    }
 }
 
 #[derive(Debug)]
