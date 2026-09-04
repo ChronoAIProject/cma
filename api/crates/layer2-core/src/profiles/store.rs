@@ -20,6 +20,10 @@ pub enum ProfileStoreError {
     Conflict,
     #[error("profile reference is unavailable")]
     ReferenceUnavailable,
+    #[error("profile store unavailable: {0}")]
+    Unavailable(String),
+    #[error("stored profile data is not usable: {0}")]
+    Corrupt(String),
     #[error(transparent)]
     Validation(#[from] ProfileError),
 }

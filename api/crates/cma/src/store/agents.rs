@@ -1,0 +1,266 @@
+//! Mongo persistence for agent aggregates.
+
+use futures_util::TryStreamExt;
+use layer2_core::ids::{AgentId, SubjectId};
+use layer2_core::sandbox::store::{
+    AgentStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
+};
+use layer2_core::sandbox::Agent;
+use mongodb::bson::{doc, Document};
+use mongodb::options::IndexOptions;
+use mongodb::{Collection, IndexModel};
+
+use super::sandbox_mongo::{
+    i64_field_matches, is_duplicate_key, read_record, record_bson, require_version, signed,
+    string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+};
+
+const LIVE_STATUSES: &[&str] = &["starting", "ready", "working", "waiting_approval", "paused"];
+
+pub(super) fn agent_indexes() -> Vec<IndexModel> {
+    vec![
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "status": 1, "updated_at": -1 })
+            .options(
+                IndexOptions::builder()
+                    .name("agents_owner_status_updated".to_string())
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "sandbox_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("agents_sandbox".to_string())
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "worktree_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("agents_live_worktree".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "status": { "$in": LIVE_STATUSES } })
+                    .build(),
+            )
+            .build(),
+    ]
+}
+
+pub(super) async fn ensure_indexes(
+    collection: &Collection<Document>,
+) -> Result<(), layer2_core::StoreError> {
+    collection
+        .create_indexes(agent_indexes())
+        .await
+        .map(|_| ())
+        .map_err(|error| layer2_core::StoreError::Unavailable(format!("agent indexes: {error}")))
+}
+
+pub(super) fn agent_updated_at(agent: &Agent) -> &str {
+    &agent.updated_at
+}
+
+pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreError> {
+    Ok(doc! {
+        "_id": agent.id.as_str(),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "owner": agent.owner.as_str(),
+        "sandbox_id": agent.sandbox_id.as_str(),
+        "workspace_id": agent.workspace_id.as_str(),
+        "worktree_id": agent.worktree_id.as_str(),
+        "status": record_bson(&agent.status).map_err(SandboxStoreError::Corrupt)?,
+        "updated_at": agent_updated_at(agent),
+        "revision": signed(agent.revision, "agent revision")
+            .map_err(SandboxStoreError::Corrupt)?,
+        "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
+            .map_err(SandboxStoreError::Corrupt)?,
+        "record": record_bson(agent).map_err(SandboxStoreError::Corrupt)?,
+    })
+}
+
+pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
+    let agent: Agent = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    let status = record_bson(&agent.status).map_err(SandboxStoreError::Corrupt)?;
+    let revision = signed(agent.revision, "agent revision").map_err(SandboxStoreError::Corrupt)?;
+    let last_seq = signed(agent.conversation.last_seq, "agent log sequence")
+        .map_err(SandboxStoreError::Corrupt)?;
+    if !string_field_matches(document, "_id", agent.id.as_str())
+        || !string_field_matches(document, "owner", agent.owner.as_str())
+        || !string_field_matches(document, "sandbox_id", agent.sandbox_id.as_str())
+        || !string_field_matches(document, "workspace_id", agent.workspace_id.as_str())
+        || !string_field_matches(document, "worktree_id", agent.worktree_id.as_str())
+        || document.get("status") != Some(&status)
+        || !string_field_matches(document, "updated_at", agent_updated_at(&agent))
+        || !i64_field_matches(document, "revision", revision)
+        || !i64_field_matches(document, "last_seq", last_seq)
+    {
+        return Err(SandboxStoreError::Corrupt(
+            "agent query fields disagree with its aggregate".into(),
+        ));
+    }
+    Ok(agent)
+}
+
+fn replacement_fields(agent: &Agent) -> Result<Document, SandboxStoreError> {
+    let mut document = agent_document(agent)?;
+    document.remove("_id");
+    document.remove("last_seq");
+    Ok(document)
+}
+
+async fn classify_miss(
+    collection: &Collection<Document>,
+    id: &AgentId,
+) -> Result<SandboxStoreError, SandboxStoreError> {
+    match collection
+        .find_one(doc! { "_id": id.as_str() })
+        .projection(doc! { "document_schema_version": 1 })
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+    {
+        None => Ok(SandboxStoreError::NotFound),
+        Some(document) => {
+            require_version(&document).map_err(SandboxStoreError::Corrupt)?;
+            Ok(SandboxStoreError::Conflict)
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentStore for MongoSandboxStore {
+    async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
+        if agent.revision != 1 {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if agent.conversation.last_seq != 0 {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        self.agents
+            .insert_one(agent_document(&agent)?)
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                if is_duplicate_key(&error) {
+                    SandboxStoreError::Duplicate
+                } else {
+                    SandboxStoreError::Unavailable(error.to_string())
+                }
+            })
+    }
+
+    async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError> {
+        self.agents
+            .find_one(doc! { "_id": id.as_str() })
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .as_ref()
+            .map(read_agent)
+            .transpose()
+    }
+
+    async fn save_agent(
+        &self,
+        expected_revision: u64,
+        agent: Agent,
+    ) -> Result<(), SandboxStoreError> {
+        if agent.revision
+            != expected_revision
+                .checked_add(1)
+                .ok_or(SandboxStoreError::Conflict)?
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let result = self
+            .agents
+            .update_one(
+                doc! {
+                    "_id": agent.id.as_str(),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "revision": signed(expected_revision, "expected agent revision")
+                        .map_err(|_| SandboxStoreError::Conflict)?,
+                    "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
+                        .map_err(SandboxStoreError::Corrupt)?,
+                },
+                doc! { "$set": replacement_fields(&agent)? },
+            )
+            .await
+            .map_err(|error| {
+                if is_duplicate_key(&error) {
+                    SandboxStoreError::Duplicate
+                } else {
+                    SandboxStoreError::Unavailable(error.to_string())
+                }
+            })?;
+        if result.matched_count == 1 {
+            Ok(())
+        } else {
+            Err(classify_miss(&self.agents, &agent.id).await?)
+        }
+    }
+
+    async fn list_agents(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<Agent>, SandboxStoreError> {
+        if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        let mut filter = doc! { "owner": owner.as_str() };
+        if let Some(cursor) = &page.cursor {
+            filter.insert("_id", doc! { "$gt": cursor });
+        }
+        let mut cursor = self
+            .agents
+            .find(filter)
+            .sort(doc! { "_id": 1 })
+            .limit(i64::from(page.limit) + 1)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        let mut items = Vec::new();
+        while let Some(document) = cursor
+            .try_next()
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        {
+            items.push(read_agent(&document)?);
+        }
+        let has_more = items.len() > usize::from(page.limit);
+        if has_more {
+            items.pop();
+        }
+        let next = has_more.then(|| {
+            items
+                .last()
+                .expect("a bounded page has a last item")
+                .id
+                .0
+                .clone()
+        });
+        Ok(Page { items, next })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_indexes_include_the_live_worktree_constraint() {
+        let indexes = agent_indexes();
+        assert_eq!(
+            indexes[0].keys,
+            doc! { "owner": 1, "status": 1, "updated_at": -1 }
+        );
+        assert_eq!(indexes[1].keys, doc! { "sandbox_id": 1 });
+        assert_eq!(indexes[2].keys, doc! { "worktree_id": 1 });
+        let options = indexes[2].options.as_ref().unwrap();
+        assert_eq!(options.unique, Some(true));
+        assert_eq!(
+            options.partial_filter_expression,
+            Some(doc! { "status": { "$in": LIVE_STATUSES } })
+        );
+    }
+}

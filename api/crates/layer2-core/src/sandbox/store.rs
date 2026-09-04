@@ -56,6 +56,10 @@ pub enum SandboxStoreError {
     InvalidPage,
     #[error("transaction invariant failed: {0}")]
     InvalidTransaction(&'static str),
+    #[error("sandbox store unavailable: {0}")]
+    Unavailable(String),
+    #[error("stored sandbox data is not usable: {0}")]
+    Corrupt(String),
 }
 
 #[async_trait]
