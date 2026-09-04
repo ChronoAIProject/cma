@@ -23,6 +23,11 @@ jobs:
         run: .github/scripts/check-file-size-tests.sh
       - name: Source files stay within size limits
         run: .github/scripts/check-file-size.sh
+      # The real-tree invocation lands with #809, once its configuration code
+      # and manifests agree. The checker stays strict; only its fixtures run in
+      # this independent prerequisite commit.
+      - name: Configuration key validator regressions
+        run: .github/scripts/check-config-keys-tests.sh
       - name: Release notes validator regressions
         run: .github/release-notes-tests.sh
       - name: Release planning tests
