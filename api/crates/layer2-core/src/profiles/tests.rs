@@ -246,6 +246,26 @@ async fn revisions_are_snapshots_and_later_draft_edits_do_not_change_them() {
 }
 
 #[tokio::test]
+async fn duplicate_profile_ids_do_not_replace_existing_records() {
+    let store = InMemoryProfileStore::default();
+    let original = agent_profile("agp_one", "owner", ProfileVisibility::Private);
+    store.create_agent_profile(original.clone()).await.unwrap();
+
+    let mut duplicate = original.clone();
+    duplicate.name = "Replacement".into();
+    assert_eq!(
+        store.create_agent_profile(duplicate).await.unwrap_err(),
+        ProfileStoreError::Duplicate
+    );
+
+    let stored = store
+        .list_agent_profiles(Some(&original.owner), false, &ProfilePageRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(stored.items, vec![original]);
+}
+
+#[tokio::test]
 async fn revision_pages_are_bounded_and_newest_first() {
     let store = InMemoryProfileStore::default();
     let mut profile = agent_profile("agp_one", "owner", ProfileVisibility::Private);
