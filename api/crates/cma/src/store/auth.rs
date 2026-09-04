@@ -82,7 +82,7 @@ impl MongoAuthStore {
         encryption_key: &AuthEncryptionKey,
     ) -> Result<Self, StoreError> {
         let database = client.database(database);
-        schema::refuse_unknown_versions(&database, AUTH_COLLECTIONS).await?;
+        schema::initialize_collections(&database, AUTH_COLLECTIONS).await?;
         let store = Self {
             browser_logins: majority_collection(&database, BROWSER_LOGINS),
             login_attempts: majority_collection(&database, LOGIN_ATTEMPTS),

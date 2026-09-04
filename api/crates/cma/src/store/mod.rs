@@ -34,6 +34,7 @@ mod schema;
 #[cfg(test)]
 mod schema_mongo_integration_tests;
 pub mod settings;
+mod trigger_definitions;
 mod workspace_profiles;
 mod workspaces;
 mod worktrees;
@@ -46,3 +47,4 @@ pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
 pub use settings::MongoPlatformSettingsStore;
+pub use trigger_definitions::MongoTriggerDefinitionStore;

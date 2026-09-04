@@ -56,7 +56,7 @@ pub struct MongoUserDirectoryStore {
 impl MongoUserDirectoryStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let database = client.database(database);
-        schema::refuse_unknown_versions(&database, &[USERS]).await?;
+        schema::initialize_collections(&database, &[USERS]).await?;
         let store = Self {
             users: majority_collection(&database, USERS),
         };

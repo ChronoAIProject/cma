@@ -67,6 +67,10 @@ pub enum TriggerStoreError {
     Reference(#[from] TriggerReferenceError),
     #[error("profile is referenced by published triggers: {trigger_ids:?}")]
     ProfileReferenced { trigger_ids: Vec<TriggerId> },
+    #[error("trigger store unavailable: {0}")]
+    Unavailable(String),
+    #[error("stored trigger data is not usable: {0}")]
+    Corrupt(String),
     #[error(transparent)]
     Validation(#[from] TriggerError),
 }
@@ -79,6 +83,8 @@ impl TriggerStoreError {
             Self::Conflict { .. } => "trigger_draft_changed",
             Self::Reference(error) => error.code(),
             Self::ProfileReferenced { .. } => "profile_referenced_by_published_trigger",
+            Self::Unavailable(_) => "trigger_store_unavailable",
+            Self::Corrupt(_) => "stored_trigger_corrupt",
             Self::Validation(error) => error.code,
         }
     }

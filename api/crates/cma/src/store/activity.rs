@@ -56,7 +56,7 @@ impl MongoActivityStore {
         retention: Duration,
     ) -> Result<Self, StoreError> {
         let database = client.database(database);
-        schema::refuse_unknown_versions(&database, &[ACTIVITY]).await?;
+        schema::initialize_collections(&database, &[ACTIVITY]).await?;
         let store = Self {
             entries: majority_collection(&database, ACTIVITY),
             database,
