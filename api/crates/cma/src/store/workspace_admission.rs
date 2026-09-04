@@ -210,6 +210,11 @@ async fn apply_admission(
     candidate
         .validate_for_admission(&sandbox, admission.kind.allowed_status())
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+    if !candidate.origin_matches_sandbox_profile(&sandbox) {
+        return Err(ApplyError::Domain(
+            SandboxStoreError::WorkspaceOriginConflict,
+        ));
+    }
 
     if let WorkspaceOrigin::SandboxProfile { index } = candidate.origin {
         if let Some(document) = store
