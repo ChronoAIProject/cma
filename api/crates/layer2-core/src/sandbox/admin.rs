@@ -245,6 +245,9 @@ impl OperatorError {
             | SandboxStoreError::WorkspaceLimitReached { .. }
             | SandboxStoreError::WorkspaceHasLiveAgents
             | SandboxStoreError::WorkspaceOriginConflict
+            | SandboxStoreError::WorkspaceNotReady
+            | SandboxStoreError::AgentLimitReached { .. }
+            | SandboxStoreError::AgentCreationConflict
             | SandboxStoreError::InvalidTransaction(_) => Self::InvalidState(error.to_string()),
             SandboxStoreError::Unavailable(_) | SandboxStoreError::Corrupt(_) => {
                 Self::Unavailable(error.to_string())

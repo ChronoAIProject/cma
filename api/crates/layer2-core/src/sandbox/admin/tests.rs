@@ -178,6 +178,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
         sandbox_id: sandbox.id.clone(),
         owner: sandbox.owner.clone(),
         creation_key: format!("create-{id}"),
+        creation_fingerprint: "d".repeat(64),
         profile: AgentProfileSnapshot {
             id: crate::AgentProfileId("agp_test".into()),
             revision: 3,

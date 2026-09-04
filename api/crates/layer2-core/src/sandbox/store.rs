@@ -10,6 +10,11 @@ use super::{
     Workspace, Worktree,
 };
 
+mod agent_admission;
+pub use agent_admission::{
+    AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
+};
+
 pub const MAX_PAGE_SIZE: u16 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +69,12 @@ pub enum SandboxStoreError {
     WorkspaceHasLiveAgents,
     #[error("workspace provisioning origin is already occupied")]
     WorkspaceOriginConflict,
+    #[error("workspace is not ready for agent admission")]
+    WorkspaceNotReady,
+    #[error("agent limit reached: {live} of {limit}")]
+    AgentLimitReached { limit: u8, live: u8 },
+    #[error("agent creation key is already bound to another request")]
+    AgentCreationConflict,
     #[error("invalid page request")]
     InvalidPage,
     #[error("transaction invariant failed: {0}")]
@@ -338,6 +349,21 @@ impl<T> WorkspaceServiceStore for T where
 
 pub trait WorkspaceLifecycleStore:
     SandboxStore + WorkspaceStore + WorkspaceWorkerStore + SandboxTransactionStore
+{
+}
+
+pub trait AgentServiceStore:
+    SandboxStore + WorkspaceStore + WorktreeStore + AgentStore + AgentAdmissionStore + AgentLogStore
+{
+}
+
+impl<T> AgentServiceStore for T where
+    T: SandboxStore
+        + WorkspaceStore
+        + WorktreeStore
+        + AgentStore
+        + AgentAdmissionStore
+        + AgentLogStore
 {
 }
 

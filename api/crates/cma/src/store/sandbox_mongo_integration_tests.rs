@@ -240,6 +240,7 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         sandbox_id: sandbox_id.clone(),
         owner: worktree.owner.clone(),
         creation_key: "create-atomic".into(),
+        creation_fingerprint: "d".repeat(64),
         profile: AgentProfileSnapshot {
             id: AgentProfileId("agp_test".into()),
             revision: 1,

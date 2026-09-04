@@ -33,6 +33,9 @@ macro_rules! save_record {
     }};
 }
 
+mod agent_admission;
+#[cfg(test)]
+mod agent_admission_tests;
 mod lifecycle;
 mod workspace_lifecycle;
 
