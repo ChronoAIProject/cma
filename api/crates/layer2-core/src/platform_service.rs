@@ -1,10 +1,16 @@
-//! Authorization and optimistic-concurrency boundary for platform settings.
+//! Authorization, auditing, and optimistic concurrency for platform settings.
 
 use std::sync::Arc;
 
-use crate::{Caller, Capability, CoreError, PlatformSettings, StoreError};
+use crate::{
+    ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget, Caller,
+    Capability, CoreError, DetailKey, PlatformSettings, StoreError,
+};
 
-/// Settings paired with their durable optimistic-concurrency revision.
+const TRIGGER_CAS_ATTEMPTS: usize = 4;
+const SETTINGS_TARGET: &str = "platform_settings";
+const TRIGGERS_TARGET: &str = "triggers";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredPlatformSettings {
     pub revision: u64,
@@ -23,19 +29,35 @@ pub trait PlatformSettingsStore: Send + Sync {
 
 pub struct PlatformSettingsService {
     store: Arc<dyn PlatformSettingsStore>,
+    activity: Arc<ActivityService>,
 }
 
 impl PlatformSettingsService {
-    pub fn new(store: Arc<dyn PlatformSettingsStore>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<dyn PlatformSettingsStore>, activity: Arc<ActivityService>) -> Self {
+        Self { store, activity }
+    }
+
+    /// Read policy for another application service, without opening an
+    /// unauthenticated operator entry point.
+    pub async fn current(&self) -> Result<StoredPlatformSettings, CoreError> {
+        self.store.read().await.map_err(store_failed)
     }
 
     pub async fn read(&self, caller: &Caller) -> Result<StoredPlatformSettings, CoreError> {
         caller.require(Capability::ConfigurePlatform)?;
-        self.store.read().await.map_err(store_failed)
+        let stored = self.current().await?;
+        self.audit(
+            caller,
+            ActivityAction::Read,
+            SETTINGS_TARGET,
+            stored.revision,
+            None,
+        )
+        .await?;
+        Ok(stored)
     }
 
-    pub async fn replace(
+    pub async fn configure_platform(
         &self,
         caller: &Caller,
         expected_revision: u64,
@@ -43,10 +65,102 @@ impl PlatformSettingsService {
     ) -> Result<StoredPlatformSettings, CoreError> {
         caller.require(Capability::ConfigurePlatform)?;
         settings.validate()?;
-        self.store
+        let stored = self
+            .store
             .replace(expected_revision, settings)
             .await
-            .map_err(store_failed)
+            .map_err(store_failed)?;
+        self.audit(
+            caller,
+            ActivityAction::Configure,
+            SETTINGS_TARGET,
+            stored.revision,
+            Some((DetailKey::Setting, SETTINGS_TARGET)),
+        )
+        .await?;
+        Ok(stored)
+    }
+
+    pub async fn pause_triggers(
+        &self,
+        caller: &Caller,
+    ) -> Result<StoredPlatformSettings, CoreError> {
+        caller.require(Capability::ConfigurePlatform)?;
+        self.set_trigger_pause(caller, true).await
+    }
+
+    pub async fn resume_triggers(
+        &self,
+        caller: &Caller,
+    ) -> Result<StoredPlatformSettings, CoreError> {
+        caller.require(Capability::ConfigurePlatform)?;
+        self.set_trigger_pause(caller, false).await
+    }
+
+    async fn set_trigger_pause(
+        &self,
+        caller: &Caller,
+        paused: bool,
+    ) -> Result<StoredPlatformSettings, CoreError> {
+        for _ in 0..TRIGGER_CAS_ATTEMPTS {
+            let current = self.current().await?;
+            if current.settings.triggers.orchestration_paused == paused {
+                self.audit_trigger_control(caller, &current, paused).await?;
+                return Ok(current);
+            }
+            let mut settings = current.settings;
+            settings.triggers.orchestration_paused = paused;
+            match self.store.replace(current.revision, &settings).await {
+                Ok(stored) => {
+                    self.audit_trigger_control(caller, &stored, paused).await?;
+                    return Ok(stored);
+                }
+                Err(StoreError::RevisionConflict { .. }) => continue,
+                Err(error) => return Err(store_failed(error)),
+            }
+        }
+        Err(CoreError::InvalidState(
+            "platform settings kept changing while trigger orchestration was updated".into(),
+        ))
+    }
+
+    async fn audit_trigger_control(
+        &self,
+        caller: &Caller,
+        stored: &StoredPlatformSettings,
+        paused: bool,
+    ) -> Result<(), CoreError> {
+        self.audit(
+            caller,
+            ActivityAction::Configure,
+            TRIGGERS_TARGET,
+            stored.revision,
+            Some((DetailKey::Status, if paused { "paused" } else { "running" })),
+        )
+        .await
+    }
+
+    async fn audit(
+        &self,
+        caller: &Caller,
+        action: ActivityAction,
+        target: &str,
+        revision: u64,
+        detail: Option<(DetailKey, &str)>,
+    ) -> Result<(), CoreError> {
+        let mut record = ActivityRecord::new(action, ActivityOutcome::Succeeded)
+            .by(caller.subject.clone())
+            .on(ActivityTarget::Resource(target.into()));
+        record
+            .detail
+            .record(DetailKey::Revision, revision.to_string());
+        if let Some((key, value)) = detail {
+            record.detail.record(key, value);
+        }
+        self.activity
+            .record(&record)
+            .await
+            .map_err(|error| CoreError::RuntimeUnavailable(error.to_string()))
     }
 }
 
@@ -60,67 +174,4 @@ fn store_failed(error: StoreError) -> CoreError {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use super::*;
-    use crate::{Authorization, SubjectId};
-
-    struct MemoryStore(Mutex<StoredPlatformSettings>);
-
-    #[async_trait::async_trait]
-    impl PlatformSettingsStore for MemoryStore {
-        async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
-            Ok(self.0.lock().unwrap().clone())
-        }
-
-        async fn replace(
-            &self,
-            expected_revision: u64,
-            settings: &PlatformSettings,
-        ) -> Result<StoredPlatformSettings, StoreError> {
-            let mut stored = self.0.lock().unwrap();
-            if stored.revision != expected_revision {
-                return Err(StoreError::RevisionConflict {
-                    expected: expected_revision,
-                    actual: stored.revision,
-                });
-            }
-            *stored = StoredPlatformSettings {
-                revision: expected_revision + 1,
-                settings: settings.clone(),
-            };
-            Ok(stored.clone())
-        }
-    }
-
-    fn service() -> PlatformSettingsService {
-        PlatformSettingsService::new(Arc::new(MemoryStore(Mutex::new(StoredPlatformSettings {
-            revision: 0,
-            settings: PlatformSettings::default(),
-        }))))
-    }
-
-    #[tokio::test]
-    async fn requires_platform_authority_and_preserves_revision_cas() {
-        let denied = Caller::new(SubjectId::new("subject-a"), Authorization::none());
-        assert_eq!(service().read(&denied).await, Err(CoreError::Forbidden));
-
-        let caller = Caller::new(
-            SubjectId::new("subject-a"),
-            Authorization::new([Capability::ConfigurePlatform]),
-        );
-        let service = service();
-        let replaced = service
-            .replace(&caller, 0, &PlatformSettings::default())
-            .await
-            .unwrap();
-        assert_eq!(replaced.revision, 1);
-        assert!(matches!(
-            service
-                .replace(&caller, 0, &PlatformSettings::default())
-                .await,
-            Err(CoreError::InvalidState(_))
-        ));
-    }
-}
+mod tests;

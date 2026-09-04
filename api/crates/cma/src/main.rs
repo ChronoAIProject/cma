@@ -78,7 +78,7 @@ async fn serve() -> Result<(), String> {
     // here already enforces indexes and schema compatibility before serving.
     let _sandbox_model_store = stores.sandbox_model.clone();
     let _sandbox_profile_store = stores.sandbox_profiles.clone();
-    let _settings = PlatformSettingsService::new(stores.settings.clone());
+    let _settings = PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity));
     let _operations: Arc<dyn OperationStore> = stores.operations.clone();
     let recorder = ActivityRecorder::new(Arc::clone(&activity));
     let auth = AuthState::with_store_and_nyxid_public_url(
