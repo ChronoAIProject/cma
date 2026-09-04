@@ -92,10 +92,10 @@ pub(crate) fn reading_from(sample: layer3_adapter::ResourceSample) -> ResourceRe
 /// Fill limits the runtime cannot observe from the reservation CMA provisioned.
 ///
 /// gVisor exposes the guest's own unlimited cgroup v1 controllers even when the
-/// Kubernetes pod has finite limits. A session-stated size is still exact: the
-/// same value is retained on the session and handed to the provider. Prefer an
-/// observed cgroup limit whenever one exists, and use that declaration only for
-/// an absent limit.
+/// Kubernetes pod has finite limits. A declared size is still exact: ordinary
+/// sessions retain it themselves, while chat threads borrow the immutable size
+/// pinned by their shared host. Prefer an observed cgroup limit whenever one
+/// exists, and use that declaration only for an absent limit.
 pub(crate) fn with_declared_ceiling(
     mut reading: ResourceReading,
     declared: Option<SessionSize>,
@@ -111,6 +111,48 @@ pub(crate) fn with_declared_ceiling(
         );
     }
     reading
+}
+
+/// Resolve the reservation that owns one live entry without holding its lock
+/// across the chat-host store read.
+async fn declared_ceiling(service: &SessionService, id: &SessionId) -> Option<SessionSize> {
+    let (session_size, chat_host_id) = {
+        let entries = service.entries.read().await;
+        let entry = entries.get(id)?;
+        (
+            entry.session.options.size,
+            entry
+                .chat_origin
+                .as_ref()
+                .map(|origin| origin.host_id.clone()),
+        )
+    };
+    if session_size.is_some() {
+        return session_size;
+    }
+
+    let host_id = chat_host_id?;
+    let hosts = service.chat_hosts.as_ref()?;
+    match hosts.get(&host_id).await {
+        Ok(Some(host)) => host.pinned_settings.settings.host.size,
+        Ok(None) => {
+            tracing::warn!(
+                session_id = %id,
+                chat_host = %host_id,
+                "resource limits could not find the chat host reservation"
+            );
+            None
+        }
+        Err(error) => {
+            tracing::warn!(
+                session_id = %id,
+                chat_host = %host_id,
+                %error,
+                "resource limits could not read the chat host reservation"
+            );
+            None
+        }
+    }
 }
 
 fn occupancy(used: u64, limit: Option<u64>) -> (Option<u64>, Option<u16>) {
@@ -172,12 +214,7 @@ pub(crate) fn spawn_resource_watch(
     handle: RuntimeHandle,
 ) {
     tokio::spawn(async move {
-        let declared_ceiling = service
-            .entries
-            .read()
-            .await
-            .get(&id)
-            .and_then(|entry| entry.session.options.size);
+        let declared_ceiling = declared_ceiling(&service, &id).await;
         let (tx, mut rx) = mpsc::channel(RESOURCE_BUFFER);
         match adapter.watch_resources(&handle, tx).await {
             Ok(()) => {}

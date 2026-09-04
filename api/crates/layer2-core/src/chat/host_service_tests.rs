@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::{
-    ContentBlock, ConversationInput, KernelAdapter, KernelCapabilities, RuntimePermission,
+    ContentBlock, ConversationInput, KernelAdapter, KernelCapabilities, ResourceSample,
+    RuntimePermission,
 };
 use tokio::sync::Mutex;
 
@@ -308,6 +309,66 @@ fn chat_capabilities() -> KernelCapabilities {
         snapshot: true,
         ..KernelCapabilities::default()
     }
+}
+
+#[tokio::test]
+async fn chat_resource_readings_use_the_shared_host_pinned_size() {
+    let declared = crate::SessionSize::new(2_000, 8_192).expect("the host size is valid");
+    let mut chat = enabled_chat();
+    chat.host.size = Some(declared);
+    let mut capabilities = chat_capabilities();
+    capabilities.resources = true;
+    let fixture = fixture(platform_with(Some(chat)), capabilities, Baseline::default());
+    let caller = user("owner-resource-ceiling");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .expect("the chat thread is created");
+
+    let mut sender = None;
+    for _ in 0..400 {
+        if let Some(opened) = fixture.adapter.resource_sink.lock().await.clone() {
+            sender = Some(opened);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let sender = sender.expect("the resource watch was opened");
+    sender
+        .send(ResourceSample {
+            cpu_millis_used: Some(725),
+            cpu_millis_limit: None,
+            memory_bytes_used: Some(860 * 1024 * 1024),
+            memory_bytes_limit: None,
+            memory_bytes_peak: None,
+            stall_permille: None,
+            ceiling_hits: None,
+            allocation_failures: None,
+            kills: None,
+            received_bytes: None,
+            sent_bytes: None,
+            received_bytes_per_second: None,
+            sent_bytes_per_second: None,
+            interval_ms: Some(1_000),
+        })
+        .await
+        .expect("the resource watch remains open");
+
+    for _ in 0..400 {
+        if let crate::ResourceStatus::Held(held) = fixture
+            .service
+            .last_reading(&caller, &session.id)
+            .await
+            .expect("the reading is visible")
+        {
+            assert_eq!(held.reading.cpu_millis_limit, Some(2_000));
+            assert_eq!(held.reading.memory_bytes_limit, Some(8_192 * 1024 * 1024));
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("the chat resource reading was not retained");
 }
 
 async fn stored_host(fixture: &HostFixture, owner: &SubjectId) -> ChatHostRecord {
