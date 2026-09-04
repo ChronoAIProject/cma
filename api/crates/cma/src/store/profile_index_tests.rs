@@ -10,6 +10,20 @@ fn required_profile_indexes_have_exact_keys() {
         indexes[1].keys,
         doc! { "visibility": 1, "kind": 1, "updated_at": -1 }
     );
+    assert_eq!(
+        indexes[2].keys,
+        doc! {
+            "visibility": 1,
+            "retired_at": 1,
+            "latest_published_at": -1,
+            "name": 1,
+            "_id": 1,
+        }
+    );
+    assert_eq!(
+        indexes[3].keys,
+        doc! { "name": "text", "description": "text" }
+    );
     let revision = revision_indexes("revisions").remove(0);
     assert_eq!(revision.keys, doc! { "profile_id": 1, "revision": 1 });
     assert_eq!(revision.options.unwrap().unique, Some(true));

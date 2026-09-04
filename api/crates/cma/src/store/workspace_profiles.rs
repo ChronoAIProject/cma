@@ -7,10 +7,12 @@ use layer2_core::profiles::store::{
 use layer2_core::profiles::{content_digest, WorkspaceProfile, WorkspaceProfileRevision};
 use mongodb::bson::Document;
 
+use super::profile_documents::{
+    decode_record, profile_document, revision_document, save_draft, ProfileDocumentInput,
+};
 use super::profiles::{
-    advance_publication, decode_record, get_revision, list_profiles, list_revisions,
-    profile_document, readable_revision, retire_profile, revision_document, save_draft,
-    ProfileDocumentInput, PublishError,
+    advance_publication, get_revision, list_profiles, list_revisions, readable_revision,
+    retire_profile, PublishError,
 };
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, nullable, record_bson,
@@ -24,8 +26,11 @@ fn input(profile: &WorkspaceProfile) -> ProfileDocumentInput<'_, WorkspaceProfil
     ProfileDocumentInput {
         id: profile.id.as_str(),
         owner: &profile.owner,
+        name: &profile.name,
+        description: &profile.description,
         visibility: profile.visibility,
         kind: KIND,
+        uses_count: profile.uses_count,
         draft_version: profile.draft_version,
         updated_at: &profile.updated_at,
         retired_at: profile.retired_at.as_ref(),
@@ -37,16 +42,21 @@ fn document(profile: &WorkspaceProfile) -> Result<Document, ProfileStoreError> {
     profile_document(&input(profile))
 }
 
-fn read_profile(document: &Document) -> Result<WorkspaceProfile, ProfileStoreError> {
+pub(super) fn read_profile(document: &Document) -> Result<WorkspaceProfile, ProfileStoreError> {
     let profile: WorkspaceProfile = decode_record(document)?;
     profile.validate()?;
     let visibility = record_bson(&profile.visibility).map_err(ProfileStoreError::Corrupt)?;
     let draft_version = signed(profile.draft_version, "workspace profile draft version")
         .map_err(ProfileStoreError::Corrupt)?;
+    let uses_count = signed(profile.uses_count, "workspace profile use count")
+        .map_err(ProfileStoreError::Corrupt)?;
     if !string_field_matches(document, "_id", profile.id.as_str())
         || !string_field_matches(document, "owner", profile.owner.as_str())
+        || !string_field_matches(document, "name", &profile.name)
+        || !string_field_matches(document, "description", &profile.description)
         || document.get("visibility") != Some(&visibility)
         || !string_field_matches(document, "kind", KIND)
+        || !i64_field_matches(document, "uses_count", uses_count)
         || !i64_field_matches(document, "draft_version", draft_version)
         || !string_field_matches(document, "updated_at", &profile.updated_at)
         || document.get("retired_at") != Some(&nullable(profile.retired_at.as_ref()))
@@ -58,7 +68,9 @@ fn read_profile(document: &Document) -> Result<WorkspaceProfile, ProfileStoreErr
     Ok(profile)
 }
 
-fn read_revision(document: &Document) -> Result<WorkspaceProfileRevision, ProfileStoreError> {
+pub(super) fn read_revision(
+    document: &Document,
+) -> Result<WorkspaceProfileRevision, ProfileStoreError> {
     let revision: WorkspaceProfileRevision = decode_record(document)?;
     let digest = content_digest(&revision.content)?;
     if !string_field_matches(document, "profile_id", revision.profile_id.as_str())
@@ -79,7 +91,7 @@ impl WorkspaceProfileStore for MongoProfileStore {
         profile: WorkspaceProfile,
     ) -> Result<(), ProfileStoreError> {
         profile.validate()?;
-        if profile.draft_version == 0 {
+        if profile.draft_version != 1 {
             return Err(ProfileStoreError::Conflict);
         }
         self.workspace_profiles
@@ -135,6 +147,7 @@ impl WorkspaceProfileStore for MongoProfileStore {
                 &mut session,
                 id.as_str(),
                 expected,
+                &published_at,
             )
             .await
             {

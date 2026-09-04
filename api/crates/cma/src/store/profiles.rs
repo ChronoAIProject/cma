@@ -3,16 +3,13 @@
 use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::profiles::store::{ProfilePage, ProfilePageRequest, ProfileStoreError};
-use layer2_core::profiles::ProfileVisibility;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{IndexOptions, ReturnDocument};
 use mongodb::{ClientSession, Collection, IndexModel};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 use super::sandbox_mongo::{
-    is_duplicate_key, nullable, read_record, record_bson, require_version, signed, unsigned,
-    MongoProfileStore, DOCUMENT_SCHEMA_VERSION,
+    require_version, signed, unsigned, MongoProfileStore, DOCUMENT_SCHEMA_VERSION,
 };
 
 const MAX_PROFILE_PAGE: u16 = 200;
@@ -32,6 +29,28 @@ pub(super) fn profile_indexes(prefix: &str) -> Vec<IndexModel> {
             .options(
                 IndexOptions::builder()
                     .name(format!("{prefix}_marketplace"))
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! {
+                "visibility": 1,
+                "retired_at": 1,
+                "latest_published_at": -1,
+                "name": 1,
+                "_id": 1,
+            })
+            .options(
+                IndexOptions::builder()
+                    .name(format!("{prefix}_marketplace_order"))
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "name": "text", "description": "text" })
+            .options(
+                IndexOptions::builder()
+                    .name(format!("{prefix}_marketplace_text"))
                     .build(),
             )
             .build(),
@@ -82,114 +101,6 @@ pub(super) async fn ensure_indexes(
         })?;
     }
     Ok(())
-}
-
-pub(super) struct ProfileDocumentInput<'a, T> {
-    pub id: &'a str,
-    pub owner: &'a SubjectId,
-    pub visibility: ProfileVisibility,
-    pub kind: &'a str,
-    pub draft_version: u64,
-    pub updated_at: &'a str,
-    pub retired_at: Option<&'a String>,
-    pub record: &'a T,
-}
-
-pub(super) fn profile_document<T: Serialize>(
-    input: &ProfileDocumentInput<'_, T>,
-) -> Result<Document, ProfileStoreError> {
-    Ok(doc! {
-        "_id": input.id,
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "owner": input.owner.as_str(),
-        "visibility": record_bson(&input.visibility).map_err(ProfileStoreError::Corrupt)?,
-        "kind": input.kind,
-        "draft_version": signed(input.draft_version, "profile draft version")
-            .map_err(ProfileStoreError::Corrupt)?,
-        "last_revision": 0_i64,
-        "updated_at": input.updated_at,
-        "retired_at": nullable(input.retired_at),
-        "record": record_bson(input.record).map_err(ProfileStoreError::Corrupt)?,
-    })
-}
-
-pub(super) fn revision_document<T: Serialize>(
-    profile_id: &str,
-    revision: u32,
-    record: &T,
-) -> Result<Document, ProfileStoreError> {
-    Ok(doc! {
-        "_id": format!("{profile_id}:{revision:010}"),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "profile_id": profile_id,
-        "revision": i64::from(revision),
-        "record": record_bson(record).map_err(ProfileStoreError::Corrupt)?,
-    })
-}
-
-pub(super) fn decode_record<T: DeserializeOwned>(
-    document: &Document,
-) -> Result<T, ProfileStoreError> {
-    read_record(document).map_err(ProfileStoreError::Corrupt)
-}
-
-pub(super) fn replacement_fields<T: Serialize>(
-    input: &ProfileDocumentInput<'_, T>,
-) -> Result<Document, ProfileStoreError> {
-    let mut document = profile_document(input)?;
-    document.remove("_id");
-    document.remove("last_revision");
-    Ok(document)
-}
-
-pub(super) async fn save_draft<T: Serialize>(
-    collection: &Collection<Document>,
-    expected: u64,
-    input: ProfileDocumentInput<'_, T>,
-) -> Result<(), ProfileStoreError> {
-    if input.draft_version != expected.checked_add(1).ok_or(ProfileStoreError::Conflict)? {
-        return Err(ProfileStoreError::Conflict);
-    }
-    let result = collection
-        .update_one(
-            doc! {
-                "_id": input.id,
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "draft_version": signed(expected, "expected draft version")
-                    .map_err(|_| ProfileStoreError::Conflict)?,
-            },
-            doc! { "$set": replacement_fields(&input)? },
-        )
-        .await
-        .map_err(|error| {
-            if is_duplicate_key(&error) {
-                ProfileStoreError::Duplicate
-            } else {
-                ProfileStoreError::Unavailable(error.to_string())
-            }
-        })?;
-    if result.matched_count == 1 {
-        return Ok(());
-    }
-    Err(classify_profile_miss(collection, input.id).await?)
-}
-
-pub(super) async fn classify_profile_miss(
-    collection: &Collection<Document>,
-    id: &str,
-) -> Result<ProfileStoreError, ProfileStoreError> {
-    match collection
-        .find_one(doc! { "_id": id })
-        .projection(doc! { "document_schema_version": 1 })
-        .await
-        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?
-    {
-        None => Ok(ProfileStoreError::NotFound),
-        Some(document) => {
-            require_version(&document).map_err(ProfileStoreError::Corrupt)?;
-            Ok(ProfileStoreError::Conflict)
-        }
-    }
 }
 
 pub(super) async fn retire_profile(
@@ -245,6 +156,7 @@ pub(super) async fn list_profiles<T: DeserializeOwned>(
     }
     if public_only {
         filter.insert("visibility", "public");
+        filter.insert("retired_at", Bson::Null);
     }
     if let Some(cursor) = &page.cursor {
         filter.insert("_id", doc! { "$gt": cursor });
@@ -371,6 +283,7 @@ pub(super) async fn advance_publication(
     session: &mut ClientSession,
     id: &str,
     expected: u64,
+    published_at: &str,
 ) -> Result<(Document, u32), PublishError> {
     let profile = collection
         .find_one_and_update(
@@ -382,7 +295,10 @@ pub(super) async fn advance_publication(
                     .map_err(PublishError::Domain)?,
                 "retired_at": Bson::Null,
             },
-            doc! { "$inc": { "last_revision": 1_i64 } },
+            doc! {
+                "$inc": { "last_revision": 1_i64 },
+                "$set": { "latest_published_at": published_at },
+            },
         )
         .return_document(ReturnDocument::After)
         .session(&mut *session)
