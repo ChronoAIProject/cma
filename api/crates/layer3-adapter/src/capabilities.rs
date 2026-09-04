@@ -13,6 +13,7 @@ pub const RUNTIME_CONTRACT_VERSION: &str = "2";
 pub struct AdapterCapabilities {
     pub conversation: bool,
     pub snapshot: bool,
+    pub per_agent_home: bool,
     pub steer: bool,
     pub interrupt: bool,
     pub usage: bool,
@@ -48,6 +49,7 @@ impl RuntimeContract {
             Self::V2 => AdapterCapabilities {
                 conversation: true,
                 snapshot: true,
+                per_agent_home: true,
                 steer: true,
                 interrupt: true,
                 usage: true,

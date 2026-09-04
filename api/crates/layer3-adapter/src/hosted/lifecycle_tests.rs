@@ -66,6 +66,7 @@ async fn contract_label_is_exact_and_capabilities_do_not_follow_the_image_name()
     good.deployment.image.uri = "an-arbitrary-image-name".into();
     assert!(good.deployment.capabilities().conversation);
     assert!(good.deployment.capabilities().snapshot);
+    assert!(good.deployment.capabilities().per_agent_home);
 }
 
 #[tokio::test]
