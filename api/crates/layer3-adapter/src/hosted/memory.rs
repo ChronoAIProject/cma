@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, Mutex};
 
+use super::deployment::provider_request_identity;
 use super::HostedBackend;
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{
@@ -40,7 +41,7 @@ struct MemoryAgent {
 #[derive(Debug, Clone)]
 struct MemoryRuntime {
     request: ProviderSandboxRequest,
-    installed: bool,
+    install: Option<((String, String), InstallReceipt)>,
     credential_delivered: bool,
     workspaces: BTreeMap<String, WorkspaceReceipt>,
     worktrees: BTreeMap<(String, String), WorktreeReceipt>,
@@ -134,13 +135,27 @@ impl InMemoryHostedBackend {
 #[async_trait::async_trait]
 impl HostedBackend for InMemoryHostedBackend {
     async fn provision(&self, request: ProviderSandboxRequest) -> crate::Result<RuntimeHandle> {
+        let identity = provider_request_identity(&request)?;
+        let mut runtimes = self.runtimes.lock().await;
+        if let Some((handle, runtime)) = runtimes.iter().find(|(_, runtime)| {
+            provider_request_identity(&runtime.request)
+                .is_ok_and(|existing| existing.sandbox_id == identity.sandbox_id)
+        }) {
+            return if provider_request_identity(&runtime.request)? == identity {
+                Ok(handle.clone())
+            } else {
+                Err(AdapterError::Rejected(
+                    "sandbox identity belongs to another specification".into(),
+                ))
+            };
+        }
         let id = self.next_handle.fetch_add(1, Ordering::Relaxed) + 1;
         let handle = RuntimeHandle(format!("runtime-{id}"));
-        self.runtimes.lock().await.insert(
+        runtimes.insert(
             handle.clone(),
             MemoryRuntime {
                 request,
-                installed: false,
+                install: None,
                 credential_delivered: false,
                 workspaces: BTreeMap::new(),
                 worktrees: BTreeMap::new(),
@@ -173,16 +188,29 @@ impl HostedBackend for InMemoryHostedBackend {
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
         match request {
             RequestFrame::Install(request) => {
-                if runtime.credential_delivered {
-                    return refused(operation, "credential_already_present");
+                if request.operation_id.trim().is_empty() || !request.has_valid_sha256() {
+                    return refused(operation, "install_request_invalid");
                 }
-                runtime.installed = true;
-                let mut commands = successful_commands(&request.commands);
+                let identity = (request.operation_id.clone(), request.request_sha256.clone());
+                if let Some((completed, receipt)) = &runtime.install {
+                    return if completed == &identity {
+                        Ok(ResponseFrame::Install(receipt.clone()))
+                    } else {
+                        refused(operation, "install_replay_mismatch")
+                    };
+                }
+                let receipt = InstallReceipt {
+                    operation_id: request.operation_id.clone(),
+                    request_sha256: request.request_sha256,
+                    commands: successful_commands(&request.commands),
+                };
+                runtime.install = Some((identity, receipt.clone()));
+                let mut response = receipt;
                 if self.corrupt_install_receipt.swap(false, Ordering::Relaxed) {
-                    if let Some(first) = commands.first_mut() {
+                    if let Some(first) = response.commands.first_mut() {
                         first.index = u32::MAX;
                     } else {
-                        commands.push(CommandReceipt {
+                        response.commands.push(CommandReceipt {
                             index: 0,
                             exit_code: 0,
                             stdout_sha256: digest(&[]),
@@ -190,10 +218,10 @@ impl HostedBackend for InMemoryHostedBackend {
                         });
                     }
                 }
-                Ok(ResponseFrame::Install(InstallReceipt { commands }))
+                Ok(ResponseFrame::Install(response))
             }
             RequestFrame::Credential(frame) => {
-                if !runtime.installed {
+                if runtime.install.is_none() {
                     return refused(operation, "install_not_completed");
                 }
                 runtime.credential_delivered = true;

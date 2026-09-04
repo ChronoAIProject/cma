@@ -3,8 +3,11 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
+use super::deployment::{provider_request_identity, SANDBOX_METADATA, SPEC_FINGERPRINT_METADATA};
 use super::HostedBackend;
-use crate::provider::{ProviderDeleteTarget, ProviderSandboxRequest, SandboxClient};
+use crate::provider::{
+    ProviderDeleteTarget, ProviderSandbox, ProviderSandboxRequest, SandboxClient,
+};
 use crate::wire::{RequestFrame, ResponseFrame};
 use crate::{AdapterError, AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeHandle};
 
@@ -84,12 +87,35 @@ impl ProviderHostedBackend {
             }
         }
     }
+
+    async fn reconcile(
+        &self,
+        request: &ProviderSandboxRequest,
+    ) -> crate::Result<Option<ProviderSandbox>> {
+        matching_sandbox(request, self.client.list().await?)
+    }
 }
 
 #[async_trait::async_trait]
 impl HostedBackend for ProviderHostedBackend {
     async fn provision(&self, request: ProviderSandboxRequest) -> crate::Result<RuntimeHandle> {
-        let sandbox = self.client.create(&request).await?;
+        let sandbox = match self.reconcile(&request).await? {
+            Some(sandbox) => sandbox,
+            None => match self.client.create(&request).await {
+                Ok(sandbox) => {
+                    let created = validate_sandbox_identity(&request, sandbox)?;
+                    match self.reconcile(&request).await? {
+                        Some(reconciled) if reconciled.id == created.id => reconciled,
+                        Some(_) => return Err(identity_mismatch()),
+                        None => created,
+                    }
+                }
+                Err(create_error) => match self.reconcile(&request).await? {
+                    Some(sandbox) => sandbox,
+                    None => return Err(create_error.into()),
+                },
+            },
+        };
         self.await_running(sandbox).await
     }
 
@@ -125,3 +151,44 @@ impl HostedBackend for ProviderHostedBackend {
         Ok(())
     }
 }
+
+fn matching_sandbox(
+    request: &ProviderSandboxRequest,
+    sandboxes: Vec<ProviderSandbox>,
+) -> crate::Result<Option<ProviderSandbox>> {
+    let identity = provider_request_identity(request)?;
+    let mut candidates = sandboxes
+        .into_iter()
+        .filter(|sandbox| sandbox.metadata.get(SANDBOX_METADATA) == Some(&identity.sandbox_id));
+    let Some(sandbox) = candidates.next() else {
+        return Ok(None);
+    };
+    if candidates.next().is_some() {
+        return Err(identity_mismatch());
+    }
+    validate_sandbox_identity(request, sandbox).map(Some)
+}
+
+fn validate_sandbox_identity(
+    request: &ProviderSandboxRequest,
+    sandbox: ProviderSandbox,
+) -> crate::Result<ProviderSandbox> {
+    let identity = provider_request_identity(request)?;
+    if sandbox.id.trim().is_empty()
+        || sandbox.metadata.get(SANDBOX_METADATA) != Some(&identity.sandbox_id)
+        || sandbox.metadata.get(SPEC_FINGERPRINT_METADATA) != Some(&identity.spec_fingerprint)
+    {
+        return Err(identity_mismatch());
+    }
+    Ok(sandbox)
+}
+
+fn identity_mismatch() -> AdapterError {
+    AdapterError::Rejected(
+        "provider sandbox identity is ambiguous or belongs to another specification".into(),
+    )
+}
+
+#[cfg(test)]
+#[path = "provider_backend_tests.rs"]
+mod tests;

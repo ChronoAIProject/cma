@@ -18,6 +18,9 @@ use crate::{
     WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
+#[path = "adapter_install.rs"]
+mod install;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Provisioned,
@@ -32,6 +35,8 @@ enum Phase {
 struct RuntimeState {
     phase: Phase,
     own_credential: bool,
+    provision: super::deployment::ProviderIdentity,
+    install: Option<(String, String)>,
 }
 
 /// Shared hosted implementation of the complete sandbox lifecycle.
@@ -130,14 +135,18 @@ impl SandboxAdapter for HostedAdapter {
 
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
         let request = self.deployment.render(spec)?;
-        let handle = self.backend.provision(request).await?;
+        let identity = super::deployment::provider_request_identity(&request)?;
+        let handle = self.backend.provision(request.clone()).await?;
         if handle.0.trim().is_empty() {
             return Err(AdapterError::Rejected(
                 "provider returned an empty runtime handle".into(),
             ));
         }
         let mut states = self.states.lock().await;
-        if states.contains_key(&handle) {
+        if let Some(state) = states.get(&handle) {
+            if state.provision == identity {
+                return Ok(handle);
+            }
             return Err(AdapterError::Rejected(format!(
                 "provider reused live runtime handle {}",
                 handle.0
@@ -148,6 +157,8 @@ impl SandboxAdapter for HostedAdapter {
             RuntimeState {
                 phase: Phase::Provisioned,
                 own_credential: spec.own_credential,
+                provision: identity,
+                install: None,
             },
         );
         Ok(handle)
@@ -158,60 +169,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &InstallRequest,
     ) -> crate::Result<InstallReceipt> {
-        if request.timeout_seconds == 0 || request.output_limit_bytes == 0 {
-            return Err(AdapterError::Rejected(
-                "install bounds must be greater than zero".into(),
-            ));
-        }
-        {
-            let mut states = self.states.lock().await;
-            let state = states.get_mut(handle).ok_or_else(|| {
-                AdapterError::Unavailable(format!("unknown runtime {}", handle.0))
-            })?;
-            if matches!(
-                state.phase,
-                Phase::DeliveringInitialCredential
-                    | Phase::RotatingCredential
-                    | Phase::Credentialed
-            ) {
-                return Err(AdapterError::Rejected(
-                    "install cannot run after credential delivery began".into(),
-                ));
-            }
-            if state.phase == Phase::Installing {
-                return Err(AdapterError::Rejected(
-                    "install is already running for this sandbox".into(),
-                ));
-            }
-            state.phase = Phase::Installing;
-        }
-
-        let response = self
-            .exchange(handle, RequestFrame::Install(request.clone()))
-            .await;
-        let mut states = self.states.lock().await;
-        let state = states.get_mut(handle).ok_or_else(|| {
-            AdapterError::Unavailable(format!("runtime {} disappeared during install", handle.0))
-        })?;
-        match response {
-            Ok(ResponseFrame::Install(receipt)) => {
-                match validate_command_receipts(&receipt.commands, request.commands.len()) {
-                    Ok(()) => {
-                        state.phase = Phase::Installed;
-                        Ok(receipt)
-                    }
-                    Err(error) => {
-                        state.phase = Phase::Provisioned;
-                        Err(error)
-                    }
-                }
-            }
-            Ok(_) => unreachable!("exchange verifies response operation"),
-            Err(error) => {
-                state.phase = Phase::Provisioned;
-                Err(error)
-            }
-        }
+        self.run_install_request(handle, request).await
     }
 
     async fn deliver_credential(

@@ -86,7 +86,7 @@ pub(crate) async fn run_shell_commands(
     Ok(receipts)
 }
 
-fn validate_commands(commands: &[String]) -> Result<()> {
+pub(crate) fn validate_commands(commands: &[String]) -> Result<()> {
     if commands.len() > MAX_COMMANDS {
         return Err(RuntimeError::rejected(
             "too_many_commands",

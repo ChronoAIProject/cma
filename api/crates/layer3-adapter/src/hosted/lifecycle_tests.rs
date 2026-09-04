@@ -70,6 +70,36 @@ async fn contract_label_is_exact_and_capabilities_do_not_follow_the_image_name()
 }
 
 #[tokio::test]
+async fn provisioning_replay_reuses_only_the_exact_sandbox_specification() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let mut spec = sandbox_spec(false);
+    let first = adapter.provision(&spec).await.unwrap();
+    let replay = adapter.provision(&spec).await.unwrap();
+    assert_eq!(replay, first);
+    assert!(backend.snapshot(&first).await.is_ok());
+
+    adapter
+        .run_install(
+            &first,
+            &InstallRequest::new("sandbox-install-v1:reattach", Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(&first, credential())
+        .await
+        .unwrap();
+    spec.created_by = Some("control-plane-after-rollout".into());
+    assert_eq!(adapter.provision(&spec).await.unwrap(), first);
+
+    let mut changed = spec;
+    changed.capacity.cpu_millis += 1;
+    let error = adapter.provision(&changed).await.unwrap_err();
+    assert!(matches!(error, AdapterError::Rejected(detail)
+        if detail.contains("another specification")));
+}
+
+#[tokio::test]
 async fn credential_delivery_requires_proof_of_successful_install() {
     let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
     let handle = adapter
@@ -94,10 +124,7 @@ async fn credential_delivery_requires_proof_of_successful_install() {
         "command_failed",
         "command 0 exited 1",
     );
-    let install = InstallRequest {
-        commands: vec!["false".into()],
-        ..InstallRequest::default()
-    };
+    let install = InstallRequest::new("sandbox-install-v1:failure", vec!["false".into()]);
     assert!(adapter.run_install(&handle, &install).await.is_err());
     assert!(adapter
         .deliver_credential(&handle, credential())
@@ -145,7 +172,10 @@ async fn a_failed_credential_rotation_keeps_the_installed_generation_usable() {
         .await
         .expect("sandbox provisions");
     adapter
-        .run_install(&handle, &InstallRequest::default())
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:rotation", Vec::new()),
+        )
         .await
         .expect("install completes");
     adapter
@@ -188,10 +218,10 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     adapter
         .run_install(
             &handle,
-            &InstallRequest {
-                commands: vec!["install-toolchain".into(), "install-helper".into()],
-                ..InstallRequest::default()
-            },
+            &InstallRequest::new(
+                "sandbox-install-v1:end-to-end",
+                vec!["install-toolchain".into(), "install-helper".into()],
+            ),
         )
         .await
         .expect("install completes");
@@ -427,7 +457,10 @@ async fn every_agent_uses_the_sandbox_wide_model_access_mode() {
         .await
         .expect("own-credential sandbox provisions");
     adapter
-        .run_install(&handle, &InstallRequest::default())
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:own-credential", Vec::new()),
+        )
         .await
         .expect("empty install still returns proof");
     adapter
@@ -474,6 +507,11 @@ fn hosted_request_keeps_size_environment_and_sandbox_reaches() {
     assert_eq!(request.env["CHRONO_SANDBOX_REACHES"], "api-github,ornn-api");
     assert!(!request.env.contains_key("CHRONO_SESSION_REACHES"));
     assert_eq!(request.env["PROJECT_MODE"], "research");
+    let fingerprint = &request.metadata["cma/spec-sha256"];
+    assert_eq!(fingerprint.len(), 43);
+    assert!(fingerprint
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')));
     assert!(request
         .env
         .values()

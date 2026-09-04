@@ -62,11 +62,12 @@ fn credential() -> RequestFrame {
 
 async fn install_and_credential(supervisor: &Supervisor) {
     let installed = supervisor
-        .dispatch(RequestFrame::Install(InstallRequest {
-            commands: Vec::new(),
-            timeout_seconds: 5,
-            output_limit_bytes: 1024,
-        }))
+        .dispatch(RequestFrame::Install(InstallRequest::bounded(
+            "install-link",
+            Vec::new(),
+            5,
+            1024,
+        )))
         .await;
     assert!(
         matches!(installed, ResponseFrame::Install(_)),
@@ -89,11 +90,12 @@ async fn shared_control_frames_round_trip_over_http() {
     let installed = exchange(
         &client,
         address,
-        &RequestFrame::Install(InstallRequest {
-            commands: Vec::new(),
-            timeout_seconds: 5,
-            output_limit_bytes: 1024,
-        }),
+        &RequestFrame::Install(InstallRequest::bounded(
+            "install-frame",
+            Vec::new(),
+            5,
+            1024,
+        )),
     )
     .await;
     assert!(matches!(installed, ResponseFrame::Install(_)));

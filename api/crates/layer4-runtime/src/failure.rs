@@ -2,9 +2,9 @@ use layer3_adapter::wire::{ResponseFrame, WireFailure, WireOperation};
 
 const MAX_DETAIL_CHARS: usize = 1_024;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct RuntimeError {
-    pub code: &'static str,
+    pub code: String,
     pub detail: String,
     pub retryable: bool,
 }
@@ -12,7 +12,7 @@ pub(crate) struct RuntimeError {
 impl RuntimeError {
     pub(crate) fn rejected(code: &'static str, detail: impl Into<String>) -> Self {
         Self {
-            code,
+            code: code.into(),
             detail: bounded(detail.into()),
             retryable: false,
         }
@@ -20,16 +20,24 @@ impl RuntimeError {
 
     pub(crate) fn unavailable(code: &'static str, detail: impl Into<String>) -> Self {
         Self {
-            code,
+            code: code.into(),
             detail: bounded(detail.into()),
             retryable: true,
+        }
+    }
+
+    pub(crate) fn recorded(code: String, detail: String, retryable: bool) -> Self {
+        Self {
+            code,
+            detail: bounded(detail),
+            retryable,
         }
     }
 
     pub(crate) fn response(self, operation: WireOperation) -> ResponseFrame {
         ResponseFrame::Failure(WireFailure {
             operation,
-            code: self.code.into(),
+            code: self.code,
             detail: self.detail,
             retryable: self.retryable,
         })
