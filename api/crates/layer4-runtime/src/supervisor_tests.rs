@@ -37,6 +37,17 @@ fn corrupt_workspace_journal(config: &RuntimeConfig) {
     .unwrap();
 }
 
+fn corrupt_install_journal(config: &RuntimeConfig) {
+    std::fs::write(
+        config
+            .checkpoint_root
+            .join("runtime-state")
+            .join("install-v2.json"),
+        b"{broken",
+    )
+    .unwrap();
+}
+
 fn credential(operation_id: &str) -> RequestFrame {
     RequestFrame::Credential(CredentialFrame {
         operation_id: operation_id.into(),
@@ -156,6 +167,88 @@ async fn an_identical_install_replay_returns_the_receipt_without_rerunning_comma
     );
     assert_eq!(mismatch.code, "install_replay_mismatch");
     assert!(!home.join("must-not-run").exists());
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn recreated_supervisor_recovers_completed_install_before_credential_delivery() {
+    let home = root("recreated-install");
+    let config = RuntimeConfig::for_test(home.clone());
+    let first = supervisor(config.clone());
+    let installed = first
+        .dispatch(RequestFrame::Install(InstallRequest::new(
+            "install-before-recreation",
+            vec!["printf 'ran\\n' >> install-runs".into()],
+        )))
+        .await;
+    assert!(
+        matches!(installed, ResponseFrame::Install(_)),
+        "{installed:?}"
+    );
+    drop(first);
+
+    let recreated = supervisor(config);
+    assert_eq!(recreated.phase().await, Phase::Installed);
+    let delivered = recreated.dispatch(credential("after-recreation")).await;
+    assert!(
+        matches!(delivered, ResponseFrame::Credential(_)),
+        "{delivered:?}"
+    );
+    assert_eq!(recreated.phase().await, Phase::Credentialed);
+    assert_eq!(
+        std::fs::read_to_string(home.join("install-runs")).unwrap(),
+        "ran\n"
+    );
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn post_start_install_corruption_fences_every_mutation() {
+    let home = root("install-corrupt-after-start");
+    let config = RuntimeConfig::for_test(home.clone());
+    let supervisor = supervisor(config.clone());
+    let installed = supervisor
+        .dispatch(RequestFrame::Install(InstallRequest::new(
+            "install-before-corruption",
+            Vec::new(),
+        )))
+        .await;
+    assert!(
+        matches!(installed, ResponseFrame::Install(_)),
+        "{installed:?}"
+    );
+    assert!(matches!(
+        supervisor.dispatch(credential("before-corruption")).await,
+        ResponseFrame::Credential(_)
+    ));
+    corrupt_install_journal(&config);
+
+    let blocked_install = failure(
+        supervisor
+            .dispatch(RequestFrame::Install(InstallRequest::new(
+                "install-after-corruption",
+                vec!["touch must-not-install".into()],
+            )))
+            .await,
+    );
+    assert_eq!(blocked_install.code, "install_state_invalid");
+    assert!(!home.join("must-not-install").exists());
+
+    let blocked_credential = failure(supervisor.dispatch(credential("after-corruption")).await);
+    assert_eq!(blocked_credential.code, "install_state_invalid");
+
+    let blocked_workspace = failure(
+        supervisor
+            .dispatch(RequestFrame::PrepareWorkspace(WorkspaceRequest::new(
+                "workspace:wks_blocked:prepare:v1",
+                "wks_blocked",
+                "must-not-prepare",
+                WorkspaceSource::Init,
+            )))
+            .await,
+    );
+    assert_eq!(blocked_workspace.code, "install_state_invalid");
+    assert!(!home.join("must-not-prepare").exists());
     cleanup(&home);
 }
 

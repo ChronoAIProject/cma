@@ -12,6 +12,7 @@ use crate::bridge::Bridge;
 use crate::checkpoint::CheckpointStore;
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
+use crate::install_state::RecoveryState;
 use crate::paths::{path_is_directory, safe_component};
 use crate::upstream::{CredentialHolder, PreparedProxies};
 use crate::writer_fence::{SupervisorBoundary, WriterFence};
@@ -48,11 +49,7 @@ impl Supervisor {
         writer_boundary: SupervisorBoundary,
     ) -> Result<Arc<Self>> {
         let supervisor = Self::new(config, writer_boundary)?;
-        crate::workspace_runtime::recover(
-            supervisor.config.clone(),
-            Arc::clone(&supervisor.operation_gate),
-        )
-        .await?;
+        supervisor.recover_journals().await?;
         Ok(supervisor)
     }
 
@@ -69,11 +66,14 @@ impl Supervisor {
                 "sandbox home is not a directory",
             ));
         }
-        crate::install::recover(&config)?;
+        let install_state = crate::install::recover(&config)?;
         let checkpoint = CheckpointStore::new(&config);
         Ok(Arc::new(Self {
             config,
-            phase: RwLock::new(Phase::Provisioned),
+            phase: RwLock::new(match install_state {
+                RecoveryState::Completed => Phase::Installed,
+                RecoveryState::Absent | RecoveryState::Terminal => Phase::Provisioned,
+            }),
             operation_gate: Arc::new(Mutex::new(())),
             credential: CredentialHolder::new(),
             agents: RwLock::new(BTreeMap::new()),
@@ -99,12 +99,7 @@ impl Supervisor {
                 | RequestFrame::WorkspaceSetup(_)
                 | RequestFrame::RemoveWorkspace(_)
         ) {
-            if let Err(error) = crate::workspace_runtime::recover(
-                self.config.clone(),
-                Arc::clone(&self.operation_gate),
-            )
-            .await
-            {
+            if let Err(error) = self.recover_journals().await {
                 return error.response(operation);
             }
             if let Err(error) = self.require_credentialed().await {
@@ -127,7 +122,7 @@ impl Supervisor {
             };
         }
         let _operation = self.operation_gate.lock().await;
-        if let Err(error) = crate::workspace_runtime::recover_locked(&self.config).await {
+        if let Err(error) = self.recover_journals_locked().await {
             return error.response(operation);
         }
         match self.execute(request).await {
@@ -197,6 +192,29 @@ impl Supervisor {
                 self.resources.sample(std::time::Instant::now()).into(),
             )),
         }
+    }
+
+    async fn recover_journals(&self) -> Result<()> {
+        let _operation = self.operation_gate.lock().await;
+        self.recover_journals_locked().await
+    }
+
+    async fn recover_journals_locked(&self) -> Result<()> {
+        let durable = crate::install::recover(&self.config)?;
+        let mut phase = self.phase.write().await;
+        match (durable, *phase) {
+            (RecoveryState::Completed, Phase::Provisioned) => *phase = Phase::Installed,
+            (RecoveryState::Completed, Phase::Installed | Phase::Credentialed)
+            | (RecoveryState::Absent | RecoveryState::Terminal, Phase::Provisioned) => {}
+            (RecoveryState::Absent | RecoveryState::Terminal, _) => {
+                return Err(RuntimeError::rejected(
+                    "install_state_invalid",
+                    "runtime lifecycle disagrees with its durable installation state",
+                ))
+            }
+        }
+        drop(phase);
+        crate::workspace_runtime::recover_locked(&self.config).await
     }
 
     async fn install(&self, request: InstallRequest) -> Result<ResponseFrame> {
