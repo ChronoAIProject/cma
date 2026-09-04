@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use layer2_core::{Authorization, Capability};
 
 use super::{entitlements, AuthState, AUTH_COOKIE};
 
@@ -18,6 +19,7 @@ pub(super) async fn read(State(auth): State<Arc<AuthState>>, headers: HeaderMap)
                 "authenticated": true,
                 "subject": resolved.subject.as_str(),
                 "capabilities": entitlements::reported(&resolved.authorization),
+                "visitor": is_visitor(&resolved.authorization),
             });
             if let (Some(map), Ok(serde_json::Value::Object(profile))) =
                 (body.as_object_mut(), serde_json::to_value(resolved.profile))
@@ -43,6 +45,11 @@ pub(super) async fn read(State(auth): State<Arc<AuthState>>, headers: HeaderMap)
                 .into_response()
         }
     }
+}
+
+fn is_visitor(authorization: &Authorization) -> bool {
+    authorization.allows(Capability::LaunchTriggers)
+        && !authorization.allows(Capability::CreateSandbox)
 }
 
 pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
@@ -117,5 +124,20 @@ mod tests {
     fn url_encoding_uses_rfc_3986_unreserved_bytes() {
         assert_eq!(urlencode("http://a/b?c=d"), "http%3A%2F%2Fa%2Fb%3Fc%3Dd");
         assert_eq!(urlencode("plain-Value_1.0~"), "plain-Value_1.0~");
+    }
+
+    #[test]
+    fn visitor_requires_launch_without_direct_sandbox_creation() {
+        assert!(is_visitor(&Authorization::new([
+            Capability::LaunchTriggers,
+            Capability::UseOwnSandboxes,
+        ])));
+        assert!(!is_visitor(&Authorization::new([
+            Capability::LaunchTriggers,
+            Capability::CreateSandbox,
+        ])));
+        assert!(!is_visitor(&Authorization::new([
+            Capability::UseOwnSandboxes,
+        ])));
     }
 }

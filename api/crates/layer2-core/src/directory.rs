@@ -57,7 +57,7 @@ impl UserDirectory {
         caller: &Caller,
         query: &DirectoryQuery,
     ) -> Result<Page<RegisteredUser>, CoreError> {
-        caller.require(Capability::ReadDirectory)?;
+        caller.require(Capability::ReadUserDirectory)?;
         query.validate()?;
         self.store
             .list(query)

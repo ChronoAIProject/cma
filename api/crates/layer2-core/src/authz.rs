@@ -6,21 +6,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CoreError, SubjectId};
 
-/// Generic authority retained while resource-specific capabilities move to #802.
+/// A distinct action the core can be asked to perform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
-    /// Read resources owned by the caller.
-    ReadOwnResources,
-    /// Change resources owned by the caller.
-    ManageOwnResources,
+    /// Provision a new Sandbox directly.
+    CreateSandbox,
+    /// Read and operate Sandboxes owned by the caller.
+    UseOwnSandboxes,
+    /// Delete a Sandbox owned by the caller.
+    DeleteOwnSandbox,
+    /// Author and revise Profiles owned by the caller.
+    ManageOwnProfiles,
+    /// Publish Triggers owned by the caller.
+    PublishTriggers,
+    /// Launch a published Trigger into the caller's own resources.
+    LaunchTriggers,
+    /// Read every Sandbox regardless of owner.
+    ReadAllSandboxes,
+    /// Retire or otherwise control a Sandbox regardless of owner.
+    ControlAnySandbox,
+    /// Read the provider runtime inventory.
+    ReadRuntimeInventory,
+    /// Read durable resource event logs.
+    ReadEventLog,
     /// Read deployment-wide activity records.
-    ReadActivity,
+    ReadActivityLog,
     /// Read the deployment user directory.
-    ReadDirectory,
-    /// Read resources belonging to any subject.
-    ReadAllResources,
-    /// Change deployment-owned settings.
+    ReadUserDirectory,
+    /// Read and change deployment-owned settings.
     ConfigurePlatform,
 }
 
@@ -94,9 +108,9 @@ mod tests {
         );
 
         let authority = Authorization::new([
-            Capability::ReadOwnResources,
+            Capability::UseOwnSandboxes,
             Capability::ConfigurePlatform,
-            Capability::ReadOwnResources,
+            Capability::UseOwnSandboxes,
         ]);
         assert!(authority.allows(Capability::ConfigurePlatform));
         assert_eq!(authority.iter().count(), 2);

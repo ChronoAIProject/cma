@@ -1,6 +1,13 @@
 import type { AuthProvider, AuthState, Capability, User } from './types';
 
-const DAILY_USE: readonly Capability[] = ['read_own_resources', 'manage_own_resources'];
+const DAILY_USE: readonly Capability[] = [
+  'create_sandbox',
+  'use_own_sandboxes',
+  'delete_own_sandbox',
+  'manage_own_profiles',
+  'publish_triggers',
+  'launch_triggers',
+];
 
 export interface MockAuthOptions {
   readonly initiallyAuthenticated?: boolean;
@@ -13,6 +20,7 @@ export function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvi
     id: 'mock-subject',
     handle: 'operator',
     capabilities: options.capabilities ?? DAILY_USE,
+    visitor: false,
   };
   let user: User | null = options.initiallyAuthenticated === true ? mockUser : null;
 

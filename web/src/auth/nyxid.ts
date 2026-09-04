@@ -38,6 +38,7 @@ interface IdentityResponse {
   email?: unknown;
   avatar_url?: unknown;
   capabilities?: unknown;
+  visitor?: unknown;
 }
 
 /**
@@ -132,6 +133,7 @@ export function createNyxidAuthProvider(): AuthProvider {
           email,
           avatarUrl: optionalText(body.avatar_url),
           capabilities: capabilitiesFrom(body.capabilities),
+          visitor: body.visitor === true,
         },
       };
     },

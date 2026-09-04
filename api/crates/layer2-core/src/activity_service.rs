@@ -28,7 +28,7 @@ impl ActivityService {
         caller: &Caller,
         query: &ActivityQuery,
     ) -> Result<Page<ActivityRecord>, CoreError> {
-        caller.require(Capability::ReadActivity)?;
+        caller.require(Capability::ReadActivityLog)?;
         query.validate()?;
         self.store
             .list(query)

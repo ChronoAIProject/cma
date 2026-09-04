@@ -1,19 +1,33 @@
 /** Authentication state exposed to the retained web shell. */
 
 export type Capability =
-  | 'read_own_resources'
-  | 'manage_own_resources'
-  | 'read_activity'
-  | 'read_directory'
-  | 'read_all_resources'
+  | 'create_sandbox'
+  | 'use_own_sandboxes'
+  | 'delete_own_sandbox'
+  | 'manage_own_profiles'
+  | 'publish_triggers'
+  | 'launch_triggers'
+  | 'read_all_sandboxes'
+  | 'control_any_sandbox'
+  | 'read_runtime_inventory'
+  | 'read_event_log'
+  | 'read_activity_log'
+  | 'read_user_directory'
   | 'configure_platform';
 
 const CAPABILITIES: readonly Capability[] = [
-  'read_own_resources',
-  'manage_own_resources',
-  'read_activity',
-  'read_directory',
-  'read_all_resources',
+  'create_sandbox',
+  'use_own_sandboxes',
+  'delete_own_sandbox',
+  'manage_own_profiles',
+  'publish_triggers',
+  'launch_triggers',
+  'read_all_sandboxes',
+  'control_any_sandbox',
+  'read_runtime_inventory',
+  'read_event_log',
+  'read_activity_log',
+  'read_user_directory',
   'configure_platform',
 ];
 
@@ -28,6 +42,7 @@ export interface User {
   readonly email?: string;
   readonly avatarUrl?: string;
   readonly capabilities: readonly Capability[];
+  readonly visitor: boolean;
 }
 
 export type AuthState =
