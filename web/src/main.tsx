@@ -3,14 +3,12 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
 import { createNyxidAuthProvider } from './auth/nyxid';
-import { startBrowserCompatibilityMeasurement } from './observability/browserCompatibility';
 import { startAppearance } from './theme/appearance';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
  * corrects itself a frame later.
  */
-startBrowserCompatibilityMeasurement();
 startAppearance();
 
 const container = document.getElementById('root');
