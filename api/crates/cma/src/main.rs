@@ -95,16 +95,21 @@ async fn serve() -> Result<(), String> {
     // #809 composes the owner-facing Sandbox services. Opening the stores here
     // already enforces indexes and schema compatibility before serving.
     let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
-    let _sandbox_operators = SandboxOperatorService::new(
+    let sandbox_operators = Arc::new(SandboxOperatorService::new(
         stores.sandbox_model.clone(),
         stores.sandbox_profiles.clone(),
         retirement,
         Arc::clone(&activity),
-    );
+    ));
     let settings = Arc::new(PlatformSettingsService::new(
         stores.settings.clone(),
         Arc::clone(&activity),
     ));
+    let admin = layer1_public::rest::admin::AdminState::new(
+        Arc::clone(&settings),
+        sandbox_operators,
+        Arc::clone(&activity),
+    );
     let operations: Arc<dyn OperationStore> = stores.operations.clone();
     let profiles = ProfilesState::new(
         stores.sandbox_profiles.clone(),
@@ -126,7 +131,9 @@ async fn serve() -> Result<(), String> {
     }
 
     let limits = RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
-    let public = rest_router(profiles_router(profiles))
+    let resource_routes =
+        profiles_router(profiles).merge(layer1_public::rest::admin::router(admin));
+    let public = rest_router(resource_routes)
         .merge(auth::router(Arc::clone(&auth)))
         .layer(axum::middleware::from_fn_with_state(
             recorder,
