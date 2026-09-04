@@ -11,7 +11,8 @@ use super::profile_documents::{
     decode_record, profile_document, revision_document, save_draft, ProfileDocumentInput,
 };
 use super::profiles::{
-    advance_publication, get_revision, list_profiles, list_revisions, retire_profile, PublishError,
+    advance_publication, get_profile, get_revision, list_profiles, list_revisions, retire_profile,
+    PublishError,
 };
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, nullable, record_bson,
@@ -101,6 +102,13 @@ impl AgentProfileStore for MongoProfileStore {
                     ProfileStoreError::Unavailable(error.to_string())
                 }
             })
+    }
+
+    async fn agent_profile(
+        &self,
+        id: &AgentProfileId,
+    ) -> Result<Option<AgentProfile>, ProfileStoreError> {
+        get_profile(&self.agent_profiles, id.as_str(), read_profile).await
     }
 
     async fn save_agent_draft(

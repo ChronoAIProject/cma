@@ -133,6 +133,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let revision =
                     latest_agent_revision(&state, id).ok_or(MarketplaceError::NotFound)?;
                 Ok(MarketplaceEntry {
+                    owner: profile.owner.clone(),
                     summary: summary(
                         MarketplaceKind::Agent,
                         id.as_str(),
@@ -172,6 +173,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     })
                     .collect();
                 Ok(MarketplaceEntry {
+                    owner: profile.owner.clone(),
                     summary: summary(
                         MarketplaceKind::Workspace,
                         id.as_str(),
@@ -211,6 +213,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     })
                     .collect();
                 Ok(MarketplaceEntry {
+                    owner: profile.owner.clone(),
                     summary: summary(
                         MarketplaceKind::Sandbox,
                         id.as_str(),

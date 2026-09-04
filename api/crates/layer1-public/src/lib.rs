@@ -18,6 +18,12 @@ pub use tickets::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Operation {
     Discover,
+    /// Author, publish, share, and retire owned profiles.
+    ManageProfiles,
+    /// Search and read published profiles.
+    ReadProfileMarketplace,
+    /// Copy a published profile revision into an owned private draft.
+    ForkMarketplaceProfile,
 }
 
 /// Protocol profiles declare only operations they currently implement.

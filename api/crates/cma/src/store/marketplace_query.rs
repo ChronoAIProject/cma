@@ -209,7 +209,7 @@ pub(super) async fn read_marketplace(
     locator: &MarketplaceLocator,
 ) -> Result<MarketplaceEntry, MarketplaceError> {
     let target = collections_for_locator(store, locator);
-    let (document, _) = find_public_profile(target, locator.as_str()).await?;
+    let (document, profile) = find_public_profile(target, locator.as_str()).await?;
     let publication = publication_metadata(&document)?;
     if publication.revision == 0 {
         return Err(MarketplaceError::NotFound);
@@ -223,6 +223,7 @@ pub(super) async fn read_marketplace(
     }
     let resolved_profiles = resolved_names(store, &revision).await?;
     Ok(MarketplaceEntry {
+        owner: profile.owner().clone(),
         summary,
         revision: revision.into_marketplace(),
         resolved_profiles,

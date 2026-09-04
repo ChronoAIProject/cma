@@ -16,8 +16,8 @@ use super::profile_documents::{
     decode_record, profile_document, revision_document, save_draft, ProfileDocumentInput,
 };
 use super::profiles::{
-    advance_publication, get_revision, list_profiles, list_revisions, readable_revision,
-    retire_profile, PublishError,
+    advance_publication, get_profile, get_revision, list_profiles, list_revisions,
+    readable_revision, retire_profile, PublishError,
 };
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, nullable, record_bson,
@@ -125,6 +125,13 @@ impl SandboxProfileStore for MongoProfileStore {
                     ProfileStoreError::Unavailable(error.to_string())
                 }
             })
+    }
+
+    async fn sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+    ) -> Result<Option<SandboxProfile>, ProfileStoreError> {
+        get_profile(&self.sandbox_profiles, id.as_str(), read_profile).await
     }
 
     async fn save_sandbox_draft(

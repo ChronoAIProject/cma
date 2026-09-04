@@ -195,6 +195,20 @@ pub(super) async fn list_profiles<T: DeserializeOwned>(
     })
 }
 
+pub(super) async fn get_profile<T: DeserializeOwned>(
+    collection: &Collection<Document>,
+    id: &str,
+    decode: fn(&Document) -> Result<T, ProfileStoreError>,
+) -> Result<Option<T>, ProfileStoreError> {
+    collection
+        .find_one(doc! { "_id": id })
+        .await
+        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?
+        .as_ref()
+        .map(decode)
+        .transpose()
+}
+
 pub(super) async fn get_revision<T: DeserializeOwned>(
     collection: &Collection<Document>,
     profile_id: &str,

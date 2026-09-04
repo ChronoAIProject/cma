@@ -52,6 +52,10 @@ impl Default for ProfilePageRequest {
 #[async_trait]
 pub trait AgentProfileStore: Send + Sync {
     async fn create_agent_profile(&self, profile: AgentProfile) -> Result<(), ProfileStoreError>;
+    async fn agent_profile(
+        &self,
+        id: &AgentProfileId,
+    ) -> Result<Option<AgentProfile>, ProfileStoreError>;
     async fn save_agent_draft(
         &self,
         expected_draft_version: u64,
@@ -93,6 +97,10 @@ pub trait WorkspaceProfileStore: Send + Sync {
         &self,
         profile: WorkspaceProfile,
     ) -> Result<(), ProfileStoreError>;
+    async fn workspace_profile(
+        &self,
+        id: &WorkspaceProfileId,
+    ) -> Result<Option<WorkspaceProfile>, ProfileStoreError>;
     async fn save_workspace_draft(
         &self,
         expected_draft_version: u64,
@@ -134,6 +142,10 @@ pub trait SandboxProfileStore: Send + Sync {
         &self,
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError>;
+    async fn sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+    ) -> Result<Option<SandboxProfile>, ProfileStoreError>;
     async fn save_sandbox_draft(
         &self,
         expected_draft_version: u64,
