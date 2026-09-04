@@ -1,0 +1,217 @@
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use super::*;
+use crate::RuntimeHandle;
+
+struct Reply {
+    status: u16,
+    body: &'static str,
+}
+
+struct Fixture {
+    base_url: String,
+    requests: Arc<Mutex<Vec<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Fixture {
+    async fn finish(mut self) -> Vec<String> {
+        tokio::time::timeout(Duration::from_secs(2), &mut self.task)
+            .await
+            .expect("provider fixture received every request")
+            .expect("provider fixture did not panic");
+        self.requests.lock().expect("request lock").clone()
+    }
+}
+
+async fn serve(replies: Vec<Reply>) -> Fixture {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("fixture binds");
+    let address = listener.local_addr().expect("fixture address");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&requests);
+    let task = tokio::spawn(async move {
+        for reply in replies {
+            let (mut stream, _) = listener.accept().await.expect("fixture accepts");
+            let request = read_request(&mut stream).await;
+            observed.lock().expect("request lock").push(request);
+            let reason = match reply.status {
+                200 => "OK",
+                202 => "Accepted",
+                204 => "No Content",
+                status => panic!("fixture does not support status {status}"),
+            };
+            let response = format!(
+                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply.status,
+                reason,
+                reply.body.len(),
+                reply.body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("fixture writes");
+            stream.shutdown().await.expect("fixture closes");
+        }
+    });
+    Fixture {
+        base_url: format!("http://{address}"),
+        requests,
+        task,
+    }
+}
+
+async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
+    let mut bytes = Vec::new();
+    let header_end = loop {
+        let mut chunk = [0_u8; 1024];
+        let read = stream.read(&mut chunk).await.expect("fixture reads");
+        assert!(read > 0, "client closed before request completed");
+        bytes.extend_from_slice(&chunk[..read]);
+        if let Some(index) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+            break index + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&bytes[..header_end]);
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().expect("content length"))
+        })
+        .unwrap_or(0);
+    while bytes.len() < header_end + content_length {
+        let mut chunk = [0_u8; 1024];
+        let read = stream.read(&mut chunk).await.expect("fixture reads body");
+        assert!(read > 0, "client closed during request body");
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    String::from_utf8(bytes).expect("HTTP request is text")
+}
+
+fn provider_request() -> ProviderSandboxRequest {
+    ProviderSandboxRequest {
+        image: ProviderImage {
+            uri: "runtime:test".into(),
+        },
+        entrypoint: vec!["/runtime".into()],
+        env: BTreeMap::from([("HOME".into(), "/home/cma".into())]),
+        resource_limits: BTreeMap::from([
+            ("cpu".into(), "1000m".into()),
+            ("memory".into(), "1024Mi".into()),
+        ]),
+        timeout: None,
+        metadata: BTreeMap::from([("cma/sandbox".into(), "sandbox-1".into())]),
+    }
+}
+
+#[test]
+fn provider_rows_ignore_unknown_fields() {
+    let sandbox: ProviderSandbox = serde_json::from_str(
+        r#"{
+            "id": "runtime-1",
+            "status": {
+                "state": "Running",
+                "newProviderField": true
+            },
+            "newTopLevelField": 1
+        }"#,
+    )
+    .expect("extended provider row remains readable");
+
+    assert_eq!(sandbox.id, "runtime-1");
+    assert!(sandbox.is_running());
+}
+
+#[tokio::test]
+async fn provider_lifecycle_uses_published_paths_and_header_authentication() {
+    let fixture = serve(vec![
+        Reply {
+            status: 202,
+            body: r#"{"id":"runtime-1","status":{"state":"Running"}}"#,
+        },
+        Reply {
+            status: 200,
+            body: r#"{"endpoint":"provider.test/proxy/3001"}"#,
+        },
+        Reply {
+            status: 200,
+            body: r#"{"items":[{"id":"runtime-1","status":{"state":"Running"}}],"pagination":{"page":1,"pageSize":100,"totalItems":1,"totalPages":1,"hasNextPage":false}}"#,
+        },
+        Reply {
+            status: 204,
+            body: "",
+        },
+    ])
+    .await;
+    let client = SandboxClient::new(&fixture.base_url, "provider-secret");
+
+    let created = client
+        .create(&provider_request())
+        .await
+        .expect("create succeeds");
+    assert!(created.is_running());
+    assert_eq!(
+        client
+            .endpoint("runtime-1", 3001)
+            .await
+            .expect("endpoint resolves")
+            .endpoint,
+        "provider.test/proxy/3001"
+    );
+    assert_eq!(client.list().await.expect("list succeeds").len(), 1);
+    client
+        .delete(&RuntimeHandle("runtime-1".into()))
+        .await
+        .expect("delete succeeds");
+
+    let requests = fixture.finish().await;
+    let first_lines: Vec<_> = requests
+        .iter()
+        .map(|request| request.lines().next().expect("request line"))
+        .collect();
+    assert_eq!(
+        first_lines,
+        [
+            "POST /v1/sandboxes HTTP/1.1",
+            "GET /v1/sandboxes/runtime-1/endpoints/3001?use_server_proxy=true HTTP/1.1",
+            "GET /v1/sandboxes?page=1&pageSize=100 HTTP/1.1",
+            "DELETE /v1/sandboxes/runtime-1 HTTP/1.1",
+        ]
+    );
+    assert!(requests.iter().all(|request| request
+        .to_ascii_lowercase()
+        .contains("open-sandbox-api-key: provider-secret")));
+    assert!(requests.iter().all(|request| !request
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .contains("provider-secret")));
+
+    let body = requests[0]
+        .split_once("\r\n\r\n")
+        .expect("create has body")
+        .1;
+    let json: serde_json::Value = serde_json::from_str(body).expect("create body is JSON");
+    assert!(json["timeout"].is_null());
+    assert_eq!(json["resourceLimits"]["cpu"], "1000m");
+    assert!(json.get("resource_limits").is_none());
+}
+
+#[test]
+fn provider_client_never_places_its_key_in_the_base_url() {
+    let client = SandboxClient::new("https://provider.example/", "provider-secret");
+    assert_eq!(client.base_url(), "https://provider.example");
+    assert!(!client.base_url().contains("provider-secret"));
+    assert_eq!(
+        client.auth_header(),
+        ("OPEN-SANDBOX-API-KEY", "provider-secret")
+    );
+}
