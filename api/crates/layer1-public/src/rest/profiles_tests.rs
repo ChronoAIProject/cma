@@ -11,8 +11,9 @@ use axum::{
 };
 use layer2_core::{
     profiles::{InMemoryProfileStore, ProfileCapacityBounds},
-    Authorization, Capability, OperationClaim, OperationReservation, OperationStore, StoreError,
-    SubjectId,
+    ActivityQuery, ActivityRecord, ActivityService, ActivityStore, Authorization, Capability,
+    OperationClaim, OperationReservation, OperationStore, Page, PlatformSettings,
+    PlatformSettingsService, PlatformSettingsStore, StoreError, StoredPlatformSettings, SubjectId,
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -76,12 +77,77 @@ impl OperationStore for MemoryOperationStore {
     }
 }
 
-fn fixture(marketplace_enabled: bool) -> Router {
+struct MemorySettingsStore(Mutex<StoredPlatformSettings>);
+
+impl MemorySettingsStore {
+    fn new(marketplace_enabled: bool) -> Self {
+        let mut settings = PlatformSettings::default();
+        settings.marketplace.enabled = marketplace_enabled;
+        Self(Mutex::new(StoredPlatformSettings {
+            revision: 0,
+            settings,
+        }))
+    }
+
+    fn set_marketplace_enabled(&self, enabled: bool) {
+        let mut stored = self.0.lock().unwrap();
+        stored.revision += 1;
+        stored.settings.marketplace.enabled = enabled;
+    }
+}
+
+#[async_trait]
+impl PlatformSettingsStore for MemorySettingsStore {
+    async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+
+    async fn replace(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+    ) -> Result<StoredPlatformSettings, StoreError> {
+        let mut stored = self.0.lock().unwrap();
+        if stored.revision != expected_revision {
+            return Err(StoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: stored.revision,
+            });
+        }
+        *stored = StoredPlatformSettings {
+            revision: expected_revision + 1,
+            settings: settings.clone(),
+        };
+        Ok(stored.clone())
+    }
+}
+
+#[derive(Default)]
+struct MemoryActivityStore;
+
+#[async_trait]
+impl ActivityStore for MemoryActivityStore {
+    async fn append(&self, _record: &ActivityRecord) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    async fn list(&self, _query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
+        Ok(Page::new(Vec::new(), None))
+    }
+}
+
+fn settings_service(store: Arc<MemorySettingsStore>) -> Arc<PlatformSettingsService> {
+    PlatformSettingsService::new(store, ActivityService::new(Arc::new(MemoryActivityStore))).into()
+}
+
+fn fixture_with_settings(marketplace_enabled: bool) -> (Router, Arc<MemorySettingsStore>) {
+    let settings = Arc::new(MemorySettingsStore::new(marketplace_enabled));
     let profiles = Arc::new(InMemoryProfileStore::default());
     let operations: Arc<dyn OperationStore> = Arc::new(MemoryOperationStore::default());
-    profiles_router(ProfilesState::new(
+    let router = profiles_router(ProfilesState::new(
         profiles,
         operations,
+        settings_service(Arc::clone(&settings)),
         ProfileRoutePolicy {
             capacity_bounds: ProfileCapacityBounds {
                 min_cpu_millis: 250,
@@ -90,9 +156,13 @@ fn fixture(marketplace_enabled: bool) -> Router {
                 max_memory_mib: 8_192,
             },
             secret_patterns: vec!["SECRET_TOKEN".into()],
-            marketplace_enabled,
         },
-    ))
+    ));
+    (router, settings)
+}
+
+fn fixture(marketplace_enabled: bool) -> Router {
+    fixture_with_settings(marketplace_enabled).0
 }
 
 fn request(
@@ -1088,7 +1158,7 @@ async fn sandbox_and_marketplace_routes_cover_bounds_trust_fork_and_publication_
 
 #[tokio::test]
 async fn marketplace_policy_and_path_vocabulary_fail_closed() {
-    let router = fixture(false);
+    let (router, settings) = fixture_with_settings(false);
     let (status, problem) = json_response(
         &router,
         request(
@@ -1102,6 +1172,38 @@ async fn marketplace_policy_and_path_vocabulary_fail_closed() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(problem["code"], "marketplace_disabled");
+
+    settings.set_marketplace_enabled(true);
+    let (status, body) = json_response(
+        &router,
+        request(
+            Method::GET,
+            "/api/v1/marketplace/agent-profiles",
+            None,
+            Some(("visitor", false)),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"], json!([]));
+
+    settings.set_marketplace_enabled(false);
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                Method::GET,
+                "/api/v1/marketplace/agent-profiles",
+                None,
+                Some(("visitor", false)),
+                None,
+            ),
+        )
+        .await
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
 
     let enabled = fixture(true);
     let unpublished =

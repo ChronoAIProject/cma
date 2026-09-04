@@ -25,10 +25,15 @@ pub(super) fn routes() -> Router<ProfilesState> {
         .route("/api/v1/marketplace/{kind}/{id}/fork", post(fork))
 }
 
-fn require_enabled(state: &ProfilesState) -> Result<(), ProfileProblem> {
+async fn require_enabled(state: &ProfilesState) -> Result<(), ProfileProblem> {
     state
-        .policy
-        .marketplace_enabled
+        .settings
+        .current()
+        .await
+        .map_err(|_| ProfileProblem::StoreUnavailable)?
+        .settings
+        .marketplace
+        .enabled
         .then_some(())
         .ok_or(ProfileProblem::MarketplaceDisabled)
 }
@@ -112,7 +117,7 @@ pub(super) async fn list(
     Path(kind_value): Path<String>,
     query: Result<Query<MarketplacePageQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<MarketplacePageView>, ProfileProblem> {
-    require_enabled(&state)?;
+    require_enabled(&state).await?;
     let query = query.map_err(|_| ProfileProblem::InvalidPage)?.0;
     let limit = query.limit.unwrap_or(50);
     if limit == 0 || limit > 50 {
@@ -146,7 +151,7 @@ pub(super) async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((kind_value, id)): Path<(String, String)>,
 ) -> Result<Json<MarketplaceEntryView>, ProfileProblem> {
-    require_enabled(&state)?;
+    require_enabled(&state).await?;
     let entry = state
         .marketplace
         .read_marketplace(&locator(&kind_value, id)?)
@@ -179,7 +184,7 @@ pub(super) async fn fork(
         format!("marketplace:fork:{kind_value}:{id}"),
         body,
         move |body| async move {
-            require_enabled(&command_state)?;
+            require_enabled(&command_state).await?;
             let locator = locator(&kind_value, id)?;
             let revision = match body.revision {
                 Some(revision) if revision > 0 => revision,
