@@ -228,6 +228,7 @@ describe('acting on somebody else’s session', () => {
     ownerLabel: 'Ada Lovelace',
     status: 'ready',
     kernel: 'example-runtime',
+    chat: false,
   };
 
   it('asks before ending one, per the destructive pattern', async () => {
@@ -272,6 +273,28 @@ describe('acting on somebody else’s session', () => {
     await show(/sessions/i);
     await screen.findByText('Ada Lovelace');
     expect(screen.queryByRole('button', { name: /delete|remove/i })).not.toBeInTheDocument();
+  });
+
+  it('permanently deletes only a Chat after naming its owner and retained environment', async () => {
+    const onDeleteChat = vi.fn();
+    const chat = { ...RUNNING, id: 'chat_1', chat: true };
+    const user = userEvent.setup();
+    open(ALL, { sessions: [RUNNING, chat], onDeleteChat });
+    await show(/sessions/i);
+    const row = (await screen.findByText('chat_1')).closest('li') as HTMLElement;
+
+    await user.click(within(row).getByRole('button', { name: 'Delete Chat' }));
+    const dialog = screen.getByRole('dialog', { name: 'Delete this Chat?' });
+    expect(dialog).toHaveTextContent('Owner Ada Lovelace');
+    expect(dialog).toHaveTextContent("owner's other Chats and shared sandbox remain available");
+    await user.click(within(dialog).getByRole('checkbox'));
+    await user.click(within(dialog).getByRole('button', { name: 'Delete Chat' }));
+
+    await waitFor(() => {
+      expect(onDeleteChat).toHaveBeenCalledWith('chat_1');
+      expect(screen.queryByText('chat_1')).toBeNull();
+    });
+    expect(screen.queryByRole('button', { name: 'Delete Chat' })).toBeNull();
   });
 });
 
@@ -338,6 +361,27 @@ describe('shared chat hosts', () => {
     expect(within(row).getByRole('button', { name: 'Retire' })).toBeDisabled();
   });
 
+  it('separately confirms a full host reset with its owner and thread count', async () => {
+    const onResetHost = vi.fn();
+    const user = userEvent.setup();
+    open(ALL, { chatHosts: [HOST], onResetHost });
+    await show(/^chat hosts$/i);
+    const row = (await screen.findByText('subject-chat-owner')).closest('li') as HTMLElement;
+
+    await user.click(within(row).getByRole('button', { name: 'Reset environment' }));
+    const dialog = screen.getByRole('dialog', { name: 'Reset this Chat environment?' });
+    expect(dialog).toHaveTextContent('Owner subject-chat-owner has 3 Chats');
+    expect(dialog).toHaveTextContent('terminates the shared sandbox');
+    await user.click(within(dialog).getByRole('checkbox'));
+    await user.click(within(dialog).getByRole('button', { name: 'Reset environment' }));
+
+    await waitFor(() => {
+      expect(onResetHost).toHaveBeenCalledWith(HOST.id);
+      expect(within(row).getByText('retired')).toBeInTheDocument();
+      expect(within(row).getByText('0 threads')).toBeInTheDocument();
+    });
+  });
+
   it('keeps retirement visible but unavailable to an inventory-only caller', async () => {
     open(['read_all_sessions'], { chatHosts: [HOST] });
     await show(/^chat hosts$/i);
@@ -356,6 +400,7 @@ describe('shared chat hosts', () => {
       ownerLabel: 'Session owner',
       status: 'ready',
       kernel: 'example-runtime',
+      chat: false,
     };
     open(ALL, { chatHosts: [HOST], sessions: [session] });
     await show(/^chat hosts$/i);

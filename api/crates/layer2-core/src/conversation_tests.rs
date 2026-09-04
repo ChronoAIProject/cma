@@ -676,6 +676,71 @@ async fn a_message_being_typed_is_liveness_and_never_numbered() {
 }
 
 #[tokio::test]
+async fn a_public_progress_message_is_committed_before_tool_activity() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "do the slow work".into())
+        .await
+        .expect("the turn starts");
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(chunk("I am checking this now."))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::ToolCall(
+                layer3_adapter::ToolCall::new(
+                    layer3_adapter::ToolCallId::new("slow-call"),
+                    "run the slow check",
+                ),
+            )))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ToolCallStarted { call_id, .. } if call_id == "slow-call"
+        ))
+        .await,
+        "the tool boundary becomes durable"
+    );
+    let events = svc.events_since(&alice, &id, None).await.expect("readable");
+    let message = events
+        .iter()
+        .position(|event| {
+            matches!(
+                &event.kind,
+                EventKind::MessageCommitted { content } if content == "I am checking this now."
+            )
+        })
+        .expect("the complete progress message is durable before the tool finishes");
+    let tool = events
+        .iter()
+        .position(|event| {
+            matches!(
+                &event.kind,
+                EventKind::ToolCallStarted { call_id, .. } if call_id == "slow-call"
+            )
+        })
+        .expect("the tool start is durable");
+    assert!(
+        message < tool,
+        "the working note precedes the tool in history"
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event.kind, EventKind::TurnCompleted)),
+        "the working note must be recoverable while the turn is still running"
+    );
+}
+
+#[tokio::test]
 async fn usage_is_reported_and_read_back() {
     let (svc, alice, id, adapter) = conversation().await;
     report_usage(&adapter, 1290, 258_400).await;
@@ -1191,17 +1256,16 @@ async fn somebody_elses_session_cannot_be_watched() {
 }
 
 #[tokio::test]
-async fn the_agents_reasoning_is_watchable_and_is_never_recorded() {
+async fn exposed_reasoning_is_live_then_committed_once_at_the_turn_boundary() {
     // A turn spent thinking looks exactly like a turn spent stuck. The
     // reasoning crosses Layer 3 today — `AgentThoughtChunk` is an ACP v1
-    // variant and the bridge forwards `SessionUpdate` whole — and the fold
-    // dropped it on the floor.
-    //
-    // It must be watchable *and* absent from the log. §18.1 requires a turn
-    // drawn from history and a turn watched arriving to produce the same
-    // result, so a durable thought is a thought that gets replayed: somebody
-    // reloading to check what the agent decided would watch it think again.
+    // variant and the bridge forwards `SessionUpdate` whole. Token-sized
+    // deltas stay off the durable sequence while the turn runs, then the
+    // complete exposed summary is retained once so a reload does not erase it.
     let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "inspect the workspace".into())
+        .await
+        .expect("the turn starts");
     let mut watching = svc.subscribe_live(&alice, &id).await.expect("watchable");
     let before = svc
         .events_since(&alice, &id, None)
@@ -1216,18 +1280,27 @@ async fn the_agents_reasoning_is_watchable_and_is_never_recorded() {
             .updates
             .send(said(layer3_adapter::SessionUpdate::AgentThoughtChunk(
                 layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
-                    "the file is probably under src/",
+                    "the file is probably ",
                 )),
+            )))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::AgentThoughtChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from("under src/")),
             )))
             .await
             .expect("the core is listening");
     }
 
-    match tokio::time::timeout(std::time::Duration::from_secs(2), watching.recv()).await {
-        Ok(Ok(crate::event::LiveFrame::ThoughtDelta(text))) => {
-            assert_eq!(text, "the file is probably under src/");
+    for expected in ["the file is probably ", "under src/"] {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), watching.recv()).await {
+            Ok(Ok(crate::event::LiveFrame::ThoughtDelta(text))) => {
+                assert_eq!(text, expected);
+            }
+            other => panic!("expected the agent's reasoning, got {other:?}"),
         }
-        other => panic!("expected the agent's reasoning, got {other:?}"),
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1236,7 +1309,40 @@ async fn the_agents_reasoning_is_watchable_and_is_never_recorded() {
         .await
         .expect("readable")
         .len();
-    assert_eq!(before, after, "reasoning must not reach the durable log");
+    assert_eq!(
+        before, after,
+        "reasoning deltas must not consume durable sequence"
+    );
+
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+            ))
+            .await
+            .expect("the core is listening");
+    }
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ReasoningCommitted { content }
+                if content == "the file is probably under src/"
+        ))
+        .await,
+        "the complete exposed summary becomes durable at completion"
+    );
+    let logged = svc.events_since(&alice, &id, None).await.expect("readable");
+    assert_eq!(
+        logged
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::ReasoningCommitted { .. }))
+            .count(),
+        1,
+        "one turn must commit one reasoning summary"
+    );
 }
 
 #[tokio::test]
@@ -1246,6 +1352,9 @@ async fn reasoning_does_not_become_part_of_the_message_the_agent_commits() {
     // durable, and is what a reload shows — would contain the agent's
     // reasoning, permanently, having never been said out loud.
     let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "find the file".into())
+        .await
+        .expect("the turn starts");
     {
         let held = adapter.conversation.lock().await;
         let kernel = held.as_ref().expect("the conversation was opened");
@@ -1281,13 +1390,144 @@ async fn reasoning_does_not_become_part_of_the_message_the_agent_commits() {
         "the committed message must be exactly what the agent said"
     );
     let logged = svc.events_since(&alice, &id, None).await.expect("readable");
+    let reasoning_index = logged
+        .iter()
+        .position(|event| {
+            matches!(
+                &event.kind,
+                EventKind::ReasoningCommitted { content } if content == "I should not say this part"
+            )
+        })
+        .expect("the exposed reasoning is retained separately");
+    let message_index = logged
+        .iter()
+        .position(|event| {
+            matches!(
+                &event.kind,
+                EventKind::MessageCommitted { content } if content == "Found it."
+            )
+        })
+        .expect("the final answer is retained");
+    assert!(reasoning_index < message_index);
     assert!(
         !logged.iter().any(|e| matches!(
             &e.kind,
             EventKind::MessageCommitted { content } if content.contains("should not say")
         )),
-        "no part of the reasoning may be in the record: {logged:?}"
+        "reasoning must never be mixed into the assistant answer: {logged:?}"
     );
+}
+
+#[tokio::test]
+async fn exposed_reasoning_is_committed_when_the_turn_fails() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "attempt the operation".into())
+        .await
+        .expect("the turn starts");
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::AgentThoughtChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
+                    "checking the failing operation",
+                )),
+            )))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(layer3_adapter::ConversationUpdate::Failed {
+                message: "the runtime stopped".into(),
+                capability: None,
+            })
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ReasoningCommitted { content }
+                if content == "checking the failing operation"
+        ))
+        .await,
+        "failure retains the exposed working notes before closing the turn"
+    );
+}
+
+#[tokio::test]
+async fn output_only_tool_updates_are_discarded_but_completion_remains_durable() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "run the check".into())
+        .await
+        .expect("the turn starts");
+    assert!(
+        !svc.get_session(&alice, &id)
+            .await
+            .expect("the session is readable")
+            .options
+            .record_tool_bodies
+    );
+    {
+        let held = adapter.conversation.lock().await;
+        let kernel = held.as_ref().expect("the conversation was opened");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::ToolCall(
+                layer3_adapter::ToolCall::new(
+                    layer3_adapter::ToolCallId::new("noisy-call"),
+                    "run a verbose command",
+                ),
+            )))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::ToolCallUpdate(
+                layer3_adapter::ToolCallUpdate::new(
+                    layer3_adapter::ToolCallId::new("noisy-call"),
+                    layer3_adapter::ToolCallUpdateFields::new()
+                        .raw_output(Some(serde_json::json!("an output-only delta"))),
+                ),
+            )))
+            .await
+            .expect("the core is listening");
+        kernel
+            .updates
+            .send(said(layer3_adapter::SessionUpdate::ToolCallUpdate(
+                layer3_adapter::ToolCallUpdate::new(
+                    layer3_adapter::ToolCallId::new("noisy-call"),
+                    layer3_adapter::ToolCallUpdateFields::new()
+                        .status(layer3_adapter::ToolCallStatus::Completed),
+                ),
+            )))
+            .await
+            .expect("the core is listening");
+    }
+
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ToolCallUpdated { call_id, status, .. }
+                if call_id == "noisy-call" && status == "completed"
+        ))
+        .await
+    );
+    let logged = svc.events_since(&alice, &id, None).await.expect("readable");
+    let updates = logged
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::ToolCallUpdated {
+                call_id,
+                status,
+                result,
+            } if call_id == "noisy-call" => Some((status.as_str(), result)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(updates, vec![("completed", &None)]);
 }
 
 /// A tool call with a body a session might hand over in its environment.

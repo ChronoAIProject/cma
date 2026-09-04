@@ -95,6 +95,8 @@ export interface AdminSession {
   readonly kernel: string;
   readonly createdAt?: number;
   readonly runtimeVersion?: string;
+  /** Whether this row is a deployment-managed Chat rather than an Agent session. */
+  readonly chat: boolean;
 }
 
 /** One deployment-managed shared chat runtime in the operator inventory. */
@@ -239,8 +241,12 @@ export interface OperatorStore {
   stopSession(id: string): Promise<void>;
   /** End a session. */
   terminateSession(id: string): Promise<void>;
+  /** Permanently delete one Chat owned by any subject. */
+  deleteChat(id: string): Promise<void>;
   /** Retire a shared chat host without deleting its retained histories. */
   retireChatHost(id: string): Promise<void>;
+  /** Permanently delete one owner's complete Chat environment and sandbox. */
+  resetChatHost(id: string): Promise<void>;
   /** Read deployment-wide settings and their conditional-write revision. */
   readPlatformSettings(): Promise<StoredPlatformSettings>;
   /** Replace all settings, provided nobody has written the named revision. */

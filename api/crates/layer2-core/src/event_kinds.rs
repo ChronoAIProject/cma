@@ -98,6 +98,16 @@ pub enum EventKind {
         /// What the agent said, as it committed it.
         content: String,
     },
+    /// The reasoning summary the agent exposed while working through a turn.
+    ///
+    /// Accumulated from live deltas and committed once at the turn boundary.
+    /// Keeping the summary as one event avoids assigning durable sequence
+    /// positions to token-sized fragments while allowing a conversation to
+    /// reconstruct the working-notes container after navigation or reconnect.
+    ReasoningCommitted {
+        /// The complete exposed reasoning summary for this turn.
+        content: String,
+    },
     /// The owner sent a message to the agent.
     ///
     /// Durable for the same reason the agent's committed message is: the
@@ -494,6 +504,7 @@ const KNOWN_TAGS: &[&str] = &[
     "initial_prompt_delivery_changed",
     "conversation_opened",
     "message_committed",
+    "reasoning_committed",
     "owner_message",
     "turn_metadata",
     "tool_call_started",

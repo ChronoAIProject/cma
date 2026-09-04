@@ -84,7 +84,13 @@ pub(super) const SIGN_IN_DEADLINE: std::time::Duration = std::time::Duration::fr
 type Sink = SplitSink<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Message>;
 
 /// A JSON-RPC call in flight, waiting for the bridge to answer it.
-type Pending = Arc<Mutex<HashMap<i64, tokio::sync::oneshot::Sender<serde_json::Value>>>>;
+type Pending = Arc<Mutex<HashMap<i64, PendingCall>>>;
+
+/// One JSON-RPC response waiter and whether its answer ends a prompt turn.
+pub(super) struct PendingCall {
+    pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
+    pub(super) prompt: bool,
+}
 
 /// The client's side of a conversation with this kernel's bridge.
 pub struct Bridge {
@@ -208,6 +214,7 @@ impl Bridge {
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
             orphaned_prompt_response: AtomicBool::new(false),
         });
+        let (updates, _update_relay) = super::relay::spawn(updates_tx);
         // This sender's channel identity is the generation of this socket.
         // Keep it beside the reader so a late answer from this socket cannot
         // settle a waiter installed by a replacement connection.
@@ -215,7 +222,7 @@ impl Bridge {
         let mut abort_on_drop = super::AbortLinkOnDrop::new(control.clone());
 
         let writer = Arc::clone(&bridge);
-        let writer_updates = updates_tx.clone();
+        let writer_updates = updates.clone();
         let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
             let writer = Arc::clone(&writer);
             let updates = writer_updates.clone();
@@ -225,7 +232,7 @@ impl Bridge {
         // Read before anything is sent: the handshake's own answers arrive on
         // this loop, so it has to be running to receive them.
         let reader = Arc::clone(&bridge);
-        let updates = updates_tx.clone();
+        let reader_updates = updates.clone();
         let control_for_reader = control.downgrade();
         let link_for_reader = link.clone();
         let reader_task = tokio::spawn(async move {
@@ -233,14 +240,14 @@ impl Bridge {
                 match frame {
                     Ok(Message::Binary(bytes)) => match supervisor::unframe(&bytes) {
                         Some((supervisor::LANE_CONVERSATION, payload)) => {
-                            reader.receive(payload, &updates).await;
+                            reader.receive(payload, &reader_updates).await;
                         }
                         Some((supervisor::LANE_CONVERSATION_GAP, payload)) => {
                             let frames = serde_json::from_slice::<serde_json::Value>(payload)
                                 .ok()
                                 .and_then(|v| v.get("frames").and_then(serde_json::Value::as_u64))
                                 .unwrap_or(0);
-                            let _ = updates.send(ConversationUpdate::Lost { frames }).await;
+                            reader_updates.send(ConversationUpdate::Lost { frames });
                         }
                         _ => {}
                     },
@@ -308,6 +315,7 @@ impl Bridge {
         let control_abort = control.abort_handle();
         let control_for_cleanup = control.downgrade();
         let link_for_cleanup = link.clone();
+        drop(updates);
         let cleanup_task = tokio::spawn(async move {
             let _whole_guard = whole_guard;
             let mut reader = reader_task;
@@ -448,6 +456,23 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
     ) -> Result<tokio::sync::oneshot::Receiver<serde_json::Value>, AdapterError> {
+        self.begin_inner(method, params, false).await
+    }
+
+    /// Send the one request whose response is also a conversation update.
+    pub(super) async fn begin_prompt(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<tokio::sync::oneshot::Receiver<serde_json::Value>, AdapterError> {
+        self.begin_inner("session/prompt", params, true).await
+    }
+
+    async fn begin_inner(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        prompt: bool,
+    ) -> Result<tokio::sync::oneshot::Receiver<serde_json::Value>, AdapterError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (answer, waiting) = tokio::sync::oneshot::channel();
         let framed = serde_json::json!({
@@ -457,7 +482,10 @@ impl Bridge {
             "params": params,
         });
 
-        self.pending.lock().await.insert(id, answer);
+        self.pending
+            .lock()
+            .await
+            .insert(id, PendingCall { answer, prompt });
         if let Err(error) = self.send(&framed).await {
             self.pending.lock().await.remove(&id);
             return Err(error);

@@ -2138,13 +2138,17 @@ impl SessionStore for FakeStore {
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
+        let mut sessions = self.sessions.lock().await;
+        let chat = sessions
+            .get(&id.0)
+            .is_some_and(|record| record.chat_origin.is_some());
         let mut coordination = self.coordination.lock().await;
         if let Some(state) = coordination.get_mut(&id.0) {
             state.expire_lease(tokio::time::Instant::now());
             if state.lease.is_some() {
                 return Err(StoreError::SessionLeaseHeld { id: id.clone() });
             }
-            if (state.authority.generation != 0 && state.authority.runtime_id.is_some())
+            if (state.authority.generation != 0 && state.authority.runtime_id.is_some() && !chat)
                 || !state.cleanups.is_empty()
             {
                 return Err(StoreError::SessionCleanupPending {
@@ -2154,7 +2158,6 @@ impl SessionStore for FakeStore {
                 });
             }
         }
-        let mut sessions = self.sessions.lock().await;
         if sessions
             .get(&id.0)
             .is_some_and(|record| record.skill_packs != crate::store::SkillPackState::Cleaned)

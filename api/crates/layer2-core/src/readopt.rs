@@ -1038,6 +1038,7 @@ impl SessionService {
             pending_approvals,
             approval_locators,
             assembling: None,
+            assembling_reasoning: None,
             context_reading: None,
             attached: None,
             attachments_issued: 0,

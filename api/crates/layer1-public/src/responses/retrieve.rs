@@ -157,6 +157,7 @@ pub(super) fn project(session: &Session, events: &[Event], turn: u64) -> Option<
 
     let mut metadata = BTreeMap::new();
     let mut output = None;
+    let mut reasoning_summary = None;
     let mut usage = None;
     let mut failure = None;
     let mut incomplete = None;
@@ -164,6 +165,7 @@ pub(super) fn project(session: &Session, events: &[Event], turn: u64) -> Option<
         match &event.kind {
             EventKind::TurnMetadata { metadata: retained } => metadata = retained.clone(),
             EventKind::MessageCommitted { content } => output = Some(content.clone()),
+            EventKind::ReasoningCommitted { content } => reasoning_summary = Some(content.clone()),
             EventKind::UsageReported {
                 input_tokens,
                 output_tokens,
@@ -251,7 +253,13 @@ pub(super) fn project(session: &Session, events: &[Event], turn: u64) -> Option<
         output,
         parallel_tool_calls: false,
         previous_response_id: previous_turn.map(|previous| response_id(&session.id, previous)),
-        reasoning: serde_json::json!({ "effort": null, "summary": null }),
+        reasoning: serde_json::json!({
+            "effort": null,
+            "summary": reasoning_summary.map(|text| vec![serde_json::json!({
+                "type": "summary_text",
+                "text": text
+            })])
+        }),
         store: true,
         temperature: None,
         text: serde_json::json!({

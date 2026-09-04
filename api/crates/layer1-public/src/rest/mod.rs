@@ -1169,6 +1169,7 @@ fn documented_router(state: SessionsState) -> OpenApiRouter {
         .routes(routes!(create, list))
         .routes(routes!(allowance::read))
         .routes(routes!(read, remove))
+        .routes(routes!(reset_chat_environment))
         // Two distinct verbs: ending a session leaves it listed, removing it
         // does not. Collapsing them would make "stop this" and "forget this"
         // the same button.
@@ -1564,6 +1565,20 @@ async fn remove(
     // The stored context is removed by the caller that owns object storage;
     // the core reports what to remove rather than reaching for it itself.
     let _context_ref = service.delete_session(&caller, &SessionId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/chat/host",
+    tag = "sessions",
+    responses((status = 204, description = "All caller Chat conversations, worktrees, checkpoints, and the shared sandbox removed"))
+)]
+async fn reset_chat_environment(
+    State(service): State<Arc<SessionService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+) -> Result<StatusCode, Problem> {
+    service.reset_chat_environment(&caller).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -30,7 +30,7 @@ describe('the chat settings document', () => {
     );
     expect(screen.getByLabelText('Branch')).toHaveValue('dev');
     expect(screen.getByLabelText('Thinking effort')).toHaveValue('high');
-    expect(screen.getByLabelText('Prepended texts 1')).toHaveValue('$codex-formal-answer');
+    expect(screen.queryByLabelText('Prepended texts 1')).not.toBeInTheDocument();
     const defaultSetup = (
       screen.getByLabelText('Software-installation commands 1') as HTMLInputElement
     ).value;

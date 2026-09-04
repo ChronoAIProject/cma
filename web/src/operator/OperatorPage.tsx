@@ -60,8 +60,10 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
   const [error, setError] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [hostBusy, setHostBusy] = useState(false);
   const [confirmingHost, setConfirmingHost] = useState<string | null>(null);
+  const [confirmingHostReset, setConfirmingHostReset] = useState<string | null>(null);
   const [filter, setFilter] = useState<ActivityFilter>({});
 
   /*
@@ -220,6 +222,44 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
     [failed, reloadChatHosts, store],
   );
 
+  const deleteChat = useCallback(
+    (id: string) => {
+      setBusy(true);
+      setError(undefined);
+      store
+        .deleteChat(id)
+        .then(() => {
+          setConfirmingDelete(null);
+          reloadSessions();
+          setChatHosts({ kind: 'loading' });
+        })
+        .catch(failed)
+        .finally(() => {
+          setBusy(false);
+        });
+    },
+    [failed, reloadSessions, store],
+  );
+
+  const resetHost = useCallback(
+    (id: string) => {
+      setHostBusy(true);
+      setError(undefined);
+      store
+        .resetChatHost(id)
+        .then(() => {
+          setConfirmingHostReset(null);
+          reloadChatHosts();
+          setSessions({ kind: 'loading' });
+        })
+        .catch(failed)
+        .finally(() => {
+          setHostBusy(false);
+        });
+    },
+    [failed, reloadChatHosts, store],
+  );
+
   return (
     <section className="operator" aria-label="Operations">
       {/*
@@ -316,14 +356,17 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
               sessions={sessions.value}
               capabilities={capabilities}
               confirming={confirming}
+              confirmingDelete={confirmingDelete}
               busy={busy}
               onConfirm={setConfirming}
+              onConfirmDelete={setConfirmingDelete}
               onStop={(id) => {
                 act(() => store.stopSession(id));
               }}
               onTerminate={(id) => {
                 act(() => store.terminateSession(id));
               }}
+              onDeleteChat={deleteChat}
             />
           )
         ) : null}
@@ -336,9 +379,12 @@ export function OperatorPage({ store, capabilities }: OperatorPageProps) {
               hosts={chatHosts.value}
               capabilities={capabilities}
               confirming={confirmingHost}
+              confirmingReset={confirmingHostReset}
               busy={hostBusy}
               onConfirm={setConfirmingHost}
+              onConfirmReset={setConfirmingHostReset}
               onRetire={retireHost}
+              onReset={resetHost}
             />
           )
         ) : null}

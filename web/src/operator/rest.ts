@@ -1,10 +1,12 @@
 import {
   ApiError,
   changeChatSettings as changeSdkChatSettings,
+  deleteAnyChatSession as deleteSdkChatSession,
   listChatHosts as listSdkChatHosts,
   ProtocolError,
   readChatSettings as readSdkChatSettings,
   retireChatHost as retireSdkChatHost,
+  resetChatHost as resetSdkChatHost,
   request,
   requestPages,
   resolveConfig,
@@ -315,6 +317,7 @@ export function toAdminSession(raw: unknown): AdminSession {
     kernel?: unknown;
     created_at?: unknown;
     runtime_version?: unknown;
+    chat?: unknown;
   };
   if (typeof s?.id !== 'string' || s.id === '') {
     throw new ProtocolError('a session arrived with no identifier');
@@ -332,6 +335,7 @@ export function toAdminSession(raw: unknown): AdminSession {
     kernel: typeof s.kernel === 'string' ? s.kernel : 'unknown',
     createdAt: instant(s.created_at),
     runtimeVersion: text(s.runtime_version),
+    chat: s.chat === true,
   };
 }
 
@@ -440,8 +444,16 @@ export function createRestOperatorStore(): OperatorStore {
       await call(`${BASE}/sessions/${encodeURIComponent(id)}/terminate`, { method: 'POST' });
     },
 
+    async deleteChat(id: string): Promise<void> {
+      await deleteSdkChatSession(config, id);
+    },
+
     async retireChatHost(id: string): Promise<void> {
       await retireSdkChatHost(config, id);
+    },
+
+    async resetChatHost(id: string): Promise<void> {
+      await resetSdkChatHost(config, id);
     },
 
     async readPlatformSettings(): Promise<StoredPlatformSettings> {

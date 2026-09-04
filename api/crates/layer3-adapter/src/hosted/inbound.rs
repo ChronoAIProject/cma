@@ -6,12 +6,11 @@
 //! something outstanding, an update to pass up, a permission request to hold
 //! until a person answers it, or a method this client does not serve.
 
-use tokio::sync::mpsc;
-
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::acp::{Blocked, Bridge};
+use super::relay::UpdateRelay;
 use crate::{
     ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind,
     PermissionRequest, SessionUpdate,
@@ -35,7 +34,7 @@ impl Bridge {
     }
 
     /// Act on one frame the bridge sent.
-    pub(super) async fn receive(&self, payload: &[u8], updates: &mpsc::Sender<ConversationUpdate>) {
+    pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) {
         let Ok(frame) = serde_json::from_slice::<serde_json::Value>(payload) else {
             // Unreadable rather than unfamiliar. Logged without its content:
             // a conversation frame carries what somebody said to their agent.
@@ -48,7 +47,13 @@ impl Bridge {
             if frame.get("method").is_none() {
                 let waiting = self.pending.lock().await.remove(&id);
                 if let Some(waiting) = waiting {
-                    let _ = waiting.send(frame);
+                    if waiting.prompt {
+                        updates.send(super::turn::scoped_turn_outcome(
+                            super::turn::turn_outcome(frame.clone()),
+                            true,
+                        ));
+                    }
+                    let _ = waiting.answer.send(frame);
                     return;
                 }
                 if self
@@ -61,7 +66,7 @@ impl Bridge {
                     // update stream before releasing the turn-scoped cache.
                     self.answered.lock().await.clear();
                     let outcome = super::turn::turn_outcome(frame);
-                    let _ = updates.send(outcome.into_update()).await;
+                    updates.send(outcome.into_update());
                 }
                 return;
             }
@@ -75,7 +80,7 @@ impl Bridge {
                 match serde_json::from_value::<SessionUpdate>(update.clone()) {
                     Ok(update) => {
                         let update = self.scope_activity(ConversationUpdate::Said(update));
-                        let _ = updates.send(update).await;
+                        updates.send(update);
                     }
                     // A shape of update this build has no type for. Skipped
                     // rather than failing the conversation: a newer bridge
@@ -120,7 +125,7 @@ impl Bridge {
     /// Nothing that comes back this way is a credential. What the sign-in
     /// produces is written inside the sandbox by the kernel, which is the
     /// whole basis of `CredentialMode::Own`'s promise.
-    async fn sign_in(&self, frame: &serde_json::Value, updates: &mpsc::Sender<ConversationUpdate>) {
+    async fn sign_in(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
         let asked = sign_in_from(frame.get("params"));
         let Some((url, code, message)) = asked else {
             // Nothing to show. Refused rather than accepted, so the kernel
@@ -138,9 +143,7 @@ impl Bridge {
             return;
         };
         tracing::info!(%url, "the agent is waiting for its owner to sign in");
-        let _ = updates
-            .send(ConversationUpdate::SignInRequired { url, code, message })
-            .await;
+        updates.send(ConversationUpdate::SignInRequired { url, code, message });
 
         if let Some(id) = frame.get("id") {
             let _ = self
@@ -154,11 +157,7 @@ impl Bridge {
     }
 
     /// Record a permission request and pass it up for somebody to answer.
-    async fn blocked_on(
-        &self,
-        frame: serde_json::Value,
-        updates: &mpsc::Sender<ConversationUpdate>,
-    ) {
+    async fn blocked_on(&self, frame: serde_json::Value, updates: &UpdateRelay) {
         let Some(params) = frame.get("params") else {
             return;
         };
@@ -204,7 +203,7 @@ impl Bridge {
             request,
         });
         let update = scope_activity(update, owns_prompt_waiter);
-        let _ = updates.send(update).await;
+        updates.send(update);
     }
 }
 

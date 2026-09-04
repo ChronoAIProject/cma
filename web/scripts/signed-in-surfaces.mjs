@@ -416,7 +416,7 @@ async function chatSurfaceSwitches(page) {
         };
       });
       if (!details.open) problems.push('chat surface: Details did not open the drawer column');
-      if (JSON.stringify(details.sections) !== JSON.stringify(['Worktree'])) {
+      if (JSON.stringify(details.sections) !== JSON.stringify(['Worktree', 'Resources'])) {
         problems.push(`chat surface: drawer sections are ${JSON.stringify(details.sections)}`);
       }
       for (const expected of [
@@ -456,7 +456,7 @@ async function chatSurfaceSwitches(page) {
       const reduced = await page.evaluate(() => {
         const surface = document.querySelector('.chat-surface[data-surface="chat"]');
         const actions = [...document.querySelectorAll('.sessionheader .actions button')].map(
-          (button) => button.textContent?.trim(),
+          (button) => button.getAttribute('aria-label') ?? button.textContent?.trim(),
         );
         const box = surface?.getBoundingClientRect();
         return {
@@ -479,7 +479,7 @@ async function chatSurfaceSwitches(page) {
       if (!reduced.mounted || !reduced.visible) {
         problems.push(`chat surface at ${String(width)}px: the conversation is not visible`);
       }
-      if (JSON.stringify(reduced.actions) !== JSON.stringify(['Details'])) {
+      if (JSON.stringify(reduced.actions) !== JSON.stringify(['Details', 'Manage Chat'])) {
         problems.push(
           `chat surface at ${String(width)}px: header actions are ${JSON.stringify(reduced.actions)}`,
         );

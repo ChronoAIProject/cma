@@ -108,6 +108,8 @@ pub enum ActivityAction {
     ChatHostList,
     /// One deployment-managed chat host was retired.
     ChatHostRetire,
+    /// Every conversation and the shared sandbox for one Chat environment were removed.
+    ChatEnvironmentReset,
     /// A reusable environment bundle was created.
     EnvironmentProfileCreate,
     /// One bundle was read.

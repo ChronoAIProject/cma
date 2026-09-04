@@ -146,10 +146,14 @@ let allowanceReads = 0;
 let reviveProblem: { readonly status: number; readonly body: unknown } | null = null;
 let chatCapability = false;
 let chatProblem: { readonly status: number; readonly body: Record<string, unknown> } | null = null;
+let chatCreatedDespiteProblem = false;
+let chatCreateWaiter: Promise<void> | null = null;
+let chatRecoveryListWaiter: Promise<void> | null = null;
 let sessionListSurfaces: (string | null)[] = [];
 let creationBodies: unknown[] = [];
 let deleteResponse: Promise<Response> | null = null;
 let deleteRequested = false;
+let deletePaths: string[] = [];
 let terminateRequested = false;
 
 /** `count` running sessions, distinguishable by start time as the rail shows them. */
@@ -209,10 +213,14 @@ beforeEach(() => {
   reviveProblem = null;
   chatCapability = false;
   chatProblem = null;
+  chatCreatedDespiteProblem = false;
+  chatCreateWaiter = null;
+  chatRecoveryListWaiter = null;
   sessionListSurfaces = [];
   creationBodies = [];
   deleteResponse = null;
   deleteRequested = false;
+  deletePaths = [];
   terminateRequested = false;
   FakeEventStream.outcome = 'ready';
   FakeEventStream.signIn = null;
@@ -270,6 +278,9 @@ beforeEach(() => {
       if (path === '/api/v1/sessions' && method === 'GET') {
         const surface = url.searchParams.get('surface');
         sessionListSurfaces.push(surface);
+        if (surface === 'chat' && creationBodies.length > 0 && chatRecoveryListWaiter !== null) {
+          await chatRecoveryListWaiter;
+        }
         const sessions = listing.filter((candidate) => {
           if (surface === 'chat') return candidate.chat !== undefined;
           if (surface === 'agent') return candidate.chat === undefined;
@@ -313,7 +324,21 @@ beforeEach(() => {
       }
       if (method === 'DELETE') {
         deleteRequested = true;
-        return deleteResponse ?? new Response(null, { status: 204 });
+        deletePaths.push(path);
+        const response = await (deleteResponse ??
+          Promise.resolve(new Response(null, { status: 204 })));
+        if (response.ok) {
+          if (path === '/api/v1/chat/host') {
+            listing = listing.filter((candidate) => candidate.chat === undefined);
+          } else {
+            const removed = /^\/api\/v1\/sessions\/([^/]+)$/.exec(path)?.[1];
+            if (removed !== undefined) {
+              const id = decodeURIComponent(removed);
+              listing = listing.filter((candidate) => candidate.id !== id);
+            }
+          }
+        }
+        return response;
       }
       if (path.endsWith('/terminate') && method === 'POST') {
         terminateRequested = true;
@@ -328,7 +353,14 @@ beforeEach(() => {
       if (path === '/api/v1/sessions' && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
         creationBodies.push(body);
+        if (body.surface === 'chat' && chatCreateWaiter !== null) {
+          await chatCreateWaiter;
+        }
         if (body.surface === 'chat' && chatProblem !== null) {
+          if (chatCreatedDespiteProblem) {
+            created += 1;
+            listing = [chatSession(`chat_${String(created)}`, 'ready'), ...listing];
+          }
           return problem(chatProblem.status, chatProblem.body);
         }
         created += 1;
@@ -576,6 +608,68 @@ describe('App', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('opens a new Chat seat immediately and prevents duplicate creation while provisioning', async () => {
+    chatCapability = true;
+    listing = [chatSession('chat-old', 'running', { title: 'Previous conversation' })];
+    let releaseCreate!: () => void;
+    chatCreateWaiter = new Promise((resolve) => {
+      releaseCreate = resolve;
+    });
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+    expect(await screen.findByText('Durable answer for chat-old')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'New Chat' }));
+
+    expect(screen.getByText('New Chat / Preparing')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Setting up the shared sandbox and a fresh workspace.',
+    );
+    expect(document.querySelector('.landing__character--provisioning')).not.toBeNull();
+    expect(screen.queryByText('Durable answer for chat-old')).toBeNull();
+    const create = screen.getByRole('button', { name: 'New Chat' });
+    expect(create).toBeDisabled();
+    await user.click(create);
+    expect(creationBodies).toEqual([{ surface: 'chat' }]);
+
+    releaseCreate();
+    expect(await screen.findByRole('tab', { name: /chat-1/ })).toBeInTheDocument();
+    expect(screen.queryByText('New Chat / Preparing')).toBeNull();
+  });
+
+  it('recovers a Chat whose cold start outlives the Cloudflare response window', async () => {
+    chatCapability = true;
+    chatProblem = {
+      status: 524,
+      body: {
+        detail: 'The origin did not return a complete response in time.',
+        code: 'origin_response_timeout',
+      },
+    };
+    chatCreatedDespiteProblem = true;
+    let releaseRecovery!: () => void;
+    chatRecoveryListWaiter = new Promise((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+    await user.click(screen.getByRole('button', { name: 'New Chat' }));
+
+    expect(await screen.findByText(/sandbox is taking longer than usual/i)).toBeInTheDocument();
+    expect(screen.getByText('New Chat / Preparing')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New Chat' })).toBeDisabled();
+    releaseRecovery();
+    expect(await screen.findByRole('tab', { name: /chat_1-worktree/ })).toBeInTheDocument();
+    expect(screen.queryByText(/timed-out request could not be reconciled/i)).toBeNull();
+    expect(screen.queryByText(/origin did not return a complete response/i)).toBeNull();
+    expect(creationBodies).toEqual([{ surface: 'chat' }]);
+    expect(sessionListSurfaces.filter((surface) => surface === 'chat')).toHaveLength(2);
+  });
+
   it.each([
     {
       status: 503,
@@ -599,8 +693,110 @@ describe('App', () => {
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText(detail)).toBeInTheDocument();
     expect(within(alert).getByText(code)).toBeInTheDocument();
-    expect(alert).toHaveTextContent('No chat was created.');
+    expect(alert).toHaveTextContent('No Chat was created.');
     expect(creationBodies).toEqual([{ surface: 'chat' }]);
+  });
+
+  it('keeps a failed new Chat seat open and retries from it', async () => {
+    chatCapability = true;
+    chatProblem = {
+      status: 503,
+      body: {
+        detail: 'The shared Chat host is temporarily unavailable.',
+        code: 'chat_unavailable',
+      },
+    };
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+    await user.click(screen.getByRole('button', { name: 'New Chat' }));
+
+    expect(await screen.findByText('New Chat / Needs attention')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The shared Chat host is temporarily unavailable.',
+    );
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+
+    chatProblem = null;
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('tab', { name: /chat-1/ })).toBeInTheDocument();
+    expect(creationBodies).toEqual([{ surface: 'chat' }, { surface: 'chat' }]);
+  });
+
+  it('deletes one Chat while preserving the shared sandbox and selecting another Chat', async () => {
+    chatCapability = true;
+    listing = [
+      chatSession('chat-delete', 'running', { title: 'Delete me' }),
+      chatSession('chat-keep', 'running', { title: 'Keep me' }),
+      {
+        id: 'sesn-agent',
+        kernel: 'codex',
+        status: 'running',
+        created_at: '2026-08-15T02:00:00Z',
+      },
+    ];
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+    expect(await screen.findByText('Durable answer for chat-delete')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Manage Chat' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete this Chat' }));
+    const dialog = screen.getByRole('dialog', { name: 'Delete this Chat?' });
+    expect(dialog).toHaveTextContent('Other Chats and the shared sandbox remain available.');
+    await user.click(
+      within(dialog).getByRole('checkbox', {
+        name: 'I understand this Chat cannot be recovered.',
+      }),
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Delete this Chat' }));
+
+    await waitFor(() => {
+      expect(deletePaths).toEqual(['/api/v1/sessions/chat-delete']);
+      expect(screen.queryByRole('tab', { name: /Delete me/ })).toBeNull();
+    });
+    expect(screen.getByRole('tab', { name: /Keep me/ })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByText('Durable answer for chat-keep')).toBeInTheDocument();
+    expect(screen.queryByText('Durable answer for sesn-agent')).toBeNull();
+  });
+
+  it('resets every Chat and the shared sandbox through the distinct owner route', async () => {
+    chatCapability = true;
+    listing = [
+      chatSession('chat-one', 'running', { title: 'One' }),
+      chatSession('chat-two', 'running', { title: 'Two' }),
+      {
+        id: 'sesn-agent',
+        kernel: 'codex',
+        status: 'running',
+        created_at: '2026-08-15T02:00:00Z',
+      },
+    ];
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+    await user.click(screen.getByRole('button', { name: 'Chat' }));
+
+    await user.click(screen.getByRole('button', { name: 'Manage Chat' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Reset Chat environment' }));
+    const dialog = screen.getByRole('dialog', { name: 'Reset Chat environment?' });
+    expect(dialog).toHaveTextContent('all of your Chat histories and worktrees');
+    expect(dialog).toHaveTextContent('terminates your shared Chat sandbox');
+    await user.click(
+      within(dialog).getByRole('checkbox', {
+        name: 'I understand every Chat in this environment will be deleted.',
+      }),
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Reset environment' }));
+
+    await waitFor(() => {
+      expect(deletePaths).toEqual(['/api/v1/chat/host']);
+      expect(screen.queryByRole('tab', { name: /One|Two/ })).toBeNull();
+    });
+    expect(screen.getByText('No session open')).toBeInTheDocument();
+    expect(listing.some((candidate) => candidate.id === 'sesn-agent')).toBe(true);
   });
 
   it('has no navigation menu in either state', async () => {

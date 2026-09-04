@@ -454,6 +454,11 @@ export function createChatSession(): Promise<Session> {
   return bot.createSession({ surface: 'chat' });
 }
 
+/** Delete every caller-owned Chat and terminate the shared Chat sandbox. */
+export function resetChatEnvironment(): Promise<void> {
+  return bot.resetChatEnvironment();
+}
+
 /** Read one caller-owned chat through the public Responses interface. */
 export function readResponsesConversation(
   id: string,

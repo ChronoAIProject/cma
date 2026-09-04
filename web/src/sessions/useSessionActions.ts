@@ -287,7 +287,13 @@ export function useSessionActions({
            * that list, and with a full history it is evicted at once. That is
            * the one node §15 promises is never detached.
            */
-          const successor = sessions.find((s) => s.id !== id);
+          const removed = sessions.find((session) => session.id === id);
+          const successor = sessions.find(
+            (session) =>
+              session.id !== id &&
+              (removed === undefined ||
+                (session.chat === undefined) === (removed.chat === undefined)),
+          );
           if (successor === undefined) {
             clearSelection();
           } else {

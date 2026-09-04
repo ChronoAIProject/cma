@@ -800,7 +800,7 @@ async fn owner_lifecycle_and_terminal_operations_name_chat_policy() {
 }
 
 #[tokio::test]
-async fn operator_controls_only_the_thread_and_owner_delete_retires_the_last_host() {
+async fn deleting_the_final_chat_keeps_its_shared_sandbox_running() {
     let fixture = fixture(
         platform_with(Some(enabled_chat())),
         chat_capabilities(),
@@ -863,28 +863,26 @@ async fn operator_controls_only_the_thread_and_owner_delete_retires_the_last_hos
         .lock()
         .await
         .contains_key(&session.id.0));
-    let retired = stored_host(&fixture, &caller.subject).await;
-    assert_eq!(retired.status, ChatHostStatus::Retired);
-    assert!(retired.threads[0].removed);
-    assert!(retired.runtime_id.is_none());
-    assert!(fixture.adapter.running.lock().await.is_empty());
+    let retained = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(retained.status, ChatHostStatus::Active);
+    assert!(retained.threads[0].removed);
+    assert_eq!(retained.runtime_id.as_deref(), Some(runtime.as_str()));
+    assert!(fixture.adapter.running.lock().await.contains_key(&runtime));
+    assert!(fixture.adapter.terminated.lock().await.is_empty());
     assert_eq!(
-        fixture.adapter.terminated.lock().await.as_slice(),
-        &[runtime]
-    );
-    assert!(
         fixture
             .adapter
             .removed_workspace_trees
             .lock()
             .await
-            .is_empty(),
-        "retiring the whole sandbox does not need a per-tree mutation"
+            .as_slice(),
+        &[(runtime, "chat-1".into())],
+        "single-Chat deletion always removes only that worktree"
     );
 }
 
 #[tokio::test]
-async fn deleting_from_a_shared_host_removes_only_worktrees_that_stay_live() {
+async fn deleting_each_chat_removes_each_worktree_and_never_retires_the_host() {
     let fixture = fixture(
         platform_with(Some(enabled_chat())),
         chat_capabilities(),
@@ -925,24 +923,11 @@ async fn deleting_from_a_shared_host_removes_only_worktrees_that_stay_live() {
         ChatHostStatus::Active
     );
 
-    let mut pausing = stored_host(&fixture, &caller.subject).await;
-    pausing.status = ChatHostStatus::Pausing;
-    pausing.last_transition_claim = Some("chro_stuck_legacy_checkpoint".into());
-    pausing.transition_started_at = Some("2026-09-02T20:04:31Z".into());
-    pausing.revive_cause = Some(ChatReviveCause::ImageDrift);
-    pausing.checkpoint_sequence += 1;
-    fixture
-        .hosts
-        .update_if_revision(pausing.revision, &pausing)
-        .await
-        .unwrap()
-        .unwrap();
-
     fixture
         .service
         .delete_session(&caller, &second.id)
         .await
-        .expect("the last thread supersedes a stuck image-rotation claim");
+        .expect("the final thread leaves the empty shared host running");
 
     assert_eq!(
         fixture
@@ -951,18 +936,21 @@ async fn deleting_from_a_shared_host_removes_only_worktrees_that_stay_live() {
             .lock()
             .await
             .as_slice(),
-        &[(runtime.clone(), "chat-1".into())],
-        "the final worktree disappears with its sandbox"
+        &[
+            (runtime.clone(), "chat-1".into()),
+            (runtime.clone(), "chat-2".into())
+        ]
     );
-    assert!(!fixture.adapter.running.lock().await.contains_key(&runtime));
+    assert!(fixture.adapter.running.lock().await.contains_key(&runtime));
+    assert!(fixture.adapter.terminated.lock().await.is_empty());
     assert_eq!(
         stored_host(&fixture, &caller.subject).await.status,
-        ChatHostStatus::Retired
+        ChatHostStatus::Active
     );
 }
 
 #[tokio::test]
-async fn failed_final_host_retirement_leaves_the_thread_row_for_cleanup_retry() {
+async fn only_an_operator_can_permanently_delete_another_owners_chat() {
     let fixture = fixture(
         platform_with(Some(enabled_chat())),
         chat_capabilities(),
@@ -974,46 +962,37 @@ async fn failed_final_host_retirement_leaves_the_thread_row_for_cleanup_retry() 
         .create_session(&caller, chat_spec())
         .await
         .unwrap();
-    fixture.adapter.fail_terminations.store(1, Ordering::SeqCst);
-
-    let error = fixture
-        .service
-        .delete_session(&caller, &session.id)
-        .await
-        .expect_err("unconfirmed host cleanup keeps the deletion retryable");
-    assert!(matches!(
-        error,
-        CoreError::ChatUnavailable(ChatUnavailableCause::ProvisioningFailed {
-            phase: ChatProvisioningPhase::Cleanup,
-            retryable: true,
-            ..
-        })
-    ));
+    assert_eq!(
+        fixture
+            .service
+            .delete_any_chat_session(&user("other-chat-user"), &session.id)
+            .await
+            .expect_err("an ordinary user cannot use the administrative delete"),
+        CoreError::Forbidden
+    );
     assert!(fixture
         .sessions
         .sessions
         .lock()
         .await
         .contains_key(&session.id.0));
-    let pending = stored_host(&fixture, &caller.subject).await;
-    assert_eq!(pending.status, ChatHostStatus::Pausing);
-    assert!(pending.threads[0].removed);
-    assert!(pending.runtime_id.is_some());
 
-    fixture
+    let owner = fixture
         .service
-        .delete_session(&caller, &session.id)
+        .delete_any_chat_session(&operator(), &session.id)
         .await
-        .expect("retry completes host retirement and row deletion");
+        .expect("an operator may delete another owner's Chat");
+    assert_eq!(owner, caller.subject);
     assert!(!fixture
         .sessions
         .sessions
         .lock()
         .await
         .contains_key(&session.id.0));
-    let retired = stored_host(&fixture, &caller.subject).await;
-    assert_eq!(retired.status, ChatHostStatus::Retired);
-    assert!(retired.runtime_id.is_none());
+    let retained = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(retained.status, ChatHostStatus::Active);
+    assert!(retained.threads[0].removed);
+    assert!(retained.runtime_id.is_some());
 }
 
 #[tokio::test]
@@ -1055,16 +1034,118 @@ async fn paused_thread_delete_drops_its_restore_reference_without_provider_work(
         removals_before,
         "a paused host has no live provider worktree to remove"
     );
-    let retired = stored_host(&fixture, &caller.subject).await;
-    assert_eq!(retired.status, ChatHostStatus::Retired);
-    assert!(retired.threads[0].removed);
-    assert_eq!(retired.checkpoint, None);
+    let retained = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(retained.status, ChatHostStatus::Paused);
+    assert!(retained.threads[0].removed);
+    assert_eq!(retained.checkpoint, None);
     assert!(!fixture
         .sessions
         .sessions
         .lock()
         .await
         .contains_key(&session.id.0));
+}
+
+#[tokio::test]
+async fn owner_reset_deletes_every_chat_and_terminates_the_exact_shared_runtime() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-chat-environment-reset");
+    let first = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let second = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let host = stored_host(&fixture, &caller.subject).await;
+    let runtime = host.runtime_id.clone().unwrap();
+
+    assert_eq!(
+        fixture
+            .service
+            .reset_chat_environment(&caller)
+            .await
+            .expect("the owner can reset the complete Chat environment"),
+        caller.subject
+    );
+
+    let sessions = fixture.sessions.sessions.lock().await;
+    assert!(!sessions.contains_key(&first.id.0));
+    assert!(!sessions.contains_key(&second.id.0));
+    drop(sessions);
+    let retired = stored_host(&fixture, &caller.subject).await;
+    assert_eq!(retired.status, ChatHostStatus::Retired);
+    assert!(retired.threads.iter().all(|thread| thread.removed));
+    assert!(retired.runtime_id.is_none());
+    assert!(retired.checkpoint.is_none());
+    assert!(!fixture.adapter.running.lock().await.contains_key(&runtime));
+    assert_eq!(
+        fixture.adapter.terminated.lock().await.as_slice(),
+        &[runtime]
+    );
+    assert!(fixture
+        .adapter
+        .removed_workspace_trees
+        .lock()
+        .await
+        .is_empty());
+}
+
+#[tokio::test]
+async fn only_an_operator_can_reset_another_owners_chat_environment() {
+    let fixture = fixture(
+        platform_with(Some(enabled_chat())),
+        chat_capabilities(),
+        Baseline::default(),
+    );
+    let caller = user("owner-admin-chat-environment-reset");
+    let session = fixture
+        .service
+        .create_session(&caller, chat_spec())
+        .await
+        .unwrap();
+    let host = stored_host(&fixture, &caller.subject).await;
+
+    assert_eq!(
+        fixture
+            .service
+            .reset_any_chat_environment(&user("other-chat-user"), &host.id)
+            .await
+            .expect_err("an ordinary user cannot reset another owner's environment"),
+        CoreError::Forbidden
+    );
+    assert!(fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .contains_key(&session.id.0));
+
+    assert_eq!(
+        fixture
+            .service
+            .reset_any_chat_environment(&operator(), &host.id)
+            .await
+            .expect("the operator can reset another owner's Chat environment"),
+        caller.subject
+    );
+    assert!(!fixture
+        .sessions
+        .sessions
+        .lock()
+        .await
+        .contains_key(&session.id.0));
+    assert_eq!(
+        stored_host(&fixture, &caller.subject).await.status,
+        ChatHostStatus::Retired
+    );
 }
 
 #[tokio::test]

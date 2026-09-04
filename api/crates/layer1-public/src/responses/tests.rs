@@ -171,10 +171,12 @@ fn responses_sdk_fixtures_are_server_projections() {
         first_id: projected_items.first().map(|item| match item {
             items::ConversationItem::Message(item) => item.id.clone(),
             items::ConversationItem::ToolActivity(item) => item.id.clone(),
+            items::ConversationItem::WorkingNotes(item) => item.id.clone(),
         }),
         last_id: projected_items.last().map(|item| match item {
             items::ConversationItem::Message(item) => item.id.clone(),
             items::ConversationItem::ToolActivity(item) => item.id.clone(),
+            items::ConversationItem::WorkingNotes(item) => item.id.clone(),
         }),
         data: projected_items,
         has_more: false,
@@ -355,6 +357,12 @@ fn durable_response_projection_keeps_metadata_usage_model_and_failure() {
         ),
         logged(
             5,
+            EventKind::ReasoningCommitted {
+                content: "checked the failure path".into(),
+            },
+        ),
+        logged(
+            6,
             EventKind::UsageReported {
                 input_tokens: 12,
                 output_tokens: 5,
@@ -362,9 +370,9 @@ fn durable_response_projection_keeps_metadata_usage_model_and_failure() {
                 context_window: Some(200_000),
             },
         ),
-        logged(6, EventKind::TurnCompleted),
+        logged(7, EventKind::TurnCompleted),
         logged(
-            7,
+            8,
             EventKind::StatusChanged {
                 status: SessionStatus::Ready,
                 stop_reason: Some(StopReason::Error),
@@ -385,12 +393,15 @@ fn durable_response_projection_keeps_metadata_usage_model_and_failure() {
     assert_eq!(response.output[0].content[0].text, "partial answer");
     assert_eq!(
         response.reasoning,
-        json!({ "effort": null, "summary": null })
+        json!({
+            "effort": null,
+            "summary": [{ "type": "summary_text", "text": "checked the failure path" }]
+        })
     );
 }
 
 #[test]
-fn durable_items_are_newest_first_and_fold_tool_activity_without_reasoning() {
+fn durable_items_keep_working_notes_before_the_separate_final_answer() {
     let events = vec![
         logged(1, EventKind::TurnStarted),
         logged(
@@ -425,21 +436,63 @@ fn durable_items_are_newest_first_and_fold_tool_activity_without_reasoning() {
         logged(
             5,
             EventKind::MessageCommitted {
-                content: "answer".into(),
+                content: "I am checking the contract.".into(),
             },
         ),
-        logged(6, EventKind::TurnCompleted),
+        logged(
+            6,
+            EventKind::ReasoningCommitted {
+                content: "reasoning summary".into(),
+            },
+        ),
+        logged(
+            7,
+            EventKind::MessageCommitted {
+                content: "final answer".into(),
+            },
+        ),
+        logged(8, EventKind::TurnCompleted),
     ];
     let projected = serde_json::to_value(items::project(&SessionId(SESSION.into()), &events))
         .expect("items serialize");
 
     assert_eq!(projected[0]["role"], "assistant");
-    assert_eq!(projected[1]["type"], "cma_chat.tool_activity");
-    assert_eq!(projected[1]["kind"], "read");
-    assert_eq!(projected[1]["status"], "completed");
-    assert_eq!(projected[1]["result"]["truncated"], true);
-    assert_eq!(projected[2]["role"], "user");
-    assert!(!projected.to_string().contains("reasoning"));
+    assert_eq!(projected[0]["content"][0]["text"], "final answer");
+    assert_eq!(projected[1]["type"], "cma_chat.working_notes");
+    assert_eq!(projected[1]["reasoning"], "reasoning summary");
+    assert_eq!(projected[1]["messages"][0], "I am checking the contract.");
+    assert_eq!(projected[2]["type"], "cma_chat.tool_activity");
+    assert_eq!(projected[2]["kind"], "read");
+    assert_eq!(projected[2]["status"], "completed");
+    assert_eq!(projected[2]["result"]["truncated"], true);
+    assert_eq!(projected[3]["role"], "user");
+}
+
+#[test]
+fn in_progress_assistant_message_remains_inside_working_notes() {
+    let events = vec![
+        logged(1, EventKind::TurnStarted),
+        logged(
+            2,
+            EventKind::OwnerMessage {
+                content: "question".into(),
+            },
+        ),
+        logged(
+            3,
+            EventKind::MessageCommitted {
+                content: "I am still checking.".into(),
+            },
+        ),
+    ];
+    let projected = serde_json::to_value(items::project(&SessionId(SESSION.into()), &events))
+        .expect("items serialize");
+
+    assert_eq!(projected.as_array().map(Vec::len), Some(2));
+    assert_eq!(projected[0]["type"], "cma_chat.working_notes");
+    assert_eq!(projected[0]["response_id"], format!("resp_{SESSION}_1"));
+    assert_eq!(projected[0]["messages"][0], "I am still checking.");
+    assert_eq!(projected[1]["role"], "user");
 }
 
 #[test]
@@ -761,7 +814,7 @@ async fn response_stream_folds_live_reasoning_text_tools_and_durable_completion(
         logged(
             6,
             EventKind::MessageCommitted {
-                content: "Hello".into(),
+                content: "I am checking the contract.".into(),
             },
         ),
         logged(
@@ -773,9 +826,21 @@ async fn response_stream_folds_live_reasoning_text_tools_and_durable_completion(
                 context_window: Some(200_000),
             },
         ),
-        logged(8, EventKind::TurnCompleted),
+        logged(
+            8,
+            EventKind::ReasoningCommitted {
+                content: "thinking".into(),
+            },
+        ),
         logged(
             9,
+            EventKind::MessageCommitted {
+                content: "Hello".into(),
+            },
+        ),
+        logged(10, EventKind::TurnCompleted),
+        logged(
+            11,
             EventKind::StatusChanged {
                 status: SessionStatus::Ready,
                 stop_reason: Some(StopReason::EndTurn),
@@ -783,9 +848,9 @@ async fn response_stream_folds_live_reasoning_text_tools_and_durable_completion(
                 capability: None,
             },
         ),
-        logged(10, EventKind::TurnStarted),
+        logged(12, EventKind::TurnStarted),
         logged(
-            11,
+            13,
             EventKind::ToolCallStarted {
                 call_id: "future-call".into(),
                 title: "Must stay hidden".into(),
@@ -825,14 +890,19 @@ async fn response_stream_folds_live_reasoning_text_tools_and_durable_completion(
             .count(),
         2
     );
+    let intermediate = projected
+        .iter()
+        .find(|event| event["type"] == "response.cma_chat.intermediate_message")
+        .expect("the superseded public message is retained in the stream");
+    assert_eq!(intermediate["item"]["text"], "I am checking the contract.");
     assert!(!projected
         .iter()
         .any(|event| event.to_string().contains("future-call")));
-    let suffix = projected
+    let final_delta = projected
         .iter()
-        .find(|event| event["type"] == "response.output_text.delta" && event["delta"] == "lo")
-        .expect("durability fills the suffix missed by the live stream");
-    assert_eq!(suffix["delta"], "lo");
+        .find(|event| event["type"] == "response.output_text.delta" && event["delta"] == "Hello")
+        .expect("the final message restarts after the intermediate message boundary");
+    assert_eq!(final_delta["delta"], "Hello");
     let item_done = projected
         .iter()
         .find(|event| event["type"] == "response.output_item.done")
@@ -849,7 +919,10 @@ async fn response_stream_folds_live_reasoning_text_tools_and_durable_completion(
     assert_eq!(terminal["response"]["usage"]["total_tokens"], 12);
     assert_eq!(
         terminal["response"]["reasoning"],
-        json!({ "effort": null, "summary": null })
+        json!({
+            "effort": null,
+            "summary": [{ "type": "summary_text", "text": "thinking" }]
+        })
     );
 }
 

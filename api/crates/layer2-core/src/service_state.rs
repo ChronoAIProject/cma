@@ -142,6 +142,12 @@ pub(crate) struct SessionEntry {
     /// Held here so the finished message can be committed at that moment
     /// rather than each piece being written down as though it were history.
     pub(crate) assembling: Option<(Option<String>, String, bool)>,
+    /// The reasoning summary exposed during the current turn.
+    ///
+    /// Deltas stay on the live lane while the turn runs. The accumulated text
+    /// is committed once when the turn ends, so navigation cannot erase what
+    /// the interface already showed its owner.
+    pub(crate) assembling_reasoning: Option<String>,
     /// The last context reading this runtime gave, if it has given one.
     ///
     /// Held per entry rather than per session on purpose: an entry is built

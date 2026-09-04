@@ -15,6 +15,8 @@ interface ResourcesProps {
   readonly cpuPressure?: CpuPressure;
   /** The open memory-pressure episode, which gives the memory row its failure wording. */
   readonly memoryPressure?: MemoryPressure;
+  /** Stack readings for the narrow Chat details drawer. */
+  readonly drawer?: boolean;
 }
 
 interface PressureNoticeProps {
@@ -130,19 +132,19 @@ export function Resources({
   resources,
   cpuPressure,
   memoryPressure,
+  drawer = false,
 }: ResourcesProps) {
+  const statusClass = `resources__status${drawer ? ' resources__status--drawer' : ''}`;
   if (!granted) {
-    return <span className="resources__status">Resources not reported for this session</span>;
+    return <span className={statusClass}>Resources not reported for this session</span>;
   }
   if (unreported === true) {
     return (
-      <span className="resources__status">
-        This session's runtime cannot report what it is using
-      </span>
+      <span className={statusClass}>This session's runtime cannot report what it is using</span>
     );
   }
   if (resources === undefined) {
-    return <span className="resources__status">Resources · waiting</span>;
+    return <span className={statusClass}>Resources · waiting</span>;
   }
 
   const network =
@@ -151,7 +153,7 @@ export function Resources({
       : `↓ ${formatBytes(resources.receivedBytes)} · ↑ ${formatBytes(resources.sentBytes)}`;
 
   return (
-    <div className="resources" aria-label="Resources">
+    <div className={`resources${drawer ? ' resources--drawer' : ''}`} aria-label="Resources">
       <BoundedRow
         label="Memory"
         used={resources.memoryBytesUsed}

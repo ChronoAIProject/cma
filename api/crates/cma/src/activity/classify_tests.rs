@@ -97,6 +97,9 @@ fn the_method_decides_between_two_actions_at_one_address() {
         classified(Method::DELETE, "/api/v1/sessions/sesn_1").action,
         Action::SessionDelete
     );
+    let reset = classified(Method::DELETE, "/api/v1/chat/host");
+    assert_eq!(reset.action, Action::ChatEnvironmentReset);
+    assert!(reset.target.is_none());
 }
 
 #[test]
@@ -148,6 +151,18 @@ fn the_operator_surface_is_classified_too() {
     assert_eq!(
         retire.target,
         Some(ActivityTarget::ChatHost(ChatHostId("chho_example".into())))
+    );
+    let reset = classified(Method::DELETE, "/api/v1/admin/chat/hosts/chho_example");
+    assert_eq!(reset.action, Action::ChatEnvironmentReset);
+    assert_eq!(
+        reset.target,
+        Some(ActivityTarget::ChatHost(ChatHostId("chho_example".into())))
+    );
+    let delete = classified(Method::DELETE, "/api/v1/admin/sessions/sesn_1");
+    assert_eq!(delete.action, Action::SessionDelete);
+    assert_eq!(
+        delete.target,
+        Some(ActivityTarget::Session(SessionId("sesn_1".into())))
     );
     assert!(!retire.reads_body);
 }

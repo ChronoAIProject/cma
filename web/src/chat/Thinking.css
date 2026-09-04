@@ -10,9 +10,13 @@
 .thinking {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   align-items: stretch;
   min-width: 0;
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
 }
 
 .thinking__key {
@@ -21,7 +25,7 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  height: 24px;
+  min-height: 28px;
   padding: 0;
   overflow: hidden;
   color: var(--dsw-alias-label-secondary);
@@ -51,19 +55,38 @@
  */
 .thinking__body {
   align-self: stretch;
-  max-height: 120px;
-  padding: 12px;
+  min-height: 56px;
+  max-height: min(42vh, 420px);
+  padding: 8px 0 2px;
   overflow-y: auto;
+  resize: vertical;
   color: var(--dsw-alias-label-tertiary);
   font-size: 13px;
   line-height: 20px;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
 .thinking__reasoning {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.thinking__messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.thinking__reasoning + .thinking__messages,
+.thinking__messages + .thinking__activities {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.thinking__message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .thinking__activities {

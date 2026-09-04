@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::{
-    AdapterError, ContentBlock, ConversationInput, KernelAdapter, RuntimeLossReason,
+    ContentBlock, ConversationInput, KernelAdapter, RuntimeLossReason,
     WorkspaceCheckpointDisposition,
 };
 
@@ -924,7 +924,7 @@ async fn image_drift_rotates_every_thread_at_the_captured_boundary() {
 }
 
 #[tokio::test]
-async fn deleting_the_final_thread_preempts_a_held_image_rotation_checkpoint() {
+async fn deleting_the_final_thread_after_image_rotation_keeps_the_successor_host() {
     let fixture = fixture("delete-held-image-rotation", 1).await;
     use_package(&fixture, 1, "delete-held-image-rotation-workspace").await;
     let before = host(&fixture).await;
@@ -941,9 +941,6 @@ async fn deleting_the_final_thread_preempts_a_held_image_rotation_checkpoint() {
         .adapter
         .hold_checkpoint
         .store(true, Ordering::SeqCst);
-    *fixture.adapter.checkpoint_error.lock().await = Some(AdapterError::Unavailable(
-        "held workspace checkpoint could not be safely recovered after runtime termination".into(),
-    ));
 
     let service = Arc::clone(&fixture.service);
     let host_id = drifted.id.clone();
@@ -958,50 +955,21 @@ async fn deleting_the_final_thread_preempts_a_held_image_rotation_checkpoint() {
     .unwrap()
     .forget();
     assert_eq!(host(&fixture).await.status, ChatHostStatus::Pausing);
-    let held_lifecycle = fixture.service.lock_lifecycle(&fixture.threads[0].id).await;
 
-    let service = Arc::clone(&fixture.service);
-    let caller = fixture.caller.clone();
-    let session_id = fixture.threads[0].id.clone();
-    let deletion = tokio::spawn(async move { service.delete_session(&caller, &session_id).await });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if fixture
-                .adapter
-                .terminated
-                .lock()
-                .await
-                .contains(&old_runtime)
-            {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("final-thread deletion terminates the runtime before waiting for the input fence");
-    assert!(
-        !deletion.is_finished(),
-        "durable deletion still waits for the checkpoint holder to release its locks"
-    );
+    assert!(fixture.adapter.terminated.lock().await.is_empty());
 
     fixture.adapter.continue_checkpoint.add_permits(1);
-    assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(2), rotation)
-            .await
-            .expect("rotation exits after runtime termination")
-            .unwrap(),
-        Err(CoreError::RuntimeRefused(_))
-    ));
-    assert!(
-        !deletion.is_finished(),
-        "durable deletion still waits for its session lifecycle fence"
-    );
-    drop(held_lifecycle);
-    tokio::time::timeout(Duration::from_secs(2), deletion)
+    assert!(tokio::time::timeout(Duration::from_secs(2), rotation)
         .await
-        .expect("deletion finishes after checkpoint capture releases its locks")
+        .expect("rotation completes after checkpoint capture resumes")
         .unwrap()
+        .expect("the image-drift rotation succeeds"));
+    let successor_runtime = host(&fixture).await.runtime_id.unwrap();
+    assert_ne!(successor_runtime, old_runtime);
+    fixture
+        .service
+        .delete_session(&fixture.caller, &fixture.threads[0].id)
+        .await
         .expect("the final chat thread is deleted");
 
     assert!(fixture
@@ -1010,10 +978,13 @@ async fn deleting_the_final_thread_preempts_a_held_image_rotation_checkpoint() {
         .await
         .unwrap()
         .is_none());
-    let retired = host(&fixture).await;
-    assert_eq!(retired.status, ChatHostStatus::Retired);
-    assert_eq!(retired.runtime_id, None);
-    assert!(retired.threads[0].removed);
+    let available = host(&fixture).await;
+    assert_eq!(available.status, ChatHostStatus::Active);
+    assert_eq!(
+        available.runtime_id.as_deref(),
+        Some(successor_runtime.as_str())
+    );
+    assert!(available.threads[0].removed);
     assert_eq!(
         fixture.adapter.terminated.lock().await.as_slice(),
         &[old_runtime]

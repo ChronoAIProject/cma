@@ -85,9 +85,10 @@ load balancer's authoritative client chain and puts streams under the API
 policy. The web image keeps the same-origin nginx proxy as a fallback when it
 is reached without that route split, so the web policy remains explicit too.
 Without the applicable policy the balancer's thirty-second default cuts a live
-event stream while it is healthy. A client can replay durable frames, but the
-message being typed and the agent's live reasoning are deliberately not
-durable and disappear on each cut.
+event stream while it is healthy. Individual live deltas have no durable
+cursor, but at the turn boundary the complete exposed reasoning summary,
+superseded public assistant messages, and final answer are committed so a
+client can reconstruct the visible work after a cut.
 
 The api-side five exist because the control plane depends on them by name. It
 runs as a named service account, receives the sandbox key through a named

@@ -3,30 +3,17 @@ import './Thinking.css';
 import { IconThinkOutline14 } from '../ui/icons';
 
 /**
- * What the agent is reasoning about, while it reasons — `Web_Style.md` §18.8.
+ * The agent's exposed working notes — `Web_Style.md` §18.8.
  *
- * **It is liveness and it is never in the record.** It is removed when the
- * turn ends and a reload shows none of it. That is stated on the control
- * whether it is open or not, because a reader who saw reasoning and reloaded
- * to find it gone would otherwise report data loss.
- *
- * **Collapsed by default** to one row. The previous revision drew an
- * always-open band, which put the least durable content on the surface at the
- * same weight as the conversation. Opening it shows a height-capped band
- * pinned to the newest.
- *
- * The row carries the newest line while it is collapsed. That is the whole
- * reason to look at a shut row: "it is doing something" is what a spinner
- * says, and this says what.
- *
- * There is deliberately no settled summary. The design this follows shows the
- * first line once reasoning has stopped — but reasoning here never stops on
- * screen: §18.8 makes it liveness, so the run ending removes it entirely and
- * a row showing a finished summary is a row that cannot exist.
+ * Reasoning, intermediate public messages, and tool activity arrive here while
+ * the turn runs. Their complete public form is retained at the turn boundary,
+ * so the same open container can be reconstructed after navigation or reload.
+ * The disclosure remains height-bounded and resizable because the work can be
+ * much longer than the final answer.
  *
  * No colour, ever. §2 reserves the semantic inks for session and system
- * state, and reasoning is neither — it says nothing about how the session is
- * doing.
+ * state, and working notes are neither — they say nothing about whether the
+ * session itself is healthy.
  */
 
 export interface ThinkingActivityBody {
@@ -46,8 +33,10 @@ export interface ThinkingActivity {
 }
 
 interface ThinkingProps {
-  /** Live-only reasoning. Empty for a fold reconstructed from durable tools. */
+  /** Live or retained reasoning summary explicitly exposed by the agent. */
   readonly text?: string;
+  /** Public intermediate messages superseded by the turn's final answer. */
+  readonly messages?: readonly string[];
   readonly activities?: readonly ThinkingActivity[];
   /** Settled folds do not animate or continue counting. */
   readonly live?: boolean;
@@ -82,14 +71,15 @@ export function activitySummary(activity: ThinkingActivity): string {
   return `${activity.kind} - ${activity.target} - ${activity.status} - ${activityDuration(activity)}`;
 }
 
-export function Thinking({ text = '', activities = [], live = true }: ThinkingProps) {
-  const [open, setOpen] = useState(false);
+export function Thinking({
+  text = '',
+  messages = [],
+  activities = [],
+  live = true,
+}: ThinkingProps) {
+  const [open, setOpen] = useState(true);
   const bodyRef = useRef<HTMLDivElement>(null);
-  /*
-   * How long this reasoning has been arriving, counted from mount. Liveness
-   * about liveness: the figure is not kept either, and a reload starts from
-   * nothing because the reasoning it measured is gone.
-   */
+  /** How long this live working-notes stream has been arriving. */
   const [seconds, setSeconds] = useState(0);
 
   useEffect(() => {
@@ -106,14 +96,13 @@ export function Thinking({ text = '', activities = [], live = true }: ThinkingPr
   }, [live]);
 
   useEffect(() => {
-    // Always pinned, unlike the message stream. Nobody scrolls back through
-    // reasoning — it is going to be gone in a moment — so the newest is the
-    // only part worth showing.
+    // Keep the newest live work visible. A settled container remains manually
+    // scrollable and this effect no longer runs once its contents stop changing.
     const body = bodyRef.current;
     if (body !== null && open) {
       body.scrollTop = body.scrollHeight;
     }
-  }, [activities, text, open]);
+  }, [activities, messages, text, open]);
 
   const recordedDuration = activities.reduce<number | undefined>((longest, activity) => {
     const duration = activity.durationMs;
@@ -123,19 +112,18 @@ export function Thinking({ text = '', activities = [], live = true }: ThinkingPr
   const title =
     live || recordedDuration !== undefined
       ? `Thought for ${String(live ? seconds : Math.ceil((recordedDuration ?? 0) / 1000))}s`
-      : 'Thinking';
+      : 'Working notes';
   const activity = activities.at(-1);
-  const summary = summaryOf(text) || (activity === undefined ? '' : activitySummary(activity));
+  const summary =
+    summaryOf(messages.at(-1) ?? '') ||
+    summaryOf(text) ||
+    (activity === undefined ? '' : activitySummary(activity));
 
   return (
     <section
       className={`thinking${live ? '' : ' thinking--settled'}`}
-      aria-label="What the agent is working through"
+      aria-label="Agent working notes"
     >
-      {/*
-       * The words that make it safe to lose stay on the key whether it is
-       * open or not — §18.8.
-       */}
       <button
         type="button"
         className="thinking__key"
@@ -148,20 +136,14 @@ export function Thinking({ text = '', activities = [], live = true }: ThinkingPr
           <IconThinkOutline14 />
         </span>
         <span className="thinking__title">{title}</span>
-        <span className="thinking__dot" aria-hidden="true" />
-        {/*
-          The summary is the row's reason to exist while it is shut. It never
-          wraps: a row that grows with the agent's longest sentence moves the
-          conversation under it several times a second.
-        */}
-        <span className="thinking__summary">{summary}</span>
-        <span className="sr-only">
-          {activities.length === 0
-            ? ', not kept after this turn'
-            : text === ''
-              ? ', tool activity retained in this conversation'
-              : ', reasoning not kept after this turn; tool activity retained in this conversation'}
-        </span>
+        {open ? null : (
+          <>
+            <span className="thinking__dot" aria-hidden="true" />
+            {/* The latest line identifies useful work while the body is shut. */}
+            <span className="thinking__summary">{summary}</span>
+          </>
+        )}
+        <span className="sr-only">, retained in this conversation</span>
       </button>
 
       {/*
@@ -172,6 +154,15 @@ export function Thinking({ text = '', activities = [], live = true }: ThinkingPr
       {open ? (
         <div className="thinking__body" ref={bodyRef}>
           {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
+          {messages.length === 0 ? null : (
+            <div className="thinking__messages">
+              {messages.map((message, index) => (
+                <div className="thinking__message" key={index}>
+                  {message}
+                </div>
+              ))}
+            </div>
+          )}
           {activities.length === 0 ? null : (
             <ul className="thinking__activities">
               {activities.map((item) => (
@@ -198,7 +189,7 @@ function ActivityBody({
 }) {
   if (body === undefined || body === null) return null;
   return (
-    <details className="thinking__activitybody">
+    <details className="thinking__activitybody" open>
       <summary>{label}</summary>
       <pre>{body.text}</pre>
       {body.truncated ? <p>The recorded body was truncated.</p> : null}

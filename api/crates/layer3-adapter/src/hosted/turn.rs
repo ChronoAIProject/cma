@@ -7,19 +7,18 @@
 
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
 use crate::conversation::{ConversationInput, ConversationUpdate, PromptResponse};
 
 use super::acp::{Bridge, Outcome, TURN_DEADLINE};
 use super::inbound::{blocked_from_locator, outcome_for};
+use super::relay::UpdateRelay;
 
 impl Bridge {
     /// Act on something a caller sent toward the runtime.
     pub(super) async fn drive(
         &self,
         input: ConversationInput,
-        updates: &mpsc::Sender<ConversationUpdate>,
+        updates: &UpdateRelay,
     ) -> Result<(), crate::AdapterError> {
         let Some(session) = self.session.lock().await.clone() else {
             return Err(crate::AdapterError::Unavailable(
@@ -49,7 +48,7 @@ impl Bridge {
                 // bridge something: that one waits under a deadline meant for a
                 // question with a quick answer, and a prompt takes as long as
                 // the model takes.
-                match self.begin("session/prompt", params).await {
+                match self.begin_prompt(params).await {
                     Ok(waiting) => {
                         let answered_permissions = Arc::clone(&self.answered);
                         let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
@@ -61,30 +60,30 @@ impl Bridge {
                             // A response ends the scope in which permission
                             // request ids and their duplicate answers are live.
                             answered_permissions.lock().await.clear();
-                            let (outcome, prompt_evidence) = match answered {
+                            let update = match answered {
                                 // Nothing at all, for an hour. Said rather
                                 // than left running: a turn nobody will ever
                                 // answer looks exactly like a turn in
                                 // progress, and only one of them is worth
                                 // waiting for.
-                                Err(_) => (
+                                Err(_) => Some(scoped_turn_outcome(
                                     Outcome::Failed {
                                         message: "the agent did not answer this turn".to_string(),
                                         capability: None,
                                     },
                                     false,
-                                ),
+                                )),
                                 // A matched JSON-RPC prompt response is the
                                 // recipient-side terminal evidence. Its result
                                 // or error is correlated even though the wire
                                 // carries no id on intermediate updates.
-                                Ok(Ok(frame)) => (turn_outcome(frame), true),
+                                Ok(Ok(_)) => None,
                                 // The bridge went away mid-turn. This is a
                                 // failure, not an ending: the agent did not
                                 // answer, and reporting it as a completed turn
                                 // is what made a dead bridge look like an
                                 // agent with nothing to say.
-                                Ok(Err(_)) => (
+                                Ok(Err(_)) => Some(scoped_turn_outcome(
                                     Outcome::Failed {
                                         message:
                                             "the agent stopped answering before the turn finished"
@@ -92,10 +91,11 @@ impl Bridge {
                                         capability: None,
                                     },
                                     false,
-                                ),
+                                )),
                             };
-                            let update = scoped_turn_outcome(outcome, prompt_evidence);
-                            let _ = updates.send(update).await;
+                            if let Some(update) = update {
+                                updates.send(update);
+                            }
                         });
                         Ok(())
                     }
@@ -108,17 +108,13 @@ impl Bridge {
                             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                         debug_assert!(previous > 0, "a failed prompt releases its waiter");
                         tracing::warn!(error = %e, "could not send a prompt");
-                        let _ = updates
-                            .send(scoped_turn_outcome(
-                                Outcome::Failed {
-                                    message: format!(
-                                        "the prompt could not be sent to the agent: {e}"
-                                    ),
-                                    capability: None,
-                                },
-                                false,
-                            ))
-                            .await;
+                        updates.send(scoped_turn_outcome(
+                            Outcome::Failed {
+                                message: format!("the prompt could not be sent to the agent: {e}"),
+                                capability: None,
+                            },
+                            false,
+                        ));
                         Err(e)
                     }
                 }

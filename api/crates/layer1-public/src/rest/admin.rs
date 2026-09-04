@@ -236,6 +236,8 @@ impl From<ActivityRecord> for ActivityView {
 pub struct AdminSessionView {
     id: String,
     owner: String,
+    /// Whether this row is a deployment-managed Chat conversation.
+    chat: bool,
     /// How the owner should be shown, when the directory knows a name for them.
     #[serde(skip_serializing_if = "Option::is_none")]
     owner_label: Option<String>,
@@ -255,9 +257,11 @@ pub struct AdminSessionView {
 
 impl AdminSessionView {
     fn render(s: Session, names: &HashMap<SubjectId, String>) -> Self {
+        let chat = s.chat.is_some();
         Self {
             owner_label: names.get(&s.owner).cloned(),
             owner: s.owner.0,
+            chat,
             id: s.id.0,
             status: s.status,
             recovery_state: s.recovery_state,
@@ -684,19 +688,21 @@ fn enum_code(value: impl Serialize) -> String {
 /// unit, and a route added outside that segment would escape whatever protects
 /// it without anything noticing.
 #[cfg(test)]
-const OPERATOR_ROUTES: [&str; 12] = [
+const OPERATOR_ROUTES: [&str; 14] = [
     "/api/v1/admin/users",
     "/api/v1/admin/activity",
     "/api/v1/admin/triggers/support",
     "/api/v1/admin/triggers/launches/{launch_id}/reconcile",
     "/api/v1/admin/runtimes",
     "/api/v1/admin/sessions",
+    "/api/v1/admin/sessions/{id}",
     // The same core operations the owner's own routes project. A second
     // address rather than second behaviour: an operator ending somebody else's
     // session should be doing it somewhere a gateway can see.
     "/api/v1/admin/sessions/{id}/stop",
     "/api/v1/admin/sessions/{id}/terminate",
     "/api/v1/admin/chat/hosts",
+    "/api/v1/admin/chat/hosts/{id}",
     "/api/v1/admin/chat/hosts/{id}/retire",
     "/api/v1/admin/settings",
     "/api/v1/admin/settings/reset",
@@ -716,9 +722,11 @@ pub(super) fn documented_router(state: Arc<AdminState>) -> OpenApiRouter {
         .routes(routes!(authorize_effect_reconciliation))
         .routes(routes!(runtimes))
         .routes(routes!(sessions))
+        .routes(routes!(delete_chat_session))
         .routes(routes!(stop))
         .routes(routes!(terminate))
         .routes(routes!(chat_hosts))
+        .routes(routes!(reset_chat_host))
         .routes(routes!(retire_chat_host))
         .with_state(state)
         .merge(settings)
@@ -1012,6 +1020,44 @@ async fn chat_hosts(
                 .collect(),
         ),
     ))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/sessions/{id}",
+    tag = "administration",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Chat conversation, history, checkpoints, and worktree permanently removed by an operator"))
+)]
+async fn delete_chat_session(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Response, Problem> {
+    let owner = state
+        .sessions
+        .delete_any_chat_session(&caller, &SessionId(id))
+        .await?;
+    Ok(acted(&caller, owner))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/chat/hosts/{id}",
+    tag = "administration",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Owner's complete Chat environment and shared sandbox permanently removed by an operator"))
+)]
+async fn reset_chat_host(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Response, Problem> {
+    let owner = state
+        .sessions
+        .reset_any_chat_environment(&caller, &ChatHostId(id))
+        .await?;
+    Ok(acted(&caller, owner))
 }
 
 #[utoipa::path(

@@ -73,12 +73,25 @@ pub struct ToolActivityItem {
     pub result: Option<ToolActivityBody>,
 }
 
+/// Retained agent work shown inside one turn's working-notes container.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct WorkingNotesItem {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub response_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    pub messages: Vec<String>,
+}
+
 /// Supported conversation item union.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(untagged)]
 pub enum ConversationItem {
     Message(MessageItem),
     ToolActivity(ToolActivityItem),
+    WorkingNotes(WorkingNotesItem),
 }
 
 impl ConversationItem {
@@ -86,6 +99,7 @@ impl ConversationItem {
         match self {
             Self::Message(item) => &item.id,
             Self::ToolActivity(item) => &item.id,
+            Self::WorkingNotes(item) => &item.id,
         }
     }
 }
@@ -177,39 +191,80 @@ struct ToolFold {
     started_at: Option<u64>,
 }
 
+fn flush_assistant(
+    id: &SessionId,
+    ordered: &mut Vec<OrderedItem>,
+    turn: Option<u64>,
+    completed: bool,
+    messages: &mut Vec<(u64, String)>,
+    reasoning: &mut Option<(u64, String)>,
+) {
+    let Some(turn) = turn else {
+        messages.clear();
+        *reasoning = None;
+        return;
+    };
+    let final_message = completed.then(|| messages.pop()).flatten();
+    let note_sequence = messages
+        .iter()
+        .map(|(seq, _)| *seq)
+        .chain(reasoning.iter().map(|(seq, _)| *seq))
+        .max();
+    if let Some(seq) = note_sequence {
+        ordered.push(OrderedItem {
+            seq,
+            item: ConversationItem::WorkingNotes(WorkingNotesItem {
+                id: format!("work_{}_{}", id.as_str(), turn),
+                kind: "cma_chat.working_notes",
+                response_id: super::response_id(id, turn),
+                reasoning: reasoning.take().map(|(_, content)| content),
+                messages: messages.drain(..).map(|(_, content)| content).collect(),
+            }),
+        });
+    } else {
+        messages.clear();
+        *reasoning = None;
+    }
+    if let Some((seq, text)) = final_message {
+        ordered.push(OrderedItem {
+            seq,
+            item: ConversationItem::Message(MessageItem {
+                id: message_id(id, turn),
+                kind: "message",
+                status: "completed",
+                role: "assistant",
+                content: vec![MessageContent {
+                    kind: "output_text".into(),
+                    text,
+                    annotations: Some(Vec::new()),
+                    logprobs: Some(Vec::new()),
+                }],
+            }),
+        });
+    }
+}
+
 pub(super) fn project(id: &SessionId, events: &[Event]) -> Vec<ConversationItem> {
     let mut ordered = Vec::<OrderedItem>::new();
     let mut tools = HashMap::<String, ToolFold>::new();
     let mut turn = None;
-    let mut assistant: Option<(u64, String)> = None;
-
-    let flush_assistant = |ordered: &mut Vec<OrderedItem>,
-                           turn: Option<u64>,
-                           assistant: &mut Option<(u64, String)>| {
-        if let (Some(turn), Some((seq, text))) = (turn, assistant.take()) {
-            ordered.push(OrderedItem {
-                seq,
-                item: ConversationItem::Message(MessageItem {
-                    id: message_id(id, turn),
-                    kind: "message",
-                    status: "completed",
-                    role: "assistant",
-                    content: vec![MessageContent {
-                        kind: "output_text".into(),
-                        text,
-                        annotations: Some(Vec::new()),
-                        logprobs: Some(Vec::new()),
-                    }],
-                }),
-            });
-        }
-    };
+    let mut assistant = Vec::<(u64, String)>::new();
+    let mut reasoning = None::<(u64, String)>;
+    let mut turn_completed = false;
 
     for event in events {
         match &event.kind {
             EventKind::TurnStarted => {
-                flush_assistant(&mut ordered, turn, &mut assistant);
+                flush_assistant(
+                    id,
+                    &mut ordered,
+                    turn,
+                    turn_completed,
+                    &mut assistant,
+                    &mut reasoning,
+                );
                 turn = Some(event.seq);
+                turn_completed = false;
             }
             EventKind::OwnerMessage { content } => ordered.push(OrderedItem {
                 seq: event.seq,
@@ -227,8 +282,12 @@ pub(super) fn project(id: &SessionId, events: &[Event]) -> Vec<ConversationItem>
                 }),
             }),
             EventKind::MessageCommitted { content } if turn.is_some() => {
-                assistant = Some((event.seq, content.clone()));
+                assistant.push((event.seq, content.clone()));
             }
+            EventKind::ReasoningCommitted { content } if turn.is_some() => {
+                reasoning = Some((event.seq, content.clone()));
+            }
+            EventKind::TurnCompleted if turn.is_some() => turn_completed = true,
             EventKind::ToolCallStarted {
                 call_id,
                 title,
@@ -302,7 +361,14 @@ pub(super) fn project(id: &SessionId, events: &[Event]) -> Vec<ConversationItem>
             _ => {}
         }
     }
-    flush_assistant(&mut ordered, turn, &mut assistant);
+    flush_assistant(
+        id,
+        &mut ordered,
+        turn,
+        turn_completed,
+        &mut assistant,
+        &mut reasoning,
+    );
     ordered.sort_by_key(|entry| std::cmp::Reverse(entry.seq));
     ordered.into_iter().map(|entry| entry.item).collect()
 }

@@ -9,6 +9,7 @@ import type {
   ResponsesResponse,
   ResponsesStreamEvent,
   ResponseToolActivity,
+  ResponseWorkingNotes,
 } from '@chronoai/cma-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'react';
@@ -83,10 +84,22 @@ function thinkingActivity(extra: Partial<ThinkingActivity> = {}): ThinkingActivi
   };
 }
 
+function workingNotes(extra: Partial<ResponseWorkingNotes> = {}): ResponseWorkingNotes {
+  return {
+    id: 'work_chat_test_1',
+    type: 'cma_chat.working_notes',
+    response_id: 'resp_chat_test_1',
+    reasoning: 'checking the release gates',
+    messages: ['I checked the release inputs.'],
+    ...extra,
+  };
+}
+
 function historyItems(): readonly ResponsesConversationItem[] {
   // The public endpoint is newest first.
   return [
     message('msg_chat_test_1', 'assistant', 'Everything is ready.'),
+    workingNotes(),
     tool(),
     message('msg_chat_test_2', 'user', 'Check the release.'),
   ];
@@ -349,8 +362,7 @@ describe('Responses history projection', () => {
 });
 
 describe('the reduced Chat surface', () => {
-  it('reconstructs committed messages and durable tool work, but never reasoning, on reload', async () => {
-    const user = userEvent.setup();
+  it('reconstructs retained working notes and the separate final answer on reload', async () => {
     const listItems = vi.fn().mockResolvedValue(page(historyItems()));
     const { container } = render(<TestChatSurface session={session()} listItems={listItems} />);
 
@@ -362,16 +374,20 @@ describe('the reduced Chat surface', () => {
     expect(container.querySelector('.turn--tool')).toBeNull();
     expect(screen.queryByText(/private chain of thought/i)).toBeNull();
 
-    const fold = screen.getByRole('button', { name: /tool activity retained/i });
-    expect(fold).toHaveTextContent('shell - npm test - completed - 1.4s');
-    await user.click(fold);
+    const fold = screen.getByRole('button', { name: /retained in this conversation/i });
+    expect(fold).toHaveAttribute('aria-expanded', 'true');
     const body = container.querySelector('.thinking__body');
     expect(body).not.toBeNull();
+    expect(body).toHaveTextContent('checking the release gates');
+    expect(body).toHaveTextContent('I checked the release inputs.');
     expect(within(body as HTMLElement).getByText('shell - npm test - completed - 1.4s')).toBe(
       within(body as HTMLElement).getByText('shell - npm test - completed - 1.4s'),
     );
-    await user.click(within(body as HTMLElement).getByText('Arguments'));
-    await user.click(within(body as HTMLElement).getByText('Result'));
+    const activityBodies = body?.querySelectorAll('.thinking__activitybody');
+    expect(activityBodies).toHaveLength(2);
+    for (const activityBody of activityBodies ?? []) {
+      expect(activityBody).toHaveAttribute('open');
+    }
     expect(body).toHaveTextContent('{"cwd":"/work/chat-1"}');
     expect(body).toHaveTextContent('42 tests passed');
     expect(body).toHaveTextContent('The recorded body was truncated.');
@@ -399,7 +415,7 @@ describe('the reduced Chat surface', () => {
     expect(field).toHaveValue('/status');
   });
 
-  it('folds a controlled Responses stream and replaces live reasoning with durable tools on reload', async () => {
+  it('keeps live working notes through completion and moves only the final answer outside', async () => {
     const user = userEvent.setup();
     const connection = new ControlledConnection();
     let currentItems: readonly ResponsesConversationItem[] = [];
@@ -441,7 +457,9 @@ describe('the reduced Chat surface', () => {
         response: inProgress,
       });
     });
-    expect(screen.getByRole('button', { name: /not kept after this turn/i })).toHaveTextContent(
+    const liveNotes = screen.getByRole('button', { name: /retained in this conversation/i });
+    expect(liveNotes).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.thinking__body')).toHaveTextContent(
       'checking the release gates',
     );
     expect(screen.queryByText('Working')).toBeNull();
@@ -455,7 +473,6 @@ describe('the reduced Chat surface', () => {
         response: inProgress,
       });
     });
-    await user.click(screen.getByRole('button', { name: /not kept after this turn/i }));
     expect(screen.getByText('shell - npm test - started - ongoing')).toBeInTheDocument();
 
     await act(async () => {
@@ -466,10 +483,8 @@ describe('the reduced Chat surface', () => {
         response: inProgress,
       });
     });
-    expect(screen.getByText('Everything is ready.').closest('.turn')).toHaveAttribute(
-      'data-role',
-      'assistant',
-    );
+    expect(screen.getByText('Everything is ready.').closest('.thinking')).not.toBeNull();
+    expect(screen.getByText('Everything is ready.').closest('.turn')).toBeNull();
 
     currentItems = historyItems();
     const complete = response('completed');
@@ -487,13 +502,13 @@ describe('the reduced Chat surface', () => {
     });
 
     await waitFor(() => expect(listItems).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByText('checking the release gates')).toBeNull());
+    await waitFor(() => expect(screen.getByText('checking the release gates')).toBeInTheDocument());
     expect(screen.getByText('Everything is ready.').closest('.turn')).toHaveAttribute(
       'data-role',
       'assistant',
     );
     expect(container.querySelectorAll('.thinking')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /tool activity retained/i })).toHaveTextContent(
+    expect(container.querySelector('.thinking__body')).toHaveTextContent(
       'shell - npm test - completed - 1.4s',
     );
   });
@@ -539,7 +554,8 @@ describe('the reduced Chat surface', () => {
     const listItems = vi.fn((id: string) =>
       Promise.resolve(page(id === 'chat_one' ? chatOneItems : [])),
     );
-    const running = response('in_progress', '', {
+    const intermediateText = 'Still checking the active turn.';
+    const running = response('in_progress', intermediateText, {
       id: 'resp_chat_one_1',
       previous_response_id: null,
     });
@@ -558,15 +574,32 @@ describe('the reduced Chat surface', () => {
         },
       ],
     });
+    const activeChatOneItems = (): readonly ResponsesConversationItem[] => [
+      workingNotes({
+        id: 'work_chat_one_1',
+        response_id: 'resp_chat_one_1',
+        reasoning: 'checking after navigation',
+        messages: [intermediateText],
+      }),
+      message('msg_chat_one_2', 'user', 'Keep working'),
+    ];
+    let finishRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => {
+      finishRecovery = resolve;
+    });
     const readResponse = vi
       .fn()
-      .mockResolvedValueOnce(running)
       .mockImplementationOnce(() => {
+        chatOneItems = activeChatOneItems();
+        return Promise.resolve(running);
+      })
+      .mockImplementationOnce(async () => {
+        await recoveryGate;
         chatOneItems = [
           message('msg_chat_one_1', 'assistant', 'Recovered answer'),
-          message('msg_chat_one_2', 'user', 'Keep working'),
+          ...activeChatOneItems(),
         ];
-        return Promise.resolve(completed);
+        return completed;
       });
     const view = render(
       <TestChatSurface
@@ -615,7 +648,25 @@ describe('the reduced Chat surface', () => {
     );
     expect(screen.getByRole('status')).toHaveTextContent("Checking this chat's latest response.");
     expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+    const recoveredIntermediate = await screen.findByText(intermediateText);
+    expect(screen.getAllByText(intermediateText)).toHaveLength(1);
+    expect(recoveredIntermediate.closest('.thinking')).not.toBeNull();
+    expect(recoveredIntermediate.closest('.turn')).toBeNull();
+    expect(view.container.querySelectorAll('.thinking')).toHaveLength(1);
+    expect(view.container.querySelector('.stream__waiting')).toBeNull();
+
+    await waitFor(() => expect(readResponse).toHaveBeenCalledTimes(2), { timeout: 2_500 });
+    await act(async () => {
+      finishRecovery();
+      await recoveryGate;
+    });
     expect(await screen.findByText('Recovered answer', {}, { timeout: 2_500 })).toBeInTheDocument();
+    expect(screen.getByText('Recovered answer').closest('.turn')).toHaveAttribute(
+      'data-role',
+      'assistant',
+    );
+    expect(screen.getAllByText(intermediateText)).toHaveLength(1);
+    expect(screen.getByText(intermediateText).closest('.thinking')).not.toBeNull();
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
     expect(screen.getAllByText('Keep working')).toHaveLength(1);
     connection.cancel();

@@ -78,10 +78,12 @@ export function canControlAnySession(capabilities: readonly Capability[]): boole
 export interface SessionControls {
   readonly canStop: boolean;
   readonly canTerminate: boolean;
+  readonly canDeleteChat: boolean;
   /** Why stopping is unavailable, when it is. */
   readonly stopReason?: string;
   /** Why ending is unavailable, when it is. */
   readonly terminateReason?: string;
+  readonly deleteChatReason?: string;
 }
 
 /** Explanations shared by both controls, so they cannot drift apart. */
@@ -106,8 +108,10 @@ export function controlsFor(
     return {
       canStop: false,
       canTerminate: false,
+      canDeleteChat: false,
       stopReason: NOT_ENTITLED,
       terminateReason: NOT_ENTITLED,
+      deleteChatReason: session.chat ? NOT_ENTITLED : undefined,
     };
   }
   switch (session.status) {
@@ -115,6 +119,7 @@ export function controlsFor(
       return {
         canStop: false,
         canTerminate: false,
+        canDeleteChat: session.chat,
         stopReason: ALREADY_ENDED,
         terminateReason: ALREADY_ENDED,
       };
@@ -124,11 +129,22 @@ export function controlsFor(
       return {
         canStop: false,
         canTerminate: true,
+        canDeleteChat: session.chat,
         stopReason: 'Its runtime is already released.',
       };
     default:
-      return { canStop: true, canTerminate: true };
+      return { canStop: true, canTerminate: true, canDeleteChat: session.chat };
   }
+}
+
+/** Whether an operator may permanently reset one owner's complete Chat environment. */
+export function environmentResetFor(capabilities: readonly Capability[]): {
+  readonly canReset: boolean;
+  readonly reason?: string;
+} {
+  return canControlAnySession(capabilities)
+    ? { canReset: true }
+    : { canReset: false, reason: NOT_ENTITLED };
 }
 
 /** Whether a host may be retired from the inventory, and why not when it may not. */

@@ -36,6 +36,7 @@ export interface ThinkingStreamEntry {
   readonly kind: 'thinking';
   readonly id: string;
   readonly text?: string;
+  readonly messages?: readonly string[];
   readonly activities: readonly ThinkingActivity[];
   readonly live: boolean;
   readonly seq: number;
@@ -92,6 +93,7 @@ interface MessageStreamProps {
    */
   readonly reasoning?: {
     readonly text: string;
+    readonly messages?: readonly string[];
     readonly activities?: readonly ThinkingActivity[];
     readonly live?: boolean;
   };
@@ -160,7 +162,13 @@ export function MessageStream({
    * nothing, because it is the affordance a reader trusts to tell them the
    * difference.
    */
-  const waiting = turnInFlight && linkLive && live === undefined && reasoning === undefined;
+  const hasLiveThinkingEntry = entries.some((entry) => entry.kind === 'thinking' && entry.live);
+  const waiting =
+    turnInFlight &&
+    linkLive &&
+    live === undefined &&
+    reasoning === undefined &&
+    !hasLiveThinkingEntry;
 
   /*
    * Follow the column while it grows, for as long as somebody is following.
@@ -303,6 +311,7 @@ export function MessageStream({
           {reasoning === undefined ? null : (
             <Thinking
               text={reasoning.text}
+              messages={reasoning.messages}
               activities={reasoning.activities}
               live={reasoning.live}
             />
@@ -567,7 +576,14 @@ function StreamEntry({
       );
 
     case 'thinking':
-      return <Thinking text={entry.text} activities={entry.activities} live={entry.live} />;
+      return (
+        <Thinking
+          text={entry.text}
+          messages={entry.messages}
+          activities={entry.activities}
+          live={entry.live}
+        />
+      );
 
     default: {
       const exhaustive: never = entry;

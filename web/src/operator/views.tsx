@@ -1,5 +1,7 @@
 import { Button } from '../ui/Button';
 import { InlineConfirm } from '../ui/InlineConfirm';
+import { RiskConfirmation } from '../ui/RiskConfirmation';
+import { IconTrashOutline16 } from '../ui/icons';
 import { Pill } from '../ui/Pill';
 import { StateDot } from '../ui/StateDot';
 import { fullTimestampOrNone } from '../sessions/sessionTime';
@@ -13,7 +15,7 @@ import {
   type ActivityFilter,
 } from './activity';
 import { byRecency, labelFor, nameOf, type PersonLabel } from './directory';
-import { controlsFor, retirementFor } from './access';
+import { controlsFor, environmentResetFor, retirementFor } from './access';
 import { PersonName, RecordList, RecordRow } from './RecordList';
 import type { ActivityEntry, AdminSession, ChatHost, Person, RuntimeInventory } from './types';
 
@@ -237,10 +239,13 @@ interface SessionsViewProps {
   readonly capabilities: readonly Capability[];
   /** Which session is awaiting an inline confirmation to end. */
   readonly confirming: string | null;
+  readonly confirmingDelete: string | null;
   readonly busy: boolean;
   readonly onConfirm: (id: string | null) => void;
+  readonly onConfirmDelete: (id: string | null) => void;
   readonly onStop: (id: string) => void;
   readonly onTerminate: (id: string) => void;
+  readonly onDeleteChat: (id: string) => void;
 }
 
 /** Every session there is, and the two controls that act on one. */
@@ -248,10 +253,13 @@ export function SessionsView({
   sessions,
   capabilities,
   confirming,
+  confirmingDelete,
   busy,
   onConfirm,
+  onConfirmDelete,
   onStop,
   onTerminate,
+  onDeleteChat,
 }: SessionsViewProps) {
   return (
     <RecordList
@@ -282,48 +290,80 @@ export function SessionsView({
               </>
             }
             actions={
-              confirming === session.id ? (
-                <>
-                  <span className="operator__confirm">End this session?</span>
-                  <Button
-                    variant="primary"
-                    disabled={busy}
-                    onClick={() => {
-                      onTerminate(session.id);
+              <>
+                {confirming === session.id ? (
+                  <>
+                    <span className="operator__confirm">End this session?</span>
+                    <Button
+                      variant="primary"
+                      disabled={busy}
+                      onClick={() => {
+                        onTerminate(session.id);
+                      }}
+                    >
+                      End
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        onConfirm(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      disabled={!controls.canStop || busy}
+                      title={controls.stopReason}
+                      onClick={() => {
+                        onStop(session.id);
+                      }}
+                    >
+                      Stop
+                    </Button>
+                    <Button
+                      disabled={!controls.canTerminate || busy}
+                      title={controls.terminateReason}
+                      onClick={() => {
+                        onConfirm(session.id);
+                      }}
+                    >
+                      End
+                    </Button>
+                    {session.chat ? (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        icon={<IconTrashOutline16 />}
+                        disabled={!controls.canDeleteChat || busy}
+                        title={controls.deleteChatReason}
+                        onClick={() => {
+                          onConfirmDelete(session.id);
+                        }}
+                      >
+                        Delete Chat
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+                {session.chat ? (
+                  <RiskConfirmation
+                    open={confirmingDelete === session.id}
+                    title="Delete this Chat?"
+                    description={`Owner ${session.ownerLabel ?? session.owner}. This permanently deletes Chat ${session.id}, its history, checkpoints, and worktree. The owner's other Chats and shared sandbox remain available.`}
+                    acknowledgeLabel="I understand this Chat cannot be recovered."
+                    confirmLabel="Delete Chat"
+                    busy={busy}
+                    onCancel={() => {
+                      onConfirmDelete(null);
                     }}
-                  >
-                    End
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      onConfirm(null);
+                    onConfirm={() => {
+                      onDeleteChat(session.id);
                     }}
-                  >
-                    Cancel
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    disabled={!controls.canStop || busy}
-                    title={controls.stopReason}
-                    onClick={() => {
-                      onStop(session.id);
-                    }}
-                  >
-                    Stop
-                  </Button>
-                  <Button
-                    disabled={!controls.canTerminate || busy}
-                    title={controls.terminateReason}
-                    onClick={() => {
-                      onConfirm(session.id);
-                    }}
-                  >
-                    End
-                  </Button>
-                </>
-              )
+                  />
+                ) : null}
+              </>
             }
           />
         );
@@ -356,9 +396,12 @@ interface ChatHostsViewProps {
   readonly hosts: readonly ChatHost[];
   readonly capabilities: readonly Capability[];
   readonly confirming: string | null;
+  readonly confirmingReset: string | null;
   readonly busy: boolean;
   readonly onConfirm: (id: string | null) => void;
+  readonly onConfirmReset: (id: string | null) => void;
   readonly onRetire: (id: string) => void;
+  readonly onReset: (id: string) => void;
 }
 
 /** Deployment-managed shared chat runtimes and their audited retirement control. */
@@ -366,9 +409,12 @@ export function ChatHostsView({
   hosts,
   capabilities,
   confirming,
+  confirmingReset,
   busy,
   onConfirm,
+  onConfirmReset,
   onRetire,
+  onReset,
 }: ChatHostsViewProps) {
   return (
     <RecordList
@@ -378,6 +424,7 @@ export function ChatHostsView({
     >
       {hosts.map((host) => {
         const retirement = retirementFor(host, capabilities);
+        const reset = environmentResetFor(capabilities);
         return (
           <RecordRow
             key={host.id}
@@ -420,37 +467,65 @@ export function ChatHostsView({
               </>
             }
             actions={
-              confirming === host.id ? (
-                <InlineConfirm
-                  question="Retire this chat host?"
-                  confirmLabel="Retire"
+              <>
+                {confirming === host.id ? (
+                  <InlineConfirm
+                    question="Retire this chat host?"
+                    confirmLabel="Retire"
+                    busy={busy}
+                    cancelDisabled={busy}
+                    onCancel={() => {
+                      onConfirm(null);
+                    }}
+                    onConfirm={() => {
+                      onRetire(host.id);
+                    }}
+                  />
+                ) : (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={!retirement.canRetire || busy}
+                      title={retirement.reason}
+                      onClick={() => {
+                        onConfirm(host.id);
+                      }}
+                    >
+                      Retire
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      icon={<IconTrashOutline16 />}
+                      disabled={!reset.canReset || busy}
+                      title={reset.reason}
+                      onClick={() => {
+                        onConfirmReset(host.id);
+                      }}
+                    >
+                      Reset environment
+                    </Button>
+                    {retirement.reason === undefined ? null : (
+                      <span className="control-reason">{retirement.reason}</span>
+                    )}
+                  </>
+                )}
+                <RiskConfirmation
+                  open={confirmingReset === host.id}
+                  title="Reset this Chat environment?"
+                  description={`Owner ${host.owner} has ${String(host.threadCount)} ${host.threadCount === 1 ? 'Chat' : 'Chats'} on this host. This permanently deletes every Chat history, checkpoint, and worktree, then terminates the shared sandbox.`}
+                  acknowledgeLabel="I understand this owner's complete Chat environment will be deleted."
+                  confirmLabel="Reset environment"
                   busy={busy}
-                  cancelDisabled={busy}
                   onCancel={() => {
-                    onConfirm(null);
+                    onConfirmReset(null);
                   }}
                   onConfirm={() => {
-                    onRetire(host.id);
+                    onReset(host.id);
                   }}
                 />
-              ) : (
-                <>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    disabled={!retirement.canRetire || busy}
-                    title={retirement.reason}
-                    onClick={() => {
-                      onConfirm(host.id);
-                    }}
-                  >
-                    Retire
-                  </Button>
-                  {retirement.reason === undefined ? null : (
-                    <span className="control-reason">{retirement.reason}</span>
-                  )}
-                </>
-              )
+              </>
             }
           />
         );

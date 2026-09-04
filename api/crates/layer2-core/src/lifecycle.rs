@@ -20,6 +20,8 @@ use crate::service::{store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::{SessionRecord, StoreError};
 
+const CHAT_ENVIRONMENT_RESET_CLAIM_PREFIX: &str = "chreset_";
+
 impl SessionService {
     /// Fail unless this caller may end or pause this particular session.
     ///
@@ -1117,15 +1119,16 @@ impl SessionService {
     /// Distinct from ending one. Terminating stops the runtime and leaves the
     /// session listed, because a finished conversation is still worth reading;
     /// deleting is the owner saying they are done with it. A session still
-    /// running is terminated first, so deleting never strands a sandbox.
+    /// running is terminated first, so deleting never strands a sandbox. Chat
+    /// conversations are the exception because they share a deployment-managed
+    /// sandbox: deleting one removes only its worktree and keeps that sandbox.
     ///
     /// Returns the context reference, if the session had one, so the caller can
     /// see what was removed alongside the record.
     ///
-    /// Unlike stopping and terminating, this stays with the owner. An operator
-    /// needs to be able to stop work that is costing money or misbehaving, and
-    /// stopping is reversible; destroying somebody else's history is not, and
-    /// nothing about running the service requires it.
+    /// Unlike stopping and terminating, ordinary session deletion stays with
+    /// the owner. The administrative Chat-only control is deliberately narrower
+    /// than this operation and cannot erase arbitrary session history.
     pub async fn delete_session(
         self: &Arc<Self>,
         caller: &Caller,
@@ -1199,12 +1202,322 @@ impl SessionService {
         Ok(cleanup_record.context_ref)
     }
 
+    /// Permanently remove one chat owned by any subject.
+    ///
+    /// This is deliberately limited to deployment-managed Chat sessions. The
+    /// operator control exists so a broken or abusive chat can be removed; it
+    /// does not turn the reversible cross-owner lifecycle controls into a way
+    /// to erase arbitrary terminal-session history.
+    pub async fn delete_any_chat_session(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SubjectId, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ControlAnySession)?;
+        let initial = self.record(id).await?;
+        if initial.chat_origin.is_none() {
+            return Err(CoreError::InvalidRequest(
+                "the administrative permanent-delete control applies only to Chat sessions".into(),
+            ));
+        }
+        let owner = initial.session.owner.clone();
+        if caller.is_acting_for_another(&owner) {
+            tracing::warn!(
+                session_id = %id,
+                actor = %caller.subject,
+                %owner,
+                "a Chat is being permanently deleted by somebody other than its owner"
+            );
+        }
+        self.delete_chat_thread(initial).await?;
+        Ok(owner)
+    }
+
+    /// Delete every Chat belonging to the caller and tear down their shared sandbox.
+    pub async fn reset_chat_environment(
+        self: &Arc<Self>,
+        caller: &Caller,
+    ) -> Result<SubjectId, CoreError> {
+        caller
+            .authorization
+            .require(Capability::TerminateOwnSession)?;
+        let owner = caller.subject.clone();
+        let hosts = self.chat_hosts.as_ref().ok_or({
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+        })?;
+        let Some(host) = hosts.get_for_owner(&owner).await.map_err(|_| {
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+        })?
+        else {
+            // Reset is idempotent: an owner with no environment is already in
+            // the requested state.
+            return Ok(owner);
+        };
+        self.reset_chat_host(host).await?;
+        Ok(owner)
+    }
+
+    /// Delete every Chat on one owner host and tear down its exact sandbox.
+    pub async fn reset_any_chat_environment(
+        self: &Arc<Self>,
+        caller: &Caller,
+        host_id: &crate::ChatHostId,
+    ) -> Result<SubjectId, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ControlAnySession)?;
+        let hosts = self.chat_hosts.as_ref().ok_or({
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+        })?;
+        let host = hosts
+            .get(host_id)
+            .await
+            .map_err(|_| {
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+            })?
+            .ok_or(CoreError::SessionNotFound)?;
+        let owner = host.owner.clone();
+        if caller.is_acting_for_another(&owner) {
+            tracing::warn!(
+                chat_host = %host_id,
+                actor = %caller.subject,
+                %owner,
+                "a Chat environment is being reset by somebody other than its owner"
+            );
+        }
+        self.reset_chat_host(host).await?;
+        Ok(owner)
+    }
+
+    /// Fence creation, destroy one exact shared runtime, and purge every thread.
+    ///
+    /// The retired aggregate is intentionally retained as a generation fence.
+    /// `ensure_chat_host` reincarnates it under a higher runtime and credential
+    /// generation when the owner next starts a Chat.
+    async fn reset_chat_host(
+        self: &Arc<Self>,
+        observed: crate::ChatHostRecord,
+    ) -> Result<(), CoreError> {
+        let host_store = self.chat_hosts.clone().ok_or({
+            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+        })?;
+        let host_id = observed.id.clone();
+        let owner = observed.owner.clone();
+
+        // First publish a reset claim. New Chat creation and host revival both
+        // refuse a pausing host, so no worktree can appear between the inventory
+        // below and the provider teardown.
+        let claimed = {
+            let _owner_guard = self.chat_host_guards.lock(&owner).await;
+            loop {
+                let mut current = host_store
+                    .get(&host_id)
+                    .await
+                    .map_err(|_| {
+                        CoreError::ChatUnavailable(
+                            crate::ChatUnavailableCause::HostStoreUnavailable,
+                        )
+                    })?
+                    .ok_or(CoreError::SessionNotFound)?;
+                if current.owner != owner {
+                    return Err(CoreError::Forbidden);
+                }
+                if current.status == crate::ChatHostStatus::Retired
+                    || current
+                        .last_transition_claim
+                        .as_deref()
+                        .is_some_and(|claim| claim.starts_with(CHAT_ENVIRONMENT_RESET_CLAIM_PREFIX))
+                {
+                    break current;
+                }
+
+                current.status = crate::ChatHostStatus::Pausing;
+                current.last_transition_claim = Some(format!(
+                    "{CHAT_ENVIRONMENT_RESET_CLAIM_PREFIX}{}",
+                    uuid::Uuid::new_v4().simple()
+                ));
+                current.transition_started_at = Some(crate::clock::now_rfc3339());
+                current.updated_at = crate::clock::now_rfc3339();
+                match host_store
+                    .update_if_revision(current.revision, &current)
+                    .await
+                    .map_err(|_| {
+                        CoreError::ChatUnavailable(
+                            crate::ChatUnavailableCause::HostStoreUnavailable,
+                        )
+                    })? {
+                    Some(claimed) => break claimed,
+                    None => continue,
+                }
+            }
+        };
+
+        let session_ids = claimed
+            .threads
+            .iter()
+            .map(|thread| thread.session_id.clone())
+            .collect::<Vec<_>>();
+        let mut input_fences = Vec::with_capacity(session_ids.len());
+        for session_id in &session_ids {
+            input_fences.push(self.input_gates.gate(session_id).write_owned().await);
+        }
+
+        let owner_guard = self.chat_host_guards.lock(&owner).await;
+        let mut current = host_store
+            .get(&host_id)
+            .await
+            .map_err(|_| {
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+            })?
+            .ok_or(CoreError::SessionNotFound)?;
+        if current.owner != owner
+            || (current.status != crate::ChatHostStatus::Retired
+                && !current
+                    .last_transition_claim
+                    .as_deref()
+                    .is_some_and(|claim| claim.starts_with(CHAT_ENVIRONMENT_RESET_CLAIM_PREFIX)))
+            || current
+                .threads
+                .iter()
+                .map(|thread| &thread.session_id)
+                .ne(session_ids.iter())
+        {
+            return Err(CoreError::RuntimeUnavailable(
+                "the Chat environment changed after its reset was fenced".into(),
+            ));
+        }
+
+        if let Some(runtime_id) = current.runtime_id.clone() {
+            let adapter = self.adapters.get(&current.kernel).ok_or_else(|| {
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::CapabilityUnsupported(
+                    "configured chat kernel".into(),
+                ))
+            })?;
+            adapter
+                .terminate_if_identity(&RuntimeIdentity {
+                    handle: RuntimeHandle(runtime_id),
+                    session: current.id.0.clone(),
+                    generation: Some(crate::chat::generation_for(&current)),
+                })
+                .await
+                .map_err(|_| {
+                    CoreError::ChatUnavailable(crate::ChatUnavailableCause::ProvisioningFailed {
+                        phase: crate::ChatProvisioningPhase::Cleanup,
+                        command_index: None,
+                        retryable: true,
+                    })
+                })?;
+        }
+        if let Some(credentials) = self.credentials.as_ref() {
+            credentials
+                .release(&current.credential_session_id())
+                .await
+                .map_err(store_failed)?;
+        }
+
+        let now = crate::clock::now_rfc3339();
+        current.status = crate::ChatHostStatus::Retired;
+        current.runtime_id = None;
+        current.runtime_version = None;
+        current.workspace_authority = None;
+        for thread in &mut current.threads {
+            thread.removed = true;
+        }
+        current.checkpoint = None;
+        current.prompt_admissions.clear();
+        current.revive_failed_threads.clear();
+        current.last_transition_claim = None;
+        current.transition_started_at = None;
+        current.last_failure = None;
+        current.last_operator_note = None;
+        current.revive_cause = None;
+        current.revive_phase = None;
+        current.retired_at = Some(now.clone());
+        current.updated_at = now;
+        host_store
+            .update_if_revision(current.revision, &current)
+            .await
+            .map_err(|_| {
+                CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
+            })?
+            .ok_or_else(|| {
+                CoreError::RuntimeUnavailable(
+                    "the Chat environment changed while its reset was committed".into(),
+                )
+            })?;
+        self.chat_hosts_starting.write().await.remove(&host_id);
+
+        {
+            let mut entries = self.entries.write().await;
+            for session_id in &session_ids {
+                entries.remove(session_id);
+            }
+        }
+        drop(owner_guard);
+
+        for session_id in &session_ids {
+            let record = self.store.get(session_id).await.map_err(store_failed)?;
+            if let Some(record) = record.as_ref() {
+                if record.session.owner != owner
+                    || record
+                        .chat_origin
+                        .as_ref()
+                        .is_none_or(|origin| origin.host_id != host_id)
+                {
+                    return Err(CoreError::RuntimeUnavailable(
+                        "a Chat environment thread does not belong to its recorded owner host"
+                            .into(),
+                    ));
+                }
+            }
+            self.delete_chat_objects(session_id, record.as_ref())
+                .await?;
+            self.delete_durably(session_id)
+                .await
+                .map_err(store_failed)?;
+            self.sequences.forget(session_id);
+        }
+        if let Some(objects) = self.chat_checkpoints.as_ref() {
+            objects
+                .delete_workspace(&host_id)
+                .await
+                .map_err(store_failed)?;
+        }
+        drop(input_fences);
+        tracing::info!(chat_host = %host_id, %owner, "Chat environment reset");
+        Ok(())
+    }
+
+    async fn delete_chat_objects(
+        &self,
+        id: &SessionId,
+        record: Option<&SessionRecord>,
+    ) -> Result<(), CoreError> {
+        if let (Some(context), Some(reference)) = (
+            self.context.as_ref(),
+            record.and_then(|record| record.context_ref.as_deref()),
+        ) {
+            context.delete(reference).await.map_err(store_failed)?;
+        }
+        if let Some(handovers) = self.handovers.as_ref() {
+            handovers.delete_for(id).await.map_err(store_failed)?;
+        }
+        if let Some(objects) = self.chat_checkpoints.as_ref() {
+            objects
+                .delete_conversation(id)
+                .await
+                .map_err(store_failed)?;
+        }
+        Ok(())
+    }
+
     async fn delete_chat_thread(
         self: &Arc<Self>,
         observed: SessionRecord,
     ) -> Result<Option<String>, CoreError> {
         let id = observed.session.id.clone();
-        self.preempt_pausing_final_chat_runtime(&observed).await?;
         let lifecycle = self.lock_lifecycle(&id).await;
         let input_fence = self.input_gates.gate(&id).write_owned().await;
         let ordering = self.conversation_order_gates.gate(&id);
@@ -1245,13 +1558,9 @@ impl SessionService {
                     "the chat host no longer contains this thread allocation".into(),
                 )
             })?;
-        let has_other_retained_threads = host
-            .threads
-            .iter()
-            .any(|slot| slot.session_id != id && !slot.removed);
         if !slot_removed {
             match host.status {
-                crate::ChatHostStatus::Active | crate::ChatHostStatus::Pausing => {
+                crate::ChatHostStatus::Active => {
                     let runtime_id = host.runtime_id.clone().ok_or({
                         CoreError::ChatUnavailable(crate::ChatUnavailableCause::Provisioning)
                     })?;
@@ -1260,33 +1569,28 @@ impl SessionService {
                             "the chat thread does not name its host's current runtime".into(),
                         ));
                     }
-                    if has_other_retained_threads {
-                        let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
+                    let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
+                        CoreError::ChatUnavailable(
+                            crate::ChatUnavailableCause::CapabilityUnsupported(
+                                "configured chat kernel".into(),
+                            ),
+                        )
+                    })?;
+                    adapter
+                        .remove_workspace_tree(&RuntimeHandle(runtime_id), &origin.worktree_name)
+                        .await
+                        .map_err(|_| {
                             CoreError::ChatUnavailable(
-                                crate::ChatUnavailableCause::CapabilityUnsupported(
-                                    "configured chat kernel".into(),
-                                ),
+                                crate::ChatUnavailableCause::ProvisioningFailed {
+                                    phase: crate::ChatProvisioningPhase::Cleanup,
+                                    command_index: None,
+                                    retryable: true,
+                                },
                             )
                         })?;
-                        adapter
-                            .remove_workspace_tree(
-                                &RuntimeHandle(runtime_id),
-                                &origin.worktree_name,
-                            )
-                            .await
-                            .map_err(|_| {
-                                CoreError::ChatUnavailable(
-                                    crate::ChatUnavailableCause::ProvisioningFailed {
-                                        phase: crate::ChatProvisioningPhase::Cleanup,
-                                        command_index: None,
-                                        retryable: true,
-                                    },
-                                )
-                            })?;
-                    }
                 }
                 crate::ChatHostStatus::Paused => {}
-                crate::ChatHostStatus::Reviving => {
+                crate::ChatHostStatus::Pausing | crate::ChatHostStatus::Reviving => {
                     return Err(CoreError::ChatUnavailable(
                         crate::ChatUnavailableCause::RevivePending,
                     ));
@@ -1326,10 +1630,7 @@ impl SessionService {
                 .map_err(|_| {
                     CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
                 })? {
-                Some(committed) => {
-                    host = committed;
-                    break;
-                }
+                Some(_) => break,
                 None => {
                     host = host_store
                         .get(&origin.host_id)
@@ -1345,86 +1646,15 @@ impl SessionService {
                 }
             }
         }
-        self.entries.write().await.remove(&id);
-        let context_ref = current.context_ref;
+        let context_ref = current.context_ref.clone();
         drop(owner_guard);
-        self.retire_chat_host_if_empty(&host.id).await?;
+        self.delete_chat_objects(&id, Some(&current)).await?;
+        self.entries.write().await.remove(&id);
         self.delete_durably(&id).await.map_err(store_failed)?;
         self.sequences.forget(&id);
         drop(ordered);
         drop(input_fence);
         drop(lifecycle);
         Ok(context_ref)
-    }
-
-    /// Break a checkpoint/delete lock cycle without risking a successor runtime.
-    ///
-    /// Image rotation holds every thread input fence and the owner guard while
-    /// its runtime checkpoint is in flight. Deleting the final retained thread
-    /// is allowed to tear down that whole host, so terminate its exact provider
-    /// identity before waiting for either lock. Provider-side identity matching
-    /// makes a stale observation harmless if rotation already installed a
-    /// successor.
-    async fn preempt_pausing_final_chat_runtime(
-        &self,
-        observed: &SessionRecord,
-    ) -> Result<(), CoreError> {
-        let Some(origin) = observed.chat_origin.as_ref() else {
-            return Ok(());
-        };
-        let hosts = self.chat_hosts.as_ref().ok_or({
-            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
-        })?;
-        let Some(host) = hosts.get(&origin.host_id).await.map_err(|_| {
-            CoreError::ChatUnavailable(crate::ChatUnavailableCause::HostStoreUnavailable)
-        })?
-        else {
-            return Ok(());
-        };
-        let target_is_retained = host
-            .threads
-            .iter()
-            .any(|slot| slot.session_id == observed.session.id && !slot.removed);
-        let has_other_retained_threads = host
-            .threads
-            .iter()
-            .any(|slot| slot.session_id != observed.session.id && !slot.removed);
-        if host.status != crate::ChatHostStatus::Pausing
-            || !target_is_retained
-            || has_other_retained_threads
-        {
-            return Ok(());
-        }
-        let Some(runtime_id) = host.runtime_id.as_ref() else {
-            return Ok(());
-        };
-        if observed.runtime_id.as_deref() != Some(runtime_id.as_str()) {
-            return Ok(());
-        }
-        let adapter = self.adapters.get(&host.kernel).ok_or_else(|| {
-            CoreError::ChatUnavailable(crate::ChatUnavailableCause::CapabilityUnsupported(
-                "configured chat kernel".into(),
-            ))
-        })?;
-        tracing::info!(
-            chat_host = %host.id,
-            runtime = %runtime_id,
-            session_id = %observed.session.id,
-            "preempting a pausing chat runtime before final-thread deletion"
-        );
-        adapter
-            .terminate_if_identity(&RuntimeIdentity {
-                handle: RuntimeHandle(runtime_id.clone()),
-                session: host.id.0.clone(),
-                generation: Some(crate::chat::generation_for(&host)),
-            })
-            .await
-            .map_err(|_| {
-                CoreError::ChatUnavailable(crate::ChatUnavailableCause::ProvisioningFailed {
-                    phase: crate::ChatProvisioningPhase::Cleanup,
-                    command_index: None,
-                    retryable: true,
-                })
-            })
     }
 }

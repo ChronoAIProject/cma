@@ -302,7 +302,13 @@ async fn responses_full_turn_is_streamed_retrieved_paginated_and_not_body_owned(
     );
     assert_eq!(
         terminal["response"]["reasoning"],
-        json!({ "effort": null, "summary": null })
+        json!({
+            "effort": null,
+            "summary": [{
+                "type": "summary_text",
+                "text": "Considering"
+            }]
+        })
     );
     let first_response_id = terminal["response"]["id"]
         .as_str()
@@ -311,7 +317,7 @@ async fn responses_full_turn_is_streamed_retrieved_paginated_and_not_body_owned(
 
     let durable = retrieve_response(&surface.app, &first_response_id).await;
     assert_eq!(durable, terminal["response"]);
-    assert!(!durable.to_string().contains("Considering"));
+    assert_eq!(durable["reasoning"]["summary"][0]["text"], "Considering");
 
     let items = surface
         .app
@@ -324,12 +330,15 @@ async fn responses_full_turn_is_streamed_retrieved_paginated_and_not_body_owned(
         .await
         .expect("the composed router answers");
     let items = assert_json(items, StatusCode::OK).await;
-    assert_eq!(items["data"].as_array().unwrap().len(), 2);
+    assert_eq!(items["data"].as_array().unwrap().len(), 3);
     assert_eq!(items["data"][0]["role"], "assistant");
     assert_eq!(items["data"][0]["content"][0]["text"], "Complete answer");
-    assert_eq!(items["data"][1]["role"], "user");
-    assert_eq!(items["data"][1]["content"][0]["text"], "First prompt");
-    assert!(!items.to_string().contains("Considering"));
+    assert_eq!(items["data"][1]["type"], "cma_chat.working_notes");
+    assert_eq!(items["data"][1]["response_id"], first_response_id);
+    assert_eq!(items["data"][1]["reasoning"], "Considering");
+    assert_eq!(items["data"][1]["messages"], json!([]));
+    assert_eq!(items["data"][2]["role"], "user");
+    assert_eq!(items["data"][2]["content"][0]["text"], "First prompt");
 
     let first_page = surface
         .app
@@ -358,8 +367,25 @@ async fn responses_full_turn_is_streamed_retrieved_paginated_and_not_body_owned(
         .await
         .expect("the composed router answers");
     let second_page = assert_json(second_page, StatusCode::OK).await;
-    assert_eq!(second_page["data"][0]["role"], "user");
-    assert_eq!(second_page["has_more"], false);
+    assert_eq!(second_page["data"][0]["type"], "cma_chat.working_notes");
+    assert_eq!(second_page["has_more"], true);
+    let after = second_page["last_id"].as_str().unwrap();
+    let third_page = surface
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/conversations/{id}/items?limit=1&after={after}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .expect("the composed router answers");
+    let third_page = assert_json(third_page, StatusCode::OK).await;
+    assert_eq!(third_page["data"][0]["role"], "user");
+    assert_eq!(third_page["data"][0]["content"][0]["text"], "First prompt");
+    assert_eq!(third_page["has_more"], false);
 
     let dropped = surface
         .app

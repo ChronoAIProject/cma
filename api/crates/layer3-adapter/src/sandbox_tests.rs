@@ -11,17 +11,31 @@ use crate::AdapterError;
 struct FixtureResponse {
     status: u16,
     body: String,
+    delay: Duration,
 }
 
 impl FixtureResponse {
     fn ok(body: String) -> Self {
-        Self { status: 200, body }
+        Self {
+            status: 200,
+            body,
+            delay: Duration::ZERO,
+        }
+    }
+
+    fn delayed_ok(body: String, delay: Duration) -> Self {
+        Self {
+            status: 200,
+            body,
+            delay,
+        }
     }
 
     fn rejected(status: u16, body: impl Into<String>) -> Self {
         Self {
             status,
             body: body.into(),
+            delay: Duration::ZERO,
         }
     }
 }
@@ -83,6 +97,7 @@ async fn serve(responses: Vec<FixtureResponse>) -> Fixture {
                 response.body.len(),
                 response.body
             );
+            tokio::time::sleep(response.delay).await;
             stream
                 .write_all(reply.as_bytes())
                 .await
@@ -96,6 +111,38 @@ async fn serve(responses: Vec<FixtureResponse>) -> Fixture {
         requests,
         server,
     }
+}
+
+#[tokio::test]
+async fn one_bounded_artifact_can_outlive_the_provider_default_timeout() {
+    let fixture = serve(vec![FixtureResponse::delayed_ok(
+        "complete checkpoint".into(),
+        Duration::from_millis(75),
+    )])
+    .await;
+    let client = SandboxClient::new_with_provider_timeout(
+        &fixture.base_url,
+        "test-key",
+        Duration::from_millis(20),
+    );
+
+    let artifact = client
+        .post_to_sandbox_with_bounded_response_until(
+            &fixture.base_url,
+            "/runtime/workspace/checkpoint",
+            Vec::new(),
+            1_024,
+            Duration::from_secs(1),
+        )
+        .await
+        .expect("the request-specific artifact deadline overrides the client default");
+
+    assert_eq!(artifact, b"complete checkpoint");
+    let requests = fixture.finish().await;
+    assert_eq!(
+        request_lines(&requests),
+        ["POST /runtime/workspace/checkpoint HTTP/1.1"]
+    );
 }
 
 fn page(

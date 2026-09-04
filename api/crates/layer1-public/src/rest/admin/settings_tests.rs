@@ -297,12 +297,12 @@ async fn omitted_chat_fields_take_the_documented_defaults() {
     assert_eq!(chat["workspace"]["branch"], "dev");
     assert_eq!(chat["agent"]["reasoning_effort"], "high");
     assert_eq!(chat["agent"]["record_tool_bodies"], true);
-    assert_eq!(chat["message_prefixes"], json!(["$codex-formal-answer"]));
+    assert_eq!(chat["message_prefixes"], json!([]));
     assert_eq!(chat["setup"]["commands"].as_array().unwrap().len(), 1);
     assert!(chat["setup"]["commands"][0]
         .as_str()
         .unwrap()
-        .contains("skills/codex-formal-answer/SKILL.md"));
+        .contains("for skill in skills/*"));
     assert_eq!(chat["inactivity"]["pause_after_seconds"], 900);
     assert_eq!(chat["host"]["max_threads"], 10);
 }

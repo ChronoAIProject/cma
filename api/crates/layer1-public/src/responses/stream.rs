@@ -47,7 +47,7 @@ struct Open {
     reasoning_text: String,
     message_started: bool,
     message_text: String,
-    committed_text: Option<String>,
+    committed_text: Option<(u64, String)>,
     history: Vec<Event>,
     tools: HashMap<String, ToolState>,
     ended: bool,
@@ -253,7 +253,53 @@ impl Open {
             self.history.push(event.clone());
             match &event.kind {
                 EventKind::MessageCommitted { content } => {
-                    self.committed_text = Some(content.clone());
+                    if let Some((seq, previous)) =
+                        self.committed_text.replace((event.seq, content.clone()))
+                    {
+                        self.push(
+                            "response.cma_chat.intermediate_message",
+                            json!({
+                                "response_id": response_id(&self.id, self.turn),
+                                "item": {
+                                    "id": format!("workmsg_{}_{}", self.id.as_str(), seq),
+                                    "type": "cma_chat.intermediate_message",
+                                    "text": previous
+                                }
+                            }),
+                        );
+                        // The next live message is a new piece of work rather
+                        // than a continuation of the one just retained.
+                        self.message_text.clear();
+                    }
+                }
+                EventKind::ReasoningCommitted { content } => {
+                    let item_id = reasoning_id(&self.id, self.turn);
+                    if !self.reasoning_started {
+                        self.push(
+                            "response.reasoning_summary_part.added",
+                            json!({
+                                "item_id": item_id,
+                                "output_index": 0,
+                                "summary_index": 0,
+                                "part": { "type": "summary_text", "text": "" }
+                            }),
+                        );
+                        self.reasoning_started = true;
+                    }
+                    if let Some(suffix) = content.strip_prefix(&self.reasoning_text) {
+                        if !suffix.is_empty() {
+                            self.push(
+                                "response.reasoning_summary_text.delta",
+                                json!({
+                                    "item_id": item_id,
+                                    "output_index": 0,
+                                    "summary_index": 0,
+                                    "delta": suffix
+                                }),
+                            );
+                        }
+                    }
+                    self.reasoning_text.clone_from(content);
                 }
                 EventKind::ToolCallStarted {
                     call_id,
@@ -397,7 +443,7 @@ impl Open {
                 }),
             );
         }
-        if let Some(text) = self.committed_text.clone() {
+        if let Some((_, text)) = self.committed_text.clone() {
             self.ensure_message_started();
             if let Some(suffix) = text.strip_prefix(&self.message_text) {
                 if !suffix.is_empty() {

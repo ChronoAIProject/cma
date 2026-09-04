@@ -446,6 +446,14 @@ impl ChatCheckpointStore for MemoryChatCheckpoints {
             .await
     }
 
+    async fn delete_conversation(&self, id: &SessionId) -> Result<(), StoreError> {
+        self.objects
+            .lock()
+            .await
+            .remove(&format!("sessions/{id}/handover.snapshot"));
+        Ok(())
+    }
+
     async fn stage_workspace(
         &self,
         host: &ChatHostId,
@@ -477,6 +485,14 @@ impl ChatCheckpointStore for MemoryChatCheckpoints {
     ) -> Result<(), StoreError> {
         self.prune(format!("chat-hosts/{host}/checkpoint-v1"), keep_sha256)
             .await
+    }
+
+    async fn delete_workspace(&self, host: &ChatHostId) -> Result<(), StoreError> {
+        self.objects
+            .lock()
+            .await
+            .remove(&format!("chat-hosts/{host}/checkpoint-v1"));
+        Ok(())
     }
 }
 
@@ -4943,6 +4959,7 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         "/openapi.json",
         "/api/v1/pricing/quote",
         "/api/v1/sessions",
+        "/api/v1/chat/host",
         "/api/v1/sessions/allowance",
         "/api/v1/sessions/{id}",
         "/api/v1/sessions/{id}/terminate",
@@ -4980,9 +4997,11 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         "/api/v1/admin/triggers/launches/{launch_id}/reconcile",
         "/api/v1/admin/runtimes",
         "/api/v1/admin/sessions",
+        "/api/v1/admin/sessions/{id}",
         "/api/v1/admin/sessions/{id}/stop",
         "/api/v1/admin/sessions/{id}/terminate",
         "/api/v1/admin/chat/hosts",
+        "/api/v1/admin/chat/hosts/{id}",
         "/api/v1/admin/chat/hosts/{id}/retire",
         "/api/v1/admin/settings",
         "/api/v1/admin/settings/reset",
@@ -5012,6 +5031,18 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         paths["/api/v1/admin/chat/hosts/{id}/retire"]["post"]["responses"]["200"]["content"]
             ["application/json"]["schema"]["$ref"],
         "#/components/schemas/AdminChatHostView"
+    );
+    assert!(
+        paths["/api/v1/chat/host"]["delete"].is_object(),
+        "the owner Chat-environment reset must be documented"
+    );
+    assert!(
+        paths["/api/v1/admin/sessions/{id}"]["delete"].is_object(),
+        "the operator single-Chat deletion must be documented"
+    );
+    assert!(
+        paths["/api/v1/admin/chat/hosts/{id}"]["delete"].is_object(),
+        "the operator Chat-environment reset must be documented"
     );
 
     let response_resource = &paths["/api/v1/responses/{response_id}"];
@@ -5072,6 +5103,14 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             "status",
             "thread_count",
         ])
+    );
+    let admin_session_properties = document["components"]["schemas"]["AdminSessionView"]
+        ["properties"]
+        .as_object()
+        .expect("admin session projection has a concrete schema");
+    assert!(
+        admin_session_properties.contains_key("chat"),
+        "operators need an explicit Chat discriminator before a permanent-delete control can be shown"
     );
     let failure_properties = document["components"]["schemas"]["AdminChatHostFailureView"]
         ["properties"]
@@ -5740,7 +5779,7 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             );
         }
     }
-    assert_eq!(operations, 54, "every REST operation must be documented");
+    assert_eq!(operations, 57, "every REST operation must be documented");
 }
 
 #[tokio::test]
@@ -6270,6 +6309,116 @@ async fn admin_chat_host_routes_enforce_distinct_operator_capabilities() {
         .await
         .expect("router answers");
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn owner_and_operator_chat_environment_resets_use_their_distinct_delete_routes() {
+    let owner_surface = test_surface(true);
+    let owner_response = owner_surface
+        .app
+        .oneshot(
+            Request::delete("/api/v1/chat/host")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(owner_response.status(), StatusCode::NO_CONTENT);
+
+    let operator_surface = test_surface(true);
+    let host = chat_host_record(
+        7,
+        SubjectId("operator-reset-owner".into()),
+        ChatHostStatus::Retired,
+    );
+    let id = host.id.0.clone();
+    seed_chat_hosts(&operator_surface.chat_hosts, [host]).await;
+    let response = operator_surface
+        .app
+        .oneshot(
+            Request::delete(format!("/api/v1/admin/chat/hosts/{id}"))
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let stored = operator_surface
+        .chat_hosts
+        .records
+        .lock()
+        .await
+        .get(&id)
+        .cloned()
+        .expect("the retired generation fence remains");
+    assert_eq!(stored.status, ChatHostStatus::Retired);
+    assert!(stored.threads.iter().all(|thread| thread.removed));
+    assert!(stored.checkpoint.is_none());
+}
+
+#[tokio::test]
+async fn admin_single_chat_delete_is_discriminated_and_keeps_the_owner_host() {
+    let TestSurface {
+        app,
+        store,
+        chat_hosts,
+        ..
+    } = test_surface(true);
+    let owner = SubjectId("operator-single-chat-owner".into());
+    let record = chat_session_record(8, &owner);
+    let id = record.session.id.clone();
+    let origin = record
+        .chat_origin
+        .as_ref()
+        .expect("the fixture is a Chat")
+        .clone();
+    store
+        .state
+        .lock()
+        .await
+        .records
+        .insert(id.0.clone(), record);
+
+    let mut host = chat_host_record(8, owner, ChatHostStatus::Retired);
+    host.threads = vec![ChatThreadSlot {
+        session_id: id.clone(),
+        worktree_name: origin.worktree_name,
+        worktree_path: origin.worktree_path,
+        created_at: "2026-09-01T00:00:08Z".into(),
+        removed: false,
+    }];
+    host.checkpoint = None;
+    let host_id = host.id.0.clone();
+    seed_chat_hosts(&chat_hosts, [host]).await;
+
+    let (rows, _) = get_collection(&app, "/api/v1/admin/sessions").await;
+    let row = rows
+        .iter()
+        .find(|row| row["id"] == id.0)
+        .expect("the Chat is visible to the operator");
+    assert_eq!(row["chat"], true);
+
+    let response = app
+        .oneshot(
+            Request::delete(format!("/api/v1/admin/sessions/{}", id.0))
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(store.state.lock().await.records.get(&id.0).is_none());
+
+    let host = chat_hosts
+        .records
+        .lock()
+        .await
+        .get(&host_id)
+        .cloned()
+        .expect("single-Chat deletion preserves the host generation");
+    assert_eq!(host.status, ChatHostStatus::Retired);
+    assert!(host.threads.iter().all(|thread| thread.removed));
 }
 
 #[tokio::test]

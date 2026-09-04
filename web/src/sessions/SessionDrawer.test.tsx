@@ -15,6 +15,7 @@ import type {
   LaunchCapabilityRevocationState,
   PullRequestDraft,
   PullRequestRecord,
+  SessionResourceStatus,
   SessionSpend,
 } from '@chronoai/cma-sdk';
 import { listLaunchPage, readLaunch } from '../api/client';
@@ -182,10 +183,43 @@ function renderDrawer(
   );
 }
 
+const CHAT_RESOURCE_STATUS: SessionResourceStatus = {
+  reading: {
+    cpuMillisUsed: 320,
+    cpuMillisLimit: 1000,
+    memoryBytesUsed: 512 * 1024 ** 2,
+    memoryBytesLimit: 2 * 1024 ** 3,
+    memoryBytesPeak: 640 * 1024 ** 2,
+    stallPermille: 0,
+    ceilingHits: 0,
+    allocationFailures: 0,
+    kills: 0,
+    receivedBytes: 1024,
+    sentBytes: 2048,
+    receivedBytesPerSecond: 12,
+    sentBytesPerSecond: 24,
+    intervalMs: 2000,
+  },
+  observedAt: '2026-09-03T10:00:00Z',
+};
+
+function chatSession(lifecycle: SessionLifecycle, resources = true): Session {
+  return session(lifecycle, {
+    capabilities: { ...NO_CAPABILITIES, resources },
+    chat: {
+      worktreeName: 'chat-1',
+      worktreePath: '/work/chat-1',
+      title: 'Release readiness',
+    },
+  });
+}
+
 describe('the session header', () => {
   it('reduces a Chat header to its title, state, and Details action', async () => {
     const user = userEvent.setup();
     const onDetails = vi.fn();
+    const onDelete = vi.fn();
+    const onResetEnvironment = vi.fn();
     const chat = session('running', {
       chat: {
         worktreeName: 'chat-1',
@@ -196,7 +230,14 @@ describe('the session header', () => {
     const { container } = render(
       <SessionHeader
         session={chat}
-        actions={<ChatSessionActions onDetails={onDetails} detailsOpen />}
+        actions={
+          <ChatSessionActions
+            onDetails={onDetails}
+            onDelete={onDelete}
+            onResetEnvironment={onResetEnvironment}
+            detailsOpen
+          />
+        }
       />,
     );
 
@@ -204,11 +245,15 @@ describe('the session header', () => {
     expect(container.querySelector('.sessionheader__crumb')).toHaveTextContent('Release readiness');
     expect(container.querySelector('.sessionheader__kernel')).toBeNull();
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(1);
+    expect(buttons).toHaveLength(2);
     expect(buttons[0]).toHaveAccessibleName('Details');
     expect(buttons[0]).toHaveAttribute('aria-expanded', 'true');
     await user.click(buttons[0] as HTMLButtonElement);
     expect(onDetails).toHaveBeenCalledOnce();
+
+    await user.click(screen.getByRole('button', { name: 'Manage Chat' }));
+    expect(screen.getByRole('menuitem', { name: 'Delete this Chat' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Reset Chat environment' })).toBeInTheDocument();
   });
 
   it('carries one lifecycle key, one details key, and the overflow menu', () => {
@@ -422,7 +467,7 @@ describe('the header does not clip what it opens', () => {
 });
 
 describe('the details drawer', () => {
-  it('draws exactly the two Chat bands and never reads Agent-only facts', async () => {
+  it('draws the focused Chat bands and never reads Agent-only facts', async () => {
     const user = userEvent.setup();
     const readSpend = vi.fn();
     const { container } = renderDrawer(
@@ -447,7 +492,7 @@ describe('the details drawer', () => {
     expect(drawer).toHaveTextContent('Release readiness');
     expect(
       [...container.querySelectorAll('.facts__title')].map((title) => title.textContent),
-    ).toEqual(['Worktree']);
+    ).toEqual(['Worktree', 'Resources']);
     expect(within(drawer).getByText('Name').closest('.facts__fact')).toHaveTextContent('chat-1');
     const path = within(drawer).getByRole('button', { name: 'Copy local path /work/chat-1' });
     expect(path).toHaveTextContent('/work/chat-1');
@@ -467,6 +512,139 @@ describe('the details drawer', () => {
     }
     expect(readSpend).not.toHaveBeenCalled();
     expect(listLaunchPage).not.toHaveBeenCalled();
+  });
+
+  it('loads and refreshes CPU and memory while an open Chat host is active', async () => {
+    vi.useFakeTimers();
+    const readResources = vi.fn().mockResolvedValue(CHAT_RESOURCE_STATUS);
+    const view = render(
+      <SessionDrawer
+        session={chatSession('running')}
+        onClose={vi.fn()}
+        open
+        readResources={readResources}
+      />,
+    );
+
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readResources).toHaveBeenCalledTimes(1);
+      expect(readResources).toHaveBeenLastCalledWith('ses_test', expect.any(AbortSignal));
+      expect(screen.getByText('Memory · 512 MiB / 2048 MiB')).toBeInTheDocument();
+      expect(screen.getByText('CPU · 320m / 1000m')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(readResources).toHaveBeenCalledTimes(2);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not poll a paused Chat or a Chat drawer hidden at zero width', async () => {
+    const readResources = vi.fn().mockResolvedValue(CHAT_RESOURCE_STATUS);
+    const paused = render(
+      <SessionDrawer
+        session={chatSession('idle')}
+        onClose={vi.fn()}
+        open
+        readResources={readResources}
+      />,
+    );
+    expect(screen.getByText(/available while the chat host is active/i)).toBeInTheDocument();
+    paused.unmount();
+
+    const hidden = render(
+      <SessionDrawer
+        session={chatSession('running')}
+        onClose={vi.fn()}
+        open={false}
+        readResources={readResources}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(readResources).not.toHaveBeenCalled();
+    hidden.unmount();
+  });
+
+  it('aborts the active read and stops scheduled refreshes when the drawer closes', async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    const readResources = vi.fn((_id: string, signal?: AbortSignal) => {
+      if (signal !== undefined) signals.push(signal);
+      return Promise.resolve(CHAT_RESOURCE_STATUS);
+    });
+    const view = render(
+      <SessionDrawer
+        session={chatSession('running')}
+        onClose={vi.fn()}
+        open
+        readResources={readResources}
+      />,
+    );
+
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readResources).toHaveBeenCalledTimes(1);
+      expect(signals[0]?.aborted).toBe(false);
+
+      view.rerender(
+        <SessionDrawer
+          session={chatSession('running')}
+          onClose={vi.fn()}
+          open={false}
+          readResources={readResources}
+        />,
+      );
+      expect(signals[0]?.aborted).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(readResources).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows unsupported, waiting, and temporary read-failure states without guessing', async () => {
+    const unsupported = render(
+      <SessionDrawer session={chatSession('running', false)} onClose={vi.fn()} open />,
+    );
+    expect(screen.getByText('Resources not reported for this session')).toBeInTheDocument();
+    unsupported.unmount();
+
+    const waiting = render(
+      <SessionDrawer
+        session={chatSession('running')}
+        onClose={vi.fn()}
+        open
+        readResources={vi.fn().mockResolvedValue({ reason: 'no_reading_yet' })}
+      />,
+    );
+    expect(await screen.findByText('Resources · waiting')).toBeInTheDocument();
+    waiting.unmount();
+
+    render(
+      <SessionDrawer
+        session={chatSession('running')}
+        onClose={vi.fn()}
+        open
+        readResources={vi.fn().mockRejectedValue(new Error('temporary'))}
+      />,
+    );
+    expect(
+      await screen.findByText('Resource status is temporarily unavailable'),
+    ).toBeInTheDocument();
   });
 
   it('gates a delete behind an acknowledgement rather than a second press', async () => {

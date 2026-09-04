@@ -1,9 +1,18 @@
 import { useEffect, useRef } from 'react';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import './Landing.css';
+
+export type LandingCharacterMode = 'interactive' | 'provisioning';
 
 /** The reserved signed-out character stage; Three.js arrives after the prompt is interactive. */
-export function LandingCharacter() {
-  const hostRef = useRef<HTMLButtonElement>(null);
+export function LandingCharacter({
+  className,
+  mode = 'interactive',
+}: {
+  readonly className?: string;
+  readonly mode?: LandingCharacterMode;
+}) {
+  const hostRef = useRef<HTMLButtonElement | HTMLDivElement>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -15,7 +24,9 @@ export function LandingCharacter() {
     let dispose: (() => void) | undefined;
     const showFallback = () => {
       host.removeAttribute('data-ready');
-      host.disabled = true;
+      if (host instanceof HTMLButtonElement) {
+        host.disabled = true;
+      }
     };
 
     if (typeof window.WebGL2RenderingContext === 'undefined') {
@@ -31,6 +42,7 @@ export function LandingCharacter() {
 
         try {
           const character = mountCharacter(host, {
+            mode,
             onReady: () => {
               if (!cancelled) {
                 host.setAttribute('data-ready', '');
@@ -58,22 +70,42 @@ export function LandingCharacter() {
       dispose?.();
       showFallback();
     };
-  }, []);
+  }, [mode]);
+
+  const fallback = (
+    <span
+      className="landing__character-fallback"
+      aria-hidden="true"
+      dangerouslySetInnerHTML={{ __html: markMarkup }}
+    />
+  );
+
+  if (mode === 'provisioning') {
+    return (
+      <div
+        ref={(node) => {
+          hostRef.current = node;
+        }}
+        className={`landing__character landing__character--provisioning${className === undefined ? '' : ` ${className}`}`}
+        aria-hidden="true"
+      >
+        {fallback}
+      </div>
+    );
+  }
 
   return (
     <button
-      ref={hostRef}
-      className="landing__character"
+      ref={(node) => {
+        hostRef.current = node;
+      }}
+      className={`landing__character landing__character--interactive${className === undefined ? '' : ` ${className}`}`}
       type="button"
       aria-label="Spin CMA character"
       title="Spin CMA character"
       disabled
     >
-      <span
-        className="landing__character-fallback"
-        aria-hidden="true"
-        dangerouslySetInnerHTML={{ __html: markMarkup }}
-      />
+      {fallback}
     </button>
   );
 }

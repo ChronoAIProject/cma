@@ -36,13 +36,20 @@ interface SessionHeaderProps {
   readonly waiting?: boolean;
   /** The lifecycle controls that act on it. */
   readonly actions?: ReactNode;
+  /** What an intentionally empty seat is called. */
+  readonly emptyLabel?: string;
 }
 
-export function SessionHeader({ session, waiting = false, actions }: SessionHeaderProps) {
+export function SessionHeader({
+  session,
+  waiting = false,
+  actions,
+  emptyLabel = 'No session open',
+}: SessionHeaderProps) {
   if (session === null) {
     return (
       <div className="sessionheader">
-        <span className="sessionheader__crumb">No session open</span>
+        <span className="sessionheader__crumb">{emptyLabel}</span>
       </div>
     );
   }

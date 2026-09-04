@@ -14,11 +14,11 @@ import { StateDot } from '../ui/StateDot';
 import { CreatorFace, Fact, Facts, ReachList, Section, SkillList, Unknown } from './SessionFacts';
 import './SessionDrawer.css';
 import { IconCloseOutline16 } from '../ui/icons';
-import type { SessionSpend } from '@chronoai/cma-sdk';
-import type { Launch } from '@chronoai/cma-sdk';
+import type { Launch, SessionResourceStatus, SessionSpend } from '@chronoai/cma-sdk';
 import { listLaunchPage, readLaunch } from '../api/client';
 import type { AppRouter } from '../routing/routes';
 import { routeClick, routePath } from '../routing/routes';
+import { Resources } from '../chat/Resources';
 import {
   deliveryState,
   mergeabilityLabel,
@@ -30,6 +30,7 @@ import {
 } from '../trigger/model';
 
 const TRIGGER_LAUNCH_REFRESH_INTERVAL_MS = 15_000;
+const CHAT_RESOURCE_REFRESH_INTERVAL_MS = 2_000;
 
 function pullRequestChecksLabel(value: NonNullable<Launch['pull_request']>['checks']): string {
   return value === 'awaiting_maintainer_approval'
@@ -65,10 +66,14 @@ function pullRequestFailureNote(
 interface SessionDrawerProps {
   readonly session: Session;
   readonly onClose: () => void;
+  /** Whether this always-mounted drawer is actually visible. */
+  readonly open?: boolean;
   /** Why the session ended, when it ended badly. */
   readonly ending?: string;
   /** Read this session's reserved-capacity spend from the public REST API. */
   readonly readSpend?: (id: string) => Promise<SessionSpend>;
+  /** Read the latest CPU and memory status for an active Chat host. */
+  readonly readResources?: (id: string, signal?: AbortSignal) => Promise<SessionResourceStatus>;
   /** Navigate to the owning Launch without turning the read into a mutation. */
   readonly navigate?: AppRouter['navigate'];
 }
@@ -77,21 +82,35 @@ export function SessionDrawer(props: SessionDrawerProps) {
   return props.session.chat === undefined ? (
     <AgentSessionDrawer {...props} />
   ) : (
-    <ChatSessionDrawer session={props.session} chat={props.session.chat} onClose={props.onClose} />
+    <ChatSessionDrawer
+      session={props.session}
+      chat={props.session.chat}
+      onClose={props.onClose}
+      open={props.open ?? true}
+      readResources={props.readResources}
+    />
   );
 }
 
-/** The two-band Chat drawer: state and title, then the worktree facts. */
+/** The focused Chat drawer: identity, worktree facts, and live host resources. */
 function ChatSessionDrawer({
   session,
   chat,
   onClose,
-}: Pick<SessionDrawerProps, 'session' | 'onClose'> & {
+  open,
+  readResources,
+}: Pick<SessionDrawerProps, 'session' | 'onClose' | 'open' | 'readResources'> & {
   readonly chat: NonNullable<Session['chat']>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [resourceRead, setResourceRead] = useState<{
+    readonly session: string;
+    readonly status?: SessionResourceStatus;
+    readonly failed: boolean;
+  }>();
   const tone = toneFor(session.lifecycle);
   const dot = stateDotFor(tone);
+  const hostActive = session.lifecycle !== 'idle' && session.lifecycle !== 'terminated';
   useEffect(() => {
     if (!copied) return;
     const timer = window.setTimeout(() => {
@@ -101,6 +120,50 @@ function ChatSessionDrawer({
       window.clearTimeout(timer);
     };
   }, [copied]);
+
+  useEffect(() => {
+    if (
+      open !== true ||
+      !hostActive ||
+      !session.capabilities.resources ||
+      readResources === undefined
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let live = true;
+    let timer: number | undefined;
+    const readResourceStatus = readResources;
+
+    async function refresh(): Promise<void> {
+      try {
+        const status = await readResourceStatus(session.id, controller.signal);
+        if (live) {
+          setResourceRead({ session: session.id, status, failed: false });
+        }
+      } catch {
+        if (live && !controller.signal.aborted) {
+          setResourceRead({ session: session.id, failed: true });
+        }
+      } finally {
+        if (live) {
+          timer = window.setTimeout(() => {
+            void refresh();
+          }, CHAT_RESOURCE_REFRESH_INTERVAL_MS);
+        }
+      }
+    }
+
+    void refresh();
+    return () => {
+      live = false;
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [hostActive, open, readResources, session.capabilities.resources, session.id]);
+
+  const currentResourceRead = resourceRead?.session === session.id ? resourceRead : undefined;
 
   const copyPath = () => {
     void navigator.clipboard
@@ -157,6 +220,27 @@ function ChatSessionDrawer({
               </button>
             </Fact>
           </Facts>
+        </Section>
+
+        <Section title="Resources">
+          <div className="drawer__resources">
+            {!hostActive ? (
+              <span className="resources__status resources__status--drawer">
+                CPU and memory are available while the chat host is active
+              </span>
+            ) : currentResourceRead?.failed === true ? (
+              <span className="resources__status resources__status--drawer">
+                Resource status is temporarily unavailable
+              </span>
+            ) : (
+              <Resources
+                granted={session.capabilities.resources}
+                unreported={currentResourceRead?.status?.reason === 'runtime_does_not_report'}
+                resources={currentResourceRead?.status?.reading}
+                drawer
+              />
+            )}
+          </div>
         </Section>
       </div>
     </aside>

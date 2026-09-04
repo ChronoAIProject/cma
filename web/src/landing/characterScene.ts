@@ -15,7 +15,26 @@ const BODY_ROWS = 36;
 const LIP_ROWS = 4;
 const ROWS_PER_RING = LIP_ROWS + BODY_ROWS;
 
+export interface ProvisioningPose {
+  readonly y: number;
+  readonly yaw: number;
+  readonly roll: number;
+}
+
+/** Continuous loading pose, kept pure so reduced-motion behavior cannot drift untested. */
+export function provisioningPose(time: number, reduced: boolean): ProvisioningPose {
+  if (reduced) {
+    return { y: 0, yaw: 0, roll: 0 };
+  }
+  return {
+    y: Math.sin(time * 1.05) * 0.028,
+    yaw: time * 0.42,
+    roll: Math.sin(time * 0.72) * 0.028,
+  };
+}
+
 interface CharacterOptions {
+  readonly mode?: 'interactive' | 'provisioning';
   readonly onReady?: () => void;
   readonly onUnavailable?: () => void;
 }
@@ -196,6 +215,7 @@ function readPalette(host: HTMLElement): CharacterPalette {
 
 /** Mount the supplied procedural CMA character into a transparent, responsive host. */
 export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}): CharacterHandle {
+  const provisioning = options.mode === 'provisioning';
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let reduced = motion.matches;
   let disposed = false;
@@ -217,7 +237,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   host.appendChild(renderer.domElement);
 
   function syncInteraction() {
-    const enabled = !reduced && contextAvailable;
+    const enabled = !provisioning && !reduced && contextAvailable;
     host.toggleAttribute('data-motion', enabled);
     if (host instanceof HTMLButtonElement) {
       host.disabled = !enabled;
@@ -374,16 +394,19 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     }
     lastFrame = timestamp;
     const time = reduced ? 0 : animationTime;
+    const loadingPose = provisioningPose(time, reduced);
 
     body.update(time);
-    if (reduced) {
+    if (reduced || provisioning) {
       pointer.x = 0;
       pointer.y = 0;
       target.x = 0;
       target.y = 0;
       swing = 0;
-      spin = 0;
-      spinStart = -1;
+      if (reduced) {
+        spin = 0;
+        spinStart = -1;
+      }
       rig.scale.setScalar(1);
     } else {
       const previousX = pointer.x;
@@ -392,12 +415,16 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       swing += ((pointer.x - previousX) * 9 - swing) * 0.12;
     }
 
-    head.rotation.y = pointer.x * 0.42;
-    head.rotation.x = pointer.y * 0.24;
-    body.mesh.rotation.y = -swing * 0.5;
-    body.mesh.rotation.z = swing * 0.22;
-    rig.position.y = reduced ? 0 : Math.sin(time * 1.05) * 0.028;
-    rig.rotation.z = reduced ? 0 : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
+    head.rotation.y = provisioning ? 0 : pointer.x * 0.42;
+    head.rotation.x = provisioning ? 0 : pointer.y * 0.24;
+    body.mesh.rotation.y = provisioning ? 0 : -swing * 0.5;
+    body.mesh.rotation.z = provisioning ? 0 : swing * 0.22;
+    rig.position.y = provisioning ? loadingPose.y : reduced ? 0 : Math.sin(time * 1.05) * 0.028;
+    rig.rotation.z = provisioning
+      ? loadingPose.roll
+      : reduced
+        ? 0
+        : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
 
     if (spinStart >= 0) {
       const progress = clamp((animationTime - spinStart) / 0.95, 0, 1);
@@ -413,7 +440,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
         rig.scale.setScalar(1);
       }
     }
-    rig.rotation.y = spin;
+    rig.rotation.y = provisioning ? loadingPose.yaw : reduced ? 0 : spin;
 
     shadowMaterial.opacity = 0.46 - rig.position.y * 1.4;
     const shadowScale = 1 - rig.position.y * 0.5;
@@ -510,9 +537,11 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     options.onUnavailable?.();
   };
 
-  window.addEventListener('pointermove', onPointerMove, { passive: true });
+  if (!provisioning) {
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    host.addEventListener('click', onClick);
+  }
   window.addEventListener('resize', resize);
-  host.addEventListener('click', onClick);
   document.addEventListener('visibilitychange', onVisibility);
   motion.addEventListener('change', onMotion);
   renderer.domElement.addEventListener('webglcontextlost', onContextLost);
@@ -544,9 +573,11 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       if (animationFrame !== null) {
         cancelAnimationFrame(animationFrame);
       }
-      window.removeEventListener('pointermove', onPointerMove);
+      if (!provisioning) {
+        window.removeEventListener('pointermove', onPointerMove);
+        host.removeEventListener('click', onClick);
+      }
       window.removeEventListener('resize', resize);
-      host.removeEventListener('click', onClick);
       document.removeEventListener('visibilitychange', onVisibility);
       motion.removeEventListener('change', onMotion);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);

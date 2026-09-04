@@ -34,6 +34,15 @@
   overflow-wrap: anywhere;
 }
 
+.resources--drawer {
+  grid-template-columns: 1fr;
+}
+
+.resources--drawer .resources__figure,
+.resources__status--drawer {
+  text-align: left;
+}
+
 .resources__row {
   display: flex;
   flex-direction: column;

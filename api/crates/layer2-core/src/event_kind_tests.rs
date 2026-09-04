@@ -59,6 +59,9 @@ fn one_of_every_kind() -> Vec<EventKind> {
         EventKind::MessageCommitted {
             content: "hello".into(),
         },
+        EventKind::ReasoningCommitted {
+            content: "checking the contract".into(),
+        },
         EventKind::OwnerMessage {
             content: "hello back".into(),
         },
@@ -181,6 +184,7 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::InitialPromptDeliveryChanged { .. }
             | EventKind::ConversationOpened { .. }
             | EventKind::MessageCommitted { .. }
+            | EventKind::ReasoningCommitted { .. }
             | EventKind::OwnerMessage { .. }
             | EventKind::TurnMetadata { .. }
             | EventKind::ToolCallStarted { .. }

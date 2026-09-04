@@ -1694,6 +1694,10 @@ async fn malformed_held_checkpoint_resumes_the_exact_token_once_and_preserves_re
     assert!(requests[3]
         .0
         .starts_with("POST /runtime/workspace/checkpoint/resume "));
+    assert!(requests[3]
+        .0
+        .to_ascii_lowercase()
+        .contains("content-type: application/json"));
     let requested = requested_resume_token(&requests[2]).expect("hold request carries a token");
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&requests[3].1).unwrap(),

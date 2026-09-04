@@ -48,6 +48,9 @@ fn every_durable_kind() -> Vec<EventKind> {
         EventKind::MessageCommitted {
             content: "complete answer".into(),
         },
+        EventKind::ReasoningCommitted {
+            content: "checking the state contract".into(),
+        },
         EventKind::OwnerMessage {
             content: "owner input".into(),
         },
@@ -158,6 +161,7 @@ fn every_durable_kind() -> Vec<EventKind> {
             | EventKind::InitialPromptDeliveryChanged { .. }
             | EventKind::ConversationOpened { .. }
             | EventKind::MessageCommitted { .. }
+            | EventKind::ReasoningCommitted { .. }
             | EventKind::OwnerMessage { .. }
             | EventKind::TurnMetadata { .. }
             | EventKind::ToolCallStarted { .. }

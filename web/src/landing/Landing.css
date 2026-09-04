@@ -74,6 +74,10 @@ body[data-ds-dark-theme] .landing {
   cursor: pointer;
 }
 
+.landing__character--provisioning {
+  pointer-events: none;
+}
+
 .landing__character:focus-visible {
   outline: none;
   border-radius: 50%;

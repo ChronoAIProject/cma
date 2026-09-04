@@ -16,6 +16,7 @@ import { SessionHeader } from './sessions/SessionHeader';
 import { TerminalSurface } from './terminal/TerminalSurface';
 import { ConversationSurface } from './chat/ConversationSurface';
 import { ChatSurface } from './chat/ChatSurface';
+import { ChatProvisioning } from './chat/ChatProvisioning';
 import { useSessionDrivers } from './sessions/drivers';
 import { SessionCanvas } from './canvas/SessionCanvas';
 import { selectLiveWindow, unattachedNote } from './canvas/layout';
@@ -34,7 +35,9 @@ import {
   quoteSession,
   readAllowance,
   readChatSurfaceEnabled,
+  readSessionResources,
   readSessionSpend,
+  resetChatEnvironment as requestChatEnvironmentReset,
 } from './api/client';
 import {
   abilitiesFor,
@@ -89,6 +92,50 @@ interface ConsoleProps {
   readonly onNavigate?: AppRouter['navigate'];
 }
 
+const CHAT_CREATE_GATEWAY_TIMEOUT = 524;
+const CHAT_CREATE_RECOVERY_WINDOW_MS = 90_000;
+const CHAT_CREATE_RECOVERY_POLL_MS = 2_000;
+
+type PendingChatCreation =
+  | { readonly kind: 'preparing'; readonly message: string }
+  | { readonly kind: 'failed'; readonly notice: FailureNotice };
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
+
+function omitSessionIds<T>(
+  values: Readonly<Record<string, T>>,
+  ids: ReadonlySet<string>,
+): Record<string, T> {
+  return Object.fromEntries(Object.entries(values).filter(([id]) => !ids.has(id)));
+}
+
+/**
+ * Cloudflare can stop waiting before a cold Chat host finishes provisioning,
+ * while the admitted origin request continues and durably creates its thread.
+ * Reconcile that one ambiguous gateway outcome against the owner's Chat list
+ * so the UI never reports that nothing was created when the thread exists.
+ */
+async function recoverTimedOutChat(knownIds: ReadonlySet<string>): Promise<Session | null> {
+  const deadline = Date.now() + CHAT_CREATE_RECOVERY_WINDOW_MS;
+  while (Date.now() < deadline) {
+    try {
+      const chats = await listSessions('chat');
+      const created = chats.find((chat) => !knownIds.has(chat.id));
+      if (created !== undefined) {
+        return created;
+      }
+    } catch {
+      // The original 524 remains the useful error if reconciliation also fails.
+    }
+    await wait(CHAT_CREATE_RECOVERY_POLL_MS);
+  }
+  return null;
+}
+
 /** The transient surfaces §1 admits. They are state, never routes. */
 type ConsoleView = 'sessions' | 'publisher' | 'operations' | 'developer';
 
@@ -126,6 +173,8 @@ export function Console({
   const [activeId, setActiveId] = useState<string | null>(null);
   const routeRef = useRef(route);
   const [notice, setNotice] = useState<FailureNotice | null>(null);
+  const [pendingChatCreation, setPendingChatCreation] = useState<PendingChatCreation | null>(null);
+  const chatCreationInFlight = useRef(false);
   /*
    * Bumped when the terminal palette changes. xterm reads its theme when the
    * terminal is constructed, so remounting is what applies a new one — and
@@ -288,6 +337,7 @@ export function Console({
 
   /** Select a session, in whichever arrangement is showing. */
   const selectState = useCallback((id: string) => {
+    setPendingChatCreation(null);
     setActiveId(id);
     /*
      * Choosing a session is asking to look at it, so it leaves whatever else
@@ -320,6 +370,7 @@ export function Console({
   );
 
   const clearSelection = useCallback(() => {
+    setPendingChatCreation(null);
     setActiveId(null);
     onNavigate({ kind: 'home' }, { replace: true });
   }, [onNavigate]);
@@ -463,26 +514,120 @@ export function Console({
   });
 
   const startChat = useCallback(async () => {
+    if (chatCreationInFlight.current) {
+      return;
+    }
+    chatCreationInFlight.current = true;
     setNotice(null);
     markActing(true);
+    setSurfaceMode('chat');
+    storeSurfaceMode('chat');
+    setView('sessions');
+    setActiveId(null);
+    setDetailsOpen(false);
+    setInspecting(null);
+    setPendingChatCreation({
+      kind: 'preparing',
+      message: 'Setting up the shared sandbox and a fresh workspace.',
+    });
+    if (route.kind !== 'home') {
+      onNavigate({ kind: 'home' }, { replace: true });
+    }
+    const knownChatIds = new Set(
+      sessions.filter((session) => session.chat !== undefined).map((session) => session.id),
+    );
     try {
       const session = await createChatSession();
       setSessions((previous) => [session, ...previous]);
       select(session.id);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === CHAT_CREATE_GATEWAY_TIMEOUT) {
+        setPendingChatCreation({
+          kind: 'preparing',
+          message: 'The sandbox is taking longer than usual. Checking for your new Chat.',
+        });
+        const recovered = await recoverTimedOutChat(knownChatIds);
+        if (recovered !== null) {
+          setSessions((previous) => [
+            recovered,
+            ...previous.filter((session) => session.id !== recovered.id),
+          ]);
+          select(recovered.id);
+          return;
+        }
+      }
       if (cause instanceof ApiError) {
-        setNotice({
-          failed: cause.message,
-          unchanged: 'No chat was created.',
-          code: cause.code ?? (cause.status > 0 ? `HTTP ${String(cause.status)}` : undefined),
+        setPendingChatCreation({
+          kind: 'failed',
+          notice: {
+            failed: cause.message,
+            unchanged:
+              cause.status === CHAT_CREATE_GATEWAY_TIMEOUT
+                ? 'The timed-out request could not be reconciled with your Chats.'
+                : 'No Chat was created.',
+            code: cause.code ?? (cause.status > 0 ? `HTTP ${String(cause.status)}` : undefined),
+          },
         });
       } else {
-        report(cause, 'Starting a chat failed.', 'No chat was created.');
+        setPendingChatCreation({
+          kind: 'failed',
+          notice: {
+            failed: `Starting a Chat failed. ${String(cause)}`,
+            unchanged: 'No Chat was created.',
+          },
+        });
       }
     } finally {
+      chatCreationInFlight.current = false;
       markActing(false);
     }
-  }, [markActing, report, select]);
+  }, [markActing, onNavigate, route.kind, select, sessions]);
+
+  const resetChatEnvironment = useCallback(async () => {
+    const chatIds = new Set(
+      sessions.filter((session) => session.chat !== undefined).map((session) => session.id),
+    );
+    setNotice(null);
+    markActing(true);
+    try {
+      try {
+        await requestChatEnvironmentReset();
+      } catch (cause) {
+        try {
+          const remaining = await listSessions('chat');
+          if (remaining.length > 0) {
+            report(
+              cause,
+              'Resetting the Chat environment failed.',
+              'Your Chats and shared sandbox remain available.',
+            );
+            return;
+          }
+        } catch {
+          report(
+            cause,
+            'Resetting the Chat environment failed.',
+            'Its current state could not be confirmed. Refresh before trying again.',
+          );
+          return;
+        }
+      }
+
+      setSessions((previous) => previous.filter((session) => session.chat === undefined));
+      setFocusHistory((previous) => previous.filter((id) => !chatIds.has(id)));
+      setEndings((previous) => omitSessionIds(previous, chatIds));
+      setStages((previous) => omitSessionIds(previous, chatIds));
+      setSignIns((previous) => omitSessionIds(previous, chatIds));
+      setWaitingId((current) => (current !== null && chatIds.has(current) ? null : current));
+      setOpeningForId((current) => (current !== null && chatIds.has(current) ? null : current));
+      setInspecting(null);
+      setDetailsOpen(false);
+      clearSelection();
+    } finally {
+      refreshAllowance();
+      markActing(false);
+    }
+  }, [clearSelection, markActing, refreshAllowance, report, sessions]);
 
   /*
    * Follow whichever session is still starting. The stream is the only thing
@@ -645,7 +790,12 @@ export function Console({
     return `${count} · ${String(liveCount)} live`;
   }, [view, loading, listed, liveCount, effectiveSurface]);
   const agentCreation = useMemo(() => creationAbilityFor(allowance), [allowance]);
-  const creation = effectiveSurface === 'chat' ? { canCreate: true } : agentCreation;
+  const creation =
+    effectiveSurface === 'chat'
+      ? acting || pendingChatCreation?.kind === 'preparing'
+        ? { canCreate: false, reason: 'A new Chat is already being prepared.' }
+        : { canCreate: true }
+      : agentCreation;
 
   const changeSurface = useCallback(
     (next: SurfaceMode) => {
@@ -679,6 +829,7 @@ export function Console({
       detailsOpen={
         (route.kind === 'home' || route.kind === 'session') &&
         view === 'sessions' &&
+        pendingChatCreation === null &&
         active !== null &&
         detailsOpen
       }
@@ -735,7 +886,7 @@ export function Console({
             <SessionRail
               sessions={listed}
               surface={effectiveSurface}
-              activeId={effectiveActiveId}
+              activeId={pendingChatCreation === null ? effectiveActiveId : null}
               order={order}
               onSelect={select}
               onReorder={setOrder}
@@ -756,7 +907,7 @@ export function Console({
          * session, and two columns would leave the second one empty most of
          * the time.
          */
-        inspecting !== null ? (
+        pendingChatCreation !== null ? null : inspecting !== null ? (
           <DetailsPanel
             title={inspecting.target ?? inspecting.toolKind}
             sections={sectionsOf(inspecting)}
@@ -769,6 +920,12 @@ export function Console({
             session={active}
             ending={endings[active.id]}
             readSpend={readSessionSpend}
+            readResources={readSessionResources}
+            open={
+              (route.kind === 'home' || route.kind === 'session') &&
+              view === 'sessions' &&
+              detailsOpen
+            }
             navigate={onNavigate}
             onClose={() => {
               setDetailsOpen(false);
@@ -777,7 +934,19 @@ export function Console({
         )
       }
       center={
-        route.kind === 'trigger' ? (
+        pendingChatCreation !== null ? (
+          <main className="console__surface">
+            <SessionHeader
+              session={null}
+              emptyLabel={
+                pendingChatCreation.kind === 'preparing'
+                  ? 'New Chat / Preparing'
+                  : 'New Chat / Needs attention'
+              }
+            />
+            <ChatProvisioning state={pendingChatCreation} onRetry={() => void startChat()} />
+          </main>
+        ) : route.kind === 'trigger' ? (
           <TriggerReview
             key={route.publicId}
             ownerId={user.id}
@@ -866,6 +1035,9 @@ export function Console({
                   />
                 ) : (
                   <ChatSessionActions
+                    busy={acting}
+                    onDelete={() => void removeSession(active.id)}
+                    onResetEnvironment={() => void resetChatEnvironment()}
                     onDetails={() => {
                       setDetailsOpen((open) => !open);
                     }}

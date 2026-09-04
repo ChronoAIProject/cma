@@ -216,6 +216,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         ["api", "v1", "sessions", id, "approvals", _request] if method == Method::POST => {
             Some(Classified::new(Action::SessionApprovalResolve).on(session(id)))
         }
+        ["api", "v1", "chat", "host"] if method == Method::DELETE => {
+            Some(Classified::new(Action::ChatEnvironmentReset))
+        }
 
         ["api", "v1", "conversations"] if method == Method::POST => {
             Some(Classified::new(Action::SessionCreate))
@@ -272,6 +275,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         ["api", "v1", "admin", "chat", "hosts", id, "retire"] if method == Method::POST => {
             Some(Classified::new(Action::ChatHostRetire).on(chat_host(id)))
         }
+        ["api", "v1", "admin", "chat", "hosts", id] if method == Method::DELETE => {
+            Some(Classified::new(Action::ChatEnvironmentReset).on(chat_host(id)))
+        }
         ["api", "v1", "admin", "settings"] => match *method {
             Method::GET => Some(Classified::new(Action::PlatformSettingsRead)),
             Method::PUT | Method::PATCH => Some(Classified::new(Action::PlatformSettingsWrite)),
@@ -282,6 +288,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         }
         ["api", "v1", "admin", "sessions", id, verb] => classify_session_verb(method, verb)
             .map(|action| Classified::new(action).on(session(id))),
+        ["api", "v1", "admin", "sessions", id] if method == Method::DELETE => {
+            Some(Classified::new(Action::SessionDelete).on(session(id)))
+        }
 
         _ => None,
     }

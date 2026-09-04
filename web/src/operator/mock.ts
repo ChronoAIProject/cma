@@ -46,7 +46,9 @@ export interface MockOperatorOptions {
   /** Told which session was stopped, and which was ended. */
   readonly onStop?: (id: string) => void;
   readonly onTerminate?: (id: string) => void;
+  readonly onDeleteChat?: (id: string) => void;
   readonly onRetireHost?: (id: string) => void;
+  readonly onResetHost?: (id: string) => void;
   readonly onSettingsChange?: (settings: PlatformSettings) => void;
   readonly onChatSettingsChange?: (settings: ChatSettings | null) => void;
   readonly onBriefingReset?: () => void;
@@ -236,6 +238,16 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
       options.onTerminate?.(id);
     },
 
+    async deleteChat(id: string) {
+      guard();
+      const index = sessions.findIndex((session) => session.id === id && session.chat);
+      if (index < 0) {
+        throw new Error('That Chat no longer exists.');
+      }
+      sessions.splice(index, 1);
+      options.onDeleteChat?.(id);
+    },
+
     async retireChatHost(id: string) {
       guard();
       const index = chatHosts.findIndex((host) => host.id === id);
@@ -245,6 +257,23 @@ export function createMockOperatorStore(options: MockOperatorOptions = {}): Oper
       }
       chatHosts[index] = { ...existing, status: 'retired' };
       options.onRetireHost?.(id);
+    },
+
+    async resetChatHost(id: string) {
+      guard();
+      const index = chatHosts.findIndex((host) => host.id === id);
+      const existing = chatHosts[index];
+      if (existing === undefined) {
+        throw new Error('That chat host no longer exists.');
+      }
+      chatHosts[index] = { ...existing, status: 'retired', threadCount: 0 };
+      for (let sessionIndex = sessions.length - 1; sessionIndex >= 0; sessionIndex -= 1) {
+        const session = sessions[sessionIndex];
+        if (session?.chat && session.owner === existing.owner) {
+          sessions.splice(sessionIndex, 1);
+        }
+      }
+      options.onResetHost?.(id);
     },
 
     async readPlatformSettings() {

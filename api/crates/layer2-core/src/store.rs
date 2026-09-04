@@ -2083,6 +2083,9 @@ pub trait ChatCheckpointStore: Send + Sync {
     async fn prune_conversation(&self, id: &SessionId, keep_sha256: &str)
         -> Result<(), StoreError>;
 
+    /// Remove every retained generation for one deleted chat conversation.
+    async fn delete_conversation(&self, id: &SessionId) -> Result<(), StoreError>;
+
     async fn stage_workspace(
         &self,
         host: &crate::ChatHostId,
@@ -2102,6 +2105,9 @@ pub trait ChatCheckpointStore: Send + Sync {
         host: &crate::ChatHostId,
         keep_sha256: &str,
     ) -> Result<(), StoreError>;
+
+    /// Remove every retained generation for one reset chat environment.
+    async fn delete_workspace(&self, host: &crate::ChatHostId) -> Result<(), StoreError>;
 }
 
 #[cfg(test)]

@@ -244,11 +244,19 @@ impl SandboxClient {
     /// The key is held here and sent only as a header; it never appears in a
     /// URL, a log line, or an error body.
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+        Self::new_with_provider_timeout(base_url, api_key, PROVIDER_TIMEOUT)
+    }
+
+    fn new_with_provider_timeout(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        provider_timeout: std::time::Duration,
+    ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             http: reqwest::Client::builder()
-                .timeout(PROVIDER_TIMEOUT)
+                .timeout(provider_timeout)
                 .build()
                 .expect("http client builds"),
             reclaimer: None,
@@ -412,6 +420,7 @@ impl SandboxClient {
             body,
             64 * 1024,
             "application/json",
+            PROVIDER_TIMEOUT,
         )
         .await
     }
@@ -426,12 +435,34 @@ impl SandboxClient {
         body: Vec<u8>,
         max_response_bytes: usize,
     ) -> Result<Vec<u8>, SandboxError> {
+        self.post_to_sandbox_with_bounded_response_until(
+            endpoint,
+            path,
+            body,
+            max_response_bytes,
+            PROVIDER_TIMEOUT,
+        )
+        .await
+    }
+
+    /// Post bytes and override the shared provider deadline for one bounded
+    /// artifact response. Large workspace captures can legitimately take much
+    /// longer than lifecycle and control calls while remaining byte-bounded.
+    pub(crate) async fn post_to_sandbox_with_bounded_response_until(
+        &self,
+        endpoint: &str,
+        path: &str,
+        body: Vec<u8>,
+        max_response_bytes: usize,
+        request_timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, SandboxError> {
         self.post_to_sandbox_with_bounded_response_as(
             endpoint,
             path,
             body,
             max_response_bytes,
             "application/octet-stream",
+            request_timeout,
         )
         .await
     }
@@ -443,6 +474,7 @@ impl SandboxClient {
         body: Vec<u8>,
         max_response_bytes: usize,
         content_type: &'static str,
+        request_timeout: std::time::Duration,
     ) -> Result<Vec<u8>, SandboxError> {
         let url = self.sandbox_url(endpoint, path);
         let resp = self
@@ -451,6 +483,7 @@ impl SandboxClient {
             .header(API_KEY_HEADER, &self.api_key)
             .header(reqwest::header::CONTENT_TYPE, content_type)
             .body(body)
+            .timeout(request_timeout)
             .send()
             .await
             .map_err(|e| SandboxError::Unreachable(e.to_string()))?;

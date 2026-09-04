@@ -953,6 +953,7 @@ impl SessionService {
             pending_approvals: final_history.pending_approvals,
             approval_locators: final_history.approval_locators,
             assembling: None,
+            assembling_reasoning: None,
             context_reading: None,
             attached: None,
             attachments_issued: 0,

@@ -34,9 +34,13 @@ use crate::coordination::{
 use crate::event::{ConfigOption, Event, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
 use crate::log::{append_conversation, append_conversation_with_prompt_evidence};
-use crate::service::SessionService;
+use crate::service::{SessionEntry, SessionService};
 use crate::session::{SessionStatus, StopReason};
 use crate::store::StoreError;
+
+/// Maximum number of immediately available runtime frames folded under one
+/// authority check and one durable flush barrier.
+const CONVERSATION_FOLD_BATCH: usize = 256;
 
 /// Rebuild the approval requests a live entry must still accept.
 ///
@@ -68,12 +72,22 @@ impl FoldedUpdate {
             live: Some((sender, frame)),
         }
     }
+}
 
-    fn emit(self) {
-        if let Some((sender, frame)) = self.live {
-            let _ = sender.send(frame);
-        }
-    }
+/// Finish the public message the runtime was assembling before it moves into a
+/// different kind of activity. This boundary makes a progress update durable
+/// before a long-running tool starts, while still keeping token-sized message
+/// chunks out of the event log.
+fn commit_assembling_message(entry: &mut SessionEntry) -> bool {
+    let Some((_, content, correlated)) = entry.assembling.take() else {
+        return false;
+    };
+    append_conversation_with_prompt_evidence(
+        entry,
+        EventKind::MessageCommitted { content },
+        correlated,
+    );
+    true
 }
 
 fn prompt_evidence(update: ConversationUpdate) -> (ConversationUpdate, bool) {
@@ -317,11 +331,24 @@ impl SessionService {
     /// Recorded and then shown, never the other way round: a client that saw
     /// something the log does not hold would find it missing on reconnect with
     /// no way to tell that from having imagined it.
+    #[cfg(test)]
     async fn fold_update(
         &self,
         id: &SessionId,
         link: ConversationLinkId,
         update: ConversationUpdate,
+        ordering: &tokio::sync::Mutex<()>,
+    ) -> bool {
+        self.fold_updates(id, link, std::iter::once(update), ordering)
+            .await
+    }
+
+    /// Fold an ordered group of updates under one link-authority decision.
+    async fn fold_updates(
+        &self,
+        id: &SessionId,
+        link: ConversationLinkId,
+        updates: impl IntoIterator<Item = ConversationUpdate>,
         ordering: &tokio::sync::Mutex<()>,
     ) -> bool {
         // Rotation takes these gates in the same order before publishing its
@@ -332,10 +359,20 @@ impl SessionService {
         if !self.admit_conversation_link(id, link).await {
             return false;
         }
-        let folded = self.fold_update_locked(id, link, update).await;
-        let current = !folded.changed || self.flush_conversation(id, link).await;
+        let mut changed = false;
+        let mut live = Vec::new();
+        for update in updates {
+            let folded = self.fold_update_locked(id, link, update).await;
+            changed |= folded.changed;
+            if let Some(frame) = folded.live {
+                live.push(frame);
+            }
+        }
+        let current = !changed || self.flush_conversation(id, link).await;
         if current {
-            folded.emit();
+            for (sender, frame) in live {
+                let _ = sender.send(frame);
+            }
         }
         drop(ordered);
         drop(input_fence);
@@ -402,28 +439,31 @@ impl SessionService {
                 return FoldedUpdate::quiet(true);
             }
         };
-        // A piece of the agent's reasoning. Liveness and nothing else: unlike a
-        // message it is never committed, so it accumulates nowhere and the
-        // durable log does not learn it happened. Handled before the message
-        // arm below rather than inside it, because the one thing they must not
-        // share is the accumulation.
+        // A piece of the reasoning summary the agent chose to expose. Stream it
+        // immediately and accumulate it separately from the answer; the whole
+        // summary is committed once at the turn boundary so navigation does
+        // not erase it and token-sized deltas do not consume durable sequence.
         if let SessionUpdate::AgentThoughtChunk(chunk) = &update {
             let Some(text) = plain_text(&chunk.content) else {
                 return FoldedUpdate::quiet(false);
             };
-            let live = {
-                let entries = self.entries.read().await;
+            let (live, changed) = {
+                let mut entries = self.entries.write().await;
                 let Some(entry) = entries
-                    .get(id)
+                    .get_mut(id)
                     .filter(|entry| entry.conversation_link == Some(link))
                 else {
                     return FoldedUpdate::quiet(false);
                 };
-                entry.live_frames.clone()
+                let changed = commit_assembling_message(entry);
+                entry
+                    .assembling_reasoning
+                    .get_or_insert_with(String::new)
+                    .push_str(&text);
+                (entry.live_frames.clone(), changed)
             };
-            // No flush: nothing was appended and nothing changed about the
-            // session. A thought that reaches nobody is simply unwatched.
-            return FoldedUpdate::live(false, live, LiveFrame::ThoughtDelta(text));
+            // No flush yet: the complete summary is one event at turn end.
+            return FoldedUpdate::live(changed, live, LiveFrame::ThoughtDelta(text));
         }
         // A piece of a message is liveness, and is shown rather than recorded.
         // What is recorded is the message the pieces add up to, at the moment
@@ -510,6 +550,26 @@ impl SessionService {
             return FoldedUpdate::live(true, live, LiveFrame::AvailableCommands(commands));
         }
 
+        // A tool boundary proves any public message immediately before it is a
+        // working note, not the turn's final answer. Commit it before recording
+        // the tool so a client that navigates away can reconstruct the live
+        // Thinking container while that tool is still running.
+        let message_committed = if matches!(
+            &update,
+            SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_)
+        ) {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries
+                .get_mut(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return FoldedUpdate::quiet(false);
+            };
+            commit_assembling_message(entry)
+        } else {
+            false
+        };
+
         // Read the grant and the values to redact before folding. A tool body
         // is only recorded when the owner asked for it, and it never carries a
         // value the session was handed — the credential, or an environment
@@ -528,6 +588,18 @@ impl SessionService {
             }
             (entry.session.options.record_tool_bodies, secrets)
         };
+        // ACP tool-output deltas commonly carry no state transition. When the
+        // session does not retain tool bodies, recording each such delta as an
+        // identical `updated` event preserves no information and can turn a
+        // verbose command into thousands of individual database writes.
+        if !record_tool_bodies
+            && matches!(
+                &update,
+                SessionUpdate::ToolCallUpdate(update) if update.fields.status.is_none()
+            )
+        {
+            return FoldedUpdate::quiet(message_committed);
+        }
         let reading = match &update {
             SessionUpdate::UsageUpdate(usage) if usage.used > 0 => {
                 Some((usage.used, (usage.size > 0).then_some(usage.size)))
@@ -539,7 +611,7 @@ impl SessionService {
             // guessed at: the vocabulary here is the core's own, and inventing
             // an event for something it does not model would put a runtime's
             // shape into the one layer that must outlive it.
-            return FoldedUpdate::quiet(false);
+            return FoldedUpdate::quiet(message_committed);
         };
         {
             let mut entries = self.entries.write().await;
@@ -702,6 +774,11 @@ impl SessionService {
                     },
                 );
             }
+            if let Some(content) = entry.assembling_reasoning.take() {
+                if !content.is_empty() {
+                    append_conversation(entry, EventKind::ReasoningCommitted { content });
+                }
+            }
             // The turn ending is what finishes the message the agent was
             // saying. Committed before the boundary so the log reads in the
             // order it happened.
@@ -796,6 +873,11 @@ impl SessionService {
             else {
                 return false;
             };
+            if let Some(content) = entry.assembling_reasoning.take() {
+                if !content.is_empty() {
+                    append_conversation(entry, EventKind::ReasoningCommitted { content });
+                }
+            }
             // Half a message is still what the agent said, and it is the last
             // thing anybody saw. Committed before the failure so the log
             // reads in the order it happened.
@@ -859,6 +941,12 @@ impl SessionService {
                 return;
             };
             let mut changed = false;
+            if let Some(content) = entry.assembling_reasoning.take() {
+                if !content.is_empty() {
+                    append_conversation(entry, EventKind::ReasoningCommitted { content });
+                    changed = true;
+                }
+            }
             if let Some((_, content, correlated)) = entry.assembling.take() {
                 // Half a message is still what the agent said. Losing it
                 // because the runtime went away would leave the log missing
@@ -1123,7 +1211,16 @@ pub(crate) fn spawn_folder(
     let ordering = service.conversation_order_gates.gate(&id);
     tokio::spawn(async move {
         while let Some(update) = updates.recv().await {
-            if !service.fold_update(&id, link, update, &ordering).await {
+            let mut batch = Vec::with_capacity(CONVERSATION_FOLD_BATCH);
+            batch.push(update);
+            while batch.len() < CONVERSATION_FOLD_BATCH {
+                match updates.try_recv() {
+                    Ok(update) => batch.push(update),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            }
+            if !service.fold_updates(&id, link, batch, &ordering).await {
                 break;
             }
         }

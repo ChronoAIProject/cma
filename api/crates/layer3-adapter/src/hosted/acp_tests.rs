@@ -858,6 +858,144 @@ async fn a_prompt_goes_out_as_a_dispatchable_json_rpc_request() {
 }
 
 #[tokio::test]
+async fn a_large_update_burst_cannot_block_socket_service_or_the_terminal_response() {
+    const UPDATE_COUNT: usize = 256;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let (reader_serviced_probe, probe_was_serviced) = tokio::sync::oneshot::channel();
+    let (finish_fixture, fixture_may_finish) = tokio::sync::oneshot::channel();
+
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+
+        let prompt_id = loop {
+            let call = receive_rpc(&mut ws).await;
+            let method = call["method"].as_str().unwrap_or_default();
+            if method == "session/prompt" {
+                break call["id"].clone();
+            }
+            let result = if method == "session/new" {
+                serde_json::json!({ "sessionId": "conv-backpressure" })
+            } else {
+                serde_json::json!({})
+            };
+            send_rpc(
+                &mut ws,
+                serde_json::json!({ "jsonrpc": "2.0", "id": call["id"], "result": result }),
+            )
+            .await;
+        };
+
+        for index in 0..UPDATE_COUNT {
+            let update = crate::SessionUpdate::AgentThoughtChunk(crate::ContentChunk::new(
+                crate::ContentBlock::from(format!("thought-{index}")),
+            ));
+            send_rpc(
+                &mut ws,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "conv-backpressure",
+                        "update": update,
+                    },
+                }),
+            )
+            .await;
+        }
+
+        // The core-facing channel below holds only one update and is not
+        // drained yet. Reaching and answering this request proves the socket
+        // reader continued polling through the full downstream lane.
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "reader-probe",
+                "method": "test/unsupported",
+                "params": {},
+            }),
+        )
+        .await;
+        let refusal = receive_rpc(&mut ws).await;
+        assert_eq!(refusal["id"], "reader-probe");
+        assert_eq!(refusal["error"]["code"], -32601);
+        let _ = reader_serviced_probe.send(());
+
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": prompt_id,
+                "result": { "stopReason": "end_turn" },
+            }),
+        )
+        .await;
+        let _ = fixture_may_finish.await;
+    });
+
+    let stream = connect(&url).await;
+    let (updates_tx, mut updates) = mpsc::channel(1);
+    let (channel, _control) = Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        None,
+        false,
+        updates_tx,
+    )
+    .await
+    .expect("the bridge opens");
+    channel
+        .input
+        .send(crate::ConversationInput::Prompt(vec![
+            crate::ContentBlock::from("produce a large response"),
+        ]))
+        .await
+        .expect("the prompt reaches the bridge");
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), probe_was_serviced)
+        .await
+        .expect("the socket reader remains responsive")
+        .expect("the fixture reports reader progress");
+
+    for index in 0..UPDATE_COUNT {
+        let update = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+            .await
+            .expect("the ordered relay makes progress")
+            .expect("the update lane stays open");
+        let crate::ConversationUpdate::Said(crate::SessionUpdate::AgentThoughtChunk(chunk)) =
+            update
+        else {
+            panic!("expected thought update {index}, got {update:?}");
+        };
+        assert_eq!(
+            chunk.content,
+            crate::ContentBlock::from(format!("thought-{index}"))
+        );
+    }
+    assert!(matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+            .await
+            .expect("the terminal response is delivered after the burst"),
+        Some(crate::ConversationUpdate::TurnEnded(_))
+    ));
+
+    let _ = finish_fixture.send(());
+    served.await.expect("the fixture exits cleanly");
+}
+
+#[tokio::test]
 async fn an_interrupt_is_accepted_after_it_reaches_the_runtime_link() {
     let (url, served) = bridging(None, None, Some(3)).await;
     let stream = connect(&url).await;

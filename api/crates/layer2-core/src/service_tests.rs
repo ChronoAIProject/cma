@@ -3266,7 +3266,8 @@ async fn queued_pre_dispatch_agent_messages_cannot_cross_the_execution_fence() {
             crate::conversation_support::said(layer3_adapter::SessionUpdate::ToolCallUpdate(
                 layer3_adapter::ToolCallUpdate::new(
                     layer3_adapter::ToolCallId::new("startup-tool"),
-                    layer3_adapter::ToolCallUpdateFields::new(),
+                    layer3_adapter::ToolCallUpdateFields::new()
+                        .status(layer3_adapter::ToolCallStatus::Completed),
                 ),
             ))
             .without_prompt_evidence(),
@@ -3404,7 +3405,8 @@ async fn uncorrelated_activity_is_durable_but_never_advances_initial_prompt_deli
                 crate::conversation_support::said(layer3_adapter::SessionUpdate::ToolCallUpdate(
                     layer3_adapter::ToolCallUpdate::new(
                         layer3_adapter::ToolCallId::new("startup-tool"),
-                        layer3_adapter::ToolCallUpdateFields::new(),
+                        layer3_adapter::ToolCallUpdateFields::new()
+                            .status(layer3_adapter::ToolCallStatus::Completed),
                     ),
                 ))
                 .without_prompt_evidence(),

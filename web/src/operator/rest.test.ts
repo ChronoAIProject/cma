@@ -242,10 +242,12 @@ describe('reading a session off the wire', () => {
       status: 'running',
       kernel: 'example-runtime',
       created_at: '2026-08-14T09:00:00Z',
+      chat: true,
     });
     expect(session.owner).toBe('76fe9d91');
     expect(session.ownerLabel).toBe('Ada Lovelace');
     expect(session.status).toBe('running');
+    expect(session.chat).toBe(true);
   });
 
   it('keeps a state it has never heard of rather than refusing the row', () => {
@@ -486,6 +488,22 @@ describe('talking to the control plane', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/admin/sessions/sesn%201/stop');
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/admin/sessions/sesn_2/terminate');
+  });
+
+  it('uses distinct SDK routes for one Chat deletion and a complete host reset', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(null, 204));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = createRestOperatorStore();
+    await store.deleteChat('chat one');
+    await store.resetChatHost('host one');
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/admin/sessions/chat%20one',
+      '/api/v1/admin/chat/hosts/host%20one',
+    ]);
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('DELETE');
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe('DELETE');
   });
 
   it('reads, conditionally replaces, and briefing-resets platform settings', async () => {

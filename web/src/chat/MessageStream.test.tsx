@@ -437,23 +437,16 @@ describe('a turn in flight, §18.1', () => {
 });
 
 describe('what the agent is working through, §18.8', () => {
-  it('collapses the reasoning to one key that says it is not kept', async () => {
-    // §18.8: collapsed by default — the previous revision's always-open band
-    // put the least durable content at the same weight as the conversation.
-    // The words that make it safe to lose stay on the key either way.
+  it('opens retained working notes by default and summarizes them when collapsed', async () => {
     const user = userEvent.setup();
     render(<MessageStream entries={[]} turnInFlight reasoning={{ text: 'checking src/' }} />);
 
-    const key = screen.getByRole('button', { name: /not kept after this turn/i });
-    /*
-     * The row shows the newest line while it is shut — that is its reason to
-     * exist, since "it is doing something" is what a spinner says and this
-     * says what. The body is what stays closed.
-     */
-    expect(key.textContent).toContain('checking src/');
-    expect(document.querySelector('.thinking__body')).toBeNull();
-    await user.click(key);
+    const key = screen.getByRole('button', { name: /retained in this conversation/i });
     expect(document.querySelector('.thinking__body')?.textContent).toBe('checking src/');
+    expect(key.textContent).not.toContain('checking src/');
+    await user.click(key);
+    expect(document.querySelector('.thinking__body')).toBeNull();
+    expect(key.textContent).toContain('checking src/');
   });
 
   it('draws nothing at all when there is no reasoning', () => {

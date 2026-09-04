@@ -4,6 +4,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Landing } from './Landing';
+import { ChatProvisioning } from '../chat/ChatProvisioning';
 import { AuthContextProvider } from '../auth/context';
 import { createMockAuthProvider } from '../auth/mock';
 import { clearPendingTurn, consumePendingTurn } from '../auth/pendingTurn';
@@ -14,9 +15,9 @@ const characterScene = vi.hoisted(() => ({ mount: vi.fn(), dispose: vi.fn() }));
 vi.mock('./characterScene', () => ({
   mountCharacter: (
     host: HTMLElement,
-    options: { readonly onReady?: () => void },
+    options: { readonly mode?: string; readonly onReady?: () => void },
   ): { readonly dispose: () => void } => {
-    characterScene.mount();
+    characterScene.mount(host, options);
     if (host instanceof HTMLButtonElement) {
       host.disabled = false;
     }
@@ -92,6 +93,22 @@ describe('Landing', () => {
 
     result.unmount();
     expect(characterScene.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('mounts the character in continuous provisioning mode for a new Chat', async () => {
+    render(
+      <ChatProvisioning
+        state={{ kind: 'preparing', message: 'Preparing the workspace.' }}
+        onRetry={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(characterScene.mount).toHaveBeenCalledOnce();
+    });
+    expect(characterScene.mount.mock.calls[0]?.[1]).toMatchObject({ mode: 'provisioning' });
+    expect(screen.getByRole('status')).toHaveTextContent('Preparing the workspace.');
+    expect(screen.queryByRole('button', { name: /spin cma/i })).toBeNull();
   });
 
   it('holds the typed prompt across sign-in', async () => {

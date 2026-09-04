@@ -34,7 +34,7 @@ const DEFAULT_CHAT: ChatSettings = {
     instructions: '',
     recordToolBodies: true,
   },
-  messagePrefixes: ['$codex-formal-answer'],
+  messagePrefixes: [],
   inactivity: { pauseAfterSeconds: 900 },
   setup: {
     commands: [

@@ -317,6 +317,14 @@ impl ChatCheckpointStore for MemoryCheckpoints {
             .await
     }
 
+    async fn delete_conversation(&self, id: &crate::SessionId) -> Result<(), StoreError> {
+        self.objects
+            .lock()
+            .await
+            .remove(&format!("sessions/{id}/handover.snapshot"));
+        Ok(())
+    }
+
     async fn stage_workspace(
         &self,
         host: &ChatHostId,
@@ -353,6 +361,14 @@ impl ChatCheckpointStore for MemoryCheckpoints {
     ) -> Result<(), StoreError> {
         self.prune(format!("chat-hosts/{host}/checkpoint-v1"), keep_sha256)
             .await
+    }
+
+    async fn delete_workspace(&self, host: &ChatHostId) -> Result<(), StoreError> {
+        self.objects
+            .lock()
+            .await
+            .remove(&format!("chat-hosts/{host}/checkpoint-v1"));
+        Ok(())
     }
 }
 

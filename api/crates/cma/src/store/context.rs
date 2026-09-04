@@ -554,6 +554,14 @@ impl ChatCheckpointStore for ChronoStorageContextStore {
         .await
     }
 
+    async fn delete_conversation(&self, id: &SessionId) -> Result<(), StoreError> {
+        self.delete_object(
+            &Self::chat_conversation_checkpoint_key_for(id),
+            "chat conversation checkpoint",
+        )
+        .await
+    }
+
     async fn stage_workspace(
         &self,
         host: &ChatHostId,
@@ -589,6 +597,14 @@ impl ChatCheckpointStore for ChronoStorageContextStore {
         self.prune_chat_checkpoint_object(
             &Self::chat_workspace_checkpoint_key_for(host),
             keep_sha256,
+            "chat workspace checkpoint",
+        )
+        .await
+    }
+
+    async fn delete_workspace(&self, host: &ChatHostId) -> Result<(), StoreError> {
+        self.delete_object(
+            &Self::chat_workspace_checkpoint_key_for(host),
             "chat workspace checkpoint",
         )
         .await

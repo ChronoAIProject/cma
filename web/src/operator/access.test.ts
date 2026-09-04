@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Capability } from '../auth/types';
-import { canControlAnySession, canOperate, controlsFor, retirementFor, viewsFor } from './access';
+import {
+  canControlAnySession,
+  canOperate,
+  controlsFor,
+  environmentResetFor,
+  retirementFor,
+  viewsFor,
+} from './access';
 import type { AdminSession, ChatHost } from './types';
 
 /**
@@ -20,7 +27,7 @@ const DAILY: readonly Capability[] = [
 ];
 
 function session(status: string): AdminSession {
-  return { id: 'sesn_1', owner: 'subject-a', status, kernel: 'example-runtime' };
+  return { id: 'sesn_1', owner: 'subject-a', status, kernel: 'example-runtime', chat: false };
 }
 
 describe('who is offered the panel', () => {
@@ -105,6 +112,14 @@ describe('what may be done to a chat host', () => {
     expect(retirementFor(host('reviving'), ['control_any_session']).canRetire).toBe(false);
     expect(retirementFor(host('retired'), ['control_any_session']).reason).toMatch(/already/i);
   });
+
+  it('keeps permanent reset gated but available for a retired host', () => {
+    expect(environmentResetFor(['read_all_sessions'])).toMatchObject({
+      canReset: false,
+      reason: expect.stringMatching(/watch/i),
+    });
+    expect(environmentResetFor(['control_any_session'])).toEqual({ canReset: true });
+  });
 });
 
 describe('what may be done to a session', () => {
@@ -122,6 +137,19 @@ describe('what may be done to a session', () => {
     expect(controls.canStop).toBe(true);
     expect(controls.canTerminate).toBe(true);
     expect(controls.stopReason).toBeUndefined();
+  });
+
+  it('offers permanent deletion only for Chat rows', () => {
+    expect(controlsFor(session('running'), ['control_any_session']).canDeleteChat).toBe(false);
+    expect(
+      controlsFor({ ...session('terminated'), chat: true }, ['control_any_session']).canDeleteChat,
+    ).toBe(true);
+    expect(controlsFor({ ...session('running'), chat: true }, ['read_all_sessions'])).toMatchObject(
+      {
+        canDeleteChat: false,
+        deleteChatReason: expect.stringMatching(/watch/i),
+      },
+    );
   });
 
   it('will not stop a session whose runtime is already released', () => {

@@ -67,6 +67,7 @@ interface LocalTurn {
   readonly responseId?: string;
   readonly outputText: string;
   readonly reasoningText: string;
+  readonly intermediateMessages: readonly string[];
   readonly activities: readonly ThinkingActivity[];
   readonly terminal?: ResponsesResponse;
   /** False until a paused response has progressed beyond `response.created`. */
@@ -188,6 +189,9 @@ export function projectChatHistory(
   const projected: MessageStreamEntry[] = [];
   const activities: ThinkingActivity[] = [];
   const activityPositions = new Map<string, number>();
+  const intermediateMessages: string[] = [];
+  let reasoningText = '';
+  let workingNotesId: string | undefined;
   let turnId: string | undefined;
   let sequence = 0;
 
@@ -196,16 +200,23 @@ export function projectChatHistory(
     return sequence;
   };
   const flushThinking = () => {
-    if (activities.length === 0) return;
+    if (activities.length === 0 && intermediateMessages.length === 0 && reasoningText === '') {
+      return;
+    }
     projected.push({
       kind: 'thinking',
-      id: `thinking:${turnId ?? activities[0]?.id ?? String(sequence)}`,
+      id: workingNotesId ?? `thinking:${turnId ?? activities[0]?.id ?? String(sequence)}`,
+      ...(reasoningText === '' ? {} : { text: reasoningText }),
+      ...(intermediateMessages.length === 0 ? {} : { messages: [...intermediateMessages] }),
       activities: [...activities],
       live: false,
       seq: nextSequence(),
     });
     activities.length = 0;
     activityPositions.clear();
+    intermediateMessages.length = 0;
+    reasoningText = '';
+    workingNotesId = undefined;
   };
 
   for (const item of [...newestFirst].reverse()) {
@@ -218,6 +229,12 @@ export function projectChatHistory(
       } else {
         activities[existing] = activity;
       }
+      continue;
+    }
+    if (item.type === 'cma_chat.working_notes') {
+      workingNotesId = item.id;
+      reasoningText = item.reasoning ?? '';
+      intermediateMessages.push(...item.messages);
       continue;
     }
 
@@ -314,7 +331,8 @@ function stateIntoTurn(current: LocalTurn, state: ResponsesConnectionState): Loc
     ...current,
     ...(state.response === undefined ? {} : { responseId: state.response.id }),
     outputText: state.outputText,
-    reasoningText: state.terminal === undefined ? state.reasoningText : '',
+    reasoningText: state.reasoningText,
+    intermediateMessages: (state.intermediateMessages ?? []).map((message) => message.text),
     activities: state.toolActivities.map(activityOf),
     ...(state.terminal === undefined ? {} : { terminal: state.terminal }),
   };
@@ -338,11 +356,19 @@ function localEntries(turn: LocalTurn | undefined, after: number): readonly Mess
   }
   if (turn.terminal === undefined) return entries;
 
-  if (turn.durable !== true && userVisible && turn.activities.length > 0) {
+  if (
+    turn.durable !== true &&
+    userVisible &&
+    (turn.reasoningText !== '' ||
+      turn.intermediateMessages.length > 0 ||
+      turn.activities.length > 0)
+  ) {
     sequence += 1;
     entries.push({
       kind: 'thinking',
       id: `local-thinking:${String(turn.token)}`,
+      ...(turn.reasoningText === '' ? {} : { text: turn.reasoningText }),
+      ...(turn.intermediateMessages.length === 0 ? {} : { messages: turn.intermediateMessages }),
       activities: turn.activities,
       live: false,
       seq: sequence,
@@ -445,11 +471,11 @@ function ChatSurfaceThread({
     async (
       responseId: string,
       signal: AbortSignal,
-      onProgress?: (response: ResponsesResponse) => void,
+      onProgress?: (response: ResponsesResponse) => void | Promise<void>,
     ): Promise<ResponsesResponse> => {
       for (;;) {
         const response = await readResponse(responseId, signal);
-        onProgress?.(response);
+        await onProgress?.(response);
         if (response.status !== 'in_progress') return response;
         await waitForResponsePoll(signal);
       }
@@ -463,19 +489,21 @@ function ChatSurfaceThread({
       const token = ++turnToken.current;
       const userText = newestUserText(snapshot.items);
       let observedInProgress = false;
-      const terminal = await readUntilTerminal(snapshot.predecessor, signal, (response) => {
+      const terminal = await readUntilTerminal(snapshot.predecessor, signal, async (response) => {
         if (response.status !== 'in_progress') return;
         observedInProgress = true;
         setTurn({
           token,
           userText,
           responseId: response.id,
-          outputText: responseOutputText(response),
+          outputText: '',
           reasoningText: '',
+          intermediateMessages: [],
           activities: [],
           userVisible: true,
           durable: true,
         });
+        await refreshHistory(signal);
       });
       if (!observedInProgress) return;
 
@@ -680,6 +708,7 @@ function ChatSurfaceThread({
           userText: text,
           outputText: '',
           reasoningText: '',
+          intermediateMessages: [],
           activities: [],
           ...(reviveGate === undefined ? {} : { userVisible: false, starting: false }),
         });
@@ -709,19 +738,36 @@ function ChatSurfaceThread({
     ],
   );
 
-  const durableEntries = useMemo(() => projectChatHistory(history), [history]);
+  const turnInFlight = turn !== undefined && turn.terminal === undefined;
+  const durableEntries = useMemo(() => {
+    const projected = projectChatHistory(history);
+    if (!turnInFlight || turn?.durable !== true) return projected;
+    const latest = projected.at(-1);
+    if (latest?.kind !== 'thinking') return projected;
+    return [...projected.slice(0, -1), { ...latest, live: true }];
+  }, [history, turn?.durable, turnInFlight]);
   const entries = useMemo(
     () => [...durableEntries, ...localEntries(turn, durableEntries.length)],
     [durableEntries, turn],
   );
-  const turnInFlight = turn !== undefined && turn.terminal === undefined;
   const revivePending = turnInFlight && turn.userVisible === false;
   const liveThinking =
-    turnInFlight && (turn.reasoningText !== '' || turn.activities.length > 0)
-      ? { text: turn.reasoningText, activities: turn.activities, live: true }
+    turnInFlight &&
+    turn.durable !== true &&
+    (turn.reasoningText !== '' ||
+      turn.intermediateMessages.length > 0 ||
+      turn.outputText !== '' ||
+      turn.activities.length > 0)
+      ? {
+          text: turn.reasoningText,
+          messages: [
+            ...turn.intermediateMessages,
+            ...(turn.outputText === '' ? [] : [turn.outputText]),
+          ],
+          activities: turn.activities,
+          live: true,
+        }
       : undefined;
-  const liveMessage =
-    turnInFlight && turn.outputText !== '' ? { text: turn.outputText } : undefined;
   const state = planeStateFor(session, approval !== undefined);
   const failure = turnFailure ?? historyFailure;
   const refusedReason = !historyLoaded
@@ -763,7 +809,6 @@ function ChatSurfaceThread({
       <MessageStream
         entries={entries}
         turnInFlight={turnInFlight && !revivePending}
-        live={liveMessage}
         reasoning={liveThinking}
         linkLive={historyLoaded}
         openingHint={false}

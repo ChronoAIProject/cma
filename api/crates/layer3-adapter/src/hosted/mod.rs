@@ -23,6 +23,7 @@ mod inbound;
 mod link;
 pub(crate) use link::credential_answer;
 mod loss;
+mod relay;
 mod telemetry;
 pub(super) mod turn;
 
@@ -205,6 +206,11 @@ const MAX_WORKSPACE_HEADER_BYTES: usize = 128 * 1024 * 1024;
 const MAX_WORKSPACE_INLINE_BYTES: u64 = 1_024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize =
     MAX_WORKSPACE_BYTES + MAX_WORKSPACE_HEADER_BYTES + 128 * 1024;
+/// Large, file-dense repositories can take longer than the provider's ordinary
+/// lifecycle deadline to enumerate, compress, and stream. The response remains
+/// byte-bounded, and periodic chat captures are preempted before publication
+/// whenever new input arrives.
+const WORKSPACE_CHECKPOINT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 const RUNTIME_POLICY_VERSION: u64 = 2;
 const RUNTIME_GATEWAY_PROBE_VERSION: u64 = 2;
 
@@ -1840,11 +1846,12 @@ impl HostedKernel {
         });
         let wire = match self
             .client
-            .post_to_sandbox_with_bounded_response(
+            .post_to_sandbox_with_bounded_response_until(
                 &endpoint.endpoint,
                 &path,
                 Vec::new(),
                 MAX_WORKSPACE_RESPONSE_BYTES,
+                WORKSPACE_CHECKPOINT_TIMEOUT,
             )
             .await
         {
@@ -2619,7 +2626,7 @@ async fn resume_workspace_writers_with_client(
     let body = serde_json::to_vec(&WorkspaceWriterResumeRequest { resume_token })
         .expect("a workspace writer resume request is serializable");
     let response = client
-        .post_to_sandbox_with_response(endpoint, WORKSPACE_CHECKPOINT_RESUME_PATH, body)
+        .post_json_to_sandbox_with_response(endpoint, WORKSPACE_CHECKPOINT_RESUME_PATH, body)
         .await?;
     let receipt: WorkspaceWriterResumeReceipt =
         serde_json::from_slice(&response).map_err(|_| {

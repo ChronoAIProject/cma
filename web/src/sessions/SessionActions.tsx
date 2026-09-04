@@ -9,6 +9,7 @@ import { resolveTheme, storeThemeId, storedThemeId, themesFor } from '../termina
 import { Button } from '../ui/Button';
 import './SessionActions.css';
 import { Menu } from '../ui/Menu';
+import { IconEllipsisOutline16 } from '../ui/icons';
 
 /**
  * What can be done to the session being described — docs/Web_Style.md §12.
@@ -75,19 +76,94 @@ interface SessionActionsProps {
   readonly signingIn?: boolean;
 }
 
-/** Chat lifecycle belongs to the platform, so its header exposes Details alone. */
+/** Chat keeps reference material direct and destructive controls behind one named menu. */
 export function ChatSessionActions({
   onDetails,
+  onDelete,
+  onResetEnvironment,
   detailsOpen = false,
+  busy = false,
 }: {
   readonly onDetails: () => void;
+  readonly onDelete: () => void;
+  readonly onResetEnvironment: () => void;
   readonly detailsOpen?: boolean;
+  readonly busy?: boolean;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
   return (
     <div className="actions">
       <Button size="sm" onClick={onDetails} aria-expanded={detailsOpen}>
         Details
       </Button>
+      <Menu
+        open={menuOpen}
+        label="Manage Chat"
+        align="end"
+        items={[
+          { id: 'delete', label: 'Delete this Chat', danger: true, disabled: busy },
+          { type: 'separator', id: 'before-reset' },
+          { id: 'reset', label: 'Reset Chat environment', danger: true, disabled: busy },
+        ]}
+        onSelect={(id) => {
+          setMenuOpen(false);
+          if (id === 'delete') setConfirmingDelete(true);
+          if (id === 'reset') setConfirmingReset(true);
+        }}
+        onClose={() => {
+          setMenuOpen(false);
+        }}
+        anchor={
+          <Button
+            size="sm"
+            placement="actions__more"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Manage Chat"
+            title="Manage Chat"
+            icon={<IconEllipsisOutline16 />}
+            disabled={busy}
+            onClick={() => {
+              setMenuOpen((open) => !open);
+            }}
+          />
+        }
+      />
+
+      <RiskConfirmation
+        open={confirmingDelete}
+        title="Delete this Chat?"
+        description="This permanently deletes this conversation, its history, and its worktree. Other Chats and the shared sandbox remain available."
+        acknowledgeLabel="I understand this Chat cannot be recovered."
+        confirmLabel="Delete this Chat"
+        busy={busy}
+        onCancel={() => {
+          setConfirmingDelete(false);
+        }}
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          onDelete();
+        }}
+      />
+
+      <RiskConfirmation
+        open={confirmingReset}
+        title="Reset Chat environment?"
+        description="This permanently deletes all of your Chat histories and worktrees, then terminates your shared Chat sandbox. Agent sessions are not affected."
+        acknowledgeLabel="I understand every Chat in this environment will be deleted."
+        confirmLabel="Reset environment"
+        busy={busy}
+        onCancel={() => {
+          setConfirmingReset(false);
+        }}
+        onConfirm={() => {
+          setConfirmingReset(false);
+          onResetEnvironment();
+        }}
+      />
     </div>
   );
 }

@@ -7,7 +7,6 @@ use crate::{ReasoningEffort, SessionSize};
 
 const DEFAULT_REPOSITORY_URL: &str = "https://github.com/the-omega-institute/trureturing";
 const DEFAULT_BRANCH: &str = "dev";
-const DEFAULT_MESSAGE_PREFIX: &str = concat!("$", "co", "dex-formal-answer");
 const DEFAULT_SKILL_SETUP: &str = concat!(
     "set -eu; found=0; for skill in skills/*; do ",
     "test -f \"$skill/SKILL.md\" || continue; name=${skill##*/}; ",
@@ -122,7 +121,7 @@ impl Default for ChatSettings {
             enabled: false,
             workspace: ChatWorkspaceSource::default(),
             agent: ChatAgentSettings::default(),
-            message_prefixes: vec![DEFAULT_MESSAGE_PREFIX.into()],
+            message_prefixes: Vec::new(),
             inactivity: ChatInactivity::default(),
             setup: ChatSetup::default(),
             host: ChatHostSettings::default(),
@@ -312,7 +311,7 @@ mod tests {
         let settings: ChatSettings = serde_json::from_str("{}").expect("defaults deserialize");
         assert_eq!(settings, ChatSettings::default());
         assert!(!settings.enabled);
-        assert_eq!(settings.message_prefixes, [DEFAULT_MESSAGE_PREFIX]);
+        assert!(settings.message_prefixes.is_empty());
         assert_eq!(settings.workspace_directory().unwrap(), "trureturing");
         assert!(settings.validate().is_ok());
     }
