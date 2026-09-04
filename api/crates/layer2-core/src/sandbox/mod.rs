@@ -1,5 +1,6 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
+mod admin;
 mod agent;
 mod error;
 mod event;
@@ -10,6 +11,11 @@ pub mod store;
 mod workspace;
 mod worktree;
 
+pub use admin::{
+    AgentAdminSummary, OperatorError, SandboxAdminQuery, SandboxAdminStore, SandboxAdminSummary,
+    SandboxAdminView, SandboxOperatorService, SandboxRetirement, SandboxRetirementResult,
+    StoredSandboxRetirement, WorkspaceAdminSummary,
+};
 pub use agent::{Agent, AgentOrigin, AgentStopReason, ConversationState, FirstMessageDelivery};
 pub use error::SandboxModelError;
 pub use event::{AgentLogEntry, AgentLogKind, SandboxEvent, SandboxEventKind};

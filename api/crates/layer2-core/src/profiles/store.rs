@@ -271,6 +271,7 @@ fn readable(owner: &SubjectId, profile_owner: &SubjectId, visibility: ProfileVis
     owner == profile_owner || visibility == ProfileVisibility::Public
 }
 
+mod admin_memory;
 mod marketplace_memory;
 mod marketplace_support;
 mod memory;

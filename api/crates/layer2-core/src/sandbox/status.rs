@@ -40,9 +40,9 @@ impl SandboxStatus {
                 | (Self::Pausing, Self::Paused)
                 | (Self::Paused, Self::Reviving | Self::Retiring)
                 | (Self::Reviving | Self::Rotating, Self::Active)
-                | (Self::Failed, Self::Retiring)
                 | (Self::Retiring, Self::Retired)
-        ) || (!matches!(self, Self::Failed | Self::Retired) && next == Self::Failed);
+        ) || (!matches!(self, Self::Failed | Self::Retired) && next == Self::Failed)
+            || (!matches!(self, Self::Retiring | Self::Retired) && next == Self::Retiring);
         allowed
             .then_some(next)
             .ok_or_else(|| transition_error!("sandbox", self, next))
