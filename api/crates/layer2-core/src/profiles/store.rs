@@ -1,0 +1,218 @@
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+
+use crate::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
+
+use super::{
+    AgentProfile, AgentProfileRevision, ProfileCapacityBounds, ProfileError, ProfileVisibility,
+    SandboxProfile, SandboxProfileRevision, WorkspaceProfile, WorkspaceProfileRevision,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProfileStoreError {
+    #[error("profile not found")]
+    NotFound,
+    #[error("profile already exists")]
+    Duplicate,
+    #[error("profile draft changed")]
+    Conflict,
+    #[error("profile reference is unavailable")]
+    ReferenceUnavailable,
+    #[error(transparent)]
+    Validation(#[from] ProfileError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfilePage<T> {
+    pub items: Vec<T>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfilePageRequest {
+    pub limit: u16,
+    pub cursor: Option<String>,
+}
+
+impl Default for ProfilePageRequest {
+    fn default() -> Self {
+        Self {
+            limit: 100,
+            cursor: None,
+        }
+    }
+}
+
+#[async_trait]
+pub trait AgentProfileStore: Send + Sync {
+    async fn create_agent_profile(&self, profile: AgentProfile) -> Result<(), ProfileStoreError>;
+    async fn save_agent_draft(
+        &self,
+        expected_draft_version: u64,
+        profile: AgentProfile,
+    ) -> Result<(), ProfileStoreError>;
+    async fn publish_agent_profile(
+        &self,
+        id: &AgentProfileId,
+        expected_draft_version: u64,
+        published_at: String,
+    ) -> Result<AgentProfileRevision, ProfileStoreError>;
+    async fn agent_profile_revision(
+        &self,
+        id: &AgentProfileId,
+        revision: u32,
+    ) -> Result<Option<AgentProfileRevision>, ProfileStoreError>;
+    async fn list_agent_profiles(
+        &self,
+        owner: Option<&SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<AgentProfile>, ProfileStoreError>;
+    async fn retire_agent_profile(
+        &self,
+        id: &AgentProfileId,
+        owner: &SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError>;
+}
+
+#[async_trait]
+pub trait WorkspaceProfileStore: Send + Sync {
+    async fn create_workspace_profile(
+        &self,
+        profile: WorkspaceProfile,
+    ) -> Result<(), ProfileStoreError>;
+    async fn save_workspace_draft(
+        &self,
+        expected_draft_version: u64,
+        profile: WorkspaceProfile,
+    ) -> Result<(), ProfileStoreError>;
+    async fn publish_workspace_profile(
+        &self,
+        id: &WorkspaceProfileId,
+        expected_draft_version: u64,
+        published_at: String,
+    ) -> Result<WorkspaceProfileRevision, ProfileStoreError>;
+    async fn workspace_profile_revision(
+        &self,
+        id: &WorkspaceProfileId,
+        revision: u32,
+    ) -> Result<Option<WorkspaceProfileRevision>, ProfileStoreError>;
+    async fn list_workspace_profiles(
+        &self,
+        owner: Option<&SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<WorkspaceProfile>, ProfileStoreError>;
+    async fn retire_workspace_profile(
+        &self,
+        id: &WorkspaceProfileId,
+        owner: &SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError>;
+}
+
+#[async_trait]
+pub trait SandboxProfileStore: Send + Sync {
+    async fn create_sandbox_profile(
+        &self,
+        profile: SandboxProfile,
+    ) -> Result<(), ProfileStoreError>;
+    async fn save_sandbox_draft(
+        &self,
+        expected_draft_version: u64,
+        profile: SandboxProfile,
+    ) -> Result<(), ProfileStoreError>;
+    async fn publish_sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+        expected_draft_version: u64,
+        published_at: String,
+        bounds: ProfileCapacityBounds,
+        secret_patterns: &[String],
+    ) -> Result<SandboxProfileRevision, ProfileStoreError>;
+    async fn sandbox_profile_revision(
+        &self,
+        id: &SandboxProfileId,
+        revision: u32,
+    ) -> Result<Option<SandboxProfileRevision>, ProfileStoreError>;
+    async fn list_sandbox_profiles(
+        &self,
+        owner: Option<&SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<SandboxProfile>, ProfileStoreError>;
+    async fn retire_sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+        owner: &SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError>;
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryProfileStore {
+    state: Arc<Mutex<State>>,
+}
+
+#[derive(Default)]
+struct State {
+    agents: HashMap<AgentProfileId, AgentProfile>,
+    agent_revisions: HashMap<(AgentProfileId, u32), AgentProfileRevision>,
+    workspaces: HashMap<WorkspaceProfileId, WorkspaceProfile>,
+    workspace_revisions: HashMap<(WorkspaceProfileId, u32), WorkspaceProfileRevision>,
+    sandboxes: HashMap<SandboxProfileId, SandboxProfile>,
+    sandbox_revisions: HashMap<(SandboxProfileId, u32), SandboxProfileRevision>,
+}
+
+impl InMemoryProfileStore {
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+fn profile_page<T: Clone>(
+    mut values: Vec<(String, T)>,
+    request: &ProfilePageRequest,
+) -> Result<ProfilePage<T>, ProfileStoreError> {
+    if request.limit == 0 || request.limit > 200 {
+        return Err(ProfileError::new("invalid_page", "limit").into());
+    }
+    values.sort_by(|left, right| left.0.cmp(&right.0));
+    if let Some(cursor) = &request.cursor {
+        values.retain(|(key, _)| key > cursor);
+    }
+    let has_more = values.len() > usize::from(request.limit);
+    values.truncate(usize::from(request.limit));
+    let next = has_more
+        .then(|| values.last().map(|(key, _)| key.clone()))
+        .flatten();
+    Ok(ProfilePage {
+        items: values.into_iter().map(|(_, value)| value).collect(),
+        next,
+    })
+}
+
+fn next_revision<I: Clone + Eq + std::hash::Hash, R>(
+    revisions: &HashMap<(I, u32), R>,
+    id: &I,
+) -> Result<u32, ProfileStoreError> {
+    revisions
+        .keys()
+        .filter(|(stored, _)| stored == id)
+        .map(|(_, revision)| *revision)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or(ProfileStoreError::Conflict)
+}
+
+fn readable(owner: &SubjectId, profile_owner: &SubjectId, visibility: ProfileVisibility) -> bool {
+    owner == profile_owner || visibility == ProfileVisibility::Public
+}
+
+mod memory;
