@@ -70,17 +70,19 @@ impl Workspace {
         if (next == WorkspaceStatus::Failed) != failure.is_some() {
             return Err(SandboxModelError::invalid_value("workspace.failed"));
         }
-        self.status = self.status.transition(next)?;
+        let status = self.status.transition(next)?;
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("workspace.revision"))?;
+        self.status = status;
         self.failed = failure;
         match next {
             WorkspaceStatus::Ready => self.ready_at = Some(at.clone()),
             WorkspaceStatus::Removed => self.removed_at = Some(at.clone()),
             _ => {}
         }
-        self.revision = self
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| SandboxModelError::invalid_value("workspace.revision"))?;
+        self.revision = revision;
         Ok(())
     }
 }

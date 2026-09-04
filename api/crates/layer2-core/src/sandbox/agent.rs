@@ -110,7 +110,12 @@ impl Agent {
         if (next == AgentStatus::Stopped) != reason.is_some() {
             return Err(SandboxModelError::invalid_value("agent.stop_reason"));
         }
-        self.status = self.status.transition(next)?;
+        let status = self.status.transition(next)?;
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
+        self.status = status;
         self.stop_reason = reason;
         self.updated_at = at.clone();
         match next {
@@ -119,10 +124,7 @@ impl Agent {
             AgentStatus::Deleted => self.deleted_at = Some(at),
             _ => {}
         }
-        self.revision = self
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
+        self.revision = revision;
         Ok(())
     }
 }

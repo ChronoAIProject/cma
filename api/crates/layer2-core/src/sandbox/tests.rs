@@ -306,6 +306,43 @@ fn lower_level_prerequisites_require_matching_ready_lineage() {
 }
 
 #[test]
+fn revision_overflow_leaves_aggregates_unchanged() {
+    let mut sandbox = sandbox();
+    sandbox.status = SandboxStatus::Provisioning;
+    sandbox.revision = u64::MAX;
+    let original = sandbox.clone();
+    assert!(sandbox
+        .transition(SandboxStatus::Installing, "later".into(), None)
+        .is_err());
+    assert_eq!(sandbox, original);
+
+    let mut workspace = workspace();
+    workspace.status = WorkspaceStatus::Preparing;
+    workspace.ready_at = None;
+    workspace.revision = u64::MAX;
+    let original = workspace.clone();
+    assert!(workspace
+        .transition(WorkspaceStatus::Ready, "later".into(), None)
+        .is_err());
+    assert_eq!(workspace, original);
+
+    let mut worktree = worktree();
+    worktree.status = WorktreeStatus::Creating;
+    worktree.revision = u64::MAX;
+    let original = worktree.clone();
+    assert!(worktree.transition(WorktreeStatus::Ready).is_err());
+    assert_eq!(worktree, original);
+
+    let mut agent = agent();
+    agent.revision = u64::MAX;
+    let original = agent.clone();
+    assert!(agent
+        .transition(AgentStatus::Ready, "later".into(), None)
+        .is_err());
+    assert_eq!(agent, original);
+}
+
+#[test]
 fn every_aggregate_round_trips_and_refuses_unknown_fields() {
     fn round_trip<T>(value: &T)
     where

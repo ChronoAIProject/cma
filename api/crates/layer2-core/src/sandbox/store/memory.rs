@@ -21,7 +21,10 @@ macro_rules! save_record {
             .$collection
             .get(&$id)
             .ok_or(SandboxStoreError::NotFound)?;
-        if current.revision != $expected || $record.revision != $expected + 1 {
+        let next_revision = $expected
+            .checked_add(1)
+            .ok_or(SandboxStoreError::Conflict)?;
+        if current.revision != $expected || $record.revision != next_revision {
             return Err(SandboxStoreError::Conflict);
         }
         $state.$collection.insert($id, $record);
