@@ -1,0 +1,195 @@
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
+
+use layer3_adapter::{WorktreeReceipt, WorktreeRef, WorktreeRequest};
+
+use crate::failure::{Result, RuntimeError};
+use crate::git::GitRunner;
+use crate::paths::{path_is_directory, safe_component, validate_selector};
+use crate::workspace_source::resolve_commit;
+
+pub(crate) async fn add(
+    home: &Path,
+    allow_local_git: bool,
+    request: &WorktreeRequest,
+) -> Result<WorktreeReceipt> {
+    safe_component(&request.workspace, "workspace name")?;
+    safe_component(&request.name, "worktree name")?;
+    validate_selector(&request.base, "worktree base")?;
+    let repository = home.join(&request.workspace);
+    require_repository(&repository)?;
+    let parent = repository.join(".worktrees");
+    ensure_worktree_parent(&parent)?;
+    let path = parent.join(&request.name);
+    if std::fs::symlink_metadata(&path).is_ok() {
+        return Err(RuntimeError::rejected(
+            "worktree_exists",
+            "worktree path already exists",
+        ));
+    }
+
+    let git = GitRunner::new(allow_local_git);
+    let base_commit = resolve_commit(&repository, &git, &request.base).await?;
+    let branch = format!("cma/{}", request.name);
+    if branch_exists(&git, &repository, &branch).await? {
+        return Err(RuntimeError::rejected(
+            "worktree_exists",
+            "worktree branch already exists",
+        ));
+    }
+    let args = vec![
+        OsString::from("worktree"),
+        OsString::from("add"),
+        OsString::from("-b"),
+        OsString::from(&branch),
+        path.as_os_str().to_owned(),
+        OsString::from(&base_commit),
+    ];
+    if let Err(error) = git.checked(&repository, args, "add worktree").await {
+        cleanup_failed_add(&git, &repository, &path, &branch).await;
+        return Err(error);
+    }
+    Ok(WorktreeReceipt {
+        workspace: request.workspace.clone(),
+        name: request.name.clone(),
+        path: path.to_string_lossy().into_owned(),
+        branch,
+        base_commit,
+    })
+}
+
+async fn branch_exists(git: &GitRunner, repository: &Path, branch: &str) -> Result<bool> {
+    let reference = format!("refs/heads/{branch}");
+    let output = git
+        .checked(
+            repository,
+            ["for-each-ref", "--format=%(refname)", reference.as_str()],
+            "inspect worktree branch",
+        )
+        .await?;
+    Ok(output.stdout.lines().any(|line| line == reference))
+}
+
+async fn cleanup_failed_add(git: &GitRunner, repository: &Path, path: &Path, branch: &str) {
+    let _ = git
+        .checked(
+            repository,
+            [
+                OsString::from("worktree"),
+                OsString::from("remove"),
+                OsString::from("--force"),
+                path.as_os_str().to_owned(),
+            ],
+            "clean failed worktree",
+        )
+        .await;
+    let _ = std::fs::remove_dir_all(path);
+    let _ = git
+        .checked(
+            repository,
+            ["worktree", "prune", "--expire", "now"],
+            "prune failed worktree",
+        )
+        .await;
+    let _ = git
+        .checked(
+            repository,
+            ["branch", "-D", branch],
+            "clean failed worktree branch",
+        )
+        .await;
+}
+
+pub(crate) async fn remove(
+    home: &Path,
+    allow_local_git: bool,
+    reference: &WorktreeRef,
+) -> Result<()> {
+    safe_component(&reference.workspace, "workspace name")?;
+    safe_component(&reference.name, "worktree name")?;
+    let repository = home.join(&reference.workspace);
+    require_repository(&repository)?;
+    let path = repository.join(".worktrees").join(&reference.name);
+    if !path_is_directory(&path) {
+        return Err(RuntimeError::rejected(
+            "worktree_not_found",
+            "worktree directory was not found",
+        ));
+    }
+    let git = GitRunner::new(allow_local_git);
+    git.checked(
+        &repository,
+        [
+            OsString::from("worktree"),
+            OsString::from("remove"),
+            OsString::from("--force"),
+            path.as_os_str().to_owned(),
+        ],
+        "remove worktree",
+    )
+    .await?;
+    let branch = format!("cma/{}", reference.name);
+    git.checked(
+        &repository,
+        ["branch", "-D", branch.as_str()],
+        "delete worktree branch",
+    )
+    .await?;
+    Ok(())
+}
+
+pub(crate) fn parse_path(home: &Path, candidate: &Path) -> Option<(String, String)> {
+    let relative = candidate.strip_prefix(home).ok()?;
+    let parts = relative.components().collect::<Vec<_>>();
+    if parts.len() != 3
+        || !matches!(parts[0], Component::Normal(_))
+        || !matches!(parts[1], Component::Normal(part) if part == ".worktrees")
+        || !matches!(parts[2], Component::Normal(_))
+    {
+        return None;
+    }
+    let workspace = parts[0].as_os_str().to_str()?.to_string();
+    let worktree = parts[2].as_os_str().to_str()?.to_string();
+    safe_component(&workspace, "workspace").ok()?;
+    safe_component(&worktree, "worktree").ok()?;
+    Some((workspace, worktree))
+}
+
+pub(crate) fn expected_path(home: &Path, workspace: &str, name: &str) -> PathBuf {
+    home.join(workspace).join(".worktrees").join(name)
+}
+
+fn require_repository(repository: &Path) -> Result<()> {
+    if !path_is_directory(repository) || !path_is_directory(&repository.join(".git")) {
+        return Err(RuntimeError::rejected(
+            "workspace_not_found",
+            "workspace is not a main Git checkout",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_worktree_parent(parent: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(parent) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(RuntimeError::rejected(
+            "worktree_parent_invalid",
+            "workspace .worktrees path is not a directory",
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(parent)
+            .map_err(|error| {
+                RuntimeError::unavailable(
+                    "worktree_io_failed",
+                    format!("create .worktrees directory: {error}"),
+                )
+            }),
+        Err(error) => Err(RuntimeError::unavailable(
+            "worktree_io_failed",
+            format!("inspect .worktrees directory: {error}"),
+        )),
+    }
+}
+
+#[cfg(test)]
+#[path = "worktree_tests.rs"]
+mod tests;

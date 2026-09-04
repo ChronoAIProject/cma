@@ -1,10 +1,33 @@
-//! Temporary runtime process while the supervisor contract is rebuilt by #807.
+//! Kernel-neutral sandbox supervisor for the contract-2 runtime protocol.
 
-use std::net::SocketAddr;
-
-use axum::{routing::get, Router};
-
-const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:3001";
+mod agent_home;
+mod bridge;
+mod checkpoint;
+mod checkpoint_archive;
+mod checkpoint_copy;
+mod checkpoint_manifest;
+mod command;
+mod config;
+mod conversation;
+mod failure;
+mod git;
+mod install;
+mod lanes;
+mod link;
+mod paths;
+mod resource_cgroup;
+mod resource_network;
+mod resources;
+mod skills;
+mod supervisor;
+mod upstream;
+mod upstream_guard;
+mod upstream_target;
+mod workspace_setup;
+mod workspace_source;
+mod worktree;
+mod writer_fence;
+mod writer_process;
 
 #[tokio::main]
 async fn main() {
@@ -13,20 +36,47 @@ async fn main() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    if let Err(error) = run().await {
+        tracing::error!(%error, "runtime supervisor stopped");
+        std::process::exit(2);
+    }
+}
 
-    let address = std::env::var("CHRONO_RUNTIME_LISTEN_ADDR")
-        .unwrap_or_else(|_| DEFAULT_LISTEN_ADDR.into())
-        .parse::<SocketAddr>()
-        .unwrap_or_else(|error| panic!("invalid CHRONO_RUNTIME_LISTEN_ADDR: {error}"));
-    let listener = tokio::net::TcpListener::bind(address)
+async fn run() -> Result<(), String> {
+    let config = config::RuntimeConfig::from_environment()?;
+    let bind = config.bind;
+    let writer_boundary = writer_fence::SupervisorBoundary::install()?;
+    let supervisor =
+        supervisor::Supervisor::new(config, writer_boundary).map_err(|error| error.to_string())?;
+    let listener = tokio::net::TcpListener::bind(bind)
         .await
-        .unwrap_or_else(|error| panic!("could not bind runtime health listener: {error}"));
-    let app = Router::new()
-        .route("/livez", get(|| async { "ok" }))
-        .route("/ready", get(|| async { "rebuilding" }));
+        .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
+    tracing::info!(%bind, "runtime supervisor listening");
+    axum::serve(listener, link::router(supervisor))
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .map_err(|error| format!("serve runtime supervisor: {error}"))
+}
 
-    tracing::info!(%address, "runtime skeleton listening");
-    axum::serve(listener, app)
-        .await
-        .unwrap_or_else(|error| panic!("runtime health server failed: {error}"));
+async fn shutdown_signal() {
+    let interrupt = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::warn!(%error, "could not install interrupt signal handler");
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => tracing::warn!(%error, "could not install termination signal handler"),
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
+    }
 }

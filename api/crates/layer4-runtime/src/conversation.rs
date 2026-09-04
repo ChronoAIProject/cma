@@ -1,238 +1,147 @@
-//! Capturing and restoring the agent's conversation.
-//!
-//! What makes a bot pod disposable. The agent records every turn to a rollout
-//! file as it goes; carrying that file to a new pod and pointing the agent at
-//! it is the difference between replacing a runtime and ending a session.
-//!
-//! Deliberately naive about the format. The rollout is the agent's own file in
-//! the agent's own shape, and this reads and writes it verbatim — nothing here
-//! parses a turn, which is what keeps this working across agent versions that
-//! change what a turn looks like.
-//!
-//! Naive about the *layout* too, and that is newer. Where the agent keeps its
-//! rollouts used to be a constant here — one kernel's directory name, in the
-//! supervisor that is supposed to host any of them. It is now told to this pod
-//! by the adapter that started it, because the layer that knows a kernel's name
-//! is the layer that owns that kernel.
-//!
-//! Without an identifier, only the newest rollout is carried for compatibility
-//! with single-conversation callers. A caller hosting keyed conversations can
-//! instead name the rollout's recorded identifier and carry exactly that one.
-//!
-//! What *is* known, and now travels with the bytes, is where the file was
-//! found. Not what it says — where it was. A store laid out as a keyed tree
-//! cannot be rebuilt without it, and a conversation put back in the wrong place
-//! is not found at all: the agent starts a fresh one and reports success. The
-//! envelope that carries it lives in `carry`.
-
-use std::io::{BufRead as _, Read as _, Write};
+use std::io::{BufRead as _, Read as _};
 use std::path::{Path, PathBuf};
 
-use crate::carry;
+use layer3_adapter::ConversationSnapshot;
+use sha2::{Digest, Sha256};
 
-/// Refuse anything implausible as a rollout.
-///
-/// A cap rather than a guess at what is reasonable: the bytes cross an HTTP
-/// hop and land on a pod's disk, and an unbounded read is a way to run either
-/// of those out. Generous enough that no real conversation reaches it.
-const MAX_ROLLOUT_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_OPENING_RECORD_BYTES: u64 = 64 * 1024;
+use crate::command::hex;
+use crate::failure::{Result, RuntimeError};
 
-/// The agent's most recent conversation, if it has had one.
-///
-/// `None` means the agent has not recorded anything yet, which is ordinary for
-/// a session nobody has used and is not a failure.
-pub fn capture(home: &Path, sessions_dir: &str) -> std::io::Result<Option<Vec<u8>>> {
-    let root = home.join(sessions_dir);
-    let Some(newest) = newest_rollout(&root)? else {
+const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_OPENING_BYTES: u64 = 64 * 1024;
+const MAX_ENTRIES: usize = 100_000;
+
+pub(crate) fn capture(agent_home: &Path) -> Result<ConversationSnapshot> {
+    let sessions = agent_home.join("sessions");
+    let path = newest_file(&sessions)?.ok_or_else(|| {
+        RuntimeError::rejected(
+            "conversation_not_found",
+            "agent home contains no conversation record",
+        )
+    })?;
+    let metadata = std::fs::metadata(&path).map_err(capture_io("inspect conversation"))?;
+    if metadata.len() > MAX_ARCHIVE_BYTES {
+        return Err(RuntimeError::rejected(
+            "conversation_too_large",
+            format!("conversation exceeds {MAX_ARCHIVE_BYTES} bytes"),
+        ));
+    }
+    let mut archive = Vec::with_capacity(metadata.len() as usize);
+    std::fs::File::open(&path)
+        .map_err(capture_io("open conversation"))?
+        .take(MAX_ARCHIVE_BYTES + 1)
+        .read_to_end(&mut archive)
+        .map_err(capture_io("read conversation"))?;
+    if archive.len() as u64 > MAX_ARCHIVE_BYTES {
+        return Err(RuntimeError::rejected(
+            "conversation_too_large",
+            format!("conversation exceeds {MAX_ARCHIVE_BYTES} bytes"),
+        ));
+    }
+    let conversation_id = conversation_id(&archive).ok_or_else(|| {
+        RuntimeError::rejected(
+            "conversation_id_missing",
+            "newest conversation record does not name its conversation",
+        )
+    })?;
+    Ok(ConversationSnapshot {
+        conversation_id,
+        archive_sha256: hex(&Sha256::digest(&archive)),
+        archive,
+    })
+}
+
+fn newest_file(root: &Path) -> Result<Option<PathBuf>> {
+    if !root.exists() {
         return Ok(None);
-    };
-    capture_rollout(&root, &newest).map(Some)
-}
-
-/// The newest rollout whose opening record names `conversation_id`.
-pub fn capture_by_id(
-    home: &Path,
-    sessions_dir: &str,
-    conversation_id: &str,
-) -> std::io::Result<Option<Vec<u8>>> {
-    let root = home.join(sessions_dir);
-    let Some(selected) = newest_rollout_with_id(&root, conversation_id)? else {
-        return Ok(None);
-    };
-    capture_rollout(&root, &selected).map(Some)
-}
-
-fn capture_rollout(root: &Path, rollout: &Path) -> std::io::Result<Vec<u8>> {
-    let size = std::fs::metadata(rollout)?.len();
-    if size > MAX_ROLLOUT_BYTES {
-        return Err(std::io::Error::other(format!(
-            "conversation is {size} bytes, beyond the {MAX_ROLLOUT_BYTES} that can be carried"
-        )));
     }
-    let bytes = std::fs::read(rollout)?;
-    // Relative to the directory the adapter nominated, because that is the
-    // only part a replacement pod can reproduce: its home is its own, and the
-    // directory is what it was told.
-    let relative = rollout.strip_prefix(root).unwrap_or(rollout);
-    tracing::info!(
-        path = %rollout.display(),
-        bytes = bytes.len(),
-        "captured the conversation"
-    );
-    Ok(carry::seal(relative, &bytes))
-}
-
-/// A conversation laid down for the agent to continue.
-pub struct Restored {
-    /// Where the rollout was written. Read by the tests that check it landed
-    /// somewhere the agent looks.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub path: PathBuf,
-    /// The conversation's own identifier, taken from the rollout.
-    ///
-    /// The agent has to be told which conversation to continue by name. It
-    /// will not work it out: asked for "the most recent", it selects among
-    /// conversations recorded in the current working directory, and a
-    /// conversation carried from another pod was recorded somewhere else. It
-    /// then finds nothing, starts a fresh one, and reports success — so a
-    /// missing identifier here is silent data loss, not a failure.
-    pub session_id: Option<String>,
-}
-
-/// Read the identifier from a carried conversation without writing it.
-///
-/// Runtime admission uses this before restore so a named slot conflict cannot
-/// leave an unowned rollout on disk after returning `409 Conflict`.
-pub fn carried_conversation_id(carried: &[u8]) -> Option<String> {
-    let (_, bytes) = carry::open(carried);
-    conversation_id_of(bytes)
-}
-
-/// Lay a captured conversation down where the agent will find it.
-pub fn restore(
-    home: &Path,
-    sessions_dir: &str,
-    carried: &[u8],
-    stamp: &str,
-) -> std::io::Result<Restored> {
-    let root = home.join(sessions_dir);
-    let (relative, bytes) = carry::open(carried);
-    // Where the sender found it, when it said. Otherwise the placement this
-    // has always used, which is what a pod that predates the envelope gets and
-    // what the first kernel's store accepts either way.
-    let path = match relative {
-        Some(relative) => root.join(relative),
-        None => root.join("restored").join(format!("rollout-{stamp}.jsonl")),
-    };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    let metadata = std::fs::symlink_metadata(root).map_err(capture_io("inspect sessions"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(RuntimeError::rejected(
+            "sessions_invalid",
+            "agent sessions path is not a directory",
+        ));
     }
-    let mut file = std::fs::File::create(&path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    let session_id = conversation_id_of(bytes);
-    match session_id.as_deref() {
-        Some(id) => tracing::info!(
-            path = %path.display(),
-            bytes = bytes.len(),
-            conversation = %id,
-            "restored the conversation"
-        ),
-        // Worth shouting about: without the identifier the agent cannot be
-        // told what to continue, and will quietly start something new.
-        None => tracing::error!(
-            path = %path.display(),
-            bytes = bytes.len(),
-            "restored a conversation that does not name itself; the agent cannot be told to continue it"
-        ),
+    let mut pending = vec![root.to_path_buf()];
+    let mut visited = 0_usize;
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory).map_err(capture_io("list sessions"))? {
+            let entry = entry.map_err(capture_io("read sessions entry"))?;
+            visited += 1;
+            if visited > MAX_ENTRIES {
+                return Err(RuntimeError::rejected(
+                    "sessions_too_large",
+                    "agent sessions tree contains too many entries",
+                ));
+            }
+            let kind = entry
+                .file_type()
+                .map_err(capture_io("inspect sessions entry"))?;
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file() {
+                let modified = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .map_err(capture_io("inspect conversation timestamp"))?;
+                let path = entry.path();
+                if newest
+                    .as_ref()
+                    .is_none_or(|(time, prior)| (modified, &path) > (*time, prior))
+                {
+                    newest = Some((modified, path));
+                }
+            }
+        }
     }
-    Ok(Restored { path, session_id })
+    Ok(newest.map(|(_, path)| path))
 }
 
-/// The identifier a rollout gives itself, from its opening record.
-///
-/// Read rather than derived from the filename: the name is ours to choose and
-/// the agent's own record is not, so this keeps working when we change how the
-/// file is named and when the agent changes how it names them.
-///
-/// `None` is an ordinary answer, not a failure. This shape — a first line
-/// whose `payload.id` names the conversation — belongs to one kernel's
-/// rollout format, and a kernel that records something else, or something that
-/// is not text at all, simply has no identifier to give. Whether that matters
-/// is decided by whoever asked, not here: it matters only to a kernel that has
-/// to be told by name which conversation to continue.
-fn conversation_id_of(bytes: &[u8]) -> Option<String> {
-    let first = bytes.split(|b| *b == b'\n').next()?;
-    let value: serde_json::Value = serde_json::from_slice(first).ok()?;
+fn conversation_id(bytes: &[u8]) -> Option<String> {
+    let mut first = Vec::new();
+    std::io::BufReader::new(bytes)
+        .take(MAX_OPENING_BYTES + 1)
+        .read_until(b'\n', &mut first)
+        .ok()?;
+    if first.len() as u64 > MAX_OPENING_BYTES {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&first).ok()?;
     value
         .get("payload")?
         .get("id")?
         .as_str()
+        .filter(|id| !id.is_empty() && id.len() <= 256)
         .map(str::to_string)
 }
 
-/// The most recently modified rollout under a directory tree.
-fn newest_rollout(root: &Path) -> std::io::Result<Option<PathBuf>> {
-    newest_rollout_where(root, |_| Ok(true))
-}
-
-fn newest_rollout_with_id(root: &Path, conversation_id: &str) -> std::io::Result<Option<PathBuf>> {
-    newest_rollout_where(root, |path| {
-        let file = std::fs::File::open(path)?;
-        let mut opening = Vec::new();
-        std::io::BufReader::new(file)
-            .take(MAX_OPENING_RECORD_BYTES + 1)
-            .read_until(b'\n', &mut opening)?;
-        if opening.len() as u64 > MAX_OPENING_RECORD_BYTES {
-            return Ok(false);
-        }
-        Ok(conversation_id_of(&opening).as_deref() == Some(conversation_id))
-    })
-}
-
-fn newest_rollout_where(
-    root: &Path,
-    mut accepts: impl FnMut(&Path) -> std::io::Result<bool>,
-) -> std::io::Result<Option<PathBuf>> {
-    if !root.exists() {
-        return Ok(None);
+fn capture_io(operation: &'static str) -> impl FnOnce(std::io::Error) -> RuntimeError + Copy {
+    move |error| {
+        RuntimeError::unavailable("conversation_io_failed", format!("{operation}: {error}"))
     }
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    let mut pending = vec![root.to_path_buf()];
-
-    // Every regular file is a candidate, whatever it is called. One kernel
-    // writes newline-delimited JSON and another writes compressed frames; a
-    // filter on the extension would be this module knowing a format again,
-    // which is the thing it exists not to know.
-    //
-    // Iterative rather than recursive: rollouts are filed under a directory
-    // tree from disk, and that is not something to recurse into without a
-    // bound on depth.
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            if !kind.is_file() {
-                continue;
-            }
-            if !accepts(&path)? {
-                continue;
-            }
-            let modified = entry.metadata()?.modified()?;
-            if best.as_ref().is_none_or(|(when, _)| modified > *when) {
-                best = Some((modified, path));
-            }
-        }
-    }
-    Ok(best.map(|(_, path)| path))
 }
 
 #[cfg(test)]
-#[path = "conversation_tests.rs"]
-mod conversation_tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newest_rollout_is_captured_with_its_own_id_and_digest() {
+        let home = std::env::temp_dir().join(format!("cma-conversation-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("sessions/2026/09")).unwrap();
+        let bytes = br#"{"payload":{"id":"conversation-7"}}
+{"event":"answer"}
+"#;
+        std::fs::write(home.join("sessions/2026/09/rollout.jsonl"), bytes).unwrap();
+        let snapshot = capture(&home).unwrap();
+        assert_eq!(snapshot.conversation_id, "conversation-7");
+        assert_eq!(snapshot.archive, bytes);
+        assert_eq!(snapshot.archive_sha256, hex(&Sha256::digest(bytes)));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
