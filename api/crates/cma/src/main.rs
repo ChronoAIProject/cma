@@ -5,6 +5,7 @@ mod auth;
 mod config;
 mod health;
 mod permissions;
+mod profile_policy;
 mod rate_limit;
 mod store;
 
@@ -19,7 +20,7 @@ use axum::{
     routing::any,
     Router,
 };
-use layer1_public::rest::HttpProblem;
+use layer1_public::rest::{profiles_router, HttpProblem, ProfilesState};
 use layer2_core::sandbox::{SandboxOperatorService, StoredSandboxRetirement};
 use layer2_core::{ActivityService, OperationStore, PlatformSettingsService, UserDirectory};
 use tower_http::{
@@ -32,6 +33,7 @@ use crate::{
     activity::ActivityRecorder,
     auth::{AuthState, SignInRecords},
     config::Config,
+    profile_policy::profile_route_policy,
     rate_limit::RateLimiters,
     store::MongoStores,
 };
@@ -84,8 +86,17 @@ async fn serve() -> Result<(), String> {
         retirement,
         Arc::clone(&activity),
     );
-    let _settings = PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity));
-    let _operations: Arc<dyn OperationStore> = stores.operations.clone();
+    let settings = Arc::new(PlatformSettingsService::new(
+        stores.settings.clone(),
+        Arc::clone(&activity),
+    ));
+    let operations: Arc<dyn OperationStore> = stores.operations.clone();
+    let profiles = ProfilesState::new(
+        stores.sandbox_profiles.clone(),
+        operations,
+        Arc::clone(&settings),
+        profile_route_policy(),
+    );
     let recorder = ActivityRecorder::new(Arc::clone(&activity));
     let auth = AuthState::with_store_and_nyxid_public_url(
         config.auth_mode.clone(),
@@ -100,7 +111,7 @@ async fn serve() -> Result<(), String> {
     }
 
     let limits = RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
-    let public = rest_router()
+    let public = rest_router(profiles_router(profiles))
         .merge(auth::router(Arc::clone(&auth)))
         .layer(axum::middleware::from_fn_with_state(
             recorder,
@@ -143,8 +154,9 @@ async fn serve() -> Result<(), String> {
     .map_err(|error| format!("HTTP server failed: {error}"))
 }
 
-fn rest_router() -> Router {
+fn rest_router(resource_routes: Router) -> Router {
     layer1_public::rest::router()
+        .merge(resource_routes)
         .route("/api/v1", any(|| async { HttpProblem::NotFound }))
         .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
         .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
@@ -340,44 +352,5 @@ async fn shutdown_signal() {
 }
 
 #[cfg(test)]
-mod tests {
-    use axum::{body::Body, http::Request};
-    use tower::ServiceExt as _;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn cors_preflight_grants_only_configured_origins_and_headers() {
-        let app = with_cors(
-            Router::new(),
-            vec![HeaderValue::from_static("https://console.example")],
-        );
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::OPTIONS)
-                    .uri("/api/v1/conformance")
-                    .header(header::ORIGIN, "https://console.example")
-                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
-                    .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
-            Some(&HeaderValue::from_static("https://console.example"))
-        );
-    }
-
-    #[tokio::test]
-    async fn unknown_rest_paths_keep_problem_and_profile_headers() {
-        let response = rest_router()
-            .oneshot(Request::get("/api/v1/missing").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
-        assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
-    }
-}
+#[path = "main_tests.rs"]
+mod tests;

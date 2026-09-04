@@ -7,7 +7,7 @@ use layer2_core::profiles::{
     AgentProfileStore, MarketplaceStore, ProfileCapacityBounds, ProfilePageRequest,
     SandboxProfileStore, WorkspaceProfileStore,
 };
-use layer2_core::{Caller, Capability, OperationStore};
+use layer2_core::{Caller, Capability, OperationStore, PlatformSettingsService};
 
 use super::idempotency::{self, IdempotencyKey, RequestBody as IdempotentBody};
 use super::profiles_openapi_shapes::ProfilePageQuery;
@@ -19,7 +19,6 @@ use super::BodyProblem;
 pub struct ProfileRoutePolicy {
     pub capacity_bounds: ProfileCapacityBounds,
     pub secret_patterns: Vec<String>,
-    pub marketplace_enabled: bool,
 }
 
 /// Provider-neutral ports used by the profile and marketplace routes.
@@ -30,6 +29,7 @@ pub struct ProfilesState {
     pub(super) sandboxes: Arc<dyn SandboxProfileStore>,
     pub(super) marketplace: Arc<dyn MarketplaceStore>,
     pub(super) operations: Arc<dyn OperationStore>,
+    pub(super) settings: Arc<PlatformSettingsService>,
     pub(super) policy: ProfileRoutePolicy,
 }
 
@@ -37,6 +37,7 @@ impl ProfilesState {
     pub fn new<S>(
         profiles: Arc<S>,
         operations: Arc<dyn OperationStore>,
+        settings: Arc<PlatformSettingsService>,
         policy: ProfileRoutePolicy,
     ) -> Self
     where
@@ -52,6 +53,7 @@ impl ProfilesState {
             sandboxes: profiles.clone(),
             marketplace: profiles,
             operations,
+            settings,
             policy,
         }
     }
