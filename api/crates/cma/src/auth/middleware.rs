@@ -43,6 +43,12 @@ pub async fn attach_subject(
     mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    // Registration discovery is intentionally anonymous. Do not let an
+    // expired ambient cookie or an auth-store outage make the landing page
+    // depend on identity that this endpoint neither needs nor consumes.
+    if req.uri().path() == "/auth/signup-options" {
+        return next.run(req).await;
+    }
     let resolved = match auth.resolve_request(req.headers()).await {
         Ok(resolved) => resolved,
         Err(error) => {

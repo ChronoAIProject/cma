@@ -792,13 +792,14 @@ async fn serve_normal_control_plane() {
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
     // nobody is currently watching.
-    let auth_state = AuthState::with_store(
+    let auth_state = AuthState::with_store_and_nyxid_public_url(
         config.auth_mode.clone(),
         Some(SignInRecords {
             users: Arc::clone(&users),
             activity: Arc::clone(&activity),
         }),
         auth_store,
+        config.nyxid_public_url.clone(),
     );
     let (trigger_authority, trigger_connections, trigger_github): TriggerProviderPorts =
         match &config.auth_mode {

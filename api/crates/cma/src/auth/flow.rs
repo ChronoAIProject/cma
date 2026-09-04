@@ -14,12 +14,13 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use layer2_core::{LaunchId, PublicTriggerId, SubjectId};
+use layer2_core::SubjectId;
 use serde::Deserialize;
 
 use super::permissions::{introspect_permissions, permissions_claim};
 use super::persistence::{DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue};
 use super::session_routes::{logout, session, urlencode};
+use super::signup_options::signup_options;
 use super::{code_challenge, random_token, AuthMode, AuthState, ProviderMetadata, SESSION_COOKIE};
 
 const LOGIN_ATTEMPT_DOMAIN: &str = "login-attempt";
@@ -43,6 +44,14 @@ pub struct CallbackParams {
 struct LoginParams {
     #[serde(default)]
     return_to: Option<String>,
+    #[serde(default)]
+    screen: Option<LoginScreen>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LoginScreen {
+    Register,
 }
 
 /// Routes for the login flow.
@@ -51,6 +60,7 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .route("/auth/login", get(login_route))
         .route("/auth/callback", get(callback))
         .route("/auth/session", get(session))
+        .route("/auth/signup-options", get(signup_options))
         .route("/auth/logout", get(logout))
         .with_state(auth)
 }
@@ -80,10 +90,19 @@ async fn login_route(
         },
         None => None,
     };
-    begin_login(auth, return_to).await
+    begin_login_for_screen(auth, return_to, params.screen).await
 }
 
+#[cfg(test)]
 async fn begin_login(auth: Arc<AuthState>, return_to: Option<String>) -> Response {
+    begin_login_for_screen(auth, return_to, None).await
+}
+
+async fn begin_login_for_screen(
+    auth: Arc<AuthState>,
+    return_to: Option<String>,
+    screen: Option<LoginScreen>,
+) -> Response {
     match &auth.mode {
         AuthMode::Trusted { .. } => {
             Redirect::to(return_to.as_deref().unwrap_or("/")).into_response()
@@ -127,7 +146,15 @@ async fn begin_login(auth: Arc<AuthState>, return_to: Option<String>) -> Respons
                     urlencode(&state),
                     urlencode(&challenge),
                 );
-                let mut response = Redirect::to(&url).into_response();
+                let destination = match screen {
+                    Some(LoginScreen::Register) => format!(
+                        "{}/register?return_to={}",
+                        auth.nyxid_public_url.trim_end_matches('/'),
+                        urlencode(&url),
+                    ),
+                    None => url,
+                };
+                let mut response = Redirect::to(&destination).into_response();
                 append_set_cookie(
                     &mut response,
                     issued_login_binding_cookie(
@@ -452,21 +479,30 @@ async fn callback(
 }
 
 fn app_return_target(value: &str) -> Result<String, ()> {
-    if value.len() > 128 || value.contains(['?', '#', '\\']) {
+    if value == "/" {
+        return Ok(value.to_string());
+    }
+    if value.len() > 256 || value.contains(['?', '#', '\\', '%']) {
         return Err(());
     }
 
-    let segments: Vec<_> = value.split('/').collect();
+    let segments: Vec<_> = value.strip_prefix('/').ok_or(())?.split('/').collect();
+    if segments.iter().any(|segment| !opaque_path_segment(segment)) {
+        return Err(());
+    }
     match segments.as_slice() {
-        ["", "triggers", public_id] => {
-            PublicTriggerId::parse((*public_id).to_string()).map_err(|_| ())?;
-        }
-        ["", "launches", launch_id]
-        | ["", "launches", launch_id, "recover"]
-        | ["", "launches", launch_id, "contribute"] => {
-            LaunchId::parse((*launch_id).to_string()).map_err(|_| ())?;
-        }
-        ["", "sessions", session_id] if opaque_path_segment(session_id) => {}
+        ["t", public_id] if opaque_path_segment(public_id) => {}
+        ["t", public_id, placement_id]
+            if opaque_path_segment(public_id) && opaque_path_segment(placement_id) => {}
+        ["triggers", "manage"] => {}
+        ["triggers", "manage", trigger_id] if opaque_path_segment(trigger_id) => {}
+        ["triggers", "manage", trigger_id, "embed"] if opaque_path_segment(trigger_id) => {}
+        ["agents", agent_id] if opaque_path_segment(agent_id) => {}
+        ["sandboxes", sandbox_id] if opaque_path_segment(sandbox_id) => {}
+        ["profiles"] | ["marketplace"] => {}
+        ["profiles" | "marketplace", kind, profile_id]
+            if matches!(*kind, "agent" | "workspace" | "sandbox")
+                && opaque_path_segment(profile_id) => {}
         _ => return Err(()),
     }
     Ok(value.to_string())
@@ -619,12 +655,14 @@ pub(crate) async fn resolve_subject(
 #[cfg(test)]
 mod tests {
     use axum::{
+        body::Body,
         extract::Form,
-        http::HeaderMap,
+        http::{HeaderMap, Request},
         routing::{get, post},
         Router,
     };
     use std::collections::HashMap;
+    use tower::ServiceExt;
 
     use super::*;
     use crate::auth::persistence::{AuthStore, MemoryAuthStore};
@@ -796,6 +834,129 @@ mod tests {
         let response = login(State(auth)).await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body_of(response).await["code"], "store_failed");
+    }
+
+    #[tokio::test]
+    async fn registration_nests_the_complete_persisted_authorize_attempt() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store_and_nyxid_public_url(
+            AuthMode::Provider {
+                base_url: "http://provider.invalid".into(),
+                client_id: "client-a".into(),
+                client_secret: "secret".into(),
+                public_url: "https://cma.example".into(),
+            },
+            None,
+            store.clone(),
+            Some("https://nyx.example".into()),
+        );
+        *auth.metadata.write().await = Some(ProviderMetadata {
+            authorization_endpoint: "https://nyx-api.example/oauth/authorize".into(),
+            token_endpoint: "https://nyx-api.example/oauth/token".into(),
+            userinfo_endpoint: None,
+            introspection_endpoint: None,
+        });
+        let return_to = "/t/pub_123/plc_456";
+
+        let response =
+            begin_login_for_screen(auth, Some(return_to.into()), Some(LoginScreen::Register)).await;
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let registration = reqwest::Url::parse(
+            response.headers()[header::LOCATION]
+                .to_str()
+                .expect("registration redirect"),
+        )
+        .expect("registration URL");
+        assert_eq!(
+            registration.as_str().split('?').next(),
+            Some("https://nyx.example/register")
+        );
+        let authorize = registration
+            .query_pairs()
+            .find_map(|(key, value)| (key == "return_to").then(|| value.into_owned()))
+            .expect("registration keeps the authorize URL");
+        let authorize = reqwest::Url::parse(&authorize).expect("authorize URL");
+        assert_eq!(
+            authorize.as_str().split('?').next(),
+            Some("https://nyx-api.example/oauth/authorize")
+        );
+        let query = authorize
+            .query_pairs()
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(query.get("response_type").map(String::as_str), Some("code"));
+        assert_eq!(query.get("client_id").map(String::as_str), Some("client-a"));
+        assert_eq!(
+            query.get("redirect_uri").map(String::as_str),
+            Some("https://cma.example/auth/callback")
+        );
+        assert_eq!(
+            query.get("scope").map(String::as_str),
+            Some("openid profile email roles proxy offline_access")
+        );
+        assert_eq!(
+            query.get("code_challenge_method").map(String::as_str),
+            Some("S256")
+        );
+
+        let state = query.get("state").expect("authorize state");
+        let cookie = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .find(|value| value.starts_with(LOGIN_BINDING_COOKIE_PREFIX))
+            .expect("browser-binding cookie");
+        let (cookie_name, browser_binding) = cookie
+            .split(';')
+            .next()
+            .and_then(|pair| pair.split_once('='))
+            .expect("cookie pair");
+        assert_eq!(cookie_name, login_binding_cookie_name(state));
+        let attempt = store
+            .take_login_attempt(
+                &SecretDigest::identify(LOGIN_ATTEMPT_DOMAIN, state),
+                &SecretDigest::identify(LOGIN_BROWSER_BINDING_DOMAIN, browser_binding),
+            )
+            .await
+            .expect("login store works")
+            .expect("registration persisted an attempt");
+        assert_eq!(attempt.return_to.as_deref(), Some(return_to));
+        assert_eq!(
+            query.get("code_challenge").map(String::as_str),
+            Some(code_challenge(attempt.verifier.expose()).as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn login_rejects_blank_unknown_or_duplicate_screens() {
+        for query in [
+            "screen=",
+            "screen=login",
+            "screen=unknown",
+            "screen=register&screen=register",
+        ] {
+            let app = router(AuthState::new(
+                AuthMode::Trusted {
+                    subject: "local-developer".into(),
+                },
+                None,
+            ));
+            let response = app
+                .oneshot(
+                    Request::get(format!("/auth/login?{query}"))
+                        .body(Body::empty())
+                        .expect("request builds"),
+                )
+                .await
+                .expect("router answers");
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "accepted {query}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1229,35 +1390,55 @@ mod tests {
 
     #[test]
     fn login_return_targets_are_only_canonical_workflow_paths() {
-        let workflow_id = "123e4567-e89b-12d3-a456-426614174000";
         for valid in [
-            format!("/triggers/{workflow_id}"),
-            format!("/launches/{workflow_id}"),
-            format!("/launches/{workflow_id}/recover"),
-            format!("/launches/{workflow_id}/contribute"),
-            "/sessions/sesn_trg_123e4567e89b12d3a456426614174000".to_string(),
-            "/sessions/legacy-session_1.0~".to_string(),
+            "/",
+            "/t/pub_123",
+            "/t/pub_123/plc_456",
+            "/triggers/manage",
+            "/triggers/manage/trg_123",
+            "/triggers/manage/trg_123/embed",
+            "/agents/agt_123",
+            "/sandboxes/sbx_123",
+            "/profiles",
+            "/profiles/agent/prf_123",
+            "/profiles/workspace/prf_123",
+            "/profiles/sandbox/prf_123",
+            "/marketplace",
+            "/marketplace/agent/prf_123",
+            "/marketplace/workspace/prf_123",
+            "/marketplace/sandbox/prf_123",
         ] {
-            assert_eq!(app_return_target(&valid).as_deref(), Ok(valid.as_str()));
+            assert_eq!(app_return_target(valid).as_deref(), Ok(valid));
         }
 
         for invalid in [
-            "/",
-            "/triggers/not-a-uuid",
-            "/triggers/123e4567-e89b-12d3-a456-426614174000/extra",
-            "/launches/not-a-uuid",
-            "/launches/123e4567-e89b-12d3-a456-426614174000/delete",
-            "/launches/123e4567-e89b-12d3-a456-426614174000/recover/extra",
-            "/sessions/",
-            "/sessions/..",
-            "/sessions/session/extra",
-            "/sessions/session%2Fextra",
-            "/sessions/session one",
-            "//example.com/triggers/123e4567-e89b-12d3-a456-426614174000",
-            "https://example.com/triggers/123e4567-e89b-12d3-a456-426614174000",
-            "/triggers/123e4567-e89b-12d3-a456-426614174000?next=https://example.com",
-            "/launches/123e4567-e89b-12d3-a456-426614174000#fragment",
-            "/sessions/session\\extra",
+            "",
+            "//example.com/t/pub_123",
+            "https://example.com/t/pub_123",
+            "/t",
+            "/t/",
+            "/t/pub_123/plc_456/extra",
+            "/t/pub_123?next=https://example.com",
+            "/t/pub_123#fragment",
+            "/t/pub_123%2Fextra",
+            "/t/pub_123\\extra",
+            "/triggers",
+            "/triggers/manage/",
+            "/triggers/manage/trg_123/delete",
+            "/triggers/manage/trg_123/embed/extra",
+            "/agents",
+            "/agents/..",
+            "/agents/agt_123/extra",
+            "/sandboxes/sbx_123/agent",
+            "/profiles/unknown/prf_123",
+            "/profiles/agent",
+            "/profiles/agent/prf_123/edit",
+            "/marketplace/agent/",
+            "/marketplace//prf_123",
+            "/sessions/sesn_old",
+            "/launches/lch_123",
+            "/developer",
+            "/profiles/agent/profile one",
         ] {
             assert!(app_return_target(invalid).is_err(), "accepted {invalid}");
         }
@@ -1271,17 +1452,19 @@ mod tests {
             },
             None,
         );
-        let workflow_id = "123e4567-e89b-12d3-a456-426614174000";
         for return_to in [
-            format!("/launches/{workflow_id}"),
-            format!("/launches/{workflow_id}/recover"),
-            format!("/launches/{workflow_id}/contribute"),
-            "/sessions/sesn_trg_123e4567e89b12d3a456426614174000".to_string(),
+            "/t/pub_123".to_string(),
+            "/triggers/manage/trg_123/embed".to_string(),
+            "/agents/agt_123".to_string(),
+            "/sandboxes/sbx_123".to_string(),
+            "/profiles/workspace/prf_123".to_string(),
+            "/marketplace".to_string(),
         ] {
             let response = login_route(
                 State(Arc::clone(&auth)),
                 Query(LoginParams {
                     return_to: Some(return_to.clone()),
+                    screen: None,
                 }),
             )
             .await;
@@ -1301,6 +1484,7 @@ mod tests {
             )),
             Query(LoginParams {
                 return_to: Some("/developer".into()),
+                screen: None,
             }),
         )
         .await;
