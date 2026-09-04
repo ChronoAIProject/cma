@@ -170,6 +170,48 @@ async fn revisions_are_snapshots_and_later_draft_edits_do_not_change_them() {
 }
 
 #[tokio::test]
+async fn revision_pages_are_bounded_and_newest_first() {
+    let store = InMemoryProfileStore::default();
+    let mut profile = agent_profile("agp_one", "owner", ProfileVisibility::Private);
+    store.create_agent_profile(profile.clone()).await.unwrap();
+    store
+        .publish_agent_profile(&profile.id, 1, "2026-09-05T00:00:00Z".into())
+        .await
+        .unwrap();
+    profile.draft_version = 2;
+    profile.draft.system_prompt = "Second".into();
+    store.save_agent_draft(1, profile.clone()).await.unwrap();
+    store
+        .publish_agent_profile(&profile.id, 2, "2026-09-05T01:00:00Z".into())
+        .await
+        .unwrap();
+
+    let first = store
+        .list_agent_profile_revisions(
+            &profile.id,
+            &ProfilePageRequest {
+                limit: 1,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.items[0].revision, 2);
+    let second = store
+        .list_agent_profile_revisions(
+            &profile.id,
+            &ProfilePageRequest {
+                limit: 1,
+                cursor: first.next,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.items[0].revision, 1);
+    assert!(second.next.is_none());
+}
+
+#[tokio::test]
 async fn references_must_resolve_to_own_or_public_revisions() {
     let store = InMemoryProfileStore::default();
     let agent = agent_profile("agp_public", "publisher", ProfileVisibility::Public);
