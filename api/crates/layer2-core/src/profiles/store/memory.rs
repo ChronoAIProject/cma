@@ -38,9 +38,10 @@ impl AgentProfileStore for InMemoryProfileStore {
             return Err(ProfileStoreError::Conflict);
         }
         let mut state = self.lock();
-        if state.agents.insert(profile.id.clone(), profile).is_some() {
+        if state.agents.contains_key(&profile.id) {
             return Err(ProfileStoreError::Duplicate);
         }
+        state.agents.insert(profile.id.clone(), profile);
         Ok(())
     }
 
@@ -144,13 +145,10 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
             return Err(ProfileStoreError::Conflict);
         }
         let mut state = self.lock();
-        if state
-            .workspaces
-            .insert(profile.id.clone(), profile)
-            .is_some()
-        {
+        if state.workspaces.contains_key(&profile.id) {
             return Err(ProfileStoreError::Duplicate);
         }
+        state.workspaces.insert(profile.id.clone(), profile);
         Ok(())
     }
 
@@ -269,13 +267,10 @@ impl SandboxProfileStore for InMemoryProfileStore {
             return Err(ProfileStoreError::Conflict);
         }
         let mut state = self.lock();
-        if state
-            .sandboxes
-            .insert(profile.id.clone(), profile)
-            .is_some()
-        {
+        if state.sandboxes.contains_key(&profile.id) {
             return Err(ProfileStoreError::Duplicate);
         }
+        state.sandboxes.insert(profile.id.clone(), profile);
         Ok(())
     }
 

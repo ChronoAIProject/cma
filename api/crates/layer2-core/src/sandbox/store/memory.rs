@@ -7,9 +7,10 @@ macro_rules! create_record {
         if $record.revision != 1 {
             return Err(SandboxStoreError::Conflict);
         }
-        if $state.$collection.insert($id, $record).is_some() {
+        if $state.$collection.contains_key(&$id) {
             return Err(SandboxStoreError::Duplicate);
         }
+        $state.$collection.insert($id, $record);
         Ok(())
     }};
 }

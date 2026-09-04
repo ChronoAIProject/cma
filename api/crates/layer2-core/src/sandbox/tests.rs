@@ -407,3 +407,22 @@ async fn worktree_and_agent_transaction_is_atomic() {
     );
     assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
 }
+
+#[tokio::test]
+async fn duplicate_resource_ids_do_not_replace_existing_records() {
+    let store = InMemorySandboxStore::default();
+    let original = sandbox();
+    store.create_sandbox(original.clone()).await.unwrap();
+
+    let mut duplicate = original.clone();
+    duplicate.owner = SubjectId("another-owner".into());
+    duplicate.name = "replacement".into();
+    assert_eq!(
+        store.create_sandbox(duplicate).await.unwrap_err(),
+        SandboxStoreError::Duplicate
+    );
+    assert_eq!(
+        store.get_sandbox(&original.id).await.unwrap(),
+        Some(original)
+    );
+}
