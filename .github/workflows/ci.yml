@@ -93,6 +93,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Source file size validator regressions
+        run: .github/scripts/check-file-size-tests.sh
+      - name: Source files stay within size limits
+        run: .github/scripts/check-file-size.sh
       - name: Release notes validator regressions
         run: .github/release-notes-tests.sh
       - name: Release planning tests
