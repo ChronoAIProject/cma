@@ -4,6 +4,7 @@ set -euo pipefail
 umask 077
 
 readonly SOURCE_LINE_LIMIT=500
+readonly TEST_SOURCE_LINE_LIMIT=2000
 readonly GENERATED_FIXTURE_LINE_LIMIT=2000
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -30,7 +31,7 @@ is_test_source() {
   local basename=$1
 
   case "${basename}" in
-    *_tests.rs | *.test.ts | *.test.tsx) return 0 ;;
+    tests.rs | *_tests.rs | *.test.ts | *.test.tsx) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -85,12 +86,13 @@ fi
 
 while IFS= read -r -d '' file; do
   basename=${file##*/}
-  is_test_source "${basename}" && continue
-
   relative_path=${file#"${repository_root}/"}
   limit=${SOURCE_LINE_LIMIT}
   category='source'
-  if is_generated_fixture "${relative_path}"; then
+  if is_test_source "${basename}"; then
+    limit=${TEST_SOURCE_LINE_LIMIT}
+    category='test source'
+  elif is_generated_fixture "${relative_path}"; then
     limit=${GENERATED_FIXTURE_LINE_LIMIT}
     category='generated fixture'
   fi

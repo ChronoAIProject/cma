@@ -116,19 +116,39 @@ assert_contains "${stderr_file}" \
 pass 'all ordinary-source overflows are reported in one run'
 
 new_case
-make_lines "${case_root}/api/crates/core/src/model_tests.rs" 2501
-make_lines "${case_root}/web/src/model.test.ts" 2501
-make_lines "${case_root}/web/src/model.test.tsx" 2501
-make_lines "${case_root}/sdk/typescript/src/client.test.ts" 2501
+make_lines "${case_root}/api/crates/core/src/model_tests.rs" 2000
+make_lines "${case_root}/api/crates/core/src/tests.rs" 2000 no
+make_lines "${case_root}/web/src/model.test.ts" 2000
+make_lines "${case_root}/web/src/model.test.tsx" 2000
+make_lines "${case_root}/sdk/typescript/src/client.test.ts" 2000
 make_lines "${case_root}/api/crates/core/tests/not_source.rs" 2501
 make_lines "${case_root}/web/scripts/not_source.ts" 2501
 make_lines "${case_root}/sdk/rust/tests/not_source.rs" 2501
 make_lines "${case_root}/web/src/not_source.js" 2501
 run_checker "${case_root}"
-assert_status 0 'scope and test exclusions'
-assert_contains "${stdout_file}" 'Source file size check passed: 0 files checked.' \
-  'scope and test exclusions'
-pass 'named test sources, files outside source roots, and other extensions are excluded'
+assert_status 0 'scope and test boundary'
+assert_contains "${stdout_file}" 'Source file size check passed: 5 files checked.' \
+  'scope and test boundary'
+pass 'named test sources accept 2,000 lines while out-of-scope files remain excluded'
+
+new_case
+make_lines "${case_root}/api/crates/core/src/model_tests.rs" 2001
+make_lines "${case_root}/api/crates/core/src/tests.rs" 2001 no
+make_lines "${case_root}/web/src/model.test.ts" 2001
+make_lines "${case_root}/web/src/model.test.tsx" 2001
+make_lines "${case_root}/sdk/typescript/src/client.test.ts" 2001
+run_checker "${case_root}"
+assert_status 1 'test overflow'
+assert_contains "${stderr_file}" \
+  'api/crates/core/src/model_tests.rs has 2001 lines; the test source limit is 2000' \
+  'test overflow'
+assert_contains "${stderr_file}" \
+  'api/crates/core/src/tests.rs has 2001 lines; the test source limit is 2000' \
+  'test overflow'
+assert_contains "${stderr_file}" \
+  'Source file size check failed: 5 of 5 checked files exceed their limit.' \
+  'test overflow'
+pass 'named Rust, TypeScript, and TSX test sources fail above 2,000 lines'
 
 new_case
 make_lines "${case_root}/api/crates/core/src/fixtures/generated/wire.rs" 2000 no
@@ -165,7 +185,7 @@ assert_contains "${stderr_file}" 'model_test.rs has 501 lines; the source limit 
 assert_contains "${stderr_file}" 'model.tests.ts has 501 lines; the source limit is 500' \
   'near-miss exclusions'
 assert_not_contains "${stderr_file}" 'model.test.js' 'near-miss exclusions'
-pass 'only the specified test filename forms bypass the production-source limit'
+pass 'near-miss test filenames remain subject to the production-source limit'
 
 new_case
 make_lines "${case_root}/api/crates/a crate/src/a file.rs" 501
