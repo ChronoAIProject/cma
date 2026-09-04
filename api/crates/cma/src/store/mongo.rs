@@ -7,11 +7,15 @@ use mongodb::{bson::doc, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
-    MongoPlatformSettingsStore, MongoUserDirectoryStore,
+    MongoPlatformSettingsStore, MongoProfileStore, MongoSandboxStore, MongoUserDirectoryStore,
 };
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    /// Sandbox -> Workspace -> Worktree -> Agent aggregates and logs.
+    pub sandbox_model: Arc<MongoSandboxStore>,
+    /// Profile drafts, immutable revisions, and ownership indexes.
+    pub sandbox_profiles: Arc<MongoProfileStore>,
     pub auth: Arc<MongoAuthStore>,
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
@@ -32,6 +36,8 @@ impl MongoStores {
         let client = Client::with_uri_str(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+        let sandbox_model = Arc::new(MongoSandboxStore::open(&client, database).await?);
+        let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         );
@@ -41,6 +47,8 @@ impl MongoStores {
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let stores = Self {
+            sandbox_model,
+            sandbox_profiles,
             auth,
             activity,
             users,

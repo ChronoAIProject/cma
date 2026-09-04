@@ -1,0 +1,321 @@
+//! Cross-collection transactions required by the sandbox store contract.
+
+use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, SandboxTransactionStore};
+use layer2_core::sandbox::SandboxEvent;
+use mongodb::bson::doc;
+
+use super::agents::{agent_document, read_agent};
+use super::sandbox_events::{
+    append_in_transaction, event_document, read_event, reconcile_event, TransactionEventError,
+};
+use super::sandbox_mongo::{
+    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, unsigned,
+    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+};
+use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::worktrees::{read_worktree, worktree_document};
+
+enum ApplyError {
+    Domain(SandboxStoreError),
+    Driver(mongodb::error::Error),
+}
+
+enum Receipt {
+    Create(SandboxEvent),
+    Save(SandboxEvent),
+}
+
+impl From<TransactionEventError> for ApplyError {
+    fn from(error: TransactionEventError) -> Self {
+        match error {
+            TransactionEventError::Domain(error) => Self::Domain(error),
+            TransactionEventError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+fn validate_create(transaction: &SandboxTransaction) -> Result<(), SandboxStoreError> {
+    let SandboxTransaction::CreateWorktreeAndAgent {
+        worktree, agent, ..
+    } = transaction
+    else {
+        return Ok(());
+    };
+    if worktree.revision != 1
+        || agent.revision != 1
+        || agent.conversation.last_seq != 0
+        || agent.worktree_id != worktree.id
+        || agent.workspace_id != worktree.workspace_id
+        || agent.sandbox_id != worktree.sandbox_id
+        || agent.owner != worktree.owner
+        || worktree.agent_id.as_ref() != Some(&agent.id)
+    {
+        return Err(SandboxStoreError::InvalidTransaction(
+            "worktree and agent lineage or initial revisions disagree",
+        ));
+    }
+    Ok(())
+}
+
+async fn apply_transaction(
+    store: &MongoSandboxStore,
+    session: &mut mongodb::ClientSession,
+    transaction: &SandboxTransaction,
+) -> Result<Receipt, ApplyError> {
+    match transaction {
+        SandboxTransaction::CreateWorktreeAndAgent {
+            worktree,
+            agent,
+            event_at,
+            event,
+        } => {
+            store
+                .worktrees
+                .insert_one(worktree_document(worktree).map_err(ApplyError::Domain)?)
+                .session(&mut *session)
+                .await
+                .map_err(classify_write)?;
+            store
+                .agents
+                .insert_one(agent_document(agent).map_err(ApplyError::Domain)?)
+                .session(&mut *session)
+                .await
+                .map_err(classify_write)?;
+            let event = append_in_transaction(
+                store,
+                session,
+                &worktree.sandbox_id,
+                event_at.clone(),
+                event.clone(),
+            )
+            .await?;
+            Ok(Receipt::Create(event))
+        }
+        SandboxTransaction::SaveSandboxAndAppend {
+            expected_revision,
+            sandbox,
+            event_at,
+            event,
+        } => {
+            let next = expected_revision
+                .checked_add(1)
+                .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+            if sandbox.revision != next {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+            let aggregate = store
+                .sandboxes
+                .find_one(doc! {
+                    "_id": sandbox.id.as_str(),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                })
+                .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
+                .session(&mut *session)
+                .await
+                .map_err(ApplyError::Driver)?;
+            let Some(aggregate) = aggregate else {
+                let exists = store
+                    .sandboxes
+                    .find_one(doc! { "_id": sandbox.id.as_str() })
+                    .projection(doc! { "_id": 1 })
+                    .session(&mut *session)
+                    .await
+                    .map_err(ApplyError::Driver)?
+                    .is_some();
+                return Err(ApplyError::Domain(if exists {
+                    SandboxStoreError::Conflict
+                } else {
+                    SandboxStoreError::NotFound
+                }));
+            };
+            let previous = aggregate
+                .get_i64("last_seq")
+                .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))
+                .and_then(|value| {
+                    unsigned(value, "sandbox event sequence")
+                        .map_err(SandboxStoreError::Corrupt)
+                        .map_err(ApplyError::Domain)
+                })?;
+            let seq = previous
+                .checked_add(1)
+                .ok_or(ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
+            let mut fields = sandbox_replacement_fields(sandbox).map_err(ApplyError::Domain)?;
+            fields.insert(
+                "last_seq",
+                signed(seq, "sandbox event sequence")
+                    .map_err(SandboxStoreError::Corrupt)
+                    .map_err(ApplyError::Domain)?,
+            );
+            let advanced = store
+                .sandboxes
+                .update_one(
+                    doc! {
+                        "_id": sandbox.id.as_str(),
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "revision": signed(*expected_revision, "expected sandbox revision")
+                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                        "last_seq": signed(previous, "sandbox event sequence")
+                            .map_err(SandboxStoreError::Corrupt)
+                            .map_err(ApplyError::Domain)?,
+                    },
+                    doc! { "$set": fields },
+                )
+                .session(&mut *session)
+                .await
+                .map_err(classify_write)?;
+            if advanced.matched_count != 1 {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+            let event = SandboxEvent {
+                sandbox_id: sandbox.id.clone(),
+                seq,
+                appended_at: event_at.clone(),
+                kind: event.clone(),
+            };
+            store
+                .sandbox_events
+                .insert_one(event_document(&event).map_err(ApplyError::Domain)?)
+                .session(session)
+                .await
+                .map_err(classify_sequence_write)?;
+            Ok(Receipt::Save(event))
+        }
+    }
+}
+
+fn classify_write(error: mongodb::error::Error) -> ApplyError {
+    if is_duplicate_key(&error) {
+        ApplyError::Domain(SandboxStoreError::Duplicate)
+    } else {
+        ApplyError::Driver(error)
+    }
+}
+
+fn classify_sequence_write(error: mongodb::error::Error) -> ApplyError {
+    if is_duplicate_key(&error) {
+        ApplyError::Domain(SandboxStoreError::SequenceConflict)
+    } else {
+        ApplyError::Driver(error)
+    }
+}
+
+async fn reconcile(
+    store: &MongoSandboxStore,
+    transaction: &SandboxTransaction,
+    receipt: &Receipt,
+) -> Result<bool, SandboxStoreError> {
+    match (transaction, receipt) {
+        (
+            SandboxTransaction::CreateWorktreeAndAgent {
+                worktree, agent, ..
+            },
+            Receipt::Create(event),
+        ) => {
+            let stored_worktree = store
+                .worktrees
+                .find_one(doc! { "_id": worktree.id.as_str() })
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                .as_ref()
+                .map(read_worktree)
+                .transpose()?;
+            let stored_agent = store
+                .agents
+                .find_one(doc! { "_id": agent.id.as_str() })
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                .as_ref()
+                .map(read_agent)
+                .transpose()?;
+            Ok(stored_worktree.as_ref() == Some(worktree)
+                && stored_agent.as_ref() == Some(agent)
+                && reconcile_event(store, event).await?.is_some())
+        }
+        (SandboxTransaction::SaveSandboxAndAppend { sandbox, .. }, Receipt::Save(event)) => {
+            let stored = store
+                .sandboxes
+                .find_one(doc! { "_id": sandbox.id.as_str() })
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                .as_ref()
+                .map(read_sandbox)
+                .transpose()?;
+            let stored_event = store
+                .sandbox_events
+                .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, event.seq) })
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                .as_ref()
+                .map(read_event)
+                .transpose()?;
+            Ok(stored.as_ref() == Some(sandbox) && stored_event.as_ref() == Some(event))
+        }
+        _ => Err(SandboxStoreError::Corrupt(
+            "transaction receipt kind does not match its command".into(),
+        )),
+    }
+}
+
+#[async_trait::async_trait]
+impl SandboxTransactionStore for MongoSandboxStore {
+    async fn commit(&self, transaction: SandboxTransaction) -> Result<(), SandboxStoreError> {
+        validate_create(&transaction)?;
+        let mut last_transient = None;
+        for attempt in 0..TRANSACTION_ATTEMPTS {
+            if attempt > 0 {
+                tokio::task::yield_now().await;
+            }
+            let mut session = match self.client.start_session().await {
+                Ok(session) => session,
+                Err(error) if is_transient(&error) => {
+                    last_transient = Some(error.to_string());
+                    continue;
+                }
+                Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+            };
+            if let Err(error) = start_transaction(&mut session).await {
+                if is_transient(&error) {
+                    last_transient = Some(error.to_string());
+                    continue;
+                }
+                return Err(SandboxStoreError::Unavailable(error.to_string()));
+            }
+            let receipt = match apply_transaction(self, &mut session, &transaction).await {
+                Ok(receipt) => receipt,
+                Err(ApplyError::Domain(error)) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(error);
+                }
+                Err(ApplyError::Driver(error)) if is_transient(&error) => {
+                    let _ = session.abort_transaction().await;
+                    last_transient = Some(error.to_string());
+                    continue;
+                }
+                Err(ApplyError::Driver(error)) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(SandboxStoreError::Unavailable(error.to_string()));
+                }
+            };
+            match commit_transaction(&mut session).await {
+                CommitOutcome::Committed => return Ok(()),
+                CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+                CommitOutcome::Unknown(error) => {
+                    return if reconcile(self, &transaction, &receipt).await? {
+                        Ok(())
+                    } else {
+                        Err(SandboxStoreError::Unavailable(format!(
+                            "sandbox transaction commit remained unknown: {error}"
+                        )))
+                    };
+                }
+                CommitOutcome::Failed(error) => {
+                    return Err(SandboxStoreError::Unavailable(error.to_string()));
+                }
+            }
+        }
+        Err(SandboxStoreError::Unavailable(format!(
+            "sandbox transaction exhausted its retry budget: {}",
+            last_transient.unwrap_or_else(|| "no driver result".into())
+        )))
+    }
+}

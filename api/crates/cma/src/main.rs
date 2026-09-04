@@ -74,6 +74,10 @@ async fn serve() -> Result<(), String> {
     );
     let activity = ActivityService::new(stores.activity.clone());
     let users = UserDirectory::new(stores.users.clone());
+    // #809 composes these into the Sandbox application services. Opening them
+    // here already enforces indexes and schema compatibility before serving.
+    let _sandbox_model_store = stores.sandbox_model.clone();
+    let _sandbox_profile_store = stores.sandbox_profiles.clone();
     let _settings = PlatformSettingsService::new(stores.settings.clone());
     let _operations: Arc<dyn OperationStore> = stores.operations.clone();
     let recorder = ActivityRecorder::new(Arc::clone(&activity));
