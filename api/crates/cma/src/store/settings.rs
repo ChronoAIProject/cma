@@ -57,7 +57,7 @@ pub struct MongoPlatformSettingsStore {
 impl MongoPlatformSettingsStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let database = client.database(database);
-        schema::refuse_unknown_versions(&database, &[SETTINGS]).await?;
+        schema::initialize_collections(&database, &[SETTINGS]).await?;
         Ok(Self {
             settings: majority_collection(&database, SETTINGS),
         })

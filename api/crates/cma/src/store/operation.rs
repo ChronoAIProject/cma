@@ -54,7 +54,7 @@ pub struct MongoOperationStore {
 impl MongoOperationStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let database = client.database(database);
-        schema::refuse_unknown_versions(&database, &[OPERATIONS]).await?;
+        schema::initialize_collections(&database, &[OPERATIONS]).await?;
         let store = Self {
             operations: majority_collection(&database, OPERATIONS),
         };

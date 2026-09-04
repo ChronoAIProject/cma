@@ -1,7 +1,5 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
 
-use std::collections::HashSet;
-
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::error::{
@@ -12,7 +10,7 @@ use mongodb::{Client, ClientSession, Collection, Database};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::durability::majority_collection;
+use super::{durability::majority_collection, schema::initialize_collections};
 
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
@@ -92,7 +90,7 @@ impl MongoSandboxStore {
     }
 }
 
-async fn require_transaction_topology(database: &Database) -> Result<(), StoreError> {
+pub(super) async fn require_transaction_topology(database: &Database) -> Result<(), StoreError> {
     let reply = database
         .run_command(doc! { "hello": 1_i32 })
         .await
@@ -138,35 +136,6 @@ impl MongoProfileStore {
         tracing::info!(database = name, "sandbox-profile Mongo store ready");
         Ok(store)
     }
-}
-
-async fn initialize_collections(
-    database: &Database,
-    collections: &[&str],
-) -> Result<(), StoreError> {
-    let existing: HashSet<_> = database
-        .list_collection_names()
-        .await
-        .map_err(|error| unavailable("list schema-v1 collections", error))?
-        .into_iter()
-        .collect();
-    for name in collections.iter().filter(|name| !existing.contains(**name)) {
-        if let Err(error) = database.create_collection(*name).await {
-            let appeared = database
-                .list_collection_names()
-                .await
-                .map_err(|list_error| unavailable("recheck schema-v1 collection", list_error))?
-                .iter()
-                .any(|candidate| candidate == name);
-            if !appeared {
-                return Err(unavailable(
-                    &format!("create schema-v1 collection {name}"),
-                    error,
-                ));
-            }
-        }
-    }
-    super::schema::refuse_unknown_versions(database, collections).await
 }
 
 pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {

@@ -1,10 +1,45 @@
 //! Shared document-schema boundary for versioned Mongo-backed stores.
 
+use std::collections::HashSet;
+
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Document};
 use mongodb::Database;
 
 pub(super) const DOCUMENT_SCHEMA_VERSION: i64 = 1;
+
+/// Create every collection in a fresh database, then reject unsupported rows.
+pub(super) async fn initialize_collections(
+    database: &Database,
+    collections: &[&str],
+) -> Result<(), StoreError> {
+    let existing: HashSet<_> = database
+        .list_collection_names()
+        .await
+        .map_err(|error| StoreError::Unavailable(format!("list schema-v1 collections: {error}")))?
+        .into_iter()
+        .collect();
+    for name in collections.iter().filter(|name| !existing.contains(**name)) {
+        if let Err(error) = database.create_collection(*name).await {
+            let appeared = database
+                .list_collection_names()
+                .await
+                .map_err(|list_error| {
+                    StoreError::Unavailable(format!(
+                        "recheck schema-v1 collection after create failure: {list_error}"
+                    ))
+                })?
+                .iter()
+                .any(|candidate| candidate == name);
+            if !appeared {
+                return Err(StoreError::Unavailable(format!(
+                    "create schema-v1 collection {name}: {error}"
+                )));
+            }
+        }
+    }
+    refuse_unknown_versions(database, collections).await
+}
 
 /// Refuse a database containing any document this binary cannot interpret.
 pub(super) async fn refuse_unknown_versions(

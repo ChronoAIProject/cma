@@ -45,8 +45,35 @@ fn auth_key() -> AuthEncryptionKey {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
-async fn retained_stores_refuse_missing_malformed_and_unknown_schema_versions() {
+async fn retained_stores_initialize_and_refuse_unsupported_schema_versions() {
     let (client, name) = database().await;
+
+    MongoAuthStore::open(&client, &name, "test", &auth_key())
+        .await
+        .unwrap();
+    MongoActivityStore::open(&client, &name, Duration::from_secs(86_400))
+        .await
+        .unwrap();
+    MongoUserDirectoryStore::open(&client, &name).await.unwrap();
+    MongoOperationStore::open(&client, &name).await.unwrap();
+    MongoPlatformSettingsStore::open(&client, &name)
+        .await
+        .unwrap();
+    let names = client
+        .database(&name)
+        .list_collection_names()
+        .await
+        .unwrap();
+    for collection in AUTH_COLLECTIONS
+        .iter()
+        .copied()
+        .chain([ACTIVITY, USERS, OPERATIONS, SETTINGS])
+    {
+        assert!(
+            names.iter().any(|name| name == collection),
+            "startup did not create {collection}"
+        );
+    }
 
     for collection in AUTH_COLLECTIONS {
         insert(
