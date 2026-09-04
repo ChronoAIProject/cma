@@ -13,6 +13,7 @@ mod failure;
 mod fs_durability;
 mod git;
 mod install;
+mod install_state;
 mod lanes;
 mod link;
 mod paths;

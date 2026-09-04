@@ -16,18 +16,14 @@ pub(crate) async fn dispatch(
 ) -> Result<ResponseFrame> {
     tokio::spawn(async move {
         let _operation = gate.lock().await;
+        if crate::install::recover(&config)? != crate::install_state::RecoveryState::Completed {
+            return Err(RuntimeError::rejected(
+                "install_state_invalid",
+                "workspace mutation requires a durable completed installation",
+            ));
+        }
         recover_locked(&config).await?;
         dispatch_locked(&config, request).await
-    })
-    .await
-    .map_err(join_error)?
-}
-
-/// Settle every orphaned Started record before another mutation is accepted.
-pub(crate) async fn recover(config: RuntimeConfig, gate: Arc<Mutex<()>>) -> Result<()> {
-    tokio::spawn(async move {
-        let _operation = gate.lock().await;
-        recover_locked(&config).await
     })
     .await
     .map_err(join_error)?
