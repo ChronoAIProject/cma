@@ -14,11 +14,12 @@ use layer2_core::sandbox::store::{
     AgentStore, PageRequest, SandboxEventStore, SandboxStore, SandboxStoreError, WorkspaceStore,
 };
 use layer2_core::sandbox::{
-    Agent, AgentOrigin, AgentStatus, ConversationState, RuntimeBinding, Sandbox, SandboxAdminQuery,
-    SandboxAdminStore, SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxOrigin,
-    SandboxRetirement, SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
-    StoredSandboxRetirement, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus,
-    WorkspaceWorkState, WorkspaceWorkStep,
+    Agent, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep, ConversationState,
+    RuntimeBinding, Sandbox, SandboxAdminQuery, SandboxAdminStore, SandboxCredentialState,
+    SandboxEventKind, SandboxLimits, SandboxOrigin, SandboxRetirement, SandboxSignInState,
+    SandboxStatus, SandboxWorkState, SandboxWorkStep, StoredSandboxRetirement, TypedFailure,
+    Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState,
+    WorkspaceWorkStep,
 };
 use mongodb::Client;
 
@@ -124,6 +125,7 @@ fn workspace(sandbox: &Sandbox) -> Workspace {
         resolved_commit: Some("0123456789abcdef0123456789abcdef01234567".into()),
         status: WorkspaceStatus::Ready,
         work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
+        next_worktree_number: 1,
         created_at: NOW.into(),
         ready_at: Some(NOW.into()),
         failed: None,
@@ -139,6 +141,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         workspace_id: WorkspaceId(format!("wks_{}", sandbox.id.as_str())),
         sandbox_id: sandbox.id.clone(),
         owner: sandbox.owner.clone(),
+        creation_key: format!("create-{id}"),
         profile: AgentProfileSnapshot {
             id: AgentProfileId("agp_operator".into()),
             revision: 1,
@@ -153,10 +156,18 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         },
         status,
         conversation: ConversationState {
-            conversation_id: None,
+            conversation_id: Some(format!("conversation-{id}")),
+            runtime_generation: Some(1),
             last_seq: 0,
             first_message: None,
+            active_turn: None,
+            queued_messages: vec![],
         },
+        work: AgentWorkState::new(AgentWorkStep::None, NOW.into()),
+        failure: (status == AgentStatus::Failed).then(|| TypedFailure {
+            class: "startup_failed".into(),
+            detail: "startup failed".into(),
+        }),
         title: Some(format!("Agent {id}")),
         created_at: NOW.into(),
         updated_at: NOW.into(),

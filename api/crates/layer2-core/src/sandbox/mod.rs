@@ -2,11 +2,14 @@
 
 mod admin;
 mod agent;
+mod agent_work;
 mod credential;
 mod error;
 mod event;
+mod first_message;
 mod limits;
 mod provision;
+mod queued_message;
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;
@@ -23,14 +26,23 @@ pub use admin::{
     SandboxAdminView, SandboxOperatorService, SandboxRetirement, SandboxRetirementResult,
     StoredSandboxRetirement, WorkspaceAdminSummary,
 };
-pub use agent::{Agent, AgentOrigin, AgentStopReason, ConversationState, FirstMessageDelivery};
+pub use agent::{Agent, AgentOrigin, AgentStopReason, ConversationState};
+pub use agent_work::{
+    AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,
+};
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxSignInState,
 };
 pub use error::SandboxModelError;
 pub use event::{AgentLogEntry, AgentLogKind, SandboxEvent, SandboxEventKind};
+pub use first_message::{
+    FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
+};
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
+pub use queued_message::{
+    QueuedAgentMessage, QueuedMessageState, MAX_AGENT_MESSAGE_BYTES, MAX_QUEUED_AGENT_MESSAGES,
+};
 pub use sandbox::{RuntimeBinding, Sandbox, SandboxCheckpointRef, SandboxLimits, TypedFailure};
 pub use service::{
     CreateSandbox, SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxService,
@@ -43,6 +55,8 @@ pub use workspace_service::{CreateWorkspace, WorkspaceService, WorkspaceServiceE
 pub use workspace_work::{WorkspaceWorkLease, WorkspaceWorkState, WorkspaceWorkStep};
 pub use worktree::Worktree;
 
+#[cfg(test)]
+mod agent_model_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

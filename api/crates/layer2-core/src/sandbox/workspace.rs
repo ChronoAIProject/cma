@@ -43,6 +43,7 @@ pub struct Workspace {
     pub resolved_commit: Option<String>,
     pub status: WorkspaceStatus,
     pub work: WorkspaceWorkState,
+    pub next_worktree_number: u64,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_at: Option<String>,
@@ -95,7 +96,7 @@ impl Workspace {
         if self.path != format!("/home/cma/{}", self.name) || self.revision == 0 {
             return Err(SandboxModelError::invalid_value("workspace.path"));
         }
-        if self.work.next_fence == 0 {
+        if self.work.next_fence == 0 || self.next_worktree_number == 0 {
             return Err(SandboxModelError::invalid_value("workspace.work"));
         }
         Ok(())
