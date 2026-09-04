@@ -96,16 +96,18 @@ impl Sandbox {
         if (next == SandboxStatus::Failed) != failure.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.failure"));
         }
-        self.status = self.status.transition(next)?;
+        let status = self.status.transition(next)?;
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("sandbox.revision"))?;
+        self.status = status;
         self.failure = failure;
         self.updated_at = at.clone();
         if next == SandboxStatus::Retired {
             self.retired_at = Some(at);
         }
-        self.revision = self
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| SandboxModelError::invalid_value("sandbox.revision"))?;
+        self.revision = revision;
         Ok(())
     }
 }

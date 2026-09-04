@@ -54,11 +54,13 @@ impl Worktree {
     }
 
     pub fn transition(&mut self, next: WorktreeStatus) -> Result<(), SandboxModelError> {
-        self.status = self.status.transition(next)?;
-        self.revision = self
+        let status = self.status.transition(next)?;
+        let revision = self
             .revision
             .checked_add(1)
             .ok_or_else(|| SandboxModelError::invalid_value("worktree.revision"))?;
+        self.status = status;
+        self.revision = revision;
         Ok(())
     }
 }
