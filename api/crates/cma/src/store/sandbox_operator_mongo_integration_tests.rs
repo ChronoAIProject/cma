@@ -142,6 +142,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         sandbox_id: sandbox.id.clone(),
         owner: sandbox.owner.clone(),
         creation_key: format!("create-{id}"),
+        creation_fingerprint: "d".repeat(64),
         profile: AgentProfileSnapshot {
             id: AgentProfileId("agp_operator".into()),
             revision: 1,

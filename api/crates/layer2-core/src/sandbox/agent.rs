@@ -53,6 +53,7 @@ pub struct Agent {
     pub sandbox_id: SandboxId,
     pub owner: SubjectId,
     pub creation_key: String,
+    pub creation_fingerprint: String,
     pub profile: AgentProfileSnapshot,
     pub status: AgentStatus,
     pub conversation: ConversationState,
@@ -84,10 +85,15 @@ impl Agent {
             || self.revision != 1
             || self.creation_key.trim().is_empty()
             || self.creation_key.len() > 256
+            || self.creation_fingerprint.len() != 64
+            || !self
+                .creation_fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             || self.failure.is_some()
             || self.conversation.conversation_id.is_some()
             || self.conversation.runtime_generation.is_some()
-            || self.conversation.last_seq != 0
+            || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0

@@ -155,6 +155,7 @@ fn agent() -> Agent {
         sandbox_id: SandboxId("sbx_test".into()),
         owner: SubjectId("owner".into()),
         creation_key: "create-test-agent".into(),
+        creation_fingerprint: "d".repeat(64),
         profile: agent_snapshot(),
         status: AgentStatus::Starting,
         conversation: ConversationState {
