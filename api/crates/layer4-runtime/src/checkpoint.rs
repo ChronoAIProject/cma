@@ -89,9 +89,9 @@ impl CheckpointStore {
         let home = self.home.clone();
         blocking(move || {
             crate::checkpoint_archive::inspect(&temporary, &expected, &home)?;
-            match std::fs::hard_link(&temporary, &final_path) {
+            match crate::fs_durability::hard_link(&temporary, &final_path) {
                 Ok(()) => {
-                    std::fs::remove_file(&temporary)
+                    crate::fs_durability::remove_file(&temporary)
                         .map_err(checkpoint_io("remove linked checkpoint upload"))?;
                     Ok(())
                 }
@@ -103,7 +103,7 @@ impl CheckpointStore {
                         && crate::checkpoint_manifest::sha256_file(&final_path)?
                             .eq_ignore_ascii_case(&expected)
                     {
-                        std::fs::remove_file(&temporary)
+                        crate::fs_durability::remove_file(&temporary)
                             .map_err(checkpoint_io("remove duplicate checkpoint upload"))?;
                         Ok(())
                     } else {
@@ -125,7 +125,8 @@ impl CheckpointStore {
     }
 
     fn ensure_store(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.root).map_err(checkpoint_io("create checkpoint store"))?;
+        crate::fs_durability::create_dir_all(&self.root)
+            .map_err(checkpoint_io("create checkpoint store"))?;
         let metadata = std::fs::symlink_metadata(&self.root)
             .map_err(checkpoint_io("inspect checkpoint store"))?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -140,7 +141,8 @@ impl CheckpointStore {
 
 fn restore_archive(archive: &Path, expected: &str, home: &Path, scratch: &Path) -> Result<()> {
     let inspected = crate::checkpoint_archive::inspect(archive, expected, home)?;
-    std::fs::create_dir_all(scratch).map_err(checkpoint_io("create restore scratch directory"))?;
+    crate::fs_durability::create_dir_all(scratch)
+        .map_err(checkpoint_io("create restore scratch directory"))?;
     let staged = scratch.join(format!(
         ".restore-staging-{}-{}",
         std::process::id(),

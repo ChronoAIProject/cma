@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use layer3_adapter::wire::{AgentRef, ResponseFrame};
+use layer3_adapter::wire::{AgentRef, ResponseFrame, WireOperation};
 use layer3_adapter::{
     AgentHomePlan, AgentLaunch, AgentSlot, CheckpointRequest, CredentialFrame, HomeFile,
     InstallRequest, RestoreRequest, RuntimeCredential, WorkspaceRemoveRequest, WorkspaceRequest,
@@ -24,6 +24,17 @@ fn supervisor(config: RuntimeConfig) -> Arc<Supervisor> {
 fn cleanup(home: &Path) {
     std::fs::remove_dir_all(home).unwrap();
     let _ = std::fs::remove_dir_all(home.with_extension("checkpoints"));
+    let _ = std::fs::remove_dir_all(home.with_extension("runtime-state"));
+}
+
+fn corrupt_workspace_journal(config: &RuntimeConfig) {
+    let directory = config.state_root.join("workspace-operations");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(format!("{}.json", "0".repeat(64))),
+        b"{broken",
+    )
+    .unwrap();
 }
 
 fn credential(operation_id: &str) -> RequestFrame {
@@ -59,6 +70,45 @@ async fn credential_is_refused_until_install_completes() {
     assert_eq!(rejected.operation, WireOperation::Credential);
     assert_eq!(rejected.code, "install_not_completed");
     assert_eq!(supervisor.phase().await, Phase::Provisioned);
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn startup_refuses_to_serve_with_any_corrupt_workspace_journal() {
+    let home = root("startup-journal-corrupt");
+    let config = RuntimeConfig::for_test(home.clone());
+    corrupt_workspace_journal(&config);
+    let result = Supervisor::start(config, SupervisorBoundary::default()).await;
+    let error = match result {
+        Ok(_) => panic!("startup accepted a corrupt workspace journal"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "workspace_journal_corrupt");
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn install_and_credential_validate_workspace_journals_before_mutating() {
+    let home = root("unrelated-journal-corrupt");
+    let config = RuntimeConfig::for_test(home.clone());
+    let supervisor = supervisor(config.clone());
+    corrupt_workspace_journal(&config);
+
+    let install = failure(
+        supervisor
+            .dispatch(RequestFrame::Install(InstallRequest::new(
+                "install-blocked-by-journal",
+                vec!["touch must-not-run".into()],
+            )))
+            .await,
+    );
+    assert_eq!(install.operation, WireOperation::Install);
+    assert_eq!(install.code, "workspace_journal_corrupt");
+    assert!(!home.join("must-not-run").exists());
+
+    let credential = failure(supervisor.dispatch(credential("also-blocked")).await);
+    assert_eq!(credential.operation, WireOperation::Credential);
+    assert_eq!(credential.code, "workspace_journal_corrupt");
     cleanup(&home);
 }
 

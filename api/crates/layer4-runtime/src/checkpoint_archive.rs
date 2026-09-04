@@ -70,9 +70,9 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
     let sha256 = crate::checkpoint_manifest::sha256_file(&temporary)?;
     let reference = format!("home-{sha256}.cma");
     let path = store.join(&reference);
-    match std::fs::hard_link(&temporary, &path) {
+    match crate::fs_durability::hard_link(&temporary, &path) {
         Ok(()) => {
-            std::fs::remove_file(&temporary)
+            crate::fs_durability::remove_file(&temporary)
                 .map_err(archive_io("remove linked checkpoint temporary"))?;
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -82,7 +82,8 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
                     "checkpoint object name is occupied by different bytes",
                 ));
             }
-            std::fs::remove_file(&temporary).map_err(archive_io("remove duplicate checkpoint"))?;
+            crate::fs_durability::remove_file(&temporary)
+                .map_err(archive_io("remove duplicate checkpoint"))?;
         }
         Err(error) => return Err(archive_io("publish checkpoint archive")(error)),
     }
@@ -274,7 +275,7 @@ fn extract_file(
 }
 
 fn ensure_store(store: &Path) -> Result<()> {
-    std::fs::create_dir_all(store).map_err(archive_io("create checkpoint store"))?;
+    crate::fs_durability::create_dir_all(store).map_err(archive_io("create checkpoint store"))?;
     let metadata =
         std::fs::symlink_metadata(store).map_err(archive_io("inspect checkpoint store"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
