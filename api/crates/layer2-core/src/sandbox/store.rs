@@ -225,4 +225,5 @@ fn page<T: Clone>(
     })
 }
 
+mod admin_memory;
 mod memory;

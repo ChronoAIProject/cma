@@ -187,7 +187,9 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         for to in sandbox_statuses {
             let expected_allowed = expected.contains(&(from, to))
                 || (!matches!(from, SandboxStatus::Failed | SandboxStatus::Retired)
-                    && to == SandboxStatus::Failed);
+                    && to == SandboxStatus::Failed)
+                || (!matches!(from, SandboxStatus::Retiring | SandboxStatus::Retired)
+                    && to == SandboxStatus::Retiring);
             assert_eq!(
                 from.transition(to).is_ok(),
                 expected_allowed,

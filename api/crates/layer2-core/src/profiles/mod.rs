@@ -1,5 +1,6 @@
 //! Versioned configuration for sandboxes, workspaces, and agents.
 
+mod admin;
 mod agent;
 mod common;
 mod digest;
@@ -10,6 +11,9 @@ mod workspace;
 
 pub mod store;
 
+pub use admin::{
+    ProfileAdminQuery, ProfileAdminStore, ProfileAdminSummary, ProfileKind, ProfileLocator,
+};
 pub use agent::{
     AgentProfile, AgentProfileContent, AgentProfileRevision, AgentProfileSnapshot, PermissionLevel,
     SkillRef, SkillSource, ThinkingEffort,

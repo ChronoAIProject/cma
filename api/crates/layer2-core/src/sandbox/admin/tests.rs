@@ -1,0 +1,215 @@
+use std::sync::Mutex;
+
+use crate::profiles::store::{AgentProfileStore, InMemoryProfileStore};
+use crate::profiles::{
+    AgentProfile, AgentProfileContent, AgentProfileSnapshot, AgentProvider, ModelAccess,
+    PermissionLevel, ProfileKind, SandboxProfileContent, SandboxProfileSnapshot, ThinkingEffort,
+    WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
+};
+use crate::sandbox::store::{
+    AgentStore, InMemorySandboxStore, SandboxEventStore, SandboxStore, WorkspaceStore,
+};
+use crate::sandbox::RuntimeBinding;
+use crate::{ActivityQuery, ActivityStore, Authorization, Page as ActivityPage, StoreError};
+
+use super::*;
+
+const NOW: &str = "2026-09-05T00:00:00Z";
+
+#[derive(Default)]
+struct MemoryActivity {
+    records: Mutex<Vec<ActivityRecord>>,
+}
+
+#[async_trait]
+impl ActivityStore for MemoryActivity {
+    async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError> {
+        self.records.lock().unwrap().push(record.clone());
+        Ok(())
+    }
+
+    async fn list(
+        &self,
+        _query: &ActivityQuery,
+    ) -> Result<ActivityPage<ActivityRecord>, StoreError> {
+        Ok(ActivityPage::new(
+            self.records.lock().unwrap().clone(),
+            None,
+        ))
+    }
+}
+
+struct Fixture {
+    service: SandboxOperatorService,
+    sandboxes: Arc<InMemorySandboxStore>,
+    profiles: Arc<InMemoryProfileStore>,
+    activity: Arc<MemoryActivity>,
+}
+
+fn fixture() -> Fixture {
+    let sandboxes = Arc::new(InMemorySandboxStore::default());
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let activity = Arc::new(MemoryActivity::default());
+    let retirement = Arc::new(StoredSandboxRetirement::new(sandboxes.clone()));
+    let service = SandboxOperatorService::new(
+        sandboxes.clone(),
+        profiles.clone(),
+        retirement,
+        ActivityService::new(activity.clone()),
+    );
+    Fixture {
+        service,
+        sandboxes,
+        profiles,
+        activity,
+    }
+}
+
+fn caller(capabilities: impl IntoIterator<Item = Capability>) -> Caller {
+    Caller::new(
+        SubjectId::new("operator-a"),
+        Authorization::new(capabilities),
+    )
+}
+
+fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) -> Sandbox {
+    Sandbox {
+        id: SandboxId(id.into()),
+        owner: SubjectId::new(owner),
+        name: format!("sandbox-{id}"),
+        profile: SandboxProfileSnapshot {
+            id: crate::SandboxProfileId("sbp_test".into()),
+            revision: 1,
+            digest: "a".repeat(64),
+            content: sandbox_profile_content(),
+        },
+        status,
+        failure: None,
+        runtime: Some(RuntimeBinding {
+            runtime_id: format!("runtime-{id}"),
+            runtime_version: runtime_version.into(),
+            bound_at: NOW.into(),
+        }),
+        credential: super::super::SandboxCredentialState {
+            reaches: vec![],
+            key_generation: 1,
+            delivered: true,
+        },
+        limits: super::super::SandboxLimits {
+            max_workspaces: 4,
+            max_agents_per_workspace: 4,
+        },
+        checkpoint: None,
+        last_activity_at: NOW.into(),
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        retired_at: None,
+        revision: 1,
+    }
+}
+
+fn sandbox_profile_content() -> SandboxProfileContent {
+    SandboxProfileContent {
+        cpu_millis: 1_000,
+        memory_mib: 2_048,
+        nyxid_services: vec![],
+        agent_provider: AgentProvider::Codex,
+        model_access: ModelAccess::ChronoaiManaged,
+        max_workspaces: 4,
+        max_agents_per_workspace: 4,
+        workspace_profiles: vec![],
+        software_install_commands: vec![],
+        environment_variables: vec![],
+    }
+}
+
+fn workspace(sandbox: &Sandbox, id: &str) -> Workspace {
+    Workspace {
+        id: WorkspaceId(id.into()),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        profile: WorkspaceProfileSnapshot {
+            id: crate::WorkspaceProfileId("wkp_test".into()),
+            revision: 2,
+            digest: "b".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory {
+                    name: "project".into(),
+                },
+                name: "project".into(),
+                setup_commands: vec![],
+                agent_profiles: vec![],
+            },
+        },
+        name: "project".into(),
+        path: "/home/cma/project".into(),
+        source: super::super::WorkspaceSource::Empty,
+        status: WorkspaceStatus::Ready,
+        created_at: NOW.into(),
+        ready_at: Some(NOW.into()),
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    }
+}
+
+fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus) -> Agent {
+    Agent {
+        id: crate::AgentId(id.into()),
+        worktree_id: WorktreeId(format!("wkt_{id}")),
+        workspace_id: workspace.id.clone(),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        profile: AgentProfileSnapshot {
+            id: crate::AgentProfileId("agp_test".into()),
+            revision: 3,
+            digest: "c".repeat(64),
+            content: agent_profile_content(),
+        },
+        status,
+        conversation: super::super::ConversationState {
+            conversation_id: Some("conversation-a".into()),
+            last_seq: 0,
+            first_message: None,
+        },
+        title: Some("Proof search".into()),
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        ready_at: Some(NOW.into()),
+        stopped_at: None,
+        stop_reason: None,
+        deleted_at: None,
+        origin: super::super::AgentOrigin::Manual,
+        revision: 1,
+    }
+}
+
+fn agent_profile_content() -> AgentProfileContent {
+    AgentProfileContent {
+        model: None,
+        thinking_effort: ThinkingEffort::Medium,
+        permission_level: PermissionLevel::Guarded,
+        skills: vec![],
+        system_prompt: String::new(),
+    }
+}
+
+fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
+    AgentProfile {
+        id: crate::AgentProfileId(id.into()),
+        owner: SubjectId::new(owner),
+        name: format!("profile-{id}"),
+        description: String::new(),
+        visibility,
+        forked_from: None,
+        uses_count: 0,
+        draft: agent_profile_content(),
+        draft_version: 1,
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        retired_at: None,
+    }
+}
+
+mod controls;
+mod reads;

@@ -21,6 +21,8 @@ pub enum DetailKey {
     Setting,
     CorrelationId,
     Revision,
+    ProfileKind,
+    Visibility,
 }
 
 impl DetailKey {
@@ -38,6 +40,8 @@ impl DetailKey {
             Self::Setting => "setting",
             Self::CorrelationId => "correlation_id",
             Self::Revision => "revision",
+            Self::ProfileKind => "profile_kind",
+            Self::Visibility => "visibility",
         }
     }
 
@@ -55,6 +59,8 @@ impl DetailKey {
             "setting" => Self::Setting,
             "correlation_id" => Self::CorrelationId,
             "revision" => Self::Revision,
+            "profile_kind" => Self::ProfileKind,
+            "visibility" => Self::Visibility,
             _ => return None,
         })
     }
