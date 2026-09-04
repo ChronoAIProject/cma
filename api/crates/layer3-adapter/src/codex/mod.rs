@@ -205,6 +205,13 @@ impl KernelAdapter for CodexAdapter {
             .await
     }
 
+    async fn preempt_workspace_checkpoint(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<bool, AdapterError> {
+        self.hosted.preempt_workspace_checkpoint(handle).await
+    }
+
     async fn attach_terminal(
         &self,
         handle: &RuntimeHandle,

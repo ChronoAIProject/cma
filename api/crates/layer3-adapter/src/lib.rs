@@ -502,6 +502,17 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
+    /// Ask an active runtime to abandon a still-building opportunistic
+    /// checkpoint so foreground workspace work can proceed.
+    async fn preempt_workspace_checkpoint(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<bool, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot preempt an in-flight workspace checkpoint".to_string(),
+        ))
+    }
+
     /// Defaults to saying it cannot answer, rather than to an empty list. The
     /// difference matters more than it looks: an empty list is a statement that
     /// nothing is running, and a caller acting on that would tear down or

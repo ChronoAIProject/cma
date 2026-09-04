@@ -834,6 +834,58 @@ impl crate::service::SessionService {
         ))
     }
 
+    /// Acquire foreground ownership while periodically invalidating only an
+    /// opportunistic checkpoint that currently holds it.
+    pub(super) async fn foreground_chat_host_guard(
+        &self,
+        owner: &SubjectId,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        loop {
+            if let Some(guard) = self.chat_host_guards.try_lock(owner).await {
+                return guard;
+            }
+            self.preempt_periodic_chat_checkpoint(owner).await;
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
+
+    async fn preempt_periodic_chat_checkpoint(&self, owner: &SubjectId) {
+        let Some(hosts) = self.chat_hosts.as_ref() else {
+            return;
+        };
+        let Ok(Some(host)) = hosts.get_for_owner(owner).await else {
+            return;
+        };
+        if host.status != ChatHostStatus::Active
+            || !host
+                .last_transition_claim
+                .as_deref()
+                .is_some_and(|claim| claim.starts_with("chcp_"))
+        {
+            return;
+        }
+        let (Some(runtime_id), Some(adapter)) =
+            (host.runtime_id.as_ref(), self.adapters.get(&host.kernel))
+        else {
+            return;
+        };
+        match adapter
+            .preempt_workspace_checkpoint(&RuntimeHandle(runtime_id.clone()))
+            .await
+        {
+            Ok(true) => tracing::info!(
+                chat_host = %host.id,
+                "foreground Chat creation preempted a periodic workspace checkpoint"
+            ),
+            Ok(false) | Err(AdapterError::Unsupported(_)) => {}
+            Err(error) => tracing::warn!(
+                chat_host = %host.id,
+                %error,
+                "foreground Chat creation could not preempt a periodic workspace checkpoint"
+            ),
+        }
+    }
+
     /// Return this owner's one usable shared chat host, provisioning it once
     /// when no durable host exists.
     pub(crate) async fn ensure_chat_host(
@@ -842,7 +894,7 @@ impl crate::service::SessionService {
         caller_credential: Option<&crate::CallerCredential>,
     ) -> Result<ChatHostRecord, CoreError> {
         let store = self.chat_hosts.clone().ok_or_else(host_store_unavailable)?;
-        let _owner_guard = self.chat_host_guards.lock(owner).await;
+        let _owner_guard = self.foreground_chat_host_guard(owner).await;
 
         let existing = store
             .get_for_owner(owner)

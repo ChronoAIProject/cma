@@ -862,6 +862,10 @@ fn runtime_router(state: AppState) -> Router {
             post(workspace_checkpoint_resume).layer(DefaultBodyLimit::max(4 * 1024)),
         )
         .route(
+            "/runtime/workspace/checkpoint/preempt",
+            post(workspace_checkpoint_preempt).layer(DefaultBodyLimit::max(1)),
+        )
+        .route(
             "/runtime/workspace/source",
             post(workspace_source_prepare).layer(DefaultBodyLimit::max(4 * 1024)),
         )
@@ -1872,6 +1876,18 @@ async fn workspace_checkpoint(
     .await;
     let (candidate, checkpoint, pending_hold) = match candidate {
         Ok(Ok(candidate)) => candidate,
+        Ok(Err(_))
+            if in_flight.as_ref().is_some_and(|hold| {
+                hold.cancel_requested
+                    .load(std::sync::atomic::Ordering::Acquire)
+            }) =>
+        {
+            return (
+                axum::http::StatusCode::CONFLICT,
+                "workspace checkpoint was cancelled before its writer fence",
+            )
+                .into_response();
+        }
         Ok(Err(error)) => {
             tracing::warn!(
                 reason = workspace::checkpoint_refusal_reason(&error),
@@ -2135,6 +2151,33 @@ fn settle_in_flight_workspace_hold(
 #[serde(deny_unknown_fields)]
 struct WorkspaceCheckpointResumeRequest {
     resume_token: String,
+}
+
+#[derive(serde::Serialize)]
+struct WorkspaceCheckpointPreemptReceipt {
+    cancellation_requested: bool,
+}
+
+/// Give foreground workspace operations a bounded way to invalidate an
+/// opportunistic capture before they wait on its process and mutation gates.
+async fn workspace_checkpoint_preempt(
+    State(state): State<AppState>,
+) -> axum::Json<WorkspaceCheckpointPreemptReceipt> {
+    let cancellation_requested = {
+        let holds = state
+            .workspace_writer_hold
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        holds.in_flight.as_ref().is_some_and(|in_flight| {
+            in_flight
+                .cancel_requested
+                .store(true, std::sync::atomic::Ordering::Release);
+            true
+        })
+    };
+    axum::Json(WorkspaceCheckpointPreemptReceipt {
+        cancellation_requested,
+    })
 }
 
 async fn workspace_checkpoint_resume(

@@ -190,12 +190,14 @@ const PRELUDE_COMPONENT_LIMIT: usize = 255;
 const WORKSPACE_PATH: &str = "/runtime/workspace";
 const WORKSPACE_CHECKPOINT_PATH: &str = "/runtime/workspace/checkpoint";
 const WORKSPACE_CHECKPOINT_RESUME_PATH: &str = "/runtime/workspace/checkpoint/resume";
+const WORKSPACE_CHECKPOINT_PREEMPT_PATH: &str = "/runtime/workspace/checkpoint/preempt";
 const WORKSPACE_SOURCE_PATH: &str = "/runtime/workspace/source";
 const WORKSPACE_TREES_PATH: &str = "/runtime/workspace/trees";
 const WORKSPACE_SETUP_PATH: &str = "/runtime/workspace/setup";
 const RUNTIME_GATEWAY_PROBE_PATH: &str = "/runtime/gateway-probe";
 const WORKSPACE_VERSION: u64 = 2;
 const WORKSPACE_HOLD_VERSION: u64 = 6;
+const WORKSPACE_PREEMPT_VERSION: u64 = 7;
 const WORKSPACE_COMPLETE_GIT_VERSION: u64 = 5;
 const WORKSPACE_SOURCE_RECEIPT_VERSION: u64 = 2;
 const WORKSPACE_ARCHIVE_VERSION: u32 = 2;
@@ -1959,6 +1961,43 @@ impl HostedKernel {
         resume_workspace_writers_with_client(&self.client, endpoint, resume_token).await
     }
 
+    /// Cancel candidate construction before a foreground worktree waits behind
+    /// the runtime's checkpoint gate. A false receipt means no candidate was
+    /// active and is still a successful, race-safe answer.
+    pub async fn preempt_workspace_checkpoint(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<bool, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let ready = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await?
+            .unwrap_or_default();
+        if workspace_checkpoint_version(&ready)
+            .is_none_or(|version| version < WORKSPACE_PREEMPT_VERSION)
+        {
+            return Err(AdapterError::Unsupported(
+                "this runtime image cannot preempt an in-flight workspace checkpoint".into(),
+            ));
+        }
+        let response = self
+            .client
+            .post_to_sandbox_with_response(
+                &endpoint.endpoint,
+                WORKSPACE_CHECKPOINT_PREEMPT_PATH,
+                Vec::new(),
+            )
+            .await?;
+        let receipt: WorkspaceCheckpointPreemptReceipt = serde_json::from_slice(&response)
+            .map_err(|_| {
+                AdapterError::Rejected(
+                    "runtime returned an invalid checkpoint preemption receipt".into(),
+                )
+            })?;
+        Ok(receipt.cancellation_requested)
+    }
+
     /// Run one closed read through the exact runtime's command sandbox and
     /// restricted service gateway. No provider response data crosses back.
     pub async fn probe_runtime_gateway(
@@ -2373,6 +2412,13 @@ fn require_chat_runtime_capabilities(
                 .into(),
         ));
     }
+    if workspace_checkpoint_version(body).is_none_or(|version| version < WORKSPACE_PREEMPT_VERSION)
+    {
+        return Err(AdapterError::Unsupported(
+            "this runtime image does not advertise foreground-preemptible workspaceCheckpoint v7"
+                .into(),
+        ));
+    }
     Ok(())
 }
 
@@ -2616,6 +2662,12 @@ struct WorkspaceWriterResumeRequest<'a> {
 struct WorkspaceWriterResumeReceipt {
     resume_token: String,
     writers_resumed: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceCheckpointPreemptReceipt {
+    cancellation_requested: bool,
 }
 
 async fn resume_workspace_writers_with_client(

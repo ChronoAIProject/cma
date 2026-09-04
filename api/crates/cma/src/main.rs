@@ -278,7 +278,7 @@ async fn cors(State(policy): State<Arc<CorsPolicy>>, request: Request, next: Nex
                 response.headers_mut().insert(
                     header::ACCESS_CONTROL_ALLOW_HEADERS,
                     HeaderValue::from_static(
-                        "content-type, authorization, last-event-id, idempotency-key, x-request-id",
+                        "content-type, authorization, last-event-id, idempotency-key, prefer, x-request-id",
                     ),
                 );
                 response.headers_mut().insert(
@@ -338,6 +338,7 @@ fn requested_cors_headers_are_allowed(headers: &HeaderMap) -> bool {
                                 | "authorization"
                                 | "last-event-id"
                                 | "idempotency-key"
+                                | "prefer"
                                 | "x-request-id"
                         )
                     })

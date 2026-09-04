@@ -2319,6 +2319,77 @@ async fn create_session(app: &Router) -> (SessionId, serde_json::Value) {
     (id, body)
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn asynchronous_chat_creation_returns_before_provisioning_and_replays_its_result() {
+    let surface = chat_test_surface(true);
+    let pause = surface.kernel.pause_next_provision().await;
+    let request = || {
+        let mut request = json_request(Method::POST, "/api/v1/sessions", r#"{"surface":"chat"}"#);
+        request.headers_mut().insert(
+            "idempotency-key",
+            HeaderValue::from_static("async-chat-create"),
+        );
+        request
+            .headers_mut()
+            .insert("prefer", HeaderValue::from_static("respond-async"));
+        request
+    };
+
+    let accepted = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        surface.app.clone().oneshot(request()),
+    )
+    .await
+    .expect("the async handshake does not wait for provider provisioning")
+    .expect("the router answers");
+    assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        accepted.headers().get("preference-applied"),
+        Some(&HeaderValue::from_static("respond-async"))
+    );
+    assert_eq!(
+        assert_json(accepted, StatusCode::ACCEPTED).await["accepted"],
+        true
+    );
+    pause.wait_until_reached().await;
+
+    let pending = surface
+        .app
+        .clone()
+        .oneshot(request())
+        .await
+        .expect("the pending poll answers");
+    assert_eq!(
+        pending.headers().get(header::RETRY_AFTER),
+        Some(&HeaderValue::from_static("7"))
+    );
+    let problem = assert_problem(pending, StatusCode::CONFLICT).await;
+    assert_eq!(problem["code"], "idempotency_in_flight");
+
+    pause.release();
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let response = surface
+                .app
+                .clone()
+                .oneshot(request())
+                .await
+                .expect("the completion poll answers");
+            if response.status() == StatusCode::CREATED {
+                break response;
+            }
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the completed operation becomes replayable");
+    let session = assert_json(completed, StatusCode::CREATED).await;
+    assert_eq!(session["status"], "ready");
+    assert_eq!(session["chat"]["worktree_name"], "chat-1");
+    assert_eq!(surface.kernel.provisions.load(Ordering::SeqCst), 1);
+}
+
 async fn wait_until_ready(sessions: &SessionService, caller: &Caller, id: &SessionId) {
     wait_until_status(sessions, caller, id, SessionStatus::Ready).await;
 }
@@ -4315,7 +4386,7 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
         .header(
             header::ACCESS_CONTROL_REQUEST_HEADERS,
-            "authorization,content-type,idempotency-key",
+            "authorization,content-type,idempotency-key,prefer",
         )
         .send()
         .await
@@ -4351,6 +4422,7 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         "idempotency-key",
     );
+    assert_header_list_contains(&headers, header::ACCESS_CONTROL_ALLOW_HEADERS, "prefer");
     assert_header_list_contains(&headers, header::ACCESS_CONTROL_ALLOW_METHODS, "POST");
     assert_eq!(
         headers

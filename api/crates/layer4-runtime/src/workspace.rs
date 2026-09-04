@@ -15,7 +15,7 @@ use unicode_normalization::UnicodeNormalization as _;
 pub const VERSION: u32 = 2;
 const LEGACY_VERSION: u32 = 1;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub const CAPABILITY_VERSION: u32 = 6;
+pub const CAPABILITY_VERSION: u32 = 7;
 pub const MAX_FILES: usize = 750_000;
 pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 1_024;

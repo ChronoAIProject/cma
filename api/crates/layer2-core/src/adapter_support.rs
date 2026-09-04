@@ -218,6 +218,9 @@ pub(crate) struct FakeAdapter {
     pub(crate) checkpoint_calls: std::sync::atomic::AtomicUsize,
     pub(crate) checkpoint_requests: Mutex<Vec<(String, WorkspaceCheckpointRequest)>>,
     pub(crate) hold_checkpoint: std::sync::atomic::AtomicBool,
+    pub(crate) checkpoint_in_flight: std::sync::atomic::AtomicBool,
+    pub(crate) checkpoint_preempt_requested: std::sync::atomic::AtomicBool,
+    pub(crate) checkpoint_preemptions: std::sync::atomic::AtomicUsize,
     pub(crate) checkpoint_started: Semaphore,
     pub(crate) continue_checkpoint: Semaphore,
     /// Exact runtime/token pairs Layer 2 asked to reopen after a failed move.
@@ -334,6 +337,9 @@ impl Default for FakeAdapter {
             checkpoint_calls: std::sync::atomic::AtomicUsize::new(0),
             checkpoint_requests: Mutex::default(),
             hold_checkpoint: std::sync::atomic::AtomicBool::new(false),
+            checkpoint_in_flight: std::sync::atomic::AtomicBool::new(false),
+            checkpoint_preempt_requested: std::sync::atomic::AtomicBool::new(false),
+            checkpoint_preemptions: std::sync::atomic::AtomicUsize::new(0),
             checkpoint_started: Semaphore::new(0),
             continue_checkpoint: Semaphore::new(0),
             workspace_resumes: Mutex::default(),
@@ -1227,12 +1233,24 @@ impl KernelAdapter for FakeAdapter {
             .hold_checkpoint
             .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
+            self.checkpoint_in_flight
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             self.checkpoint_started.add_permits(1);
             self.continue_checkpoint
                 .acquire()
                 .await
                 .expect("the test adapter remains alive")
                 .forget();
+            self.checkpoint_in_flight
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            if self
+                .checkpoint_preempt_requested
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(AdapterError::Rejected(
+                    "workspace checkpoint was preempted".into(),
+                ));
+            }
         }
         if let Some(error) = self.checkpoint_error.lock().await.take() {
             return Err(error);
@@ -1268,6 +1286,26 @@ impl KernelAdapter for FakeAdapter {
             .await
             .push((handle.0.clone(), resume_token.to_string()));
         Ok(())
+    }
+
+    async fn preempt_workspace_checkpoint(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<bool, AdapterError> {
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        self.checkpoint_preemptions
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let in_flight = self
+            .checkpoint_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst);
+        if in_flight {
+            self.checkpoint_preempt_requested
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.continue_checkpoint.add_permits(1);
+        }
+        Ok(in_flight)
     }
 
     async fn switch_plane(

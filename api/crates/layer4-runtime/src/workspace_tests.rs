@@ -1443,3 +1443,78 @@ async fn exact_resume_cancels_a_registered_candidate_before_the_writer_fence() {
 
     std::fs::remove_dir_all(base).unwrap();
 }
+
+#[tokio::test]
+async fn foreground_preemption_cancels_a_registered_checkpoint_without_its_private_token() {
+    let base = root("foreground-preempts-candidate");
+    let workspace = base.join("workspace");
+    let checkpoints = base.join("checkpoints");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("work.txt"), b"stable\n").unwrap();
+
+    let source = "a".repeat(40);
+    let baseline = "b".repeat(64);
+    let token = "e".repeat(64);
+    let mut state = crate::AppState::for_test(&[]);
+    state.workspace_root = workspace;
+    state.checkpoint_root = checkpoints;
+    *state.workspace_authority.write().await = Some(crate::WorkspaceAuthority {
+        epoch: 14,
+        source_revision: source.clone(),
+        baseline_manifest_digest: baseline.clone(),
+    });
+
+    let startup_blocker = state.startup_gate.read().await;
+    let checkpoint_state = state.clone();
+    let checkpoint = tokio::spawn(async move {
+        crate::workspace_checkpoint(
+            State(checkpoint_state),
+            Query(crate::WorkspaceCheckpointParams {
+                epoch: 14,
+                version: 1,
+                source,
+                baseline,
+                include_git_metadata: false,
+                disposition: crate::RuntimeWorkspaceCheckpointDisposition::HoldForTeardown,
+                resume_token: Some(token),
+            }),
+        )
+        .await
+        .into_response()
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if state
+                .workspace_writer_hold
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .in_flight
+                .is_some()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the candidate registers its private hold token");
+
+    let receipt = crate::workspace_checkpoint_preempt(State(state.clone())).await;
+    assert!(receipt.0.cancellation_requested);
+    drop(startup_blocker);
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), checkpoint)
+        .await
+        .expect("the preempted checkpoint settles")
+        .expect("the checkpoint task joins");
+    assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    let holds = state
+        .workspace_writer_hold
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(holds.in_flight.is_none());
+    assert!(holds.held.is_none());
+
+    std::fs::remove_dir_all(base).unwrap();
+}

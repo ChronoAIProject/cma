@@ -19,6 +19,7 @@ const IDEMPOTENCY_KEY: &str = "idempotency-key";
 const MAX_KEY_BYTES: usize = 255;
 pub(super) const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const EXECUTION_LEASE: Duration = Duration::from_secs(2 * 60);
+pub(super) const ASYNC_EXECUTION_LEASE: Duration = Duration::from_secs(15 * 60);
 
 /// A JSON decoding result accompanied by the digest of the bytes that carried it.
 pub(super) struct RequestBody<T> {
@@ -140,40 +141,51 @@ pub enum IdempotencyProblem {
 
 impl IntoResponse for IdempotencyProblem {
     fn into_response(self) -> Response {
-        let (status, slug, code, detail) = match self {
+        let (status, slug, code, detail, retry_after) = match self {
             Self::Missing => (
                 StatusCode::BAD_REQUEST,
                 "missing-idempotency-key",
                 "missing_idempotency_key",
                 "This operation requires an Idempotency-Key header.",
+                None,
             ),
             Self::Invalid => (
                 StatusCode::BAD_REQUEST,
                 "invalid-idempotency-key",
                 "invalid_idempotency_key",
                 "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+                None,
             ),
             Self::Pending => (
                 StatusCode::CONFLICT,
                 "idempotency-in-flight",
                 "idempotency_in_flight",
                 "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+                Some(HeaderValue::from_static("1")),
             ),
             Self::RecoveryRequired => (
                 StatusCode::CONFLICT,
                 "idempotency-recovery-required",
                 "idempotency_recovery_required",
                 "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+                None,
             ),
             Self::Reused => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "idempotency-key-reused",
                 "idempotency_key_reused",
                 "This Idempotency-Key already names a different request.",
+                None,
             ),
         };
         let body = problem_document(status, slug, detail, code);
-        problem_response(status, body)
+        let mut response = problem_response(status, body);
+        if let Some(retry_after) = retry_after {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, retry_after);
+        }
+        response
     }
 }
 
@@ -196,6 +208,20 @@ impl Idempotency {
         operation: impl Into<String>,
         fingerprint: [u8; 32],
     ) -> Result<Self, Response> {
+        Self::begin_with_lease(key, store, caller, operation, fingerprint, EXECUTION_LEASE).await
+    }
+
+    /// Reserve an operation whose accepted work deliberately outlives one
+    /// request. The longer lease does not authorize a retry after expiry; it
+    /// only avoids falsely declaring recovery while the owned task is healthy.
+    pub(super) async fn begin_with_lease(
+        key: IdempotencyKey,
+        store: Arc<dyn OperationStore>,
+        caller: &Caller,
+        operation: impl Into<String>,
+        fingerprint: [u8; 32],
+        execution_lease: Duration,
+    ) -> Result<Self, Response> {
         let Some(key) = key.0 else {
             return Ok(Self::Unkeyed);
         };
@@ -205,7 +231,7 @@ impl Idempotency {
             operation,
             key,
             fingerprint,
-            now + EXECUTION_LEASE,
+            now + execution_lease,
             RETENTION,
         );
         let reservation = store

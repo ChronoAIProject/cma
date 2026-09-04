@@ -3075,7 +3075,7 @@ fn chat_readiness_requires_source_slots_and_coherent_checkpoint_together() {
     let ready = serde_json::json!({
         "workspaceSource": { "version": 2 },
         "conversationSlots": { "max": 16 },
-        "workspaceCheckpoint": { "version": 6 },
+        "workspaceCheckpoint": { "version": 7 },
     });
     let body = serde_json::to_vec(&ready).expect("readiness serializes");
     super::require_chat_runtime_capabilities(&body, 16)
@@ -3091,13 +3091,13 @@ fn chat_readiness_requires_source_slots_and_coherent_checkpoint_together() {
     );
 
     let mut legacy_checkpoint = ready.clone();
-    legacy_checkpoint["workspaceCheckpoint"]["version"] = serde_json::json!(5);
+    legacy_checkpoint["workspaceCheckpoint"]["version"] = serde_json::json!(6);
     let error = super::require_chat_runtime_capabilities(
         &serde_json::to_vec(&legacy_checkpoint).unwrap(),
         16,
     )
-    .expect_err("a held capture without complete-Git scope cannot serve chat recovery");
-    assert!(matches!(error, AdapterError::Unsupported(detail) if detail.contains("complete-Git")));
+    .expect_err("a checkpoint that foreground work cannot preempt cannot serve Chat");
+    assert!(matches!(error, AdapterError::Unsupported(detail) if detail.contains("preemptible")));
 
     for pointer in [
         "workspaceSource",
@@ -3211,7 +3211,7 @@ async fn every_missing_chat_capability_is_fenced_before_restore_or_prelude() {
         "status": "ready",
         "workspaceSource": { "version": 2 },
         "conversationSlots": { "max": 3 },
-        "workspaceCheckpoint": { "version": 6 },
+        "workspaceCheckpoint": { "version": 7 },
     });
     let mut missing_source = full.clone();
     missing_source

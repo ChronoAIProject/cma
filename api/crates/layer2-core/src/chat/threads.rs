@@ -112,7 +112,7 @@ impl SessionService {
             .ensure_chat_host(&caller.subject, spec.caller_credential.as_ref())
             .await?;
         let store = self.chat_hosts.clone().ok_or_else(host_store_unavailable)?;
-        let _owner_guard = self.chat_host_guards.lock(&caller.subject).await;
+        let _owner_guard = self.foreground_chat_host_guard(&caller.subject).await;
 
         let session_id = SessionId::generate();
         let (host, worktree_name) = loop {

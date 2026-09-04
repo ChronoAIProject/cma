@@ -1306,6 +1306,47 @@ async fn a_new_prompt_preempts_an_expensive_checkpoint_candidate() {
 }
 
 #[tokio::test]
+async fn a_new_chat_preempts_a_periodic_checkpoint_before_waiting_for_the_owner_guard() {
+    let fixture = fixture("checkpoint-new-chat-preemption", 1).await;
+    let before = host(&fixture).await;
+    let id = before.id.clone();
+    use_package(&fixture, 1, "new-chat-preemption").await;
+    fixture
+        .adapter
+        .hold_checkpoint
+        .store(true, Ordering::SeqCst);
+    let checkpoint_service = Arc::clone(&fixture.service);
+    let attempt = tokio::spawn(async move {
+        checkpoint_service
+            .checkpoint_chat_host(&id, CAPTURE_AT)
+            .await
+    });
+    wait_for_checkpoint_fence(&fixture.adapter).await;
+
+    let created = tokio::time::timeout(
+        Duration::from_secs(1),
+        fixture.service.create_session(&fixture.caller, chat_spec()),
+    )
+    .await
+    .expect("New Chat does not wait for periodic candidate construction")
+    .expect("the foreground thread is created");
+
+    assert_eq!(created.chat.as_ref().unwrap().worktree_name, "chat-2");
+    assert!(
+        fixture
+            .adapter
+            .checkpoint_preemptions
+            .load(Ordering::SeqCst)
+            >= 1
+    );
+    assert_eq!(
+        attempt.await.unwrap().unwrap(),
+        ChatCheckpointOutcome::Refused
+    );
+    assert_refused_without_state_loss(&before, &host(&fixture).await, CAPTURE_AT);
+}
+
+#[tokio::test]
 async fn admitted_input_cannot_deadlock_a_held_checkpoint() {
     let fixture = fixture("checkpoint-held-input-race", 1).await;
     let before = host(&fixture).await;

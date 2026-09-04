@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{FromRef, FromRequest, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json, Router,
 };
@@ -317,6 +317,11 @@ struct PricedQuoteView {
     display: String,
     per: &'static str,
     quoted_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct AsyncSessionCreationAccepted {
+    accepted: bool,
 }
 
 impl From<Option<Quote>> for PricingQuoteView {
@@ -1243,6 +1248,7 @@ async fn pricing_quote(
     request_body = CreateSessionRequest,
     responses(
         (status = 201, description = "Session created", body = SessionView),
+        (status = 202, description = "Chat creation accepted for asynchronous completion", body = AsyncSessionCreationAccepted),
         (status = 400, description = "Malformed operation key"),
         (status = 409, description = "Operation with this key is still running"),
         (status = 422, description = "Operation key names a different request"),
@@ -1253,6 +1259,7 @@ async fn create(
     State(state): State<SessionsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     key: idempotency::IdempotencyKey,
+    headers: HeaderMap,
     // Optional on purpose: a deployment with no delegation configured still
     // creates sessions, they simply cannot call out as the owner.
     credential: Option<axum::Extension<DelegatedCredential>>,
@@ -1274,76 +1281,128 @@ async fn create(
         Ok(body) => body.into_parts(),
         Err(error) => return RequestFailure::from(error).into_response(),
     };
-    let guard = match idempotency::Idempotency::begin(
-        key,
-        operations,
-        &caller,
-        "session-create",
-        fingerprint,
-    )
-    .await
-    {
+    let respond_async = prefers_respond_async(&headers)
+        && body
+            .as_ref()
+            .is_ok_and(|request| request.surface == Some(layer2_core::SessionSurface::Chat));
+    let key = if respond_async {
+        match key.required() {
+            Ok(key) => key,
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        key
+    };
+    let reservation = if respond_async {
+        idempotency::Idempotency::begin_with_lease(
+            key,
+            operations,
+            &caller,
+            "session-create",
+            fingerprint,
+            idempotency::ASYNC_EXECUTION_LEASE,
+        )
+        .await
+    } else {
+        idempotency::Idempotency::begin(key, operations, &caller, "session-create", fingerprint)
+            .await
+    };
+    let guard = match reservation {
         Ok(idempotency::Idempotency::Replay(response)) => return response,
         Ok(guard) => guard,
-        Err(response) => return response,
+        Err(mut response) => {
+            // Reconciliation uses the create route and therefore spends from
+            // its deliberately small admission budget. A one-second pending
+            // loop would rate-limit its own accepted cold start.
+            if respond_async
+                && response.status() == StatusCode::CONFLICT
+                && response.headers().contains_key(header::RETRY_AFTER)
+            {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("7"));
+            }
+            return response;
+        }
     };
     let body = match body {
         Ok(body) => body,
         Err(error) => return guard.finish(Err(RequestFailure::from(error))).await,
     };
-    let result: Result<Response, RequestFailure> = async {
-        let parts = body.into_parts()?;
-        let credential_value = credential
-            .as_ref()
-            .map(|axum::Extension(c)| c.value().to_owned());
-        let session = service
-            .create_session(
-                &caller,
-                SessionSpec {
-                    surface: parts.surface,
-                    environment_profile: parts
-                        .environment_profile
-                        .map(layer2_core::EnvironmentProfileId),
-                    geometry: parts.geometry,
-                    // Replaced by the core from the profile this session names.
-                    // Sent as a default rather than left out because the spec is
-                    // also what a rotation rebuilds a session from, where these
-                    // are the values the session was started with.
-                    options: Default::default(),
-                    // The caller's own token, for asking the platform as them. It is
-                    // never what the session runs on: the core mints that.
-                    caller_credential: credential
-                        .map(|axum::Extension(c)| c.into_caller_credential()),
-                    runtime_credential: None,
-                    // This interface takes no plane, so the profile or the
-                    // deployment decides — which is what it has always done.
-                    requested_mode: None,
-                    quoted_rate_card: parts.quoted_rate_card.map(layer2_core::RateCardId),
-                },
-            )
-            .await?;
-        /*
-         * Filled here, not left as the placeholder it starts as.
-         *
-         * `From<Session>` seeds `reach: Vec::new()` for `reached` to fill, and
-         * this handler used to return before that happened. An empty list is a
-         * real answer on this interface — it means the session reaches nothing —
-         * so a client showed a freshly created session as reaching no services
-         * until something refetched it. The two ends disagreed about what `[]`
-         * meant, and both were reading their own contract correctly.
-         */
-        let view = viewed_one(
-            &environments,
-            &users,
-            &caller,
-            credential_value.as_deref(),
-            session,
+    if respond_async {
+        tokio::spawn(async move {
+            let result =
+                create_session_once(service, environments, users, caller, credential, body).await;
+            // `finish` durably records the exact eventual response. The first
+            // request already received 202, so this copy has no observer.
+            drop(guard.finish(result).await);
+        });
+        return (
+            StatusCode::ACCEPTED,
+            [
+                ("preference-applied", "respond-async"),
+                ("retry-after", "1"),
+            ],
+            Json(AsyncSessionCreationAccepted { accepted: true }),
         )
-        .await;
-        Ok((StatusCode::CREATED, view).into_response())
+            .into_response();
     }
-    .await;
+
+    let result = create_session_once(service, environments, users, caller, credential, body).await;
     guard.finish(result).await
+}
+
+fn prefers_respond_async(headers: &HeaderMap) -> bool {
+    headers
+        .get_all("prefer")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|preference| preference.trim().split(';').next())
+        .any(|preference| preference.eq_ignore_ascii_case("respond-async"))
+}
+
+async fn create_session_once(
+    service: Arc<SessionService>,
+    environments: Arc<EnvironmentProfileService>,
+    users: Arc<UserDirectory>,
+    caller: Caller,
+    credential: Option<axum::Extension<DelegatedCredential>>,
+    body: CreateSessionRequest,
+) -> Result<Response, RequestFailure> {
+    let parts = body.into_parts()?;
+    let credential_value = credential
+        .as_ref()
+        .map(|axum::Extension(c)| c.value().to_owned());
+    let session = service
+        .create_session(
+            &caller,
+            SessionSpec {
+                surface: parts.surface,
+                environment_profile: parts
+                    .environment_profile
+                    .map(layer2_core::EnvironmentProfileId),
+                geometry: parts.geometry,
+                // Replaced by the core from the profile this session names.
+                // Sent as a default rather than left out because the spec is
+                // also what a rotation rebuilds a session from.
+                options: Default::default(),
+                caller_credential: credential.map(|axum::Extension(c)| c.into_caller_credential()),
+                runtime_credential: None,
+                requested_mode: None,
+                quoted_rate_card: parts.quoted_rate_card.map(layer2_core::RateCardId),
+            },
+        )
+        .await?;
+    let view = viewed_one(
+        &environments,
+        &users,
+        &caller,
+        credential_value.as_deref(),
+        session,
+    )
+    .await;
+    Ok((StatusCode::CREATED, view).into_response())
 }
 
 #[utoipa::path(
