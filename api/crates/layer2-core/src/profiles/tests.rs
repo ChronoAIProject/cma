@@ -94,11 +94,29 @@ fn bounds() -> ProfileCapacityBounds {
 }
 
 #[test]
-fn canonical_agent_digest_is_stable() {
-    let content = agent_profile("agp_one", "owner", ProfileVisibility::Private).draft;
+fn canonical_digests_are_stable_for_every_profile_kind() {
+    let agent = agent_profile("agp_one", "owner", ProfileVisibility::Private);
+    let workspace = workspace_profile(
+        "wkp_one",
+        "owner",
+        AgentProfileRef::new(agent.id.clone(), 1),
+    );
+    let sandbox = sandbox_profile(
+        "sbp_one",
+        "owner",
+        WorkspaceProfileRef::new(workspace.id.clone(), 1),
+    );
     assert_eq!(
-        content_digest(&content).unwrap(),
+        content_digest(&agent.draft).unwrap(),
         "5e2334daa625e6e5585e25b300ddc8cd822259ac89105909f71acc34eda2c569"
+    );
+    assert_eq!(
+        content_digest(&workspace.draft).unwrap(),
+        "1f42247bbb8b81420cf491379ab5414c6923a0c717f96b73a2aecae20da251a0"
+    );
+    assert_eq!(
+        content_digest(&sandbox.draft).unwrap(),
+        "4f97af16a5a8a6c65e2c7959a61b74f5b3647c6b6939bf2871fcb2a056aa3a0a"
     );
 }
 
@@ -127,6 +145,24 @@ fn validation_refuses_reserved_environment_names_and_secret_like_values() {
 }
 
 #[test]
+fn commands_accept_single_lines_or_complete_heredocs_only() {
+    validate_command("curl -fsSL https://example.invalid/install | sh").unwrap();
+    validate_command("cat <<'EOF' > tool.conf\nmode=proof\nEOF\nchmod 600 tool.conf").unwrap();
+    validate_command("cat <<-\"END\" > tool.conf\n\tmode=proof\n\tEND").unwrap();
+
+    for invalid in [
+        "echo first\necho second",
+        "cat <<EOF\nunterminated",
+        "cat <<''\nvalue",
+    ] {
+        assert_eq!(
+            validate_command(invalid).unwrap_err(),
+            ProfileError::new("invalid_command", "commands")
+        );
+    }
+}
+
+#[test]
 fn all_profile_content_refuses_unknown_fields() {
     let json =
         serde_json::to_value(agent_profile("agp_one", "owner", ProfileVisibility::Private).draft)
@@ -144,6 +180,46 @@ fn all_profile_content_refuses_unknown_fields() {
         serde_json::from_str::<SkillRef>(&serde_json::to_string(&skill).unwrap()).unwrap(),
         skill
     );
+}
+
+#[test]
+fn every_profile_aggregate_round_trips_and_refuses_unknown_fields() {
+    fn round_trip<T>(value: &T)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+    {
+        let json = serde_json::to_value(value).unwrap();
+        assert_eq!(serde_json::from_value::<T>(json.clone()).unwrap(), *value);
+        let mut object = json.as_object().unwrap().clone();
+        object.insert("unknown".into(), serde_json::json!(true));
+        assert!(serde_json::from_value::<T>(object.into()).is_err());
+    }
+
+    let agent = agent_profile("agp_one", "owner", ProfileVisibility::Private);
+    let agent_revision = agent.publish(1, NOW.into()).unwrap();
+    round_trip(&agent);
+    round_trip(&agent_revision);
+    round_trip(&AgentProfileSnapshot::from(&agent_revision));
+
+    let workspace = workspace_profile(
+        "wkp_one",
+        "owner",
+        AgentProfileRef::new(agent.id.clone(), 1),
+    );
+    let workspace_revision = workspace.publish(1, NOW.into()).unwrap();
+    round_trip(&workspace);
+    round_trip(&workspace_revision);
+    round_trip(&WorkspaceProfileSnapshot::from(&workspace_revision));
+
+    let sandbox = sandbox_profile(
+        "sbp_one",
+        "owner",
+        WorkspaceProfileRef::new(workspace.id, 1),
+    );
+    let sandbox_revision = sandbox.publish(1, NOW.into(), bounds(), &[]).unwrap();
+    round_trip(&sandbox);
+    round_trip(&sandbox_revision);
+    round_trip(&SandboxProfileSnapshot::from(&sandbox_revision));
 }
 
 #[tokio::test]
