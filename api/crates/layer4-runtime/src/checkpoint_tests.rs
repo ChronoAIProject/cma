@@ -1,0 +1,134 @@
+use std::io::Write as _;
+
+use sha2::{Digest as _, Sha256};
+
+use super::*;
+use crate::command::hex;
+
+fn config(name: &str) -> RuntimeConfig {
+    let home = std::env::temp_dir().join(format!("cma-checkpoint-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let mut config = RuntimeConfig::for_test(home);
+    config.checkpoint_root = config.home.with_extension(format!("{name}-objects"));
+    let _ = std::fs::remove_dir_all(&config.checkpoint_root);
+    std::fs::create_dir_all(&config.home).unwrap();
+    config
+}
+
+fn fixture(config: &RuntimeConfig) {
+    std::fs::create_dir_all(config.home.join("project/.worktrees/a/node_modules/pkg")).unwrap();
+    std::fs::create_dir_all(config.home.join(".cache")).unwrap();
+    std::fs::write(config.home.join("project/README.md"), "hello\n").unwrap();
+    std::fs::write(
+        config
+            .home
+            .join("project/.worktrees/a/node_modules/pkg/index.js"),
+        "module.exports = 1;\n",
+    )
+    .unwrap();
+    std::fs::write(config.home.join(".cache/disposable"), "skip").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("README.md", config.home.join("project/readme-link")).unwrap();
+}
+
+#[test]
+fn manifest_is_deterministic_and_exclusions_are_exact_paths() {
+    let config = config("manifest");
+    fixture(&config);
+    let manifest = crate::checkpoint_manifest::collect(&config.home, &[".cache".into()]).unwrap();
+    let paths = manifest
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        vec![
+            "project",
+            "project/.worktrees",
+            "project/.worktrees/a",
+            "project/.worktrees/a/node_modules",
+            "project/.worktrees/a/node_modules/pkg",
+            "project/.worktrees/a/node_modules/pkg/index.js",
+            "project/README.md",
+            #[cfg(unix)]
+            "project/readme-link",
+        ]
+    );
+    let json = serde_json::to_string(&manifest).unwrap();
+    assert!(json.starts_with("{\"version\":1,\"entries\":[{\"path\":\"project\""));
+    assert!(!json.contains("disposable"));
+    assert!(json.contains("node_modules"));
+    std::fs::remove_dir_all(config.home).unwrap();
+    let _ = std::fs::remove_dir_all(config.checkpoint_root);
+}
+
+#[tokio::test]
+async fn whole_home_round_trips_files_modes_links_and_worktree_dependencies() {
+    let config = config("round-trip");
+    fixture(&config);
+    let store = CheckpointStore::new(&config);
+    let receipt = store
+        .capture(&CheckpointRequest {
+            epoch: 7,
+            exclusions: vec![".cache".into()],
+        })
+        .await
+        .unwrap();
+    std::fs::write(config.home.join("project/README.md"), "changed\n").unwrap();
+    std::fs::write(config.home.join("new"), "remove me").unwrap();
+    store
+        .restore(&RestoreRequest {
+            object_reference: receipt.object_reference,
+            sha256: receipt.sha256,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(config.home.join("project/README.md")).unwrap(),
+        "hello\n"
+    );
+    assert!(config
+        .home
+        .join("project/.worktrees/a/node_modules/pkg/index.js")
+        .is_file());
+    assert!(!config.home.join("new").exists());
+    assert!(!config.home.join(".cache").exists());
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
+#[test]
+fn a_truncated_archive_is_refused_even_with_its_own_digest() {
+    let config = config("truncated");
+    fixture(&config);
+    let sealed =
+        crate::checkpoint_archive::seal(&config.home, &config.checkpoint_root, &[]).unwrap();
+    let mut bytes = std::fs::read(&sealed.path).unwrap();
+    bytes.truncate(bytes.len() - 3);
+    let truncated = config.checkpoint_root.join("truncated.cma");
+    let mut file = std::fs::File::create(&truncated).unwrap();
+    file.write_all(&bytes).unwrap();
+    let digest = hex(&Sha256::digest(&bytes));
+    let error = crate::checkpoint_archive::inspect(&truncated, &digest, &config.home).unwrap_err();
+    assert_eq!(error.code, "checkpoint_invalid");
+    assert!(config.home.join("project/README.md").is_file());
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn checkpoint_download_refuses_a_symlinked_object() {
+    let config = config("symlink-object");
+    let store = CheckpointStore::new(&config);
+    std::fs::create_dir_all(&config.checkpoint_root).unwrap();
+    let outside = config.home.join("outside");
+    std::fs::write(&outside, "must not be served").unwrap();
+    let reference = format!("home-{}.cma", "0".repeat(64));
+    std::os::unix::fs::symlink(&outside, config.checkpoint_root.join(&reference)).unwrap();
+    let error = store.download_path(&reference).unwrap_err();
+    assert_eq!(error.code, "checkpoint_object_invalid");
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}

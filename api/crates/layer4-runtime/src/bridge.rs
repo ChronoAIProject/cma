@@ -1,153 +1,95 @@
-//! The kernel's conversation bridge, and the buffer that outlives a reconnect.
-//!
-//! The bridge is a process this pod starts and talks to over its standard
-//! input and output. What crosses is newline-delimited frames, and this module
-//! reads exactly one thing about them: where a line ends. Not what a frame
-//! means, not what it is called, not whether it is well formed — the same
-//! deliberate naivety the conversation capture commits to, for the same
-//! reason. A kernel version that changes what a frame looks like must not be
-//! able to break the pod hosting it.
-//!
-//! Its stdout is protocol and its stderr is not. Diagnostics go to the
-//! supervisor's log, which is where a person looks; mixing them into the
-//! protocol stream would make a bridge's debugging output indistinguishable
-//! from what it is saying to the control plane.
-//!
-//! ## Why anything is buffered
-//!
-//! The terminal plane survives a control-plane restart because a screen can be
-//! re-derived: the pty keeps running, and whoever reattaches is repainted from
-//! the current state. A conversation has no such property. Everything the
-//! agent did while nobody was listening — messages, tool calls, a turn that
-//! completed — happened once and is gone if it was not carried. So frames
-//! produced with nobody attached are held until somebody is, which is what
-//! CLAUDE.md §5 requires of an upgrade that must not cost anyone their work.
-//!
-//! The buffer is bounded, because a pod cannot grow without limit while its
-//! control plane is away. When the bound is reached the oldest frames are
-//! dropped and a marker is left where they were — so the gap is recorded at
-//! the point it happened and its owner can be shown a boundary, rather than
-//! left to puzzle over a conversation that skips.
-
-#[cfg(unix)]
-use std::os::unix::process::CommandExt as _;
+use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use layer3_adapter::AgentLaunch;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
-/// How much unacknowledged conversation this pod holds while detached.
-///
-/// Generous against a long control-plane restart and bounded against one that
-/// never comes back. Frames are small; this is thousands of them.
 const BUFFER_BYTES: usize = 8 * 1024 * 1024;
-
-/// How many frames may queue toward a bridge before writing applies back
-/// pressure.
 const INPUT_BUFFER: usize = 256;
+pub(crate) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+const CLOSE_POLL: Duration = Duration::from_millis(10);
 
-/// What came out of the bridge, in the order it came out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Outbound {
-    /// One frame, exactly as the bridge wrote it, without its newline.
+pub(crate) enum Outbound {
     Frame(Vec<u8>),
-    /// Frames were dropped here rather than kept.
-    Gap {
-        /// How many were dropped, so the boundary can say how large it is.
-        frames: usize,
-    },
+    Gap { frames: usize },
 }
 
-/// Frames the bridge has produced that nobody has taken yet.
-///
-/// Separate from the relay so it survives the connection: the point of holding
-/// anything is that the control plane is not here.
 #[derive(Default)]
 struct Pending {
     held: std::collections::VecDeque<Outbound>,
     bytes: usize,
-    /// Frames dropped since the last marker, folded into one boundary rather
-    /// than one marker per frame.
     dropped: usize,
 }
 
 impl Pending {
-    /// Hold a frame, dropping the oldest if that is what it takes.
     fn push(&mut self, frame: Vec<u8>) {
-        self.bytes += frame.len();
+        self.bytes = self.bytes.saturating_add(frame.len());
         self.held.push_back(Outbound::Frame(frame));
         while self.bytes > BUFFER_BYTES {
             match self.held.pop_front() {
-                Some(Outbound::Frame(dropped)) => {
-                    self.bytes -= dropped.len();
-                    self.dropped += 1;
+                Some(Outbound::Frame(bytes)) => {
+                    self.bytes = self.bytes.saturating_sub(bytes.len());
+                    self.dropped = self.dropped.saturating_add(1);
                 }
-                // A marker at the front is folded into the count being built
-                // rather than stopping the trim, which it would otherwise do
-                // for good — the oldest thing held would be a boundary, and
-                // nothing behind it could ever be reached. The record is not
-                // lost: its count carries into the boundary written below.
-                Some(Outbound::Gap { frames }) => self.dropped += frames,
+                Some(Outbound::Gap { frames }) => {
+                    self.dropped = self.dropped.saturating_add(frames);
+                }
                 None => break,
             }
         }
+        self.record_gap();
+    }
+
+    fn gap(&mut self) {
+        self.dropped = self.dropped.saturating_add(1);
+        self.record_gap();
+    }
+
+    fn record_gap(&mut self) {
         if self.dropped > 0 {
-            // One marker in front of what survives, carrying the whole count.
-            // Where the gap falls is the useful part; how many separate times
-            // the bound was hit is not.
             self.held.push_front(Outbound::Gap {
                 frames: std::mem::take(&mut self.dropped),
             });
         }
     }
 
-    /// Take everything held, leaving the buffer empty.
     fn drain(&mut self) -> Vec<Outbound> {
         self.bytes = 0;
         self.held.drain(..).collect()
     }
 }
 
-/// A running conversation bridge.
-pub struct Bridge {
-    /// Frames to write to the bridge's standard input.
+pub(crate) struct Bridge {
     input: mpsc::Sender<Vec<u8>>,
-    /// Everything the bridge has said, live.
     output: tokio::sync::broadcast::Sender<Outbound>,
-    /// What it said while nobody was listening.
     pending: Arc<Mutex<Pending>>,
-    /// Set once the bridge process has ended, whichever way it went.
-    ///
-    /// A watch rather than a `Notify`: `notify_waiters` stores no permit, so a
-    /// bridge that died before anything awaited it notified nobody and the
-    /// exit was lost. A bridge that fails at startup is exactly that case, and
-    /// it is the one where somebody is waiting for an answer that is never
-    /// coming — so it is the case that must not be missed.
     ended: tokio::sync::watch::Sender<bool>,
-    /// Dedicated process session containing the bridge and supported
-    /// descendants. The root remains checkpoint authority after the primary
-    /// exits because a descendant may still hold the workspace open.
     writer_session_root: Option<i32>,
 }
 
 impl Bridge {
-    /// Start a bridge, running `command` with its standard streams piped.
-    ///
-    /// The command is whatever this pod was told to host. Parsed the way a
-    /// shell would split a simple command line, which is how the terminal
-    /// plane already reads the same setting.
-    pub fn start(command: &str) -> std::io::Result<Self> {
-        let mut parts = command.split_whitespace();
-        let program = parts
-            .next()
-            .ok_or_else(|| std::io::Error::other("no bridge command configured"))?;
-        let mut process = tokio::process::Command::new(program);
+    pub(crate) fn start(
+        launch: &AgentLaunch,
+        environment: &BTreeMap<String, String>,
+    ) -> std::io::Result<Self> {
+        let mut process = tokio::process::Command::new(&launch.program);
         process
-            .args(parts)
+            .args(&launch.args)
+            .current_dir(&launch.cwd)
+            .env_clear()
+            .envs(environment)
+            .env("HOME", &launch.home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
         #[cfg(unix)]
         unsafe {
             process.as_std_mut().pre_exec(|| {
@@ -159,12 +101,8 @@ impl Bridge {
         }
         let spawn = crate::writer_fence::ManagedSpawnPermit::begin();
         let mut child = process.spawn()?;
-        let managed_child = spawn.register(child.id());
-        #[cfg(unix)]
+        let managed = spawn.register(child.id());
         let writer_session_root = child.id().and_then(|pid| i32::try_from(pid).ok());
-        #[cfg(not(unix))]
-        let writer_session_root = None;
-
         let stdin = child
             .stdin
             .take()
@@ -177,18 +115,15 @@ impl Bridge {
             .stderr
             .take()
             .ok_or_else(|| std::io::Error::other("bridge stderr was not piped"))?;
-
         let (input, input_rx) = mpsc::channel(INPUT_BUFFER);
         let (output, _) = tokio::sync::broadcast::channel(INPUT_BUFFER);
         let pending = Arc::new(Mutex::new(Pending::default()));
         let (ended, _) = tokio::sync::watch::channel(false);
-
         spawn_writer(stdin, input_rx);
         spawn_reader(stdout, output.clone(), Arc::clone(&pending));
         spawn_diagnostics(stderr);
-        spawn_reaper(child, managed_child, ended.clone());
-
-        tracing::info!(%command, "conversation bridge started");
+        spawn_reaper(child, managed, ended.clone());
+        tracing::info!(agent = %launch.agent_id.as_str(), program = %launch.program, "agent bridge started");
         Ok(Self {
             input,
             output,
@@ -198,31 +133,20 @@ impl Bridge {
         })
     }
 
-    /// Send one frame to the bridge.
-    pub async fn send(&self, frame: Vec<u8>) -> bool {
-        self.input.send(frame).await.is_ok()
+    pub(crate) async fn send(&self, frame: Vec<u8>) -> bool {
+        frame.len() <= MAX_FRAME_BYTES && self.input.send(frame).await.is_ok()
     }
 
-    /// Subscribe to what the bridge says from now on.
-    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Outbound> {
+    pub(crate) fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Outbound> {
         self.output.subscribe()
     }
 
-    /// Take everything said while nobody was attached.
-    ///
-    /// Called immediately after subscribing and before any live frame is
-    /// forwarded, so what a reconnecting control plane sees is the whole
-    /// conversation in order.
-    pub async fn backlog(&self) -> Vec<Outbound> {
+    pub(crate) async fn backlog(&self) -> Vec<Outbound> {
         self.pending.lock().await.drain()
     }
 
-    /// Whether the bridge process has already ended.
-    ///
-    /// Asked before a cached bridge is handed out again: a process that died
-    /// is not one a second attachment can talk to, and returning it produced
-    /// a conversation that accepted prompts and answered none.
-    pub fn is_ended(&self) -> bool {
+    #[cfg(not(unix))]
+    pub(crate) fn is_ended(&self) -> bool {
         *self.ended.subscribe().borrow()
     }
 
@@ -230,99 +154,175 @@ impl Bridge {
         self.writer_session_root
     }
 
-    /// Resolves when the bridge process has ended, including when it already
-    /// had before this was called.
-    pub async fn ended(&self) {
-        let mut seen = self.ended.subscribe();
-        if *seen.borrow() {
+    pub(crate) async fn ended(&self) {
+        let mut ended = self.ended.subscribe();
+        if *ended.borrow() {
             return;
         }
-        // Only fails when the sender is gone, which is the bridge being
-        // dropped — itself an ending.
-        let _ = seen.changed().await;
+        let _ = ended.changed().await;
+    }
+
+    pub(crate) async fn terminate(&self) -> Result<(), String> {
+        terminate_process_session(self.writer_session_root, self).await
     }
 }
 
-/// Write frames to the bridge, one line each.
-fn spawn_writer(mut stdin: tokio::process::ChildStdin, mut frames: mpsc::Receiver<Vec<u8>>) {
+fn spawn_writer(mut stdin: tokio::process::ChildStdin, mut input: mpsc::Receiver<Vec<u8>>) {
     tokio::spawn(async move {
-        while let Some(frame) = frames.recv().await {
-            if stdin.write_all(&frame).await.is_err() || stdin.write_all(b"\n").await.is_err() {
-                break;
-            }
-            if stdin.flush().await.is_err() {
+        while let Some(frame) = input.recv().await {
+            if stdin.write_all(&frame).await.is_err()
+                || stdin.write_all(b"\n").await.is_err()
+                || stdin.flush().await.is_err()
+            {
                 break;
             }
         }
-        tracing::info!("conversation bridge input closed");
     });
 }
 
-/// Read frames from the bridge, holding them when nobody is listening.
 fn spawn_reader(
     stdout: tokio::process::ChildStdout,
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
 ) {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stdout).split(b'\n');
+        let mut stdout = BufReader::new(stdout);
+        let mut chunk = [0_u8; 8 * 1024];
+        let mut frame = Vec::new();
+        let mut discarding = false;
         loop {
-            match lines.next_segment().await {
-                Ok(Some(frame)) => {
-                    // A send with no subscriber is not a failure; it is the
-                    // case this whole module exists for, and the frame is
-                    // held instead.
-                    if output.send(Outbound::Frame(frame.clone())).is_err() {
-                        pending.lock().await.push(frame);
-                    }
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    tracing::warn!(error = %e, "conversation bridge output failed");
+            let read = match stdout.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) => {
+                    tracing::warn!(%error, "agent bridge output failed");
                     break;
+                }
+            };
+            for byte in &chunk[..read] {
+                if *byte == b'\n' {
+                    if discarding {
+                        pending.lock().await.gap();
+                    } else {
+                        publish(std::mem::take(&mut frame), &output, &pending).await;
+                    }
+                    frame.clear();
+                    discarding = false;
+                } else if !discarding {
+                    if frame.len() == MAX_FRAME_BYTES {
+                        frame.clear();
+                        discarding = true;
+                    } else {
+                        frame.push(*byte);
+                    }
                 }
             }
         }
-        tracing::info!("conversation bridge output ended");
-    });
-}
-
-/// Forward the bridge's diagnostics to this pod's log.
-///
-/// Its stdout is protocol and its stderr is not. A bridge writing a warning
-/// must not have that warning read as something it said to the control plane.
-fn spawn_diagnostics(stderr: tokio::process::ChildStderr) {
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            tracing::info!(bridge = %line, "conversation bridge said");
+        if discarding {
+            pending.lock().await.gap();
+        } else if !frame.is_empty() {
+            publish(frame, &output, &pending).await;
         }
     });
 }
 
-/// Notice when the bridge process ends, and say so.
-///
-/// A bridge that exits mid-conversation is the runtime being lost, and has to
-/// surface as that rather than as a stream that quietly stops.
+async fn publish(
+    frame: Vec<u8>,
+    output: &tokio::sync::broadcast::Sender<Outbound>,
+    pending: &Arc<Mutex<Pending>>,
+) {
+    if output.send(Outbound::Frame(frame.clone())).is_err() {
+        pending.lock().await.push(frame);
+    }
+}
+
+fn spawn_diagnostics(stderr: tokio::process::ChildStderr) {
+    tokio::spawn(async move {
+        let mut stderr = BufReader::new(stderr);
+        let mut buffer = [0_u8; 8 * 1024];
+        while let Ok(read) = stderr.read(&mut buffer).await {
+            if read == 0 {
+                break;
+            }
+            tracing::debug!(bytes = read, "agent bridge wrote diagnostics");
+        }
+    });
+}
+
 fn spawn_reaper(
     mut child: tokio::process::Child,
-    managed_child: crate::writer_fence::ManagedChild,
+    managed: crate::writer_fence::ManagedChild,
     ended: tokio::sync::watch::Sender<bool>,
 ) {
     tokio::spawn(async move {
         match child.wait().await {
-            Ok(status) => {
-                tracing::warn!(%status, "conversation bridge exited")
-            }
-            Err(e) => tracing::warn!(error = %e, "conversation bridge could not be waited on"),
+            Ok(status) => tracing::info!(%status, "agent bridge exited"),
+            Err(error) => tracing::warn!(%error, "agent bridge wait failed"),
         }
-        drop(managed_child);
-        // Held rather than announced: a bridge that exits before anything
-        // asks must still answer the question when it is finally asked.
+        drop(managed);
         let _ = ended.send(true);
     });
 }
 
+#[cfg(unix)]
+async fn terminate_process_session(session: Option<i32>, _bridge: &Bridge) -> Result<(), String> {
+    let Some(session) = session else {
+        return Err("agent process has no process-session identifier".into());
+    };
+    signal_session(session, libc::SIGTERM)?;
+    if wait_until_gone(session).await {
+        return Ok(());
+    }
+    signal_session(session, libc::SIGKILL)?;
+    if wait_until_gone(session).await {
+        Ok(())
+    } else {
+        Err("agent process session did not terminate".into())
+    }
+}
+
+#[cfg(unix)]
+async fn wait_until_gone(session: i32) -> bool {
+    tokio::time::timeout(CLOSE_TIMEOUT, async {
+        while session_exists(session) {
+            tokio::time::sleep(CLOSE_POLL).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[cfg(unix)]
+fn signal_session(session: i32, signal: i32) -> Result<(), String> {
+    if unsafe { libc::kill(-session, signal) } == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(format!("signal agent process session {session}: {error}"))
+    }
+}
+
+#[cfg(unix)]
+fn session_exists(session: i32) -> bool {
+    if unsafe { libc::kill(-session, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+async fn terminate_process_session(_session: Option<i32>, bridge: &Bridge) -> Result<(), String> {
+    if bridge.is_ended() {
+        return Ok(());
+    }
+    tokio::time::timeout(CLOSE_TIMEOUT, bridge.ended())
+        .await
+        .map_err(|_| "agent process did not terminate".to_string())
+}
+
 #[cfg(test)]
 #[path = "bridge_tests.rs"]
-mod bridge_tests;
+mod tests;
