@@ -802,7 +802,7 @@ async fn sandbox_and_marketplace_routes_cover_bounds_trust_fork_and_publication_
     .await;
     assert_eq!(status, StatusCode::CREATED);
     let workspace_id = workspace["id"].as_str().unwrap();
-    let (status, _) = mutate(
+    let (status, workspace_revision) = mutate(
         &router,
         Method::POST,
         &format!("/api/v1/workspace-profiles/{workspace_id}/revisions"),
@@ -833,12 +833,7 @@ async fn sandbox_and_marketplace_routes_cover_bounds_trust_fork_and_publication_
         &router,
         Method::POST,
         "/api/v1/sandbox-profiles",
-        Some(sandbox_body(
-            "Sandbox-A",
-            Some(workspace_id),
-            vec!["apt-get update"],
-            Some("configuration"),
-        )),
+        Some(sandbox_body("Sandbox-A", Some(workspace_id), vec![], None)),
         "owner",
         "sandbox-create-1",
     )
@@ -861,12 +856,7 @@ async fn sandbox_and_marketplace_routes_cover_bounds_trust_fork_and_publication_
         );
     }
 
-    let mut update = sandbox_body(
-        "Sandbox-A2",
-        Some(workspace_id),
-        vec!["apt-get update"],
-        Some("configuration"),
-    );
+    let mut update = sandbox_body("Sandbox-A2", Some(workspace_id), vec![], None);
     update["draft_version"] = json!(1);
     let (status, updated) = mutate(
         &router,
@@ -911,6 +901,36 @@ async fn sandbox_and_marketplace_routes_cover_bounds_trust_fork_and_publication_
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(revision["revision"], 1);
+
+    let mut workspace_update = workspace_body("sandbox-workspace", agent_id, 1);
+    workspace_update["draft_version"] = json!(1);
+    workspace_update["content"]["setup_commands"] = json!(["echo revision-two"]);
+    assert_eq!(
+        mutate(
+            &router,
+            Method::PUT,
+            &format!("/api/v1/workspace-profiles/{workspace_id}"),
+            Some(workspace_update),
+            "owner",
+            "sandbox-workspace-update",
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        mutate(
+            &router,
+            Method::POST,
+            &format!("/api/v1/workspace-profiles/{workspace_id}/revisions"),
+            Some(json!({ "draft_version": 2 })),
+            "owner",
+            "sandbox-workspace-publish-2",
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
 
     for path in [
         format!("/api/v1/sandbox-profiles/{id}/revisions"),
@@ -970,10 +990,25 @@ async fn sandbox_and_marketplace_routes_cover_bounds_trust_fork_and_publication_
         visitor_entry["trust"]["commands_digest"],
         visitor_entry["revision"]["digest"]
     );
+    assert_eq!(visitor_entry["resolved_profiles"][0]["kind"], "workspace");
+    assert_eq!(visitor_entry["resolved_profiles"][0]["id"], workspace_id);
+    assert_eq!(visitor_entry["resolved_profiles"][0]["revision"], 1);
+    assert_eq!(visitor_entry["resolved_revisions"][0]["kind"], "workspace");
     assert_eq!(
-        visitor_entry["revision"]["content"]["environment_variables"][0]["value"],
-        "configuration"
+        visitor_entry["resolved_revisions"][0]["name"],
+        "sandbox-workspace profile"
     );
+    assert_eq!(
+        visitor_entry["resolved_revisions"][0]["revision"],
+        workspace_revision
+    );
+    assert_eq!(
+        visitor_entry["resolved_revisions"][0]["revision"]["content"]["setup_commands"],
+        json!(["git status --short"])
+    );
+    assert!(visitor_entry["resolved_revisions"][0]
+        .get("owner")
+        .is_none());
 
     let fork_path = format!("/api/v1/marketplace/sandbox-profiles/{id}/fork");
     let (status, problem) = json_response(

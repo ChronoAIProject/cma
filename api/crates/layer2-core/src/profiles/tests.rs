@@ -607,7 +607,9 @@ fn trust_confirmation_is_bound_to_the_displayed_revision_digest() {
             "digest-one",
             Some("digest-two")
         ),
-        Err(MarketplaceError::TrustConfirmationMismatch)
+        Err(MarketplaceError::TrustConfirmationRequired {
+            commands_digest: "digest-one".into()
+        })
     );
     assert!(require_trust_confirmation(
         &publisher,

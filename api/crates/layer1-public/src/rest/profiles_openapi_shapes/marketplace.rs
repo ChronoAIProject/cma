@@ -60,6 +60,42 @@ impl From<layer2_core::profiles::ResolvedProfileName> for ResolvedProfileNameVie
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResolvedProfileRevisionView {
+    Agent {
+        name: String,
+        revision: AgentProfileRevisionView,
+    },
+    Workspace {
+        name: String,
+        revision: WorkspaceProfileRevisionView,
+    },
+    Sandbox {
+        name: String,
+        revision: SandboxProfileRevisionView,
+    },
+}
+
+impl From<layer2_core::profiles::ResolvedProfileRevision> for ResolvedProfileRevisionView {
+    fn from(value: layer2_core::profiles::ResolvedProfileRevision) -> Self {
+        match value.revision {
+            layer2_core::profiles::MarketplaceRevision::Agent(revision) => Self::Agent {
+                name: value.name,
+                revision: revision.into(),
+            },
+            layer2_core::profiles::MarketplaceRevision::Workspace(revision) => Self::Workspace {
+                name: value.name,
+                revision: revision.into(),
+            },
+            layer2_core::profiles::MarketplaceRevision::Sandbox(revision) => Self::Sandbox {
+                name: value.name,
+                revision: revision.into(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxProfileTrustView {
     pub requires_confirmation: bool,
     pub commands_digest: String,
@@ -72,16 +108,19 @@ pub enum MarketplaceEntryView {
         summary: MarketplaceSummaryView,
         revision: AgentProfileRevisionView,
         resolved_profiles: Vec<ResolvedProfileNameView>,
+        resolved_revisions: Vec<ResolvedProfileRevisionView>,
     },
     Workspace {
         summary: MarketplaceSummaryView,
         revision: WorkspaceProfileRevisionView,
         resolved_profiles: Vec<ResolvedProfileNameView>,
+        resolved_revisions: Vec<ResolvedProfileRevisionView>,
     },
     Sandbox {
         summary: MarketplaceSummaryView,
         revision: SandboxProfileRevisionView,
         resolved_profiles: Vec<ResolvedProfileNameView>,
+        resolved_revisions: Vec<ResolvedProfileRevisionView>,
         trust: SandboxProfileTrustView,
     },
 }

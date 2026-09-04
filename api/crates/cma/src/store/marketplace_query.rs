@@ -3,7 +3,7 @@ use base64::Engine;
 use futures_util::TryStreamExt;
 use layer2_core::profiles::{
     MarketplaceEntry, MarketplaceError, MarketplaceKind, MarketplaceLocator, MarketplacePage,
-    MarketplaceQuery, ResolvedProfileName,
+    MarketplaceQuery, ResolvedProfileRevision,
 };
 use mongodb::bson::{doc, Bson};
 use serde::{Deserialize, Serialize};
@@ -141,67 +141,72 @@ pub(super) async fn list_marketplace(
     Ok(MarketplacePage { items: rows, next })
 }
 
-async fn resolve_name(
+async fn resolve_revision(
     store: &MongoProfileStore,
     kind: MarketplaceKind,
     id: &str,
     revision: u32,
-) -> Result<Option<ResolvedProfileName>, MarketplaceError> {
+) -> Result<ResolvedProfileRevision, MarketplaceError> {
     let target = collections_for_kind(store, kind);
-    let Some(document) = target
+    let document = target
         .profiles
         .find_one(doc! { "_id": id })
         .await
         .map_err(driver_error)?
-    else {
-        return Ok(None);
-    };
+        .ok_or_else(|| corrupt_reference("profile is missing"))?;
     let profile = decode_profile(kind, &document)?;
-    Ok(Some(ResolvedProfileName {
-        kind,
-        id: id.to_string(),
-        revision,
+    let revision = find_revision(target, id, revision)
+        .await
+        .map_err(|error| match error {
+            MarketplaceError::NotFound => corrupt_reference("profile revision is missing"),
+            other => other,
+        })?;
+    Ok(ResolvedProfileRevision {
+        owner: profile.owner().clone(),
         name: profile.name().to_string(),
-    }))
+        revision: revision.into_marketplace(),
+    })
 }
 
-async fn resolved_names(
+async fn resolved_revisions(
     store: &MongoProfileStore,
     revision: &StoredRevision,
-) -> Result<Vec<ResolvedProfileName>, MarketplaceError> {
-    let mut names = Vec::new();
+) -> Result<Vec<ResolvedProfileRevision>, MarketplaceError> {
+    let mut revisions = Vec::new();
     match revision {
         StoredRevision::Agent(_) => {}
         StoredRevision::Workspace(revision) => {
             for reference in &revision.content.agent_profiles {
-                if let Some(name) = resolve_name(
-                    store,
-                    MarketplaceKind::Agent,
-                    reference.id.as_str(),
-                    reference.revision,
-                )
-                .await?
-                {
-                    names.push(name);
-                }
+                revisions.push(
+                    resolve_revision(
+                        store,
+                        MarketplaceKind::Agent,
+                        reference.id.as_str(),
+                        reference.revision,
+                    )
+                    .await?,
+                );
             }
         }
         StoredRevision::Sandbox(revision) => {
             for reference in &revision.content.workspace_profiles {
-                if let Some(name) = resolve_name(
-                    store,
-                    MarketplaceKind::Workspace,
-                    reference.id.as_str(),
-                    reference.revision,
-                )
-                .await?
-                {
-                    names.push(name);
-                }
+                revisions.push(
+                    resolve_revision(
+                        store,
+                        MarketplaceKind::Workspace,
+                        reference.id.as_str(),
+                        reference.revision,
+                    )
+                    .await?,
+                );
             }
         }
     }
-    Ok(names)
+    Ok(revisions)
+}
+
+fn corrupt_reference(detail: &str) -> MarketplaceError {
+    MarketplaceError::Corrupt(format!("referenced marketplace {detail}"))
 }
 
 pub(super) async fn read_marketplace(
@@ -221,12 +226,17 @@ pub(super) async fn read_marketplace(
             "latest revision and publication time disagree".into(),
         ));
     }
-    let resolved_profiles = resolved_names(store, &revision).await?;
+    let resolved_revisions = resolved_revisions(store, &revision).await?;
+    let resolved_profiles = resolved_revisions
+        .iter()
+        .map(ResolvedProfileRevision::resolved_name)
+        .collect();
     Ok(MarketplaceEntry {
         owner: profile.owner().clone(),
         summary,
         revision: revision.into_marketplace(),
         resolved_profiles,
+        resolved_revisions,
     })
 }
 

@@ -1,7 +1,8 @@
 use crate::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
 use crate::profiles::{
-    AgentProfileRevision, MarketplaceError, MarketplaceKind, MarketplaceSummary, ProfileError,
-    ProfileVisibility, SandboxProfileRevision, WorkspaceProfileRevision,
+    content_digest, AgentProfileRef, AgentProfileRevision, MarketplaceError, MarketplaceKind,
+    MarketplaceRevision, MarketplaceSummary, ProfileError, ProfileVisibility,
+    ResolvedProfileRevision, SandboxProfileRevision, WorkspaceProfileRef, WorkspaceProfileRevision,
 };
 
 use super::State;
@@ -78,6 +79,83 @@ pub(super) fn latest_sandbox_revision<'a>(
         .filter(|((stored, _), _)| stored == id)
         .max_by_key(|((_, number), _)| *number)
         .map(|(_, revision)| revision)
+}
+
+pub(super) fn resolve_agent_revision(
+    state: &State,
+    reference: &AgentProfileRef,
+) -> Result<ResolvedProfileRevision, MarketplaceError> {
+    let profile = state
+        .agents
+        .get(&reference.id)
+        .ok_or_else(|| corrupt_reference("agent profile"))?;
+    if profile.id != reference.id {
+        return Err(corrupt_reference("agent profile"));
+    }
+    let revision = state
+        .agent_revisions
+        .get(&(reference.id.clone(), reference.revision))
+        .ok_or_else(|| corrupt_reference("agent profile revision"))?;
+    validate_revision(
+        revision.profile_id == reference.id,
+        revision.revision == reference.revision,
+        &revision.content,
+        &revision.digest,
+        "agent profile revision",
+    )?;
+    Ok(ResolvedProfileRevision {
+        owner: profile.owner.clone(),
+        name: profile.name.clone(),
+        revision: MarketplaceRevision::Agent(revision.clone()),
+    })
+}
+
+pub(super) fn resolve_workspace_revision(
+    state: &State,
+    reference: &WorkspaceProfileRef,
+) -> Result<ResolvedProfileRevision, MarketplaceError> {
+    let profile = state
+        .workspaces
+        .get(&reference.id)
+        .ok_or_else(|| corrupt_reference("workspace profile"))?;
+    if profile.id != reference.id {
+        return Err(corrupt_reference("workspace profile"));
+    }
+    let revision = state
+        .workspace_revisions
+        .get(&(reference.id.clone(), reference.revision))
+        .ok_or_else(|| corrupt_reference("workspace profile revision"))?;
+    validate_revision(
+        revision.profile_id == reference.id,
+        revision.revision == reference.revision,
+        &revision.content,
+        &revision.digest,
+        "workspace profile revision",
+    )?;
+    Ok(ResolvedProfileRevision {
+        owner: profile.owner.clone(),
+        name: profile.name.clone(),
+        revision: MarketplaceRevision::Workspace(revision.clone()),
+    })
+}
+
+fn validate_revision<T: serde::Serialize>(
+    id_matches: bool,
+    number_matches: bool,
+    content: &T,
+    stored_digest: &str,
+    kind: &str,
+) -> Result<(), MarketplaceError> {
+    let actual_digest = content_digest(content)
+        .map_err(|error| MarketplaceError::Corrupt(format!("{kind}: {error}")))?;
+    if !id_matches || !number_matches || actual_digest != stored_digest {
+        return Err(corrupt_reference(kind));
+    }
+    Ok(())
+}
+
+fn corrupt_reference(kind: &str) -> MarketplaceError {
+    MarketplaceError::Corrupt(format!("referenced {kind} is unavailable or corrupt"))
 }
 
 pub(super) fn require_published_and_valid<T>(

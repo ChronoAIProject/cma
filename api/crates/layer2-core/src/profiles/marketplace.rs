@@ -98,12 +98,49 @@ pub enum MarketplaceRevision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProfileRevision {
+    /// Internal ownership evidence used to compute caller-relative trust.
+    pub owner: SubjectId,
+    pub name: String,
+    pub revision: MarketplaceRevision,
+}
+
+impl ResolvedProfileRevision {
+    pub fn resolved_name(&self) -> ResolvedProfileName {
+        let (kind, id, revision) = match &self.revision {
+            MarketplaceRevision::Agent(revision) => (
+                MarketplaceKind::Agent,
+                revision.profile_id.to_string(),
+                revision.revision,
+            ),
+            MarketplaceRevision::Workspace(revision) => (
+                MarketplaceKind::Workspace,
+                revision.profile_id.to_string(),
+                revision.revision,
+            ),
+            MarketplaceRevision::Sandbox(revision) => (
+                MarketplaceKind::Sandbox,
+                revision.profile_id.to_string(),
+                revision.revision,
+            ),
+        };
+        ResolvedProfileName {
+            kind,
+            id,
+            revision,
+            name: self.name.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketplaceEntry {
     /// Internal ownership evidence used to compute caller-relative trust.
     pub owner: SubjectId,
     pub summary: MarketplaceSummary,
     pub revision: MarketplaceRevision,
     pub resolved_profiles: Vec<ResolvedProfileName>,
+    pub resolved_revisions: Vec<ResolvedProfileRevision>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,8 +169,6 @@ pub enum MarketplaceError {
     Validation(String),
     #[error("trust confirmation required for digest {commands_digest}")]
     TrustConfirmationRequired { commands_digest: String },
-    #[error("trust confirmation does not match the displayed revision")]
-    TrustConfirmationMismatch,
     #[error("invalid marketplace page")]
     InvalidPage,
     #[error("marketplace store unavailable: {0}")]
@@ -168,10 +203,6 @@ pub trait MarketplaceStore: Send + Sync {
         revision: u32,
         now: String,
     ) -> Result<ForkedProfile, MarketplaceError>;
-    async fn increment_profile_use(
-        &self,
-        locator: &MarketplaceLocator,
-    ) -> Result<(), MarketplaceError>;
 }
 
 pub struct MarketplaceService<S> {
@@ -233,6 +264,8 @@ pub fn require_trust_confirmation(
         Some(digest) if digest == revision_digest => Ok(Some(TrustConfirmation {
             commands_digest: digest.to_string(),
         })),
-        Some(_) => Err(MarketplaceError::TrustConfirmationMismatch),
+        Some(_) => Err(MarketplaceError::TrustConfirmationRequired {
+            commands_digest: revision_digest.to_string(),
+        }),
     }
 }

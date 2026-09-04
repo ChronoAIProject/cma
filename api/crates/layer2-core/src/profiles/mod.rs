@@ -25,7 +25,8 @@ pub use digest::content_digest;
 pub use marketplace::{
     require_trust_confirmation, ForkedProfile, MarketplaceEntry, MarketplaceError, MarketplaceKind,
     MarketplaceLocator, MarketplacePage, MarketplaceQuery, MarketplaceRevision, MarketplaceService,
-    MarketplaceStore, MarketplaceSummary, ResolvedProfileName, TrustConfirmation,
+    MarketplaceStore, MarketplaceSummary, ResolvedProfileName, ResolvedProfileRevision,
+    TrustConfirmation,
 };
 pub use sandbox::{
     AgentProvider, EnvironmentVariable, ModelAccess, ProfileCapacityBounds, SandboxProfile,
@@ -33,7 +34,7 @@ pub use sandbox::{
 };
 pub use store::{
     AgentProfileStore, InMemoryProfileStore, ProfilePage, ProfilePageRequest, ProfileStoreError,
-    SandboxProfileStore, WorkspaceProfileStore,
+    ProfileUseRecorder, SandboxProfileStore, WorkspaceProfileStore,
 };
 pub use validation::{validate_command, validate_workspace_name};
 pub use workspace::{

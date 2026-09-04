@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use crate::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
 
 use super::{
-    AgentProfile, AgentProfileRevision, ProfileCapacityBounds, ProfileError, ProfileVisibility,
-    SandboxProfile, SandboxProfileRevision, WorkspaceProfile, WorkspaceProfileRevision,
+    AgentProfile, AgentProfileRevision, MarketplaceLocator, ProfileCapacityBounds, ProfileError,
+    ProfileVisibility, SandboxProfile, SandboxProfileRevision, WorkspaceProfile,
+    WorkspaceProfileRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -40,6 +41,14 @@ pub struct ProfilePage<T> {
 pub struct ProfilePageRequest {
     pub limit: u16,
     pub cursor: Option<String>,
+}
+
+#[async_trait]
+pub trait ProfileUseRecorder: Send + Sync {
+    async fn record_profile_use(
+        &self,
+        locator: &MarketplaceLocator,
+    ) -> Result<(), ProfileStoreError>;
 }
 
 impl Default for ProfilePageRequest {

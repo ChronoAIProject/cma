@@ -109,6 +109,7 @@ use super::profiles_openapi_shapes::*;
         MarketplaceSummaryView,
         MarketplacePageView,
         ResolvedProfileNameView,
+        ResolvedProfileRevisionView,
         SandboxProfileTrustView,
         MarketplaceEntryView,
         ForkedProfileView,
