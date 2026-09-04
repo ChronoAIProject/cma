@@ -257,6 +257,25 @@ async fn exact_creation_key_replay_returns_existing_and_changed_payload_conflict
 }
 
 #[tokio::test]
+async fn replay_fails_closed_when_a_creation_artifact_is_cross_linked() {
+    let store = ready_store(2).await;
+    let request = admission("corrupt-replay");
+    let creation = created(store.admit_agent(request.clone()).await.unwrap());
+    {
+        let mut state = store.lock();
+        state
+            .worktrees
+            .get_mut(&creation.worktree.id)
+            .unwrap()
+            .agent_id = Some(AgentId("agt_someone_else".into()));
+    }
+    assert!(matches!(
+        store.admit_agent(request).await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+}
+
+#[tokio::test]
 async fn late_failure_rolls_back_every_admission_artifact() {
     let store = ready_store(2).await;
     {

@@ -103,6 +103,7 @@ impl AgentAdmission {
     }
 
     pub fn matches(&self, creation: &AgentCreation) -> Result<bool, SandboxStoreError> {
+        creation.validate_replay()?;
         Ok(creation.agent.owner == self.owner
             && creation.agent.workspace_id == self.workspace_id
             && creation.agent.creation_key == self.creation_key
@@ -150,6 +151,33 @@ pub struct AgentCreation {
     pub agent: Agent,
     pub worktree: Worktree,
     pub initial_log: AgentLogEntry,
+}
+
+impl AgentCreation {
+    pub fn validate_replay(&self) -> Result<(), SandboxStoreError> {
+        let created_log_matches = matches!(
+            &self.initial_log.kind,
+            crate::sandbox::AgentLogKind::Created {
+                workspace_id,
+                worktree_id,
+            } if workspace_id == &self.agent.workspace_id
+                && worktree_id == &self.worktree.id
+        );
+        if self.agent.worktree_id != self.worktree.id
+            || self.agent.workspace_id != self.worktree.workspace_id
+            || self.agent.sandbox_id != self.worktree.sandbox_id
+            || self.agent.owner != self.worktree.owner
+            || self.worktree.agent_id.as_ref() != Some(&self.agent.id)
+            || self.initial_log.agent_id != self.agent.id
+            || self.initial_log.seq != 1
+            || !created_log_matches
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "agent creation replay artifacts disagree".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2,6 +2,7 @@
 
 mod admin;
 mod agent;
+mod agent_service;
 mod agent_work;
 mod credential;
 mod error;
@@ -27,6 +28,7 @@ pub use admin::{
     StoredSandboxRetirement, WorkspaceAdminSummary,
 };
 pub use agent::{Agent, AgentOrigin, AgentStopReason, ConversationState};
+pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
 pub use agent_work::{
     AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,
 };
@@ -57,6 +59,8 @@ pub use worktree::Worktree;
 
 #[cfg(test)]
 mod agent_model_tests;
+#[cfg(test)]
+mod agent_service_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]
