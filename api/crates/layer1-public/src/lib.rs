@@ -24,6 +24,8 @@ pub enum Operation {
     ReadProfileMarketplace,
     /// Copy a published profile revision into an owned private draft.
     ForkMarketplaceProfile,
+    /// Inspect and control deployment-wide resources.
+    Administer,
 }
 
 /// Protocol profiles declare only operations they currently implement.

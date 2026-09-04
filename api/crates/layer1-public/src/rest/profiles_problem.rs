@@ -18,7 +18,7 @@ pub(super) enum ProfileProblem {
 impl ProfileProblem {
     pub(super) fn from_store(error: ProfileStoreError, reference_path: &str) -> Self {
         match error {
-            ProfileStoreError::NotFound => Self::NotFound,
+            ProfileStoreError::NotFound | ProfileStoreError::Protected => Self::NotFound,
             ProfileStoreError::Duplicate | ProfileStoreError::Conflict => Self::VersionConflict,
             ProfileStoreError::ReferenceUnavailable => Self::ReferenceInvalid {
                 path: reference_path.to_owned(),

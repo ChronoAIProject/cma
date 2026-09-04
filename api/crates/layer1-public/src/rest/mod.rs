@@ -10,6 +10,7 @@ use axum::{
 };
 use layer2_core::StoreError;
 
+pub mod admin;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
@@ -148,6 +149,7 @@ impl InterfaceProfile for RestInterface {
             Operation::ManageProfiles,
             Operation::ReadProfileMarketplace,
             Operation::ForkMarketplaceProfile,
+            Operation::Administer,
         ]
     }
 }
