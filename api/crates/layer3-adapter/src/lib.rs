@@ -1,65 +1,52 @@
-//! Temporary Layer 3 adapter boundary for the CMA resource-model rebuild.
+//! Layer 3 sandbox lifecycle and ACP conversation boundary.
 //!
-//! Issue #806 rewrites the hosted runtime, provider adapter, sandbox, and
-//! supervisor contracts against the aggregates introduced by #802. Keeping a
-//! small provider-neutral boundary here lets every commit in the teardown
-//! series build without guessing those contracts early.
+//! Layer 2 maps its durable model into the neutral request types exported here.
+//! Hosted implementations transport those requests to a runtime supervisor;
+//! agent-specific filesystem and launch conventions remain in their own module.
 
-/// Static abilities advertised by a runtime implementation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct KernelCapabilities {
-    pub conversation: bool,
-    pub snapshot: bool,
-    pub steer: bool,
-    pub interrupt: bool,
-    pub usage: bool,
-    pub resources: bool,
-}
+mod adapter;
+mod agent;
+mod capabilities;
+mod checkpoint;
+mod conversation;
+mod conversation_channel;
+mod error;
+mod runtime;
+mod workspace;
 
-/// A provider-neutral adapter failure.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum AdapterError {
-    #[error("runtime unavailable: {0}")]
-    Unavailable(String),
-    #[error("runtime rejected request: {0}")]
-    Rejected(String),
-    #[error("no capacity for the requested runtime: {0}")]
-    AtCapacity(String),
-    #[error("runtime capability is not supported: {0}")]
-    Unsupported(String),
-}
+pub mod codex;
+pub mod hosted;
+pub mod provider;
+pub mod wire;
 
-impl AdapterError {
-    /// Whether the failure is evidence that the runtime no longer answers.
-    pub fn is_runtime_loss(&self) -> bool {
-        matches!(self, Self::Unavailable(_))
-    }
-
-    /// Add diagnostic context without changing the failure category.
-    pub fn context(self, context: &str) -> Self {
-        match self {
-            Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
-            Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
-            Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
-            Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),
-        }
-    }
-}
-
-/// Minimal registry-facing contract retained until #806 defines provisioning.
-pub trait KernelAdapter: Send + Sync {
-    fn kernel_name(&self) -> &'static str;
-    fn capabilities(&self) -> KernelCapabilities;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn diagnostic_context_preserves_runtime_loss_evidence() {
-        let error = AdapterError::Unavailable("closed".into()).context("attach");
-        assert!(error.is_runtime_loss());
-        assert_eq!(error.to_string(), "runtime unavailable: attach: closed");
-    }
-}
+pub use adapter::SandboxAdapter;
+pub use agent::{
+    AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSkill, AgentSlot,
+    ConversationSnapshot, HomeFile, HomeSymlink, PermissionLevel, ReasoningEffort, RuntimeOptions,
+    ThinkingEffort,
+};
+pub use capabilities::{
+    AdapterCapabilities, RuntimeContract, RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION,
+};
+pub use checkpoint::{
+    CheckpointReceipt, CheckpointRequest, ResourceReading, RestoreRequest, WriterState,
+};
+pub use conversation::{
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
+    ConversationId, ConversationInput, ConversationInputSender, ConversationSendOutcome,
+    ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
+    PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
+    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage,
+    UsageUpdate,
+};
+pub use error::{AdapterError, Result, RuntimeContractMismatch};
+pub use runtime::{
+    CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeCredential,
+    RuntimeHandle, RuntimeImage, SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+    DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
+};
+pub use workspace::{
+    SetupReceipt, WorkspaceReceipt, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource,
+    WorktreeReceipt, WorktreeRef, WorktreeRequest,
+};

@@ -1,0 +1,174 @@
+use super::*;
+use crate::{
+    AgentHomeRequest, AgentOpenRequest, AgentSkill, AgentSlot, PermissionLevel, ReasoningEffort,
+    RuntimeOptions,
+};
+
+fn options(
+    own_credential: bool,
+    permission: PermissionLevel,
+    effort: ReasoningEffort,
+) -> RuntimeOptions {
+    RuntimeOptions {
+        model: Some("gpt-golden".into()),
+        reasoning_effort: effort,
+        permission,
+        own_credential,
+        working_directory: "/home/cma/repo/.worktrees/wt-7".into(),
+        home_directory: "/home/cma/.cma/agents/agent-7/home".into(),
+        slot: AgentSlot("agent-7".into()),
+    }
+}
+
+fn golden(own_credential: bool, permission: PermissionLevel, effort: ReasoningEffort) -> String {
+    let (approval, sandbox) = match permission {
+        PermissionLevel::Guarded => ("on-request", "read-only"),
+        PermissionLevel::Autonomous => ("on-failure", "workspace-write"),
+    };
+    let prefix = format!(
+        "model = \"gpt-golden\"\n\
+         model_reasoning_effort = \"{}\"\n\
+         approval_policy = \"{approval}\"\n\
+         sandbox_mode = \"{sandbox}\"\n",
+        effort.as_str()
+    );
+    if own_credential {
+        prefix
+    } else {
+        format!(
+            "model = \"gpt-golden\"\n\
+             model_provider = \"cma\"\n\
+             model_reasoning_effort = \"{}\"\n\
+             approval_policy = \"{approval}\"\n\
+             sandbox_mode = \"{sandbox}\"\n\
+             \n\
+             [model_providers.cma]\n\
+             name = \"CMA Loopback\"\n\
+             base_url = \"http://127.0.0.1:9091\"\n\
+             env_key = \"CHRONO_UPSTREAM_PLACEHOLDER_KEY\"\n\
+             wire_api = \"responses\"\n",
+            effort.as_str()
+        )
+    }
+}
+
+#[test]
+fn config_goldens_cover_both_access_modes_permissions_and_all_efforts() {
+    let efforts = [
+        ReasoningEffort::Minimal,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::XHigh,
+    ];
+    for own_credential in [false, true] {
+        for permission in [PermissionLevel::Guarded, PermissionLevel::Autonomous] {
+            for effort in efforts {
+                let rendered = render_config(
+                    &options(own_credential, permission, effort),
+                    &CodexConfig::default(),
+                )
+                .expect("valid config renders");
+                assert_eq!(
+                    rendered,
+                    golden(own_credential, permission, effort),
+                    "access={own_credential} permission={permission:?} effort={effort:?}"
+                );
+                assert_eq!(rendered.contains("[model_providers.cma]"), !own_credential);
+            }
+        }
+    }
+}
+
+#[test]
+fn agent_home_contains_exact_profile_files_shared_auth_and_skills() {
+    let prompt = "Line one\n\nDo exactly this.\n";
+    let request = AgentHomeRequest {
+        options: options(false, PermissionLevel::Guarded, ReasoningEffort::High),
+        system_prompt: prompt.into(),
+        skills: vec![AgentSkill {
+            id: "proof-review".into(),
+            version: Some("v3".into()),
+            archive_sha256: "a".repeat(64),
+            source_url: "https://ornn.example/proof-review.tgz".into(),
+        }],
+    };
+    let plan = render_agent_home(&request, &CodexConfig::default()).expect("home renders");
+
+    assert_eq!(plan.agent_id, request.options.slot);
+    assert_eq!(
+        plan.files
+            .iter()
+            .find(|file| file.path == "AGENTS.md")
+            .expect("instructions file")
+            .bytes,
+        prompt.as_bytes()
+    );
+    assert!(plan.files.iter().any(|file| file.path == "config.toml"));
+    assert!(plan.symlinks.iter().any(|link| {
+        link.path == "auth.json" && link.target == "/home/cma/.cma/provider/codex/auth.json"
+    }));
+    for baseline in ["nyxid", "ornn-agent-manual-cli"] {
+        assert!(plan
+            .symlinks
+            .iter()
+            .any(|link| link.path == format!("skills/{baseline}")));
+    }
+    assert_eq!(plan.skills, request.skills);
+}
+
+#[test]
+fn bridge_launch_uses_per_agent_home_worktree_slot_and_acp_resume() {
+    let options = options(false, PermissionLevel::Autonomous, ReasoningEffort::XHigh);
+    let fresh = render_launch(&AgentOpenRequest {
+        options: options.clone(),
+        resume_conversation: None,
+    })
+    .expect("fresh launch");
+    let resumed = render_launch(&AgentOpenRequest {
+        options: options.clone(),
+        resume_conversation: Some("conversation-old".into()),
+    })
+    .expect("resume launch");
+
+    assert_eq!(fresh, resumed, "resume is an ACP load, not a CLI argument");
+    assert_eq!(fresh.program, "codex-acp");
+    assert!(fresh.args.is_empty());
+    assert_eq!(fresh.agent_id, options.slot);
+    assert_eq!(fresh.cwd, options.working_directory);
+    assert_eq!(fresh.home, options.home_directory);
+    assert_eq!(fresh.env.get("CODEX_HOME"), Some(&fresh.home));
+}
+
+#[test]
+fn bridge_launch_rejects_non_normalized_or_misplaced_worktree_paths() {
+    for cwd in [
+        "home/cma/repo/.worktrees/wt-7",
+        "/home/cma/repo/.worktrees/../outside",
+        "/home/cma/repo/./.worktrees/wt-7",
+        "/home/cma/repo/not-worktrees/wt-7",
+        "/home/cma/repo/.worktrees/wt-7/nested",
+    ] {
+        let mut options = options(false, PermissionLevel::Guarded, ReasoningEffort::High);
+        options.working_directory = cwd.into();
+
+        assert!(
+            render_launch(&AgentOpenRequest {
+                options,
+                resume_conversation: None,
+            })
+            .is_err(),
+            "accepted invalid worktree cwd {cwd}"
+        );
+    }
+}
+
+#[test]
+fn own_credentials_never_receive_the_managed_placeholder() {
+    let launch = render_launch(&AgentOpenRequest {
+        options: options(true, PermissionLevel::Guarded, ReasoningEffort::Minimal),
+        resume_conversation: None,
+    })
+    .expect("own-credential launch");
+    assert!(!launch.env.contains_key("CHRONO_UPSTREAM_PLACEHOLDER_KEY"));
+}
