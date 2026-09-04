@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use layer3_adapter::wire::{
     Acknowledgement, AgentOpenReceipt, CredentialReceipt, RequestFrame, ResponseFrame,
-    WireOperation,
 };
 use layer3_adapter::{AgentLaunch, AgentSlot, InstallRequest};
 use tokio::sync::{Mutex, RwLock};
@@ -44,6 +43,19 @@ pub(crate) struct Supervisor {
 }
 
 impl Supervisor {
+    pub(crate) async fn start(
+        config: RuntimeConfig,
+        writer_boundary: SupervisorBoundary,
+    ) -> Result<Arc<Self>> {
+        let supervisor = Self::new(config, writer_boundary)?;
+        crate::workspace_runtime::recover(
+            supervisor.config.clone(),
+            Arc::clone(&supervisor.operation_gate),
+        )
+        .await?;
+        Ok(supervisor)
+    }
+
     pub(crate) fn new(
         config: RuntimeConfig,
         writer_boundary: SupervisorBoundary,
@@ -87,6 +99,14 @@ impl Supervisor {
                 | RequestFrame::WorkspaceSetup(_)
                 | RequestFrame::RemoveWorkspace(_)
         ) {
+            if let Err(error) = crate::workspace_runtime::recover(
+                self.config.clone(),
+                Arc::clone(&self.operation_gate),
+            )
+            .await
+            {
+                return error.response(operation);
+            }
             if let Err(error) = self.require_credentialed().await {
                 return error.response(operation);
             }
@@ -106,20 +126,10 @@ impl Supervisor {
                 Err(error) => error.response(operation),
             };
         }
-        if !matches!(
-            request,
-            RequestFrame::Install(_) | RequestFrame::Credential(_) | RequestFrame::Resources
-        ) {
-            if let Err(error) = crate::workspace_runtime::recover(
-                self.config.clone(),
-                Arc::clone(&self.operation_gate),
-            )
-            .await
-            {
-                return error.response(operation);
-            }
-        }
         let _operation = self.operation_gate.lock().await;
+        if let Err(error) = crate::workspace_runtime::recover_locked(&self.config).await {
+            return error.response(operation);
+        }
         match self.execute(request).await {
             Ok(response) => response,
             Err(error) => error.response(operation),
@@ -464,26 +474,6 @@ fn validate_environment(name: &str, value: &str) -> Result<()> {
 
 fn reserved(name: &str) -> bool {
     name == "HOME" || name == "PATH" || name.starts_with("CHRONO_") || name.starts_with("NYXID_")
-}
-
-pub(crate) fn operation_for_tag(tag: &str) -> Option<WireOperation> {
-    Some(match tag {
-        "install" => WireOperation::Install,
-        "prepare_workspace" => WireOperation::PrepareWorkspace,
-        "workspace_setup" => WireOperation::WorkspaceSetup,
-        "remove_workspace" => WireOperation::RemoveWorkspace,
-        "add_worktree" => WireOperation::AddWorktree,
-        "remove_worktree" => WireOperation::RemoveWorktree,
-        "materialize_agent_home" => WireOperation::MaterializeAgentHome,
-        "open_agent" => WireOperation::OpenAgent,
-        "close_agent" => WireOperation::CloseAgent,
-        "capture_agent" => WireOperation::CaptureAgent,
-        "checkpoint" => WireOperation::Checkpoint,
-        "restore" => WireOperation::Restore,
-        "credential" => WireOperation::Credential,
-        "resources" => WireOperation::Resources,
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

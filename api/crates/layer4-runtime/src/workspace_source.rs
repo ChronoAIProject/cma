@@ -114,19 +114,19 @@ pub(crate) fn remove(home: &Path, workspace_id: &str, name: &str) -> Result<()> 
             ));
         }
         require_workspace_identity(&path, workspace_id)?;
-        std::fs::create_dir_all(&quarantine)
+        crate::fs_durability::create_dir_all(&quarantine)
             .map_err(|error| io_error("create workspace removal quarantine", error))?;
-        std::fs::rename(&path, &tombstone)
+        crate::fs_durability::rename(&path, &tombstone)
             .map_err(|error| io_error("quarantine workspace", error))?;
     }
     if !tombstone.exists() && staging.exists() {
-        std::fs::create_dir_all(&quarantine)
+        crate::fs_durability::create_dir_all(&quarantine)
             .map_err(|error| io_error("create workspace removal quarantine", error))?;
-        std::fs::rename(&staging, &tombstone)
+        crate::fs_durability::rename(&staging, &tombstone)
             .map_err(|error| io_error("quarantine staged workspace", error))?;
     }
     if tombstone.exists() {
-        std::fs::remove_dir_all(tombstone)
+        crate::fs_durability::remove_dir_all(&tombstone)
             .map_err(|error| io_error("remove quarantined workspace", error))?;
     }
     Ok(())
@@ -190,10 +190,12 @@ async fn clone_workspace(
 }
 
 async fn init_workspace(path: &Path, git: &GitRunner) -> Result<()> {
-    std::fs::create_dir(path).map_err(|error| io_error("create workspace", error))?;
+    crate::fs_durability::create_dir_all(path)
+        .map_err(|error| io_error("create workspace", error))?;
     git.checked(path, ["init", "-b", "main", "."], "init workspace")
         .await?;
-    std::fs::write(path.join(".gitkeep"), []).map_err(|error| io_error("write .gitkeep", error))?;
+    crate::fs_durability::write(&path.join(".gitkeep"), &[])
+        .map_err(|error| io_error("write .gitkeep", error))?;
     git.checked(path, ["add", "--", ".gitkeep"], "stage initial workspace")
         .await?;
     git.checked(
@@ -213,7 +215,7 @@ async fn init_workspace(path: &Path, git: &GitRunner) -> Result<()> {
     Ok(())
 }
 
-fn validate_clone_url(value: &str, allow_local: bool) -> Result<()> {
+pub(crate) fn validate_clone_url(value: &str, allow_local: bool) -> Result<()> {
     if allow_local && (Path::new(value).is_absolute() || value.starts_with("file://")) {
         return Ok(());
     }
@@ -254,7 +256,8 @@ fn github_authority(value: &str) -> Option<&str> {
 
 fn install_worktree_metadata(repository: &Path, workspace_id: &str) -> Result<()> {
     let info = repository.join(".git/info");
-    std::fs::create_dir_all(&info).map_err(|error| io_error("create Git info directory", error))?;
+    crate::fs_durability::create_dir_all(&info)
+        .map_err(|error| io_error("create Git info directory", error))?;
     let exclude = info.join("exclude");
     let mut contents = match std::fs::read_to_string(&exclude) {
         Ok(contents) => contents,
@@ -266,9 +269,10 @@ fn install_worktree_metadata(repository: &Path, workspace_id: &str) -> Result<()
             contents.push('\n');
         }
         contents.push_str(".worktrees/\n");
-        std::fs::write(exclude, contents).map_err(|error| io_error("write Git excludes", error))?;
+        crate::fs_durability::write(&exclude, contents.as_bytes())
+            .map_err(|error| io_error("write Git excludes", error))?;
     }
-    std::fs::write(info.join("cma-workspace-id"), workspace_id)
+    crate::fs_durability::write(&info.join("cma-workspace-id"), workspace_id.as_bytes())
         .map_err(|error| io_error("write workspace identity", error))?;
     Ok(())
 }
@@ -286,7 +290,8 @@ pub(crate) fn require_workspace_identity(repository: &Path, workspace_id: &str) 
 }
 
 fn ensure_home(home: &Path) -> Result<()> {
-    std::fs::create_dir_all(home).map_err(|error| io_error("create sandbox home", error))?;
+    crate::fs_durability::create_dir_all(home)
+        .map_err(|error| io_error("create sandbox home", error))?;
     if !path_is_directory(home) {
         return Err(RuntimeError::rejected(
             "home_invalid",

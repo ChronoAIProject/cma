@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use crate::bridge::{Bridge, Outbound, MAX_FRAME_BYTES};
 use crate::failure::RuntimeError;
 use crate::lanes::{self, Ready};
-use crate::supervisor::{operation_for_tag, Phase, Supervisor};
+use crate::supervisor::{Phase, Supervisor};
 
 const CONTROL_BODY_BYTES: usize = 384 * 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
@@ -87,7 +87,7 @@ async fn control(State(supervisor): State<Arc<Supervisor>>, body: Bytes) -> Resp
             false,
         );
     };
-    let Some(operation) = operation_for_tag(tag) else {
+    let Some(operation) = crate::wire_operation::for_tag(tag) else {
         return protocol_failure(
             StatusCode::BAD_REQUEST,
             "unknown_frame",

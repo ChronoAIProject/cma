@@ -10,6 +10,7 @@ mod command;
 mod config;
 mod conversation;
 mod failure;
+mod fs_durability;
 mod git;
 mod install;
 mod lanes;
@@ -23,6 +24,7 @@ mod supervisor;
 mod upstream;
 mod upstream_guard;
 mod upstream_target;
+mod wire_operation;
 mod workspace_journal;
 mod workspace_runtime;
 mod workspace_setup;
@@ -48,8 +50,9 @@ async fn run() -> Result<(), String> {
     let config = config::RuntimeConfig::from_environment()?;
     let bind = config.bind;
     let writer_boundary = writer_fence::SupervisorBoundary::install()?;
-    let supervisor =
-        supervisor::Supervisor::new(config, writer_boundary).map_err(|error| error.to_string())?;
+    let supervisor = supervisor::Supervisor::start(config, writer_boundary)
+        .await
+        .map_err(|error| error.to_string())?;
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;

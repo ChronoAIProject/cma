@@ -45,8 +45,13 @@ async fn dispatch_locked(config: &RuntimeConfig, request: RequestFrame) -> Resul
     }
 }
 
-async fn recover_locked(config: &RuntimeConfig) -> Result<()> {
-    for pending in workspace_journal::started(&config.state_root, &config.sandbox_id)? {
+pub(crate) async fn recover_locked(config: &RuntimeConfig) -> Result<()> {
+    for pending in workspace_journal::started(
+        &config.state_root,
+        &config.sandbox_id,
+        &config.home,
+        config.allow_local_git,
+    )? {
         match pending.kind.as_str() {
             "prepare" => recover_prepare(config, pending).await?,
             "setup" => {
@@ -82,6 +87,8 @@ async fn prepare(
     }
     match workspace_journal::begin::<WorkspaceReceipt, _>(
         &config.state_root,
+        &config.home,
+        config.allow_local_git,
         &config.sandbox_id,
         &request.workspace_id,
         "prepare",
@@ -103,18 +110,22 @@ async fn execute_prepare(
     ticket: Ticket,
 ) -> Result<ResponseFrame> {
     match recover_prepared_receipt(config, &request).await {
-        Ok(Some(receipt)) => finish(ticket, Ok(receipt), ResponseFrame::PrepareWorkspace),
+        Ok(Some(receipt)) => {
+            finish_recoverable(ticket, Ok(receipt), ResponseFrame::PrepareWorkspace)
+        }
         Ok(None) => {
             let result = prepare_in_staging(config, &request).await;
-            finish(ticket, result, ResponseFrame::PrepareWorkspace)
+            finish_recoverable(ticket, result, ResponseFrame::PrepareWorkspace)
         }
-        Err(error) => {
+        Err(error) if error.retryable => Err(error),
+        Err(error) if error.code == "workspace_prepare_indeterminate" => {
             let indeterminate = ticket.indeterminate(
                 "workspace preparation left ambiguous staged or published state; remove it before retrying",
             )?;
             tracing::warn!(detail = %error, "workspace preparation recovery failed closed");
             Err(indeterminate)
         }
+        Err(error) => finish_recoverable(ticket, Err(error), ResponseFrame::PrepareWorkspace),
     }
 }
 
@@ -123,7 +134,7 @@ async fn prepare_in_staging(
     request: &layer3_adapter::WorkspaceRequest,
 ) -> Result<WorkspaceReceipt> {
     let staging_root = staging_root(&config.home);
-    std::fs::create_dir_all(&staging_root).map_err(|error| {
+    crate::fs_durability::create_dir_all(&staging_root).map_err(|error| {
         RuntimeError::unavailable(
             "workspace_io_failed",
             format!("create workspace staging root: {error}"),
@@ -184,7 +195,7 @@ fn publish_staged(
             "workspace path already belongs to a live workspace",
         ));
     }
-    std::fs::rename(&staged, &published).map_err(|error| {
+    crate::fs_durability::rename(&staged, &published).map_err(|error| {
         RuntimeError::unavailable(
             "workspace_io_failed",
             format!("publish prepared workspace: {error}"),
@@ -209,6 +220,8 @@ async fn setup(
     }
     match workspace_journal::begin::<layer3_adapter::SetupReceipt, _>(
         &config.state_root,
+        &config.home,
+        config.allow_local_git,
         &config.sandbox_id,
         &request.workspace_id,
         "setup",
@@ -222,7 +235,7 @@ async fn setup(
             .indeterminate("workspace setup may have executed; explicit recovery is required")?),
         Begin::New(ticket) => {
             let result = crate::workspace_setup::run(config, &request).await;
-            finish(ticket, result, ResponseFrame::WorkspaceSetup)
+            finish_setup(ticket, result)
         }
     }
 }
@@ -236,6 +249,8 @@ fn remove(
     }
     match workspace_journal::begin::<WorkspaceRemoveReceipt, _>(
         &config.state_root,
+        &config.home,
+        config.allow_local_git,
         &config.sandbox_id,
         &request.workspace_id,
         "remove",
@@ -267,7 +282,9 @@ fn execute_remove(
             Ok(ResponseFrame::RemoveWorkspace(receipt))
         }
         Err(error) => {
-            ticket.fail(&error)?;
+            if !error.retryable {
+                ticket.fail(&error)?;
+            }
             Err(error)
         }
     }
@@ -281,13 +298,7 @@ async fn recover_prepare(config: &RuntimeConfig, pending: Pending) -> Result<()>
     execute_prepare(config, request, pending.ticket)
         .await
         .map(|_| ())
-        .or_else(|error| {
-            if error.code == "workspace_operation_indeterminate" {
-                Ok(())
-            } else {
-                Err(error)
-            }
-        })
+        .or_else(|error| (!error.retryable).then_some(()).ok_or(error))
 }
 
 fn recover_remove(config: &RuntimeConfig, pending: Pending) -> Result<()> {
@@ -295,7 +306,9 @@ fn recover_remove(config: &RuntimeConfig, pending: Pending) -> Result<()> {
     if !request.has_valid_sha256() {
         return Err(invalid_digest());
     }
-    execute_remove(config, request, pending.ticket).map(|_| ())
+    execute_remove(config, request, pending.ticket)
+        .map(|_| ())
+        .or_else(|error| (!error.retryable).then_some(()).ok_or(error))
 }
 
 fn staged_request(request: &layer3_adapter::WorkspaceRequest) -> layer3_adapter::WorkspaceRequest {
@@ -308,7 +321,7 @@ fn staging_root(home: &Path) -> PathBuf {
     home.join(".cma").join("preparing")
 }
 
-fn finish<T: serde::Serialize>(
+fn finish_recoverable<T: serde::Serialize>(
     ticket: Ticket,
     result: Result<T>,
     response: impl FnOnce(T) -> ResponseFrame,
@@ -318,6 +331,27 @@ fn finish<T: serde::Serialize>(
             ticket.complete(&receipt)?;
             Ok(response(receipt))
         }
+        Err(error) => {
+            if !error.retryable {
+                ticket.fail(&error)?;
+            }
+            Err(error)
+        }
+    }
+}
+
+fn finish_setup(
+    ticket: Ticket,
+    result: Result<layer3_adapter::SetupReceipt>,
+) -> Result<ResponseFrame> {
+    match result {
+        Ok(receipt) => {
+            ticket.complete(&receipt)?;
+            Ok(ResponseFrame::WorkspaceSetup(receipt))
+        }
+        Err(error) if error.retryable => Err(ticket.indeterminate(
+            "workspace setup may have executed before its outcome became durable",
+        )?),
         Err(error) => {
             ticket.fail(&error)?;
             Err(error)
