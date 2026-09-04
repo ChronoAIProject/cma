@@ -11,6 +11,10 @@ use ipnet::IpNet;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
+mod profiles;
+
+pub(crate) use profiles::DefaultProfileConfig;
+
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
@@ -130,6 +134,7 @@ pub struct Config {
     pub deployment_id: String,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
+    pub default_profiles: DefaultProfileConfig,
     pub auth_mode: AuthMode,
 }
 
@@ -148,6 +153,7 @@ impl std::fmt::Debug for Config {
             .field("deployment_id", &self.deployment_id)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
+            .field("default_profiles", &self.default_profiles)
             .field("auth_mode", &self.auth_mode)
             .finish()
     }
@@ -229,6 +235,7 @@ impl Config {
                 .checked_mul(86_400)
                 .expect("the validated day count fits in seconds"),
         );
+        let default_profiles = DefaultProfileConfig::from_lookup(&mut lookup)?;
 
         let (auth_mode, nyxid_public_url) =
             match value_or(&mut lookup, "CHRONO_AUTH_MODE", "provider")?.as_str() {
@@ -276,6 +283,7 @@ impl Config {
             deployment_id,
             auth_encryption_key,
             activity_retention,
+            default_profiles,
             auth_mode,
         })
     }

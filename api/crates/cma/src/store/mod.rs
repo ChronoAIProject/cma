@@ -7,6 +7,7 @@ mod agents;
 pub mod auth;
 #[allow(dead_code)] // Layer 2 has not exposed the checkpoint port yet.
 mod checkpoints;
+mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
@@ -47,6 +48,7 @@ mod worktrees;
 
 pub use activity::MongoActivityStore;
 pub use auth::MongoAuthStore;
+pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
 pub use mongo::MongoStores;

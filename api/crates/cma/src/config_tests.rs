@@ -21,6 +21,8 @@ fn retained_defaults_form_a_complete_configuration() {
     assert_eq!(config.bind, "0.0.0.0:8080".parse().unwrap());
     assert_eq!(config.mongodb_database, DEFAULT_DATABASE);
     assert_eq!(config.activity_retention, Duration::from_secs(90 * 86_400));
+    assert_eq!(config.default_profiles.cpu_millis, 1_000);
+    assert_eq!(config.default_profiles.memory_mib, 1_024);
     assert_eq!(config.auth_mode_name(), "trusted");
     assert!(!format!("{config:?}").contains("mongodb://localhost"));
 }

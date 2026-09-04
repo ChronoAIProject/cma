@@ -10,6 +10,9 @@ use layer2_core::profiles::{
     ForkedProfile, MarketplaceEntry, MarketplaceKind, MarketplaceLocator, MarketplaceQuery,
     MarketplaceRevision,
 };
+use layer2_core::{
+    DEFAULT_AGENT_PROFILE_ID, DEFAULT_SANDBOX_PROFILE_ID, DEFAULT_WORKSPACE_PROFILE_ID,
+};
 
 use super::idempotency::{IdempotencyKey, RequestBody};
 use super::profiles::{execute_command, generated_id_is_valid, ProfilesState};
@@ -49,23 +52,40 @@ fn kind(value: &str) -> Result<MarketplaceKind, ProfileProblem> {
 
 fn locator(kind: &str, id: String) -> Result<MarketplaceLocator, ProfileProblem> {
     let expected = self::kind(kind)?;
-    let (prefix, locator) = match expected {
+    let (prefix, reserved, locator) = match expected {
         MarketplaceKind::Agent => (
             "agp_",
+            DEFAULT_AGENT_PROFILE_ID,
             MarketplaceLocator::Agent(layer2_core::AgentProfileId(id.clone())),
         ),
         MarketplaceKind::Workspace => (
             "wkp_",
+            DEFAULT_WORKSPACE_PROFILE_ID,
             MarketplaceLocator::Workspace(layer2_core::WorkspaceProfileId(id.clone())),
         ),
         MarketplaceKind::Sandbox => (
             "sbp_",
+            DEFAULT_SANDBOX_PROFILE_ID,
             MarketplaceLocator::Sandbox(layer2_core::SandboxProfileId(id.clone())),
         ),
     };
-    generated_id_is_valid(&id, prefix)
+    (id == reserved || generated_id_is_valid(&id, prefix))
         .then_some(locator)
         .ok_or(ProfileProblem::NotFound)
+}
+
+#[cfg(test)]
+mod identifier_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_kind_matched_reserved_identifier_bypasses_generated_id_validation() {
+        assert!(locator("agent-profiles", DEFAULT_AGENT_PROFILE_ID.into()).is_ok());
+        assert!(locator("workspace-profiles", DEFAULT_WORKSPACE_PROFILE_ID.into()).is_ok());
+        assert!(locator("sandbox-profiles", DEFAULT_SANDBOX_PROFILE_ID.into()).is_ok());
+        assert!(locator("agent-profiles", DEFAULT_WORKSPACE_PROFILE_ID.into()).is_err());
+        assert!(locator("agent-profiles", "agp_other".into()).is_err());
+    }
 }
 
 fn entry_view(entry: MarketplaceEntry, consumer: &layer2_core::SubjectId) -> MarketplaceEntryView {
