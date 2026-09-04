@@ -206,7 +206,6 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
     let workspace_expected = [
         (WorkspaceStatus::Preparing, WorkspaceStatus::Ready),
         (WorkspaceStatus::Preparing, WorkspaceStatus::Failed),
-        (WorkspaceStatus::Preparing, WorkspaceStatus::Removing),
         (WorkspaceStatus::Ready, WorkspaceStatus::Removing),
         (WorkspaceStatus::Failed, WorkspaceStatus::Removing),
         (WorkspaceStatus::Removing, WorkspaceStatus::Removed),
@@ -231,7 +230,6 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
     let worktree_expected = [
         (WorktreeStatus::Creating, WorktreeStatus::Ready),
         (WorktreeStatus::Creating, WorktreeStatus::Failed),
-        (WorktreeStatus::Creating, WorktreeStatus::Removing),
         (WorktreeStatus::Ready, WorktreeStatus::Removing),
         (WorktreeStatus::Failed, WorktreeStatus::Removing),
         (WorktreeStatus::Removing, WorktreeStatus::Removed),

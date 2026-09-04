@@ -8,7 +8,18 @@ macro_rules! save_draft {
             .$collection
             .get(&$id)
             .ok_or(ProfileStoreError::NotFound)?;
-        if stored.draft_version != $expected || $profile.draft_version != $expected + 1 {
+        let next_version = $expected
+            .checked_add(1)
+            .ok_or(ProfileStoreError::Conflict)?;
+        if stored.draft_version != $expected
+            || $profile.draft_version != next_version
+            || stored.owner != $profile.owner
+            || stored.visibility != $profile.visibility
+            || stored.forked_from != $profile.forked_from
+            || stored.uses_count != $profile.uses_count
+            || stored.created_at != $profile.created_at
+            || stored.retired_at != $profile.retired_at
+        {
             return Err(ProfileStoreError::Conflict);
         }
         $profile.validate()?;
@@ -117,7 +128,11 @@ impl AgentProfileStore for InMemoryProfileStore {
             .agents
             .values()
             .filter(|profile| owner.is_none_or(|owner| &profile.owner == owner))
-            .filter(|profile| !public_only || profile.visibility == ProfileVisibility::Public)
+            .filter(|profile| {
+                !public_only
+                    || (profile.visibility == ProfileVisibility::Public
+                        && profile.retired_at.is_none())
+            })
             .map(|profile| (profile.id.to_string(), profile.clone()))
             .collect();
         profile_page(values, page)
@@ -240,7 +255,11 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
             .workspaces
             .values()
             .filter(|profile| owner.is_none_or(|owner| &profile.owner == owner))
-            .filter(|profile| !public_only || profile.visibility == ProfileVisibility::Public)
+            .filter(|profile| {
+                !public_only
+                    || (profile.visibility == ProfileVisibility::Public
+                        && profile.retired_at.is_none())
+            })
             .map(|profile| (profile.id.to_string(), profile.clone()))
             .collect();
         profile_page(values, page)
@@ -285,7 +304,16 @@ impl SandboxProfileStore for InMemoryProfileStore {
             .sandboxes
             .get(&id)
             .ok_or(ProfileStoreError::NotFound)?;
-        if stored.draft_version != expected || profile.draft_version != expected + 1 {
+        let next_version = expected.checked_add(1).ok_or(ProfileStoreError::Conflict)?;
+        if stored.draft_version != expected
+            || profile.draft_version != next_version
+            || stored.owner != profile.owner
+            || stored.visibility != profile.visibility
+            || stored.forked_from != profile.forked_from
+            || stored.uses_count != profile.uses_count
+            || stored.created_at != profile.created_at
+            || stored.retired_at != profile.retired_at
+        {
             return Err(ProfileStoreError::Conflict);
         }
         state.sandboxes.insert(id, profile);
@@ -375,7 +403,11 @@ impl SandboxProfileStore for InMemoryProfileStore {
             .sandboxes
             .values()
             .filter(|profile| owner.is_none_or(|owner| &profile.owner == owner))
-            .filter(|profile| !public_only || profile.visibility == ProfileVisibility::Public)
+            .filter(|profile| {
+                !public_only
+                    || (profile.visibility == ProfileVisibility::Public
+                        && profile.retired_at.is_none())
+            })
             .map(|profile| (profile.id.to_string(), profile.clone()))
             .collect();
         profile_page(values, page)
