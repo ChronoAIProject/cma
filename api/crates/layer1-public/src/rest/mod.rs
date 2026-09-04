@@ -21,16 +21,25 @@ pub mod openapi;
 mod openapi_shapes;
 pub mod pagination;
 mod problems;
+mod profiles;
+mod profiles_agent;
+mod profiles_marketplace;
+mod profiles_openapi_shapes;
+mod profiles_problem;
+mod profiles_references;
+mod profiles_sandbox;
+#[cfg(test)]
+mod profiles_tests;
+mod profiles_workspace;
 #[cfg(test)]
 mod trigger_assets_test_support;
 
-// Kept compiled and tested for the resource routes introduced after #802.
-#[allow(dead_code)]
 mod idempotency;
 
 pub use embed::{EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
+pub use profiles::{profiles_router, ProfileRoutePolicy, ProfilesState};
 
 use crate::{InterfaceProfile, Operation};
 use openapi_shapes::ConformanceDocument;
@@ -134,7 +143,12 @@ impl InterfaceProfile for RestInterface {
     }
 
     fn operations(&self) -> &'static [Operation] {
-        &[Operation::Discover]
+        &[
+            Operation::Discover,
+            Operation::ManageProfiles,
+            Operation::ReadProfileMarketplace,
+            Operation::ForkMarketplaceProfile,
+        ]
     }
 }
 

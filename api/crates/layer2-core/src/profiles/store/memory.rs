@@ -56,6 +56,13 @@ impl AgentProfileStore for InMemoryProfileStore {
         Ok(())
     }
 
+    async fn agent_profile(
+        &self,
+        id: &AgentProfileId,
+    ) -> Result<Option<AgentProfile>, ProfileStoreError> {
+        Ok(self.lock().agents.get(id).cloned())
+    }
+
     async fn save_agent_draft(
         &self,
         expected: u64,
@@ -165,6 +172,13 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
         }
         state.workspaces.insert(profile.id.clone(), profile);
         Ok(())
+    }
+
+    async fn workspace_profile(
+        &self,
+        id: &WorkspaceProfileId,
+    ) -> Result<Option<WorkspaceProfile>, ProfileStoreError> {
+        Ok(self.lock().workspaces.get(id).cloned())
     }
 
     async fn save_workspace_draft(
@@ -291,6 +305,13 @@ impl SandboxProfileStore for InMemoryProfileStore {
         }
         state.sandboxes.insert(profile.id.clone(), profile);
         Ok(())
+    }
+
+    async fn sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+    ) -> Result<Option<SandboxProfile>, ProfileStoreError> {
+        Ok(self.lock().sandboxes.get(id).cloned())
     }
 
     async fn save_sandbox_draft(

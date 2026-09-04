@@ -275,6 +275,22 @@ pub(super) async fn required_command<T: DeserializeOwned>(
     Ok((guard, body, confirmation_hash))
 }
 
+/// Begin a required command whose route deliberately has no request body.
+pub(super) async fn required_empty_command(
+    key: IdempotencyKey,
+    store: Arc<dyn OperationStore>,
+    caller: &Caller,
+    operation: String,
+) -> Result<Idempotency, Response> {
+    let key = key.required().map_err(IntoResponse::into_response)?;
+    let fingerprint = Sha256::digest([]).into();
+    match Idempotency::begin(key, store, caller, operation, fingerprint).await {
+        Ok(Idempotency::Replay(response)) => Err(response),
+        Ok(guard) => Ok(guard),
+        Err(response) => Err(response),
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct RecordedResponse {
     status: u16,

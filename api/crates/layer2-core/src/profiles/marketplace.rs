@@ -99,6 +99,8 @@ pub enum MarketplaceRevision {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketplaceEntry {
+    /// Internal ownership evidence used to compute caller-relative trust.
+    pub owner: SubjectId,
     pub summary: MarketplaceSummary,
     pub revision: MarketplaceRevision,
     pub resolved_profiles: Vec<ResolvedProfileName>,
