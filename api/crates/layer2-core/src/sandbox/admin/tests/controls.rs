@@ -186,3 +186,26 @@ async fn controls_require_only_control_any_sandbox_before_target_lookup() {
     );
     assert!(fixture.activity.records.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn deployment_default_profiles_cannot_be_retired_by_an_operator() {
+    let fixture = fixture();
+    let operator = caller([Capability::ControlAnySandbox]);
+    for locator in [
+        ProfileLocator::Agent(crate::AgentProfileId(
+            crate::DEFAULT_AGENT_PROFILE_ID.into(),
+        )),
+        ProfileLocator::Workspace(crate::WorkspaceProfileId(
+            crate::DEFAULT_WORKSPACE_PROFILE_ID.into(),
+        )),
+        ProfileLocator::Sandbox(crate::SandboxProfileId(
+            crate::DEFAULT_SANDBOX_PROFILE_ID.into(),
+        )),
+    ] {
+        assert_eq!(
+            fixture.service.retire_profile(&operator, &locator).await,
+            Err(OperatorError::ProtectedProfile)
+        );
+    }
+    assert!(fixture.activity.records.lock().unwrap().is_empty());
+}

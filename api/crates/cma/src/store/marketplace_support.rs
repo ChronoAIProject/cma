@@ -313,6 +313,7 @@ pub(super) fn store_error(error: ProfileStoreError) -> MarketplaceError {
         ProfileStoreError::ReferenceUnavailable => {
             MarketplaceError::Corrupt("published profile reference is unavailable".into())
         }
+        ProfileStoreError::Protected => MarketplaceError::Forbidden,
     }
 }
 
