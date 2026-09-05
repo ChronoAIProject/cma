@@ -13,6 +13,7 @@ use super::sandbox_mongo::{
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
+#[cfg_attr(test, derive(Clone))]
 pub(super) struct PublicationReceipt {
     pub(super) agent: Agent,
     pub(super) worktree: Option<Worktree>,
