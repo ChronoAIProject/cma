@@ -17,11 +17,17 @@ const NYXID_PROXY_BIND: &str = "127.0.0.2:9092";
 pub(super) const SANDBOX_METADATA: &str = "cma/sandbox";
 pub(super) const SPEC_FINGERPRINT_METADATA: &str = "cma/spec-sha256";
 pub(super) const CONTROL_PLANE_METADATA: &str = "cma/control-plane";
+pub(super) const RUNTIME_GENERATION_METADATA: &str = "cma/runtime-generation";
+pub(super) const RUNTIME_IMAGE_METADATA: &str = "cma/image-sha256";
+pub(super) const RUNTIME_CONTRACT_METADATA: &str = "cma/runtime-contract";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct ProviderIdentity {
     pub sandbox_id: String,
+    pub generation: u64,
+    pub image_sha256: String,
     pub spec_fingerprint: String,
+    pub runtime_contract: String,
 }
 
 /// Deployment-owned hosted runtime configuration.
@@ -65,8 +71,22 @@ impl HostedDeployment {
 
     /// Render one provider request without placing any real credential in it.
     pub fn render(&self, spec: &SandboxSpec) -> crate::Result<ProviderSandboxRequest> {
+        self.render_runtime(spec, 1)
+    }
+
+    /// Render one exact non-zero provider runtime generation.
+    pub fn render_runtime(
+        &self,
+        spec: &SandboxSpec,
+        generation: u64,
+    ) -> crate::Result<ProviderSandboxRequest> {
         self.contract()?;
         validate_spec(spec)?;
+        if generation == 0 {
+            return Err(AdapterError::Rejected(
+                "runtime generation must be non-zero".into(),
+            ));
+        }
 
         let mut env = BTreeMap::from([
             ("HOME".to_string(), spec.home_directory.clone()),
@@ -80,6 +100,10 @@ impl HostedDeployment {
                 spec.home_directory.clone(),
             ),
             ("CHRONO_SANDBOX_ID".to_string(), spec.sandbox_id.clone()),
+            (
+                "CHRONO_RUNTIME_GENERATION".to_string(),
+                generation.to_string(),
+            ),
             ("CHRONO_SANDBOX_REACHES".to_string(), spec.reaches.join(",")),
             (
                 "CHRONO_UPSTREAM_BASE_URL".to_string(),
@@ -129,7 +153,15 @@ impl HostedDeployment {
         let mut metadata = BTreeMap::from([
             (SANDBOX_METADATA.to_string(), spec.sandbox_id.clone()),
             (
-                "cma/runtime-contract".to_string(),
+                RUNTIME_GENERATION_METADATA.to_string(),
+                generation.to_string(),
+            ),
+            (
+                RUNTIME_IMAGE_METADATA.to_string(),
+                image_sha256(&self.image.uri),
+            ),
+            (
+                RUNTIME_CONTRACT_METADATA.to_string(),
                 RUNTIME_CONTRACT_VERSION.to_string(),
             ),
         ]);
@@ -204,22 +236,99 @@ pub(super) fn provider_request_fingerprint(
 pub(super) fn provider_request_identity(
     request: &ProviderSandboxRequest,
 ) -> crate::Result<ProviderIdentity> {
-    let sandbox_id = request
-        .metadata
-        .get(SANDBOX_METADATA)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AdapterError::Rejected("provider request has no sandbox identity".into()))?;
-    let spec_fingerprint = request
-        .metadata
-        .get(SPEC_FINGERPRINT_METADATA)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            AdapterError::Rejected("provider request has no specification identity".into())
-        })?;
+    let identity = provider_metadata_identity(&request.metadata)?;
+    if identity.image_sha256 != image_sha256(&request.image.uri) {
+        return Err(AdapterError::Rejected(
+            "provider request has an invalid image identity".into(),
+        ));
+    }
+    Ok(identity)
+}
+
+pub(super) fn provider_metadata_identity(
+    metadata: &BTreeMap<String, String>,
+) -> crate::Result<ProviderIdentity> {
+    let sandbox_id = required_metadata(metadata, SANDBOX_METADATA, "sandbox identity")?;
+    if sandbox_id.trim() != sandbox_id
+        || sandbox_id.len() > 256
+        || sandbox_id.chars().any(char::is_control)
+    {
+        return Err(AdapterError::Rejected(
+            "provider sandbox has an invalid sandbox identity".into(),
+        ));
+    }
+    let spec_fingerprint = required_metadata(
+        metadata,
+        SPEC_FINGERPRINT_METADATA,
+        "specification identity",
+    )?;
+    if spec_fingerprint.len() != 43
+        || !spec_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(AdapterError::Rejected(
+            "provider sandbox has an invalid specification identity".into(),
+        ));
+    }
+    let image = required_metadata(metadata, RUNTIME_IMAGE_METADATA, "image identity")?;
+    if !sha256_fingerprint(image) {
+        return Err(AdapterError::Rejected(
+            "provider sandbox has an invalid image identity".into(),
+        ));
+    }
+    let runtime_contract =
+        required_metadata(metadata, RUNTIME_CONTRACT_METADATA, "runtime contract")?;
+    if runtime_contract.trim() != runtime_contract
+        || runtime_contract.len() > 64
+        || runtime_contract.chars().any(char::is_control)
+    {
+        return Err(AdapterError::Rejected(
+            "provider sandbox has an invalid runtime contract".into(),
+        ));
+    }
     Ok(ProviderIdentity {
         sandbox_id: sandbox_id.clone(),
+        generation: required_generation(metadata)?,
+        image_sha256: image.clone(),
         spec_fingerprint: spec_fingerprint.clone(),
+        runtime_contract: runtime_contract.clone(),
     })
+}
+
+fn required_generation(metadata: &BTreeMap<String, String>) -> crate::Result<u64> {
+    let value = required_metadata(metadata, RUNTIME_GENERATION_METADATA, "runtime generation")?;
+    let generation = value.parse::<u64>().map_err(|_| {
+        AdapterError::Rejected("provider runtime generation is not canonical".into())
+    })?;
+    if generation == 0 || generation.to_string() != *value {
+        return Err(AdapterError::Rejected(
+            "provider runtime generation is not canonical".into(),
+        ));
+    }
+    Ok(generation)
+}
+
+fn required_metadata<'a>(
+    metadata: &'a BTreeMap<String, String>,
+    name: &str,
+    description: &str,
+) -> crate::Result<&'a String> {
+    metadata
+        .get(name)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AdapterError::Rejected(format!("provider sandbox has no {description}")))
+}
+
+fn sha256_fingerprint(value: &str) -> bool {
+    value.len() == 43
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+pub(super) fn image_sha256(uri: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(uri.as_bytes()))
 }
 
 fn hash_strings(digest: &mut Sha256, values: &[String]) {
@@ -247,8 +356,12 @@ fn hash_length(digest: &mut Sha256, length: usize) {
 }
 
 fn validate_spec(spec: &SandboxSpec) -> crate::Result<()> {
-    if spec.sandbox_id.trim().is_empty() {
-        return Err(AdapterError::Rejected("sandbox id is empty".into()));
+    if spec.sandbox_id.trim().is_empty()
+        || spec.sandbox_id.trim() != spec.sandbox_id
+        || spec.sandbox_id.len() > 256
+        || spec.sandbox_id.chars().any(char::is_control)
+    {
+        return Err(AdapterError::Rejected("sandbox id is invalid".into()));
     }
     if spec.capacity.cpu_millis == 0 || spec.capacity.memory_mib == 0 {
         return Err(AdapterError::Rejected(

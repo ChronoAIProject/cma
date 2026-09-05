@@ -23,6 +23,21 @@ impl RuntimeHandle {
     }
 }
 
+/// Provider lifecycle state observed without assuming a closed provider enum.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeLifecycle {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl RuntimeLifecycle {
+    pub fn is_running(&self) -> bool {
+        self.state.eq_ignore_ascii_case("running")
+    }
+}
+
 /// An image reference and the labels resolved from its manifest.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,6 +97,53 @@ impl Default for SandboxSpec {
             created_by: None,
         }
     }
+}
+
+/// Generation-specific provider provisioning request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeProvisionRequest {
+    pub generation: u64,
+    pub spec: SandboxSpec,
+}
+
+impl RuntimeProvisionRequest {
+    pub fn new(generation: u64, spec: SandboxSpec) -> Self {
+        Self { generation, spec }
+    }
+}
+
+/// Exact provider runtime that a replacement control plane intends to adopt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeAdoptionRequest {
+    pub generation: u64,
+    pub handle: RuntimeHandle,
+    pub spec: SandboxSpec,
+}
+
+impl RuntimeAdoptionRequest {
+    pub fn new(generation: u64, handle: RuntimeHandle, spec: SandboxSpec) -> Self {
+        Self {
+            generation,
+            handle,
+            spec,
+        }
+    }
+}
+
+/// Complete non-secret identity observed for one provider runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeObservation {
+    pub sandbox_id: String,
+    pub generation: u64,
+    pub handle: RuntimeHandle,
+    /// URL-safe base64 encoding of the SHA-256 image-reference digest.
+    pub image_sha256: String,
+    pub spec_fingerprint: String,
+    pub runtime_contract: String,
+    pub lifecycle: RuntimeLifecycle,
 }
 
 /// One bounded sandbox-wide installation.

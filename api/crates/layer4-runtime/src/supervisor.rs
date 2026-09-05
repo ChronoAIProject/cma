@@ -5,7 +5,8 @@ use std::sync::Arc;
 use layer3_adapter::wire::{Acknowledgement, CredentialReceipt, RequestFrame, ResponseFrame};
 use layer3_adapter::{
     AgentLaunch, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest,
-    CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest, InstallRequest, WriterState,
+    CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest, InstallRequest,
+    RestoreBootstrapReceipt, RestoreBootstrapRequest, WriterState,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -33,6 +34,8 @@ mod mutations;
 pub(crate) enum Phase {
     Provisioned,
     Installed,
+    RestorePending,
+    RestoreCredentialed,
     Credentialed,
 }
 
@@ -50,6 +53,7 @@ pub(crate) struct HeldCheckpoint {
 pub(crate) struct Supervisor {
     config: RuntimeConfig,
     phase: RwLock<Phase>,
+    restore_bootstrap: RwLock<Option<RestoreBootstrapReceipt>>,
     operation_gate: Arc<Mutex<()>>,
     credential: CredentialHolder,
     agents: RwLock<BTreeMap<AgentSlot, AgentProcess>>,
@@ -84,13 +88,16 @@ impl Supervisor {
             ));
         }
         let install_state = crate::install::recover(&config)?;
+        let (phase, restore_bootstrap) = match install_state {
+            RecoveryState::Completed => (Phase::Installed, None),
+            RecoveryState::Inherited(receipt) => (Phase::RestorePending, Some(receipt)),
+            RecoveryState::Absent | RecoveryState::Terminal => (Phase::Provisioned, None),
+        };
         let checkpoint = CheckpointStore::new(&config);
         Ok(Arc::new(Self {
             config,
-            phase: RwLock::new(match install_state {
-                RecoveryState::Completed => Phase::Installed,
-                RecoveryState::Absent | RecoveryState::Terminal => Phase::Provisioned,
-            }),
+            phase: RwLock::new(phase),
+            restore_bootstrap: RwLock::new(restore_bootstrap),
             operation_gate: Arc::new(Mutex::new(())),
             credential: CredentialHolder::new(),
             agents: RwLock::new(BTreeMap::new()),
@@ -174,7 +181,9 @@ impl Supervisor {
         if !matches!(
             request,
             RequestFrame::Install(_)
+                | RequestFrame::BootstrapRestore(_)
                 | RequestFrame::Credential(_)
+                | RequestFrame::Restore(_)
                 | RequestFrame::ResumeCheckpointWriters(_)
                 | RequestFrame::Resources
         ) {
@@ -182,6 +191,7 @@ impl Supervisor {
         }
         match request {
             RequestFrame::Install(request) => self.install(request).await,
+            RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
             RequestFrame::Credential(frame) => self.credential(frame).await,
             RequestFrame::PrepareWorkspace(_)
             | RequestFrame::WorkspaceSetup(_)
@@ -248,17 +258,40 @@ impl Supervisor {
     async fn recover_journals_locked(&self) -> Result<()> {
         let durable = crate::install::recover(&self.config)?;
         let mut phase = self.phase.write().await;
-        match (durable, *phase) {
-            (RecoveryState::Completed, Phase::Provisioned) => *phase = Phase::Installed,
-            (RecoveryState::Completed, Phase::Installed | Phase::Credentialed)
-            | (RecoveryState::Absent | RecoveryState::Terminal, Phase::Provisioned) => {}
-            (RecoveryState::Absent | RecoveryState::Terminal, _) => {
-                return Err(RuntimeError::rejected(
-                    "install_state_invalid",
-                    "runtime lifecycle disagrees with its durable installation state",
-                ))
+        let mut bootstrap = self.restore_bootstrap.write().await;
+        let consistent = match durable {
+            RecoveryState::Completed if bootstrap.is_none() => match *phase {
+                Phase::Provisioned => {
+                    *phase = Phase::Installed;
+                    true
+                }
+                Phase::Installed | Phase::Credentialed => true,
+                Phase::RestorePending | Phase::RestoreCredentialed => false,
+            },
+            RecoveryState::Inherited(receipt) => match (&*bootstrap, *phase) {
+                (None, Phase::Provisioned) => {
+                    *bootstrap = Some(receipt);
+                    *phase = Phase::RestorePending;
+                    true
+                }
+                (
+                    Some(existing),
+                    Phase::RestorePending | Phase::RestoreCredentialed | Phase::Credentialed,
+                ) => existing == &receipt,
+                _ => false,
+            },
+            RecoveryState::Absent | RecoveryState::Terminal => {
+                bootstrap.is_none() && *phase == Phase::Provisioned
             }
+            RecoveryState::Completed => false,
+        };
+        if !consistent {
+            return Err(RuntimeError::rejected(
+                "install_state_invalid",
+                "runtime lifecycle disagrees with its durable installation state",
+            ));
         }
+        drop(bootstrap);
         drop(phase);
         crate::workspace_runtime::recover_locked(&self.config).await?;
         self.recover_mutations_locked().await
@@ -328,6 +361,33 @@ impl Supervisor {
         Ok(ResponseFrame::Install(receipt))
     }
 
+    async fn bootstrap_restore(&self, request: RestoreBootstrapRequest) -> Result<ResponseFrame> {
+        let receipt = crate::restore_bootstrap::admit(&self.config, &request)?;
+        let mut phase = self.phase.write().await;
+        let mut bootstrap = self.restore_bootstrap.write().await;
+        if bootstrap
+            .as_ref()
+            .is_some_and(|existing| existing != &receipt)
+        {
+            return Err(RuntimeError::rejected(
+                "restore_bootstrap_conflict",
+                "runtime lifecycle carries another restore bootstrap identity",
+            ));
+        }
+        match *phase {
+            Phase::Provisioned => *phase = Phase::RestorePending,
+            Phase::RestorePending | Phase::RestoreCredentialed | Phase::Credentialed => {}
+            Phase::Installed => {
+                return Err(RuntimeError::rejected(
+                    "install_mode_conflict",
+                    "ordinary installation already completed for this runtime",
+                ))
+            }
+        }
+        *bootstrap = Some(receipt.clone());
+        Ok(ResponseFrame::BootstrapRestore(receipt))
+    }
+
     async fn credential(&self, frame: layer3_adapter::CredentialFrame) -> Result<ResponseFrame> {
         if frame.operation_id.is_empty() || frame.operation_id.len() > 256 {
             return Err(RuntimeError::rejected(
@@ -349,7 +409,15 @@ impl Supervisor {
                 proxies.start(self.credential.clone());
                 *self.phase.write().await = Phase::Credentialed;
             }
-            Phase::Credentialed => self.credential.install(&frame).await?,
+            Phase::RestorePending => {
+                let proxies = PreparedProxies::bind(&self.config).await?;
+                self.credential.install(&frame).await?;
+                proxies.start(self.credential.clone());
+                *self.phase.write().await = Phase::RestoreCredentialed;
+            }
+            Phase::RestoreCredentialed | Phase::Credentialed => {
+                self.credential.install(&frame).await?
+            }
         }
         Ok(ResponseFrame::Credential(CredentialReceipt {
             operation_id: frame.operation_id,
@@ -466,6 +534,26 @@ impl Supervisor {
     }
 
     async fn restore(&self, request: &layer3_adapter::RestoreRequest) -> Result<ResponseFrame> {
+        let phase = *self.phase.read().await;
+        let bootstrap = self.restore_bootstrap.read().await.clone();
+        match phase {
+            Phase::RestorePending | Phase::Provisioned | Phase::Installed => {
+                return Err(RuntimeError::rejected(
+                    "credential_not_installed",
+                    "checkpoint restore requires credential delivery first",
+                ))
+            }
+            Phase::RestoreCredentialed | Phase::Credentialed => {}
+        }
+        if bootstrap
+            .as_ref()
+            .is_some_and(|identity| identity.restore_request_sha256 != request.computed_sha256())
+        {
+            return Err(RuntimeError::rejected(
+                "restore_bootstrap_conflict",
+                "restore request does not match the inherited installation checkpoint",
+            ));
+        }
         if !self.agents.read().await.is_empty() {
             return Err(RuntimeError::rejected(
                 "restore_agents_open",
@@ -478,6 +566,9 @@ impl Supervisor {
         fence
             .resume()
             .map_err(|error| RuntimeError::unavailable("writer_resume_failed", error))?;
+        if phase == Phase::RestoreCredentialed {
+            *self.phase.write().await = Phase::Credentialed;
+        }
         Ok(ResponseFrame::Restore(Acknowledgement::default()))
     }
 
@@ -542,19 +633,20 @@ impl Supervisor {
         Ok(())
     }
 
-    async fn require_phase(&self, expected: Phase, code: &'static str) -> Result<()> {
-        if *self.phase.read().await != expected {
-            return Err(RuntimeError::rejected(
-                code,
-                "operation is not valid in the runtime's current lifecycle phase",
-            ));
-        }
-        Ok(())
-    }
-
     async fn require_credentialed(&self) -> Result<()> {
-        self.require_phase(Phase::Credentialed, "credential_not_installed")
-            .await
+        match *self.phase.read().await {
+            Phase::Credentialed => Ok(()),
+            Phase::RestoreCredentialed => Err(RuntimeError::rejected(
+                "restore_not_completed",
+                "operation is fenced until the admitted checkpoint restore completes",
+            )),
+            Phase::Provisioned | Phase::Installed | Phase::RestorePending => {
+                Err(RuntimeError::rejected(
+                    "credential_not_installed",
+                    "operation is not valid before credential delivery",
+                ))
+            }
+        }
     }
 
     pub(crate) async fn bridge(&self, agent_id: &str) -> Option<Arc<Bridge>> {
@@ -608,6 +700,9 @@ mod authority_tests;
 #[cfg(test)]
 #[path = "supervisor_mutation_tests.rs"]
 mod mutation_tests;
+#[cfg(test)]
+#[path = "supervisor_restore_tests.rs"]
+mod restore_tests;
 #[cfg(test)]
 #[path = "supervisor_tests.rs"]
 mod tests;

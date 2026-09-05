@@ -23,7 +23,11 @@ pub(crate) async fn dispatch(
                 "operation is not permitted while checkpoint writers are held",
             ));
         }
-        if crate::install::recover(&config)? != crate::install_state::RecoveryState::Completed {
+        if !matches!(
+            crate::install::recover(&config)?,
+            crate::install_state::RecoveryState::Completed
+                | crate::install_state::RecoveryState::Inherited(_)
+        ) {
             return Err(RuntimeError::rejected(
                 "install_state_invalid",
                 "workspace mutation requires a durable completed installation",

@@ -3,7 +3,7 @@ use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use layer3_adapter::{InstallReceipt, InstallRequest};
+use layer3_adapter::{InstallReceipt, InstallRequest, RestoreBootstrapReceipt};
 use serde::{Deserialize, Serialize};
 
 use crate::command::{validate_commands, CommandLimits};
@@ -11,7 +11,7 @@ use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 use crate::paths::path_is_directory;
 
-const RECORD_VERSION: u8 = 2;
+pub(crate) const RECORD_VERSION: u8 = 2;
 const STATE_DIRECTORY: &str = "runtime-state";
 const STATE_FILE: &str = "install-v2.json";
 const MAX_STATE_BYTES: u64 = 2 * 1024 * 1024;
@@ -47,12 +47,18 @@ pub(crate) enum InstallRecord {
         sandbox_id: String,
         request: InstallRequest,
     },
+    Inherited {
+        version: u8,
+        sandbox_id: String,
+        receipt: RestoreBootstrapReceipt,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RecoveryState {
     Absent,
     Completed,
+    Inherited(RestoreBootstrapReceipt),
     Terminal,
 }
 
@@ -101,16 +107,32 @@ impl InstallRecord {
         }
     }
 
-    pub(crate) fn request(&self) -> &InstallRequest {
+    pub(crate) fn inherited(config: &RuntimeConfig, receipt: RestoreBootstrapReceipt) -> Self {
+        Self::Inherited {
+            version: RECORD_VERSION,
+            sandbox_id: config.sandbox_id.clone(),
+            receipt,
+        }
+    }
+
+    pub(crate) fn install_request(&self) -> Option<&InstallRequest> {
         match self {
             Self::Started { request, .. }
             | Self::Completed { request, .. }
             | Self::Failed { request, .. }
-            | Self::Indeterminate { request, .. } => request,
+            | Self::Indeterminate { request, .. } => Some(request),
+            Self::Inherited { .. } => None,
         }
     }
 
-    fn identity(&self) -> (u8, &str) {
+    pub(crate) fn bootstrap_receipt(&self) -> Option<&RestoreBootstrapReceipt> {
+        match self {
+            Self::Inherited { receipt, .. } => Some(receipt),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn identity(&self) -> (u8, &str) {
         match self {
             Self::Started {
                 version,
@@ -128,6 +150,11 @@ impl InstallRecord {
                 ..
             }
             | Self::Indeterminate {
+                version,
+                sandbox_id,
+                ..
+            }
+            | Self::Inherited {
                 version,
                 sandbox_id,
                 ..
@@ -170,6 +197,7 @@ pub(crate) fn recover(config: &RuntimeConfig) -> Result<RecoveryState> {
             Ok(RecoveryState::Terminal)
         }
         InstallRecord::Completed { .. } => Ok(RecoveryState::Completed),
+        InstallRecord::Inherited { receipt, .. } => Ok(RecoveryState::Inherited(receipt)),
         InstallRecord::Failed { .. } | InstallRecord::Indeterminate { .. } => {
             Ok(RecoveryState::Terminal)
         }
@@ -181,15 +209,18 @@ pub(crate) fn load(config: &RuntimeConfig) -> Result<Option<InstallRecord>> {
         return Ok(None);
     };
     for file in &files {
-        validate_record(config, &file.record)?;
+        crate::install_state_validation::validate_record(config, &file.record)?;
     }
     reconcile(config, files)
 }
 
 pub(crate) fn write_initial(config: &RuntimeConfig, record: &InstallRecord) -> Result<bool> {
-    validate_record(config, record)?;
-    if !matches!(record, InstallRecord::Started { .. }) {
-        return Err(invalid("initial installation state is not started"));
+    crate::install_state_validation::validate_record(config, record)?;
+    if !matches!(
+        record,
+        InstallRecord::Started { .. } | InstallRecord::Inherited { .. }
+    ) {
+        return Err(invalid("initial installation state is not admissible"));
     }
     let directory = ensure_state_directory(config)?;
     let path = directory.join(STATE_FILE);
@@ -209,7 +240,7 @@ pub(crate) fn write_initial(config: &RuntimeConfig, record: &InstallRecord) -> R
 }
 
 pub(crate) fn replace(config: &RuntimeConfig, record: &InstallRecord) -> Result<()> {
-    validate_record(config, record)?;
+    crate::install_state_validation::validate_record(config, record)?;
     if !record.terminal() {
         return Err(invalid("replacement installation state is not terminal"));
     }
@@ -299,7 +330,9 @@ fn reconcile(config: &RuntimeConfig, files: Vec<StateFile>) -> Result<Option<Ins
         return Ok(Some(canonical.record));
     }
     if temporary.iter().any(|candidate| {
-        !candidate.record.terminal() || candidate.record.request() != canonical.record.request()
+        !candidate.record.terminal()
+            || canonical.record.install_request().is_none()
+            || candidate.record.install_request() != canonical.record.install_request()
     }) {
         return Err(invalid(
             "installation state replacement does not follow its canonical record",
@@ -329,67 +362,6 @@ fn reconcile(config: &RuntimeConfig, files: Vec<StateFile>) -> Result<Option<Ins
         remove_temporary(&stale.path)?;
     }
     Ok(Some(canonical.record))
-}
-
-fn validate_record(config: &RuntimeConfig, record: &InstallRecord) -> Result<()> {
-    let (version, sandbox_id) = record.identity();
-    if version != RECORD_VERSION || sandbox_id != config.sandbox_id {
-        return Err(invalid(
-            "installation state version or sandbox identity does not match this runtime",
-        ));
-    }
-    validate_request(record.request()).map_err(|_| invalid("stored install request is invalid"))?;
-    match record {
-        InstallRecord::Started { .. } | InstallRecord::Indeterminate { .. } => Ok(()),
-        InstallRecord::Completed {
-            request, receipt, ..
-        } if valid_receipt(request, receipt) => Ok(()),
-        InstallRecord::Completed { .. } => Err(invalid(
-            "completed installation state contains an invalid receipt",
-        )),
-        InstallRecord::Failed {
-            code,
-            detail,
-            retryable,
-            ..
-        } if valid_failure(code, detail, *retryable) => Ok(()),
-        InstallRecord::Failed { .. } => Err(invalid(
-            "installation state contains an invalid terminal failure",
-        )),
-    }
-}
-
-fn valid_receipt(request: &InstallRequest, receipt: &InstallReceipt) -> bool {
-    receipt.operation_id == request.operation_id
-        && receipt.request_sha256 == request.request_sha256
-        && receipt.commands.len() == request.commands.len()
-        && receipt.commands.iter().enumerate().all(|(index, receipt)| {
-            receipt.index == u32::try_from(index).unwrap_or(u32::MAX)
-                && receipt.exit_code == 0
-                && lower_sha256(&receipt.stdout_sha256)
-                && lower_sha256(&receipt.stderr_sha256)
-        })
-}
-
-fn valid_failure(code: &str, detail: &str, retryable: bool) -> bool {
-    !retryable
-        && !code.is_empty()
-        && code.len() <= 128
-        && code
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-        && !detail.is_empty()
-        && detail.chars().count() <= 1_024
-        && detail
-            .chars()
-            .all(|character| !character.is_control() || matches!(character, '\n' | '\t'))
-}
-
-fn lower_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn read_record(path: &Path) -> Result<InstallRecord> {

@@ -15,7 +15,8 @@ use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointHoldReceipt,
     CheckpointHoldRequest, CheckpointReceipt, CheckpointWriterResumeReceipt, CommandReceipt,
     ConversationChannel, ConversationInputSender, ConversationSnapshot, ConversationUpdate,
-    InstallReceipt, ResourceReading, RuntimeHandle, WorkspaceReceipt, WorktreeReceipt, WriterState,
+    InstallReceipt, ResourceReading, RestoreBootstrapReceipt, RuntimeHandle, RuntimeLifecycle,
+    RuntimeObservation, WorkspaceReceipt, WorktreeReceipt, WriterState,
 };
 
 #[path = "memory_state.rs"]
@@ -56,6 +57,7 @@ struct MemoryAgent {
 struct MemoryRuntime {
     request: ProviderSandboxRequest,
     install: Option<((String, String), InstallReceipt)>,
+    restore_bootstrap: Option<RestoreBootstrapReceipt>,
     credential_delivered: bool,
     workspaces: BTreeMap<String, WorkspaceReceipt>,
     operations: BTreeMap<String, MemoryOperation>,
@@ -166,8 +168,10 @@ impl HostedBackend for InMemoryHostedBackend {
         let identity = provider_request_identity(&request)?;
         let mut runtimes = self.runtimes.lock().await;
         if let Some((handle, runtime)) = runtimes.iter().find(|(_, runtime)| {
-            provider_request_identity(&runtime.request)
-                .is_ok_and(|existing| existing.sandbox_id == identity.sandbox_id)
+            provider_request_identity(&runtime.request).is_ok_and(|existing| {
+                existing.sandbox_id == identity.sandbox_id
+                    && existing.generation == identity.generation
+            })
         }) {
             return if provider_request_identity(&runtime.request)? == identity {
                 Ok(handle.clone())
@@ -184,6 +188,7 @@ impl HostedBackend for InMemoryHostedBackend {
             MemoryRuntime {
                 request,
                 install: None,
+                restore_bootstrap: None,
                 credential_delivered: false,
                 workspaces: BTreeMap::new(),
                 operations: BTreeMap::new(),
@@ -197,6 +202,33 @@ impl HostedBackend for InMemoryHostedBackend {
             },
         );
         Ok(handle)
+    }
+
+    async fn inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        self.runtimes
+            .lock()
+            .await
+            .iter()
+            .map(|(handle, runtime)| memory_observation(handle, &runtime.request))
+            .collect()
+    }
+
+    async fn adopt(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> crate::Result<Option<RuntimeObservation>> {
+        let expected = provider_request_identity(request)?;
+        let runtimes = self.runtimes.lock().await;
+        let Some(runtime) = runtimes.get(handle) else {
+            return Ok(None);
+        };
+        if provider_request_identity(&runtime.request)? != expected {
+            return Err(AdapterError::Rejected(
+                "provider runtime belongs to another exact identity".into(),
+            ));
+        }
+        memory_observation(handle, &runtime.request).map(Some)
     }
 
     async fn exchange(
@@ -233,6 +265,9 @@ impl HostedBackend for InMemoryHostedBackend {
                 if request.operation_id.trim().is_empty() || !request.has_valid_sha256() {
                     return refused(operation, "install_request_invalid");
                 }
+                if runtime.restore_bootstrap.is_some() {
+                    return refused(operation, "install_mode_conflict");
+                }
                 let identity = (request.operation_id.clone(), request.request_sha256.clone());
                 if let Some((completed, receipt)) = &runtime.install {
                     return if completed == &identity {
@@ -262,8 +297,36 @@ impl HostedBackend for InMemoryHostedBackend {
                 }
                 Ok(ResponseFrame::Install(response))
             }
+            RequestFrame::BootstrapRestore(request) => {
+                let identity = provider_request_identity(&runtime.request)?;
+                if request.operation_id.trim().is_empty()
+                    || request.sandbox_id != identity.sandbox_id
+                    || !request.has_valid_sha256()
+                    || !request.checkpoint.has_valid_reference()
+                {
+                    return refused(operation, "restore_bootstrap_invalid");
+                }
+                if runtime.install.is_some() {
+                    return refused(operation, "install_mode_conflict");
+                }
+                let receipt = RestoreBootstrapReceipt {
+                    operation_id: request.operation_id,
+                    request_sha256: request.request_sha256,
+                    restore_request_sha256: request.checkpoint.computed_sha256(),
+                    installation_inherited: true,
+                };
+                if let Some(existing) = &runtime.restore_bootstrap {
+                    return if existing == &receipt {
+                        Ok(ResponseFrame::BootstrapRestore(existing.clone()))
+                    } else {
+                        refused(operation, "restore_bootstrap_conflict")
+                    };
+                }
+                runtime.restore_bootstrap = Some(receipt.clone());
+                Ok(ResponseFrame::BootstrapRestore(receipt))
+            }
             RequestFrame::Credential(frame) => {
-                if runtime.install.is_none() {
+                if runtime.install.is_none() && runtime.restore_bootstrap.is_none() {
                     return refused(operation, "install_not_completed");
                 }
                 runtime.credential_delivered = true;
@@ -392,7 +455,14 @@ impl HostedBackend for InMemoryHostedBackend {
                 }
             }
             RequestFrame::Restore(request) => {
-                require_credential(runtime, operation)?;
+                if !runtime.credential_delivered {
+                    return refused(operation, "credential_not_delivered");
+                }
+                if runtime.restore_bootstrap.as_ref().is_some_and(|bootstrap| {
+                    bootstrap.restore_request_sha256 != request.computed_sha256()
+                }) {
+                    return refused(operation, "restore_bootstrap_conflict");
+                }
                 runtime.restored_object = Some(request.object_reference);
                 Ok(ResponseFrame::Restore(Acknowledgement::default()))
             }
@@ -556,6 +626,25 @@ impl HostedBackend for InMemoryHostedBackend {
         }
         Ok(())
     }
+}
+
+fn memory_observation(
+    handle: &RuntimeHandle,
+    request: &ProviderSandboxRequest,
+) -> crate::Result<RuntimeObservation> {
+    let identity = provider_request_identity(request)?;
+    Ok(RuntimeObservation {
+        sandbox_id: identity.sandbox_id,
+        generation: identity.generation,
+        handle: handle.clone(),
+        image_sha256: identity.image_sha256,
+        spec_fingerprint: identity.spec_fingerprint,
+        runtime_contract: identity.runtime_contract,
+        lifecycle: RuntimeLifecycle {
+            state: "Running".into(),
+            reason: None,
+        },
+    })
 }
 
 fn channel(conversation_id: Option<String>) -> ConversationChannel {

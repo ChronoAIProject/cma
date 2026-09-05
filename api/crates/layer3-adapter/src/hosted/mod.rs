@@ -30,3 +30,7 @@ mod receipt_tests;
 #[cfg(test)]
 #[path = "cleanup_tests.rs"]
 mod cleanup_tests;
+
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod recovery_tests;

@@ -40,6 +40,14 @@ fn every_contract_3_request_round_trips_with_its_exact_tag() {
             600,
             32_768,
         )),
+        RequestFrame::BootstrapRestore(RestoreBootstrapRequest::new(
+            "restore-bootstrap-1",
+            "sandbox-1",
+            RestoreRequest {
+                object_reference: format!("home-{}.cma", sha()),
+                sha256: sha(),
+            },
+        )),
         RequestFrame::PrepareWorkspace(WorkspaceRequest::new(
             "workspace:wks-repo:prepare:v1",
             "wks-repo",
@@ -138,6 +146,7 @@ fn every_contract_3_request_round_trips_with_its_exact_tag() {
     ];
     let tags = [
         "install",
+        "bootstrap_restore",
         "prepare_workspace",
         "workspace_setup",
         "remove_workspace",
@@ -190,6 +199,12 @@ fn every_contract_3_reply_round_trips_and_failures_stay_typed() {
             operation_id: "install-1".into(),
             request_sha256: sha(),
             commands: vec![command.clone()],
+        }),
+        ResponseFrame::BootstrapRestore(RestoreBootstrapReceipt {
+            operation_id: "restore-bootstrap-1".into(),
+            request_sha256: sha(),
+            restore_request_sha256: sha(),
+            installation_inherited: true,
         }),
         ResponseFrame::PrepareWorkspace(WorkspaceReceipt {
             operation_id: "workspace:wks-repo:prepare:v1".into(),
