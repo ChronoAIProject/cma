@@ -28,6 +28,11 @@ pub(super) fn fold_update(
     update: ConversationUpdate,
     appended_at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
+    if !current.status.is_live() {
+        return Err(AgentConversationError::InvalidState(
+            "conversation updates require a live agent",
+        ));
+    }
     let (update, prompt_evidence) = prompt_evidence(update);
     match update {
         ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(chunk)) => {

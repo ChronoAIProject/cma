@@ -1,0 +1,1034 @@
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+use layer2_core::profiles::{
+    AgentProfileContent, AgentProfileSnapshot, AgentProvider, ModelAccess, PermissionLevel,
+    SandboxProfileContent, SandboxProfileSnapshot, SkillRef, SkillSource, ThinkingEffort,
+    WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
+};
+use layer2_core::sandbox::store::{
+    AgentAdmission, AgentAdmissionResult, AgentAdmissionStore as _, AgentControlStore as _,
+    AgentControlTarget, AgentDeleteRequest, AgentLogStore as _, AgentStore as _,
+    SandboxEventStore as _, SandboxStore as _, WorkspaceStore as _, WorktreeStore as _,
+};
+use layer2_core::sandbox::{
+    Agent, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkStep,
+    DurableAgentUpdateRecorder, InMemorySandboxStore, RuntimeBinding, Sandbox,
+    SandboxCredentialAuthority, SandboxCredentialState, SandboxLimits, SandboxOrigin,
+    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, Workspace,
+    WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
+    WorktreeStatus,
+};
+use layer2_core::{
+    rfc3339_at, AgentId, AgentProfileId, RuntimeCapabilities, RuntimeCapability, SandboxId,
+    SandboxProfileId, ServiceId, SkillId, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId,
+};
+use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
+use layer3_adapter::hosted::InMemoryHostedBackend;
+use layer3_adapter::wire::WireOperation;
+use layer3_adapter::{
+    AgentSkill, AgentSlot, ConversationInputSender, ConversationUpdate, CredentialFrame,
+    InstallRequest, RuntimeCredential, RuntimeHandle, SandboxAdapter, SandboxCapacity, SandboxSpec,
+    WorkspaceRequest, WorkspaceSource as AdapterWorkspaceSource,
+};
+use tokio::sync::mpsc;
+
+use super::agent_skills::{AgentSkillResolutionError, AgentSkillResolver, EmptyAgentSkillResolver};
+use super::agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies};
+use super::live_agents::{LiveAgentRegistry, LiveAgentRegistryError, LiveAgentTarget};
+
+const DEPLOYMENT_ID: &str = "lifecycle-test";
+
+struct Harness {
+    store: Arc<InMemorySandboxStore>,
+    worker: Arc<AgentWorker>,
+    registry: Arc<LiveAgentRegistry>,
+    backend: InMemoryHostedBackend,
+    runtime: RuntimeHandle,
+    workspace: Workspace,
+    now: SystemTime,
+}
+
+impl Harness {
+    async fn new(skills: Arc<dyn AgentSkillResolver>) -> Self {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_788_537_600);
+        let stamp = rfc3339_at(now);
+        let store = Arc::new(InMemorySandboxStore::default());
+        let owner = SubjectId::new("owner");
+        let sandbox_id = SandboxId::generate();
+        let mut sandbox = sandbox(&sandbox_id, owner.clone(), &stamp);
+        let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+        let adapter = Arc::new(adapter);
+        let runtime = adapter.provision(&sandbox_spec(&sandbox)).await.unwrap();
+        adapter
+            .run_install(
+                &runtime,
+                &InstallRequest::new("sandbox-install-v1:lifecycle", Vec::new()),
+            )
+            .await
+            .unwrap();
+        adapter
+            .deliver_credential(
+                &runtime,
+                CredentialFrame {
+                    operation_id: "credential-1".into(),
+                    value: RuntimeCredential::new("opaque-sandbox-key"),
+                    custody_generation: Some(3),
+                },
+            )
+            .await
+            .unwrap();
+        sandbox.runtime = Some(RuntimeBinding {
+            runtime_id: runtime.0.clone(),
+            runtime_version: "runtime-v2".into(),
+            bound_at: stamp.clone(),
+        });
+        store.create_sandbox(sandbox).await.unwrap();
+
+        let workspace_id = WorkspaceId::generate();
+        let receipt = adapter
+            .prepare_workspace(
+                &runtime,
+                &WorkspaceRequest::new(
+                    "workspace:project:prepare:v1",
+                    workspace_id.to_string(),
+                    "project",
+                    AdapterWorkspaceSource::Init,
+                ),
+            )
+            .await
+            .unwrap();
+        let workspace = workspace(
+            workspace_id,
+            sandbox_id,
+            owner,
+            receipt.path,
+            receipt.resolved_commit,
+            &stamp,
+        );
+        store.create_workspace(workspace.clone()).await.unwrap();
+
+        let registry = Arc::new(LiveAgentRegistry::default());
+        let dependencies = AgentWorkerDependencies {
+            store: store.clone(),
+            adapter,
+            skills,
+            registry: registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(store.clone()),
+        };
+        let mut config = AgentWorkerConfig::new("agent-worker", DEPLOYMENT_ID);
+        config.lease_duration = Duration::from_secs(30);
+        config.retry_delay = Duration::from_secs(1);
+        config.open_timeout = Duration::from_secs(2);
+        let worker = AgentWorker::new(dependencies, config);
+        Self {
+            store,
+            worker,
+            registry,
+            backend,
+            runtime,
+            workspace,
+            now,
+        }
+    }
+
+    async fn admit(&self, key: &str, skills: Vec<SkillRef>) -> Agent {
+        let result = self
+            .store
+            .admit_agent(AgentAdmission {
+                owner: self.workspace.owner.clone(),
+                workspace_id: self.workspace.id.clone(),
+                agent_id: AgentId::generate(),
+                worktree_id: WorktreeId::generate(),
+                profile: agent_profile(skills),
+                title: None,
+                first_message: None,
+                origin: AgentOrigin::Manual,
+                creation_key: key.into(),
+                event_at: rfc3339_at(self.now),
+            })
+            .await
+            .unwrap();
+        match result {
+            AgentAdmissionResult::Created(creation) => creation.agent,
+            AgentAdmissionResult::Existing(_) => panic!("expected fresh admission"),
+        }
+    }
+
+    async fn run(&self, id: &AgentId, now: SystemTime) {
+        assert!(self.worker.run_one(id, now).await.unwrap());
+    }
+
+    async fn drive_ready(&self, id: &AgentId) -> Agent {
+        for _ in 0..5 {
+            self.run(id, self.now).await;
+        }
+        let agent = self.stored(id).await;
+        assert_eq!(agent.status, AgentStatus::Ready);
+        assert_eq!(agent.work.step, AgentWorkStep::None);
+        agent
+    }
+
+    async fn stored(&self, id: &AgentId) -> Agent {
+        self.store.get_agent(id).await.unwrap().unwrap()
+    }
+
+    fn target(agent: &Agent) -> LiveAgentTarget {
+        LiveAgentTarget {
+            agent_id: agent.id.clone(),
+            conversation_id: agent.conversation.conversation_id.clone().unwrap(),
+            runtime_generation: agent.conversation.runtime_generation.unwrap(),
+        }
+    }
+}
+
+fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
+    Sandbox {
+        id: id.clone(),
+        owner,
+        name: "research".into(),
+        origin: SandboxOrigin::Manual,
+        profile: SandboxProfileSnapshot {
+            id: SandboxProfileId::generate(),
+            revision: 1,
+            digest: "a".repeat(64),
+            content: SandboxProfileContent {
+                cpu_millis: 1_000,
+                memory_mib: 2_048,
+                nyxid_services: vec![ServiceId::new("ornn-api")],
+                agent_provider: AgentProvider::Codex,
+                model_access: ModelAccess::ChronoaiManaged,
+                max_workspaces: 1,
+                max_agents_per_workspace: 8,
+                workspace_profiles: Vec::new(),
+                software_install_commands: Vec::new(),
+                environment_variables: Vec::new(),
+            },
+        },
+        status: SandboxStatus::Active,
+        failure: None,
+        runtime: None,
+        credential: SandboxCredentialState {
+            reaches: vec![ServiceId::new("ornn-api")],
+            key_generation: 3,
+            delivered: true,
+            current: Some(SandboxCredentialAuthority {
+                generation: 3,
+                provider_key_id: "provider-key-3".into(),
+                provider_state_version: 3,
+                issued_at: stamp.into(),
+                expires_at: stamp.into(),
+                grant_fingerprint: "b".repeat(64),
+            }),
+            pending: None,
+            revoke_debt: Vec::new(),
+            sign_in: SandboxSignInState::NotRequired,
+        },
+        work: SandboxWorkState::new(SandboxWorkStep::None, stamp.into()),
+        limits: SandboxLimits {
+            max_workspaces: 1,
+            max_agents_per_workspace: 8,
+        },
+        checkpoint: None,
+        last_activity_at: stamp.into(),
+        created_at: stamp.into(),
+        updated_at: stamp.into(),
+        retired_at: None,
+        purge_after: None,
+        revision: 1,
+    }
+}
+
+fn workspace(
+    id: WorkspaceId,
+    sandbox_id: SandboxId,
+    owner: SubjectId,
+    path: String,
+    resolved_commit: String,
+    stamp: &str,
+) -> Workspace {
+    Workspace {
+        id,
+        sandbox_id,
+        owner,
+        origin: WorkspaceOrigin::Manual,
+        profile: WorkspaceProfileSnapshot {
+            id: WorkspaceProfileId::generate(),
+            revision: 1,
+            digest: "c".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory {
+                    name: "project".into(),
+                },
+                name: "project".into(),
+                setup_commands: Vec::new(),
+                agent_profiles: Vec::new(),
+            },
+        },
+        name: "project".into(),
+        path,
+        source: WorkspaceSource::Empty,
+        resolved_commit: Some(resolved_commit),
+        status: WorkspaceStatus::Ready,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::None, stamp.into()),
+        next_worktree_number: 1,
+        created_at: stamp.into(),
+        ready_at: Some(stamp.into()),
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    }
+}
+
+fn sandbox_spec(sandbox: &Sandbox) -> SandboxSpec {
+    SandboxSpec {
+        sandbox_id: sandbox.id.to_string(),
+        capacity: SandboxCapacity {
+            cpu_millis: sandbox.profile.content.cpu_millis,
+            memory_mib: sandbox.profile.content.memory_mib,
+        },
+        environment: BTreeMap::new(),
+        reaches: sandbox
+            .credential
+            .reaches
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        own_credential: false,
+        created_by: Some(DEPLOYMENT_ID.into()),
+        ..SandboxSpec::default()
+    }
+}
+
+fn agent_profile(skills: Vec<SkillRef>) -> AgentProfileSnapshot {
+    AgentProfileSnapshot {
+        id: AgentProfileId::generate(),
+        revision: 1,
+        digest: "d".repeat(64),
+        content: AgentProfileContent {
+            model: Some("gpt-test".into()),
+            thinking_effort: ThinkingEffort::High,
+            permission_level: PermissionLevel::Autonomous,
+            skills,
+            system_prompt: "Be exact.".into(),
+        },
+    }
+}
+
+#[derive(Default)]
+struct ScriptedSkills {
+    results: Mutex<VecDeque<Result<Vec<AgentSkill>, AgentSkillResolutionError>>>,
+}
+
+impl ScriptedSkills {
+    fn new(
+        results: impl IntoIterator<Item = Result<Vec<AgentSkill>, AgentSkillResolutionError>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            results: Mutex::new(results.into_iter().collect()),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentSkillResolver for ScriptedSkills {
+    async fn resolve(
+        &self,
+        _references: &[SkillRef],
+    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+        self.results
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front()
+            .expect("scripted skill result")
+    }
+}
+
+#[tokio::test]
+async fn startup_is_isolated_receipted_published_and_records_runtime_updates() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let first = harness.admit("first", Vec::new()).await;
+    let second = harness.admit("second", Vec::new()).await;
+    let first = harness.drive_ready(&first.id).await;
+    let second = harness.drive_ready(&second.id).await;
+    let first_worktree = harness
+        .store
+        .get_worktree(&first.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let second_worktree = harness
+        .store
+        .get_worktree(&second.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_ne!(first.id, second.id);
+    assert_ne!(first_worktree.name, second_worktree.name);
+    assert_ne!(first_worktree.branch, second_worktree.branch);
+    assert_ne!(first_worktree.path, second_worktree.path);
+    assert_ne!(
+        first.conversation.conversation_id,
+        second.conversation.conversation_id
+    );
+    assert_eq!(first_worktree.status, WorktreeStatus::Ready);
+    assert_eq!(second_worktree.status, WorktreeStatus::Ready);
+    assert_eq!(
+        first
+            .work
+            .receipts
+            .iter()
+            .map(|receipt| receipt.step)
+            .collect::<Vec<_>>(),
+        [
+            AgentWorkStep::AddWorktree,
+            AgentWorkStep::MaterializeHome,
+            AgentWorkStep::OpenConversation,
+        ]
+    );
+    assert_eq!(
+        first.work.receipts[0].operation_id,
+        format!("worktree:project:{}:add:v1", first_worktree.name)
+    );
+    assert_eq!(
+        first.work.receipts[1].operation_id,
+        format!("agent:{}:home:create:v1", first.id)
+    );
+    assert_eq!(
+        first.work.receipts[2].operation_id,
+        format!("agent:{}:open:v1", first.id)
+    );
+    assert!(first
+        .work
+        .receipts
+        .iter()
+        .all(|receipt| receipt.request_sha256.len() == 64));
+
+    let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
+    assert_eq!(snapshot.worktrees.len(), 2);
+    assert_eq!(snapshot.homes.len(), 2);
+    assert_eq!(snapshot.agents.len(), 2);
+    assert!(snapshot
+        .homes
+        .contains_key(&AgentSlot::new(first.id.to_string())));
+    assert!(snapshot
+        .homes
+        .contains_key(&AgentSlot::new(second.id.to_string())));
+
+    let logs = harness.store.agent_log(&first.id, 0, 20).await.unwrap();
+    assert!(matches!(
+        logs.as_slice(),
+        [
+            _,
+            _,
+            _,
+            _,
+            layer2_core::sandbox::AgentLogEntry {
+                kind: AgentLogKind::ConversationOpened { .. },
+                ..
+            },
+            layer2_core::sandbox::AgentLogEntry {
+                kind: AgentLogKind::StatusChanged {
+                    from: AgentStatus::Starting,
+                    to: AgentStatus::Ready,
+                },
+                ..
+            },
+            layer2_core::sandbox::AgentLogEntry {
+                kind: AgentLogKind::WorkStepCompleted {
+                    step: AgentWorkStep::PublishConnection,
+                },
+                ..
+            }
+        ]
+    ));
+    let events = harness
+        .store
+        .sandbox_events(&first.sandbox_id, 0, 40)
+        .await
+        .unwrap();
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        layer2_core::sandbox::SandboxEventKind::AgentStatusChanged {
+            agent_id,
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        } if agent_id == &first.id
+    )));
+
+    let target = Harness::target(&first);
+    let connection = harness.registry.resolve(&target).expect("published agent");
+    assert!(connection
+        .capabilities
+        .supports(RuntimeCapability::Conversation));
+    assert!(harness
+        .registry
+        .resolve(&LiveAgentTarget {
+            runtime_generation: 2,
+            ..target.clone()
+        })
+        .is_none());
+    assert!(harness
+        .registry
+        .resolve(&LiveAgentTarget {
+            conversation_id: "another-conversation".into(),
+            ..target
+        })
+        .is_none());
+
+    harness
+        .backend
+        .send_agent_update(
+            &harness.runtime,
+            &AgentSlot::new(first.id.to_string()),
+            ConversationUpdate::Lost { frames: 2 },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let logs = harness.store.agent_log(&first.id, 0, 20).await.unwrap();
+            if logs
+                .iter()
+                .any(|entry| matches!(entry.kind, AgentLogKind::ConversationGap { frames: 2 }))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("runtime update persisted");
+}
+
+#[tokio::test]
+async fn transient_skill_resolution_retries_then_materializes_exact_archive() {
+    let reference = SkillRef {
+        source: SkillSource::Ornn,
+        id: SkillId::new("research"),
+        version: Some("7".into()),
+    };
+    let material = AgentSkill {
+        id: "research".into(),
+        version: Some("7".into()),
+        archive_sha256: "e".repeat(64),
+        source_url: "https://ornn.example/skills/research/7.tar.gz".into(),
+    };
+    let skills = ScriptedSkills::new([
+        Err(AgentSkillResolutionError::Unavailable(
+            "temporary outage".into(),
+        )),
+        Ok(vec![material.clone()]),
+    ]);
+    let harness = Harness::new(skills).await;
+    let agent = harness.admit("skills", vec![reference]).await;
+
+    harness.run(&agent.id, harness.now).await;
+    harness.run(&agent.id, harness.now).await;
+    let retrying = harness.stored(&agent.id).await;
+    assert_eq!(retrying.status, AgentStatus::Starting);
+    assert_eq!(retrying.work.step, AgentWorkStep::MaterializeHome);
+    assert_eq!(retrying.work.attempts, 1);
+    assert!(matches!(
+        harness
+            .store
+            .agent_log(&agent.id, 0, 20)
+            .await
+            .unwrap()
+            .last()
+            .map(|entry| &entry.kind),
+        Some(AgentLogKind::WorkStepFailed {
+            step: AgentWorkStep::MaterializeHome,
+            failure,
+        }) if failure.class == "agent_skill_source_unavailable"
+    ));
+
+    for _ in 0..3 {
+        harness
+            .run(&agent.id, harness.now + Duration::from_secs(2))
+            .await;
+    }
+    let ready = harness.stored(&agent.id).await;
+    assert_eq!(ready.status, AgentStatus::Ready);
+    let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
+    let home = &snapshot.homes[&AgentSlot::new(agent.id.to_string())];
+    assert_eq!(home.skills, [material]);
+}
+
+#[tokio::test]
+async fn lost_home_reply_retries_with_a_rotated_locator_for_the_same_archive() {
+    let reference = SkillRef {
+        source: SkillSource::Ornn,
+        id: SkillId::new("research"),
+        version: Some("7".into()),
+    };
+    let first = AgentSkill {
+        id: "research".into(),
+        version: Some("7".into()),
+        archive_sha256: "e".repeat(64),
+        source_url: "https://ornn.example/temporary/a.tar.gz".into(),
+    };
+    let second = AgentSkill {
+        source_url: "https://ornn.example/temporary/b.tar.gz".into(),
+        ..first.clone()
+    };
+    let skills = ScriptedSkills::new([Ok(vec![first.clone()]), Ok(vec![second])]);
+    let harness = Harness::new(skills).await;
+    let agent = harness
+        .admit("rotated-skill-locator", vec![reference])
+        .await;
+
+    harness.run(&agent.id, harness.now).await;
+    harness
+        .backend
+        .lose_next_response(WireOperation::MaterializeAgentHome);
+    harness.run(&agent.id, harness.now).await;
+    let retrying = harness.stored(&agent.id).await;
+    assert_eq!(retrying.work.step, AgentWorkStep::MaterializeHome);
+    assert_eq!(retrying.work.attempts, 1);
+    assert_eq!(retrying.work.cleanup_debt.len(), 1);
+
+    for _ in 0..4 {
+        harness
+            .run(&agent.id, harness.now + Duration::from_secs(2))
+            .await;
+    }
+    let ready = harness.stored(&agent.id).await;
+    assert_eq!(ready.status, AgentStatus::Ready);
+    assert!(ready.work.cleanup_debt.is_empty());
+    let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
+    assert_eq!(
+        snapshot.homes[&AgentSlot::new(agent.id.to_string())].skills,
+        [first]
+    );
+}
+
+#[tokio::test]
+async fn terminal_runtime_rejection_fails_agent_and_worktree_atomically() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("rejected", Vec::new()).await;
+    harness.backend.fail_next(
+        WireOperation::AddWorktree,
+        "quota_rejected",
+        "runtime rejected the worktree",
+    );
+
+    harness.run(&agent.id, harness.now).await;
+    let failed = harness.stored(&agent.id).await;
+    let worktree = harness
+        .store
+        .get_worktree(&failed.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed.status, AgentStatus::Failed);
+    assert_eq!(failed.work.step, AgentWorkStep::None);
+    assert_eq!(worktree.status, WorktreeStatus::Failed);
+    assert_eq!(
+        failed
+            .failure
+            .as_ref()
+            .map(|failure| failure.class.as_str()),
+        Some("agent_runtime_rejected")
+    );
+    let logs = harness.store.agent_log(&agent.id, 0, 20).await.unwrap();
+    assert!(matches!(
+        logs.last().map(|entry| &entry.kind),
+        Some(AgentLogKind::WorkStepFailed {
+            step: AgentWorkStep::AddWorktree,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn stop_retains_resources_then_delete_removes_them_in_runtime_order() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("cleanup", Vec::new()).await;
+    let ready = harness.drive_ready(&agent.id).await;
+    let target = Harness::target(&ready);
+    let before = harness.backend.requests().await.len();
+    harness
+        .store
+        .schedule_agent_stop(layer2_core::sandbox::store::AgentStopRequest {
+            target: AgentControlTarget::from(&ready),
+            reason: AgentStopReason::Owner,
+            requested_at: rfc3339_at(harness.now + Duration::from_secs(5)),
+        })
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        harness
+            .run(&agent.id, harness.now + Duration::from_secs(5))
+            .await;
+    }
+    let stopped = harness.stored(&agent.id).await;
+    assert_eq!(stopped.status, AgentStatus::Stopped);
+    assert!(harness.registry.resolve(&target).is_none());
+    let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
+    assert!(snapshot
+        .homes
+        .contains_key(&AgentSlot::new(agent.id.to_string())));
+    assert!(snapshot
+        .worktrees
+        .contains_key(&("project".into(), "wt-1".into())));
+
+    harness
+        .store
+        .schedule_agent_delete(AgentDeleteRequest {
+            target: AgentControlTarget::from(&stopped),
+            requested_at: rfc3339_at(harness.now + Duration::from_secs(10)),
+        })
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        harness
+            .run(&agent.id, harness.now + Duration::from_secs(10))
+            .await;
+    }
+    let deleted = harness.stored(&agent.id).await;
+    assert_eq!(deleted.status, AgentStatus::Deleted);
+    assert_eq!(deleted.work.step, AgentWorkStep::None);
+    let worktree = harness
+        .store
+        .get_worktree(&agent.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(worktree.status, WorktreeStatus::Removed);
+    let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
+    assert!(!snapshot
+        .homes
+        .contains_key(&AgentSlot::new(agent.id.to_string())));
+    assert!(!snapshot
+        .worktrees
+        .contains_key(&("project".into(), "wt-1".into())));
+    let operations = harness.backend.requests().await[before..]
+        .iter()
+        .map(|(_, request)| request.operation())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        operations,
+        [
+            WireOperation::CloseAgent,
+            WireOperation::RemoveAgentHome,
+            WireOperation::RemoveWorktree,
+        ]
+    );
+    let logs = harness.store.agent_log(&agent.id, 0, 40).await.unwrap();
+    let stopped_index = logs
+        .iter()
+        .position(|entry| matches!(entry.kind, AgentLogKind::Stopped { .. }))
+        .unwrap();
+    let deleted_index = logs
+        .iter()
+        .position(|entry| matches!(entry.kind, AgentLogKind::Deleted))
+        .unwrap();
+    assert!(stopped_index < deleted_index);
+}
+
+#[tokio::test]
+async fn deletion_after_rejected_creation_compensates_durable_intent() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("failed-cleanup", Vec::new()).await;
+    harness.backend.fail_next(
+        WireOperation::AddWorktree,
+        "request_rejected",
+        "worktree was never created",
+    );
+    harness.run(&agent.id, harness.now).await;
+    let failed = harness.stored(&agent.id).await;
+    let before = harness.backend.requests().await.len();
+    harness
+        .store
+        .schedule_agent_delete(AgentDeleteRequest {
+            target: AgentControlTarget::from(&failed),
+            requested_at: rfc3339_at(harness.now + Duration::from_secs(5)),
+        })
+        .await
+        .unwrap();
+
+    for _ in 0..4 {
+        harness
+            .run(&agent.id, harness.now + Duration::from_secs(5))
+            .await;
+    }
+    let deleted = harness.stored(&agent.id).await;
+    assert_eq!(deleted.status, AgentStatus::Deleted);
+    assert!(deleted.work.cleanup_debt.is_empty());
+    assert_eq!(
+        harness
+            .store
+            .get_worktree(&agent.worktree_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        WorktreeStatus::Removed
+    );
+    assert_eq!(
+        harness.backend.requests().await[before..]
+            .iter()
+            .map(|(_, request)| request.operation())
+            .collect::<Vec<_>>(),
+        [WireOperation::RemoveWorktree]
+    );
+}
+
+#[tokio::test]
+async fn stop_and_delete_before_startup_skip_every_runtime_agent_resource() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("early-stop", Vec::new()).await;
+    let before = harness.backend.requests().await.len();
+    harness
+        .store
+        .schedule_agent_stop(layer2_core::sandbox::store::AgentStopRequest {
+            target: AgentControlTarget::from(&agent),
+            reason: AgentStopReason::Owner,
+            requested_at: rfc3339_at(harness.now + Duration::from_secs(5)),
+        })
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        harness
+            .run(&agent.id, harness.now + Duration::from_secs(5))
+            .await;
+    }
+    let stopped = harness.stored(&agent.id).await;
+    assert_eq!(stopped.status, AgentStatus::Stopped);
+    assert_eq!(
+        harness
+            .store
+            .get_worktree(&agent.worktree_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        WorktreeStatus::Failed
+    );
+    harness
+        .store
+        .schedule_agent_delete(AgentDeleteRequest {
+            target: AgentControlTarget::from(&stopped),
+            requested_at: rfc3339_at(harness.now + Duration::from_secs(10)),
+        })
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        harness
+            .run(&agent.id, harness.now + Duration::from_secs(10))
+            .await;
+    }
+    assert_eq!(harness.stored(&agent.id).await.status, AgentStatus::Deleted);
+    assert!(harness.backend.requests().await[before..].is_empty());
+}
+
+#[tokio::test]
+async fn registry_rejects_stale_generations_fences_and_attachment_tokens() {
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let recorder = Arc::new(NoopRecorder);
+    let id = AgentId::generate();
+    let (first_input, first_updates, _first_sender) = channels();
+    let first = registry
+        .attach(
+            id.clone(),
+            "conversation-1".into(),
+            1,
+            10,
+            RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+            first_input,
+            first_updates,
+            recorder.clone(),
+        )
+        .unwrap();
+    registry.publish_and_activate(&first).unwrap();
+    let first_target = LiveAgentTarget {
+        agent_id: id.clone(),
+        conversation_id: "conversation-1".into(),
+        runtime_generation: 1,
+    };
+    assert!(registry.resolve(&first_target).is_some());
+
+    let (stale_input, stale_updates, _stale_sender) = channels();
+    assert_eq!(
+        registry
+            .attach(
+                id.clone(),
+                "conversation-1".into(),
+                1,
+                9,
+                RuntimeCapabilities::default(),
+                stale_input,
+                stale_updates,
+                recorder.clone(),
+            )
+            .unwrap_err(),
+        LiveAgentRegistryError::StaleGeneration
+    );
+    registry.fence(&id, Some(1), 9);
+    assert!(registry.resolve(&first_target).is_some());
+
+    let (newer_input, newer_updates, _newer_sender) = channels();
+    let newer = registry
+        .attach(
+            id.clone(),
+            "conversation-1".into(),
+            1,
+            11,
+            RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+            newer_input,
+            newer_updates,
+            recorder.clone(),
+        )
+        .unwrap();
+    registry.rollback(&first);
+    assert!(registry.target_is_attached(&first_target));
+    registry.publish_and_activate(&first).unwrap();
+    registry.publish_and_activate(&newer).unwrap();
+    registry.fence(&id, Some(1), 10);
+    assert!(registry.resolve(&first_target).is_some());
+    registry.fence(&id, Some(1), 11);
+    assert!(registry.resolve(&first_target).is_none());
+    let (fenced_input, fenced_updates, _fenced_sender) = channels();
+    assert_eq!(
+        registry
+            .attach(
+                id.clone(),
+                "conversation-1".into(),
+                1,
+                11,
+                RuntimeCapabilities::default(),
+                fenced_input,
+                fenced_updates,
+                recorder.clone(),
+            )
+            .unwrap_err(),
+        LiveAgentRegistryError::StaleGeneration
+    );
+
+    let (next_input, next_updates, _next_sender) = channels();
+    let next = registry
+        .attach(
+            id.clone(),
+            "conversation-2".into(),
+            2,
+            12,
+            RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+            next_input,
+            next_updates,
+            recorder.clone(),
+        )
+        .unwrap();
+    registry.publish_and_activate(&next).unwrap();
+    let (old_input, old_updates, _old_sender) = channels();
+    assert_eq!(
+        registry
+            .attach(
+                id,
+                "conversation-1".into(),
+                1,
+                13,
+                RuntimeCapabilities::default(),
+                old_input,
+                old_updates,
+                recorder,
+            )
+            .unwrap_err(),
+        LiveAgentRegistryError::StaleGeneration
+    );
+    assert!(registry
+        .resolve(&LiveAgentTarget {
+            agent_id: first_target.agent_id,
+            conversation_id: "conversation-2".into(),
+            runtime_generation: 2,
+        })
+        .is_some());
+}
+
+struct NoopRecorder;
+
+#[async_trait::async_trait]
+impl layer2_core::sandbox::AgentUpdateRecorder for NoopRecorder {
+    async fn record_update(
+        &self,
+        _id: &AgentId,
+        _runtime_generation: u64,
+        _assembly: &mut layer2_core::sandbox::AgentMessageAssembly,
+        _update: ConversationUpdate,
+        _appended_at: String,
+    ) -> Result<
+        layer2_core::sandbox::AgentUpdateOutcome,
+        layer2_core::sandbox::AgentConversationError,
+    > {
+        Ok(layer2_core::sandbox::AgentUpdateOutcome {
+            appended: Vec::new(),
+            turn_closed: false,
+        })
+    }
+}
+
+fn channels() -> (
+    ConversationInputSender,
+    mpsc::Receiver<ConversationUpdate>,
+    mpsc::Sender<ConversationUpdate>,
+) {
+    let input = ConversationInputSender::spawn(4, |_| async { Ok(()) });
+    let (updates, receiver) = mpsc::channel(4);
+    (input, receiver, updates)
+}
+
+#[tokio::test]
+async fn staged_registry_replacement_preserves_active_connection_until_promotion() {
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let recorder = Arc::new(NoopRecorder);
+    let id = AgentId::generate();
+    let (active_input, active_updates, _active_sender) = channels();
+    let active = registry
+        .attach(
+            id.clone(),
+            "conversation-1".into(),
+            1,
+            10,
+            RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+            active_input,
+            active_updates,
+            recorder.clone(),
+        )
+        .unwrap();
+    registry.publish_and_activate(&active).unwrap();
+    let active_target = LiveAgentTarget {
+        agent_id: id.clone(),
+        conversation_id: "conversation-1".into(),
+        runtime_generation: 1,
+    };
+
+    let (candidate_input, candidate_updates, _candidate_sender) = channels();
+    let candidate = registry
+        .attach(
+            id.clone(),
+            "conversation-2".into(),
+            2,
+            11,
+            RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+            candidate_input,
+            candidate_updates,
+            recorder,
+        )
+        .unwrap();
+    let candidate_target = LiveAgentTarget {
+        agent_id: id,
+        conversation_id: "conversation-2".into(),
+        runtime_generation: 2,
+    };
+    assert!(registry.resolve(&active_target).is_some());
+    assert!(registry.resolve(&candidate_target).is_none());
+
+    registry.rollback(&candidate);
+    assert!(registry.resolve(&active_target).is_some());
+    assert_eq!(
+        registry.publish_and_activate(&candidate).unwrap_err(),
+        LiveAgentRegistryError::NotAttached
+    );
+}

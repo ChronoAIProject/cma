@@ -73,12 +73,13 @@ fn terminal_agent(mut agent: Agent, status: AgentStatus) -> Agent {
     agent
 }
 
-fn all_work_steps() -> [AgentWorkStep; 13] {
+fn all_work_steps() -> [AgentWorkStep; 14] {
     [
         AgentWorkStep::AddWorktree,
         AgentWorkStep::MaterializeHome,
         AgentWorkStep::OpenConversation,
         AgentWorkStep::PublishReady,
+        AgentWorkStep::PublishConnection,
         AgentWorkStep::DispatchFirstMessage,
         AgentWorkStep::FenceInteraction,
         AgentWorkStep::CloseProcess,

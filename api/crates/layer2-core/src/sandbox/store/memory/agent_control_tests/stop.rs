@@ -94,6 +94,7 @@ async fn agent_control_stop_compatibility_is_explicit_for_every_work_step() {
                 | AgentWorkStep::MaterializeHome
                 | AgentWorkStep::OpenConversation
                 | AgentWorkStep::PublishReady
+                | AgentWorkStep::PublishConnection
                 | AgentWorkStep::DispatchFirstMessage
                 | AgentWorkStep::None
         );
@@ -134,7 +135,12 @@ async fn agent_control_stop_clears_authority_and_fences_the_prior_worker_commit(
     let store = ready_store(1).await;
     let creation = created(store.admit_agent(admission("stop-fence")).await.unwrap());
     let claimed = store
-        .claim_agent_work(&creation.agent.id, "old-worker", NOW.into(), MINUTE.into())
+        .claim_agent_work(
+            &creation.agent.id,
+            "old-worker",
+            NOW.into(),
+            TWO_MINUTES.into(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -145,6 +151,11 @@ async fn agent_control_stop_clears_authority_and_fences_the_prior_worker_commit(
         .unwrap()
         .into_agent();
     assert!(scheduled.work.lease.is_none());
+    assert_eq!(scheduled.work.ready_at, MINUTE);
+    assert_eq!(
+        scheduled.work.cleanup_not_before.as_deref(),
+        Some(TWO_MINUTES)
+    );
 
     let mut stale = claimed.clone();
     stale

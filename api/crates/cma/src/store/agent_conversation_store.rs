@@ -201,6 +201,8 @@ pub(super) fn validate_mutation(
     if seconds_from_rfc3339(&mutation.appended_at).is_none()
         || mutation.runtime_generation == 0
         || mutation.agent_logs.is_empty()
+        || !current.status.is_live()
+        || !mutation.agent.status.is_live()
         || current.revision != mutation.expected_agent_revision
         || mutation.agent.revision != next_revision
         || current.conversation.last_seq != mutation.expected_last_seq

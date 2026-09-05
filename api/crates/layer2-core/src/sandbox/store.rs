@@ -377,7 +377,7 @@ pub trait AgentServiceStore:
 }
 
 pub trait AgentLifecycleStore:
-    SandboxStore + WorktreeStore + AgentStore + AgentLogStore + AgentWorkerStore
+    SandboxStore + WorkspaceStore + WorktreeStore + AgentStore + AgentLogStore + AgentWorkerStore
 {
 }
 
@@ -386,7 +386,12 @@ pub trait AgentConversationUpdateStore: AgentStore + AgentConversationStore {}
 impl<T> AgentConversationUpdateStore for T where T: AgentStore + AgentConversationStore {}
 
 impl<T> AgentLifecycleStore for T where
-    T: SandboxStore + WorktreeStore + AgentStore + AgentLogStore + AgentWorkerStore
+    T: SandboxStore
+        + WorkspaceStore
+        + WorktreeStore
+        + AgentStore
+        + AgentLogStore
+        + AgentWorkerStore
 {
 }
 

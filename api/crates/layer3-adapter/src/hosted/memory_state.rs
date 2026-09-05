@@ -32,6 +32,18 @@ impl InMemoryHostedBackend {
             .position(|failure| failure.operation == operation)?;
         failures.remove(index)
     }
+
+    pub(super) fn take_lost_response(&self, operation: WireOperation) -> bool {
+        let mut responses = self
+            .lost_responses
+            .lock()
+            .expect("in-memory lost-response queue lock");
+        let Some(index) = responses.iter().position(|queued| *queued == operation) else {
+            return false;
+        };
+        responses.remove(index);
+        true
+    }
 }
 
 pub(super) fn require_credential(

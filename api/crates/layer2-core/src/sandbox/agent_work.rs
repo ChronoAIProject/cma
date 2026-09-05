@@ -9,6 +9,7 @@ pub enum AgentWorkStep {
     MaterializeHome,
     OpenConversation,
     PublishReady,
+    PublishConnection,
     DispatchFirstMessage,
     FenceInteraction,
     CloseProcess,
@@ -31,6 +32,7 @@ impl AgentWorkStep {
             Self::MaterializeHome => "materialize_home",
             Self::OpenConversation => "open_conversation",
             Self::PublishReady => "publish_ready",
+            Self::PublishConnection => "publish_connection",
             Self::DispatchFirstMessage => "dispatch_first_message",
             Self::FenceInteraction => "fence_interaction",
             Self::CloseProcess => "close_process",
@@ -82,6 +84,8 @@ pub struct AgentWorkState {
     pub receipts: Vec<AgentWorkReceipt>,
     #[serde(default)]
     pub cleanup_debt: Vec<AgentCleanupDebt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_not_before: Option<String>,
 }
 
 impl AgentWorkState {
@@ -94,6 +98,7 @@ impl AgentWorkState {
             lease: None,
             receipts: Vec::new(),
             cleanup_debt: Vec::new(),
+            cleanup_not_before: None,
         }
     }
 
@@ -138,6 +143,7 @@ impl AgentWorkState {
         self.ready_at = ready_at;
         self.attempts = 0;
         self.lease = None;
+        self.cleanup_not_before = None;
     }
 
     pub fn advance(
@@ -150,6 +156,19 @@ impl AgentWorkState {
         if !self.owns(holder, fence) {
             return Err(SandboxModelError::invalid_value("agent.work.fence"));
         }
+        let ready_at = match (self.step, next, self.cleanup_not_before.take()) {
+            (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before))
+                if not_before > ready_at =>
+            {
+                not_before
+            }
+            (_, _, Some(_)) => {
+                return Err(SandboxModelError::invalid_value(
+                    "agent.work.cleanup_not_before",
+                ));
+            }
+            _ => ready_at,
+        };
         self.schedule(next, ready_at);
         Ok(())
     }

@@ -30,6 +30,7 @@ impl HostedBackend for ReusedHandleBackend {
         _handle: &RuntimeHandle,
         _launch: AgentLaunch,
         _resume_conversation: Option<String>,
+        _connection_fence: u64,
         _updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
         Err(AdapterError::Unavailable("not used by this test".into()))

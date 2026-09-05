@@ -392,7 +392,32 @@ fn agent_control_model_schedules_stop_intent_before_terminal_publication() {
     assert_eq!(agent.stop_reason, None);
     assert_eq!(agent.stopped_at, None);
     assert_eq!(agent.work.step, AgentWorkStep::FenceInteraction);
+    assert_eq!(agent.work.ready_at, "2026-09-05T00:00:30Z");
+    assert_eq!(
+        agent.work.cleanup_not_before.as_deref(),
+        Some("2026-09-05T00:01:00Z")
+    );
     assert!(agent.work.lease.is_none());
+
+    let fence = agent
+        .work
+        .claim(
+            "stop-worker".into(),
+            "2026-09-05T00:00:30Z",
+            "2026-09-05T00:01:30Z".into(),
+        )
+        .unwrap();
+    agent
+        .work
+        .advance(
+            "stop-worker",
+            fence,
+            AgentWorkStep::CloseProcess,
+            "2026-09-05T00:00:30Z".into(),
+        )
+        .unwrap();
+    assert_eq!(agent.work.ready_at, "2026-09-05T00:01:00Z");
+    assert_eq!(agent.work.cleanup_not_before, None);
 
     let scheduled = agent.clone();
     assert!(agent

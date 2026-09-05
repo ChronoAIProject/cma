@@ -28,6 +28,7 @@ pub trait HostedControlTransport: Send + Sync {
         handle: &RuntimeHandle,
         launch: AgentLaunch,
         resume_conversation: Option<String>,
+        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)>;
 
@@ -132,10 +133,17 @@ impl HostedBackend for ProviderHostedBackend {
         handle: &RuntimeHandle,
         launch: AgentLaunch,
         resume_conversation: Option<String>,
+        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
         self.transport
-            .open_agent(handle, launch, resume_conversation, updates)
+            .open_agent(
+                handle,
+                launch,
+                resume_conversation,
+                connection_fence,
+                updates,
+            )
             .await
     }
 

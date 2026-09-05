@@ -256,8 +256,15 @@ impl Agent {
             .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
         self.requested_stop_reason = Some(reason);
         self.updated_at = at.clone();
+        let cleanup_not_before = self
+            .work
+            .lease
+            .as_ref()
+            .filter(|lease| lease.expires_at > at)
+            .map(|lease| lease.expires_at.clone());
         self.work
             .schedule(super::AgentWorkStep::FenceInteraction, at);
+        self.work.cleanup_not_before = cleanup_not_before;
         self.revision = revision;
         Ok(())
     }

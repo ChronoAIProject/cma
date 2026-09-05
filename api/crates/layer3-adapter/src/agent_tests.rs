@@ -74,18 +74,18 @@ fn agent_digest_encodings_are_stable() {
             launch.payload_sha256().as_str(),
         ],
         [
-            "d59d043805ec5f5e82bac45497a5bbf4b02e8b25156ad92b71b472b9d3f182ee",
+            "7594a829ef8dbe072630db33fc5d98da68f16740d80b5ac511ef1d35610f4584",
             "8c9cd7c60738544eb96a2fafbc8bb7c78f7a4f5a889a3a94b51540b1a6b5e1ca",
             "47a9a9cf05141b83ed00fbc42f4f4694138d386e62582a1ad6a0539410e25635",
             "3e5ed595a6404ed06f8475c7c4978b5cf056d4d728523979e7795f6fb1649e17",
-            "518a077c943114e581f69bf39e471cc39f4e78baf361b81164858d1fdfe390e7",
+            "d6e850ddbbf529add7ff102f38fd6711b99d0da2bb14fb7c1d9a6bcd44c293cc",
             "72f4fa8cb924668a96ceff7455166f0cffea17cd312eed4a05d3aee1c6dd50d8",
         ]
     );
 }
 
 #[test]
-fn agent_request_digests_cover_every_execution_field() {
+fn agent_request_digests_cover_every_semantic_execution_field() {
     let home = AgentHomeRequest::new(
         "agent:agent-a:home:create:v1",
         options(),
@@ -124,9 +124,11 @@ fn agent_request_digests_cover_every_execution_field() {
     changed_home!(|request: &mut AgentHomeRequest| request.skills[0]
         .archive_sha256
         .replace_range(..2, "cd"));
-    changed_home!(|request: &mut AgentHomeRequest| request.skills[0].source_url.push_str("?other"));
     changed_home!(|request: &mut AgentHomeRequest| request.skills.push(skill()));
     assert!(changed.iter().all(|digest| digest != &expected));
+    let mut refreshed_locator = home.clone();
+    refreshed_locator.skills[0].source_url.push_str("?rotated");
+    assert_eq!(refreshed_locator.computed_sha256(), expected);
 
     let open = AgentOpenRequest::new(
         "agent:agent-a:open:v1",
@@ -177,8 +179,10 @@ fn rendered_payload_digests_cover_materialization_and_launch_fields() {
     changed_plan!(|plan: &mut AgentHomePlan| plan.files[0].bytes.push(0));
     changed_plan!(|plan: &mut AgentHomePlan| plan.symlinks[0].path.push_str("-other"));
     changed_plan!(|plan: &mut AgentHomePlan| plan.symlinks[0].target.push_str("-other"));
-    changed_plan!(|plan: &mut AgentHomePlan| plan.skills[0].source_url.push_str("?other"));
     assert!(plans.iter().all(|digest| digest != &expected));
+    let mut refreshed_locator = plan.clone();
+    refreshed_locator.skills[0].source_url.push_str("?rotated");
+    assert_eq!(refreshed_locator.payload_sha256(), expected);
 
     let launch = AgentLaunch {
         operation_id: "agent:agent-a:open:v1".into(),

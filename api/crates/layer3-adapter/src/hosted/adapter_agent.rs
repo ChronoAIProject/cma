@@ -153,6 +153,11 @@ pub(super) async fn open_agent(
         request,
         format!("agent:{}:open:v1", request.options.slot.as_str()),
     )?;
+    if request.connection_fence == 0 {
+        return Err(AdapterError::Rejected(
+            "agent connection fence must be nonzero".into(),
+        ));
+    }
     let launch = adapter.runtime.launch(request)?;
     if launch.operation_id != request.operation_id
         || launch.request_sha256 != request.request_sha256
@@ -166,7 +171,13 @@ pub(super) async fn open_agent(
     }
     let (channel, receipt) = adapter
         .backend
-        .open_agent(handle, launch, request.resume_conversation.clone(), updates)
+        .open_agent(
+            handle,
+            launch,
+            request.resume_conversation.clone(),
+            request.connection_fence,
+            updates,
+        )
         .await?;
     if receipt.operation_id != request.operation_id
         || receipt.request_sha256 != request.request_sha256
