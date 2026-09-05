@@ -1,12 +1,13 @@
 mod control;
 mod fixtures;
 
+use crate::profiles::store::AgentProfileStore;
 use crate::profiles::{content_digest, AgentProfileRef, AgentProfileRevision, ProfileVisibility};
 use crate::sandbox::service_trust::{validate_agent_profile, validate_agent_revision};
 use crate::sandbox::store::{
     AgentLogStore, AgentStore, SandboxEventStore, SandboxStoreError, WorktreeStore,
 };
-use crate::{AgentId, AgentProfileId};
+use crate::{AgentId, AgentProfileId, Capability, SubjectId};
 
 use super::*;
 use fixtures::*;
@@ -110,18 +111,74 @@ async fn trigger_replay_is_exact_and_records_profile_use_once() {
         trigger_id: "trg_one".into(),
         launch_id: "launch-one".into(),
     };
-    let owner = caller("owner", true);
+    assert!(matches!(
+        service
+            .create(
+                &caller("owner", true),
+                &workspace(WorkspaceStatus::Ready).id,
+                request(reference.clone(), origin.clone()),
+            )
+            .await,
+        Err(AgentServiceError::InvalidRequest(_))
+    ));
+    assert_eq!(
+        service
+            .create_for_launch(
+                &caller("owner", true),
+                Capability::LaunchTriggers,
+                &workspace(WorkspaceStatus::Ready).id,
+                request(reference.clone(), origin.clone()),
+            )
+            .await,
+        Err(AgentServiceError::Forbidden)
+    );
+    let owner = launch_caller("owner", Capability::CreateSandbox);
+    assert_eq!(
+        service
+            .create_for_launch(
+                &owner,
+                Capability::UseOwnSandboxes,
+                &workspace(WorkspaceStatus::Ready).id,
+                request(reference.clone(), origin.clone()),
+            )
+            .await,
+        Err(AgentServiceError::Forbidden)
+    );
+    assert!(matches!(
+        service
+            .create_for_launch(
+                &owner,
+                Capability::CreateSandbox,
+                &workspace(WorkspaceStatus::Ready).id,
+                request(reference.clone(), AgentOrigin::Manual),
+            )
+            .await,
+        Err(AgentServiceError::InvalidRequest(_))
+    ));
+    assert_eq!(
+        service
+            .create_for_launch(
+                &launch_caller("other", Capability::CreateSandbox),
+                Capability::CreateSandbox,
+                &workspace(WorkspaceStatus::Ready).id,
+                request(reference.clone(), origin.clone()),
+            )
+            .await,
+        Err(AgentServiceError::WorkspaceNotFound)
+    );
     let first = service
-        .create(
+        .create_for_launch(
             &owner,
+            Capability::CreateSandbox,
             &workspace(WorkspaceStatus::Ready).id,
             request(reference.clone(), origin.clone()),
         )
         .await
         .unwrap();
     let replay = service
-        .create(
+        .create_for_launch(
             &owner,
+            Capability::CreateSandbox,
             &workspace(WorkspaceStatus::Ready).id,
             request(reference.clone(), origin.clone()),
         )
@@ -143,10 +200,67 @@ async fn trigger_replay_is_exact_and_records_profile_use_once() {
     changed.first_message = Some("A changed payload.".into());
     assert_eq!(
         service
-            .create(&owner, &workspace(WorkspaceStatus::Ready).id, changed)
+            .create_for_launch(
+                &owner,
+                Capability::CreateSandbox,
+                &workspace(WorkspaceStatus::Ready).id,
+                changed,
+            )
             .await,
         Err(AgentServiceError::CreationConflict)
     );
+}
+
+#[tokio::test]
+async fn frozen_launch_revision_survives_profile_retirement() {
+    let (service, _, profiles, reference) = setup(
+        SandboxStatus::Active,
+        WorkspaceStatus::Ready,
+        2,
+        "publisher",
+        ProfileVisibility::Public,
+    )
+    .await;
+    profiles
+        .retire_agent_profile(&reference.id, &SubjectId::new("publisher"), NOW.into())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        service
+            .create(
+                &caller("owner", true),
+                &workspace(WorkspaceStatus::Ready).id,
+                request(reference.clone(), AgentOrigin::Manual),
+            )
+            .await,
+        Err(AgentServiceError::ProfileNotFound)
+    );
+    let visitor = launch_caller("owner", Capability::LaunchTriggers);
+    let origin = AgentOrigin::Trigger {
+        trigger_id: "trg_retired".into(),
+        launch_id: "lch_retired".into(),
+    };
+    let created = service
+        .create_for_launch(
+            &visitor,
+            Capability::LaunchTriggers,
+            &workspace(WorkspaceStatus::Ready).id,
+            request(reference.clone(), origin.clone()),
+        )
+        .await
+        .unwrap();
+    let replay = service
+        .create_for_launch(
+            &visitor,
+            Capability::LaunchTriggers,
+            &workspace(WorkspaceStatus::Ready).id,
+            request(reference.clone(), origin),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, created);
+    assert_eq!(uses(&profiles, &reference.id).await, 1);
 }
 
 #[tokio::test]
@@ -275,7 +389,7 @@ async fn authorization_visibility_and_reads_fail_closed() {
 
 #[tokio::test]
 async fn request_bounds_and_profile_integrity_are_enforced() {
-    let (service, _, _, reference) = setup(
+    let (service, store, profiles, stored_reference) = setup(
         SandboxStatus::Active,
         WorkspaceStatus::Ready,
         1,
@@ -283,7 +397,7 @@ async fn request_bounds_and_profile_integrity_are_enforced() {
         ProfileVisibility::Private,
     )
     .await;
-    let mut invalid = request(reference, AgentOrigin::Manual);
+    let mut invalid = request(stored_reference.clone(), AgentOrigin::Manual);
     invalid.title = Some("x".repeat(65));
     assert_eq!(
         service
@@ -318,6 +432,31 @@ async fn request_bounds_and_profile_integrity_are_enforced() {
         validate_agent_revision(&reference, &revision),
         Err(crate::profiles::store::ProfileStoreError::Corrupt(_))
     ));
+
+    for (index, corruption) in [
+        AgentProfileCorruption::RevisionProfileId,
+        AgentProfileCorruption::RevisionDigest,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let service = service_with_profile_corruption(store.clone(), profiles.clone(), corruption);
+        let origin = AgentOrigin::Trigger {
+            trigger_id: "trg_corrupt".into(),
+            launch_id: format!("lch_corrupt_{index}"),
+        };
+        assert!(matches!(
+            service
+                .create_for_launch(
+                    &launch_caller("owner", Capability::LaunchTriggers),
+                    Capability::LaunchTriggers,
+                    &workspace(WorkspaceStatus::Ready).id,
+                    request(stored_reference.clone(), origin),
+                )
+                .await,
+            Err(AgentServiceError::Corrupt(_))
+        ));
+    }
 }
 
 #[test]

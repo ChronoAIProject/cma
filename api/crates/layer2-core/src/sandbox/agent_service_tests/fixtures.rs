@@ -1,10 +1,13 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::profiles::store::{AgentProfileStore, InMemoryProfileStore};
+use crate::profiles::store::{
+    AgentProfileStore, InMemoryProfileStore, ProfilePage, ProfilePageRequest, ProfileStoreError,
+    ProfileUseRecorder,
+};
 use crate::profiles::{
-    AgentProfile, AgentProfileContent, AgentProfileRef, AgentProvider, ModelAccess,
-    PermissionLevel, ProfileVisibility, SandboxProfileContent, SandboxProfileSnapshot,
+    AgentProfile, AgentProfileContent, AgentProfileRef, AgentProfileRevision, AgentProvider,
+    ModelAccess, PermissionLevel, ProfileVisibility, SandboxProfileContent, SandboxProfileSnapshot,
     ThinkingEffort, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
 };
 use crate::sandbox::store::{InMemorySandboxStore, SandboxStore, WorkspaceStore};
@@ -80,6 +83,120 @@ pub(super) fn caller(subject: &str, allowed: bool) -> Caller {
     Caller::new(
         SubjectId::new(subject),
         Authorization::new(allowed.then_some(Capability::UseOwnSandboxes)),
+    )
+}
+
+pub(super) fn launch_caller(subject: &str, authority: Capability) -> Caller {
+    Caller::new(SubjectId::new(subject), Authorization::new([authority]))
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum AgentProfileCorruption {
+    RevisionProfileId,
+    RevisionDigest,
+}
+
+struct CorruptingAgentProfiles {
+    inner: Arc<InMemoryProfileStore>,
+    corruption: AgentProfileCorruption,
+}
+
+#[async_trait::async_trait]
+impl AgentProfileStore for CorruptingAgentProfiles {
+    async fn create_agent_profile(&self, profile: AgentProfile) -> Result<(), ProfileStoreError> {
+        self.inner.create_agent_profile(profile).await
+    }
+
+    async fn agent_profile(
+        &self,
+        id: &AgentProfileId,
+    ) -> Result<Option<AgentProfile>, ProfileStoreError> {
+        self.inner.agent_profile(id).await
+    }
+
+    async fn save_agent_draft(
+        &self,
+        expected_draft_version: u64,
+        profile: AgentProfile,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner
+            .save_agent_draft(expected_draft_version, profile)
+            .await
+    }
+
+    async fn publish_agent_profile(
+        &self,
+        id: &AgentProfileId,
+        expected_draft_version: u64,
+        published_at: String,
+    ) -> Result<AgentProfileRevision, ProfileStoreError> {
+        self.inner
+            .publish_agent_profile(id, expected_draft_version, published_at)
+            .await
+    }
+
+    async fn agent_profile_revision(
+        &self,
+        id: &AgentProfileId,
+        revision: u32,
+    ) -> Result<Option<AgentProfileRevision>, ProfileStoreError> {
+        let mut stored = self.inner.agent_profile_revision(id, revision).await?;
+        if let Some(stored) = &mut stored {
+            match self.corruption {
+                AgentProfileCorruption::RevisionProfileId => {
+                    stored.profile_id = AgentProfileId("agp_wrong_revision".into());
+                }
+                AgentProfileCorruption::RevisionDigest => stored.digest = "wrong-digest".into(),
+            }
+        }
+        Ok(stored)
+    }
+
+    async fn list_agent_profile_revisions(
+        &self,
+        id: &AgentProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<AgentProfileRevision>, ProfileStoreError> {
+        self.inner.list_agent_profile_revisions(id, page).await
+    }
+
+    async fn list_agent_profiles(
+        &self,
+        owner: Option<&SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<AgentProfile>, ProfileStoreError> {
+        self.inner
+            .list_agent_profiles(owner, public_only, page)
+            .await
+    }
+
+    async fn retire_agent_profile(
+        &self,
+        id: &AgentProfileId,
+        owner: &SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError> {
+        self.inner.retire_agent_profile(id, owner, retired_at).await
+    }
+}
+
+pub(super) fn service_with_profile_corruption(
+    store: Arc<InMemorySandboxStore>,
+    profiles: Arc<InMemoryProfileStore>,
+    corruption: AgentProfileCorruption,
+) -> Arc<AgentService> {
+    let profile_store: Arc<dyn AgentProfileStore> = Arc::new(CorruptingAgentProfiles {
+        inner: profiles.clone(),
+        corruption,
+    });
+    let profile_uses: Arc<dyn ProfileUseRecorder> = profiles;
+    AgentService::with_dependencies(
+        store,
+        profile_store,
+        profile_uses,
+        TestAgentRuntimeRegistry::new(false),
+        agent_capabilities(),
     )
 }
 
