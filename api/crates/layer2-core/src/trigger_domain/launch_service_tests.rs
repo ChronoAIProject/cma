@@ -497,6 +497,58 @@ async fn immediate_start_and_command_replay_are_atomic_and_stable() {
 }
 
 #[tokio::test]
+async fn admission_freezes_authority_without_replay_escalation() {
+    let fixture = fixture(default_reuse(), PUBLISHER, false, false, vec![]).await;
+    let visitor = fixture
+        .service
+        .create_or_resume(
+            &fixture.caller,
+            &fixture.public.public_id,
+            fixture.request("visitor-authority"),
+        )
+        .await
+        .unwrap()
+        .launch;
+    assert_eq!(visitor.authority, LaunchAuthorityClass::Visitor);
+
+    let creator = Caller::new(
+        SubjectId::new(VISITOR),
+        Authorization::new([Capability::CreateSandbox]),
+    );
+    let creator_launch = fixture
+        .service
+        .create_or_resume(
+            &creator,
+            &fixture.public.public_id,
+            fixture.request("creator-authority"),
+        )
+        .await
+        .unwrap()
+        .launch;
+    assert_eq!(
+        creator_launch.authority,
+        LaunchAuthorityClass::SandboxCreator
+    );
+
+    let expanded = Caller::new(
+        SubjectId::new(VISITOR),
+        Authorization::new([Capability::LaunchTriggers, Capability::CreateSandbox]),
+    );
+    let replay = fixture
+        .service
+        .create_or_resume(
+            &expanded,
+            &fixture.public.public_id,
+            fixture.request("visitor-authority"),
+        )
+        .await
+        .unwrap()
+        .launch;
+    assert_eq!(replay.id, visitor.id);
+    assert_eq!(replay.authority, LaunchAuthorityClass::Visitor);
+}
+
+#[tokio::test]
 async fn exact_replay_precedes_mutable_launch_dependencies() {
     let disabled = fixture(default_reuse(), VISITOR, false, false, vec![]).await;
     let request = disabled.request("replay-disabled");

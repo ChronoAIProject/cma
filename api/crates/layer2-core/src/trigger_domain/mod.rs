@@ -4,6 +4,7 @@ mod connections;
 mod content;
 mod launch;
 mod launch_event;
+mod launch_lifecycle;
 mod launch_resolution_service;
 mod launch_service;
 mod launch_service_operations;
@@ -33,8 +34,8 @@ pub use content::{
     TriggerConsent, TriggerContent, TriggerTarget, WorkspaceReusePolicy, MAX_FIRST_MESSAGE_BYTES,
 };
 pub use launch::{
-    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface, LaunchFailure,
-    LaunchSeed, LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus,
+    Launch, LaunchAuthorityClass, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface,
+    LaunchFailure, LaunchSeed, LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus,
 };
 pub use launch_event::{LaunchEvent, LaunchEventKind};
 pub use launch_service::{

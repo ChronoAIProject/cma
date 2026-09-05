@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::{SandboxProfileStore, WorkspaceProfileStore};
-use crate::{now_rfc3339, Caller, LaunchId, SubjectId};
+use crate::{now_rfc3339, Caller, Capability, LaunchId, SubjectId};
 
 use super::launch_service_support::{
     append_resolution_events, connection_error, create_result, request_fingerprint,
@@ -13,10 +13,11 @@ use super::launch_service_support::{
 };
 use super::launch_trust::LaunchTrustManifest;
 use super::{
-    ExistingAgentChoice, Launch, LaunchAdmission, LaunchConfirmation, LaunchConsentSurface,
-    LaunchContextReader, LaunchEventKind, LaunchResolution, LaunchSeed, LaunchState, LaunchStore,
-    PublicTrigger, PublicTriggerId, RepeatChoice, RequirementsSnapshot, ReviewRequirements,
-    ServiceConnectionBroker, TriggerAvailability, TriggerProfileResolver, TriggerStore,
+    ExistingAgentChoice, Launch, LaunchAdmission, LaunchAuthorityClass, LaunchConfirmation,
+    LaunchConsentSurface, LaunchContextReader, LaunchEventKind, LaunchResolution, LaunchSeed,
+    LaunchState, LaunchStore, PublicTrigger, PublicTriggerId, RepeatChoice, RequirementsSnapshot,
+    ReviewRequirements, ServiceConnectionBroker, TriggerAvailability, TriggerProfileResolver,
+    TriggerStore,
 };
 
 pub(super) const MAX_EXISTING_MESSAGE_EXCERPT_SCALARS: usize = 140;
@@ -259,6 +260,11 @@ impl LaunchService {
                 revision_digest: trigger.revision.digest.clone(),
                 public_id: trigger.public_id.clone(),
                 owner: caller.subject.clone(),
+                authority: if caller.authorization.allows(Capability::CreateSandbox) {
+                    LaunchAuthorityClass::SandboxCreator
+                } else {
+                    LaunchAuthorityClass::Visitor
+                },
                 placement_id,
                 referrer_origin: request.referrer_origin.clone(),
                 requirements,
