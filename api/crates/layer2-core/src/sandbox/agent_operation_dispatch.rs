@@ -33,6 +33,7 @@ pub(super) struct PreparedAgentOperation {
     pub(super) required: Vec<RuntimeCapability>,
     pub(super) input: ConversationInput,
     pub(super) rollback: PreWriteRollback,
+    pub(super) queued_message_sequence: Option<u64>,
 }
 
 impl AgentOperationService {
@@ -57,7 +58,7 @@ impl AgentOperationService {
         .map_err(|error| AgentOperationError::InvalidRequest(error.to_string()))
     }
 
-    pub(super) async fn queue_paused_message(
+    pub(super) async fn queue_message(
         &self,
         current: Agent,
         text: String,
@@ -130,6 +131,7 @@ impl AgentOperationService {
             required,
             input: ConversationInput::Prompt(vec![ContentBlock::from(text)]),
             rollback: PreWriteRollback::NewTurn,
+            queued_message_sequence: None,
         })
     }
 
@@ -166,6 +168,7 @@ impl AgentOperationService {
             required,
             input: ConversationInput::Prompt(vec![ContentBlock::from(text)]),
             rollback: PreWriteRollback::None,
+            queued_message_sequence: None,
         })
     }
 
@@ -212,6 +215,7 @@ impl AgentOperationService {
             } else {
                 PreWriteRollback::None
             },
+            queued_message_sequence: None,
         })
     }
 
@@ -289,6 +293,7 @@ impl AgentOperationService {
                 decision: runtime_decision(decision),
             },
             rollback: PreWriteRollback::Approval(snapshot),
+            queued_message_sequence: None,
         })
     }
 
@@ -305,7 +310,7 @@ impl AgentOperationService {
     }
 }
 
-fn runtime_target(agent: &Agent) -> Result<AgentRuntimeTarget, AgentOperationError> {
+pub(super) fn runtime_target(agent: &Agent) -> Result<AgentRuntimeTarget, AgentOperationError> {
     let conversation_id = agent
         .conversation
         .conversation_id
@@ -324,7 +329,7 @@ fn runtime_target(agent: &Agent) -> Result<AgentRuntimeTarget, AgentOperationErr
     })
 }
 
-fn new_operation(
+pub(super) fn new_operation(
     sequence: u64,
     target: &AgentRuntimeTarget,
     turn_sequence: u64,
@@ -366,7 +371,7 @@ fn active_turn(agent: &Agent) -> Result<u64, AgentOperationError> {
         .ok_or(AgentOperationError::NoActiveTurn)
 }
 
-fn next_sequence(current: u64) -> Result<u64, AgentOperationError> {
+pub(super) fn next_sequence(current: u64) -> Result<u64, AgentOperationError> {
     current
         .checked_add(1)
         .ok_or_else(|| AgentOperationError::Corrupt("agent sequence overflow".into()))

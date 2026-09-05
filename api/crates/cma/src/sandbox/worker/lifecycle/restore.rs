@@ -235,39 +235,6 @@ impl SandboxWorker {
         self.complete_sandbox_only_phase(sandbox, next, stamp).await
     }
 
-    pub(super) async fn complete_empty_lifecycle_queue(
-        &self,
-        sandbox: Sandbox,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let agents = self.lifecycle_agents(&sandbox).await?;
-        let settled = agents
-            .iter()
-            .filter(|agent| agent.status.is_live())
-            .all(|agent| {
-                agent.status == AgentStatus::Ready
-                    && require_quiet_agent(agent).is_ok()
-                    && agent.conversation.queued_messages.is_empty()
-            });
-        if !settled {
-            return self
-                .handle_lifecycle_failure(
-                    sandbox,
-                    WorkerFailure::retryable(
-                        "lifecycle queued messages or agent work still require settlement",
-                    ),
-                    now,
-                )
-                .await;
-        }
-        let stamp = rfc3339_at(now);
-        let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
-        let mut next = sandbox.clone();
-        next.complete_lifecycle_queued_message_delivery(&lease.holder, lease.fence, stamp.clone())
-            .map_err(model_error)?;
-        self.complete_sandbox_only_phase(sandbox, next, stamp).await
-    }
-
     pub(super) async fn publish_restored_active(
         &self,
         sandbox: Sandbox,

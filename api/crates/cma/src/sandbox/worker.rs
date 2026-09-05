@@ -4,7 +4,8 @@ use std::time::{Duration, SystemTime};
 use layer2_core::profiles::WorkspaceProfileRef;
 use layer2_core::sandbox::store::{SandboxLifecycleStore, SandboxStoreError};
 use layer2_core::sandbox::{
-    AgentUpdateRecorder, Sandbox, SandboxPolicy, SandboxPolicySource, SandboxWorkStep,
+    AgentOperationService, AgentUpdateRecorder, Sandbox, SandboxPolicy, SandboxPolicySource,
+    SandboxWorkStep,
 };
 use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::{RuntimeHandle, SandboxAdapter};
@@ -75,6 +76,7 @@ pub(crate) struct SandboxWorkerDependencies {
     pub checkpoints: Arc<dyn CheckpointObjectPurger>,
     pub registry: Arc<LiveAgentRegistry>,
     pub updates: Arc<dyn AgentUpdateRecorder>,
+    pub operations: Arc<AgentOperationService>,
 }
 
 #[derive(Clone)]

@@ -11,6 +11,7 @@ use super::SandboxWorker;
 mod checkpoint;
 mod conversations;
 mod pause;
+mod queue;
 mod restore;
 mod support;
 
@@ -64,7 +65,7 @@ impl SandboxWorker {
                     self.reopen_lifecycle_conversations(sandbox, now).await
                 }
                 SandboxImageRotationPhase::QueuedMessageDelivery => {
-                    self.complete_empty_lifecycle_queue(sandbox, now).await
+                    self.deliver_lifecycle_queue(sandbox, now).await
                 }
                 SandboxImageRotationPhase::PublishActive => {
                     self.publish_restored_active(sandbox, now).await
@@ -94,7 +95,7 @@ impl SandboxWorker {
                 self.reopen_lifecycle_conversations(sandbox, now).await
             }
             SandboxRevivePhase::QueuedMessageDelivery => {
-                self.complete_empty_lifecycle_queue(sandbox, now).await
+                self.deliver_lifecycle_queue(sandbox, now).await
             }
             SandboxRevivePhase::PublishActive => self.publish_restored_active(sandbox, now).await,
         }

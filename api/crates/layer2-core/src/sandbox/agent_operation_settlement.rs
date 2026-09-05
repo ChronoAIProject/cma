@@ -7,7 +7,8 @@ use super::agent_operation_service::{operation_store_error, MAX_OPERATION_COMMIT
 use super::store::{AgentConversationMutation, AgentStore};
 use super::{
     Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationError,
-    AgentOperationFailure, AgentOperationReceipt, AgentOperationService, AgentStatus, TypedFailure,
+    AgentOperationFailure, AgentOperationReceipt, AgentOperationService, AgentStatus,
+    QueuedMessageState, TypedFailure,
 };
 
 enum SendClassification {
@@ -80,7 +81,9 @@ impl AgentOperationService {
             ) {
                 return Ok(receipt(current, prepared.operation_sequence));
             }
-            if record.state == AgentOperationDelivery::RecoveryRequired {
+            if record.state == AgentOperationDelivery::RecoveryRequired
+                && !matches!(classification, SendClassification::Confirmed)
+            {
                 return Err(AgentOperationError::DeliveryAmbiguous {
                     operation_sequence: record.sequence,
                     detail: record
@@ -118,6 +121,7 @@ impl AgentOperationService {
                     .require_recovery(operation_failure("input_write_ambiguous", detail, &at)?)
                     .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
             }
+            settle_queued_message(&mut next, &prepared, &classification)?;
             let mut logs = vec![operation_log(&next, prepared.operation_sequence)?];
             if matches!(&classification, SendClassification::PreWrite(_)) {
                 append_pre_write_rollback(&current, &mut next, &prepared, &at, &mut logs)?;
@@ -190,6 +194,40 @@ impl AgentOperationService {
             .map_err(operation_store_error)?;
         Ok((next, appended))
     }
+}
+
+fn settle_queued_message(
+    next: &mut Agent,
+    prepared: &PreparedAgentOperation,
+    classification: &SendClassification,
+) -> Result<(), AgentOperationError> {
+    let Some(sequence) = prepared.queued_message_sequence else {
+        return Ok(());
+    };
+    let message = next
+        .conversation
+        .queued_messages
+        .iter_mut()
+        .find(|message| message.sequence == sequence)
+        .ok_or_else(|| {
+            AgentOperationError::OutcomeUnavailable(
+                "the queued message associated with the dispatch fence is absent".into(),
+            )
+        })?;
+    let valid_state = message.state == QueuedMessageState::DispatchFenced
+        || (matches!(classification, SendClassification::Confirmed)
+            && message.state == QueuedMessageState::RecoveryRequired);
+    if !valid_state {
+        return Err(AgentOperationError::OutcomeUnavailable(
+            "the queued message dispatch fence was replaced".into(),
+        ));
+    }
+    let result = match classification {
+        SendClassification::Confirmed => message.mark_delivered(),
+        SendClassification::PreWrite(_) => message.retry_after_pre_write_failure(),
+        SendClassification::Ambiguous(_) => message.require_recovery(),
+    };
+    result.map_err(|error| AgentOperationError::Corrupt(error.to_string()))
 }
 
 fn append_pre_write_rollback(

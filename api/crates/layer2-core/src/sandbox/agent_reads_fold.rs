@@ -1,4 +1,8 @@
+use std::collections::BTreeMap;
+
 use crate::seconds_from_rfc3339;
+
+use super::queued_message::queued_message_origin_sequence;
 
 use super::{
     Agent, AgentLogEntry, AgentLogKind, AgentTranscript, AgentTranscriptTurn, AgentTurnOutcome,
@@ -68,7 +72,9 @@ pub(super) fn fold_agent_log(
                 }
                 transcript.start(*turn_sequence, origin_key.clone(), &entry.appended_at)?;
             }
-            AgentLogKind::OwnerMessage { content } => transcript.owner_message(content)?,
+            AgentLogKind::OwnerMessage { content } => {
+                transcript.owner_message(entry.seq, content)?
+            }
             AgentLogKind::AgentMessage { content } => transcript.agent_message(content)?,
             AgentLogKind::TurnCompleted { turn_sequence } => transcript.finish(
                 *turn_sequence,
@@ -115,6 +121,7 @@ pub(super) fn fold_agent_log(
     if active_turn != agent.conversation.active_turn {
         return Err("agent active turn disagrees with its log".into());
     }
+    transcript.validate_queued_messages(agent)?;
     transcript.finish_active()?;
 
     Ok(AgentLogProjection {
@@ -154,6 +161,12 @@ fn validate_conversation_identity(
 struct TranscriptFold {
     turns: Vec<AgentTranscriptTurn>,
     active: Option<ActiveTurn>,
+    queued_owner_messages: BTreeMap<u64, QueuedOwnerMessage>,
+}
+
+struct QueuedOwnerMessage {
+    content: String,
+    used: bool,
 }
 
 impl TranscriptFold {
@@ -172,26 +185,75 @@ impl TranscriptFold {
         {
             return Err("agent turns are nested or out of order".into());
         }
+        let owner_message = match origin_key
+            .as_deref()
+            .and_then(queued_message_origin_sequence)
+        {
+            Some(sequence) => {
+                let queued = self
+                    .queued_owner_messages
+                    .get_mut(&sequence)
+                    .ok_or_else(|| {
+                        "queued turn has no matching admitted owner message".to_string()
+                    })?;
+                queued.used = true;
+                Some(queued.content.clone())
+            }
+            None => None,
+        };
         self.active = Some(ActiveTurn {
             turn_sequence,
             started_at: started_at.into(),
             origin_key,
-            owner_message: None,
+            owner_message,
             agent_messages: Vec::new(),
         });
         Ok(())
     }
 
-    fn owner_message(&mut self, content: &str) -> Result<(), String> {
-        let turn = self
-            .active
-            .as_mut()
-            .ok_or_else(|| "owner message is outside a turn".to_string())?;
-        if turn.owner_message.is_some() || !turn.agent_messages.is_empty() {
-            return Err("agent turn has an invalid owner message".into());
+    fn owner_message(&mut self, sequence: u64, content: &str) -> Result<(), String> {
+        if let Some(turn) = self.active.as_mut() {
+            if turn.owner_message.is_some() || !turn.agent_messages.is_empty() {
+                return Err("agent turn has an invalid owner message".into());
+            }
+            turn.owner_message = Some(content.into());
+            return Ok(());
         }
-        turn.owner_message = Some(content.into());
-        Ok(())
+        self.queued_owner_messages
+            .insert(
+                sequence,
+                QueuedOwnerMessage {
+                    content: content.into(),
+                    used: false,
+                },
+            )
+            .is_none()
+            .then_some(())
+            .ok_or_else(|| "agent log contains a duplicate queued owner message".into())
+    }
+
+    fn validate_queued_messages(&self, agent: &Agent) -> Result<(), String> {
+        let queued = agent
+            .conversation
+            .queued_messages
+            .iter()
+            .filter(|message| message.state == super::QueuedMessageState::Queued)
+            .map(|message| (message.sequence, message.content.as_str()))
+            .collect::<BTreeMap<_, _>>();
+        let every_unconsumed_is_queued =
+            self.queued_owner_messages
+                .iter()
+                .all(|(sequence, message)| {
+                    message.used || queued.get(sequence) == Some(&message.content.as_str())
+                });
+        let every_queued_message_was_admitted = queued.iter().all(|(sequence, content)| {
+            self.queued_owner_messages
+                .get(sequence)
+                .is_some_and(|message| message.content == *content)
+        });
+        (every_unconsumed_is_queued && every_queued_message_was_admitted)
+            .then_some(())
+            .ok_or_else(|| "queued owner messages disagree with durable queue state".into())
     }
 
     fn agent_message(&mut self, content: &str) -> Result<(), String> {

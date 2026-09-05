@@ -1,5 +1,6 @@
 mod first_message_tests;
 mod fixtures;
+mod queued_message_tests;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -70,6 +71,7 @@ fn queued_message_transitions_preserve_the_retry_safe_boundary() {
 async fn send_message_fences_before_input_and_moves_ready_to_working() {
     let store = Arc::new(InMemorySandboxStore::default());
     let ready = test_agent(AgentStatus::Ready, None);
+    seed_active_parent(&store).await;
     store.create_agent(ready.clone()).await.unwrap();
     let fence_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let inputs = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -143,6 +145,7 @@ async fn send_message_fences_before_input_and_moves_ready_to_working() {
 async fn pre_write_failure_rolls_a_new_turn_back_to_ready() {
     let store = Arc::new(InMemorySandboxStore::default());
     let ready = test_agent(AgentStatus::Ready, None);
+    seed_active_parent(&store).await;
     store.create_agent(ready.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Ok(()));
     let registry = TestRuntimeRegistry::new(full_capabilities(), sender).fail_on_resolution(2);
@@ -174,6 +177,7 @@ async fn pre_write_failure_rolls_a_new_turn_back_to_ready() {
 async fn ambiguous_delivery_is_durable_and_blocks_a_repeat() {
     let store = Arc::new(InMemorySandboxStore::default());
     let ready = test_agent(AgentStatus::Ready, None);
+    seed_active_parent(&store).await;
     store.create_agent(ready.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Err(layer3_adapter::AdapterError::Rejected(
         "receipt disappeared".into(),
@@ -680,6 +684,7 @@ async fn message_byte_bound_is_inclusive_and_checked_before_lookup() {
 async fn invalid_or_unsupported_input_reaches_neither_store_nor_sender() {
     let store = Arc::new(InMemorySandboxStore::default());
     let ready = test_agent(AgentStatus::Ready, None);
+    seed_active_parent(&store).await;
     store.create_agent(ready.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Ok(()));
     let registry = TestRuntimeRegistry::new(RuntimeCapabilities::default(), sender);
@@ -711,6 +716,7 @@ async fn invalid_or_unsupported_input_reaches_neither_store_nor_sender() {
 async fn a_failed_fence_commit_never_reaches_the_runtime_sender() {
     let store = Arc::new(RejectingConversationStore::default());
     let ready = test_agent(AgentStatus::Ready, None);
+    seed_active_parent(&store.inner).await;
     store.inner.create_agent(ready.clone()).await.unwrap();
     store.reject_commits.store(true, Ordering::SeqCst);
     let (sender, inputs) = recording_sender(Ok(()));
@@ -733,6 +739,7 @@ async fn a_failed_fence_commit_never_reaches_the_runtime_sender() {
 async fn stronger_execution_evidence_wins_the_settlement_race() {
     let store = Arc::new(InMemorySandboxStore::default());
     let ready = test_agent(AgentStatus::Ready, None);
+    seed_active_parent(&store).await;
     store.create_agent(ready.clone()).await.unwrap();
     let sender = completing_sender(store.clone(), ready.id.clone(), false);
     let service =
