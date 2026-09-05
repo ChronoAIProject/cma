@@ -39,6 +39,8 @@ pub use sandbox_admission::{
     allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,
     SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
 };
+mod lifecycle_command;
+pub use lifecycle_command::*;
 #[cfg(test)]
 mod agent_work_validation_tests;
 
@@ -328,12 +330,20 @@ pub trait SandboxTransactionStore: Send + Sync {
 }
 
 pub trait SandboxServiceStore:
-    SandboxStore + SandboxEventStore + SandboxAdmissionStore + SandboxTransactionStore
+    SandboxStore
+    + SandboxEventStore
+    + SandboxAdmissionStore
+    + SandboxTransactionStore
+    + SandboxLifecycleCommandStore
 {
 }
 
 impl<T> SandboxServiceStore for T where
-    T: SandboxStore + SandboxEventStore + SandboxAdmissionStore + SandboxTransactionStore
+    T: SandboxStore
+        + SandboxEventStore
+        + SandboxAdmissionStore
+        + SandboxTransactionStore
+        + SandboxLifecycleCommandStore
 {
 }
 

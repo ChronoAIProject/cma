@@ -44,6 +44,40 @@ pub struct SandboxRotationIdentity {
 }
 
 impl SandboxRotationIdentity {
+    pub fn validate(&self) -> Result<(), SandboxModelError> {
+        let mut agent_ids = BTreeSet::new();
+        let mut conversation_ids = BTreeSet::new();
+        let mut previous_agent: Option<&AgentId> = None;
+        if self.sandbox_id.as_str().trim().is_empty()
+            || self.owner.as_str().trim().is_empty()
+            || self.profile_id.as_str().trim().is_empty()
+            || self.profile_revision == 0
+            || self.profile_digest.len() != 64
+            || !self
+                .profile_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || self.agents.is_empty()
+        {
+            return Err(invalid_rotation_identity());
+        }
+        for agent in &self.agents {
+            if agent.agent_id.as_str().trim().is_empty()
+                || agent.workspace_id.as_str().trim().is_empty()
+                || agent.worktree_id.as_str().trim().is_empty()
+                || agent.conversation_id.trim().is_empty()
+                || agent.conversation_id.len() > 512
+                || previous_agent.is_some_and(|previous| previous >= &agent.agent_id)
+                || !agent_ids.insert(&agent.agent_id)
+                || !conversation_ids.insert(agent.conversation_id.as_str())
+            {
+                return Err(invalid_rotation_identity());
+            }
+            previous_agent = Some(&agent.agent_id);
+        }
+        Ok(())
+    }
+
     /// Capture canonical identity without retaining prompts, logs, or credentials.
     pub fn capture(sandbox: &Sandbox, agents: &[Agent]) -> Result<Self, SandboxModelError> {
         let mut identities = Vec::new();
@@ -81,14 +115,16 @@ impl SandboxRotationIdentity {
             return Err(invalid_rotation_identity());
         }
         identities.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
-        Ok(Self {
+        let identity = Self {
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             profile_id: sandbox.profile.id.clone(),
             profile_revision: sandbox.profile.revision,
             profile_digest: sandbox.profile.digest.clone(),
             agents: identities,
-        })
+        };
+        identity.validate()?;
+        Ok(identity)
     }
 
     /// Verify that replacement changed runtime authority but no durable identity.

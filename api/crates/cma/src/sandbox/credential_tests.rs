@@ -319,7 +319,7 @@ fn sandbox() -> layer2_core::sandbox::Sandbox {
             max_workspaces: 1,
             max_agents_per_workspace: 1,
         },
-        checkpoint: None,
+        lifecycle: Default::default(),
         last_activity_at: now.clone(),
         created_at: now.clone(),
         updated_at: now,

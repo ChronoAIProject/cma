@@ -156,7 +156,7 @@ fn sandbox(id: &str) -> Sandbox {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
         },
-        checkpoint: None,
+        lifecycle: Default::default(),
         last_activity_at: NOW.into(),
         created_at: NOW.into(),
         updated_at: NOW.into(),
@@ -602,6 +602,7 @@ mod agent_title_tests;
 mod agent_transaction_tests;
 mod agent_worker_tests;
 mod profile_transaction_tests;
+mod sandbox_lifecycle_tests;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn fresh_database_initializes_every_schema_v1_collection_and_index() {

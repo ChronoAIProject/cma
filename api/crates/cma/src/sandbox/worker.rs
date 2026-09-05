@@ -177,6 +177,9 @@ impl SandboxWorker {
             SandboxWorkStep::WaitForCredentialRotation => self.begin_rotation(sandbox, now).await,
             SandboxWorkStep::RevokeRotatedCredential => self.revoke_rotated(sandbox, now).await,
             SandboxWorkStep::FinishCredentialRotation => self.finish_rotation(sandbox, now).await,
+            SandboxWorkStep::RunLifecycleOperation => Err(SandboxStoreError::Unavailable(
+                "sandbox pause and recovery worker is not composed".into(),
+            )),
             SandboxWorkStep::StopAgents => self.stop_agents(sandbox, now).await,
             SandboxWorkStep::RevokeRetirementCredentials => {
                 self.revoke_for_retirement(sandbox, now).await

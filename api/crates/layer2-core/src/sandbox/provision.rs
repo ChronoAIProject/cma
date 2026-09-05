@@ -17,6 +17,7 @@ pub enum SandboxWorkStep {
     DeliverRotatedCredential,
     RevokeRotatedCredential,
     FinishCredentialRotation,
+    RunLifecycleOperation,
     StopAgents,
     RevokeRetirementCredentials,
     TeardownRuntime,

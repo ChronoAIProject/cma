@@ -4,8 +4,8 @@ use crate::ids::{SandboxId, SubjectId};
 use crate::profiles::SandboxProfileSnapshot;
 
 use super::{
-    SandboxCheckpointRef, SandboxCredentialState, SandboxModelError, SandboxOrigin, SandboxStatus,
-    SandboxWorkState, SandboxWorkStep,
+    SandboxCredentialState, SandboxLifecycleState, SandboxModelError, SandboxOrigin,
+    SandboxReviveCause, SandboxRotationIdentity, SandboxStatus, SandboxWorkState, SandboxWorkStep,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,8 +46,8 @@ pub struct Sandbox {
     pub credential: SandboxCredentialState,
     pub work: SandboxWorkState,
     pub limits: SandboxLimits,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkpoint: Option<SandboxCheckpointRef>,
+    #[serde(default)]
+    pub lifecycle: SandboxLifecycleState,
     pub last_activity_at: String,
     pub created_at: String,
     pub updated_at: String,
@@ -79,12 +79,9 @@ impl Sandbox {
                 "sandbox.credential_or_work",
             ));
         }
-        if self
-            .checkpoint
-            .as_ref()
-            .is_some_and(|checkpoint| checkpoint.validate().is_err())
-        {
-            return Err(SandboxModelError::invalid_value("sandbox.checkpoint"));
+        self.lifecycle.validate(self)?;
+        if self.status == SandboxStatus::Paused && self.runtime.is_some() {
+            return Err(SandboxModelError::invalid_value("sandbox.runtime"));
         }
         if (self.status == SandboxStatus::Retired) != self.retired_at.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.retired_at"));
@@ -120,8 +117,83 @@ impl Sandbox {
     }
 
     pub fn begin_retirement(&mut self, at: String) -> Result<(), SandboxModelError> {
-        self.transition(SandboxStatus::Retiring, at.clone(), None)?;
-        self.work.schedule(SandboxWorkStep::StopAgents, at);
+        let mut next = self.clone();
+        next.lifecycle.cancel_operation();
+        next.transition(SandboxStatus::Retiring, at.clone(), None)?;
+        next.work.schedule(SandboxWorkStep::StopAgents, at);
+        *self = next;
+        Ok(())
+    }
+
+    pub fn begin_pause(
+        &mut self,
+        at: String,
+        notice: Option<String>,
+    ) -> Result<(), SandboxModelError> {
+        if self.status != SandboxStatus::Active
+            || self.work.lease.is_some()
+            || !matches!(
+                self.work.step,
+                SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
+            )
+        {
+            return Err(SandboxModelError::invalid_value("sandbox.pause"));
+        }
+        let mut next = self.clone();
+        next.lifecycle.start_pause(&next.id, at.clone(), notice)?;
+        next.transition(SandboxStatus::Pausing, at.clone(), None)?;
+        next.work
+            .schedule(SandboxWorkStep::RunLifecycleOperation, at);
+        *self = next;
+        Ok(())
+    }
+
+    pub fn begin_revive(
+        &mut self,
+        cause: SandboxReviveCause,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        if self.status != SandboxStatus::Paused
+            || self.work.lease.is_some()
+            || self.work.step != SandboxWorkStep::None
+        {
+            return Err(SandboxModelError::invalid_value("sandbox.revive"));
+        }
+        let mut next = self.clone();
+        next.lifecycle.start_revive(&next.id, at.clone(), cause)?;
+        next.transition(SandboxStatus::Reviving, at.clone(), None)?;
+        next.work
+            .schedule(SandboxWorkStep::RunLifecycleOperation, at);
+        *self = next;
+        Ok(())
+    }
+
+    pub fn begin_image_rotation(
+        &mut self,
+        target_runtime_version: String,
+        identity: SandboxRotationIdentity,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        if self.status != SandboxStatus::Active
+            || self.work.lease.is_some()
+            || !matches!(
+                self.work.step,
+                SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
+            )
+        {
+            return Err(SandboxModelError::invalid_value("sandbox.image_rotation"));
+        }
+        let mut next = self.clone();
+        next.lifecycle.start_image_rotation(
+            &next.id,
+            at.clone(),
+            target_runtime_version,
+            identity,
+        )?;
+        next.transition(SandboxStatus::Rotating, at.clone(), None)?;
+        next.work
+            .schedule(SandboxWorkStep::RunLifecycleOperation, at);
+        *self = next;
         Ok(())
     }
 }

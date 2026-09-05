@@ -25,6 +25,8 @@ mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
 mod inactivity;
+mod lifecycle;
+mod lifecycle_service;
 mod limits;
 mod provision;
 mod queued_message;
@@ -106,6 +108,11 @@ pub use inactivity::{
     inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
     SandboxAgentLogActivity,
 };
+pub use lifecycle::{
+    SandboxImageRotationPhase, SandboxLifecycleAuthority, SandboxLifecycleOperation,
+    SandboxLifecycleState, SandboxPausePhase,
+};
+pub use lifecycle_service::SandboxLifecycleCommandError;
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
 pub use queued_message::{
@@ -125,7 +132,10 @@ pub use service::{
 };
 pub(crate) use service_trust::foreign_workspace_setups;
 pub use status::{AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus};
-pub use store::{InMemorySandboxStore, Page, PageRequest, SandboxStoreError};
+pub use store::{
+    InMemorySandboxStore, Page, PageRequest, SandboxLifecycleCommandDisposition,
+    SandboxLifecycleCommandOutcome, SandboxStoreError,
+};
 pub use title::{
     AgentTitle, AgentTitleError, AgentTitleGenerationContext, AgentTitleGenerationError,
     AgentTitleGenerationRequest, AgentTitleGenerationResponse, AgentTitleGenerator,
@@ -158,7 +168,11 @@ mod hierarchy_tests;
 #[cfg(test)]
 mod inactivity_tests;
 #[cfg(test)]
+mod lifecycle_service_tests;
+#[cfg(test)]
 mod lifecycle_test_support;
+#[cfg(test)]
+mod lifecycle_tests;
 #[cfg(test)]
 mod revive_tests;
 #[cfg(test)]

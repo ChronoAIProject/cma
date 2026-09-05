@@ -210,7 +210,7 @@ impl SandboxService {
                 max_workspaces: profile.revision.content.max_workspaces,
                 max_agents_per_workspace: profile.revision.content.max_agents_per_workspace,
             },
-            checkpoint: None,
+            lifecycle: Default::default(),
             last_activity_at: now.clone(),
             created_at: now.clone(),
             updated_at: now.clone(),

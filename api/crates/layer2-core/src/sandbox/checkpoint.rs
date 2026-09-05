@@ -292,12 +292,17 @@ pub fn sandbox_checkpoint_due(sandbox: &Sandbox, now: &str) -> bool {
     if sandbox.status != SandboxStatus::Active || sandbox.runtime.is_none() {
         return false;
     }
-    sandbox.checkpoint.as_ref().is_none_or(|checkpoint| {
-        checkpoint.validate().is_ok()
-            && seconds_from_rfc3339(&checkpoint.sealed_at).is_some_and(|sealed| {
-                now >= sealed.saturating_add(SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
-            })
-    })
+    sandbox
+        .lifecycle
+        .checkpoints
+        .latest
+        .as_ref()
+        .is_none_or(|checkpoint| {
+            checkpoint.validate().is_ok()
+                && seconds_from_rfc3339(&checkpoint.sealed_at).is_some_and(|sealed| {
+                    now >= sealed.saturating_add(SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
+                })
+        })
 }
 
 fn valid_sha256(value: &str) -> bool {

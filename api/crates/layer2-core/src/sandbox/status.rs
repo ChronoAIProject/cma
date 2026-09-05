@@ -21,6 +21,7 @@ pub enum SandboxStatus {
     Pausing,
     Paused,
     Reviving,
+    CredentialRotating,
     Rotating,
     Failed,
     Retiring,
@@ -35,16 +36,19 @@ impl SandboxStatus {
                 | (Self::Installing, Self::Active)
                 | (
                     Self::Active,
-                    Self::Pausing | Self::Rotating | Self::Retiring
+                    Self::Pausing | Self::CredentialRotating | Self::Rotating | Self::Retiring
                 )
                 | (Self::Provisioning | Self::Installing, Self::Retiring)
                 | (Self::Pausing, Self::Paused)
                 | (Self::Paused, Self::Reviving | Self::Retiring)
                 | (
-                    Self::Pausing | Self::Reviving | Self::Rotating,
+                    Self::Pausing | Self::Reviving | Self::CredentialRotating | Self::Rotating,
                     Self::Retiring
                 )
-                | (Self::Reviving | Self::Rotating, Self::Active)
+                | (
+                    Self::Reviving | Self::CredentialRotating | Self::Rotating,
+                    Self::Active
+                )
                 | (Self::Retiring, Self::Retired)
         ) || (!matches!(self, Self::Failed | Self::Retired) && next == Self::Failed)
             || (!matches!(self, Self::Retiring | Self::Retired) && next == Self::Retiring);
@@ -65,6 +69,7 @@ impl SandboxStatus {
             Self::Pausing => "pausing",
             Self::Paused => "paused",
             Self::Reviving => "reviving",
+            Self::CredentialRotating => "credential_rotating",
             Self::Rotating => "rotating",
             Self::Failed => "failed",
             Self::Retiring => "retiring",

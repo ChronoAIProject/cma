@@ -1698,6 +1698,7 @@ async fn delete_is_idempotent_and_schedules_cleanup_from_every_live_status() {
         SandboxStatus::Pausing,
         SandboxStatus::Paused,
         SandboxStatus::Reviving,
+        SandboxStatus::CredentialRotating,
         SandboxStatus::Rotating,
         SandboxStatus::Failed,
     ];

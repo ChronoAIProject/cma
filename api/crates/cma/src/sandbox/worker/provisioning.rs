@@ -369,7 +369,7 @@ impl SandboxWorker {
     ) -> Result<(), SandboxStoreError> {
         self.advance_status(
             sandbox,
-            SandboxStatus::Rotating,
+            SandboxStatus::CredentialRotating,
             SandboxWorkStep::MintRotatedCredential,
             now,
         )

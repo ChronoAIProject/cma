@@ -341,7 +341,7 @@ fn sandbox(
             max_workspaces: 4,
             max_agents_per_workspace: 4,
         },
-        checkpoint: None,
+        lifecycle: Default::default(),
         last_activity_at: created_at.into(),
         created_at: created_at.into(),
         updated_at: created_at.into(),
