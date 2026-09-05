@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use layer2_core::sandbox::store::{
+    SandboxCheckpointMutation, SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope,
     SandboxLifecycleCommand, SandboxLifecycleCommandDisposition, SandboxLifecycleCommandResult,
-    SandboxLifecycleCommandStore,
+    SandboxLifecycleCommandStore, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
+    SandboxMutationGuard,
 };
 use layer2_core::sandbox::{
-    SandboxCheckpointConversation, SandboxCheckpointRef, SandboxLifecycleOperation,
-    SandboxReviveCause,
+    Agent, AgentLogKind, RuntimeBinding, SandboxCheckpointConversation, SandboxCheckpointRef,
+    SandboxLifecycleOperation, SandboxPausePhase, SandboxReviveCause,
 };
 use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
@@ -177,6 +179,169 @@ async fn lifecycle_command_reconciles_an_ambiguous_transaction_commit_once() {
     client.database(&database).drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn lifecycle_checkpoint_and_all_agent_phase_commit_atomically() {
+    let (client, name) = database("lifecycle_execution").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (claimed, agents) = claimed_pause_fixture(&store, "execution").await;
+    let checkpoint = checkpoint_for_agents(&agents, 1);
+
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint.clone()))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .commit_sandbox_lifecycle(pause_agents_mutation(&claimed, &agents))
+        .await
+        .unwrap();
+
+    let stored = store.get_sandbox(&claimed.id).await.unwrap().unwrap();
+    assert_eq!(stored.lifecycle.checkpoints.latest, Some(checkpoint));
+    assert!(matches!(
+        stored.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Pause {
+            phase: SandboxPausePhase::TeardownRuntime,
+            checkpoint_epoch: Some(1),
+            ..
+        })
+    ));
+    for original in agents {
+        let parked = store.get_agent(&original.id).await.unwrap().unwrap();
+        assert_eq!(parked.status, AgentStatus::Paused);
+        assert_eq!(parked.revision, original.revision + 1);
+        let log = store.agent_log(&parked.id, 0, 10).await.unwrap();
+        assert_eq!(log.len(), 1);
+        assert!(matches!(
+            log[0].kind,
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Ready,
+                to: AgentStatus::Paused,
+            }
+        ));
+    }
+    let events = store.sandbox_events(&stored.id, 0, 20).await.unwrap();
+    assert_eq!(events.len(), 5);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn one_stale_agent_aborts_the_entire_lifecycle_phase() {
+    let (client, name) = database("lifecycle_atomic_conflict").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (claimed, agents) = claimed_pause_fixture(&store, "atomic").await;
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            checkpoint_for_agents(&agents, 1),
+        ))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut mutation = pause_agents_mutation(&claimed, &agents);
+    mutation.agents[1].expected_revision += 1;
+    let events_before = store.sandbox_events(&claimed.id, 0, 20).await.unwrap();
+
+    assert_eq!(
+        store.commit_sandbox_lifecycle(mutation).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_sandbox(&claimed.id).await.unwrap(),
+        Some(claimed.clone())
+    );
+    for agent in agents {
+        assert_eq!(
+            store.get_agent(&agent.id).await.unwrap().unwrap().status,
+            AgentStatus::Ready
+        );
+        assert!(store.agent_log(&agent.id, 0, 10).await.unwrap().is_empty());
+    }
+    assert_eq!(
+        store.sandbox_events(&claimed.id, 0, 20).await.unwrap(),
+        events_before
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI")
+        .expect("CHRONO_TEST_MONGODB_FAILPOINT_URI must name a failpoint-enabled replica set");
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let app_name = format!("cma-sandbox-lifecycle-phase-{suffix}");
+    let database = format!("cma_812_lifecycle_phase_{suffix}");
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(app_name.clone());
+    let client = Client::with_options(options).unwrap();
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let (claimed, agents) = claimed_pause_fixture(&store, "ambiguous_phase").await;
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            checkpoint_for_agents(&agents, 1),
+        ))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+
+    admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand",
+            "mode": { "times": 5_i32 },
+            "data": {
+                "failCommands": ["commitTransaction"],
+                "appName": &app_name,
+                "writeConcernError": {
+                    "code": 50_i32,
+                    "codeName": "MaxTimeMSExpired",
+                    "errmsg": "injected ambiguous lifecycle phase commit",
+                },
+            },
+        })
+        .await
+        .unwrap();
+    let result = store
+        .commit_sandbox_lifecycle(pause_agents_mutation(&claimed, &agents))
+        .await;
+    admin
+        .database("admin")
+        .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
+        .await
+        .expect("commit failpoint must be disabled before assertions");
+
+    result.unwrap();
+    for agent in agents {
+        assert_eq!(store.agent_log(&agent.id, 0, 10).await.unwrap().len(), 1);
+    }
+    assert_eq!(
+        store
+            .sandbox_events(&claimed.id, 0, 20)
+            .await
+            .unwrap()
+            .len(),
+        5
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
 fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
     let archive = b"durable conversation archive".to_vec();
     let capture = SandboxCheckpointConversation::new(
@@ -200,4 +365,180 @@ fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
         NOW,
     )
     .unwrap()
+}
+
+async fn claimed_pause_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sandbox, Vec<Agent>) {
+    let mut value = sandbox(&format!("sbx_lifecycle_{suffix}"));
+    value.name = format!("lifecycle-{suffix}");
+    value.runtime = Some(RuntimeBinding {
+        runtime_id: format!("runtime-{suffix}"),
+        runtime_version: "image-v1".into(),
+        bound_at: NOW.into(),
+    });
+    value.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+    store.create_sandbox(value.clone()).await.unwrap();
+    let agents = vec![
+        lifecycle_agent(&value, &format!("agt_{suffix}_a"), "conversation-a"),
+        lifecycle_agent(&value, &format!("agt_{suffix}_b"), "conversation-b"),
+    ];
+    for agent in &agents {
+        store.create_agent(agent.clone()).await.unwrap();
+    }
+    store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            value.id.clone(),
+            value.owner,
+            NOW.into(),
+            None,
+        ))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&value.id, "worker", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    (claimed, agents)
+}
+
+fn lifecycle_agent(sandbox: &Sandbox, id: &str, conversation_id: &str) -> Agent {
+    let (_, mut agent) = worktree_and_agent(&sandbox.id);
+    agent.id = AgentId(id.into());
+    agent.worktree_id = WorktreeId(format!("wkt_{id}"));
+    agent.workspace_id = WorkspaceId(format!("wks_{id}"));
+    agent.owner = sandbox.owner.clone();
+    agent.creation_key = format!("create-{id}");
+    agent.status = AgentStatus::Ready;
+    agent.conversation.conversation_id = Some(conversation_id.into());
+    agent.conversation.runtime_generation = Some(1);
+    agent.conversation.last_seq = 0;
+    agent.work = AgentWorkState::new(AgentWorkStep::None, NOW.into());
+    agent.ready_at = Some(NOW.into());
+    agent
+}
+
+fn checkpoint_for_agents(agents: &[Agent], epoch: u64) -> SandboxCheckpointRef {
+    let captures = agents
+        .iter()
+        .map(|agent| {
+            let archive = format!("archive-{}-{epoch}", agent.id).into_bytes();
+            let conversation_id = agent.conversation.conversation_id.clone().unwrap();
+            SandboxCheckpointConversation::new(
+                agent.id.clone(),
+                conversation_id.clone(),
+                ConversationSnapshot {
+                    conversation_id,
+                    archive_sha256: format!("{:x}", Sha256::digest(&archive)),
+                    archive,
+                },
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    SandboxCheckpointRef::seal(
+        &CheckpointReceipt {
+            epoch,
+            object_reference: format!("checkpoints/sandbox-{epoch}"),
+            sha256: format!("{epoch:064x}"),
+            writers: WriterState::Held,
+        },
+        &captures,
+        NOW,
+    )
+    .unwrap()
+}
+
+fn checkpoint_mutation(
+    claimed: &Sandbox,
+    checkpoint: SandboxCheckpointRef,
+) -> SandboxCheckpointMutation {
+    let mut next = claimed.clone();
+    next.lifecycle
+        .checkpoints
+        .publish(checkpoint.clone())
+        .unwrap();
+    let Some(SandboxLifecycleOperation::Pause {
+        phase,
+        checkpoint_epoch,
+        ..
+    }) = next.lifecycle.operation.as_mut()
+    else {
+        panic!("fixture must be pausing");
+    };
+    *phase = SandboxPausePhase::PauseAgents;
+    *checkpoint_epoch = Some(checkpoint.epoch);
+    let lease = claimed.work.lease.as_ref().unwrap();
+    next.work
+        .advance(
+            &lease.holder,
+            lease.fence,
+            SandboxWorkStep::RunLifecycleOperation,
+            NOW.into(),
+        )
+        .unwrap();
+    next.revision += 1;
+    next.updated_at = NOW.into();
+    SandboxCheckpointMutation {
+        guard: SandboxMutationGuard::capture(claimed),
+        checkpoint,
+        sandbox: next,
+        appended_at: NOW.into(),
+    }
+}
+
+fn pause_agents_mutation(claimed: &Sandbox, agents: &[Agent]) -> SandboxLifecycleMutation {
+    let mut next_sandbox = claimed.clone();
+    let Some(SandboxLifecycleOperation::Pause { phase, .. }) =
+        next_sandbox.lifecycle.operation.as_mut()
+    else {
+        panic!("fixture must be pausing");
+    };
+    *phase = SandboxPausePhase::TeardownRuntime;
+    let lease = claimed.work.lease.as_ref().unwrap();
+    next_sandbox
+        .work
+        .advance(
+            &lease.holder,
+            lease.fence,
+            SandboxWorkStep::RunLifecycleOperation,
+            MINUTE.into(),
+        )
+        .unwrap();
+    next_sandbox.revision += 1;
+    next_sandbox.updated_at = MINUTE.into();
+
+    let mut events = Vec::new();
+    let agents = agents
+        .iter()
+        .map(|current| {
+            let mut next = current.clone();
+            next.transition(AgentStatus::Paused, MINUTE.into(), None)
+                .unwrap();
+            next.conversation.last_seq += 1;
+            events.push(SandboxEventKind::AgentStatusChanged {
+                agent_id: current.id.clone(),
+                from: current.status,
+                to: AgentStatus::Paused,
+            });
+            SandboxLifecycleAgentMutation {
+                expected_revision: current.revision,
+                agent: next,
+                logs: vec![AgentLogKind::StatusChanged {
+                    from: current.status,
+                    to: AgentStatus::Paused,
+                }],
+            }
+        })
+        .collect();
+    events.push(SandboxEventKind::WorkStepCompleted {
+        step: SandboxWorkStep::RunLifecycleOperation,
+    });
+    SandboxLifecycleMutation {
+        guard: SandboxMutationGuard::capture(claimed),
+        sandbox: next_sandbox,
+        agents,
+        agent_scope: SandboxLifecycleAgentScope::AllLive,
+        appended_at: MINUTE.into(),
+        events,
+    }
 }

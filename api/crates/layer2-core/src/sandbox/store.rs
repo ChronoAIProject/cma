@@ -41,8 +41,11 @@ pub use sandbox_admission::{
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
+mod lifecycle_execution;
+pub use lifecycle_execution::*;
 #[cfg(test)]
 mod agent_work_validation_tests;
+mod lifecycle_execution_validation;
 
 pub const MAX_PAGE_SIZE: u16 = 200;
 pub const MAX_AGENT_LOG_BATCH_SIZE: usize = 64;
@@ -347,16 +350,6 @@ impl<T> SandboxServiceStore for T where
 {
 }
 
-pub trait SandboxLifecycleStore:
-    SandboxStore + SandboxEventStore + SandboxTransactionStore + SandboxWorkerStore
-{
-}
-
-impl<T> SandboxLifecycleStore for T where
-    T: SandboxStore + SandboxEventStore + SandboxTransactionStore + SandboxWorkerStore
-{
-}
-
 pub trait WorkspaceServiceStore:
     SandboxStore + WorkspaceStore + WorkspaceAdmissionStore + SandboxEventStore
 {
@@ -449,6 +442,7 @@ struct State {
     sandbox_admissions: HashMap<(SubjectId, String), (SandboxId, SandboxAdmissionName, String)>,
     sandbox_events: HashMap<SandboxId, Vec<SandboxEvent>>,
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
+    checkpoints: HashMap<(SandboxId, u64), super::SandboxCheckpointRef>,
 }
 
 impl InMemorySandboxStore {
