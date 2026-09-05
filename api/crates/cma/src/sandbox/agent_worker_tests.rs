@@ -13,10 +13,10 @@ use layer2_core::sandbox::store::{
     SandboxEventStore as _, SandboxStore as _, WorkspaceStore as _, WorktreeStore as _,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkStep,
-    DurableAgentUpdateRecorder, InMemorySandboxStore, RuntimeBinding, Sandbox,
-    SandboxCredentialAuthority, SandboxCredentialState, SandboxLimits, SandboxOrigin,
-    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, Workspace,
+    Agent, AgentLogKind, AgentOrigin, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
+    AgentStatus, AgentStopReason, AgentWorkStep, DurableAgentUpdateRecorder, InMemorySandboxStore,
+    RuntimeBinding, Sandbox, SandboxCredentialAuthority, SandboxCredentialState, SandboxLimits,
+    SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, Workspace,
     WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
     WorktreeStatus,
 };
@@ -850,6 +850,53 @@ async fn registry_rejects_stale_generations_fences_and_attachment_tokens() {
         runtime_generation: 1,
     };
     assert!(registry.resolve(&first_target).is_some());
+    let runtime_target = AgentRuntimeTarget {
+        agent_id: id.clone(),
+        conversation_id: "conversation-1".into(),
+        runtime_generation: 1,
+    };
+    let connection = AgentRuntimeRegistry::resolve(registry.as_ref(), &runtime_target)
+        .await
+        .unwrap();
+    assert!(connection
+        .capabilities
+        .supports(RuntimeCapability::Conversation));
+    assert_eq!(
+        AgentRuntimeRegistry::resolve(
+            registry.as_ref(),
+            &AgentRuntimeTarget {
+                runtime_generation: 2,
+                ..runtime_target.clone()
+            }
+        )
+        .await
+        .unwrap_err(),
+        AgentRuntimeError::StaleGeneration
+    );
+    assert_eq!(
+        AgentRuntimeRegistry::resolve(
+            registry.as_ref(),
+            &AgentRuntimeTarget {
+                conversation_id: "conversation-other".into(),
+                ..runtime_target.clone()
+            }
+        )
+        .await
+        .unwrap_err(),
+        AgentRuntimeError::NotFound
+    );
+    assert_eq!(
+        AgentRuntimeRegistry::resolve(
+            registry.as_ref(),
+            &AgentRuntimeTarget {
+                agent_id: AgentId::generate(),
+                ..runtime_target
+            }
+        )
+        .await
+        .unwrap_err(),
+        AgentRuntimeError::NotFound
+    );
 
     let (stale_input, stale_updates, _stale_sender) = channels();
     assert_eq!(
