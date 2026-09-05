@@ -63,6 +63,16 @@ impl HostedAdapter {
         Ok(Some(observation))
     }
 
+    pub(super) async fn reclaim_exact(
+        &self,
+        observation: &RuntimeObservation,
+    ) -> crate::Result<()> {
+        validate_inventory(std::slice::from_ref(observation))?;
+        self.backend.reclaim(observation).await?;
+        self.states.lock().await.remove(&observation.handle);
+        Ok(())
+    }
+
     async fn attach_state(
         &self,
         handle: RuntimeHandle,

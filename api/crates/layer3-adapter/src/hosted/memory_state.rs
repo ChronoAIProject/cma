@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use sha2::{Digest, Sha256};
 
 use super::super::deployment::provider_request_identity;
@@ -66,6 +68,22 @@ pub(super) fn memory_observation(
             reason: None,
         },
     })
+}
+
+pub(super) fn reclaim(
+    runtimes: &mut BTreeMap<RuntimeHandle, MemoryRuntime>,
+    observation: &RuntimeObservation,
+) -> crate::Result<()> {
+    let Some(runtime) = runtimes.get(&observation.handle) else {
+        return Ok(());
+    };
+    if memory_observation(&observation.handle, &runtime.request)? != *observation {
+        return Err(AdapterError::Rejected(
+            "provider runtime changed after it was observed".into(),
+        ));
+    }
+    runtimes.remove(&observation.handle);
+    Ok(())
 }
 
 pub(super) fn require_credential(

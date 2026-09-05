@@ -97,6 +97,36 @@ async fn generations_coexist_and_a_recreated_adapter_adopts_only_the_exact_runni
 }
 
 #[tokio::test]
+async fn reclamation_deletes_only_the_exact_observed_runtime_and_replays_absence() {
+    let backend = InMemoryHostedBackend::default();
+    let adapter = adapter(backend, "runtime:current");
+    let handle = adapter
+        .provision_runtime(&RuntimeProvisionRequest::new(3, spec()))
+        .await
+        .unwrap();
+    let observed = adapter.runtime_inventory().await.unwrap().remove(0);
+
+    let mut stale = observed.clone();
+    stale.generation = stale.generation.checked_add(1).unwrap();
+    assert!(matches!(
+        adapter.reclaim_runtime(&stale).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    assert_eq!(
+        adapter.runtime_inventory().await.unwrap().as_slice(),
+        std::slice::from_ref(&observed)
+    );
+
+    adapter.reclaim_runtime(&observed).await.unwrap();
+    assert!(adapter.runtime_inventory().await.unwrap().is_empty());
+    assert!(matches!(
+        adapter.resources(&handle).await,
+        Err(AdapterError::Unavailable(_))
+    ));
+    adapter.reclaim_runtime(&observed).await.unwrap();
+}
+
+#[tokio::test]
 async fn restore_bootstrap_replays_exactly_and_fences_work_until_exact_restore() {
     let backend = InMemoryHostedBackend::default();
     let adapter = adapter(backend.clone(), "runtime:new");
