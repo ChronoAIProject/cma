@@ -94,7 +94,7 @@ impl AgentWorker {
         let skills = match self
             .dependencies
             .skills
-            .resolve(&agent.profile.content.skills)
+            .resolve(&agent.owner, &agent.profile.content.skills)
             .await
         {
             Ok(skills) => skills,
