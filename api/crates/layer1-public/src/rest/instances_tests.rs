@@ -22,11 +22,11 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{
     Agent, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep, ConversationState,
-    HierarchyReadService, Sandbox, SandboxCredentialState, SandboxEventKind, SandboxLimits,
-    SandboxOrigin, SandboxPolicy, SandboxService, SandboxSignInState, SandboxStatus,
-    SandboxWorkState, SandboxWorkStep, Workspace, WorkspaceOrigin, WorkspaceService,
-    WorkspaceSource, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep, Worktree,
-    WorktreeStatus,
+    HierarchyReadService, Sandbox, SandboxCheckpointRef, SandboxCredentialState, SandboxEventKind,
+    SandboxLifecycleCommandError, SandboxLimits, SandboxOrigin, SandboxPolicy, SandboxService,
+    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, Workspace,
+    WorkspaceOrigin, WorkspaceService, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState,
+    WorkspaceWorkStep, Worktree, WorktreeStatus,
 };
 use layer2_core::{
     AgentId, AgentProfileId, Authorization, Capability, OperationClaim, OperationReservation,
@@ -34,9 +34,11 @@ use layer2_core::{
     WorkspaceProfileId, WorktreeId,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 use super::{hierarchy_router, HierarchyState};
+use crate::rest::instances_problem::HierarchyProblem;
 use crate::AuthenticatedSubject;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
@@ -89,6 +91,7 @@ struct Fixture {
     router: Router,
     store: Arc<InMemorySandboxStore>,
     profiles: Arc<InMemoryProfileStore>,
+    operations: Arc<MemoryOperationStore>,
 }
 
 fn fixture(sandbox_limit: u16) -> Fixture {
@@ -104,14 +107,19 @@ fn fixture(sandbox_limit: u16) -> Fixture {
     );
     let workspaces = WorkspaceService::new(store.clone(), profiles.clone());
     let hierarchy = HierarchyReadService::new(store.clone());
-    let operations: Arc<dyn OperationStore> = Arc::new(MemoryOperationStore::default());
+    let operations = Arc::new(MemoryOperationStore::default());
+    let operation_store: Arc<dyn OperationStore> = operations.clone();
     let router = hierarchy_router(HierarchyState::new(
-        sandboxes, workspaces, hierarchy, operations,
+        sandboxes,
+        workspaces,
+        hierarchy,
+        operation_store,
     ));
     Fixture {
         router,
         store,
         profiles,
+        operations,
     }
 }
 
@@ -425,6 +433,283 @@ async fn insert_hierarchy(
     }
     if let Some(agent) = agent {
         store.create_agent(agent.clone()).await.unwrap();
+    }
+}
+
+fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
+    let object_reference = format!("checkpoints/sandbox-{epoch}.tar.zst");
+    let sha256 = format!("{epoch:064x}");
+    let sealed_at = "2026-09-05T00:29:00Z".to_owned();
+    let mut manifest = Sha256::new();
+    manifest.update(b"cma-sandbox-checkpoint-v1\0");
+    manifest.update(epoch.to_be_bytes());
+    for value in [&object_reference, &sha256] {
+        manifest.update(u64::try_from(value.len()).unwrap().to_be_bytes());
+        manifest.update(value.as_bytes());
+    }
+    manifest.update(0_u64.to_be_bytes());
+    manifest.update(u64::try_from(sealed_at.len()).unwrap().to_be_bytes());
+    manifest.update(sealed_at.as_bytes());
+    SandboxCheckpointRef {
+        epoch,
+        object_reference,
+        sha256,
+        conversations: vec![],
+        sealed_at,
+        manifest_sha256: format!("{:x}", manifest.finalize()),
+    }
+}
+
+fn paused_sandbox(id: &str, owner: &str) -> Sandbox {
+    let mut sandbox = stored_sandbox(id, owner, SandboxStatus::Paused, 4);
+    sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1));
+    sandbox
+}
+
+#[tokio::test]
+async fn sandbox_lifecycle_routes_enforce_auth_and_operation_keys() {
+    let fixture = fixture(10);
+    let active = stored_sandbox("sbx_lifecycle_auth", "owner", SandboxStatus::Active, 4);
+    fixture.store.create_sandbox(active).await.unwrap();
+    let path = "/api/v1/sandboxes/sbx_lifecycle_auth/pause";
+
+    let (status, problem) = json_response(
+        &fixture.router,
+        request(Method::POST, path, None, None, Some("unauthenticated")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(problem["code"], "not_authenticated");
+
+    let (status, problem) = json_response(
+        &fixture.router,
+        request(
+            Method::POST,
+            path,
+            None,
+            Some(("owner", Authorization::none())),
+            Some("forbidden"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(problem["code"], "forbidden");
+
+    let (status, problem) = json_response(
+        &fixture.router,
+        authenticated(Method::POST, path, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(problem["code"], "missing_idempotency_key");
+
+    let (status, problem) = json_response(
+        &fixture.router,
+        authenticated(Method::POST, path, None, Some("contains space")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(problem["code"], "invalid_idempotency_key");
+
+    let mut duplicate = authenticated(Method::POST, path, None, Some("first"));
+    duplicate
+        .headers_mut()
+        .append("idempotency-key", "second".parse().unwrap());
+    let (status, problem) = json_response(&fixture.router, duplicate).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(problem["code"], "invalid_idempotency_key");
+
+    fixture.operations.records.lock().unwrap().insert(
+        (
+            "owner".into(),
+            "sandbox:pause:sbx_lifecycle_auth".into(),
+            "reused".into(),
+        ),
+        ([0; 32], None),
+    );
+    let (status, problem) = json_response(
+        &fixture.router,
+        authenticated(Method::POST, path, None, Some("reused")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(problem["code"], "idempotency_key_reused");
+}
+
+#[tokio::test]
+async fn sandbox_lifecycle_commands_are_bodyless_accepted_and_exactly_replayed() {
+    let fixture = fixture(10);
+    let active = stored_sandbox("sbx_pause", "owner", SandboxStatus::Active, 4);
+    let paused = paused_sandbox("sbx_revive", "owner");
+    fixture.store.create_sandbox(active.clone()).await.unwrap();
+    fixture.store.create_sandbox(paused.clone()).await.unwrap();
+
+    let mut malformed_json = authenticated(
+        Method::POST,
+        "/api/v1/sandboxes/sbx_pause/pause",
+        None,
+        Some("same-key"),
+    );
+    malformed_json
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+    *malformed_json.body_mut() = Body::from("{not valid JSON");
+    let paused_response = response(&fixture.router, malformed_json).await;
+    let pause_replay = response(
+        &fixture.router,
+        authenticated(
+            Method::POST,
+            "/api/v1/sandboxes/sbx_pause/pause",
+            None,
+            Some("same-key"),
+        ),
+    )
+    .await;
+    assert_eq!(paused_response, pause_replay);
+    assert_eq!(paused_response.0, StatusCode::ACCEPTED);
+    let paused_view: Value = serde_json::from_slice(&paused_response.2).unwrap();
+    assert_eq!(paused_view["id"], "sbx_pause");
+    assert_eq!(paused_view["status"], "pausing");
+    assert!(paused_view.get("credential").is_none());
+    let stored = fixture
+        .store
+        .get_sandbox(&active.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.status, SandboxStatus::Pausing);
+    assert_eq!(stored.revision, active.revision + 1);
+    assert_eq!(
+        fixture
+            .store
+            .sandbox_events(&active.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let revived_response = response(
+        &fixture.router,
+        authenticated(
+            Method::POST,
+            "/api/v1/sandboxes/sbx_revive/revive",
+            None,
+            Some("same-key"),
+        ),
+    )
+    .await;
+    let revive_replay = response(
+        &fixture.router,
+        authenticated(
+            Method::POST,
+            "/api/v1/sandboxes/sbx_revive/revive",
+            None,
+            Some("same-key"),
+        ),
+    )
+    .await;
+    assert_eq!(revived_response, revive_replay);
+    assert_eq!(revived_response.0, StatusCode::ACCEPTED);
+    let revived_view: Value = serde_json::from_slice(&revived_response.2).unwrap();
+    assert_eq!(revived_view["id"], "sbx_revive");
+    assert_eq!(revived_view["status"], "reviving");
+    let stored = fixture
+        .store
+        .get_sandbox(&paused.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.status, SandboxStatus::Reviving);
+    assert_eq!(stored.revision, paused.revision + 1);
+    assert_eq!(
+        fixture
+            .store
+            .sandbox_events(&paused.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn sandbox_lifecycle_routes_project_conflicts_and_conceal_foreign_ids() {
+    let fixture = fixture(10);
+    let mut retiring = stored_sandbox("sbx_retiring", "owner", SandboxStatus::Retiring, 4);
+    retiring
+        .work
+        .schedule(SandboxWorkStep::StopAgents, NOW.into());
+    let foreign = paused_sandbox("sbx_foreign_lifecycle", "foreign");
+    fixture.store.create_sandbox(retiring).await.unwrap();
+    fixture.store.create_sandbox(foreign).await.unwrap();
+
+    for (operation, code) in [
+        ("pause", "sandbox_not_active"),
+        ("revive", "sandbox_not_paused"),
+    ] {
+        let path = format!("/api/v1/sandboxes/sbx_retiring/{operation}");
+        let (status, problem) = json_response(
+            &fixture.router,
+            authenticated(Method::POST, &path, None, Some(operation)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(problem["code"], code);
+
+        let foreign_path = format!("/api/v1/sandboxes/sbx_foreign_lifecycle/{operation}");
+        let missing_path = format!("/api/v1/sandboxes/sbx_missing_lifecycle/{operation}");
+        let foreign_response = response(
+            &fixture.router,
+            authenticated(
+                Method::POST,
+                &foreign_path,
+                None,
+                Some(&format!("foreign-{operation}")),
+            ),
+        )
+        .await;
+        let missing_response = response(
+            &fixture.router,
+            authenticated(
+                Method::POST,
+                &missing_path,
+                None,
+                Some(&format!("missing-{operation}")),
+            ),
+        )
+        .await;
+        assert_eq!(foreign_response, missing_response);
+        assert_eq!(foreign_response.0, StatusCode::NOT_FOUND);
+        let problem: Value = serde_json::from_slice(&foreign_response.2).unwrap();
+        assert_eq!(problem["code"], "sandbox_not_found");
+    }
+}
+
+#[tokio::test]
+async fn sandbox_lifecycle_problem_projection_preserves_typed_codes() {
+    let cases = [
+        (
+            SandboxLifecycleCommandError::Corrupt("private corrupt detail".into()),
+            "stored_sandbox_corrupt",
+        ),
+        (
+            SandboxLifecycleCommandError::Unavailable("private outage detail".into()),
+            "sandbox_lifecycle_unavailable",
+        ),
+    ];
+    for (error, code) in cases {
+        let response =
+            axum::response::IntoResponse::into_response(HierarchyProblem::sandbox_lifecycle(error));
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        let problem: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(problem["code"], code);
+        assert!(!problem.to_string().contains("private"));
     }
 }
 

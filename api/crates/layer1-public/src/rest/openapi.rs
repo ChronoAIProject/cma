@@ -106,6 +106,8 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::list,
         super::sandboxes::read,
         super::sandboxes::remove,
+        super::sandboxes::pause,
+        super::sandboxes::revive,
         super::sandboxes::events,
         super::workspaces::create,
         super::workspaces::list,

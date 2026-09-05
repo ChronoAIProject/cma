@@ -1,5 +1,7 @@
 use axum::{http::StatusCode, response::IntoResponse, response::Response};
-use layer2_core::sandbox::{HierarchyReadError, SandboxServiceError, WorkspaceServiceError};
+use layer2_core::sandbox::{
+    HierarchyReadError, SandboxLifecycleCommandError, SandboxServiceError, WorkspaceServiceError,
+};
 
 use super::{problem_document, problem_response};
 
@@ -20,6 +22,7 @@ pub(super) enum HierarchyProblem {
     InvalidQuery,
     InvalidPage,
     Unavailable,
+    SandboxLifecycleUnavailable(&'static str),
 }
 
 impl HierarchyProblem {
@@ -68,6 +71,25 @@ impl HierarchyProblem {
             WorkspaceServiceError::InvalidOrigin => Self::Invalid("invalid_workspace_origin"),
             WorkspaceServiceError::Corrupt(_) | WorkspaceServiceError::Unavailable(_) => {
                 Self::Unavailable
+            }
+        }
+    }
+
+    pub(super) fn sandbox_lifecycle(error: SandboxLifecycleCommandError) -> Self {
+        match error {
+            SandboxLifecycleCommandError::Forbidden => Self::Forbidden,
+            SandboxLifecycleCommandError::NotFound => Self::SandboxNotFound,
+            SandboxLifecycleCommandError::SandboxNotActive { .. } => {
+                Self::Conflict("sandbox_not_active")
+            }
+            SandboxLifecycleCommandError::SandboxNotPaused { .. } => {
+                Self::Conflict("sandbox_not_paused")
+            }
+            SandboxLifecycleCommandError::Corrupt(_) => {
+                Self::SandboxLifecycleUnavailable("stored_sandbox_corrupt")
+            }
+            SandboxLifecycleCommandError::Unavailable(_) => {
+                Self::SandboxLifecycleUnavailable("sandbox_lifecycle_unavailable")
             }
         }
     }
@@ -167,6 +189,13 @@ impl IntoResponse for HierarchyProblem {
                 "hierarchy-service-unavailable",
                 "The resource service could not complete this operation.",
                 "hierarchy_service_unavailable".to_owned(),
+                vec![],
+            ),
+            Self::SandboxLifecycleUnavailable(code) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sandbox-lifecycle-unavailable",
+                "The Sandbox lifecycle service could not complete this operation.",
+                code.to_owned(),
                 vec![],
             ),
         };

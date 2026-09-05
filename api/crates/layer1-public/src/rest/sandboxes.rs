@@ -46,6 +46,8 @@ pub(super) fn routes() -> Router<HierarchyState> {
     Router::new()
         .route("/api/v1/sandboxes", post(create).get(list))
         .route("/api/v1/sandboxes/{id}", get(read).delete(remove))
+        .route("/api/v1/sandboxes/{id}/pause", post(pause))
+        .route("/api/v1/sandboxes/{id}/revive", post(revive))
         .route("/api/v1/sandboxes/{id}/events", get(events))
 }
 
@@ -176,6 +178,98 @@ pub(super) async fn remove(
                 .await
                 .map_err(HierarchyProblem::sandbox)?;
             Ok((StatusCode::ACCEPTED, Json(SandboxView::from(&sandbox))).into_response())
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/sandboxes/{id}/pause",
+    tag = "sandboxes",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses(
+        (status = 202, description = "Sandbox pause scheduled", body = SandboxView),
+        (status = 400, description = "missing_idempotency_key or invalid_idempotency_key", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_active or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+pub(super) async fn pause(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+) -> Response {
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_empty_command(
+        &state,
+        &caller,
+        Capability::UseOwnSandboxes,
+        key,
+        format!("sandbox:pause:{id}"),
+        move || async move {
+            let outcome = command_state
+                .sandboxes
+                .pause(&command_caller, &SandboxId(id))
+                .await
+                .map_err(HierarchyProblem::sandbox_lifecycle)?;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(SandboxView::from(&outcome.sandbox)),
+            )
+                .into_response())
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/sandboxes/{id}/revive",
+    tag = "sandboxes",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses(
+        (status = 202, description = "Sandbox revival scheduled", body = SandboxView),
+        (status = 400, description = "missing_idempotency_key or invalid_idempotency_key", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_paused or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+pub(super) async fn revive(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+) -> Response {
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_empty_command(
+        &state,
+        &caller,
+        Capability::UseOwnSandboxes,
+        key,
+        format!("sandbox:revive:{id}"),
+        move || async move {
+            let outcome = command_state
+                .sandboxes
+                .revive(&command_caller, &SandboxId(id))
+                .await
+                .map_err(HierarchyProblem::sandbox_lifecycle)?;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(SandboxView::from(&outcome.sandbox)),
+            )
+                .into_response())
         },
     )
     .await
