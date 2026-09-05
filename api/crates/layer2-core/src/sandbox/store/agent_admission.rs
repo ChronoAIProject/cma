@@ -79,6 +79,7 @@ impl AgentAdmission {
             updated_at: self.event_at.clone(),
             ready_at: None,
             stopped_at: None,
+            requested_stop_reason: None,
             stop_reason: None,
             deleted_at: None,
             origin: self.origin.clone(),

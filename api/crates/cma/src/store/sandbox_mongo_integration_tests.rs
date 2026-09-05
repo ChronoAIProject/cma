@@ -269,6 +269,7 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         updated_at: NOW.into(),
         ready_at: None,
         stopped_at: None,
+        requested_stop_reason: None,
         stop_reason: None,
         deleted_at: None,
         origin: AgentOrigin::Manual,

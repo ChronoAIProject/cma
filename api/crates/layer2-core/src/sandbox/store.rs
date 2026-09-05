@@ -10,6 +10,11 @@ use super::{
     Workspace, Worktree,
 };
 
+mod agent_control;
+pub use agent_control::{
+    AgentControlResult, AgentControlStore, AgentControlStoreError, AgentControlTarget,
+    AgentDeleteRequest, AgentStopRequest,
+};
 mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
@@ -363,6 +368,7 @@ pub trait AgentServiceStore:
     + AgentStore
     + AgentAdmissionStore
     + AgentConversationStore
+    + AgentControlStore
     + AgentLogStore
 {
 }
@@ -388,6 +394,7 @@ impl<T> AgentServiceStore for T where
         + AgentStore
         + AgentAdmissionStore
         + AgentConversationStore
+        + AgentControlStore
         + AgentLogStore
 {
 }

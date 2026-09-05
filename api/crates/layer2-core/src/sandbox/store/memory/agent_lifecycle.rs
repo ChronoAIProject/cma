@@ -116,6 +116,7 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
             .as_ref()
             .is_some_and(|lease| current.work.lease.as_ref() != Some(lease))
         || mutation.agent.validate_conversation().is_err()
+        || !stop_intent_change_is_valid(current, &mutation.agent)
     {
         return Err(SandboxStoreError::Conflict);
     }
@@ -124,6 +125,32 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         validate_worktree(state, current, versioned)?;
     }
     Ok(())
+}
+
+fn stop_intent_change_is_valid(current: &Agent, next: &Agent) -> bool {
+    if current.stop_reason.is_some() && next.stop_reason != current.stop_reason {
+        return false;
+    }
+    match current.requested_stop_reason.as_ref() {
+        Some(requested) => {
+            (current.stop_reason.is_none()
+                && next.status == current.status
+                && next.requested_stop_reason.as_ref() == Some(requested)
+                && next.stop_reason == current.stop_reason)
+                || (current.status.is_live()
+                    && next.status == crate::sandbox::AgentStatus::Stopped
+                    && next.requested_stop_reason.is_none()
+                    && next.stop_reason.as_ref() == Some(requested))
+        }
+        None => {
+            next.requested_stop_reason.is_none()
+                && (next.stop_reason == current.stop_reason
+                    || (current.stop_reason.is_none()
+                        && current.status.is_live()
+                        && next.status == crate::sandbox::AgentStatus::Stopped
+                        && next.stop_reason.is_some()))
+        }
+    }
 }
 
 fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> bool {

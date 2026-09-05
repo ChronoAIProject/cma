@@ -68,6 +68,9 @@ pub struct Agent {
     pub ready_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stopped_at: Option<String>,
+    /// Durable owner intent consumed when the worker publishes `Stopped`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_stop_reason: Option<AgentStopReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<AgentStopReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,15 +141,15 @@ impl Agent {
             }
             _ => false,
         };
-        let requires_identity = matches!(
-            self.status,
-            AgentStatus::Ready
-                | AgentStatus::Working
-                | AgentStatus::WaitingApproval
-                | AgentStatus::Paused
-                | AgentStatus::Stopped
-                | AgentStatus::Deleted
-        );
+        let requires_identity =
+            matches!(
+                self.status,
+                AgentStatus::Ready
+                    | AgentStatus::Working
+                    | AgentStatus::WaitingApproval
+                    | AgentStatus::Paused
+            ) || (matches!(self.status, AgentStatus::Stopped | AgentStatus::Deleted)
+                && self.ready_at.is_some());
         let queue_is_valid = self.conversation.queued_messages.len() <= MAX_QUEUED_AGENT_MESSAGES
             && self
                 .conversation
@@ -186,6 +189,14 @@ impl Agent {
         if (next == AgentStatus::Stopped) != reason.is_some() {
             return Err(SandboxModelError::invalid_value("agent.stop_reason"));
         }
+        if next == AgentStatus::Stopped
+            && self
+                .requested_stop_reason
+                .as_ref()
+                .is_some_and(|requested| Some(requested) != reason.as_ref())
+        {
+            return Err(SandboxModelError::invalid_value("agent.stop_reason"));
+        }
         let status = self.status.transition(next)?;
         if next == AgentStatus::Ready
             && (self.conversation.conversation_id.is_none()
@@ -198,14 +209,61 @@ impl Agent {
             .checked_add(1)
             .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
         self.status = status;
-        self.stop_reason = reason;
         self.updated_at = at.clone();
         match next {
             AgentStatus::Ready if self.ready_at.is_none() => self.ready_at = Some(at),
-            AgentStatus::Stopped => self.stopped_at = Some(at),
+            AgentStatus::Stopped => {
+                self.requested_stop_reason = None;
+                self.stop_reason = reason;
+                self.stopped_at = Some(at);
+            }
             AgentStatus::Deleted => self.deleted_at = Some(at),
             _ => {}
         }
+        self.revision = revision;
+        Ok(())
+    }
+
+    /// Persist stop intent and fence prior lifecycle authority without publishing `Stopped`.
+    pub fn request_stop(
+        &mut self,
+        reason: AgentStopReason,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        if !self.status.is_live()
+            || self.requested_stop_reason.is_some()
+            || self.stop_reason.is_some()
+        {
+            return Err(SandboxModelError::invalid_value(
+                "agent.requested_stop_reason",
+            ));
+        }
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
+        self.requested_stop_reason = Some(reason);
+        self.updated_at = at.clone();
+        self.work
+            .schedule(super::AgentWorkStep::FenceInteraction, at);
+        self.revision = revision;
+        Ok(())
+    }
+
+    /// Schedule terminal cleanup without publishing `Deleted`.
+    pub fn request_delete(&mut self, at: String) -> Result<(), SandboxModelError> {
+        if !matches!(self.status, AgentStatus::Stopped | AgentStatus::Failed)
+            || self.requested_stop_reason.is_some()
+        {
+            return Err(SandboxModelError::invalid_value("agent.delete_status"));
+        }
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
+        self.updated_at = at.clone();
+        self.work
+            .schedule(super::AgentWorkStep::EnsureProcessClosed, at);
         self.revision = revision;
         Ok(())
     }
