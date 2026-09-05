@@ -18,11 +18,13 @@ use super::schema::initialize_collections;
 mod download;
 mod model;
 mod purge;
+mod retention;
 mod upload;
 
 use model::{
     bucket_options, ensure_indexes, validate_sandbox_id, GRIDFS_CHUNKS, GRIDFS_FILES, MANIFESTS,
 };
+pub(super) use retention::{prune_evicted, RetentionError};
 
 /// Mongo-backed archive authority shared by all sandbox-confined views.
 #[derive(Clone)]

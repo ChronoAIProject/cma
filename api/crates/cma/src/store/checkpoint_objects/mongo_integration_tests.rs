@@ -1,9 +1,19 @@
 use futures_util::io::AsyncWriteExt;
+use layer2_core::sandbox::store::{
+    SandboxCheckpointMutation, SandboxLifecycleExecutionStore, SandboxMutationGuard, SandboxStore,
+};
+use layer2_core::sandbox::{
+    RuntimeBinding, Sandbox, SandboxCheckpointRef, SandboxWorkState, SandboxWorkStep,
+};
 use layer3_adapter::hosted::{CheckpointArchiveDownload, CheckpointArchiveUpload};
-use layer3_adapter::{AdapterError, Result as AdapterResult};
+use layer3_adapter::{AdapterError, CheckpointReceipt, Result as AdapterResult, WriterState};
 use mongodb::bson::{doc, Bson};
+use mongodb::options::ClientOptions;
 use mongodb::Client;
 use tokio::sync::mpsc;
+
+use crate::store::sandbox_mongo::MongoSandboxStore;
+use crate::store::sandbox_mongo_integration_tests::sandbox;
 
 use super::model::{
     metadata_document, sha256_hex, ArchiveIdentity, ManifestDoc, GRIDFS_CHUNK_BYTES,
@@ -240,4 +250,241 @@ async fn archive_larger_than_bson_document_limit_streams_through_gridfs() {
     }
     assert_eq!(round_trip(&store, "sbx_large", &archive).await, archive);
     client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one() {
+    let (client, _, database) = test_store("retention").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let mut current = active_sandbox("sbx_checkpoint_retention");
+    store.create_sandbox(current.clone()).await.unwrap();
+
+    let first = stored_checkpoint(&store, &current, 1, b"shared generation").await;
+    publish(&store, &mut current, first.clone()).await;
+    let second = stored_checkpoint(&store, &current, 2, b"shared generation").await;
+    assert_eq!(second.object_reference, first.object_reference);
+    publish(&store, &mut current, second).await;
+    let shared_id = gridfs_id(&store, &current, &first.object_reference).await;
+
+    let third = stored_checkpoint(&store, &current, 3, b"third generation").await;
+    publish(&store, &mut current, third.clone()).await;
+    assert_archive_present(&store, &current, &first.object_reference).await;
+
+    let fourth = stored_checkpoint(&store, &current, 4, b"fourth generation").await;
+    publish(&store, &mut current, fourth.clone()).await;
+    assert_archive_absent(&store, &current, &first.object_reference, shared_id).await;
+    assert_archive_present(&store, &current, &third.object_reference).await;
+    assert_archive_present(&store, &current, &fourth.object_reference).await;
+    assert_eq!(
+        store
+            .checkpoint_objects
+            .manifests
+            .count_documents(doc! { "sandbox_id": current.id.as_str() })
+            .await
+            .unwrap(),
+        2
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn ambiguous_publication_reconciles_without_losing_the_new_archive() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI")
+        .expect("test requires a failpoint-enabled MongoDB replica set");
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let app_name = format!("cma-checkpoint-retention-{suffix}");
+    let database = format!("cma_checkpoint_retention_{suffix}");
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(app_name.clone());
+    let client = Client::with_options(options).unwrap();
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let mut current = active_sandbox("sbx_checkpoint_ambiguous");
+    store.create_sandbox(current.clone()).await.unwrap();
+
+    let first = stored_checkpoint(&store, &current, 1, b"first generation").await;
+    publish(&store, &mut current, first.clone()).await;
+    let second = stored_checkpoint(&store, &current, 2, b"second generation").await;
+    publish(&store, &mut current, second.clone()).await;
+    let first_id = gridfs_id(&store, &current, &first.object_reference).await;
+    let third = stored_checkpoint(&store, &current, 3, b"just published generation").await;
+
+    configure_commit_ambiguity(&admin, &app_name).await;
+    let result = publish_result(&store, &current, third.clone()).await;
+    disable_failpoint(&admin).await;
+    current = result.unwrap();
+
+    assert_archive_absent(&store, &current, &first.object_reference, first_id).await;
+    assert_archive_present(&store, &current, &second.object_reference).await;
+    assert_archive_present(&store, &current, &third.object_reference).await;
+    assert_eq!(current.lifecycle.checkpoints.latest, Some(third));
+    assert_eq!(current.lifecycle.checkpoints.previous, Some(second));
+    client.database(&database).drop().await.unwrap();
+}
+
+fn active_sandbox(id: &str) -> Sandbox {
+    let mut value = sandbox(id);
+    value.runtime = Some(RuntimeBinding {
+        runtime_id: format!("runtime-{id}"),
+        runtime_version: "image-v1".into(),
+        bound_at: "2026-09-05T00:00:00Z".into(),
+    });
+    value.work = SandboxWorkState::new(SandboxWorkStep::None, "2026-09-05T00:00:00Z".into());
+    value
+}
+
+async fn stored_checkpoint(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    epoch: u64,
+    bytes: &[u8],
+) -> SandboxCheckpointRef {
+    let receipt = store
+        .checkpoint_objects
+        .for_sandbox(sandbox.id.as_str())
+        .unwrap()
+        .upload(upload(bytes.to_vec()))
+        .await
+        .unwrap();
+    SandboxCheckpointRef::seal(
+        &CheckpointReceipt {
+            epoch,
+            object_reference: receipt.object_reference,
+            sha256: receipt.sha256,
+            writers: WriterState::Held,
+        },
+        &[],
+        "2026-09-05T00:00:00Z",
+    )
+    .unwrap()
+}
+
+async fn publish(
+    store: &MongoSandboxStore,
+    current: &mut Sandbox,
+    checkpoint: SandboxCheckpointRef,
+) {
+    *current = publish_result(store, current, checkpoint).await.unwrap();
+}
+
+async fn publish_result(
+    store: &MongoSandboxStore,
+    current: &Sandbox,
+    checkpoint: SandboxCheckpointRef,
+) -> Result<Sandbox, layer2_core::sandbox::store::SandboxStoreError> {
+    let mut next = current.clone();
+    next.publish_opportunistic_checkpoint(checkpoint.clone(), "2026-09-05T00:00:00Z".into())
+        .unwrap();
+    store
+        .publish_sandbox_checkpoint(SandboxCheckpointMutation {
+            guard: SandboxMutationGuard::capture(current),
+            checkpoint,
+            sandbox: next.clone(),
+            appended_at: "2026-09-05T00:00:00Z".into(),
+        })
+        .await?;
+    Ok(next)
+}
+
+async fn gridfs_id(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    reference: &str,
+) -> mongodb::bson::oid::ObjectId {
+    store
+        .checkpoint_objects
+        .manifests
+        .find_one(doc! {
+            "sandbox_id": sandbox.id.as_str(),
+            "object_reference": reference,
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .get_object_id("gridfs_id")
+        .unwrap()
+}
+
+async fn assert_archive_present(store: &MongoSandboxStore, sandbox: &Sandbox, reference: &str) {
+    let id = gridfs_id(store, sandbox, reference).await;
+    assert!(store
+        .checkpoint_objects
+        .files
+        .find_one(doc! { "_id": id })
+        .await
+        .unwrap()
+        .is_some());
+    assert!(
+        store
+            .checkpoint_objects
+            .chunks
+            .count_documents(doc! { "files_id": id })
+            .await
+            .unwrap()
+            > 0
+    );
+}
+
+async fn assert_archive_absent(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    reference: &str,
+    id: mongodb::bson::oid::ObjectId,
+) {
+    assert!(store
+        .checkpoint_objects
+        .manifests
+        .find_one(doc! {
+            "sandbox_id": sandbox.id.as_str(),
+            "object_reference": reference,
+        })
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .checkpoint_objects
+        .files
+        .find_one(doc! { "_id": id })
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store
+            .checkpoint_objects
+            .chunks
+            .count_documents(doc! { "files_id": id })
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+async fn configure_commit_ambiguity(admin: &Client, app_name: &str) {
+    admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand",
+            "mode": { "times": 5_i32 },
+            "data": {
+                "failCommands": ["commitTransaction"],
+                "appName": app_name,
+                "writeConcernError": {
+                    "code": 50_i32,
+                    "codeName": "MaxTimeMSExpired",
+                    "errmsg": "injected ambiguous checkpoint retention commit",
+                },
+            },
+        })
+        .await
+        .unwrap();
+}
+
+async fn disable_failpoint(admin: &Client) {
+    admin
+        .database("admin")
+        .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
+        .await
+        .expect("commit failpoint must be disabled before assertions");
 }

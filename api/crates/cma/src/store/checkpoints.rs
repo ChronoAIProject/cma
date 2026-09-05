@@ -4,12 +4,15 @@ use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
     validate_checkpoint_mutation, SandboxCheckpointMutation, SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxCheckpointRef, SandboxEvent, SandboxEventKind};
+use layer2_core::sandbox::{
+    Sandbox, SandboxCheckpointHistory, SandboxCheckpointRef, SandboxEvent, SandboxEventKind,
+};
 use mongodb::bson::{doc, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
+use super::checkpoint_objects::{prune_evicted, RetentionError};
 use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
 use super::sandbox_mongo::{
@@ -105,6 +108,17 @@ impl From<TransactionEventError> for PublishError {
         match error {
             TransactionEventError::Domain(error) => Self::Domain(error),
             TransactionEventError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+impl From<RetentionError> for PublishError {
+    fn from(error: RetentionError) -> Self {
+        match error {
+            RetentionError::Corrupt(detail) => {
+                Self::Domain(SandboxStoreError::Corrupt(detail.into()))
+            }
+            RetentionError::Driver(error) => Self::Driver(error),
         }
     }
 }
@@ -255,10 +269,39 @@ async fn apply_publication(
         },
     )
     .await?;
+    // Archive reclamation shares this transaction so metadata and object
+    // authority cannot disagree after a retry or ambiguous commit.
+    if let Some(evicted) = evicted_archive(
+        &current.lifecycle.checkpoints,
+        &mutation.sandbox.lifecycle.checkpoints,
+    ) {
+        prune_evicted(
+            &store.checkpoint_objects,
+            current.id.as_str(),
+            evicted,
+            session,
+        )
+        .await?;
+    }
     Ok(PublicationReceipt {
         sandbox: mutation.sandbox.clone(),
         checkpoint: mutation.checkpoint.clone(),
         event,
+    })
+}
+
+fn evicted_archive<'a>(
+    current: &'a SandboxCheckpointHistory,
+    retained: &SandboxCheckpointHistory,
+) -> Option<&'a SandboxCheckpointRef> {
+    // Other unreferenced manifests may still be awaiting publication. Only the
+    // completed generation displaced by this validated transition is deletable.
+    current.previous.as_ref().filter(|evicted| {
+        retained
+            .latest
+            .iter()
+            .chain(retained.previous.iter())
+            .all(|checkpoint| checkpoint.object_reference != evicted.object_reference)
     })
 }
 
@@ -404,5 +447,41 @@ mod tests {
             index.options.unwrap().name.as_deref(),
             Some("checkpoints_sandbox_revision")
         );
+    }
+
+    #[test]
+    fn retention_selects_only_an_evicted_unshared_archive() {
+        let first = checkpoint(1, "home-first.cma", "a");
+        let second = checkpoint(2, "home-second.cma", "b");
+        let third = checkpoint(3, "home-third.cma", "c");
+        let current = SandboxCheckpointHistory {
+            latest: Some(second.clone()),
+            previous: Some(first.clone()),
+        };
+        let retained = SandboxCheckpointHistory {
+            latest: Some(third),
+            previous: Some(second),
+        };
+        assert_eq!(evicted_archive(&current, &retained), Some(&first));
+
+        let shared = SandboxCheckpointHistory {
+            latest: retained.latest,
+            previous: Some(first.clone()),
+        };
+        assert_eq!(evicted_archive(&current, &shared), None);
+    }
+
+    fn checkpoint(epoch: u64, object_reference: &str, digest_digit: &str) -> SandboxCheckpointRef {
+        SandboxCheckpointRef::seal(
+            &CheckpointReceipt {
+                epoch,
+                object_reference: object_reference.into(),
+                sha256: digest_digit.repeat(64),
+                writers: WriterState::Held,
+            },
+            &[],
+            "2026-09-05T00:00:00Z",
+        )
+        .unwrap()
     }
 }

@@ -46,13 +46,12 @@ impl MongoStores {
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         let sandbox_model = Arc::new(MongoSandboxStore::open(&client, database).await?);
+        let checkpoint_objects = Arc::new(sandbox_model.checkpoint_objects.clone());
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
             MongoSandboxCredentialStore::open(&client, database, deployment, auth_encryption_key)
                 .await?,
         );
-        let checkpoint_objects =
-            Arc::new(MongoCheckpointObjectStore::open(&client, database).await?);
         let trigger_definitions = Arc::new(
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
                 .await?,

@@ -109,7 +109,7 @@ fn command_uses_snapshot_read(command: &Document) -> bool {
         == Some("snapshot")
 }
 
-fn sandbox(id: &str) -> Sandbox {
+pub(super) fn sandbox(id: &str) -> Sandbox {
     Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId("owner".into()),
