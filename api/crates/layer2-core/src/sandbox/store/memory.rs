@@ -45,6 +45,7 @@ mod agent_conversation_tests;
 mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
+mod agent_reads;
 mod lifecycle;
 mod workspace_lifecycle;
 

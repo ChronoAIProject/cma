@@ -6,6 +6,8 @@ mod agent_operation;
 mod agent_operation_dispatch;
 mod agent_operation_service;
 mod agent_operation_settlement;
+mod agent_reads;
+mod agent_reads_fold;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
@@ -49,6 +51,11 @@ pub use agent_operation::{
 pub use agent_operation_service::{
     AgentMessageOutcome, AgentOperationError, AgentOperationReceipt, AgentOperationService,
     AgentOperationStore,
+};
+pub use agent_reads::{
+    AgentListQuery, AgentReadError, AgentReadService, AgentResourceReading, AgentTranscript,
+    AgentTranscriptTurn, AgentTurnOutcome, AgentUsage, AgentUsageReading, SandboxResourceReadError,
+    SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
@@ -107,6 +114,8 @@ pub use worktree::Worktree;
 mod agent_model_tests;
 #[cfg(test)]
 mod agent_operation_tests;
+#[cfg(test)]
+mod agent_reads_tests;
 #[cfg(test)]
 mod agent_service_tests;
 #[cfg(test)]
