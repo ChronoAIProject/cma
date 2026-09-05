@@ -29,6 +29,9 @@ pub mod directory;
 mod durability;
 mod encryption;
 mod hierarchy;
+mod launch_context;
+#[cfg(test)]
+mod launch_context_mongo_integration_tests;
 mod marketplace;
 #[cfg(test)]
 mod marketplace_mongo_integration_tests;
