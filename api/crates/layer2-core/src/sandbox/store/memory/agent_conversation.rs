@@ -116,6 +116,7 @@ fn immutable_fields_changed(current: &Agent, next: &Agent) -> bool {
         || current.created_at != next.created_at
         || current.ready_at != next.ready_at
         || current.stopped_at != next.stopped_at
+        || current.requested_stop_reason != next.requested_stop_reason
         || current.stop_reason != next.stop_reason
         || current.deleted_at != next.deleted_at
         || current.origin != next.origin
