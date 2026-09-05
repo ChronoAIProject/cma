@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use layer3_adapter::wire::{AgentRef, ResponseFrame, WireOperation};
+use layer3_adapter::wire::{AgentRef, FencedRequest, ResponseFrame, WireOperation};
 use layer3_adapter::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
     CheckpointRequest, CredentialFrame, HomeFile, InstallRequest, RestoreRequest,
@@ -11,6 +11,30 @@ use layer3_adapter::{
 };
 
 use super::*;
+
+fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
+    RequestFrame::AddWorktree(FencedRequest::new(1, request))
+}
+
+fn remove_worktree_request(request: WorktreeRef) -> RequestFrame {
+    RequestFrame::RemoveWorktree(FencedRequest::new(1, request))
+}
+
+fn materialize_home_request(request: AgentHomePlan) -> RequestFrame {
+    RequestFrame::MaterializeAgentHome(FencedRequest::new(1, request))
+}
+
+fn remove_home_request(request: AgentHomeRemoveRequest) -> RequestFrame {
+    RequestFrame::RemoveAgentHome(FencedRequest::new(1, request))
+}
+
+fn open_agent_request(request: AgentLaunch) -> RequestFrame {
+    RequestFrame::OpenAgent(FencedRequest::new(1, request))
+}
+
+fn close_agent_request(request: AgentCloseRequest) -> RequestFrame {
+    RequestFrame::CloseAgent(FencedRequest::new(1, request))
+}
 
 fn root(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("cma-supervisor-{}-{name}", std::process::id()));
@@ -371,7 +395,7 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
     );
 
     let worktree = match supervisor
-        .dispatch(RequestFrame::AddWorktree(WorktreeRequest::new(
+        .dispatch(add_worktree_request(WorktreeRequest::new(
             "worktree:project:agent-1:add:v1",
             "project",
             "agent-1",
@@ -383,7 +407,7 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
         other => panic!("worktree addition failed: {other:?}"),
     };
     let materialized = supervisor
-        .dispatch(RequestFrame::MaterializeAgentHome(AgentHomePlan {
+        .dispatch(materialize_home_request(AgentHomePlan {
             operation_id: "agent:agent-1:home:create:v1".into(),
             request_sha256: "a".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
@@ -405,7 +429,7 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
         operation_id: "agent:agent-1:open:v1".into(),
         request_sha256: "b".repeat(64),
         agent_id: AgentSlot::new("agent-1"),
-        cwd: worktree.path.clone(),
+        cwd: worktree.receipt.path.clone(),
         home: agent_home.to_string_lossy().into_owned(),
         program: "/bin/sh".into(),
         args: vec![
@@ -424,7 +448,7 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
             ),
         ]),
     };
-    let opened = supervisor.dispatch(RequestFrame::OpenAgent(launch)).await;
+    let opened = supervisor.dispatch(open_agent_request(launch)).await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
     let expected_environment = format!(
         "chrono-visible|nyxid-visible|agent-visible|{}",
@@ -478,7 +502,7 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
     }
 
     let closed = supervisor
-        .dispatch(RequestFrame::CloseAgent(AgentCloseRequest::new(
+        .dispatch(close_agent_request(AgentCloseRequest::new(
             "agent:agent-1:close:v1",
             AgentSlot::new("agent-1"),
         )))
@@ -486,7 +510,7 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)), "{closed:?}");
     assert!(agent_home.exists());
     let removed_home = supervisor
-        .dispatch(RequestFrame::RemoveAgentHome(AgentHomeRemoveRequest::new(
+        .dispatch(remove_home_request(AgentHomeRemoveRequest::new(
             "agent:agent-1:home:remove:v1",
             AgentSlot::new("agent-1"),
         )))
@@ -525,7 +549,7 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
     );
 
     let removed = supervisor
-        .dispatch(RequestFrame::RemoveWorktree(WorktreeRef::new(
+        .dispatch(remove_worktree_request(WorktreeRef::new(
             "worktree:project:agent-1:remove:v1",
             "project",
             "agent-1",

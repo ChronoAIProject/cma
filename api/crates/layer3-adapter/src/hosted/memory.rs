@@ -8,8 +8,8 @@ use super::deployment::provider_request_identity;
 use super::HostedBackend;
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{
-    Acknowledgement, AgentOpenReceipt, CredentialReceipt, RequestFrame, ResponseFrame, WireFailure,
-    WireOperation,
+    Acknowledgement, AgentOpenReceipt, CredentialReceipt, FencedReceipt, FencedRequest,
+    RequestFrame, ResponseFrame, WireFailure, WireOperation,
 };
 use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointReceipt, CommandReceipt,
@@ -23,6 +23,8 @@ use state::{
     digest, fingerprint, refused, remember_operation, replay_operation, require_credential,
     successful_commands, valid_sha256,
 };
+#[path = "memory_authority.rs"]
+mod authority;
 #[path = "memory_mutations.rs"]
 mod mutations;
 
@@ -55,6 +57,7 @@ struct MemoryRuntime {
     credential_delivered: bool,
     workspaces: BTreeMap<String, WorkspaceReceipt>,
     operations: BTreeMap<String, MemoryOperation>,
+    authorities: BTreeMap<authority::ResourceKey, authority::Authority>,
     worktrees: BTreeMap<(String, String), WorktreeReceipt>,
     homes: BTreeMap<AgentSlot, AgentHomePlan>,
     agents: BTreeMap<AgentSlot, MemoryAgent>,
@@ -181,6 +184,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 credential_delivered: false,
                 workspaces: BTreeMap::new(),
                 operations: BTreeMap::new(),
+                authorities: BTreeMap::new(),
                 worktrees: BTreeMap::new(),
                 homes: BTreeMap::new(),
                 agents: BTreeMap::new(),
@@ -346,11 +350,10 @@ impl HostedBackend for InMemoryHostedBackend {
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
-        launch: AgentLaunch,
+        launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
-        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
+    ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         self.requests
             .lock()
             .await
@@ -367,14 +370,26 @@ impl HostedBackend for InMemoryHostedBackend {
             .get_mut(handle)
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
         require_credential(runtime, WireOperation::OpenAgent)?;
+        let authority_fence = launch.authority_fence;
+        let launch = launch.request;
         let expected = format!("agent:{}:open:v1", launch.agent_id.as_str());
         if launch.operation_id != expected
             || !valid_sha256(&launch.request_sha256)
-            || connection_fence == 0
+            || authority_fence == 0
         {
             return refused(WireOperation::OpenAgent, "operation_request_invalid");
         }
         let payload = fingerprint(&(launch.clone(), resume_conversation.clone()))?;
+        authority::admit(
+            runtime,
+            authority::ResourceKey::AgentProcess(launch.agent_id.clone()),
+            authority::Disposition::Present,
+            authority_fence,
+            &launch.operation_id,
+            &launch.request_sha256,
+            &launch.payload_sha256(),
+            WireOperation::OpenAgent,
+        )?;
         if let Some(response) = replay_operation(
             runtime,
             &launch.operation_id,
@@ -382,9 +397,10 @@ impl HostedBackend for InMemoryHostedBackend {
             &payload,
             WireOperation::OpenAgent,
         )? {
-            let ResponseFrame::OpenAgent(receipt) = response else {
+            let ResponseFrame::OpenAgent(mut receipt) = response else {
                 return refused(WireOperation::OpenAgent, "operation_replay_mismatch");
             };
+            receipt.authority_fence = authority_fence;
             let live = runtime
                 .agents
                 .get(&launch.agent_id)
@@ -393,15 +409,12 @@ impl HostedBackend for InMemoryHostedBackend {
                 return refused(WireOperation::OpenAgent, "agent_process_not_live");
             }
             if let Some(agent) = runtime.agents.get_mut(&launch.agent_id) {
-                if connection_fence < agent.connection_fence {
-                    return refused(WireOperation::OpenAgent, "connection_fence_stale");
-                }
-                if connection_fence > agent.connection_fence {
-                    agent.connection_fence = connection_fence;
+                if authority_fence > agent.connection_fence {
+                    agent.connection_fence = authority_fence;
                     agent.updates = updates;
                 }
             }
-            let result = (channel(receipt.conversation_id.clone()), receipt);
+            let result = (channel(receipt.receipt.conversation_id.clone()), receipt);
             if self.take_lost_response(WireOperation::OpenAgent) {
                 return Err(AdapterError::Unavailable(
                     "OpenAgent: response lost after effect".into(),
@@ -440,7 +453,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 launch,
                 conversation_id: conversation_id.clone(),
                 running: true,
-                connection_fence,
+                connection_fence: authority_fence,
                 updates,
             },
         );
@@ -449,7 +462,7 @@ impl HostedBackend for InMemoryHostedBackend {
             receipt.operation_id.clone(),
             receipt.request_sha256.clone(),
             payload,
-            ResponseFrame::OpenAgent(receipt.clone()),
+            ResponseFrame::OpenAgent(FencedReceipt::new(authority_fence, receipt.clone())),
         );
         let result = (channel(Some(conversation_id)), receipt);
         if self.take_lost_response(WireOperation::OpenAgent) {
@@ -457,7 +470,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 "OpenAgent: response lost after effect".into(),
             ));
         }
-        Ok(result)
+        Ok((result.0, FencedReceipt::new(authority_fence, result.1)))
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {

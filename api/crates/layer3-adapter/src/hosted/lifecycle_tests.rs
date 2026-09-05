@@ -59,7 +59,7 @@ async fn contract_label_is_exact_and_capabilities_do_not_follow_the_image_name()
     let AdapterError::RuntimeContractMismatch(mismatch) = error else {
         panic!("expected typed contract mismatch");
     };
-    assert_eq!(mismatch.expected, "2");
+    assert_eq!(mismatch.expected, "3");
     assert_eq!(mismatch.found.as_deref(), Some("02"));
     assert!(backend.requests().await.is_empty());
 
@@ -205,6 +205,7 @@ async fn recreated_adapter_uses_the_reattached_runtime_lifecycle() {
     let worktree = adapter_b
         .add_worktree(
             &reattached,
+            1,
             &WorktreeRequest::new(
                 "worktree:recreated:after-restart:add:v1",
                 "recreated",
@@ -260,12 +261,12 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         "agent-replay",
         workspace.resolved_commit,
     );
-    let worktree = adapter_a.add_worktree(&handle, &add).await.unwrap();
+    let worktree = adapter_a.add_worktree(&handle, 1, &add).await.unwrap();
     let mut changed_add = add.clone();
     changed_add.base = "f".repeat(64);
     changed_add.request_sha256 = changed_add.computed_sha256();
     assert!(matches!(
-        adapter_a.add_worktree(&handle, &changed_add).await,
+        adapter_a.add_worktree(&handle, 1, &changed_add).await,
         Err(AdapterError::Rejected(_))
     ));
 
@@ -277,7 +278,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         Vec::new(),
     );
     adapter_a
-        .materialize_agent_home(&handle, &home)
+        .materialize_agent_home(&handle, 1, &home)
         .await
         .unwrap();
     let mut changed_home = home.clone();
@@ -285,7 +286,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     changed_home.request_sha256 = changed_home.computed_sha256();
     assert!(matches!(
         adapter_a
-            .materialize_agent_home(&handle, &changed_home)
+            .materialize_agent_home(&handle, 1, &changed_home)
             .await,
         Err(AdapterError::Rejected(_))
     ));
@@ -294,10 +295,12 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         "agent:agent-replay:open:v1",
         agent_options.clone(),
         Some("conversation-replay".into()),
-    )
-    .with_connection_fence(10);
+    );
     let (updates, mut updates_rx) = tokio::sync::mpsc::channel(4);
-    let channel = adapter_a.open_agent(&handle, &open, updates).await.unwrap();
+    let channel = adapter_a
+        .open_agent(&handle, 10, &open, updates)
+        .await
+        .unwrap();
     assert_eq!(
         channel.conversation_id.as_deref(),
         Some("conversation-replay")
@@ -307,15 +310,14 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     changed_open.request_sha256 = changed_open.computed_sha256();
     let (updates, _updates_rx) = tokio::sync::mpsc::channel(1);
     assert!(matches!(
-        adapter_a.open_agent(&handle, &changed_open, updates).await,
+        adapter_a
+            .open_agent(&handle, 10, &changed_open, updates)
+            .await,
         Err(AdapterError::Rejected(_))
     ));
-    let stale_open = open.clone().with_connection_fence(9);
     let (stale_updates, _stale_updates_rx) = tokio::sync::mpsc::channel(1);
     assert!(matches!(
-        adapter_a
-            .open_agent(&handle, &stale_open, stale_updates)
-            .await,
+        adapter_a.open_agent(&handle, 9, &open, stale_updates).await,
         Err(AdapterError::Rejected(_))
     ));
     backend
@@ -331,10 +333,9 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         Some(crate::ConversationUpdate::Lost { frames: 1 })
     ));
 
-    let current_open = open.clone().with_connection_fence(11);
     let (current_updates, mut current_updates_rx) = tokio::sync::mpsc::channel(4);
     adapter_a
-        .open_agent(&handle, &current_open, current_updates)
+        .open_agent(&handle, 11, &open, current_updates)
         .await
         .unwrap();
     backend
@@ -354,16 +355,16 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     let adapter_b = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
     assert_eq!(adapter_b.provision(&spec).await.unwrap(), handle);
     assert_eq!(
-        adapter_b.add_worktree(&handle, &add).await.unwrap(),
+        adapter_b.add_worktree(&handle, 1, &add).await.unwrap(),
         worktree
     );
     adapter_b
-        .materialize_agent_home(&handle, &home)
+        .materialize_agent_home(&handle, 1, &home)
         .await
         .expect("completed home creation replays after adapter recreation");
     let (updates, _updates_rx) = tokio::sync::mpsc::channel(1);
     let replayed_channel = adapter_b
-        .open_agent(&handle, &current_open, updates)
+        .open_agent(&handle, 11, &open, updates)
         .await
         .expect("a retained live process can replay its open receipt");
     assert_eq!(replayed_channel.conversation_id, channel.conversation_id);
@@ -381,14 +382,14 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     ));
 
     let close = AgentCloseRequest::new("agent:agent-replay:close:v1", agent_options.slot.clone());
-    adapter_b.close_agent(&handle, &close).await.unwrap();
+    adapter_b.close_agent(&handle, 12, &close).await.unwrap();
     let snapshot = backend.snapshot(&handle).await.unwrap();
     assert!(snapshot.homes.contains_key(&agent_options.slot));
     assert!(snapshot.agents.contains_key(&agent_options.slot));
     let changed_close =
         AgentCloseRequest::new("agent:agent-replay:close:v1", AgentSlot::new("agent-other"));
     assert!(matches!(
-        adapter_b.close_agent(&handle, &changed_close).await,
+        adapter_b.close_agent(&handle, 12, &changed_close).await,
         Err(AdapterError::Rejected(_))
     ));
     drop(adapter_b);
@@ -396,7 +397,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     let adapter_c = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
     assert_eq!(adapter_c.provision(&spec).await.unwrap(), handle);
     adapter_c
-        .close_agent(&handle, &close)
+        .close_agent(&handle, 12, &close)
         .await
         .expect("completed close replays after adapter recreation");
 
@@ -405,7 +406,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         agent_options.slot.clone(),
     );
     adapter_c
-        .remove_agent_home(&handle, &remove_home)
+        .remove_agent_home(&handle, 13, &remove_home)
         .await
         .unwrap();
     let changed_remove_home = AgentHomeRemoveRequest::new(
@@ -414,7 +415,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     );
     assert!(matches!(
         adapter_c
-            .remove_agent_home(&handle, &changed_remove_home)
+            .remove_agent_home(&handle, 13, &changed_remove_home)
             .await,
         Err(AdapterError::Rejected(_))
     ));
@@ -425,7 +426,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         "agent-replay",
     );
     adapter_c
-        .remove_worktree(&handle, &remove_worktree)
+        .remove_worktree(&handle, 14, &remove_worktree)
         .await
         .unwrap();
     let changed_remove_worktree = WorktreeRef::new(
@@ -435,7 +436,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     );
     assert!(matches!(
         adapter_c
-            .remove_worktree(&handle, &changed_remove_worktree)
+            .remove_worktree(&handle, 14, &changed_remove_worktree)
             .await,
         Err(AdapterError::Rejected(_))
     ));
@@ -447,11 +448,11 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     let adapter_d = CodexAdapter::with_backend(backend, CodexSandboxSpec::default());
     assert_eq!(adapter_d.provision(&spec).await.unwrap(), handle);
     adapter_d
-        .remove_agent_home(&handle, &remove_home)
+        .remove_agent_home(&handle, 13, &remove_home)
         .await
         .expect("completed home removal replays after adapter recreation");
     adapter_d
-        .remove_worktree(&handle, &remove_worktree)
+        .remove_worktree(&handle, 14, &remove_worktree)
         .await
         .expect("completed worktree removal replays after adapter recreation");
 }
@@ -565,6 +566,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let tree_a = adapter
         .add_worktree(
             &handle,
+            1,
             &WorktreeRequest::new(
                 "worktree:alpha:wt-1:add:v1",
                 "alpha",
@@ -577,6 +579,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let tree_b = adapter
         .add_worktree(
             &handle,
+            1,
             &WorktreeRequest::new(
                 "worktree:beta:wt-2:add:v1",
                 "beta",
@@ -593,6 +596,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
         adapter
             .materialize_agent_home(
                 &handle,
+                1,
                 &AgentHomeRequest::new(
                     format!("agent:{}:home:create:v1", agent_options.slot.as_str()),
                     agent_options.clone(),
@@ -609,6 +613,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let channel_a = adapter
         .open_agent(
             &handle,
+            1,
             &AgentOpenRequest::new("agent:agent-a:open:v1", options_a.clone(), None),
             updates_a,
         )
@@ -617,6 +622,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let channel_b = adapter
         .open_agent(
             &handle,
+            1,
             &AgentOpenRequest::new(
                 "agent:agent-b:open:v1",
                 options_b.clone(),
@@ -698,7 +704,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
         .await
         .into_iter()
         .filter_map(|(_, request)| match request {
-            RequestFrame::OpenAgent(launch) => Some(launch),
+            RequestFrame::OpenAgent(launch) => Some(launch.request),
             _ => None,
         })
         .collect();
@@ -711,6 +717,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     adapter
         .close_agent(
             &handle,
+            1,
             &AgentCloseRequest::new("agent:agent-a:close:v1", options_a.slot.clone()),
         )
         .await
@@ -718,6 +725,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     adapter
         .close_agent(
             &handle,
+            1,
             &AgentCloseRequest::new("agent:agent-b:close:v1", options_b.slot.clone()),
         )
         .await
@@ -725,6 +733,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     adapter
         .remove_agent_home(
             &handle,
+            1,
             &AgentHomeRemoveRequest::new("agent:agent-a:home:remove:v1", options_a.slot.clone()),
         )
         .await
@@ -732,6 +741,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     adapter
         .remove_agent_home(
             &handle,
+            1,
             &AgentHomeRemoveRequest::new("agent:agent-b:home:remove:v1", options_b.slot.clone()),
         )
         .await
@@ -739,6 +749,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     adapter
         .remove_worktree(
             &handle,
+            1,
             &WorktreeRef::new("worktree:alpha:wt-1:remove:v1", "alpha", "wt-1"),
         )
         .await
@@ -746,6 +757,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     adapter
         .remove_worktree(
             &handle,
+            1,
             &WorktreeRef::new("worktree:beta:wt-2:remove:v1", "beta", "wt-2"),
         )
         .await
@@ -866,7 +878,7 @@ async fn every_agent_uses_the_sandbox_wide_model_access_mode() {
         Vec::new(),
     );
     let error = adapter
-        .materialize_agent_home(&handle, &mismatched)
+        .materialize_agent_home(&handle, 1, &mismatched)
         .await
         .expect_err("agent cannot change sandbox model access");
     assert!(matches!(error, AdapterError::Rejected(detail)

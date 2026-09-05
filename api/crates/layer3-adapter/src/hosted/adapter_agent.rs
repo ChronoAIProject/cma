@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use super::super::reply::{valid_git_commit, valid_sha256};
 use super::HostedAdapter;
-use crate::wire::{RequestFrame, ResponseFrame};
+use crate::wire::{FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
     AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentOpenRequest,
     ConversationChannel, ConversationUpdate, RuntimeHandle, WorktreeReceipt, WorktreeRef,
@@ -14,31 +14,37 @@ use crate::{
 pub(super) async fn add_worktree(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,
+    authority_fence: u64,
     request: &WorktreeRequest,
 ) -> crate::Result<WorktreeReceipt> {
+    validate_fence(authority_fence)?;
     let state = adapter.known_state(handle).await?;
     validate_request(
         request,
         format!("worktree:{}:{}:add:v1", request.workspace, request.name),
     )?;
     match adapter
-        .exchange(handle, RequestFrame::AddWorktree(request.clone()))
+        .exchange(
+            handle,
+            RequestFrame::AddWorktree(FencedRequest::new(authority_fence, request.clone())),
+        )
         .await?
     {
-        ResponseFrame::AddWorktree(receipt)
-            if receipt.operation_id == request.operation_id
-                && receipt.request_sha256 == request.request_sha256
-                && receipt.workspace == request.workspace
-                && receipt.name == request.name
-                && Path::new(&receipt.path)
+        ResponseFrame::AddWorktree(response)
+            if response.authority_fence == authority_fence
+                && response.receipt.operation_id == request.operation_id
+                && response.receipt.request_sha256 == request.request_sha256
+                && response.receipt.workspace == request.workspace
+                && response.receipt.name == request.name
+                && Path::new(&response.receipt.path)
                     == Path::new(&state.home_directory)
                         .join(&request.workspace)
                         .join(".worktrees")
                         .join(&request.name)
-                && receipt.branch == format!("cma/{}", request.name)
-                && valid_git_commit(&receipt.base_commit) =>
+                && response.receipt.branch == format!("cma/{}", request.name)
+                && valid_git_commit(&response.receipt.base_commit) =>
         {
-            Ok(receipt)
+            Ok(response.receipt)
         }
         ResponseFrame::AddWorktree(_) => Err(AdapterError::Rejected(
             "runtime returned a receipt for another worktree addition".into(),
@@ -50,22 +56,28 @@ pub(super) async fn add_worktree(
 pub(super) async fn remove_worktree(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,
+    authority_fence: u64,
     request: &WorktreeRef,
 ) -> crate::Result<()> {
+    validate_fence(authority_fence)?;
     adapter.known_state(handle).await?;
     validate_request(
         request,
         format!("worktree:{}:{}:remove:v1", request.workspace, request.name),
     )?;
     match adapter
-        .exchange(handle, RequestFrame::RemoveWorktree(request.clone()))
+        .exchange(
+            handle,
+            RequestFrame::RemoveWorktree(FencedRequest::new(authority_fence, request.clone())),
+        )
         .await?
     {
-        ResponseFrame::RemoveWorktree(receipt)
-            if receipt.operation_id == request.operation_id
-                && receipt.request_sha256 == request.request_sha256
-                && receipt.workspace == request.workspace
-                && receipt.name == request.name =>
+        ResponseFrame::RemoveWorktree(response)
+            if response.authority_fence == authority_fence
+                && response.receipt.operation_id == request.operation_id
+                && response.receipt.request_sha256 == request.request_sha256
+                && response.receipt.workspace == request.workspace
+                && response.receipt.name == request.name =>
         {
             Ok(())
         }
@@ -79,8 +91,10 @@ pub(super) async fn remove_worktree(
 pub(super) async fn materialize_home(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,
+    authority_fence: u64,
     request: &AgentHomeRequest,
 ) -> crate::Result<()> {
+    validate_fence(authority_fence)?;
     adapter.validate_options(handle, &request.options).await?;
     validate_request(
         request,
@@ -96,14 +110,19 @@ pub(super) async fn materialize_home(
         ));
     }
     match adapter
-        .exchange(handle, RequestFrame::MaterializeAgentHome(plan))
+        .exchange(
+            handle,
+            RequestFrame::MaterializeAgentHome(FencedRequest::new(authority_fence, plan)),
+        )
         .await?
     {
-        ResponseFrame::MaterializeAgentHome(receipt)
-            if receipt.operation_id == request.operation_id
-                && receipt.request_sha256 == request.request_sha256
-                && receipt.agent_id == request.options.slot
-                && Path::new(&receipt.path) == Path::new(&request.options.home_directory) =>
+        ResponseFrame::MaterializeAgentHome(response)
+            if response.authority_fence == authority_fence
+                && response.receipt.operation_id == request.operation_id
+                && response.receipt.request_sha256 == request.request_sha256
+                && response.receipt.agent_id == request.options.slot
+                && Path::new(&response.receipt.path)
+                    == Path::new(&request.options.home_directory) =>
         {
             Ok(())
         }
@@ -117,21 +136,27 @@ pub(super) async fn materialize_home(
 pub(super) async fn remove_home(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,
+    authority_fence: u64,
     request: &AgentHomeRemoveRequest,
 ) -> crate::Result<()> {
+    validate_fence(authority_fence)?;
     adapter.known_state(handle).await?;
     validate_request(
         request,
         format!("agent:{}:home:remove:v1", request.agent_id.as_str()),
     )?;
     match adapter
-        .exchange(handle, RequestFrame::RemoveAgentHome(request.clone()))
+        .exchange(
+            handle,
+            RequestFrame::RemoveAgentHome(FencedRequest::new(authority_fence, request.clone())),
+        )
         .await?
     {
-        ResponseFrame::RemoveAgentHome(receipt)
-            if receipt.operation_id == request.operation_id
-                && receipt.request_sha256 == request.request_sha256
-                && receipt.agent_id == request.agent_id =>
+        ResponseFrame::RemoveAgentHome(response)
+            if response.authority_fence == authority_fence
+                && response.receipt.operation_id == request.operation_id
+                && response.receipt.request_sha256 == request.request_sha256
+                && response.receipt.agent_id == request.agent_id =>
         {
             Ok(())
         }
@@ -145,6 +170,7 @@ pub(super) async fn remove_home(
 pub(super) async fn open_agent(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,
+    authority_fence: u64,
     request: &AgentOpenRequest,
     updates: mpsc::Sender<ConversationUpdate>,
 ) -> crate::Result<ConversationChannel> {
@@ -153,11 +179,7 @@ pub(super) async fn open_agent(
         request,
         format!("agent:{}:open:v1", request.options.slot.as_str()),
     )?;
-    if request.connection_fence == 0 {
-        return Err(AdapterError::Rejected(
-            "agent connection fence must be nonzero".into(),
-        ));
-    }
+    validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
     if launch.operation_id != request.operation_id
         || launch.request_sha256 != request.request_sha256
@@ -173,18 +195,18 @@ pub(super) async fn open_agent(
         .backend
         .open_agent(
             handle,
-            launch,
+            FencedRequest::new(authority_fence, launch),
             request.resume_conversation.clone(),
-            request.connection_fence,
             updates,
         )
         .await?;
-    if receipt.operation_id != request.operation_id
-        || receipt.request_sha256 != request.request_sha256
-        || receipt.agent_id != request.options.slot
-        || receipt.cwd != request.options.working_directory
-        || receipt.home != request.options.home_directory
-        || receipt.conversation_id != channel.conversation_id
+    if receipt.authority_fence != authority_fence
+        || receipt.receipt.operation_id != request.operation_id
+        || receipt.receipt.request_sha256 != request.request_sha256
+        || receipt.receipt.agent_id != request.options.slot
+        || receipt.receipt.cwd != request.options.working_directory
+        || receipt.receipt.home != request.options.home_directory
+        || receipt.receipt.conversation_id != channel.conversation_id
     {
         return Err(AdapterError::Rejected(
             "runtime returned a receipt for another agent open operation".into(),
@@ -196,21 +218,27 @@ pub(super) async fn open_agent(
 pub(super) async fn close_agent(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,
+    authority_fence: u64,
     request: &AgentCloseRequest,
 ) -> crate::Result<()> {
+    validate_fence(authority_fence)?;
     adapter.known_state(handle).await?;
     validate_request(
         request,
         format!("agent:{}:close:v1", request.agent_id.as_str()),
     )?;
     match adapter
-        .exchange(handle, RequestFrame::CloseAgent(request.clone()))
+        .exchange(
+            handle,
+            RequestFrame::CloseAgent(FencedRequest::new(authority_fence, request.clone())),
+        )
         .await?
     {
-        ResponseFrame::CloseAgent(receipt)
-            if receipt.operation_id == request.operation_id
-                && receipt.request_sha256 == request.request_sha256
-                && receipt.agent_id == request.agent_id =>
+        ResponseFrame::CloseAgent(response)
+            if response.authority_fence == authority_fence
+                && response.receipt.operation_id == request.operation_id
+                && response.receipt.request_sha256 == request.request_sha256
+                && response.receipt.agent_id == request.agent_id =>
         {
             Ok(())
         }
@@ -257,4 +285,14 @@ fn validate_request(request: &impl ReplayRequest, expected: String) -> crate::Re
         ));
     }
     Ok(())
+}
+
+fn validate_fence(authority_fence: u64) -> crate::Result<()> {
+    if authority_fence == 0 {
+        Err(AdapterError::Rejected(
+            "agent mutation authority fence must be nonzero".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }

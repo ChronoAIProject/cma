@@ -1,10 +1,11 @@
 use super::state::{
-    fingerprint, refused, remember_operation, replay_operation, runtime_home, safe_name,
-    successful_commands, valid_sha256,
+    fingerprint, refused, remember_operation, replay_operation, runtime_home, safe_identity,
+    safe_name, successful_commands, valid_sha256,
 };
-use super::MemoryRuntime;
+use super::{authority, MemoryRuntime};
 use crate::wire::{
-    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, ResponseFrame, WireOperation,
+    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, FencedReceipt, FencedRequest,
+    ResponseFrame, WireOperation,
 };
 use crate::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, SetupReceipt, WorkspaceReceipt,
@@ -146,9 +147,11 @@ pub(super) fn remove_workspace(
 
 pub(super) fn add_worktree(
     runtime: &mut MemoryRuntime,
-    request: WorktreeRequest,
+    request: FencedRequest<WorktreeRequest>,
 ) -> crate::Result<ResponseFrame> {
     let operation = WireOperation::AddWorktree;
+    let authority_fence = request.authority_fence;
+    let request = request.request;
     let expected = format!("worktree:{}:{}:add:v1", request.workspace, request.name);
     validate(
         request.has_valid_sha256(),
@@ -156,6 +159,16 @@ pub(super) fn add_worktree(
         operation,
     )?;
     let payload = fingerprint(&request)?;
+    authority::admit(
+        runtime,
+        authority::ResourceKey::Worktree(request.workspace.clone(), request.name.clone()),
+        authority::Disposition::Present,
+        authority_fence,
+        &request.operation_id,
+        &request.request_sha256,
+        &payload,
+        operation,
+    )?;
     if let Some(response) = replay_operation(
         runtime,
         &request.operation_id,
@@ -163,7 +176,11 @@ pub(super) fn add_worktree(
         &payload,
         operation,
     )? {
-        return Ok(response);
+        let ResponseFrame::AddWorktree(mut response) = response else {
+            return refused(operation, "operation_replay_mismatch");
+        };
+        response.authority_fence = authority_fence;
+        return Ok(ResponseFrame::AddWorktree(response));
     }
     if !safe_name(&request.name)
         || !runtime.workspaces.contains_key(&request.workspace)
@@ -195,15 +212,17 @@ pub(super) fn add_worktree(
         request.operation_id,
         request.request_sha256,
         payload,
-        ResponseFrame::AddWorktree(receipt),
+        ResponseFrame::AddWorktree(FencedReceipt::new(authority_fence, receipt)),
     )
 }
 
 pub(super) fn remove_worktree(
     runtime: &mut MemoryRuntime,
-    request: WorktreeRef,
+    request: FencedRequest<WorktreeRef>,
 ) -> crate::Result<ResponseFrame> {
     let operation = WireOperation::RemoveWorktree;
+    let authority_fence = request.authority_fence;
+    let request = request.request;
     let expected = format!("worktree:{}:{}:remove:v1", request.workspace, request.name);
     validate(
         request.has_valid_sha256(),
@@ -213,6 +232,16 @@ pub(super) fn remove_worktree(
         operation,
     )?;
     let payload = fingerprint(&request)?;
+    authority::admit(
+        runtime,
+        authority::ResourceKey::Worktree(request.workspace.clone(), request.name.clone()),
+        authority::Disposition::Absent,
+        authority_fence,
+        &request.operation_id,
+        &request.request_sha256,
+        &payload,
+        operation,
+    )?;
     let path = format!(
         "{}/{}/.worktrees/{}",
         runtime_home(runtime),
@@ -233,16 +262,23 @@ pub(super) fn remove_worktree(
         &payload,
         operation,
     )? {
-        return Ok(response);
+        let ResponseFrame::RemoveWorktree(mut response) = response else {
+            return refused(operation, "operation_replay_mismatch");
+        };
+        response.authority_fence = authority_fence;
+        return Ok(ResponseFrame::RemoveWorktree(response));
     }
     let key = (request.workspace.clone(), request.name.clone());
     runtime.worktrees.remove(&key);
-    let response = ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
-        operation_id: request.operation_id.clone(),
-        request_sha256: request.request_sha256.clone(),
-        workspace: request.workspace,
-        name: request.name,
-    });
+    let response = ResponseFrame::RemoveWorktree(FencedReceipt::new(
+        authority_fence,
+        WorktreeRemoveReceipt {
+            operation_id: request.operation_id.clone(),
+            request_sha256: request.request_sha256.clone(),
+            workspace: request.workspace,
+            name: request.name,
+        },
+    ));
     finish(
         runtime,
         request.operation_id,
@@ -254,9 +290,11 @@ pub(super) fn remove_worktree(
 
 pub(super) fn materialize_home(
     runtime: &mut MemoryRuntime,
-    plan: AgentHomePlan,
+    plan: FencedRequest<AgentHomePlan>,
 ) -> crate::Result<ResponseFrame> {
     let operation = WireOperation::MaterializeAgentHome;
+    let authority_fence = plan.authority_fence;
+    let plan = plan.request;
     let expected = format!("agent:{}:home:create:v1", plan.agent_id.as_str());
     validate(
         valid_sha256(&plan.request_sha256),
@@ -264,6 +302,16 @@ pub(super) fn materialize_home(
         operation,
     )?;
     let payload = plan.payload_sha256();
+    authority::admit(
+        runtime,
+        authority::ResourceKey::AgentHome(plan.agent_id.clone()),
+        authority::Disposition::Present,
+        authority_fence,
+        &plan.operation_id,
+        &plan.request_sha256,
+        &payload,
+        operation,
+    )?;
     if let Some(response) = replay_operation(
         runtime,
         &plan.operation_id,
@@ -271,7 +319,11 @@ pub(super) fn materialize_home(
         &payload,
         operation,
     )? {
-        return Ok(response);
+        let ResponseFrame::MaterializeAgentHome(mut response) = response else {
+            return refused(operation, "operation_replay_mismatch");
+        };
+        response.authority_fence = authority_fence;
+        return Ok(ResponseFrame::MaterializeAgentHome(response));
     }
     if plan.agent_id.0.is_empty() || runtime.homes.contains_key(&plan.agent_id) {
         return refused(operation, "invalid_or_existing_agent_home");
@@ -292,15 +344,17 @@ pub(super) fn materialize_home(
         receipt.operation_id.clone(),
         receipt.request_sha256.clone(),
         payload,
-        ResponseFrame::MaterializeAgentHome(receipt),
+        ResponseFrame::MaterializeAgentHome(FencedReceipt::new(authority_fence, receipt)),
     )
 }
 
 pub(super) fn close_agent(
     runtime: &mut MemoryRuntime,
-    request: AgentCloseRequest,
+    request: FencedRequest<AgentCloseRequest>,
 ) -> crate::Result<ResponseFrame> {
     let operation = WireOperation::CloseAgent;
+    let authority_fence = request.authority_fence;
+    let request = request.request;
     let expected = format!("agent:{}:close:v1", request.agent_id.as_str());
     validate(
         request.has_valid_sha256(),
@@ -308,6 +362,16 @@ pub(super) fn close_agent(
         operation,
     )?;
     let payload = fingerprint(&request)?;
+    authority::admit(
+        runtime,
+        authority::ResourceKey::AgentProcess(request.agent_id.clone()),
+        authority::Disposition::Absent,
+        authority_fence,
+        &request.operation_id,
+        &request.request_sha256,
+        &payload,
+        operation,
+    )?;
     if let Some(response) = replay_operation(
         runtime,
         &request.operation_id,
@@ -315,16 +379,23 @@ pub(super) fn close_agent(
         &payload,
         operation,
     )? {
-        return Ok(response);
+        let ResponseFrame::CloseAgent(mut response) = response else {
+            return refused(operation, "operation_replay_mismatch");
+        };
+        response.authority_fence = authority_fence;
+        return Ok(ResponseFrame::CloseAgent(response));
     }
     if let Some(agent) = runtime.agents.get_mut(&request.agent_id) {
         agent.running = false;
     }
-    let response = ResponseFrame::CloseAgent(AgentCloseReceipt {
-        operation_id: request.operation_id.clone(),
-        request_sha256: request.request_sha256.clone(),
-        agent_id: request.agent_id,
-    });
+    let response = ResponseFrame::CloseAgent(FencedReceipt::new(
+        authority_fence,
+        AgentCloseReceipt {
+            operation_id: request.operation_id.clone(),
+            request_sha256: request.request_sha256.clone(),
+            agent_id: request.agent_id,
+        },
+    ));
     finish(
         runtime,
         request.operation_id,
@@ -336,9 +407,11 @@ pub(super) fn close_agent(
 
 pub(super) fn remove_home(
     runtime: &mut MemoryRuntime,
-    request: AgentHomeRemoveRequest,
+    request: FencedRequest<AgentHomeRemoveRequest>,
 ) -> crate::Result<ResponseFrame> {
     let operation = WireOperation::RemoveAgentHome;
+    let authority_fence = request.authority_fence;
+    let request = request.request;
     let expected = format!("agent:{}:home:remove:v1", request.agent_id.as_str());
     validate(
         request.has_valid_sha256(),
@@ -346,6 +419,16 @@ pub(super) fn remove_home(
         operation,
     )?;
     let payload = fingerprint(&request)?;
+    authority::admit(
+        runtime,
+        authority::ResourceKey::AgentHome(request.agent_id.clone()),
+        authority::Disposition::Absent,
+        authority_fence,
+        &request.operation_id,
+        &request.request_sha256,
+        &payload,
+        operation,
+    )?;
     if runtime
         .agents
         .get(&request.agent_id)
@@ -360,14 +443,21 @@ pub(super) fn remove_home(
         &payload,
         operation,
     )? {
-        return Ok(response);
+        let ResponseFrame::RemoveAgentHome(mut response) = response else {
+            return refused(operation, "operation_replay_mismatch");
+        };
+        response.authority_fence = authority_fence;
+        return Ok(ResponseFrame::RemoveAgentHome(response));
     }
     runtime.homes.remove(&request.agent_id);
-    let response = ResponseFrame::RemoveAgentHome(AgentHomeRemoveReceipt {
-        operation_id: request.operation_id.clone(),
-        request_sha256: request.request_sha256.clone(),
-        agent_id: request.agent_id.clone(),
-    });
+    let response = ResponseFrame::RemoveAgentHome(FencedReceipt::new(
+        authority_fence,
+        AgentHomeRemoveReceipt {
+            operation_id: request.operation_id.clone(),
+            request_sha256: request.request_sha256.clone(),
+            agent_id: request.agent_id.clone(),
+        },
+    ));
     finish(
         runtime,
         request.operation_id,
@@ -404,8 +494,4 @@ fn validate(
     } else {
         refused(operation, "operation_request_invalid")
     }
-}
-
-fn safe_identity(value: &str) -> bool {
-    value.len() <= 64 && !value.starts_with('.') && safe_name(value)
 }

@@ -21,6 +21,8 @@ const MAX_AGENT_SLOTS: usize = 16;
 mod agent;
 #[path = "supervisor_agent_recovery.rs"]
 mod agent_recovery;
+#[path = "supervisor_agent_validation.rs"]
+mod agent_validation;
 #[path = "supervisor_mutations.rs"]
 mod mutations;
 
@@ -127,6 +129,9 @@ impl Supervisor {
             };
         }
         let _operation = self.operation_gate.lock().await;
+        if let Err(error) = self.authorize_mutation(&request).await {
+            return error.response(operation);
+        }
         if let Err(error) = self.recover_journals_locked().await {
             return error.response(operation);
         }
@@ -149,12 +154,30 @@ impl Supervisor {
             RequestFrame::PrepareWorkspace(_)
             | RequestFrame::WorkspaceSetup(_)
             | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
-            RequestFrame::AddWorktree(request) => self.add_worktree(request).await,
-            RequestFrame::RemoveWorktree(reference) => self.remove_worktree(reference).await,
-            RequestFrame::MaterializeAgentHome(plan) => self.materialize_agent_home(plan).await,
-            RequestFrame::RemoveAgentHome(request) => self.remove_agent_home(request).await,
-            RequestFrame::OpenAgent(launch) => self.open_agent(launch).await,
-            RequestFrame::CloseAgent(request) => self.close_agent(request).await,
+            RequestFrame::AddWorktree(request) => {
+                self.add_worktree(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::RemoveWorktree(request) => {
+                self.remove_worktree(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::MaterializeAgentHome(request) => {
+                self.materialize_agent_home(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::RemoveAgentHome(request) => {
+                self.remove_agent_home(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::OpenAgent(request) => {
+                self.open_agent(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::CloseAgent(request) => {
+                self.close_agent(request.authority_fence, request.request)
+                    .await
+            }
             RequestFrame::CaptureAgent(reference) => {
                 safe_component(reference.agent_id.as_str(), "agent id")?;
                 let home = self.config.agent_home(reference.agent_id.as_str());
@@ -198,6 +221,61 @@ impl Supervisor {
         drop(phase);
         crate::workspace_runtime::recover_locked(&self.config).await?;
         self.recover_mutations_locked().await
+    }
+
+    async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
+        use crate::mutation_journal::Operation;
+
+        let fenced = match request {
+            RequestFrame::AddWorktree(request) => {
+                crate::worktree::validate_add_request(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::add_worktree(&request.request),
+                ))
+            }
+            RequestFrame::RemoveWorktree(request) => {
+                crate::worktree::validate_remove_request(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::remove_worktree(&request.request),
+                ))
+            }
+            RequestFrame::MaterializeAgentHome(request) => {
+                agent_validation::materialize_home(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::create_agent_home(&request.request),
+                ))
+            }
+            RequestFrame::RemoveAgentHome(request) => {
+                agent_validation::remove_home(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::remove_agent_home(&request.request),
+                ))
+            }
+            RequestFrame::OpenAgent(request) => {
+                agent_validation::open(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::open_agent(&request.request),
+                ))
+            }
+            RequestFrame::CloseAgent(request) => {
+                agent_validation::close(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::close_agent(&request.request),
+                ))
+            }
+            _ => None,
+        };
+        let Some((authority_fence, operation)) = fenced else {
+            return Ok(());
+        };
+        self.require_credentialed().await?;
+        crate::mutation_authority::admit(&self.config, authority_fence, &operation)
     }
 
     async fn install(&self, request: InstallRequest) -> Result<ResponseFrame> {
@@ -383,6 +461,9 @@ fn reserved(name: &str) -> bool {
     name == "HOME" || name == "PATH" || name.starts_with("CHRONO_") || name.starts_with("NYXID_")
 }
 
+#[cfg(test)]
+#[path = "supervisor_authority_tests.rs"]
+mod authority_tests;
 #[cfg(test)]
 #[path = "supervisor_mutation_tests.rs"]
 mod mutation_tests;

@@ -1,4 +1,4 @@
-//! Shared contract-2 control frames.
+//! Shared contract-3 control frames.
 //!
 //! Layer 4 consumes these shapes in #807. This crate defines and serializes
 //! them, but does not execute filesystem or process behavior.
@@ -18,6 +18,45 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct AgentRef {
     pub agent_id: AgentSlot,
+}
+
+/// A runtime mutation paired with the caller's monotonic lifecycle authority.
+///
+/// The fence is transport authority, not part of the immutable request digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FencedRequest<T> {
+    pub authority_fence: u64,
+    pub request: T,
+}
+
+impl<T> FencedRequest<T> {
+    pub fn new(authority_fence: u64, request: T) -> Self {
+        Self {
+            authority_fence,
+            request,
+        }
+    }
+}
+
+/// A mutation receipt acknowledging the exact authority fence that executed it.
+///
+/// Layer 4 stores only the inner receipt, allowing an exact replay at a newer
+/// fence to acknowledge that newer authority without changing operation identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FencedReceipt<T> {
+    pub authority_fence: u64,
+    pub receipt: T,
+}
+
+impl<T> FencedReceipt<T> {
+    pub fn new(authority_fence: u64, receipt: T) -> Self {
+        Self {
+            authority_fence,
+            receipt,
+        }
+    }
 }
 
 /// Generic successful acknowledgement.
@@ -113,7 +152,7 @@ pub struct WireFailure {
     pub retryable: bool,
 }
 
-/// Requests accepted by a contract-2 runtime.
+/// Requests accepted by a contract-3 runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RequestFrame {
@@ -121,12 +160,12 @@ pub enum RequestFrame {
     PrepareWorkspace(WorkspaceRequest),
     WorkspaceSetup(WorkspaceSetupRequest),
     RemoveWorkspace(WorkspaceRemoveRequest),
-    AddWorktree(WorktreeRequest),
-    RemoveWorktree(WorktreeRef),
-    MaterializeAgentHome(AgentHomePlan),
-    RemoveAgentHome(AgentHomeRemoveRequest),
-    OpenAgent(AgentLaunch),
-    CloseAgent(AgentCloseRequest),
+    AddWorktree(FencedRequest<WorktreeRequest>),
+    RemoveWorktree(FencedRequest<WorktreeRef>),
+    MaterializeAgentHome(FencedRequest<AgentHomePlan>),
+    RemoveAgentHome(FencedRequest<AgentHomeRemoveRequest>),
+    OpenAgent(FencedRequest<AgentLaunch>),
+    CloseAgent(FencedRequest<AgentCloseRequest>),
     CaptureAgent(AgentRef),
     Checkpoint(CheckpointRequest),
     Restore(RestoreRequest),
@@ -156,7 +195,7 @@ impl RequestFrame {
     }
 }
 
-/// Typed replies returned by a contract-2 runtime.
+/// Typed replies returned by a contract-3 runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ResponseFrame {
@@ -164,12 +203,12 @@ pub enum ResponseFrame {
     PrepareWorkspace(WorkspaceReceipt),
     WorkspaceSetup(SetupReceipt),
     RemoveWorkspace(WorkspaceRemoveReceipt),
-    AddWorktree(WorktreeReceipt),
-    RemoveWorktree(WorktreeRemoveReceipt),
-    MaterializeAgentHome(AgentHomeReceipt),
-    RemoveAgentHome(AgentHomeRemoveReceipt),
-    OpenAgent(AgentOpenReceipt),
-    CloseAgent(AgentCloseReceipt),
+    AddWorktree(FencedReceipt<WorktreeReceipt>),
+    RemoveWorktree(FencedReceipt<WorktreeRemoveReceipt>),
+    MaterializeAgentHome(FencedReceipt<AgentHomeReceipt>),
+    RemoveAgentHome(FencedReceipt<AgentHomeRemoveReceipt>),
+    OpenAgent(FencedReceipt<AgentOpenReceipt>),
+    CloseAgent(FencedReceipt<AgentCloseReceipt>),
     CaptureAgent(ConversationSnapshot),
     Checkpoint(CheckpointReceipt),
     Restore(Acknowledgement),

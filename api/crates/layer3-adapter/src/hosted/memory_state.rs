@@ -128,6 +128,10 @@ pub(super) fn safe_name(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
+pub(super) fn safe_identity(value: &str) -> bool {
+    value.len() <= 64 && !value.starts_with('.') && safe_name(value)
+}
+
 pub(super) fn valid_sha256(value: &str) -> bool {
     value.len() == 64
         && value

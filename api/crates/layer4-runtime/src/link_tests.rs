@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use layer3_adapter::wire::{RequestFrame, ResponseFrame, WireOperation};
+use layer3_adapter::wire::{FencedRequest, RequestFrame, ResponseFrame, WireOperation};
 use layer3_adapter::{
     AgentCloseRequest, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointRequest, CredentialFrame,
     InstallRequest, RestoreRequest, RuntimeCredential, WorkspaceRequest, WorkspaceSource,
@@ -14,6 +14,22 @@ use layer3_adapter::{
 use tokio_tungstenite::tungstenite::Message as ClientMessage;
 
 use super::*;
+
+fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
+    RequestFrame::AddWorktree(FencedRequest::new(1, request))
+}
+
+fn materialize_home_request(request: AgentHomePlan) -> RequestFrame {
+    RequestFrame::MaterializeAgentHome(FencedRequest::new(1, request))
+}
+
+fn open_agent_request(request: AgentLaunch) -> RequestFrame {
+    RequestFrame::OpenAgent(FencedRequest::new(1, request))
+}
+
+fn close_agent_request(request: AgentCloseRequest) -> RequestFrame {
+    RequestFrame::CloseAgent(FencedRequest::new(1, request))
+}
 
 fn root(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("cma-link-{}-{name}", std::process::id()));
@@ -176,7 +192,7 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
         other => panic!("workspace preparation failed: {other:?}"),
     };
     let worktree = match supervisor
-        .dispatch(RequestFrame::AddWorktree(WorktreeRequest::new(
+        .dispatch(add_worktree_request(WorktreeRequest::new(
             "worktree:project:agent-1:add:v1",
             "project",
             "agent-1",
@@ -188,7 +204,7 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
         other => panic!("worktree addition failed: {other:?}"),
     };
     let materialized = supervisor
-        .dispatch(RequestFrame::MaterializeAgentHome(AgentHomePlan {
+        .dispatch(materialize_home_request(AgentHomePlan {
             operation_id: "agent:agent-1:home:create:v1".into(),
             request_sha256: "a".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
@@ -203,11 +219,11 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     ));
     let agent_home = crate::config::RuntimeConfig::for_test(home.clone()).agent_home("agent-1");
     let opened = supervisor
-        .dispatch(RequestFrame::OpenAgent(AgentLaunch {
+        .dispatch(open_agent_request(AgentLaunch {
             operation_id: "agent:agent-1:open:v1".into(),
             request_sha256: "b".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
-            cwd: worktree.path,
+            cwd: worktree.receipt.path,
             home: agent_home.to_string_lossy().into_owned(),
             program: "/bin/sh".into(),
             args: vec![
@@ -257,7 +273,7 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     assert_eq!(echoed, lanes::frame(lanes::CONVERSATION, payload));
     socket.close(None).await.unwrap();
     let closed = supervisor
-        .dispatch(RequestFrame::CloseAgent(AgentCloseRequest::new(
+        .dispatch(close_agent_request(AgentCloseRequest::new(
             "agent:agent-1:close:v1",
             AgentSlot::new("agent-1"),
         )))

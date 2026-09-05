@@ -45,10 +45,11 @@ impl AgentWorker {
             &request.request_sha256,
         );
         let agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
             .adapter
-            .add_worktree(&context.runtime, &request)
+            .add_worktree(&context.runtime, authority_fence, &request)
             .await
         {
             Ok(receipt) if valid_worktree_receipt(&context, &request, &receipt) => {
@@ -114,10 +115,11 @@ impl AgentWorker {
             &request.request_sha256,
         );
         let agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
             .adapter
-            .materialize_agent_home(&context.runtime, &request)
+            .materialize_agent_home(&context.runtime, authority_fence, &request)
             .await
         {
             Ok(()) => {
@@ -166,15 +168,15 @@ impl AgentWorker {
             format!("agent:{}:open:v1", agent.id),
             runtime_options(&agent, &context),
             None,
-        )
-        .with_connection_fence(claimed_fence(&agent, &self.config.holder)?);
+        );
         let evidence = request_evidence(
             AgentWorkStep::OpenConversation,
             &request.operation_id,
             &request.request_sha256,
         );
         let mut agent = self.prepare_side_effect(agent, &evidence, now).await?;
-        let (channel, updates) = match self.open(&context, &request).await {
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
+        let (channel, updates) = match self.open(&context, authority_fence, &request).await {
             Ok(opened) => opened,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
@@ -330,8 +332,7 @@ impl AgentWorker {
             format!("agent:{}:open:v1", agent.id),
             runtime_options(agent, context),
             None,
-        )
-        .with_connection_fence(connection_fence);
+        );
         if agent
             .work
             .receipts
@@ -348,7 +349,7 @@ impl AgentWorker {
                 "the durable conversation-open receipt does not match replay",
             ));
         }
-        let (channel, updates) = self.open(context, &request).await?;
+        let (channel, updates) = self.open(context, connection_fence, &request).await?;
         let conversation_id = valid_conversation_id(channel.conversation_id)?;
         if conversation_id != target.conversation_id {
             return Err(WorkerFailure::terminal(
@@ -368,6 +369,7 @@ impl AgentWorker {
     async fn open(
         &self,
         context: &AgentContext,
+        authority_fence: u64,
         request: &AgentOpenRequest,
     ) -> Result<
         (
@@ -379,9 +381,12 @@ impl AgentWorker {
         let (updates, receiver) = mpsc::channel(UPDATE_BUFFER);
         match tokio::time::timeout(
             self.config.open_timeout,
-            self.dependencies
-                .adapter
-                .open_agent(&context.runtime, request, updates),
+            self.dependencies.adapter.open_agent(
+                &context.runtime,
+                authority_fence,
+                request,
+                updates,
+            ),
         )
         .await
         {

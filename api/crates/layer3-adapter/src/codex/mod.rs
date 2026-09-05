@@ -132,50 +132,68 @@ impl SandboxAdapter for CodexAdapter {
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &WorktreeRequest,
     ) -> crate::Result<WorktreeReceipt> {
-        self.hosted.add_worktree(handle, request).await
+        self.hosted
+            .add_worktree(handle, authority_fence, request)
+            .await
     }
 
     async fn remove_worktree(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &WorktreeRef,
     ) -> crate::Result<()> {
-        self.hosted.remove_worktree(handle, request).await
+        self.hosted
+            .remove_worktree(handle, authority_fence, request)
+            .await
     }
 
     async fn materialize_agent_home(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentHomeRequest,
     ) -> crate::Result<()> {
-        self.hosted.materialize_agent_home(handle, request).await
+        self.hosted
+            .materialize_agent_home(handle, authority_fence, request)
+            .await
     }
 
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentHomeRemoveRequest,
     ) -> crate::Result<()> {
-        self.hosted.remove_agent_home(handle, request).await
+        self.hosted
+            .remove_agent_home(handle, authority_fence, request)
+            .await
     }
 
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        self.hosted.open_agent(handle, request, updates).await
+        self.hosted
+            .open_agent(handle, authority_fence, request, updates)
+            .await
     }
 
     async fn close_agent(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentCloseRequest,
     ) -> crate::Result<()> {
-        self.hosted.close_agent(handle, request).await
+        self.hosted
+            .close_agent(handle, authority_fence, request)
+            .await
     }
 
     async fn capture_agent(

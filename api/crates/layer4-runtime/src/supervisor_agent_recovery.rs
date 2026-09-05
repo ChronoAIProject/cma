@@ -73,7 +73,11 @@ impl Supervisor {
         Ok(())
     }
 
-    pub(super) async fn recover_agent_close(&self, pending: Pending) -> Result<()> {
+    pub(super) async fn recover_agent_close(
+        &self,
+        authority_fence: u64,
+        pending: Pending,
+    ) -> Result<()> {
         let Subject::CloseAgent { agent_id } = &pending.operation.subject else {
             return Err(corrupt("agent close recovery received another operation"));
         };
@@ -82,7 +86,10 @@ impl Supervisor {
             request_sha256: pending.operation.request_sha256,
             agent_id: AgentSlot::new(agent_id),
         };
-        absorb(self.execute_close_agent(request, pending.ticket).await)
+        absorb(
+            self.execute_close_agent(authority_fence, request, pending.ticket)
+                .await,
+        )
     }
 
     pub(super) fn recover_agent_home_removal(&self, pending: Pending) -> Result<()> {

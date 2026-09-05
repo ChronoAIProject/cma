@@ -1,6 +1,9 @@
 use super::HostedBackend;
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
-use crate::wire::{AgentCloseReceipt, AgentHomeRemoveReceipt, RequestFrame, ResponseFrame};
+use crate::wire::{
+    AgentCloseReceipt, AgentHomeRemoveReceipt, FencedReceipt, FencedRequest, RequestFrame,
+    ResponseFrame,
+};
 use crate::{
     AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentOpenRequest,
     AgentSlot, CredentialFrame, InstallRequest, RuntimeCredential, RuntimeOptions, SandboxAdapter,
@@ -42,27 +45,35 @@ async fn fixture() -> (
     (adapter, backend, handle)
 }
 
+fn fenced<T>(request: T) -> FencedRequest<T> {
+    FencedRequest::new(1, request)
+}
+
+fn receipt<T>(value: T) -> FencedReceipt<T> {
+    FencedReceipt::new(1, value)
+}
+
 #[tokio::test]
 async fn absent_cleanup_targets_return_exact_receipts_and_replay() {
     let (_adapter, backend, handle) = fixture().await;
     let agent_id = AgentSlot::new("agent-absent");
 
     let close = AgentCloseRequest::new("agent:agent-absent:close:v1", agent_id.clone());
-    let expected_close = ResponseFrame::CloseAgent(AgentCloseReceipt {
+    let expected_close = ResponseFrame::CloseAgent(receipt(AgentCloseReceipt {
         operation_id: close.operation_id.clone(),
         request_sha256: close.request_sha256.clone(),
         agent_id: agent_id.clone(),
-    });
+    }));
     assert_eq!(
         backend
-            .exchange(&handle, RequestFrame::CloseAgent(close.clone()))
+            .exchange(&handle, RequestFrame::CloseAgent(fenced(close.clone())))
             .await
             .unwrap(),
         expected_close
     );
     assert_eq!(
         backend
-            .exchange(&handle, RequestFrame::CloseAgent(close))
+            .exchange(&handle, RequestFrame::CloseAgent(fenced(close)))
             .await
             .unwrap(),
         expected_close
@@ -70,21 +81,24 @@ async fn absent_cleanup_targets_return_exact_receipts_and_replay() {
 
     let remove_home =
         AgentHomeRemoveRequest::new("agent:agent-absent:home:remove:v1", agent_id.clone());
-    let expected_home = ResponseFrame::RemoveAgentHome(AgentHomeRemoveReceipt {
+    let expected_home = ResponseFrame::RemoveAgentHome(receipt(AgentHomeRemoveReceipt {
         operation_id: remove_home.operation_id.clone(),
         request_sha256: remove_home.request_sha256.clone(),
         agent_id,
-    });
+    }));
     assert_eq!(
         backend
-            .exchange(&handle, RequestFrame::RemoveAgentHome(remove_home.clone()),)
+            .exchange(
+                &handle,
+                RequestFrame::RemoveAgentHome(fenced(remove_home.clone())),
+            )
             .await
             .unwrap(),
         expected_home
     );
     assert_eq!(
         backend
-            .exchange(&handle, RequestFrame::RemoveAgentHome(remove_home))
+            .exchange(&handle, RequestFrame::RemoveAgentHome(fenced(remove_home)))
             .await
             .unwrap(),
         expected_home
@@ -95,17 +109,17 @@ async fn absent_cleanup_targets_return_exact_receipts_and_replay() {
         "workspace-absent",
         "agent-absent",
     );
-    let expected_worktree = ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
+    let expected_worktree = ResponseFrame::RemoveWorktree(receipt(WorktreeRemoveReceipt {
         operation_id: remove_worktree.operation_id.clone(),
         request_sha256: remove_worktree.request_sha256.clone(),
         workspace: remove_worktree.workspace.clone(),
         name: remove_worktree.name.clone(),
-    });
+    }));
     assert_eq!(
         backend
             .exchange(
                 &handle,
-                RequestFrame::RemoveWorktree(remove_worktree.clone()),
+                RequestFrame::RemoveWorktree(fenced(remove_worktree.clone())),
             )
             .await
             .unwrap(),
@@ -113,7 +127,10 @@ async fn absent_cleanup_targets_return_exact_receipts_and_replay() {
     );
     assert_eq!(
         backend
-            .exchange(&handle, RequestFrame::RemoveWorktree(remove_worktree))
+            .exchange(
+                &handle,
+                RequestFrame::RemoveWorktree(fenced(remove_worktree)),
+            )
             .await
             .unwrap(),
         expected_worktree
@@ -129,14 +146,14 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
     );
     assert!(matches!(
         backend
-            .exchange(&handle, RequestFrame::CloseAgent(invalid))
+            .exchange(&handle, RequestFrame::CloseAgent(fenced(invalid)))
             .await,
         Err(AdapterError::Rejected(_))
     ));
     let invalid = AgentCloseRequest::new("agent:.hidden:close:v1", AgentSlot::new(".hidden"));
     assert!(matches!(
         backend
-            .exchange(&handle, RequestFrame::CloseAgent(invalid))
+            .exchange(&handle, RequestFrame::CloseAgent(fenced(invalid)))
             .await,
         Err(AdapterError::Rejected(_))
     ));
@@ -146,7 +163,7 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
     );
     assert!(matches!(
         backend
-            .exchange(&handle, RequestFrame::RemoveAgentHome(invalid))
+            .exchange(&handle, RequestFrame::RemoveAgentHome(fenced(invalid)))
             .await,
         Err(AdapterError::Rejected(_))
     ));
@@ -157,7 +174,7 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
     );
     assert!(matches!(
         backend
-            .exchange(&handle, RequestFrame::RemoveWorktree(invalid))
+            .exchange(&handle, RequestFrame::RemoveWorktree(fenced(invalid)))
             .await,
         Err(AdapterError::Rejected(_))
     ));
@@ -177,6 +194,7 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
     let worktree = adapter
         .add_worktree(
             &handle,
+            1,
             &WorktreeRequest::new(
                 "worktree:cleanup-guard:agent-live:add:v1",
                 "cleanup-guard",
@@ -195,6 +213,7 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
     adapter
         .materialize_agent_home(
             &handle,
+            1,
             &AgentHomeRequest::new(
                 "agent:agent-live:home:create:v1",
                 options.clone(),
@@ -208,6 +227,7 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
     adapter
         .open_agent(
             &handle,
+            1,
             &AgentOpenRequest::new("agent:agent-live:open:v1", options.clone(), None),
             updates,
         )
@@ -218,7 +238,7 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
         adapter
             .remove_agent_home(
                 &handle,
-                &AgentHomeRemoveRequest::new(
+                1, &AgentHomeRemoveRequest::new(
                     "agent:agent-live:home:remove:v1",
                     options.slot.clone(),
                 ),
@@ -230,7 +250,7 @@ async fn absent_cleanup_does_not_bypass_identity_or_live_resource_checks() {
         adapter
             .remove_worktree(
                 &handle,
-                &WorktreeRef::new(
+                1, &WorktreeRef::new(
                     "worktree:cleanup-guard:agent-live:remove:v1",
                     "cleanup-guard",
                     "agent-live",

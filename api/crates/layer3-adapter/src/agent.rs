@@ -133,10 +133,6 @@ pub struct AgentOpenRequest {
     pub operation_id: String,
     pub request_sha256: String,
     pub options: RuntimeOptions,
-    /// Ephemeral authority for replacing the live update route. It is not part
-    /// of the durable open-operation digest.
-    #[serde(default = "default_connection_fence")]
-    pub connection_fence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_conversation: Option<String>,
 }
@@ -151,17 +147,10 @@ impl AgentOpenRequest {
             operation_id: operation_id.into(),
             request_sha256: String::new(),
             options,
-            connection_fence: default_connection_fence(),
             resume_conversation,
         };
         request.request_sha256 = request.computed_sha256();
         request
-    }
-
-    #[must_use]
-    pub fn with_connection_fence(mut self, connection_fence: u64) -> Self {
-        self.connection_fence = connection_fence;
-        self
     }
 
     pub fn computed_sha256(&self) -> String {
@@ -175,10 +164,6 @@ impl AgentOpenRequest {
     pub fn has_valid_sha256(&self) -> bool {
         self.request_sha256 == self.computed_sha256()
     }
-}
-
-const fn default_connection_fence() -> u64 {
-    1
 }
 
 /// Stop one agent process while retaining its durable home.
