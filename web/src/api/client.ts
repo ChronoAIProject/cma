@@ -1,0 +1,131 @@
+import type {
+  AgentDetail,
+  AgentEvent,
+  AgentLiveEvent,
+  AgentRunRequest,
+  AgentTranscript,
+  AgentUsage,
+  CreateAgentInput,
+  CreateSandboxInput,
+  CreateWorkspaceInput,
+  ResourcePage,
+  SandboxDetail,
+  SandboxEvent,
+  SandboxSummary,
+  WorkspaceDetail,
+} from './types';
+
+export interface ReadOptions {
+  readonly signal?: AbortSignal;
+}
+
+export interface PageOptions<Cursor = string> extends ReadOptions {
+  readonly cursor?: Cursor;
+}
+
+export interface CommandOptions extends ReadOptions {
+  readonly idempotencyKey: string;
+}
+
+export interface AgentStreamOptions extends ReadOptions {
+  readonly after?: number;
+  readonly onEvent: (event: AgentLiveEvent) => void;
+}
+
+/** A transport-free view of the public CMA operations consumed by the web app. */
+export interface CmaWebClient {
+  listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
+  readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
+  readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;
+  readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;
+  readAgentEvents(
+    id: string,
+    options?: PageOptions<number>,
+  ): Promise<ResourcePage<AgentEvent, number>>;
+  readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
+  readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
+  readSandboxEvents(id: string, options?: PageOptions<number>): Promise<readonly SandboxEvent[]>;
+  replayAgent(threadId: string, options: AgentStreamOptions): Promise<void>;
+  runAgent(request: AgentRunRequest, options: AgentStreamOptions): Promise<void>;
+  createSandbox(input: CreateSandboxInput, options: CommandOptions): Promise<SandboxDetail>;
+  createWorkspace(
+    sandboxId: string,
+    input: CreateWorkspaceInput,
+    options: CommandOptions,
+  ): Promise<WorkspaceDetail>;
+  createAgent(
+    workspaceId: string,
+    input: CreateAgentInput,
+    options: CommandOptions,
+  ): Promise<AgentDetail>;
+  pauseSandbox(id: string, options: CommandOptions): Promise<void>;
+  reviveSandbox(id: string, options: CommandOptions): Promise<void>;
+  deleteSandbox(id: string, options: CommandOptions): Promise<void>;
+  removeWorkspace(id: string, options: CommandOptions): Promise<void>;
+  interruptAgent(id: string, options: CommandOptions): Promise<void>;
+  stopAgent(id: string, options: CommandOptions): Promise<void>;
+  deleteAgent(id: string, options: CommandOptions): Promise<void>;
+}
+
+export class ClientUnavailableError extends Error {
+  constructor() {
+    super('The CMA web client is not available in this build.');
+    this.name = 'ClientUnavailableError';
+  }
+}
+
+function unavailable<T>(): Promise<T> {
+  return Promise.reject(new ClientUnavailableError());
+}
+
+/** Replaced by the generated SDK adapter when issue #819 lands. */
+export const unavailableClient: CmaWebClient = {
+  listSandboxes: async () => ({ items: [] }),
+  readSandbox: unavailable,
+  readWorkspace: unavailable,
+  readAgent: unavailable,
+  readAgentEvents: unavailable,
+  readAgentTranscript: unavailable,
+  readAgentUsage: unavailable,
+  readSandboxEvents: unavailable,
+  replayAgent: unavailable,
+  runAgent: unavailable,
+  createSandbox: unavailable,
+  createWorkspace: unavailable,
+  createAgent: unavailable,
+  pauseSandbox: unavailable,
+  reviveSandbox: unavailable,
+  deleteSandbox: unavailable,
+  removeWorkspace: unavailable,
+  interruptAgent: unavailable,
+  stopAgent: unavailable,
+  deleteAgent: unavailable,
+};
+
+type KeyFactory = () => string;
+
+function randomKey(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+/** Holds one key per logical command until its outcome is known. */
+export class CommandKeys {
+  readonly #keys = new Map<string, string>();
+
+  constructor(private readonly makeKey: KeyFactory = randomKey) {}
+
+  for(command: string): string {
+    const retained = this.#keys.get(command);
+    if (retained !== undefined) return retained;
+    const key = this.makeKey();
+    this.#keys.set(command, key);
+    return key;
+  }
+
+  settle(command: string): void {
+    this.#keys.delete(command);
+  }
+}
