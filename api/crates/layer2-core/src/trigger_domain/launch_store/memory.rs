@@ -340,6 +340,7 @@ fn validate_immutable(current: &Launch, changed: &Launch) -> Result<(), LaunchSt
         || current.revision_digest != changed.revision_digest
         || current.public_id != changed.public_id
         || current.owner != changed.owner
+        || current.authority != changed.authority
         || current.placement_id != changed.placement_id
         || current.referrer_origin != changed.referrer_origin
         || current.trust != changed.trust

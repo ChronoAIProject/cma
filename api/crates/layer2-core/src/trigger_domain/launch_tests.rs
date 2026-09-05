@@ -31,6 +31,7 @@ fn seed(review: ReviewRequirements) -> LaunchSeed {
         revision_digest: digest('a'),
         public_id: PublicTriggerId("pub_one".into()),
         owner: SubjectId::new("owner"),
+        authority: LaunchAuthorityClass::SandboxCreator,
         placement_id: Some(PlacementId("plc_one".into())),
         referrer_origin: Some("https://example.com".into()),
         requirements: requirements(&[]),

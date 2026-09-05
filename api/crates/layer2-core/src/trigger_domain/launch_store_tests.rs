@@ -78,6 +78,7 @@ fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
         revision_digest: trigger.revision.digest.clone(),
         public_id: trigger.public_id.clone(),
         owner: SubjectId::new("visitor"),
+        authority: LaunchAuthorityClass::SandboxCreator,
         placement_id: None,
         referrer_origin: None,
         requirements: RequirementsSnapshot {
