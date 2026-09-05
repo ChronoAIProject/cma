@@ -6,6 +6,7 @@ use layer2_core::sandbox::{
 };
 use layer2_core::seconds_from_rfc3339;
 
+use super::startup_support::{live_target, registry_failure};
 use super::support::{claimed_fence, WorkerFailure};
 use super::AgentWorker;
 
@@ -15,6 +16,9 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Err(failure) = self.ensure_dispatch_connection(&agent).await {
+            return self.handle_failure(agent, failure, now).await;
+        }
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let authority =
             AgentWorkAuthority::new(self.config.holder.clone(), fence).map_err(dispatch_error)?;
@@ -56,6 +60,20 @@ impl AgentWorker {
             }
             FirstMessageDispatchOutcome::InProgress(_) => Ok(()),
         }
+    }
+
+    async fn ensure_dispatch_connection(&self, agent: &Agent) -> Result<(), WorkerFailure> {
+        let target = live_target(agent)?;
+        if self.dependencies.registry.resolve(&target).is_some() {
+            return Ok(());
+        }
+        let context = self.connection_context(agent).await?;
+        let attachment = self.reattach(agent, &context, &target).await?;
+        if let Err(error) = self.dependencies.registry.publish_and_activate(&attachment) {
+            self.dependencies.registry.rollback(&attachment);
+            return Err(registry_failure(error));
+        }
+        Ok(())
     }
 
     async fn current_dispatch(

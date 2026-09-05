@@ -1,8 +1,45 @@
 use super::*;
-use crate::sandbox::store::{validate_agent_work_mutation, AgentWorkMutation, AgentWorkerStore};
+use crate::sandbox::store::{
+    apply_agent_connection_recovery, validate_agent_work_mutation,
+    AgentConnectionRecoveryApplication, AgentConnectionRecoveryCandidate,
+    AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkMutation,
+    AgentWorkerStore,
+};
 
 #[async_trait]
 impl AgentWorkerStore for InMemorySandboxStore {
+    async fn live_agent_connections(
+        &self,
+        request: &PageRequest,
+    ) -> Result<Page<AgentConnectionRecoveryCandidate>, SandboxStoreError> {
+        let values = self
+            .lock()
+            .agents
+            .values()
+            .filter_map(AgentConnectionRecoveryCandidate::from_agent)
+            .map(|candidate| (candidate.agent_id.to_string(), candidate))
+            .collect();
+        page(values, request)
+    }
+
+    async fn schedule_agent_connection_recovery(
+        &self,
+        request: AgentConnectionRecoveryRequest,
+    ) -> Result<AgentConnectionRecoveryOutcome, SandboxStoreError> {
+        let mut state = self.lock();
+        let current = state
+            .agents
+            .get(&request.agent_id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        match apply_agent_connection_recovery(current, &request)? {
+            AgentConnectionRecoveryApplication::Persist(agent) => {
+                state.agents.insert(agent.id.clone(), *agent);
+                Ok(AgentConnectionRecoveryOutcome::Scheduled)
+            }
+            AgentConnectionRecoveryApplication::Complete(outcome) => Ok(outcome),
+        }
+    }
+
     async fn due_agent_work(
         &self,
         now: &str,

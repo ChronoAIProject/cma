@@ -1,7 +1,9 @@
 use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
-use layer2_core::sandbox::{Agent, AgentStatus, AgentWorkStep, SandboxStatus, WorkspaceStatus};
+use layer2_core::sandbox::{
+    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, SandboxStatus, WorkspaceStatus,
+};
 
 use super::startup_support::{live_target, registry_failure};
 use super::support::{claimed_fence, AgentContext, WorkerFailure};
@@ -37,11 +39,18 @@ impl AgentWorker {
         self.finish_connection_publication(agent, now).await
     }
 
-    async fn connection_context(&self, agent: &Agent) -> Result<AgentContext, WorkerFailure> {
-        if agent.status != AgentStatus::Ready || agent.requested_stop_reason.is_some() {
+    pub(super) async fn connection_context(
+        &self,
+        agent: &Agent,
+    ) -> Result<AgentContext, WorkerFailure> {
+        if !matches!(
+            agent.status,
+            AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
+        ) || agent.requested_stop_reason.is_some()
+        {
             return Err(WorkerFailure::terminal(
                 "agent_connection_state_invalid",
-                "connection publication requires a ready agent without stop intent",
+                "connection publication requires an attachable live agent without stop intent",
             ));
         }
         let context = self.context(agent).await?;
@@ -64,7 +73,12 @@ impl AgentWorker {
     ) -> Result<(), SandboxStoreError> {
         let fence = claimed_fence(&agent, &self.config.holder)?;
         for _ in 0..MAX_PUBLICATION_RETRIES {
-            let next = if agent.conversation.first_message.is_some() {
+            let next = if agent
+                .conversation
+                .first_message
+                .as_ref()
+                .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
+            {
                 AgentWorkStep::DispatchFirstMessage
             } else {
                 AgentWorkStep::None
@@ -78,8 +92,10 @@ impl AgentWorker {
                     let Some(current) = self.dependencies.store.get_agent(&agent.id).await? else {
                         return Err(SandboxStoreError::NotFound);
                     };
-                    if current.status != AgentStatus::Ready
-                        || current.work.step != AgentWorkStep::PublishConnection
+                    if !matches!(
+                        current.status,
+                        AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
+                    ) || current.work.step != AgentWorkStep::PublishConnection
                         || !current.work.owns(&self.config.holder, fence)
                         || live_target(&current).ok() != live_target(&agent).ok()
                     {

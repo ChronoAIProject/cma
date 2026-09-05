@@ -1,0 +1,171 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use layer2_core::sandbox::store::{
+    AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest,
+    AgentLifecycleStore, SandboxStoreError,
+};
+use layer2_core::{now_rfc3339, AgentId};
+
+use super::{LiveAgentRegistry, RegistryEntry};
+
+const RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiveAgentAttachmentIdentity {
+    pub(crate) agent_id: AgentId,
+    pub(crate) conversation_id: String,
+    pub(crate) runtime_generation: u64,
+    pub(crate) authority_fence: u64,
+    pub(crate) nonce: u64,
+}
+
+#[async_trait::async_trait]
+pub(crate) trait LiveAgentConnectionLossHandler: Send + Sync {
+    async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity);
+}
+
+pub(crate) struct DurableAgentConnectionLossHandler {
+    store: Arc<dyn AgentLifecycleStore>,
+}
+
+impl DurableAgentConnectionLossHandler {
+    pub(crate) fn new(store: Arc<dyn AgentLifecycleStore>) -> Arc<Self> {
+        Arc::new(Self { store })
+    }
+}
+
+#[async_trait::async_trait]
+impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
+    async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity) {
+        loop {
+            let current = match self.store.get_agent(&attachment.agent_id).await {
+                Ok(Some(agent)) => agent,
+                Ok(None) => return,
+                Err(SandboxStoreError::Unavailable(detail)) => {
+                    tracing::warn!(
+                        agent_id = %attachment.agent_id,
+                        %detail,
+                        "agent connection recovery read is unavailable"
+                    );
+                    tokio::time::sleep(RECOVERY_RETRY_DELAY).await;
+                    continue;
+                }
+                Err(error) => {
+                    tracing::error!(
+                        agent_id = %attachment.agent_id,
+                        %error,
+                        "agent connection recovery read failed"
+                    );
+                    return;
+                }
+            };
+            if current.conversation.conversation_id.as_deref() != Some(&attachment.conversation_id)
+                || current.conversation.runtime_generation != Some(attachment.runtime_generation)
+                || current.work.next_fence <= attachment.authority_fence
+            {
+                return;
+            }
+            let request = AgentConnectionRecoveryRequest {
+                agent_id: attachment.agent_id.clone(),
+                conversation_id: attachment.conversation_id.clone(),
+                runtime_generation: attachment.runtime_generation,
+                expected_revision: current.revision,
+                expected_work_step: current.work.step,
+                expected_authority_fence: Some(attachment.authority_fence),
+                requested_at: now_rfc3339(),
+                cause: AgentConnectionRecoveryCause::UpdateStreamLost,
+            };
+            match self.store.schedule_agent_connection_recovery(request).await {
+                Ok(
+                    AgentConnectionRecoveryOutcome::Scheduled
+                    | AgentConnectionRecoveryOutcome::AlreadyScheduled
+                    | AgentConnectionRecoveryOutcome::NotEligible,
+                ) => return,
+                Ok(AgentConnectionRecoveryOutcome::Superseded)
+                | Err(SandboxStoreError::Conflict) => tokio::task::yield_now().await,
+                Err(SandboxStoreError::Unavailable(detail)) => {
+                    tracing::warn!(
+                        agent_id = %attachment.agent_id,
+                        %detail,
+                        "agent connection recovery scheduling is unavailable"
+                    );
+                    tokio::time::sleep(RECOVERY_RETRY_DELAY).await;
+                }
+                Err(error) => {
+                    tracing::error!(
+                        agent_id = %attachment.agent_id,
+                        %error,
+                        "agent connection recovery scheduling failed"
+                    );
+                    return;
+                }
+            }
+        }
+    }
+}
+
+impl LiveAgentRegistry {
+    pub(crate) fn install_connection_loss_handler(
+        &self,
+        handler: Arc<dyn LiveAgentConnectionLossHandler>,
+    ) -> bool {
+        self.loss_handler.set(handler).is_ok()
+    }
+
+    pub(crate) async fn connection_ended(&self, attachment: LiveAgentAttachmentIdentity) {
+        let handler = {
+            let mut state = self.lock();
+            let exact = state
+                .entries
+                .get(&attachment.agent_id)
+                .is_some_and(|entry| exact_attachment(entry, &attachment));
+            if !exact {
+                return;
+            }
+            let owns_current_authority =
+                state
+                    .watermarks
+                    .get(&attachment.agent_id)
+                    .is_some_and(|watermark| {
+                        !watermark.fenced
+                            && watermark.runtime_generation == attachment.runtime_generation
+                            && watermark.authority_fence == attachment.authority_fence
+                    });
+            if owns_current_authority {
+                state
+                    .watermarks
+                    .get_mut(&attachment.agent_id)
+                    .expect("current attachment has an authority watermark")
+                    .fenced = true;
+            }
+            state.entries.remove(&attachment.agent_id);
+            owns_current_authority
+                .then(|| self.loss_handler.get().cloned())
+                .flatten()
+        };
+        if let Some(handler) = handler {
+            handler.connection_lost(attachment).await;
+        }
+    }
+}
+
+impl super::LiveAgentAttachment {
+    pub(crate) fn identity(&self) -> LiveAgentAttachmentIdentity {
+        LiveAgentAttachmentIdentity {
+            agent_id: self.agent_id.clone(),
+            conversation_id: self.conversation_id.clone(),
+            runtime_generation: self.runtime_generation,
+            authority_fence: self.authority_fence,
+            nonce: self.nonce,
+        }
+    }
+}
+
+fn exact_attachment(entry: &RegistryEntry, attachment: &LiveAgentAttachmentIdentity) -> bool {
+    entry.published
+        && entry.conversation_id == attachment.conversation_id
+        && entry.runtime_generation == attachment.runtime_generation
+        && entry.authority_fence == attachment.authority_fence
+        && entry.nonce == attachment.nonce
+}

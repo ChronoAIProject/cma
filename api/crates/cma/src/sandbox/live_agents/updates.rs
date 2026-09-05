@@ -7,21 +7,18 @@ use layer3_adapter::ConversationUpdate;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
-use super::LiveAgentRegistry;
+use super::{LiveAgentAttachmentIdentity, LiveAgentRegistry};
 
 const UPDATE_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_update_task(
     registry: Weak<LiveAgentRegistry>,
-    agent_id: AgentId,
-    runtime_generation: u64,
-    nonce: u64,
+    attachment: LiveAgentAttachmentIdentity,
     activated: oneshot::Receiver<()>,
     mut updates: mpsc::Receiver<ConversationUpdate>,
     recorder: Arc<dyn AgentUpdateRecorder>,
 ) -> AbortHandle {
-    let task_agent_id = agent_id.clone();
     let task = tokio::spawn(async move {
         if activated.await.is_err() {
             return;
@@ -30,8 +27,8 @@ pub(super) fn spawn_update_task(
         while let Some(update) = updates.recv().await {
             if record_update(
                 recorder.as_ref(),
-                &task_agent_id,
-                runtime_generation,
+                &attachment.agent_id,
+                attachment.runtime_generation,
                 &mut assembly,
                 update,
             )
@@ -42,7 +39,7 @@ pub(super) fn spawn_update_task(
             }
         }
         if let Some(registry) = registry.upgrade() {
-            registry.remove_connection(&task_agent_id, runtime_generation, nonce);
+            registry.connection_ended(attachment).await;
         }
     });
     task.abort_handle()

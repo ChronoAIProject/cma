@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use layer2_core::sandbox::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
@@ -11,7 +11,11 @@ use layer3_adapter::{ConversationInputSender, ConversationUpdate};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
+mod recovery;
 mod updates;
+pub(crate) use recovery::{
+    DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity, LiveAgentConnectionLossHandler,
+};
 use updates::spawn_update_task;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -40,6 +44,7 @@ pub(crate) struct LiveAgentConnection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LiveAgentAttachment {
     agent_id: AgentId,
+    conversation_id: String,
     runtime_generation: u64,
     authority_fence: u64,
     nonce: u64,
@@ -76,6 +81,7 @@ struct RegistryState {
 pub(crate) struct LiveAgentRegistry {
     state: Mutex<RegistryState>,
     next_nonce: AtomicU64,
+    loss_handler: OnceLock<Arc<dyn LiveAgentConnectionLossHandler>>,
 }
 
 impl LiveAgentRegistry {
@@ -124,15 +130,19 @@ impl LiveAgentRegistry {
         let (activate, activated) = oneshot::channel();
         let task = spawn_update_task(
             Arc::downgrade(self),
-            agent_id.clone(),
-            runtime_generation,
-            nonce,
+            LiveAgentAttachmentIdentity {
+                agent_id: agent_id.clone(),
+                conversation_id: conversation_id.clone(),
+                runtime_generation,
+                authority_fence,
+                nonce,
+            },
             activated,
             updates,
             recorder,
         );
         let entry = RegistryEntry {
-            conversation_id,
+            conversation_id: conversation_id.clone(),
             runtime_generation,
             authority_fence,
             capabilities,
@@ -147,6 +157,7 @@ impl LiveAgentRegistry {
         }
         Ok(LiveAgentAttachment {
             agent_id,
+            conversation_id,
             runtime_generation,
             authority_fence,
             nonce,
@@ -300,18 +311,6 @@ impl LiveAgentRegistry {
         );
     }
 
-    fn remove_connection(&self, agent_id: &AgentId, runtime_generation: u64, nonce: u64) {
-        let mut state = self.lock();
-        let matches = state.entries.get(agent_id).is_some_and(|entry| {
-            entry.runtime_generation == runtime_generation && entry.nonce == nonce
-        });
-        if matches {
-            if let Some(entry) = state.entries.remove(agent_id) {
-                entry.task.abort();
-            }
-        }
-    }
-
     fn lock(&self) -> std::sync::MutexGuard<'_, RegistryState> {
         self.state
             .lock()
@@ -414,7 +413,8 @@ fn exact_entry<'a>(
     attachment: &LiveAgentAttachment,
 ) -> Option<&'a RegistryEntry> {
     entries.get(&attachment.agent_id).filter(|entry| {
-        entry.runtime_generation == attachment.runtime_generation
+        entry.conversation_id == attachment.conversation_id
+            && entry.runtime_generation == attachment.runtime_generation
             && entry.authority_fence == attachment.authority_fence
             && entry.nonce == attachment.nonce
     })
@@ -447,6 +447,7 @@ fn exact_authority(entry: &RegistryEntry, runtime_generation: u64, authority_fen
 fn attachment(agent_id: &AgentId, entry: &RegistryEntry, inserted: bool) -> LiveAgentAttachment {
     LiveAgentAttachment {
         agent_id: agent_id.clone(),
+        conversation_id: entry.conversation_id.clone(),
         runtime_generation: entry.runtime_generation,
         authority_fence: entry.authority_fence,
         nonce: entry.nonce,

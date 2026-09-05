@@ -51,12 +51,14 @@ pub(super) fn validate_position(
                 && worktree.status == WorktreeStatus::Creating
         }
         AgentWorkStep::PublishConnection => {
-            agent.status == AgentStatus::Ready
-                && agent
-                    .ready_at
-                    .as_deref()
-                    .and_then(seconds_from_rfc3339)
-                    .is_some()
+            matches!(
+                agent.status,
+                AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
+            ) && agent
+                .ready_at
+                .as_deref()
+                .and_then(seconds_from_rfc3339)
+                .is_some()
                 && agent.requested_stop_reason.is_none()
                 && worktree.status == WorktreeStatus::Ready
         }
