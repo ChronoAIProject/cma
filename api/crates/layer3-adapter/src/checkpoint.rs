@@ -27,6 +27,66 @@ pub struct CheckpointReceipt {
     pub writers: WriterState,
 }
 
+/// Capture request whose writer fence remains held for provider teardown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointHoldRequest {
+    pub checkpoint: CheckpointRequest,
+    pub writer_resume_token: String,
+}
+
+impl CheckpointHoldRequest {
+    pub fn has_valid_writer_resume_token(&self) -> bool {
+        valid_writer_resume_token(&self.writer_resume_token)
+    }
+}
+
+/// Sealed checkpoint receipt proving that runtime writers remain held.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointHoldReceipt {
+    pub checkpoint: CheckpointReceipt,
+    pub writer_resume_token: String,
+}
+
+/// Idempotent request to release one retained checkpoint writer fence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointWriterResumeRequest {
+    pub writer_resume_token: String,
+}
+
+impl CheckpointWriterResumeRequest {
+    pub fn has_valid_writer_resume_token(&self) -> bool {
+        valid_writer_resume_token(&self.writer_resume_token)
+    }
+}
+
+/// Acknowledgement that a retained writer fence is no longer held.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointWriterResumeReceipt {
+    pub writer_resume_token: String,
+    pub writers_resumed: bool,
+}
+
+/// Resume tokens are caller-issued, canonical SHA-256-shaped identities.
+pub fn valid_writer_resume_token(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Compare two already validated fixed-width resume tokens without early exit.
+pub fn writer_resume_tokens_match(left: &str, right: &str) -> bool {
+    let mut difference = left.len() ^ right.len();
+    for (left, right) in left.bytes().zip(right.bytes()) {
+        difference |= usize::from(left ^ right);
+    }
+    difference == 0
+}
+
 /// Restore one previously sealed whole-home checkpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,4 +122,19 @@ pub struct ResourceReading {
     pub received_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sent_bytes: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writer_resume_tokens_are_fixed_width_lowercase_hex() {
+        let token = "a".repeat(64);
+        assert!(valid_writer_resume_token(&token));
+        assert!(writer_resume_tokens_match(&token, &token));
+        assert!(!valid_writer_resume_token(&"A".repeat(64)));
+        assert!(!valid_writer_resume_token(&"a".repeat(63)));
+        assert!(!writer_resume_tokens_match(&token, &"b".repeat(64)));
+    }
 }

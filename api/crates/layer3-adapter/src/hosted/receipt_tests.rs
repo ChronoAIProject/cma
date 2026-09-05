@@ -10,10 +10,11 @@ use crate::wire::{
 };
 use crate::{
     AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentLaunch,
-    AgentOpenRequest, AgentSlot, CheckpointRequest, ConversationChannel, ConversationUpdate,
-    CredentialFrame, InstallRequest, RuntimeCredential, RuntimeHandle, RuntimeOptions,
-    SandboxAdapter, SandboxSpec, WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
-    WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    AgentOpenRequest, AgentSlot, CheckpointHoldRequest, CheckpointRequest, ConversationChannel,
+    ConversationUpdate, CredentialFrame, InstallRequest, RuntimeCredential, RuntimeHandle,
+    RuntimeOptions, SandboxAdapter, SandboxSpec, WorkspaceReceipt, WorkspaceRemoveRequest,
+    WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
+    WorktreeRequest,
 };
 
 #[derive(Clone, Copy)]
@@ -30,6 +31,7 @@ enum Corruption {
     AgentHomeRemovalIdentity,
     RemovalIdentity,
     CheckpointReference,
+    HeldCheckpointToken,
     AuthorityFence,
 }
 
@@ -92,6 +94,9 @@ impl CorruptingBackend {
             }
             (Corruption::CheckpointReference, ResponseFrame::Checkpoint(receipt)) => {
                 receipt.object_reference = format!("renamed-{}", receipt.object_reference);
+            }
+            (Corruption::HeldCheckpointToken, ResponseFrame::CheckpointForTeardown(receipt)) => {
+                receipt.writer_resume_token = "f".repeat(64)
             }
             (Corruption::AuthorityFence, _) => unreachable!(),
             _ => panic!("corruption did not match the runtime response"),
@@ -381,6 +386,23 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
             )
             .await,
     );
+
+    backend.corrupt_next(Corruption::HeldCheckpointToken);
+    rejected(
+        adapter
+            .checkpoint_for_teardown(
+                &handle,
+                &CheckpointHoldRequest {
+                    checkpoint: CheckpointRequest {
+                        epoch: 8,
+                        exclusions: Vec::new(),
+                    },
+                    writer_resume_token: "e".repeat(64),
+                },
+            )
+            .await,
+    );
+    assert!(!backend.inner.snapshot(&handle).await.unwrap().writers_held);
 }
 
 #[tokio::test]

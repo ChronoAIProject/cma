@@ -3,10 +3,11 @@ use crate::hosted::HostedDeployment;
 use crate::wire::{RequestFrame, WireOperation};
 use crate::{
     AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentOpenRequest,
-    AgentSlot, CheckpointRequest, CredentialFrame, InstallRequest, PermissionLevel,
-    ReasoningEffort, RestoreRequest, RuntimeCredential, RuntimeImage, RuntimeOptions,
-    SandboxAdapter, SandboxSpec, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
-    WorkspaceSource, WorktreeRef, WorktreeRequest, RUNTIME_CONTRACT_LABEL,
+    AgentSlot, CheckpointHoldRequest, CheckpointRequest, CheckpointWriterResumeRequest,
+    CredentialFrame, InstallRequest, PermissionLevel, ReasoningEffort, RestoreRequest,
+    RuntimeCredential, RuntimeImage, RuntimeOptions, SandboxAdapter, SandboxSpec,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeRef,
+    WorktreeRequest, WriterState, RUNTIME_CONTRACT_LABEL,
 };
 
 fn sandbox_spec(own_credential: bool) -> SandboxSpec {
@@ -98,6 +99,164 @@ async fn provisioning_replay_reuses_only_the_exact_sandbox_specification() {
     let error = adapter.provision(&changed).await.unwrap_err();
     assert!(matches!(error, AdapterError::Rejected(detail)
         if detail.contains("another specification")));
+}
+
+#[tokio::test]
+async fn held_checkpoints_replay_exactly_and_resume_only_for_the_owning_token() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let handle = adapter.provision(&sandbox_spec(false)).await.unwrap();
+    adapter
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:held-checkpoint", Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(&handle, credential())
+        .await
+        .unwrap();
+
+    let request = CheckpointHoldRequest {
+        checkpoint: CheckpointRequest {
+            epoch: 17,
+            exclusions: vec![".cache".into()],
+        },
+        writer_resume_token: "a".repeat(64),
+    };
+    let receipt = adapter
+        .checkpoint_for_teardown(&handle, &request)
+        .await
+        .unwrap();
+    assert_eq!(receipt.checkpoint.writers, WriterState::Held);
+    assert_eq!(receipt.writer_resume_token, request.writer_resume_token);
+    assert_eq!(
+        adapter
+            .checkpoint_for_teardown(&handle, &request)
+            .await
+            .unwrap(),
+        receipt
+    );
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert!(snapshot.writers_held);
+    assert_eq!(snapshot.writer_fence_captures, 1);
+
+    let mut conflicting_hold = request.clone();
+    conflicting_hold.checkpoint.epoch += 1;
+    let conflict = adapter
+        .checkpoint_for_teardown(&handle, &conflicting_hold)
+        .await
+        .unwrap_err();
+    assert!(matches!(conflict, AdapterError::Rejected(detail)
+        if detail.contains("checkpoint_hold_conflict")));
+    assert!(backend.snapshot(&handle).await.unwrap().writers_held);
+
+    let blocked = adapter
+        .checkpoint(
+            &handle,
+            &CheckpointRequest {
+                epoch: 18,
+                exclusions: Vec::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(blocked, AdapterError::Rejected(detail)
+        if detail.contains("checkpoint_writers_held")));
+    assert!(adapter.resources(&handle).await.is_ok());
+    let capture = adapter
+        .capture_agent(&handle, &AgentSlot::new("missing"))
+        .await
+        .unwrap_err();
+    assert!(matches!(capture, AdapterError::Rejected(detail)
+        if detail.contains("agent_not_found")));
+
+    let wrong_resume = adapter
+        .resume_checkpoint_writers(
+            &handle,
+            &CheckpointWriterResumeRequest {
+                writer_resume_token: "b".repeat(64),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(wrong_resume, AdapterError::Rejected(detail)
+        if detail.contains("checkpoint_hold_conflict")));
+    assert!(backend.snapshot(&handle).await.unwrap().writers_held);
+
+    let resumed = adapter
+        .resume_checkpoint_writers(
+            &handle,
+            &CheckpointWriterResumeRequest {
+                writer_resume_token: request.writer_resume_token,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(resumed.writers_resumed);
+    assert!(!backend.snapshot(&handle).await.unwrap().writers_held);
+    assert!(
+        adapter
+            .resume_checkpoint_writers(
+                &handle,
+                &CheckpointWriterResumeRequest {
+                    writer_resume_token: resumed.writer_resume_token,
+                },
+            )
+            .await
+            .unwrap()
+            .writers_resumed
+    );
+}
+
+#[tokio::test]
+async fn lost_held_checkpoint_response_is_recovered_without_recapturing() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let handle = adapter.provision(&sandbox_spec(false)).await.unwrap();
+    adapter
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:lost-held-checkpoint", Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(&handle, credential())
+        .await
+        .unwrap();
+
+    backend.lose_next_response(WireOperation::CheckpointForTeardown);
+    let error = adapter
+        .checkpoint_for_teardown(
+            &handle,
+            &CheckpointHoldRequest {
+                checkpoint: CheckpointRequest {
+                    epoch: 23,
+                    exclusions: Vec::new(),
+                },
+                writer_resume_token: "c".repeat(64),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdapterError::Unavailable(_)));
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert!(!snapshot.writers_held);
+    assert_eq!(snapshot.writer_fence_captures, 1);
+    assert_eq!(
+        backend
+            .requests()
+            .await
+            .iter()
+            .rev()
+            .take(2)
+            .map(|(_, request)| request.operation())
+            .collect::<Vec<_>>(),
+        [
+            WireOperation::ResumeCheckpointWriters,
+            WireOperation::CheckpointForTeardown,
+        ]
+    );
 }
 
 #[tokio::test]

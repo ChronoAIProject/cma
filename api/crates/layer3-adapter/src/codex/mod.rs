@@ -17,8 +17,9 @@ use crate::hosted::{
 };
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest,
-    AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSlot, CheckpointReceipt,
-    CheckpointRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
+    AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSlot, CheckpointHoldReceipt,
+    CheckpointHoldRequest, CheckpointReceipt, CheckpointRequest, CheckpointWriterResumeReceipt,
+    CheckpointWriterResumeRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
     CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreRequest,
     RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
     WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
@@ -210,6 +211,22 @@ impl SandboxAdapter for CodexAdapter {
         request: &CheckpointRequest,
     ) -> crate::Result<CheckpointReceipt> {
         self.hosted.checkpoint(handle, request).await
+    }
+
+    async fn checkpoint_for_teardown(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointHoldRequest,
+    ) -> crate::Result<CheckpointHoldReceipt> {
+        self.hosted.checkpoint_for_teardown(handle, request).await
+    }
+
+    async fn resume_checkpoint_writers(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointWriterResumeRequest,
+    ) -> crate::Result<CheckpointWriterResumeReceipt> {
+        self.hosted.resume_checkpoint_writers(handle, request).await
     }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {

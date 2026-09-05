@@ -12,10 +12,17 @@ use crate::workspace_journal::{self, Begin, Pending, Ticket};
 pub(crate) async fn dispatch(
     config: RuntimeConfig,
     gate: Arc<Mutex<()>>,
+    held_checkpoint: Arc<Mutex<Option<crate::supervisor::HeldCheckpoint>>>,
     request: RequestFrame,
 ) -> Result<ResponseFrame> {
     tokio::spawn(async move {
         let _operation = gate.lock().await;
+        if held_checkpoint.lock().await.is_some() {
+            return Err(RuntimeError::rejected(
+                "checkpoint_writers_held",
+                "operation is not permitted while checkpoint writers are held",
+            ));
+        }
         if crate::install::recover(&config)? != crate::install_state::RecoveryState::Completed {
             return Err(RuntimeError::rejected(
                 "install_state_invalid",

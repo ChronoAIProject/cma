@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
-    CheckpointReceipt, CheckpointRequest, ConversationSnapshot, CredentialFrame, InstallReceipt,
-    InstallRequest, ResourceReading, RestoreRequest, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRemoveReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
-    WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
+    CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt, CheckpointRequest,
+    CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest, ConversationSnapshot,
+    CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreRequest, SetupReceipt,
+    WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
+    WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
 };
 
 /// A stable reference to one agent slot.
@@ -137,6 +138,8 @@ pub enum WireOperation {
     CloseAgent,
     CaptureAgent,
     Checkpoint,
+    CheckpointForTeardown,
+    ResumeCheckpointWriters,
     Restore,
     Credential,
     Resources,
@@ -168,6 +171,8 @@ pub enum RequestFrame {
     CloseAgent(FencedRequest<AgentCloseRequest>),
     CaptureAgent(AgentRef),
     Checkpoint(CheckpointRequest),
+    CheckpointForTeardown(CheckpointHoldRequest),
+    ResumeCheckpointWriters(CheckpointWriterResumeRequest),
     Restore(RestoreRequest),
     Credential(CredentialFrame),
     Resources,
@@ -188,6 +193,8 @@ impl RequestFrame {
             Self::CloseAgent(_) => WireOperation::CloseAgent,
             Self::CaptureAgent(_) => WireOperation::CaptureAgent,
             Self::Checkpoint(_) => WireOperation::Checkpoint,
+            Self::CheckpointForTeardown(_) => WireOperation::CheckpointForTeardown,
+            Self::ResumeCheckpointWriters(_) => WireOperation::ResumeCheckpointWriters,
             Self::Restore(_) => WireOperation::Restore,
             Self::Credential(_) => WireOperation::Credential,
             Self::Resources => WireOperation::Resources,
@@ -211,6 +218,8 @@ pub enum ResponseFrame {
     CloseAgent(FencedReceipt<AgentCloseReceipt>),
     CaptureAgent(ConversationSnapshot),
     Checkpoint(CheckpointReceipt),
+    CheckpointForTeardown(CheckpointHoldReceipt),
+    ResumeCheckpointWriters(CheckpointWriterResumeReceipt),
     Restore(Acknowledgement),
     Credential(CredentialReceipt),
     Resources(ResourceReading),

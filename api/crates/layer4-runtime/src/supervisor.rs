@@ -3,7 +3,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use layer3_adapter::wire::{Acknowledgement, CredentialReceipt, RequestFrame, ResponseFrame};
-use layer3_adapter::{AgentLaunch, AgentSlot, InstallRequest};
+use layer3_adapter::{
+    AgentLaunch, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest,
+    CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest, InstallRequest, WriterState,
+};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::bridge::Bridge;
@@ -38,6 +41,12 @@ struct AgentProcess {
     bridge: Arc<Bridge>,
 }
 
+pub(crate) struct HeldCheckpoint {
+    request: CheckpointHoldRequest,
+    receipt: CheckpointHoldReceipt,
+    fence: WriterFence,
+}
+
 pub(crate) struct Supervisor {
     config: RuntimeConfig,
     phase: RwLock<Phase>,
@@ -45,6 +54,7 @@ pub(crate) struct Supervisor {
     credential: CredentialHolder,
     agents: RwLock<BTreeMap<AgentSlot, AgentProcess>>,
     checkpoint: CheckpointStore,
+    held_checkpoint: Arc<Mutex<Option<HeldCheckpoint>>>,
     resources: crate::resources::Sampler,
     writer_boundary: SupervisorBoundary,
     http: reqwest::Client,
@@ -85,6 +95,7 @@ impl Supervisor {
             credential: CredentialHolder::new(),
             agents: RwLock::new(BTreeMap::new()),
             checkpoint,
+            held_checkpoint: Arc::new(Mutex::new(None)),
             resources: crate::resources::Sampler::new(
                 crate::resources::Roots::default(),
                 std::time::Instant::now(),
@@ -106,6 +117,9 @@ impl Supervisor {
                 | RequestFrame::WorkspaceSetup(_)
                 | RequestFrame::RemoveWorkspace(_)
         ) {
+            if self.held_checkpoint.lock().await.is_some() {
+                return writers_held_error().response(operation);
+            }
             if let Err(error) = self.recover_journals().await {
                 return error.response(operation);
             }
@@ -120,6 +134,7 @@ impl Supervisor {
             return match crate::workspace_runtime::dispatch(
                 self.config.clone(),
                 Arc::clone(&self.operation_gate),
+                Arc::clone(&self.held_checkpoint),
                 request,
             )
             .await
@@ -129,11 +144,25 @@ impl Supervisor {
             };
         }
         let _operation = self.operation_gate.lock().await;
+        let writers_held = self.held_checkpoint.lock().await.is_some();
+        if writers_held
+            && !matches!(
+                &request,
+                RequestFrame::CheckpointForTeardown(_)
+                    | RequestFrame::ResumeCheckpointWriters(_)
+                    | RequestFrame::CaptureAgent(_)
+                    | RequestFrame::Resources
+            )
+        {
+            return writers_held_error().response(operation);
+        }
         if let Err(error) = self.authorize_mutation(&request).await {
             return error.response(operation);
         }
-        if let Err(error) = self.recover_journals_locked().await {
-            return error.response(operation);
+        if !writers_held && !matches!(&request, RequestFrame::ResumeCheckpointWriters(_)) {
+            if let Err(error) = self.recover_journals_locked().await {
+                return error.response(operation);
+            }
         }
         match self.execute(request).await {
             Ok(response) => response,
@@ -144,7 +173,10 @@ impl Supervisor {
     async fn execute(&self, request: RequestFrame) -> Result<ResponseFrame> {
         if !matches!(
             request,
-            RequestFrame::Install(_) | RequestFrame::Credential(_) | RequestFrame::Resources
+            RequestFrame::Install(_)
+                | RequestFrame::Credential(_)
+                | RequestFrame::ResumeCheckpointWriters(_)
+                | RequestFrame::Resources
         ) {
             self.require_credentialed().await?;
         }
@@ -192,6 +224,12 @@ impl Supervisor {
                 )?))
             }
             RequestFrame::Checkpoint(request) => self.checkpoint(&request).await,
+            RequestFrame::CheckpointForTeardown(request) => {
+                self.checkpoint_for_teardown(request).await
+            }
+            RequestFrame::ResumeCheckpointWriters(request) => {
+                self.resume_checkpoint_writers(request).await
+            }
             RequestFrame::Restore(request) => self.restore(&request).await,
             RequestFrame::Resources => Ok(ResponseFrame::Resources(
                 self.resources.sample(std::time::Instant::now()).into(),
@@ -201,6 +239,9 @@ impl Supervisor {
 
     async fn recover_journals(&self) -> Result<()> {
         let _operation = self.operation_gate.lock().await;
+        if self.held_checkpoint.lock().await.is_some() {
+            return Err(writers_held_error());
+        }
         self.recover_journals_locked().await
     }
 
@@ -331,6 +372,99 @@ impl Supervisor {
         Ok(ResponseFrame::Checkpoint(receipt))
     }
 
+    async fn checkpoint_for_teardown(
+        &self,
+        request: CheckpointHoldRequest,
+    ) -> Result<ResponseFrame> {
+        if !request.has_valid_writer_resume_token() {
+            return Err(RuntimeError::rejected(
+                "writer_resume_token_invalid",
+                "writer resume token must be 64 lowercase hexadecimal characters",
+            ));
+        }
+
+        let mut held = self.held_checkpoint.lock().await;
+        if let Some(existing) = held.as_ref() {
+            return if existing.request == request {
+                Ok(ResponseFrame::CheckpointForTeardown(
+                    existing.receipt.clone(),
+                ))
+            } else {
+                Err(RuntimeError::rejected(
+                    "checkpoint_hold_conflict",
+                    "another checkpoint writer hold is already active",
+                ))
+            };
+        }
+
+        let roots = self.writer_roots().await;
+        let fence = WriterFence::quiesce(roots, self.writer_boundary)
+            .map_err(|error| RuntimeError::unavailable("writer_fence_failed", error))?;
+        let mut checkpoint = self.checkpoint.capture(&request.checkpoint).await?;
+        checkpoint.writers = WriterState::Held;
+        let receipt = CheckpointHoldReceipt {
+            checkpoint,
+            writer_resume_token: request.writer_resume_token.clone(),
+        };
+        tracing::info!(
+            writers = fence.writer_count(),
+            "checkpoint writers retained for teardown"
+        );
+        *held = Some(HeldCheckpoint {
+            request,
+            receipt: receipt.clone(),
+            fence,
+        });
+        Ok(ResponseFrame::CheckpointForTeardown(receipt))
+    }
+
+    async fn resume_checkpoint_writers(
+        &self,
+        request: CheckpointWriterResumeRequest,
+    ) -> Result<ResponseFrame> {
+        if !request.has_valid_writer_resume_token() {
+            return Err(RuntimeError::rejected(
+                "writer_resume_token_invalid",
+                "writer resume token must be 64 lowercase hexadecimal characters",
+            ));
+        }
+
+        let mut held = self.held_checkpoint.lock().await;
+        if held.as_ref().is_some_and(|existing| {
+            !layer3_adapter::writer_resume_tokens_match(
+                &existing.request.writer_resume_token,
+                &request.writer_resume_token,
+            )
+        }) {
+            return Err(RuntimeError::rejected(
+                "checkpoint_hold_conflict",
+                "writer resume token does not own the active checkpoint hold",
+            ));
+        }
+        let Some(mut existing) = held.take() else {
+            return Ok(ResponseFrame::ResumeCheckpointWriters(
+                CheckpointWriterResumeReceipt {
+                    writer_resume_token: request.writer_resume_token,
+                    writers_resumed: true,
+                },
+            ));
+        };
+        if let Err(error) = existing.fence.resume() {
+            *held = Some(existing);
+            return Err(RuntimeError::unavailable("writer_resume_failed", error));
+        }
+        tracing::info!(
+            writers = existing.fence.writer_count(),
+            "checkpoint writers resumed after aborted teardown"
+        );
+        Ok(ResponseFrame::ResumeCheckpointWriters(
+            CheckpointWriterResumeReceipt {
+                writer_resume_token: request.writer_resume_token,
+                writers_resumed: true,
+            },
+        ))
+    }
+
     async fn restore(&self, request: &layer3_adapter::RestoreRequest) -> Result<ResponseFrame> {
         if !self.agents.read().await.is_empty() {
             return Err(RuntimeError::rejected(
@@ -459,6 +593,13 @@ fn validate_environment(name: &str, value: &str) -> Result<()> {
 
 fn reserved(name: &str) -> bool {
     name == "HOME" || name == "PATH" || name.starts_with("CHRONO_") || name.starts_with("NYXID_")
+}
+
+fn writers_held_error() -> RuntimeError {
+    RuntimeError::rejected(
+        "checkpoint_writers_held",
+        "operation is not permitted while checkpoint writers are held",
+    )
 }
 
 #[cfg(test)]

@@ -5,9 +5,10 @@ use std::time::Duration;
 use layer3_adapter::wire::{AgentRef, FencedRequest, ResponseFrame, WireOperation};
 use layer3_adapter::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
-    CheckpointRequest, CredentialFrame, HomeFile, InstallRequest, RestoreRequest,
-    RuntimeCredential, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
-    WorkspaceSource, WorktreeRef, WorktreeRequest,
+    CheckpointHoldRequest, CheckpointRequest, CheckpointWriterResumeRequest, CredentialFrame,
+    HomeFile, InstallRequest, RestoreRequest, RuntimeCredential, WorkspaceRemoveRequest,
+    WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeRef, WorktreeRequest,
+    WriterState,
 };
 
 use super::*;
@@ -106,6 +107,184 @@ async fn credential_is_refused_until_install_completes() {
     assert_eq!(rejected.operation, WireOperation::Credential);
     assert_eq!(rejected.code, "install_not_completed");
     assert_eq!(supervisor.phase().await, Phase::Provisioned);
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn writer_resume_is_an_idempotent_noop_without_an_active_hold() {
+    let home = root("writer-resume-noop");
+    let supervisor = supervisor(RuntimeConfig::for_test(home.clone()));
+    let token = "a".repeat(64);
+    let response = supervisor
+        .dispatch(RequestFrame::ResumeCheckpointWriters(
+            CheckpointWriterResumeRequest {
+                writer_resume_token: token.clone(),
+            },
+        ))
+        .await;
+    match response {
+        ResponseFrame::ResumeCheckpointWriters(receipt) => {
+            assert_eq!(receipt.writer_resume_token, token);
+            assert!(receipt.writers_resumed);
+        }
+        other => panic!("writer resume no-op failed: {other:?}"),
+    }
+    assert_eq!(supervisor.phase().await, Phase::Provisioned);
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn held_checkpoint_fences_mutations_and_replays_until_exact_resume() {
+    let home = root("held-checkpoint");
+    let config = RuntimeConfig::for_test(home.clone());
+    let agent_home = config.agent_home("agent-held");
+    let supervisor = supervisor(config);
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::Install(InstallRequest::new(
+                "install-held-checkpoint",
+                Vec::new(),
+            )))
+            .await,
+        ResponseFrame::Install(_)
+    ));
+    assert!(matches!(
+        supervisor.dispatch(credential("held-checkpoint")).await,
+        ResponseFrame::Credential(_)
+    ));
+    std::fs::create_dir_all(agent_home.join("sessions")).unwrap();
+    std::fs::write(
+        agent_home.join("sessions/rollout.jsonl"),
+        b"{\"payload\":{\"id\":\"conversation-held\"}}\n",
+    )
+    .unwrap();
+
+    let hold = CheckpointHoldRequest {
+        checkpoint: CheckpointRequest {
+            epoch: 31,
+            exclusions: vec![".cache".into()],
+        },
+        writer_resume_token: "b".repeat(64),
+    };
+    let first = supervisor
+        .dispatch(RequestFrame::CheckpointForTeardown(hold.clone()))
+        .await;
+    let receipt = match &first {
+        ResponseFrame::CheckpointForTeardown(receipt) => {
+            assert_eq!(receipt.checkpoint.writers, WriterState::Held);
+            receipt.clone()
+        }
+        other => panic!("held checkpoint failed: {other:?}"),
+    };
+    assert!(supervisor.held_checkpoint.lock().await.is_some());
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::CheckpointForTeardown(hold.clone()))
+            .await,
+        first
+    );
+
+    let mut conflict = hold.clone();
+    conflict.checkpoint.epoch += 1;
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::CheckpointForTeardown(conflict))
+                .await
+        )
+        .code,
+        "checkpoint_hold_conflict"
+    );
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::Checkpoint(CheckpointRequest {
+                    epoch: 32,
+                    exclusions: Vec::new(),
+                }))
+                .await
+        )
+        .code,
+        "checkpoint_writers_held"
+    );
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::Restore(RestoreRequest {
+                    object_reference: receipt.checkpoint.object_reference.clone(),
+                    sha256: receipt.checkpoint.sha256.clone(),
+                }))
+                .await
+        )
+        .code,
+        "checkpoint_writers_held"
+    );
+    assert_eq!(
+        failure(supervisor.dispatch(credential("blocked-rotation")).await).code,
+        "checkpoint_writers_held"
+    );
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::PrepareWorkspace(WorkspaceRequest::new(
+                    "workspace:wks_held:prepare:v1",
+                    "wks_held",
+                    "held",
+                    WorkspaceSource::Init,
+                )))
+                .await
+        )
+        .code,
+        "checkpoint_writers_held"
+    );
+    assert!(matches!(
+        supervisor.dispatch(RequestFrame::Resources).await,
+        ResponseFrame::Resources(_)
+    ));
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::CaptureAgent(AgentRef {
+                agent_id: AgentSlot::new("agent-held"),
+            }))
+            .await,
+        ResponseFrame::CaptureAgent(_)
+    ));
+
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::ResumeCheckpointWriters(
+                    CheckpointWriterResumeRequest {
+                        writer_resume_token: "c".repeat(64),
+                    },
+                ))
+                .await
+        )
+        .code,
+        "checkpoint_hold_conflict"
+    );
+    assert!(supervisor.held_checkpoint.lock().await.is_some());
+    let resumed = supervisor
+        .dispatch(RequestFrame::ResumeCheckpointWriters(
+            CheckpointWriterResumeRequest {
+                writer_resume_token: hold.writer_resume_token,
+            },
+        ))
+        .await;
+    assert!(matches!(
+        resumed,
+        ResponseFrame::ResumeCheckpointWriters(receipt) if receipt.writers_resumed
+    ));
+    assert!(supervisor.held_checkpoint.lock().await.is_none());
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::Checkpoint(CheckpointRequest {
+                epoch: 32,
+                exclusions: Vec::new(),
+            }))
+            .await,
+        ResponseFrame::Checkpoint(_)
+    ));
     cleanup(&home);
 }
 
