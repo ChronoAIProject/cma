@@ -1,30 +1,59 @@
 //! Versioned CMA Triggers that open an Agent for the visiting user.
 
+mod connections;
 mod content;
+mod launch;
+mod launch_event;
+mod launch_store;
 mod placement;
 mod preview;
 mod reference;
+mod requirements;
+mod resolution;
 mod revision;
 pub mod store;
+mod worker_effects;
 
 use serde::{Deserialize, Serialize};
 
 use crate::ids::SubjectId;
 
 pub use crate::ids::{PlacementId, PublicTriggerId, TriggerId};
+pub use connections::{
+    BrokerHandoff, BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError,
+    ServiceConnectionHandoff,
+};
 pub use content::{
     AgentReusePolicy, ButtonLabel, Presentation, ReusePolicy, SandboxReusePolicy, Theme,
     TriggerConsent, TriggerContent, TriggerTarget, WorkspaceReusePolicy, MAX_FIRST_MESSAGE_BYTES,
+};
+pub use launch::{
+    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface, LaunchFailure,
+    LaunchSeed, LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus,
+};
+pub use launch_event::{LaunchEvent, LaunchEventKind};
+pub use launch_store::{
+    InMemoryLaunchStore, LaunchAdmission, LaunchAdmissionResult, LaunchCommit, LaunchStore,
+    LaunchStoreError, ServiceConnectionStore, DEFAULT_LAUNCH_EVENT_LIMIT, MAX_LAUNCH_EVENT_LIMIT,
 };
 pub use placement::{Placement, PlacementUpdate, MAX_LIVE_PLACEMENTS};
 pub use preview::{
     TriggerPreview, TriggerSizePreview, TriggerTechnicalPreview, TriggerTrustPreview,
 };
 pub use reference::{ResolvedTriggerProfiles, TriggerProfileResolver, TriggerReferenceError};
+pub use requirements::{
+    RequirementsSnapshot, ReviewNeed, ReviewRequirements, ServiceRequirement,
+    ServiceRequirementState,
+};
+pub use resolution::{ExistingAgentChoice, LaunchResolution, RepeatChoice, ResolvedResource};
 pub use revision::{trigger_content_digest, TriggerRevision};
 pub use store::{
     InMemoryTriggerStore, PublicTrigger, TriggerPage, TriggerPageRequest, TriggerStore,
     TriggerStoreError,
+};
+pub use worker_effects::{
+    LaunchEffectKind, LaunchEffectRecord, LaunchEffectState, LaunchWorkLease, LaunchWorkState,
+    LaunchWorkStep,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -356,3 +385,9 @@ fn require_prefixed_id(value: &str, prefix: &str, field: &'static str) -> Result
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod launch_tests;
+
+#[cfg(test)]
+mod launch_store_tests;
