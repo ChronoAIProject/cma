@@ -6,6 +6,7 @@ mod config;
 mod health;
 mod permissions;
 mod profile_policy;
+mod projections;
 mod rate_limit;
 mod sandbox;
 mod store;
@@ -43,14 +44,17 @@ use crate::{
     auth::{keys::KeyIssuer, AuthMode, AuthState, SignInRecords},
     config::Config,
     profile_policy::profile_route_policy,
+    projections::{AgentProjectionServices, UnavailableSandboxResources},
     rate_limit::RateLimiters,
-    sandbox::{LiveSandboxPolicy, ManagedSandboxCredentials},
+    sandbox::{
+        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, ManagedSandboxCredentials,
+    },
     store::{DefaultProfileSpec, MongoStores},
 };
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
-    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
 );
 
 const DEFAULT_LOG_FILTER: &str = "info";
@@ -128,6 +132,16 @@ async fn serve() -> Result<(), String> {
         stores.sandbox_model.clone(),
         stores.sandbox_profiles.clone(),
     );
+    let projections = AgentProjectionServices::new(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+        Arc::clone(&settings),
+        Arc::clone(&sandbox_service),
+        Arc::clone(&workspace_service),
+        Arc::new(LiveAgentRegistry::default()),
+        Arc::new(UnavailableSandboxResources),
+        runtime_capabilities(layer3_adapter::RuntimeContract::V3.capabilities()),
+    );
     let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone());
     let admin = layer1_public::rest::admin::AdminState::new(
         Arc::clone(&settings),
@@ -141,7 +155,12 @@ async fn serve() -> Result<(), String> {
         Arc::clone(&settings),
         profile_policy,
     );
-    let hierarchy = HierarchyState::new(sandbox_service, workspace_service, hierarchy, operations);
+    let hierarchy = HierarchyState::new(
+        sandbox_service,
+        workspace_service,
+        hierarchy,
+        Arc::clone(&operations),
+    );
     let recorder = ActivityRecorder::new(Arc::clone(&activity));
     let auth = AuthState::with_store_and_nyxid_public_url(
         config.auth_mode.clone(),
@@ -174,6 +193,7 @@ async fn serve() -> Result<(), String> {
     let limits = RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
     let resource_routes = profiles_router(profiles)
         .merge(hierarchy_router(hierarchy))
+        .merge(projections.router(Arc::clone(&operations)))
         .merge(layer1_public::rest::admin::router(admin));
     let public = rest_router(resource_routes)
         .merge(auth::router(Arc::clone(&auth)))
