@@ -141,6 +141,7 @@ fn agent(parent: &Workspace, worktree: &Worktree, id: &str) -> Agent {
                 system_prompt: String::new(),
             },
         },
+        capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
             conversation_id: None,
