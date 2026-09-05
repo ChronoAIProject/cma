@@ -83,3 +83,35 @@ fn provider_fingerprint_cannot_include_itself() {
         .insert(SPEC_FINGERPRINT_METADATA.into(), "recursive".into());
     assert!(provider_request_fingerprint(&recursive).is_err());
 }
+
+#[test]
+fn rendered_runtime_identity_covers_nonzero_generation_image_and_contract() {
+    let deployment = HostedDeployment::default();
+    let spec = SandboxSpec {
+        sandbox_id: "sandbox-1".into(),
+        ..SandboxSpec::default()
+    };
+    let first = deployment.render_runtime(&spec, 1).unwrap();
+    let replacement = deployment.render_runtime(&spec, 2).unwrap();
+
+    assert_eq!(first.metadata[RUNTIME_GENERATION_METADATA], "1");
+    assert_eq!(replacement.metadata[RUNTIME_GENERATION_METADATA], "2");
+    assert_eq!(replacement.env["CHRONO_RUNTIME_GENERATION"], "2");
+    assert_eq!(
+        replacement.metadata[RUNTIME_IMAGE_METADATA],
+        image_sha256(&replacement.image.uri)
+    );
+    assert_eq!(replacement.metadata[RUNTIME_IMAGE_METADATA].len(), 43);
+    assert_eq!(
+        replacement.metadata[RUNTIME_CONTRACT_METADATA],
+        RUNTIME_CONTRACT_VERSION
+    );
+    assert_ne!(
+        first.metadata[SPEC_FINGERPRINT_METADATA],
+        replacement.metadata[SPEC_FINGERPRINT_METADATA]
+    );
+    assert!(matches!(
+        deployment.render_runtime(&spec, 0),
+        Err(AdapterError::Rejected(_))
+    ));
+}

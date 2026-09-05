@@ -61,10 +61,14 @@ async fn run_owned(config: &RuntimeConfig, request: &InstallRequest) -> Result<I
 }
 
 fn replay(request: &InstallRequest, record: InstallRecord) -> Result<InstallReceipt> {
-    if record.request() != request {
+    if record.install_request() != Some(request) {
         return Err(RuntimeError::rejected(
-            "install_replay_mismatch",
-            "completed or pending install does not match the replayed request",
+            if record.bootstrap_receipt().is_some() {
+                "install_mode_conflict"
+            } else {
+                "install_replay_mismatch"
+            },
+            "ordinary installation does not match the admitted installation mode or request",
         ));
     }
     match record {
@@ -83,6 +87,7 @@ fn replay(request: &InstallRequest, record: InstallRecord) -> Result<InstallRece
             "install_outcome_unknown",
             "a prior installation stopped without recording its outcome",
         )),
+        InstallRecord::Inherited { .. } => unreachable!("inherited mode was rejected above"),
     }
 }
 

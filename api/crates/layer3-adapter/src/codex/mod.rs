@@ -20,10 +20,11 @@ use crate::{
     AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSlot, CheckpointHoldReceipt,
     CheckpointHoldRequest, CheckpointReceipt, CheckpointRequest, CheckpointWriterResumeReceipt,
     CheckpointWriterResumeRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
-    CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreRequest,
-    RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest,
+    CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreBootstrapReceipt,
+    RestoreBootstrapRequest, RestoreRequest, RuntimeAdoptionRequest, RuntimeHandle,
+    RuntimeObservation, RuntimeProvisionRequest, SandboxAdapter, SandboxSpec, SetupReceipt,
+    WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
+    WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
 /// Configuration for Codex inside a hosted sandbox.
@@ -90,12 +91,38 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.provision(spec).await
     }
 
+    async fn provision_runtime(
+        &self,
+        request: &RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.hosted.provision_runtime(request).await
+    }
+
+    async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        self.hosted.runtime_inventory().await
+    }
+
+    async fn adopt_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<Option<RuntimeObservation>> {
+        self.hosted.adopt_runtime(request).await
+    }
+
     async fn run_install(
         &self,
         handle: &RuntimeHandle,
         request: &InstallRequest,
     ) -> crate::Result<InstallReceipt> {
         self.hosted.run_install(handle, request).await
+    }
+
+    async fn bootstrap_restore(
+        &self,
+        handle: &RuntimeHandle,
+        request: &RestoreBootstrapRequest,
+    ) -> crate::Result<RestoreBootstrapReceipt> {
+        self.hosted.bootstrap_restore(handle, request).await
     }
 
     async fn deliver_credential(

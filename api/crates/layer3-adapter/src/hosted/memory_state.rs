@@ -51,7 +51,9 @@ pub(super) fn require_credential(
     runtime: &MemoryRuntime,
     operation: WireOperation,
 ) -> crate::Result<()> {
-    if runtime.credential_delivered {
+    if runtime.credential_delivered
+        && (runtime.restore_bootstrap.is_none() || runtime.restored_object.is_some())
+    {
         Ok(())
     } else {
         Err(AdapterError::Rejected(format!(

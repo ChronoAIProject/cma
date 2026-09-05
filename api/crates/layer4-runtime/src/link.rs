@@ -55,6 +55,8 @@ async fn readiness(State(supervisor): State<Arc<Supervisor>>) -> Json<Readiness>
     let phase = match supervisor.phase().await {
         Phase::Provisioned => "provisioned",
         Phase::Installed => "installed",
+        Phase::RestorePending => "restore_pending",
+        Phase::RestoreCredentialed => "restore_credentialed",
         Phase::Credentialed => "credentialed",
     };
     Json(Readiness {

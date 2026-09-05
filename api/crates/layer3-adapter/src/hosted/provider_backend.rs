@@ -1,15 +1,21 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use super::deployment::{provider_request_identity, SANDBOX_METADATA, SPEC_FINGERPRINT_METADATA};
+use super::deployment::{
+    provider_metadata_identity, provider_request_identity, ProviderIdentity, SANDBOX_METADATA,
+};
 use super::HostedBackend;
 use crate::provider::{
     ProviderDeleteTarget, ProviderSandbox, ProviderSandboxRequest, SandboxClient,
 };
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
-use crate::{AdapterError, AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeHandle};
+use crate::{
+    AdapterError, AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeHandle,
+    RuntimeLifecycle, RuntimeObservation,
+};
 
 const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(180);
 const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
@@ -65,6 +71,7 @@ impl ProviderHostedBackend {
 
     async fn await_running(
         &self,
+        request: &ProviderSandboxRequest,
         initial: crate::provider::ProviderSandbox,
     ) -> crate::Result<RuntimeHandle> {
         let handle = RuntimeHandle(initial.id.clone());
@@ -81,7 +88,8 @@ impl ProviderHostedBackend {
                 )));
             }
             tokio::time::sleep(self.ready_poll).await;
-            let sandbox = self.client.get(handle.as_str()).await?;
+            let sandbox =
+                validate_sandbox_identity(request, self.client.get(handle.as_str()).await?)?;
             if sandbox.is_running() {
                 return Ok(handle);
             }
@@ -116,7 +124,24 @@ impl HostedBackend for ProviderHostedBackend {
                 },
             },
         };
-        self.await_running(sandbox).await
+        self.await_running(&request, sandbox).await
+    }
+
+    async fn inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        provider_inventory(self.client.list().await?)
+    }
+
+    async fn adopt(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> crate::Result<Option<RuntimeObservation>> {
+        let expected = provider_request_identity(request)?;
+        select_adoption(
+            handle,
+            &expected,
+            provider_inventory(self.client.list().await?)?,
+        )
     }
 
     async fn exchange(
@@ -152,14 +177,44 @@ impl HostedBackend for ProviderHostedBackend {
     }
 }
 
+fn select_adoption(
+    handle: &RuntimeHandle,
+    expected: &ProviderIdentity,
+    inventory: Vec<RuntimeObservation>,
+) -> crate::Result<Option<RuntimeObservation>> {
+    let observation = inventory
+        .into_iter()
+        .find(|observation| observation.handle == *handle);
+    let Some(observation) = observation else {
+        return Ok(None);
+    };
+    if !observation_matches(&observation, expected) {
+        return Err(identity_mismatch());
+    }
+    if !observation.lifecycle.is_running() {
+        return Err(AdapterError::Rejected(format!(
+            "provider runtime {} is not running",
+            handle.0
+        )));
+    }
+    Ok(Some(observation))
+}
+
 fn matching_sandbox(
     request: &ProviderSandboxRequest,
     sandboxes: Vec<ProviderSandbox>,
 ) -> crate::Result<Option<ProviderSandbox>> {
     let identity = provider_request_identity(request)?;
-    let mut candidates = sandboxes
-        .into_iter()
-        .filter(|sandbox| sandbox.metadata.get(SANDBOX_METADATA) == Some(&identity.sandbox_id));
+    let mut candidates = Vec::new();
+    for sandbox in sandboxes {
+        if sandbox.metadata.get(SANDBOX_METADATA) == Some(&identity.sandbox_id) {
+            let candidate = provider_metadata_identity(&sandbox.metadata)?;
+            if candidate.generation == identity.generation {
+                candidates.push(sandbox);
+            }
+        }
+    }
+    let mut candidates = candidates.into_iter();
     let Some(sandbox) = candidates.next() else {
         return Ok(None);
     };
@@ -174,13 +229,94 @@ fn validate_sandbox_identity(
     sandbox: ProviderSandbox,
 ) -> crate::Result<ProviderSandbox> {
     let identity = provider_request_identity(request)?;
-    if sandbox.id.trim().is_empty()
-        || sandbox.metadata.get(SANDBOX_METADATA) != Some(&identity.sandbox_id)
-        || sandbox.metadata.get(SPEC_FINGERPRINT_METADATA) != Some(&identity.spec_fingerprint)
+    if invalid_handle(&sandbox.id)
+        || provider_metadata_identity(&sandbox.metadata).as_ref() != Ok(&identity)
     {
         return Err(identity_mismatch());
     }
     Ok(sandbox)
+}
+
+fn provider_inventory(sandboxes: Vec<ProviderSandbox>) -> crate::Result<Vec<RuntimeObservation>> {
+    let mut handles = BTreeSet::new();
+    let mut generations = BTreeSet::new();
+    let mut observations = Vec::with_capacity(sandboxes.len());
+    for sandbox in sandboxes {
+        if invalid_handle(&sandbox.id) {
+            return Err(identity_mismatch());
+        }
+        let identity = provider_metadata_identity(&sandbox.metadata)?;
+        let handle = RuntimeHandle(sandbox.id);
+        if !handles.insert(handle.clone())
+            || !generations.insert((identity.sandbox_id.clone(), identity.generation))
+        {
+            return Err(identity_mismatch());
+        }
+        let lifecycle = match sandbox.status {
+            Some(status) if valid_status(&status.state, status.reason.as_deref()) => {
+                RuntimeLifecycle {
+                    state: if status.state.trim().is_empty() {
+                        "unknown".into()
+                    } else {
+                        status.state
+                    },
+                    reason: status.reason,
+                }
+            }
+            None => RuntimeLifecycle {
+                state: "unknown".into(),
+                reason: None,
+            },
+            Some(_) => {
+                return Err(AdapterError::Rejected(
+                    "provider sandbox has an invalid lifecycle status".into(),
+                ))
+            }
+        };
+        observations.push(RuntimeObservation {
+            sandbox_id: identity.sandbox_id,
+            generation: identity.generation,
+            handle,
+            image_sha256: identity.image_sha256,
+            spec_fingerprint: identity.spec_fingerprint,
+            runtime_contract: identity.runtime_contract,
+            lifecycle,
+        });
+    }
+    observations.sort_by(|left, right| {
+        (&left.sandbox_id, left.generation, &left.handle).cmp(&(
+            &right.sandbox_id,
+            right.generation,
+            &right.handle,
+        ))
+    });
+    Ok(observations)
+}
+
+fn observation_matches(observation: &RuntimeObservation, expected: &ProviderIdentity) -> bool {
+    observation.sandbox_id == expected.sandbox_id
+        && observation.generation == expected.generation
+        && observation.image_sha256 == expected.image_sha256
+        && observation.spec_fingerprint == expected.spec_fingerprint
+        && observation.runtime_contract == expected.runtime_contract
+}
+
+fn invalid_handle(value: &str) -> bool {
+    value.trim().is_empty()
+        || value.trim() != value
+        || value.len() > 512
+        || value.chars().any(char::is_control)
+}
+
+fn valid_status(state: &str, reason: Option<&str>) -> bool {
+    state.len() <= 128
+        && !state.chars().any(char::is_control)
+        && reason.is_none_or(|reason| {
+            reason.chars().count() <= 1_024
+                && reason
+                    .chars()
+                    .all(|character| !character.is_control() || matches!(character, '\n' | '\t'))
+        })
 }
 
 fn identity_mismatch() -> AdapterError {

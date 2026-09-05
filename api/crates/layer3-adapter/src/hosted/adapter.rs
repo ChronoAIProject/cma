@@ -16,17 +16,21 @@ use crate::{
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
     CheckpointRequest, CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest,
     ConversationChannel, ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt,
-    InstallRequest, ResourceReading, RestoreRequest, RuntimeHandle, SandboxAdapter, SandboxSpec,
-    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
-    WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest, WriterState,
+    InstallRequest, ResourceReading, RestoreBootstrapReceipt, RestoreBootstrapRequest,
+    RestoreRequest, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation,
+    RuntimeProvisionRequest, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
+    WorktreeRequest, WriterState,
 };
 
 #[path = "adapter_agent.rs"]
 mod agent;
 #[path = "adapter_install.rs"]
 mod install;
+#[path = "adapter_runtime.rs"]
+mod runtime_lifecycle;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeState {
     own_credential: bool,
     home_directory: String,
@@ -162,33 +166,26 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
-        let request = self.deployment.render(spec)?;
-        let identity = super::deployment::provider_request_identity(&request)?;
-        let handle = self.backend.provision(request.clone()).await?;
-        if handle.0.trim().is_empty() {
-            return Err(AdapterError::Rejected(
-                "provider returned an empty runtime handle".into(),
-            ));
-        }
-        let mut states = self.states.lock().await;
-        if let Some(state) = states.get(&handle) {
-            if state.provision == identity {
-                return Ok(handle);
-            }
-            return Err(AdapterError::Rejected(format!(
-                "provider reused live runtime handle {}",
-                handle.0
-            )));
-        }
-        states.insert(
-            handle.clone(),
-            RuntimeState {
-                own_credential: spec.own_credential,
-                home_directory: spec.home_directory.clone(),
-                provision: identity,
-            },
-        );
-        Ok(handle)
+        self.provision_exact(spec, 1).await
+    }
+
+    async fn provision_runtime(
+        &self,
+        request: &RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.provision_exact(&request.spec, request.generation)
+            .await
+    }
+
+    async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        self.inventory_exact().await
+    }
+
+    async fn adopt_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<Option<RuntimeObservation>> {
+        self.adopt_exact(request).await
     }
 
     async fn run_install(
@@ -197,6 +194,42 @@ impl SandboxAdapter for HostedAdapter {
         request: &InstallRequest,
     ) -> crate::Result<InstallReceipt> {
         self.run_install_request(handle, request).await
+    }
+
+    async fn bootstrap_restore(
+        &self,
+        handle: &RuntimeHandle,
+        request: &RestoreBootstrapRequest,
+    ) -> crate::Result<RestoreBootstrapReceipt> {
+        let state = self.known_state(handle).await?;
+        if request.sandbox_id != state.provision.sandbox_id
+            || request.operation_id.trim().is_empty()
+            || request.operation_id.len() > 256
+            || request.operation_id.chars().any(char::is_control)
+            || !request.has_valid_sha256()
+            || !request.checkpoint.has_valid_reference()
+        {
+            return Err(AdapterError::Rejected(
+                "restore bootstrap identity is invalid".into(),
+            ));
+        }
+        match self
+            .exchange(handle, RequestFrame::BootstrapRestore(request.clone()))
+            .await?
+        {
+            ResponseFrame::BootstrapRestore(receipt)
+                if receipt.operation_id == request.operation_id
+                    && receipt.request_sha256 == request.request_sha256
+                    && receipt.restore_request_sha256 == request.checkpoint.computed_sha256()
+                    && receipt.installation_inherited =>
+            {
+                Ok(receipt)
+            }
+            ResponseFrame::BootstrapRestore(_) => Err(AdapterError::Rejected(
+                "runtime did not acknowledge the exact restore bootstrap".into(),
+            )),
+            _ => unreachable!("exchange verifies response operation"),
+        }
     }
 
     async fn deliver_credential(

@@ -7,9 +7,10 @@ use crate::{
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
     CheckpointRequest, CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest,
     ConversationChannel, ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt,
-    InstallRequest, ResourceReading, RestoreRequest, Result, RuntimeHandle, SandboxSpec,
-    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
-    WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    InstallRequest, ResourceReading, RestoreBootstrapReceipt, RestoreBootstrapRequest,
+    RestoreRequest, Result, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation,
+    RuntimeProvisionRequest, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest,
+    WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
@@ -20,12 +21,55 @@ pub trait SandboxAdapter: Send + Sync {
 
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
 
+    /// Provision an exact non-zero runtime generation.
+    async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
+        if request.generation == 0 {
+            return Err(crate::AdapterError::Rejected(
+                "runtime generation must be non-zero".into(),
+            ));
+        }
+        if request.generation == 1 {
+            return self.provision(&request.spec).await;
+        }
+        Err(crate::AdapterError::Unsupported(
+            "generation-specific provisioning is not supported".into(),
+        ))
+    }
+
+    /// Observe the complete provider inventory or refuse the whole result.
+    async fn runtime_inventory(&self) -> Result<Vec<RuntimeObservation>> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime inventory is not supported".into(),
+        ))
+    }
+
+    /// Attach local runtime state only after proving one exact provider row.
+    async fn adopt_runtime(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+    ) -> Result<Option<RuntimeObservation>> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime adoption is not supported".into(),
+        ))
+    }
+
     /// Run sandbox-wide installation before any credential is delivered.
     async fn run_install(
         &self,
         handle: &RuntimeHandle,
         request: &InstallRequest,
     ) -> Result<InstallReceipt>;
+
+    /// Inherit installation from an exact checkpoint without executing commands.
+    async fn bootstrap_restore(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &RestoreBootstrapRequest,
+    ) -> Result<RestoreBootstrapReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "restore bootstrap is not supported".into(),
+        ))
+    }
 
     async fn deliver_credential(
         &self,

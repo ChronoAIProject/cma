@@ -22,6 +22,7 @@ pub(super) fn expect_ack(response: ResponseFrame) -> crate::Result<()> {
 pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
     match response {
         ResponseFrame::Install(_) => WireOperation::Install,
+        ResponseFrame::BootstrapRestore(_) => WireOperation::BootstrapRestore,
         ResponseFrame::PrepareWorkspace(_) => WireOperation::PrepareWorkspace,
         ResponseFrame::WorkspaceSetup(_) => WireOperation::WorkspaceSetup,
         ResponseFrame::RemoveWorkspace(_) => WireOperation::RemoveWorkspace,
@@ -56,6 +57,7 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
 pub(super) const fn operation_name(operation: WireOperation) -> &'static str {
     match operation {
         WireOperation::Install => "install",
+        WireOperation::BootstrapRestore => "restore bootstrap",
         WireOperation::PrepareWorkspace => "prepare workspace",
         WireOperation::WorkspaceSetup => "workspace setup",
         WireOperation::RemoveWorkspace => "remove workspace",

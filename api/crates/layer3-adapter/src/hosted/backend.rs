@@ -4,7 +4,7 @@ use crate::provider::ProviderSandboxRequest;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
     AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, ConversationChannel,
-    ConversationUpdate, Result, RuntimeHandle,
+    ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
 
 /// Provider-specific rendering needed by the otherwise shared hosted adapter.
@@ -17,6 +17,22 @@ pub trait HostedAgentRuntime: Send + Sync {
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
+
+    async fn inventory(&self) -> Result<Vec<RuntimeObservation>> {
+        Err(crate::AdapterError::Unsupported(
+            "hosted runtime inventory is not supported".into(),
+        ))
+    }
+
+    async fn adopt(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+    ) -> Result<Option<RuntimeObservation>> {
+        Err(crate::AdapterError::Unsupported(
+            "hosted runtime adoption is not supported".into(),
+        ))
+    }
 
     async fn exchange(
         &self,

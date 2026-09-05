@@ -31,7 +31,8 @@ pub use capabilities::{
 pub use checkpoint::{
     valid_writer_resume_token, writer_resume_tokens_match, CheckpointHoldReceipt,
     CheckpointHoldRequest, CheckpointReceipt, CheckpointRequest, CheckpointWriterResumeReceipt,
-    CheckpointWriterResumeRequest, ResourceReading, RestoreRequest, WriterState,
+    CheckpointWriterResumeRequest, ResourceReading, RestoreBootstrapReceipt,
+    RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
@@ -44,8 +45,9 @@ pub use conversation::{
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use runtime::{
-    CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeCredential,
-    RuntimeHandle, RuntimeImage, SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+    CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
+    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeLifecycle, RuntimeObservation,
+    RuntimeProvisionRequest, SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
 };
 pub use workspace::{
