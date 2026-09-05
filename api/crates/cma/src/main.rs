@@ -9,6 +9,7 @@ mod profile_policy;
 mod rate_limit;
 mod sandbox;
 mod store;
+mod trigger;
 
 use std::{net::SocketAddr, sync::Arc};
 
