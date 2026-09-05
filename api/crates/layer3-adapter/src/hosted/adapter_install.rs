@@ -1,4 +1,4 @@
-use super::{HostedAdapter, Phase};
+use super::HostedAdapter;
 use crate::hosted::reply::validate_command_receipts;
 use crate::wire::{RequestFrame, ResponseFrame};
 use crate::{AdapterError, InstallReceipt, InstallRequest, RuntimeHandle};
@@ -10,46 +10,13 @@ impl HostedAdapter {
         request: &InstallRequest,
     ) -> crate::Result<InstallReceipt> {
         validate_request(request)?;
-        {
-            let mut states = self.states.lock().await;
-            let state = states.get_mut(handle).ok_or_else(|| {
-                AdapterError::Unavailable(format!("unknown runtime {}", handle.0))
-            })?;
-            let identity = (&request.operation_id, &request.request_sha256);
-            if state
-                .install
-                .as_ref()
-                .is_some_and(|started| (&started.0, &started.1) != identity)
-            {
-                return Err(AdapterError::Rejected(
-                    "install replay differs from the first request".into(),
-                ));
-            }
-            if state.install.is_none() && state.phase != Phase::Provisioned {
-                return Err(AdapterError::Rejected(
-                    "install cannot begin after credential delivery".into(),
-                ));
-            }
-            if state.phase == Phase::Provisioned {
-                state.phase = Phase::Installing;
-                state.install =
-                    Some((request.operation_id.clone(), request.request_sha256.clone()));
-            }
-        }
-
-        let response = self
+        self.known_state(handle).await?;
+        match self
             .exchange(handle, RequestFrame::Install(request.clone()))
-            .await;
-        let mut states = self.states.lock().await;
-        let state = states.get_mut(handle).ok_or_else(|| {
-            AdapterError::Unavailable(format!("runtime {} disappeared during install", handle.0))
-        })?;
-        match response {
+            .await
+        {
             Ok(ResponseFrame::Install(receipt)) => {
                 validate_receipt(request, &receipt)?;
-                if state.phase == Phase::Installing {
-                    state.phase = Phase::Installed;
-                }
                 Ok(receipt)
             }
             Ok(_) => unreachable!("exchange verifies response operation"),

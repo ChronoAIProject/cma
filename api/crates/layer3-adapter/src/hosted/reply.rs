@@ -78,7 +78,7 @@ pub(super) fn validate_command_receipts(
 ) -> crate::Result<()> {
     if receipts.len() != expected
         || receipts.iter().enumerate().any(|(index, receipt)| {
-            receipt.index != index as u32
+            receipt.index != u32::try_from(index).unwrap_or(u32::MAX)
                 || receipt.exit_code != 0
                 || !valid_sha256(&receipt.stdout_sha256)
                 || !valid_sha256(&receipt.stderr_sha256)
@@ -92,7 +92,23 @@ pub(super) fn validate_command_receipts(
 }
 
 pub(super) fn valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    value.len() == 64 && value.bytes().all(lower_hex)
+}
+
+pub(super) fn valid_git_commit(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(lower_hex)
+}
+
+pub(super) fn valid_checkpoint_reference(reference: &str, sha256: &str) -> bool {
+    valid_sha256(sha256)
+        && reference
+            .strip_prefix("home-")
+            .and_then(|value| value.strip_suffix(".cma"))
+            == Some(sha256)
+}
+
+fn lower_hex(byte: u8) -> bool {
+    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
 }
 
 #[cfg(test)]
@@ -116,5 +132,23 @@ mod tests {
             retryable: false,
         });
         assert!(matches!(terminal, AdapterError::Rejected(_)));
+    }
+
+    #[test]
+    fn hashes_commits_and_checkpoint_references_are_canonical() {
+        let sha256 = "a".repeat(64);
+        assert!(valid_sha256(&sha256));
+        assert!(!valid_sha256(&"A".repeat(64)));
+        assert!(valid_git_commit(&"b".repeat(40)));
+        assert!(valid_git_commit(&"b".repeat(64)));
+        assert!(!valid_git_commit(&"B".repeat(40)));
+        assert!(valid_checkpoint_reference(
+            &format!("home-{sha256}.cma"),
+            &sha256
+        ));
+        assert!(!valid_checkpoint_reference(
+            &format!("renamed-{sha256}.cma"),
+            &sha256
+        ));
     }
 }

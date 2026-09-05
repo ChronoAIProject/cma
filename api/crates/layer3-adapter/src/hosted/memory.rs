@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, Mutex};
 
 use super::deployment::provider_request_identity;
@@ -16,6 +15,13 @@ use crate::{
     ConversationChannel, ConversationInputSender, ConversationSnapshot, ConversationUpdate,
     InstallReceipt, ResourceReading, RuntimeHandle, SetupReceipt, WorkspaceReceipt,
     WorkspaceRemoveReceipt, WorkspaceSource, WorktreeReceipt, WriterState,
+};
+
+#[path = "memory_state.rs"]
+mod state;
+use state::{
+    digest, refused, remember_workspace_operation, replay_workspace_operation, require_credential,
+    runtime_home, safe_name, successful_commands,
 };
 
 /// Observable in-memory state used by Layer 2 lifecycle tests.
@@ -50,25 +56,6 @@ struct MemoryRuntime {
     agents: BTreeMap<AgentSlot, MemoryAgent>,
     writer_fence_captures: u64,
     restored_object: Option<String>,
-}
-
-impl MemoryRuntime {
-    fn snapshot(&self) -> InMemoryRuntimeSnapshot {
-        InMemoryRuntimeSnapshot {
-            request: self.request.clone(),
-            credential_delivered: self.credential_delivered,
-            workspaces: self.workspaces.clone(),
-            worktrees: self.worktrees.clone(),
-            homes: self.homes.clone(),
-            agents: self
-                .agents
-                .iter()
-                .map(|(slot, agent)| (slot.clone(), agent.launch.clone()))
-                .collect(),
-            writer_fence_captures: self.writer_fence_captures,
-            restored_object: self.restored_object.clone(),
-        }
-    }
 }
 
 /// Deterministic hosted backend with no filesystem or network effects.
@@ -122,14 +109,6 @@ impl InMemoryHostedBackend {
     /// Make the next captured archive disagree with its advertised digest.
     pub fn corrupt_next_capture_digest(&self) {
         self.corrupt_capture_digest.store(true, Ordering::Relaxed);
-    }
-
-    fn queued_failure(&self, operation: WireOperation) -> Option<WireFailure> {
-        let mut failures = self.failures.lock().expect("in-memory failure queue lock");
-        let index = failures
-            .iter()
-            .position(|failure| failure.operation == operation)?;
-        failures.remove(index)
     }
 }
 
@@ -259,7 +238,7 @@ impl HostedBackend for InMemoryHostedBackend {
                     request_sha256: request.request_sha256.clone(),
                     workspace_id: request.workspace_id.clone(),
                     name: request.name.clone(),
-                    path: format!("/home/cma/{}", request.name),
+                    path: format!("{}/{}", runtime_home(runtime), request.name),
                     resolved_commit: digest(commit_source.as_bytes()),
                 };
                 runtime.workspaces.insert(request.name, receipt.clone());
@@ -355,8 +334,10 @@ impl HostedBackend for InMemoryHostedBackend {
                     workspace: request.workspace.clone(),
                     name: request.name.clone(),
                     path: format!(
-                        "/home/cma/{}/.worktrees/{}",
-                        request.workspace, request.name
+                        "{}/{}/.worktrees/{}",
+                        runtime_home(runtime),
+                        request.workspace,
+                        request.name
                     ),
                     branch: format!("cma/{}", request.name),
                     base_commit: request.base,
@@ -418,10 +399,11 @@ impl HostedBackend for InMemoryHostedBackend {
                     "{}:{}:{}",
                     handle.0, request.epoch, runtime.writer_fence_captures
                 );
+                let sha256 = digest(marker.as_bytes());
                 Ok(ResponseFrame::Checkpoint(CheckpointReceipt {
                     epoch: request.epoch,
-                    object_reference: format!("memory://checkpoint/{marker}"),
-                    sha256: digest(marker.as_bytes()),
+                    object_reference: format!("home-{sha256}.cma"),
+                    sha256,
                     writers: WriterState::Resumed,
                 }))
             }
@@ -509,72 +491,4 @@ impl HostedBackend for InMemoryHostedBackend {
         }
         Ok(())
     }
-}
-
-fn require_credential(runtime: &MemoryRuntime, operation: WireOperation) -> crate::Result<()> {
-    if runtime.credential_delivered {
-        Ok(())
-    } else {
-        Err(AdapterError::Rejected(format!(
-            "{operation:?}: credential_not_delivered"
-        )))
-    }
-}
-
-fn replay_workspace_operation(
-    runtime: &MemoryRuntime,
-    operation_id: &str,
-    request_sha256: &str,
-    operation: WireOperation,
-) -> crate::Result<Option<ResponseFrame>> {
-    let Some((stored_digest, response)) = runtime.workspace_operations.get(operation_id) else {
-        return Ok(None);
-    };
-    if stored_digest != request_sha256 {
-        return refused(operation, "workspace_replay_mismatch");
-    }
-    Ok(Some(response.clone()))
-}
-
-fn remember_workspace_operation(
-    runtime: &mut MemoryRuntime,
-    operation_id: String,
-    request_sha256: String,
-    response: ResponseFrame,
-) {
-    runtime
-        .workspace_operations
-        .insert(operation_id, (request_sha256, response));
-}
-
-fn refused<T>(operation: WireOperation, code: &str) -> crate::Result<T> {
-    Err(AdapterError::Rejected(format!("{operation:?}: {code}")))
-}
-
-fn successful_commands(commands: &[String]) -> Vec<CommandReceipt> {
-    let empty = digest(&[]);
-    commands
-        .iter()
-        .enumerate()
-        .map(|(index, _)| CommandReceipt {
-            index: index as u32,
-            exit_code: 0,
-            stdout_sha256: empty.clone(),
-            stderr_sha256: empty.clone(),
-        })
-        .collect()
-}
-
-fn safe_name(value: &str) -> bool {
-    !value.is_empty()
-        && value != "."
-        && value != ".."
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-}
-
-fn digest(bytes: &[u8]) -> String {
-    let bytes = Sha256::digest(bytes);
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

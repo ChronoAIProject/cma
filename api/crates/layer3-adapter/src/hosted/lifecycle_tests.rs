@@ -101,7 +101,7 @@ async fn provisioning_replay_reuses_only_the_exact_sandbox_specification() {
 }
 
 #[tokio::test]
-async fn credential_delivery_requires_proof_of_successful_install() {
+async fn runtime_enforces_credential_order_after_adapter_side_failures() {
     let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
     let handle = adapter
         .provision(&sandbox_spec(false))
@@ -113,12 +113,11 @@ async fn credential_delivery_requires_proof_of_successful_install() {
         .await
         .expect_err("credential before install must be refused");
     assert!(matches!(refused, AdapterError::Rejected(detail)
-        if detail.contains("successful install receipt")));
-    assert!(backend
-        .requests()
-        .await
-        .iter()
-        .all(|(_, request)| !matches!(request, RequestFrame::Credential(_))));
+        if detail.contains("install_not_completed")));
+    assert!(matches!(
+        backend.requests().await.last(),
+        Some((_, RequestFrame::Credential(_)))
+    ));
 
     backend.fail_next(
         WireOperation::Install,
@@ -134,19 +133,15 @@ async fn credential_delivery_requires_proof_of_successful_install() {
 
     backend.corrupt_next_install_receipt();
     assert!(adapter.run_install(&handle, &install).await.is_err());
-    assert!(adapter
+    adapter
         .deliver_credential(&handle, credential())
         .await
-        .is_err());
+        .expect("runtime accepts credentials after its durable install completed");
 
     adapter
         .run_install(&handle, &install)
         .await
-        .expect("retried install succeeds");
-    adapter
-        .deliver_credential(&handle, credential())
-        .await
-        .expect("credential follows the successful receipt");
+        .expect("runtime replays the durable install receipt");
 
     let operations: Vec<_> = backend
         .requests()
@@ -157,12 +152,72 @@ async fn credential_delivery_requires_proof_of_successful_install() {
     assert_eq!(
         operations,
         [
+            WireOperation::Credential,
             WireOperation::Install,
+            WireOperation::Credential,
             WireOperation::Install,
-            WireOperation::Install,
-            WireOperation::Credential
+            WireOperation::Credential,
+            WireOperation::Install
         ]
     );
+}
+
+#[tokio::test]
+async fn recreated_adapter_uses_the_reattached_runtime_lifecycle() {
+    let backend = crate::hosted::InMemoryHostedBackend::default();
+    let adapter_a = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
+    let spec = sandbox_spec(false);
+    let handle = adapter_a
+        .provision(&spec)
+        .await
+        .expect("sandbox provisions");
+    adapter_a
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:adapter-recreation", Vec::new()),
+        )
+        .await
+        .expect("install completes");
+    adapter_a
+        .deliver_credential(&handle, credential())
+        .await
+        .expect("credential installs");
+    let workspace = adapter_a
+        .prepare_workspace(
+            &handle,
+            &WorkspaceRequest::new(
+                "workspace:wks-recreated:prepare:v1",
+                "wks-recreated",
+                "recreated",
+                WorkspaceSource::Init,
+            ),
+        )
+        .await
+        .expect("workspace prepares");
+    drop(adapter_a);
+
+    let adapter_b = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
+    let reattached = adapter_b
+        .provision(&spec)
+        .await
+        .expect("new adapter reattaches");
+    assert_eq!(reattached, handle);
+    let worktree = adapter_b
+        .add_worktree(
+            &reattached,
+            &WorktreeRequest {
+                workspace: "recreated".into(),
+                name: "after-restart".into(),
+                base: workspace.resolved_commit,
+            },
+        )
+        .await
+        .expect("runtime accepts a credentialed mutation without install replay");
+    assert_eq!(worktree.name, "after-restart");
+    adapter_b
+        .resources(&reattached)
+        .await
+        .expect("reattached runtime serves resource state");
 }
 
 #[tokio::test]
