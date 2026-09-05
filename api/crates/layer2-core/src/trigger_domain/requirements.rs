@@ -77,6 +77,13 @@ pub struct ReviewRequirements {
 }
 
 impl ReviewRequirements {
+    pub fn trust_digest(&self) -> Option<&str> {
+        self.needs.iter().find_map(|need| match need {
+            ReviewNeed::TrustConfirmation { commands_digest } => Some(commands_digest.as_str()),
+            _ => None,
+        })
+    }
+
     pub fn build(
         requirements: &RequirementsSnapshot,
         trust_digest: Option<String>,
@@ -124,28 +131,54 @@ impl ReviewRequirements {
         let mut trust = false;
         let mut owner = false;
         let mut choice = false;
+        let mut phase = 0;
         for need in &self.needs {
-            let unique = match need {
-                ReviewNeed::Connection { service } => {
-                    !service.as_str().trim().is_empty() && connections.insert(service.clone())
-                }
+            let (rank, unique) = match need {
+                ReviewNeed::Connection { service } => (
+                    0,
+                    !service.as_str().trim().is_empty() && connections.insert(service.clone()),
+                ),
                 ReviewNeed::TrustConfirmation { commands_digest } => {
                     let unique = !trust && valid_digest(commands_digest);
                     trust = true;
-                    unique
+                    (1, unique)
                 }
                 ReviewNeed::OwnerRequiresReview => {
                     let unique = !owner;
                     owner = true;
-                    unique
+                    (2, unique)
                 }
                 ReviewNeed::RepeatChoice => {
                     let unique = !choice;
                     choice = true;
-                    unique
+                    (3, unique)
                 }
             };
-            if !unique {
+            if rank < phase || !unique {
+                return Err(TriggerError::new("invalid_launch_review", "review.needs"));
+            }
+            phase = rank;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_for_launch(
+        &self,
+        requirements: &RequirementsSnapshot,
+        before_start: bool,
+    ) -> Result<(), TriggerError> {
+        self.validate()?;
+        if before_start {
+            let expected = requirements
+                .services
+                .iter()
+                .filter(|requirement| requirement.needs_connection())
+                .map(|requirement| &requirement.service);
+            let actual = self.needs.iter().filter_map(|need| match need {
+                ReviewNeed::Connection { service } => Some(service),
+                _ => None,
+            });
+            if !expected.eq(actual) {
                 return Err(TriggerError::new("invalid_launch_review", "review.needs"));
             }
         }

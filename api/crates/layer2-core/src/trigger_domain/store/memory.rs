@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
 
 use super::*;
-use crate::trigger_domain::TriggerProfileResolver;
+use crate::trigger_domain::{LaunchStoreError, TriggerProfileResolver};
 
 #[derive(Clone)]
 pub struct InMemoryTriggerStore {
@@ -90,6 +90,72 @@ impl InMemoryTriggerStore {
         } else {
             Err(TriggerStoreError::ProfileReferenced { trigger_ids })
         }
+    }
+
+    pub(crate) fn commit_launch_admission<T>(
+        &self,
+        expected: &PublicTrigger,
+        ready: bool,
+        commit: impl FnOnce() -> T,
+    ) -> Result<T, LaunchStoreError> {
+        let mut state = self.lock();
+        let current = Self::public_trigger(&state, &expected.public_id)
+            .ok_or(LaunchStoreError::TriggerUnavailable)?;
+        if current.availability != TriggerAvailability::Published {
+            return Err(LaunchStoreError::TriggerRetired);
+        }
+        if current != *expected {
+            return Err(LaunchStoreError::TriggerUnavailable);
+        }
+        let stored = state
+            .triggers
+            .get(&current.trigger_id)
+            .cloned()
+            .ok_or(LaunchStoreError::TriggerUnavailable)?;
+        let mut changed = stored;
+        changed.record_launch()?;
+        if ready {
+            changed.record_agent_ready()?;
+        }
+        changed.validate()?;
+        let result = commit();
+        state.triggers.insert(changed.id.clone(), changed);
+        Ok(result)
+    }
+
+    pub(crate) fn commit_agent_ready<T>(
+        &self,
+        id: &TriggerId,
+        commit: impl FnOnce() -> T,
+    ) -> Result<T, LaunchStoreError> {
+        let mut state = self.lock();
+        let stored = state
+            .triggers
+            .get(id)
+            .cloned()
+            .ok_or(LaunchStoreError::TriggerUnavailable)?;
+        let mut changed = stored;
+        changed.record_agent_ready()?;
+        changed.validate()?;
+        let result = commit();
+        state.triggers.insert(id.clone(), changed);
+        Ok(result)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed_trigger(&self, trigger: Trigger) -> Result<(), TriggerStoreError> {
+        trigger.validate()?;
+        let public_id = trigger
+            .public_id
+            .clone()
+            .ok_or_else(|| TriggerError::new("invalid_trigger_state", "public_id"))?;
+        let mut state = self.lock();
+        if state.triggers.contains_key(&trigger.id) || state.public_ids.contains_key(&public_id) {
+            return Err(TriggerStoreError::Duplicate);
+        }
+        state.public_ids.insert(public_id, trigger.id.clone());
+        state.triggers.insert(trigger.id.clone(), trigger);
+        Ok(())
     }
 }
 

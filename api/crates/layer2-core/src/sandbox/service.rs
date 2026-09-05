@@ -14,7 +14,7 @@ use crate::profiles::{
 use crate::{now_rfc3339, Caller, Capability, StoreError};
 
 use super::service_trust::{
-    nested_workspaces_require_trust, validate_sandbox_profile, validate_sandbox_revision,
+    foreign_workspace_setups, validate_sandbox_profile, validate_sandbox_revision,
 };
 use super::store::{
     Page, PageRequest, SandboxAdmission, SandboxAdmissionName, SandboxServiceStore,
@@ -240,13 +240,14 @@ impl SandboxService {
             .map_err(profile_error)?
             .ok_or(SandboxServiceError::ProfileNotFound)?;
         validate_sandbox_revision(&request.profile, &revision).map_err(profile_error)?;
-        let nested_needs_trust = nested_workspaces_require_trust(
+        let nested_needs_trust = !foreign_workspace_setups(
             self.workspace_profiles.as_ref(),
             &revision.content.workspace_profiles,
             &caller.subject,
         )
         .await
-        .map_err(profile_error)?;
+        .map_err(profile_error)?
+        .is_empty();
         let needs_trust = (profile.owner != caller.subject
             && (!revision.content.software_install_commands.is_empty()
                 || !revision.content.environment_variables.is_empty()))

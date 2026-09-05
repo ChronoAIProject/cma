@@ -6,8 +6,8 @@ use crate::seconds_from_rfc3339;
 
 use super::requirements::valid_digest;
 use super::{
-    LaunchResolution, LaunchWorkState, LaunchWorkStep, RequirementsSnapshot, ReviewRequirements,
-    TriggerError,
+    LaunchResolution, LaunchTrustManifest, LaunchWorkState, LaunchWorkStep, RequirementsSnapshot,
+    ResolvedResource, ReviewRequirements, TriggerError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +166,7 @@ pub struct LaunchSeed {
     pub referrer_origin: Option<String>,
     pub requirements: RequirementsSnapshot,
     pub review: ReviewRequirements,
+    pub trust: LaunchTrustManifest,
     pub resolution: LaunchResolution,
     pub has_first_message: bool,
     pub command_key_hash: String,
@@ -190,6 +191,7 @@ pub struct Launch {
     pub resolution: LaunchResolution,
     pub requirements: RequirementsSnapshot,
     pub review: ReviewRequirements,
+    pub trust: LaunchTrustManifest,
     pub first_message: FirstMessageDelivery,
     #[serde(default)]
     pub confirmations: Vec<LaunchConfirmation>,
@@ -230,6 +232,7 @@ impl Launch {
             resolution: seed.resolution,
             requirements: seed.requirements,
             review: seed.review,
+            trust: seed.trust,
             first_message,
             confirmations: Vec::new(),
             blocked_reason: None,
@@ -258,6 +261,55 @@ impl Launch {
         self.transition(LaunchState::Resolving, at.clone())?;
         self.started_at = Some(at.clone());
         self.work = LaunchWorkState::new(LaunchWorkStep::ResolveSandbox, at);
+        self.validate()
+    }
+
+    pub fn start_existing(&mut self, confirmation: LaunchConfirmation) -> Result<(), TriggerError> {
+        confirmation.validate()?;
+        let at = confirmation.confirmed_at.clone();
+        if self.state != LaunchState::Draft
+            || !self.review.can_start_now
+            || self.resolution.sandbox.is_pending()
+            || self.resolution.workspace.is_pending()
+            || !matches!(self.resolution.agent, ResolvedResource::Reused(_))
+            || seconds_from_rfc3339(&at).is_none()
+        {
+            return Err(TriggerError::new(
+                "invalid_existing_launch_resolution",
+                "resolution",
+            ));
+        }
+        self.confirmations.push(confirmation);
+        self.state = LaunchState::Ready;
+        self.first_message = FirstMessageDelivery::Completed;
+        self.started_at = Some(at.clone());
+        self.ready_at = Some(at.clone());
+        self.updated_at = at.clone();
+        for step in &mut self.steps {
+            step.status = LaunchStepStatus::Completed;
+            step.started_at.get_or_insert_with(|| at.clone());
+            step.completed_at.get_or_insert_with(|| at.clone());
+        }
+        self.work = LaunchWorkState::new(LaunchWorkStep::None, at);
+        self.bump_revision()?;
+        self.validate()
+    }
+
+    pub fn refresh_review(
+        &mut self,
+        requirements: RequirementsSnapshot,
+        review: ReviewRequirements,
+        at: String,
+    ) -> Result<(), TriggerError> {
+        if self.state != LaunchState::Draft || seconds_from_rfc3339(&at).is_none() {
+            return Err(TriggerError::new("launch_not_reviewable", "state"));
+        }
+        requirements.validate()?;
+        review.validate()?;
+        self.requirements = requirements;
+        self.review = review;
+        self.updated_at = at;
+        self.bump_revision()?;
         self.validate()
     }
 
@@ -316,8 +368,6 @@ impl Launch {
 
     pub fn validate(&self) -> Result<(), TriggerError> {
         if !valid_digest(&self.revision_digest)
-            || self.command_key_hash.len() != 64
-            || self.command_fingerprint.len() != 64
             || !valid_digest(&self.command_key_hash)
             || !valid_digest(&self.command_fingerprint)
             || self.revision == 0
@@ -328,12 +378,25 @@ impl Launch {
         }
         validate_referrer(self.referrer_origin.as_deref())?;
         self.requirements.validate()?;
-        self.review.validate()?;
+        self.review
+            .validate_for_launch(&self.requirements, self.started_at.is_none())?;
+        self.trust.validate()?;
         self.resolution.validate()?;
+        for confirmation in &self.confirmations {
+            confirmation.validate()?;
+        }
         let requires_start = !matches!(self.state, LaunchState::Draft | LaunchState::Cancelled);
         let was_ready = matches!(self.state, LaunchState::Ready | LaunchState::Completed);
         if (self.state == LaunchState::Draft && self.started_at.is_some())
             || (requires_start && self.started_at.is_none())
+            || (self.started_at.is_some() == self.confirmations.is_empty())
+            || self.confirmations.len() > 1
+            || (self.started_at.is_none()
+                && self.review.trust_digest() != self.trust.confirmation_digest.as_deref())
+            || self.confirmations.iter().any(|confirmation| {
+                confirmation.trust_confirmed_digest.as_deref()
+                    != self.trust.confirmation_digest.as_deref()
+            })
             || (was_ready != self.ready_at.is_some())
             || self.state.is_terminal() && self.work.step.is_pending()
             || self.blocked_reason.is_some() && self.state.is_terminal()

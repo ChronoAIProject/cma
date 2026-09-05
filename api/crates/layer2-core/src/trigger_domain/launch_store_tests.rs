@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use crate::{
     AgentProfileId, LaunchId, SandboxProfileId, ServiceHandoffId, ServiceId, SubjectId,
     WorkspaceProfileId,
 };
 
 use super::*;
-use crate::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
+use crate::profiles::{
+    AgentProfileRef, InMemoryProfileStore, SandboxProfileRef, WorkspaceProfileRef,
+};
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
@@ -40,14 +44,32 @@ fn content() -> TriggerContent {
     }
 }
 
-fn public_trigger() -> PublicTrigger {
-    PublicTrigger {
-        trigger_id: TriggerId("trg_one".into()),
-        public_id: PublicTriggerId("pub_one".into()),
-        owner: SubjectId::new("publisher"),
+fn store_fixture() -> (
+    Arc<InMemoryTriggerStore>,
+    InMemoryLaunchStore,
+    PublicTrigger,
+) {
+    let profiles: Arc<dyn TriggerProfileResolver> = Arc::new(InMemoryProfileStore::default());
+    let definitions = Arc::new(InMemoryTriggerStore::new(profiles));
+    let owner = SubjectId::new("publisher");
+    let mut trigger = Trigger::new(
+        TriggerId("trg_one".into()),
+        owner.clone(),
+        content(),
+        NOW.into(),
+    )
+    .unwrap();
+    let revision = trigger.publish(NOW.into()).unwrap();
+    let public = PublicTrigger {
+        trigger_id: trigger.id.clone(),
+        public_id: trigger.public_id.clone().unwrap(),
+        owner,
         availability: TriggerAvailability::Published,
-        revision: TriggerRevision::new(1, content(), NOW.into()).unwrap(),
-    }
+        revision,
+    };
+    definitions.seed_trigger(trigger).unwrap();
+    let launches = InMemoryLaunchStore::new(definitions.clone());
+    (definitions, launches, public)
 }
 
 fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
@@ -66,6 +88,7 @@ fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
             needs: vec![],
             can_start_now: true,
         },
+        trust: LaunchTrustManifest::none(),
         resolution: LaunchResolution::pending(),
         has_first_message: true,
         command_key_hash: digest(key),
@@ -75,23 +98,33 @@ fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
     .unwrap()
 }
 
-async fn admitted(store: &InMemoryLaunchStore) -> (PublicTrigger, Launch) {
-    let trigger = public_trigger();
+async fn admitted(store: &InMemoryLaunchStore, trigger: &PublicTrigger) -> Launch {
     let result = store
         .admit_launch(LaunchAdmission {
-            launch: launch(&trigger, 'a', 'b'),
+            launch: launch(trigger, 'a', 'b'),
             trigger: trigger.clone(),
             events: vec![LaunchEventKind::Created],
         })
         .await
         .unwrap();
-    (trigger, result.launch().clone())
+    result.launch().clone()
+}
+
+async fn trigger_stats(
+    definitions: &InMemoryTriggerStore,
+    trigger: &PublicTrigger,
+) -> TriggerStats {
+    definitions
+        .trigger(&trigger.trigger_id, &trigger.owner)
+        .await
+        .unwrap()
+        .unwrap()
+        .stats
 }
 
 #[tokio::test]
 async fn admission_replays_exactly_and_counts_only_the_created_launch() {
-    let store = InMemoryLaunchStore::default();
-    let trigger = public_trigger();
+    let (definitions, store, trigger) = store_fixture();
     let first = launch(&trigger, 'a', 'b');
     let created = store
         .admit_launch(LaunchAdmission {
@@ -114,24 +147,97 @@ async fn admission_replays_exactly_and_counts_only_the_created_launch() {
         .unwrap();
     assert!(!replay.was_created());
     assert_eq!(replay.launch().id, first.id);
-    assert_eq!(store.trigger_launch_count(&trigger.trigger_id), 1);
+    assert_eq!(
+        store
+            .launch_by_command(
+                &first.owner,
+                &first.public_id,
+                first.command_key_hash.as_str(),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        first.id
+    );
+    assert_eq!(
+        trigger_stats(&definitions, &trigger).await.launches_total,
+        1
+    );
+
+    definitions
+        .retire_trigger(&trigger.trigger_id, &trigger.owner, LATER.into())
+        .await
+        .unwrap();
+    let replay = store
+        .admit_launch(LaunchAdmission {
+            launch: launch(&trigger, 'a', 'b'),
+            trigger: trigger.clone(),
+            events: vec![LaunchEventKind::Created],
+        })
+        .await
+        .unwrap();
+    assert!(!replay.was_created());
 
     assert_eq!(
         store
             .admit_launch(LaunchAdmission {
                 launch: launch(&trigger, 'a', 'c'),
-                trigger,
+                trigger: trigger.clone(),
                 events: vec![LaunchEventKind::Created],
             })
             .await,
         Err(LaunchStoreError::CommandConflict)
     );
+    assert_eq!(
+        store
+            .admit_launch(LaunchAdmission {
+                launch: launch(&trigger, 'd', 'e'),
+                trigger: trigger.clone(),
+                events: vec![LaunchEventKind::Created],
+            })
+            .await,
+        Err(LaunchStoreError::TriggerRetired)
+    );
+    assert_eq!(
+        trigger_stats(&definitions, &trigger).await.launches_total,
+        1
+    );
+}
+
+#[tokio::test]
+async fn concurrent_same_command_admission_counts_once() {
+    let (definitions, store, trigger) = store_fixture();
+    let left = store.admit_launch(LaunchAdmission {
+        launch: launch(&trigger, 'd', 'e'),
+        trigger: trigger.clone(),
+        events: vec![LaunchEventKind::Created],
+    });
+    let right = store.admit_launch(LaunchAdmission {
+        launch: launch(&trigger, 'd', 'e'),
+        trigger: trigger.clone(),
+        events: vec![LaunchEventKind::Created],
+    });
+    let (left, right) = tokio::join!(left, right);
+    let results = [left.unwrap(), right.unwrap()];
+    assert_eq!(
+        results.iter().filter(|result| result.was_created()).count(),
+        1
+    );
+    assert_eq!(results[0].launch().id, results[1].launch().id);
+    assert_eq!(
+        trigger_stats(&definitions, &trigger).await,
+        TriggerStats {
+            launches_total: 1,
+            agents_ready_total: 0,
+        }
+    );
 }
 
 #[tokio::test]
 async fn commits_are_revision_fenced_and_append_contiguous_events() {
-    let store = InMemoryLaunchStore::default();
-    let (_, mut launch) = admitted(&store).await;
+    let (_, store, trigger) = store_fixture();
+    let mut launch = admitted(&store, &trigger).await;
     let expected = launch.revision;
     launch
         .start(LaunchConfirmation {
@@ -189,8 +295,8 @@ async fn commits_are_revision_fenced_and_append_contiguous_events() {
 
 #[tokio::test]
 async fn due_work_claims_are_atomic_and_expired_leases_can_be_taken_over() {
-    let store = InMemoryLaunchStore::default();
-    let (_, mut launch) = admitted(&store).await;
+    let (_, store, trigger) = store_fixture();
+    let mut launch = admitted(&store, &trigger).await;
     let expected = launch.revision;
     launch
         .start(LaunchConfirmation {
@@ -232,8 +338,8 @@ async fn due_work_claims_are_atomic_and_expired_leases_can_be_taken_over() {
 
 #[tokio::test]
 async fn handoffs_are_owner_scoped_and_intent_idempotent() {
-    let store = InMemoryLaunchStore::default();
-    let (_, launch) = admitted(&store).await;
+    let (_, store, trigger) = store_fixture();
+    let launch = admitted(&store, &trigger).await;
     let handoff = ServiceConnectionHandoff {
         id: ServiceHandoffId("hnd_one".into()),
         launch_id: launch.id.clone(),
