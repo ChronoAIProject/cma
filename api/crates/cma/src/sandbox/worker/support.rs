@@ -286,6 +286,14 @@ impl WorkerFailure {
         }
     }
 
+    pub(super) fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+
+    pub(super) fn detail(&self) -> &str {
+        &self.detail
+    }
+
     pub(super) fn typed(&self) -> TypedFailure {
         TypedFailure {
             class: self.class.into(),

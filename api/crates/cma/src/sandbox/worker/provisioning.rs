@@ -1,56 +1,26 @@
-use std::collections::BTreeMap;
 use std::time::SystemTime;
 
-use layer2_core::profiles::ModelAccess;
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     RuntimeBinding, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep,
 };
-use layer3_adapter::{
-    CredentialFrame, InstallRequest, RuntimeCredential, SandboxCapacity, SandboxSpec,
-};
+use layer3_adapter::{CredentialFrame, InstallRequest, RuntimeCredential};
 
 use super::support::{
     adapter_failure, credential_failure, credential_rotation_at, credential_valid_for_delivery,
     dependency_failure, install_failure, material_matches, operation_id, runtime, WorkerFailure,
 };
 use super::SandboxWorker;
+use crate::sandbox::runtime_mapping::sandbox_spec;
 
 impl SandboxWorker {
-    fn sandbox_spec(&self, sandbox: &Sandbox) -> SandboxSpec {
-        let environment = sandbox
-            .profile
-            .content
-            .environment_variables
-            .iter()
-            .map(|variable| (variable.name.clone(), variable.value.clone()))
-            .collect::<BTreeMap<_, _>>();
-        SandboxSpec {
-            sandbox_id: sandbox.id.0.clone(),
-            capacity: SandboxCapacity {
-                cpu_millis: sandbox.profile.content.cpu_millis,
-                memory_mib: sandbox.profile.content.memory_mib,
-            },
-            environment,
-            reaches: sandbox
-                .credential
-                .reaches
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            own_credential: sandbox.profile.content.model_access == ModelAccess::OwnCredentials,
-            created_by: Some(self.config.deployment_id.clone()),
-            ..SandboxSpec::default()
-        }
-    }
-
     pub(super) async fn provision(
         &self,
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let spec = self.sandbox_spec(&sandbox);
+        let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
         match self.dependencies.adapter.provision(&spec).await {
             Ok(handle) => {
                 let mut next = sandbox;
@@ -85,7 +55,7 @@ impl SandboxWorker {
         let attached = match self
             .dependencies
             .adapter
-            .provision(&self.sandbox_spec(&sandbox))
+            .provision(&sandbox_spec(&sandbox, &self.config.deployment_id))
             .await
         {
             Ok(handle) if handle == runtime => handle,
@@ -275,27 +245,15 @@ impl SandboxWorker {
         } else {
             SandboxWorkStep::CreateProfileWorkspace(0)
         };
-        let committed = self
-            .advance(
-                next,
-                next_step,
-                now,
-                SandboxEventKind::CredentialChanged {
-                    key_generation: generation,
-                },
-            )
-            .await;
-        if committed.is_ok() {
-            if let Err(error) = self
-                .dependencies
-                .credentials
-                .forget(&material.sandbox_id, generation)
-                .await
-            {
-                tracing::warn!(sandbox_id = %material.sandbox_id, generation, error = %error, "delivered credential custody cleanup deferred");
-            }
-        }
-        committed
+        self.advance(
+            next,
+            next_step,
+            now,
+            SandboxEventKind::CredentialChanged {
+                key_generation: generation,
+            },
+        )
+        .await
     }
 
     pub(super) async fn create_workspace(

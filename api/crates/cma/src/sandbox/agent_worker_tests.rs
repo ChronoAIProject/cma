@@ -1323,6 +1323,68 @@ async fn registry_rejects_stale_generations_fences_and_attachment_tokens() {
     );
 }
 
+#[tokio::test]
+async fn registry_orders_authority_lexicographically_by_runtime_generation() {
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let recorder = Arc::new(NoopRecorder);
+    let id = AgentId::generate();
+    let (old_input, old_updates, _old_sender) = channels();
+    let old = registry
+        .attach(
+            id.clone(),
+            "conversation-stable".into(),
+            7,
+            90,
+            RuntimeCapabilities::default(),
+            old_input,
+            old_updates,
+            recorder.clone(),
+        )
+        .unwrap();
+    registry.publish_and_activate(&old).unwrap();
+    registry.fence(&id, Some(7), 100);
+
+    let (new_input, new_updates, _new_sender) = channels();
+    let replacement = registry
+        .attach(
+            id.clone(),
+            "conversation-stable".into(),
+            8,
+            2,
+            RuntimeCapabilities::default(),
+            new_input,
+            new_updates,
+            recorder.clone(),
+        )
+        .unwrap();
+    registry.publish_and_activate(&replacement).unwrap();
+    let target = LiveAgentTarget {
+        agent_id: id.clone(),
+        conversation_id: "conversation-stable".into(),
+        runtime_generation: 8,
+    };
+    assert!(registry.resolve(&target).is_some());
+
+    registry.fence(&id, Some(7), 1_000);
+    assert!(registry.resolve(&target).is_some());
+    let (stale_input, stale_updates, _stale_sender) = channels();
+    assert_eq!(
+        registry
+            .attach(
+                id,
+                "conversation-stable".into(),
+                7,
+                1_001,
+                RuntimeCapabilities::default(),
+                stale_input,
+                stale_updates,
+                recorder,
+            )
+            .unwrap_err(),
+        LiveAgentRegistryError::StaleGeneration
+    );
+}
+
 #[derive(Default)]
 struct ConnectionLossProbe {
     seen: Mutex<Vec<LiveAgentAttachmentIdentity>>,

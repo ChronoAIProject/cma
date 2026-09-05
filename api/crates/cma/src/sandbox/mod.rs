@@ -17,6 +17,7 @@ mod credential;
 )]
 mod live_agents;
 mod policy;
+mod runtime_mapping;
 #[allow(
     dead_code,
     reason = "started when the production hosted-control transport is composed"

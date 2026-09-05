@@ -92,7 +92,7 @@ impl Sandbox {
         Ok(())
     }
 
-    fn require_lifecycle_authority(
+    pub(super) fn require_lifecycle_authority(
         &self,
         holder: &str,
         fence: u64,

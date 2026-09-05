@@ -161,6 +161,25 @@ fn wrong_phase_stale_fence_and_revision_overflow_are_atomic() {
 }
 
 #[test]
+fn lifecycle_retry_keeps_the_exact_phase_and_increments_attempts() {
+    let mut value = sandbox();
+    value.begin_pause(NOW.into(), None).unwrap();
+    claim(&mut value);
+    let operation = value.lifecycle.operation.clone();
+    let revision = value.revision;
+
+    value
+        .retry_lifecycle(LEASE_END.into(), HOLDER, fence(&value), LATER.into())
+        .unwrap();
+
+    assert_eq!(value.lifecycle.operation, operation);
+    assert_eq!(value.work.step, SandboxWorkStep::RunLifecycleOperation);
+    assert_eq!(value.work.attempts, 1);
+    assert_eq!(value.work.ready_at, LEASE_END);
+    assert_published(&value, revision);
+}
+
+#[test]
 fn lifecycle_failure_uses_the_phase_class_and_retains_both_checkpoints() {
     let mut value = paused();
     value.lifecycle.checkpoints.previous = Some(checkpoint(6, "2026-09-05T00:20:00Z"));

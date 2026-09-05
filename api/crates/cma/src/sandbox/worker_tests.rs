@@ -12,12 +12,14 @@ use layer2_core::profiles::{
     WorkspaceProfileContent, WorkspaceProfileRef,
 };
 use layer2_core::sandbox::store::{
-    PageRequest, SandboxEventStore as _, SandboxStore as _, SandboxStoreError,
+    PageRequest, SandboxEventStore as _, SandboxLifecycleCommand,
+    SandboxLifecycleCommandStore as _, SandboxStore as _, SandboxStoreError,
     SandboxWorkerStore as _,
 };
 use layer2_core::sandbox::{
-    CreateSandbox, InMemorySandboxStore, Sandbox, SandboxEventKind, SandboxOrigin, SandboxPolicy,
-    SandboxPolicySource, SandboxService, SandboxStatus, SandboxWorkStep,
+    CreateSandbox, DurableAgentUpdateRecorder, InMemorySandboxStore, Sandbox, SandboxEventKind,
+    SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxReviveCause, SandboxRotationIdentity,
+    SandboxService, SandboxStatus, SandboxWorkStep,
 };
 use layer2_core::{
     rfc3339_at, seconds_from_rfc3339, Authorization, Caller, Capability, SandboxId,
@@ -32,6 +34,7 @@ use tokio::sync::Notify;
 use crate::auth::persistence::SecretValue;
 
 use super::credential::{CredentialError, CredentialMaterial, SandboxCredentialController};
+use super::live_agents::LiveAgentRegistry;
 use super::worker::{
     CheckpointObjectPurger, LiveAgentStopper, ProfileWorkspaceProvisioner, SandboxDependencyError,
     SandboxWorker, SandboxWorkerConfig, SandboxWorkerDependencies, CREDENTIAL_EXPIRY_MARGIN,
@@ -357,6 +360,7 @@ struct Harness {
     credentials: Arc<MemoryCredentials>,
     backend: InMemoryHostedBackend,
     adapter: Arc<dyn SandboxAdapter>,
+    registry: Arc<LiveAgentRegistry>,
     actions: ActionLog,
     reference: SandboxProfileRef,
     policy: SandboxPolicy,
@@ -382,6 +386,7 @@ impl Harness {
         let credentials = MemoryCredentials::new(actions.clone());
         let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
         let adapter: Arc<dyn SandboxAdapter> = Arc::new(adapter);
+        let registry = Arc::new(LiveAgentRegistry::default());
         let dependencies = SandboxWorkerDependencies {
             store: store.clone(),
             adapter: Arc::clone(&adapter),
@@ -395,6 +400,8 @@ impl Harness {
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: actions.clone(),
             }),
+            registry: registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(store.clone()),
         };
         let mut config = SandboxWorkerConfig::new("worker-a", "test", "runtime-v2", policy.clone());
         config.lease_duration = Duration::from_secs(60);
@@ -407,6 +414,7 @@ impl Harness {
             credentials,
             backend,
             adapter,
+            registry,
             actions,
             reference,
             policy,
@@ -487,6 +495,8 @@ impl Harness {
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: self.actions.clone(),
             }),
+            registry: self.registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(self.store.clone()),
         };
         let mut config =
             SandboxWorkerConfig::with_policy_source(holder, "test", "runtime-v2", policy);
@@ -513,6 +523,8 @@ impl Harness {
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: self.actions.clone(),
             }),
+            registry: self.registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(self.store.clone()),
         };
         let mut config =
             SandboxWorkerConfig::new(holder, "test", "runtime-v2", self.policy.clone());
@@ -648,7 +660,7 @@ async fn create_installs_before_credential_then_builds_workspaces_in_order() {
         .material(&created.id, 1)
         .await
         .unwrap()
-        .is_none());
+        .is_some());
     let requests = harness.backend.requests().await;
     assert!(matches!(&requests[0].1, RequestFrame::Install(request)
         if request.commands == ["apt-get update", "apt-get install -y git"]));
@@ -724,6 +736,133 @@ async fn create_installs_before_credential_then_builds_workspaces_in_order() {
             to: SandboxStatus::Active,
         }
     );
+}
+
+#[tokio::test]
+async fn worker_pauses_and_revives_a_sandbox_from_its_held_checkpoint() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let active = harness.drive_active(&created.id, now).await;
+    let old_runtime = RuntimeHandle(active.runtime.as_ref().unwrap().runtime_id.clone());
+    let pause_at = now + Duration::from_secs(1);
+    harness
+        .store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            active.id.clone(),
+            active.owner.clone(),
+            rfc3339_at(pause_at),
+            Some("inactive".into()),
+        ))
+        .await
+        .unwrap();
+
+    for _ in 0..4 {
+        harness.run(&active.id, pause_at).await;
+    }
+    let paused = harness.stored(&active.id).await;
+    assert_eq!(paused.status, SandboxStatus::Paused);
+    assert!(paused.runtime.is_none());
+    assert!(paused.lifecycle.operation.is_none());
+    assert_eq!(
+        paused
+            .lifecycle
+            .checkpoints
+            .latest
+            .as_ref()
+            .unwrap()
+            .conversations,
+        []
+    );
+    assert!(harness.backend.snapshot(&old_runtime).await.is_err());
+
+    let revive_at = pause_at + Duration::from_secs(1);
+    harness
+        .store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+            paused.id.clone(),
+            paused.owner.clone(),
+            rfc3339_at(revive_at),
+            SandboxReviveCause::ExplicitRequest,
+        ))
+        .await
+        .unwrap();
+    for _ in 0..7 {
+        harness.run(&paused.id, revive_at).await;
+    }
+    let revived = harness.stored(&paused.id).await;
+    assert_eq!(revived.status, SandboxStatus::Active);
+    assert!(revived.lifecycle.operation.is_none());
+    assert!(revived.lifecycle.paused_notice.is_none());
+    assert_ne!(revived.runtime.as_ref().unwrap().runtime_id, old_runtime.0);
+    assert_eq!(
+        revived.runtime.as_ref().unwrap().runtime_version,
+        "runtime-v2"
+    );
+    assert!(harness
+        .credentials
+        .material(&revived.id, 1)
+        .await
+        .unwrap()
+        .is_some());
+    let requests = harness.backend.requests().await;
+    assert!(requests
+        .iter()
+        .any(|(_, request)| matches!(request, RequestFrame::BootstrapRestore(_))));
+    assert!(requests
+        .iter()
+        .any(|(_, request)| matches!(request, RequestFrame::Restore(_))));
+}
+
+#[tokio::test]
+async fn worker_rotates_an_image_through_checkpoint_restore_without_installing_again() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let active = harness.drive_active(&created.id, now).await;
+    let old_runtime = active.runtime.as_ref().unwrap().runtime_id.clone();
+    let before = harness
+        .backend
+        .requests()
+        .await
+        .iter()
+        .filter(|(_, request)| matches!(request, RequestFrame::Install(_)))
+        .count();
+    let identity = SandboxRotationIdentity::capture(&active, &[]).unwrap();
+    let expected_revision = active.revision;
+    let rotation_at = now + Duration::from_secs(1);
+    let mut rotating = active.clone();
+    rotating
+        .begin_image_rotation("runtime-v3".into(), identity, rfc3339_at(rotation_at))
+        .unwrap();
+    harness
+        .store
+        .save_sandbox(expected_revision, rotating)
+        .await
+        .unwrap();
+
+    for _ in 0..10 {
+        harness.run(&active.id, rotation_at).await;
+    }
+    let rotated = harness.stored(&active.id).await;
+    assert_eq!(rotated.status, SandboxStatus::Active);
+    assert_eq!(rotated.lifecycle.rotation.rotations, 1);
+    assert_ne!(rotated.runtime.as_ref().unwrap().runtime_id, old_runtime);
+    assert_eq!(
+        rotated.runtime.as_ref().unwrap().runtime_version,
+        "runtime-v3"
+    );
+    let requests = harness.backend.requests().await;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(_, request)| matches!(request, RequestFrame::Install(_)))
+            .count(),
+        before
+    );
+    assert!(requests
+        .iter()
+        .any(|(_, request)| matches!(request, RequestFrame::BootstrapRestore(_))));
 }
 
 #[tokio::test]

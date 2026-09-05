@@ -3,12 +3,16 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::profiles::WorkspaceProfileRef;
 use layer2_core::sandbox::store::{SandboxLifecycleStore, SandboxStoreError};
-use layer2_core::sandbox::{Sandbox, SandboxPolicy, SandboxPolicySource, SandboxWorkStep};
+use layer2_core::sandbox::{
+    AgentUpdateRecorder, Sandbox, SandboxPolicy, SandboxPolicySource, SandboxWorkStep,
+};
 use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::{RuntimeHandle, SandboxAdapter};
 
 use super::credential::SandboxCredentialController;
+use super::live_agents::LiveAgentRegistry;
 
+mod lifecycle;
 mod provisioning;
 mod retirement;
 mod support;
@@ -69,6 +73,8 @@ pub(crate) struct SandboxWorkerDependencies {
     pub workspaces: Arc<dyn ProfileWorkspaceProvisioner>,
     pub agents: Arc<dyn LiveAgentStopper>,
     pub checkpoints: Arc<dyn CheckpointObjectPurger>,
+    pub registry: Arc<LiveAgentRegistry>,
+    pub updates: Arc<dyn AgentUpdateRecorder>,
 }
 
 #[derive(Clone)]
@@ -177,9 +183,7 @@ impl SandboxWorker {
             SandboxWorkStep::WaitForCredentialRotation => self.begin_rotation(sandbox, now).await,
             SandboxWorkStep::RevokeRotatedCredential => self.revoke_rotated(sandbox, now).await,
             SandboxWorkStep::FinishCredentialRotation => self.finish_rotation(sandbox, now).await,
-            SandboxWorkStep::RunLifecycleOperation => Err(SandboxStoreError::Unavailable(
-                "sandbox pause and recovery worker is not composed".into(),
-            )),
+            SandboxWorkStep::RunLifecycleOperation => self.run_lifecycle(sandbox, now).await,
             SandboxWorkStep::StopAgents => self.stop_agents(sandbox, now).await,
             SandboxWorkStep::RevokeRetirementCredentials => {
                 self.revoke_for_retirement(sandbox, now).await

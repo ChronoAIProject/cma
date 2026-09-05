@@ -39,7 +39,17 @@ pub(super) fn lifecycle_sandbox_advanced(
         return false;
     };
     let mut expected = current.clone();
-    let result = if let (SandboxStatus::Failed, None, Some(failure)) = (
+    let retries_same_phase = current.lifecycle.operation == next.lifecycle.operation
+        && current.status == next.status
+        && next.work.attempts == current.work.attempts.saturating_add(1);
+    let result = if retries_same_phase {
+        expected.retry_lifecycle(
+            next.work.ready_at.clone(),
+            &lease.holder,
+            lease.fence,
+            appended_at.into(),
+        )
+    } else if let (SandboxStatus::Failed, None, Some(failure)) = (
         next.status,
         next.lifecycle.operation.as_ref(),
         next.failure.as_ref(),
