@@ -1,5 +1,23 @@
-use layer2_core::profiles::SkillRef;
+use std::sync::Arc;
+use std::time::Duration;
+
+use futures_util::{StreamExt as _, TryStreamExt as _};
+use layer2_core::profiles::{SkillRef, SkillSource};
+use layer2_core::SubjectId;
 use layer3_adapter::AgentSkill;
+use serde::Deserialize;
+
+use super::credential::OwnerTokenSource;
+
+const ORNN_PROXY_PATH: &[&str] = &["api", "v1", "proxy", "s", "ornn-api"];
+const ORNN_SKILLS_PATH: &[&str] = &["api", "v1", "skills"];
+const BASELINE_SKILL_IDS: &[&str] = &["nyxid", "ornn-agent-manual-cli"];
+const MAX_REFERENCES: usize = 32;
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_URL_BYTES: usize = 2_048;
+const LOOKUP_CONCURRENCY: usize = 4;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum AgentSkillResolutionError {
@@ -16,6 +34,7 @@ pub(crate) enum AgentSkillResolutionError {
 pub(crate) trait AgentSkillResolver: Send + Sync {
     async fn resolve(
         &self,
+        owner: &SubjectId,
         references: &[SkillRef],
     ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError>;
 }
@@ -27,6 +46,7 @@ pub(crate) struct EmptyAgentSkillResolver;
 impl AgentSkillResolver for EmptyAgentSkillResolver {
     async fn resolve(
         &self,
+        _owner: &SubjectId,
         references: &[SkillRef],
     ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
         if references.is_empty() {
@@ -38,3 +58,338 @@ impl AgentSkillResolver for EmptyAgentSkillResolver {
         }
     }
 }
+
+/// Resolves literal Ornn versions through NyxID's service proxy.
+pub(crate) struct OrnnAgentSkillResolver {
+    http: reqwest::Client,
+    request_origin: reqwest::Url,
+    locator_origin: reqwest::Url,
+    tokens: Option<Arc<dyn OwnerTokenSource>>,
+}
+
+impl OrnnAgentSkillResolver {
+    pub(crate) fn authenticated<T>(
+        platform_origin: &str,
+        tokens: Arc<T>,
+    ) -> Result<Arc<Self>, String>
+    where
+        T: OwnerTokenSource + 'static,
+    {
+        let tokens: Arc<dyn OwnerTokenSource> = tokens;
+        Self::new(platform_origin, Some(tokens)).map(Arc::new)
+    }
+
+    pub(crate) fn anonymous(platform_origin: &str) -> Result<Arc<Self>, String> {
+        Self::new(platform_origin, None).map(Arc::new)
+    }
+
+    fn new(
+        platform_origin: &str,
+        tokens: Option<Arc<dyn OwnerTokenSource>>,
+    ) -> Result<Self, String> {
+        let origin = parse_platform_origin(platform_origin)?;
+        let http = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| "agent skill HTTP client is not usable".to_string())?;
+        Ok(Self {
+            http,
+            request_origin: origin.clone(),
+            locator_origin: origin,
+            tokens,
+        })
+    }
+
+    async fn owner_bearer(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<crate::auth::persistence::SecretValue>, AgentSkillResolutionError> {
+        let Some(tokens) = &self.tokens else {
+            return Ok(None);
+        };
+        tokens
+            .token_for(owner)
+            .await
+            .map_err(|_| unavailable("owner credential lookup failed"))?
+            .map(Some)
+            .ok_or_else(|| unavailable("owner credential is not available"))
+    }
+
+    async fn resolve_one(
+        &self,
+        index: usize,
+        reference: &SkillRef,
+        bearer: Option<&str>,
+    ) -> Result<AgentSkill, AgentSkillResolutionError> {
+        let version = pinned_version(reference, index)?;
+        let url = skill_detail_url(&self.request_origin, reference.id.as_str(), version)
+            .map_err(|_| invalid(index, "reference cannot be represented by the Ornn API"))?;
+        let mut request = self.http.get(url);
+        if let Some(bearer) = bearer {
+            request = request.bearer_auth(bearer);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| unavailable_at(index, "Ornn request failed"))?;
+        classify_status(index, response.status())?;
+        let body = bounded_body(response, index).await?;
+        let envelope: OrnnEnvelope = serde_json::from_slice(&body)
+            .map_err(|_| invalid(index, "Ornn response is not valid JSON"))?;
+        if envelope.error.is_some() {
+            return Err(invalid(index, "Ornn success response contains an error"));
+        }
+        let material = envelope
+            .data
+            .ok_or_else(|| invalid(index, "Ornn success response has no data"))?;
+        if material.guid != reference.id.as_str() {
+            return Err(invalid(index, "Ornn response changed the skill identity"));
+        }
+        if material.version != version {
+            return Err(invalid(index, "Ornn response changed the pinned version"));
+        }
+        if !canonical_sha256(&material.skill_hash) {
+            return Err(invalid(index, "Ornn response has an invalid SHA-256"));
+        }
+        let source_url = skill_download_url(&self.locator_origin, reference.id.as_str(), version)
+            .map_err(|_| invalid(index, "download locator is not canonical"))?;
+        Ok(AgentSkill {
+            id: reference.id.as_str().to_owned(),
+            version: reference.version.clone(),
+            archive_sha256: material.skill_hash,
+            source_url: source_url.to_string(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentSkillResolver for OrnnAgentSkillResolver {
+    async fn resolve(
+        &self,
+        owner: &SubjectId,
+        references: &[SkillRef],
+    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+        if references.len() > MAX_REFERENCES {
+            return Err(AgentSkillResolutionError::Invalid(format!(
+                "a profile may reference at most {MAX_REFERENCES} skills"
+            )));
+        }
+        if references.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut ids = std::collections::BTreeSet::from_iter(BASELINE_SKILL_IDS.iter().copied());
+        for (index, reference) in references.iter().enumerate() {
+            pinned_version(reference, index)?;
+            if !ids.insert(reference.id.as_str()) {
+                return Err(invalid(index, "skill id duplicates another home entry"));
+            }
+        }
+        let bearer = self.owner_bearer(owner).await?;
+        let bearer = bearer.as_ref().map(|value| value.expose());
+        let requests = references
+            .iter()
+            .enumerate()
+            .map(|(index, reference)| self.resolve_one(index, reference, bearer))
+            .collect::<Vec<_>>();
+        let resolution = futures_util::stream::iter(requests)
+            .buffered(LOOKUP_CONCURRENCY)
+            .try_collect();
+        tokio::time::timeout(RESOLUTION_TIMEOUT, resolution)
+            .await
+            .map_err(|_| unavailable("Ornn resolution deadline elapsed"))?
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OrnnEnvelope {
+    data: Option<OrnnMaterial>,
+    #[serde(default)]
+    error: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrnnMaterial {
+    guid: String,
+    version: String,
+    #[serde(rename = "skillHash")]
+    skill_hash: String,
+}
+
+async fn bounded_body(
+    response: reqwest::Response,
+    index: usize,
+) -> Result<Vec<u8>, AgentSkillResolutionError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
+        return Err(invalid(index, "Ornn response exceeds the byte limit"));
+    }
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or_default()
+            .min(MAX_RESPONSE_BYTES),
+    );
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(|_| unavailable_at(index, "Ornn response read failed"))?;
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_RESPONSE_BYTES)
+        {
+            return Err(invalid(index, "Ornn response exceeds the byte limit"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+fn classify_status(
+    index: usize,
+    status: reqwest::StatusCode,
+) -> Result<(), AgentSkillResolutionError> {
+    if status.is_success() {
+        return Ok(());
+    }
+    match status {
+        reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::NOT_FOUND => {
+            Err(AgentSkillResolutionError::NotFound(format!(
+                "skill reference {index} is absent or inaccessible"
+            )))
+        }
+        reqwest::StatusCode::UNAUTHORIZED
+        | reqwest::StatusCode::REQUEST_TIMEOUT
+        | reqwest::StatusCode::TOO_MANY_REQUESTS
+        | reqwest::StatusCode::BAD_GATEWAY
+        | reqwest::StatusCode::SERVICE_UNAVAILABLE
+        | reqwest::StatusCode::GATEWAY_TIMEOUT => {
+            Err(unavailable_at(index, "Ornn is temporarily unavailable"))
+        }
+        status if status.is_server_error() => {
+            Err(unavailable_at(index, "Ornn is temporarily unavailable"))
+        }
+        _ => Err(invalid(index, "Ornn refused the exact pinned reference")),
+    }
+}
+
+fn pinned_version(reference: &SkillRef, index: usize) -> Result<&str, AgentSkillResolutionError> {
+    if !matches!(reference.source, SkillSource::Ornn) {
+        return Err(invalid(index, "skill source is unsupported"));
+    }
+    if !safe_skill_id(reference.id.as_str()) {
+        return Err(invalid(index, "Ornn skill id is not a safe runtime name"));
+    }
+    let version = reference
+        .version
+        .as_deref()
+        .ok_or_else(|| invalid(index, "Ornn skill version must be pinned"))?;
+    if !canonical_ornn_version(version) {
+        return Err(invalid(
+            index,
+            "Ornn skill version is not a literal release",
+        ));
+    }
+    Ok(version)
+}
+
+fn safe_skill_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with('.')
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn canonical_ornn_version(version: &str) -> bool {
+    version.len() <= 20
+        && version
+            .split_once('.')
+            .is_some_and(|(major, minor)| canonical_decimal(major) && canonical_decimal(minor))
+}
+
+fn canonical_decimal(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && (value == "0" || !value.starts_with('0'))
+}
+
+fn canonical_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn skill_detail_url(origin: &reqwest::Url, id: &str, version: &str) -> Result<reqwest::Url, ()> {
+    let mut url = skill_url(origin, id)?;
+    url.query_pairs_mut().append_pair("version", version);
+    valid_url(&url).then_some(url).ok_or(())
+}
+
+fn skill_download_url(origin: &reqwest::Url, id: &str, version: &str) -> Result<reqwest::Url, ()> {
+    let mut url = skill_url(origin, id)?;
+    url.path_segments_mut()
+        .map_err(|_| ())?
+        .extend(["versions", version, "download"]);
+    valid_url(&url).then_some(url).ok_or(())
+}
+
+fn skill_url(origin: &reqwest::Url, id: &str) -> Result<reqwest::Url, ()> {
+    if !safe_skill_id(id) {
+        return Err(());
+    }
+    let mut url = origin.clone();
+    url.path_segments_mut()
+        .map_err(|_| ())?
+        .extend(ORNN_PROXY_PATH.iter().chain(ORNN_SKILLS_PATH).copied())
+        .push(id);
+    Ok(url)
+}
+
+fn valid_url(url: &reqwest::Url) -> bool {
+    url.as_str().len() <= MAX_URL_BYTES
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none()
+}
+
+fn parse_platform_origin(raw: &str) -> Result<reqwest::Url, String> {
+    let parsed = reqwest::Url::parse(raw)
+        .map_err(|_| "agent skill platform origin is not a valid URL".to_string())?;
+    let canonical = parsed.origin().ascii_serialization();
+    if raw.len() > MAX_URL_BYTES
+        || parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || raw != canonical
+    {
+        return Err("agent skill platform origin must be one canonical HTTPS origin".into());
+    }
+    Ok(parsed)
+}
+
+fn unavailable(detail: &str) -> AgentSkillResolutionError {
+    AgentSkillResolutionError::Unavailable(detail.into())
+}
+
+fn unavailable_at(index: usize, detail: &str) -> AgentSkillResolutionError {
+    AgentSkillResolutionError::Unavailable(format!("skill reference {index}: {detail}"))
+}
+
+fn invalid(index: usize, detail: &str) -> AgentSkillResolutionError {
+    AgentSkillResolutionError::Invalid(format!("skill reference {index}: {detail}"))
+}
+
+#[cfg(test)]
+#[path = "agent_skills_tests.rs"]
+mod tests;

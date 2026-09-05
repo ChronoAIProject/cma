@@ -385,6 +385,7 @@ impl ScriptedSkills {
 impl AgentSkillResolver for ScriptedSkills {
     async fn resolve(
         &self,
+        _owner: &SubjectId,
         _references: &[SkillRef],
     ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
         self.results
