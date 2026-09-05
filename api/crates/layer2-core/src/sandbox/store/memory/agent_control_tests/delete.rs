@@ -234,6 +234,7 @@ async fn agent_control_delete_keeps_logs_through_scheduling_and_terminal_publica
     deleted
         .transition(AgentStatus::Deleted, TWO_MINUTES.into(), None)
         .unwrap();
+    deleted.conversation.last_seq += 1;
     store
         .commit_agent_work(AgentWorkMutation {
             expected_agent_revision: claimed.revision,

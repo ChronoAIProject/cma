@@ -554,6 +554,7 @@ async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event()
             to: AgentStatus::Ready,
         },
     ];
+    next.conversation.last_seq += u64::try_from(log_kinds.len()).unwrap();
 
     store
         .commit_agent_work(AgentWorkMutation {
@@ -576,7 +577,6 @@ async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event()
         .await
         .unwrap();
 
-    next.conversation.last_seq = 2;
     assert_eq!(store.get_agent(&next.id).await.unwrap(), Some(next.clone()));
     assert_eq!(
         store.get_worktree(&worktree.id).await.unwrap(),
@@ -622,11 +622,41 @@ async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event()
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_rejects_an_incorrect_agent_log_high_water_mark() {
+    let (client, name) = database("agent_work_incorrect_log_high_water").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (_, _, claimed) = claimed_agent_work_fixture(&store, "incorrect_log_high_water").await;
+    let next = advance_claimed_agent(&claimed);
+
+    assert_eq!(
+        store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: claimed.revision,
+                holder: "worker".into(),
+                fence: claimed.work.lease.as_ref().unwrap().fence,
+                agent: next,
+                worktree: None,
+                appended_at: NOW.into(),
+                sandbox_event: None,
+                agent_logs: vec![AgentLogKind::Deleted],
+            })
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
+    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 0);
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn agent_work_invalid_worktree_rolls_back_every_artifact() {
     let (client, name) = database("agent_work_worktree_rollback").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (parent, worktree, claimed) = claimed_agent_work_fixture(&store, "worktree_rollback").await;
-    let next = advance_claimed_agent(&claimed);
+    let mut next = advance_claimed_agent(&claimed);
+    next.conversation.last_seq += 1;
     let mut invalid_worktree = worktree.clone();
     invalid_worktree.status = WorktreeStatus::Ready;
     invalid_worktree.revision += 2;
@@ -689,7 +719,8 @@ async fn agent_work_late_log_conflict_rolls_back_agent_worktree_and_earlier_log(
         .insert_one(log_document(&conflicting).unwrap())
         .await
         .unwrap();
-    let next = advance_claimed_agent(&claimed);
+    let mut next = advance_claimed_agent(&claimed);
+    next.conversation.last_seq += 2;
     let expected_worktree_revision = worktree.revision;
     worktree.transition(WorktreeStatus::Ready).unwrap();
 
@@ -759,7 +790,8 @@ async fn agent_work_late_event_conflict_rolls_back_agent_worktree_and_logs() {
         .insert_one(event_document(&conflicting).unwrap())
         .await
         .unwrap();
-    let next = advance_claimed_agent(&claimed);
+    let mut next = advance_claimed_agent(&claimed);
+    next.conversation.last_seq += 2;
     let expected_worktree_revision = worktree.revision;
     worktree.transition(WorktreeStatus::Ready).unwrap();
 
@@ -818,6 +850,7 @@ async fn agent_work_reopen_reconciliation_requires_every_exact_artifact() {
     let expected_worktree_revision = worktree.revision;
     worktree.transition(WorktreeStatus::Ready).unwrap();
     let log_kinds = vec![AgentLogKind::Deleted, AgentLogKind::Deleted];
+    next.conversation.last_seq += u64::try_from(log_kinds.len()).unwrap();
     let event_kind = SandboxEventKind::AgentDeleted {
         agent_id: next.id.clone(),
     };
@@ -837,7 +870,6 @@ async fn agent_work_reopen_reconciliation_requires_every_exact_artifact() {
         })
         .await
         .unwrap();
-    next.conversation.last_seq = 2;
     let logs = log_kinds
         .into_iter()
         .enumerate()
