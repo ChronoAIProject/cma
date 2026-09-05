@@ -43,7 +43,9 @@ pub(crate) use credential::{
     CredentialCustodyError, CredentialMaterial, CredentialRevocation, ManagedSandboxCredentials,
     SandboxCredentialCustody,
 };
+pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
+pub(crate) use runtime_mapping::runtime_capabilities;
 
 #[cfg(test)]
 mod agent_worker_tests;

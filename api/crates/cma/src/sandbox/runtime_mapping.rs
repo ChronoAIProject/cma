@@ -32,7 +32,7 @@ pub(super) fn runtime_options(
     }
 }
 
-pub(super) fn runtime_capabilities(capabilities: AdapterCapabilities) -> RuntimeCapabilities {
+pub(crate) fn runtime_capabilities(capabilities: AdapterCapabilities) -> RuntimeCapabilities {
     let values = [
         (capabilities.conversation, RuntimeCapability::Conversation),
         (capabilities.snapshot, RuntimeCapability::Snapshot),

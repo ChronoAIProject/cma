@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use axum::{body::Body, http::Request};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use layer1_public::{
     rest::{hierarchy_router, profiles_router, HierarchyState, ProfilesState},
     AuthenticatedSubject,
@@ -88,27 +91,43 @@ fn composed_rest_router() -> Router {
     let profile_store = Arc::new(InMemoryProfileStore::default());
     let sandbox_store = Arc::new(InMemorySandboxStore::default());
     let operations: Arc<dyn OperationStore> = Arc::new(NoopOperationStore);
-    let settings = PlatformSettingsService::new(
+    let settings = Arc::new(PlatformSettingsService::new(
         Arc::new(MutableSettings::new()),
         ActivityService::new(Arc::new(NoopActivityStore)),
-    );
+    ));
     let state = ProfilesState::new(
         Arc::clone(&profile_store),
         Arc::clone(&operations),
-        Arc::new(settings),
+        Arc::clone(&settings),
         profile_route_policy(),
     );
-    let hierarchy = HierarchyState::new(
-        SandboxService::new(
-            Arc::clone(&sandbox_store),
-            Arc::clone(&profile_store),
-            SandboxPolicy::default(),
-        ),
-        WorkspaceService::new(Arc::clone(&sandbox_store), profile_store),
-        HierarchyReadService::new(sandbox_store),
-        operations,
+    let sandboxes = SandboxService::new(
+        Arc::clone(&sandbox_store),
+        Arc::clone(&profile_store),
+        SandboxPolicy::default(),
     );
-    rest_router(profiles_router(state).merge(hierarchy_router(hierarchy)))
+    let workspaces = WorkspaceService::new(Arc::clone(&sandbox_store), profile_store.clone());
+    let projections = AgentProjectionServices::new(
+        Arc::clone(&sandbox_store),
+        profile_store.clone(),
+        settings,
+        Arc::clone(&sandboxes),
+        Arc::clone(&workspaces),
+        Arc::new(LiveAgentRegistry::default()),
+        Arc::new(UnavailableSandboxResources),
+        runtime_capabilities(layer3_adapter::RuntimeContract::V3.capabilities()),
+    );
+    let hierarchy = HierarchyState::new(
+        sandboxes,
+        workspaces,
+        HierarchyReadService::new(sandbox_store),
+        Arc::clone(&operations),
+    );
+    rest_router(
+        profiles_router(state)
+            .merge(hierarchy_router(hierarchy))
+            .merge(projections.router(operations)),
+    )
 }
 
 #[tokio::test]
@@ -162,6 +181,63 @@ async fn hierarchy_routes_are_composed_before_the_rest_fallback() {
     let response = composed_rest_router().oneshot(request).await.unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
     assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
+}
+
+#[tokio::test]
+async fn every_agent_interface_is_composed_before_the_rest_fallback() {
+    let app = composed_rest_router();
+    for (method, path, expected) in [
+        (Method::GET, "/api/v1/agents", StatusCode::FORBIDDEN),
+        (Method::GET, "/api/v1/agui/capabilities", StatusCode::OK),
+        (
+            Method::GET,
+            "/api/v1/agents/agt_missing/terminal",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (Method::POST, "/api/v1/mcp", StatusCode::NOT_IMPLEMENTED),
+        (Method::POST, "/api/v1/a2a", StatusCode::NOT_IMPLEMENTED),
+        (
+            Method::GET,
+            "/.well-known/agent-card.json",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            Method::GET,
+            "/api/v1/responses",
+            StatusCode::METHOD_NOT_ALLOWED,
+        ),
+    ] {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(AuthenticatedSubject(SubjectId::new("owner-a")));
+        request.extensions_mut().insert(Authorization::none());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), expected, "unexpected status for {path}");
+        assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
+    }
+}
+
+#[tokio::test]
+async fn retired_session_and_terminal_ticket_routes_remain_absent() {
+    let app = composed_rest_router();
+    for path in [
+        "/api/v1/sessions",
+        "/api/v1/sessions/sesn_retired/terminal",
+        "/api/v1/agents/agt_missing/terminal-ticket",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
+    }
 }
 
 #[tokio::test]
