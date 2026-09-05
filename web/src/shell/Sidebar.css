@@ -39,8 +39,17 @@
 
 .sidebar__brand {
   gap: 8px;
+  flex: 1;
   min-width: 0;
+  padding: 3px 4px;
+  text-align: left;
   text-decoration: none;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.sidebar__brand:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .sidebar__mark {
@@ -59,6 +68,11 @@
   font-size: 18px;
   font-weight: 700;
   letter-spacing: 0;
+}
+
+.sidebar__new {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .sidebar__toggle {
@@ -81,7 +95,7 @@
 
 .sidebar__build {
   align-self: flex-start;
-  margin-top: 8px;
+  margin: 4px 8px;
   color: var(--dsw-alias-label-tertiary);
   font-family: var(--ds-font-family-code);
   font-size: 11px;
