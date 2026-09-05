@@ -1,21 +1,13 @@
-use crate::sandbox::{Agent, AgentStatus, AgentWorkStep, Worktree, WorktreeStatus};
+use crate::sandbox::{Agent, AgentWorkStep, Worktree, WorktreeStatus};
 use crate::seconds_from_rfc3339;
 
 use super::agent_work_evidence_validation::{
     startup_effect, validate_advance_history, validate_evidence, validate_histories,
 };
+use super::agent_work_transition_validation::{
+    classify_publication, validate_position, PublicationKind,
+};
 use super::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum PublicationKind {
-    Intent,
-    Retry,
-    Advance,
-    Ready,
-    StartupFailure,
-    Stop,
-    Delete,
-}
 
 /// Validate one fenced lifecycle publication against its complete durable snapshot.
 pub fn validate_agent_work_mutation(
@@ -96,168 +88,6 @@ fn worktree_matches_agent(worktree: &Worktree, agent: &Agent) -> bool {
         && worktree.sandbox_id == agent.sandbox_id
         && worktree.owner == agent.owner
         && worktree.agent_id.as_ref() == Some(&agent.id)
-}
-
-fn validate_position(agent: &Agent, worktree: &Worktree) -> Result<(), SandboxStoreError> {
-    let live_shape = !agent.status.is_live()
-        || (agent.failure.is_none()
-            && agent.stopped_at.is_none()
-            && agent.stop_reason.is_none()
-            && agent.deleted_at.is_none());
-    let terminal_shape = match agent.status {
-        AgentStatus::Stopped => {
-            agent.failure.is_none()
-                && agent.stopped_at.is_some()
-                && agent.stop_reason.is_some()
-                && agent.requested_stop_reason.is_none()
-                && agent.deleted_at.is_none()
-        }
-        AgentStatus::Failed => {
-            agent.failure.is_some()
-                && agent.stopped_at.is_none()
-                && agent.stop_reason.is_none()
-                && agent.requested_stop_reason.is_none()
-                && agent.deleted_at.is_none()
-        }
-        _ => true,
-    };
-    let positioned = match agent.work.step {
-        AgentWorkStep::AddWorktree
-        | AgentWorkStep::MaterializeHome
-        | AgentWorkStep::OpenConversation
-        | AgentWorkStep::PublishReady => {
-            agent.status == AgentStatus::Starting
-                && agent.ready_at.is_none()
-                && agent.requested_stop_reason.is_none()
-                && worktree.status == WorktreeStatus::Creating
-        }
-        AgentWorkStep::PublishConnection | AgentWorkStep::DispatchFirstMessage => {
-            agent.status == AgentStatus::Ready
-                && agent
-                    .ready_at
-                    .as_deref()
-                    .and_then(seconds_from_rfc3339)
-                    .is_some()
-                && agent.requested_stop_reason.is_none()
-                && worktree.status == WorktreeStatus::Ready
-        }
-        AgentWorkStep::FenceInteraction
-        | AgentWorkStep::CloseProcess
-        | AgentWorkStep::PublishStopped => {
-            agent.status.is_live()
-                && agent.requested_stop_reason.is_some()
-                && matches!(
-                    worktree.status,
-                    WorktreeStatus::Creating | WorktreeStatus::Ready | WorktreeStatus::Failed
-                )
-        }
-        AgentWorkStep::EnsureProcessClosed => {
-            matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
-                && matches!(
-                    worktree.status,
-                    WorktreeStatus::Ready | WorktreeStatus::Failed
-                )
-        }
-        AgentWorkStep::RemoveHome | AgentWorkStep::RemoveWorktree => {
-            matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
-                && worktree.status == WorktreeStatus::Removing
-        }
-        AgentWorkStep::PublishDeleted => {
-            matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
-                && worktree.status == WorktreeStatus::Removed
-        }
-        AgentWorkStep::None => false,
-    };
-    if live_shape && terminal_shape && positioned {
-        Ok(())
-    } else {
-        Err(SandboxStoreError::Conflict)
-    }
-}
-
-fn classify_publication(
-    current: &Agent,
-    next: &Agent,
-) -> Result<PublicationKind, SandboxStoreError> {
-    let from = current.work.step;
-    let to = next.work.step;
-    if from == to {
-        return Ok(
-            if next.work.cleanup_debt.len() == current.work.cleanup_debt.len() + 1 {
-                PublicationKind::Intent
-            } else {
-                PublicationKind::Retry
-            },
-        );
-    }
-    if from == AgentWorkStep::PublishReady
-        && to == AgentWorkStep::PublishConnection
-        && current.status == AgentStatus::Starting
-        && next.status == AgentStatus::Ready
-    {
-        return Ok(PublicationKind::Ready);
-    }
-    if startup_step(from)
-        && to == AgentWorkStep::None
-        && current.status == AgentStatus::Starting
-        && next.status == AgentStatus::Failed
-    {
-        return Ok(PublicationKind::StartupFailure);
-    }
-    if from == AgentWorkStep::PublishStopped
-        && to == AgentWorkStep::None
-        && current.status.is_live()
-        && next.status == AgentStatus::Stopped
-    {
-        return Ok(PublicationKind::Stop);
-    }
-    if from == AgentWorkStep::PublishDeleted
-        && to == AgentWorkStep::None
-        && matches!(current.status, AgentStatus::Stopped | AgentStatus::Failed)
-        && next.status == AgentStatus::Deleted
-    {
-        return Ok(PublicationKind::Delete);
-    }
-    if current.status == next.status && legal_advance(from, to) {
-        Ok(PublicationKind::Advance)
-    } else {
-        Err(SandboxStoreError::Conflict)
-    }
-}
-
-fn startup_step(step: AgentWorkStep) -> bool {
-    matches!(
-        step,
-        AgentWorkStep::AddWorktree
-            | AgentWorkStep::MaterializeHome
-            | AgentWorkStep::OpenConversation
-            | AgentWorkStep::PublishReady
-    )
-}
-
-fn legal_advance(from: AgentWorkStep, to: AgentWorkStep) -> bool {
-    matches!(
-        (from, to),
-        (AgentWorkStep::AddWorktree, AgentWorkStep::MaterializeHome)
-            | (
-                AgentWorkStep::MaterializeHome,
-                AgentWorkStep::OpenConversation
-            )
-            | (AgentWorkStep::OpenConversation, AgentWorkStep::PublishReady)
-            | (
-                AgentWorkStep::PublishConnection,
-                AgentWorkStep::DispatchFirstMessage | AgentWorkStep::None
-            )
-            | (AgentWorkStep::DispatchFirstMessage, AgentWorkStep::None)
-            | (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess)
-            | (AgentWorkStep::CloseProcess, AgentWorkStep::PublishStopped)
-            | (
-                AgentWorkStep::EnsureProcessClosed,
-                AgentWorkStep::RemoveHome
-            )
-            | (AgentWorkStep::RemoveHome, AgentWorkStep::RemoveWorktree)
-            | (AgentWorkStep::RemoveWorktree, AgentWorkStep::PublishDeleted)
-    )
 }
 
 fn validate_work_delta(

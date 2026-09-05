@@ -3,7 +3,8 @@ use crate::sandbox::{
     SandboxEventKind, Worktree,
 };
 
-use super::agent_work_validation::{stamp, PublicationKind};
+use super::agent_work_transition_validation::PublicationKind;
+use super::agent_work_validation::stamp;
 use super::{AgentWorkMutation, SandboxStoreError};
 
 pub const MAX_AGENT_WORK_RECEIPTS: usize = 16;
