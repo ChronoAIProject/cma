@@ -31,6 +31,7 @@ mod service_trust;
 mod status;
 pub mod store;
 mod title;
+mod title_sanitize;
 mod title_service;
 mod title_store;
 mod workspace;
