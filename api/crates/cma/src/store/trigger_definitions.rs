@@ -21,6 +21,7 @@ use super::schema::initialize_collections;
 
 mod documents;
 mod indexes;
+mod launches;
 mod mutations;
 mod profile_resolution;
 mod publication;
@@ -36,6 +37,7 @@ pub struct MongoTriggerDefinitionStore {
     pub(super) definitions: Collection<Document>,
     pub(super) revisions: Collection<Document>,
     pub(super) profiles: Arc<MongoProfileStore>,
+    pub(super) launch_data: launches::LaunchCollections,
 }
 
 impl MongoTriggerDefinitionStore {
@@ -51,11 +53,13 @@ impl MongoTriggerDefinitionStore {
             &[TRIGGER_DEFINITIONS, TRIGGER_DEFINITION_REVISIONS],
         )
         .await?;
+        let launch_data = launches::LaunchCollections::open(&database).await?;
         let store = Self {
             client: client.clone(),
             definitions: majority_collection(&database, TRIGGER_DEFINITIONS),
             revisions: majority_collection(&database, TRIGGER_DEFINITION_REVISIONS),
             profiles,
+            launch_data,
         };
         indexes::ensure(&store).await?;
         tracing::info!(
@@ -315,5 +319,7 @@ pub(super) fn driver_error(context: &str, error: mongodb::error::Error) -> Trigg
 
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod launch_mongo_integration_tests;
 #[cfg(test)]
 mod reference_integration_tests;
