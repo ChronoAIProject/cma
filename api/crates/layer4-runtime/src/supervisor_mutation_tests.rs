@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::wire::{
-    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, AgentOpenReceipt, RequestFrame,
-    ResponseFrame, WireFailure,
+    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, AgentOpenReceipt, FencedReceipt,
+    FencedRequest, RequestFrame, ResponseFrame, WireFailure,
 };
 use layer3_adapter::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
@@ -17,6 +17,34 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::mutation_journal::{self, Begin, Operation};
+
+fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
+    RequestFrame::AddWorktree(FencedRequest::new(1, request))
+}
+
+fn remove_worktree_request(request: WorktreeRef) -> RequestFrame {
+    RequestFrame::RemoveWorktree(FencedRequest::new(1, request))
+}
+
+fn materialize_home_request(request: AgentHomePlan) -> RequestFrame {
+    RequestFrame::MaterializeAgentHome(FencedRequest::new(1, request))
+}
+
+fn remove_home_request(request: AgentHomeRemoveRequest) -> RequestFrame {
+    RequestFrame::RemoveAgentHome(FencedRequest::new(1, request))
+}
+
+fn open_agent_request(request: AgentLaunch) -> RequestFrame {
+    RequestFrame::OpenAgent(FencedRequest::new(1, request))
+}
+
+fn close_agent_request(request: AgentCloseRequest) -> RequestFrame {
+    RequestFrame::CloseAgent(FencedRequest::new(1, request))
+}
+
+fn fenced_receipt<T>(receipt: T) -> FencedReceipt<T> {
+    FencedReceipt::new(1, receipt)
+}
 
 fn root(name: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -111,10 +139,10 @@ async fn add_worktree(supervisor: &Supervisor, base: String) -> (WorktreeRequest
         base,
     );
     let receipt = match supervisor
-        .dispatch(RequestFrame::AddWorktree(request.clone()))
+        .dispatch(add_worktree_request(request.clone()))
         .await
     {
-        ResponseFrame::AddWorktree(receipt) => receipt,
+        ResponseFrame::AddWorktree(receipt) => receipt.receipt,
         other => panic!("worktree addition failed: {other:?}"),
     };
     (request, receipt)
@@ -157,7 +185,7 @@ async fn absent_cleanup_intents_complete_with_exact_durable_receipts() {
     assert_eq!(
         failure(
             supervisor
-                .dispatch(RequestFrame::CloseAgent(invalid_close))
+                .dispatch(close_agent_request(invalid_close))
                 .await
         )
         .code,
@@ -166,12 +194,7 @@ async fn absent_cleanup_intents_complete_with_exact_durable_receipts() {
     let invalid_home =
         AgentHomeRemoveRequest::new("agent:another-agent:home:remove:v1", agent_id.clone());
     assert_eq!(
-        failure(
-            supervisor
-                .dispatch(RequestFrame::RemoveAgentHome(invalid_home))
-                .await
-        )
-        .code,
+        failure(supervisor.dispatch(remove_home_request(invalid_home)).await).code,
         "agent_operation_invalid"
     );
     let invalid_worktree = WorktreeRef::new(
@@ -182,7 +205,7 @@ async fn absent_cleanup_intents_complete_with_exact_durable_receipts() {
     assert_eq!(
         failure(
             supervisor
-                .dispatch(RequestFrame::RemoveWorktree(invalid_worktree))
+                .dispatch(remove_worktree_request(invalid_worktree))
                 .await
         )
         .code,
@@ -190,28 +213,28 @@ async fn absent_cleanup_intents_complete_with_exact_durable_receipts() {
     );
 
     let close = AgentCloseRequest::new("agent:agent-absent:close:v1", agent_id.clone());
-    let expected_close = ResponseFrame::CloseAgent(AgentCloseReceipt {
+    let expected_close = ResponseFrame::CloseAgent(fenced_receipt(AgentCloseReceipt {
         operation_id: close.operation_id.clone(),
         request_sha256: close.request_sha256.clone(),
         agent_id: agent_id.clone(),
-    });
+    }));
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::CloseAgent(close.clone()))
+            .dispatch(close_agent_request(close.clone()))
             .await,
         expected_close
     );
 
     let remove_home =
         AgentHomeRemoveRequest::new("agent:agent-absent:home:remove:v1", agent_id.clone());
-    let expected_home = ResponseFrame::RemoveAgentHome(AgentHomeRemoveReceipt {
+    let expected_home = ResponseFrame::RemoveAgentHome(fenced_receipt(AgentHomeRemoveReceipt {
         operation_id: remove_home.operation_id.clone(),
         request_sha256: remove_home.request_sha256.clone(),
         agent_id,
-    });
+    }));
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::RemoveAgentHome(remove_home.clone()))
+            .dispatch(remove_home_request(remove_home.clone()))
             .await,
         expected_home
     );
@@ -221,15 +244,15 @@ async fn absent_cleanup_intents_complete_with_exact_durable_receipts() {
         "workspace-absent",
         "agent-absent",
     );
-    let expected_worktree = ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
+    let expected_worktree = ResponseFrame::RemoveWorktree(fenced_receipt(WorktreeRemoveReceipt {
         operation_id: remove_worktree.operation_id.clone(),
         request_sha256: remove_worktree.request_sha256.clone(),
         workspace: remove_worktree.workspace.clone(),
         name: remove_worktree.name.clone(),
-    });
+    }));
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::RemoveWorktree(remove_worktree.clone()))
+            .dispatch(remove_worktree_request(remove_worktree.clone()))
             .await,
         expected_worktree
     );
@@ -237,18 +260,16 @@ async fn absent_cleanup_intents_complete_with_exact_durable_receipts() {
 
     let supervisor = recreate(&config).await;
     assert_eq!(
-        supervisor.dispatch(RequestFrame::CloseAgent(close)).await,
+        supervisor.dispatch(close_agent_request(close)).await,
         expected_close
     );
     assert_eq!(
-        supervisor
-            .dispatch(RequestFrame::RemoveAgentHome(remove_home))
-            .await,
+        supervisor.dispatch(remove_home_request(remove_home)).await,
         expected_home
     );
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::RemoveWorktree(remove_worktree))
+            .dispatch(remove_worktree_request(remove_worktree))
             .await,
         expected_worktree
     );
@@ -272,15 +293,15 @@ async fn fresh_worktree_removal_completes_partial_cleanup() {
     .unwrap();
 
     let request = WorktreeRef::new("worktree:project:agent-1:remove:v1", "project", "agent-1");
-    let expected = ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
+    let expected = ResponseFrame::RemoveWorktree(fenced_receipt(WorktreeRemoveReceipt {
         operation_id: request.operation_id.clone(),
         request_sha256: request.request_sha256.clone(),
         workspace: request.workspace.clone(),
         name: request.name.clone(),
-    });
+    }));
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::RemoveWorktree(request.clone()))
+            .dispatch(remove_worktree_request(request.clone()))
             .await,
         expected
     );
@@ -298,9 +319,7 @@ async fn fresh_worktree_removal_completes_partial_cleanup() {
         .unwrap();
     assert!(branches.stdout.trim().is_empty());
     assert_eq!(
-        supervisor
-            .dispatch(RequestFrame::RemoveWorktree(request))
-            .await,
+        supervisor.dispatch(remove_worktree_request(request)).await,
         expected
     );
     cleanup(&config);
@@ -312,10 +331,10 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     let supervisor = provision(&config).await;
     let workspace = prepare_workspace(&supervisor).await;
     let (add_request, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
-    let add_response = ResponseFrame::AddWorktree(worktree.clone());
+    let add_response = ResponseFrame::AddWorktree(fenced_receipt(worktree.clone()));
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::AddWorktree(add_request.clone()))
+            .dispatch(add_worktree_request(add_request.clone()))
             .await,
         add_response
     );
@@ -323,18 +342,13 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     changed_add.base = "HEAD".into();
     changed_add.request_sha256 = changed_add.computed_sha256();
     assert_eq!(
-        failure(
-            supervisor
-                .dispatch(RequestFrame::AddWorktree(changed_add))
-                .await
-        )
-        .code,
-        "runtime_mutation_replay_mismatch"
+        failure(supervisor.dispatch(add_worktree_request(changed_add)).await).code,
+        "mutation_authority_conflict"
     );
 
     let plan = home_plan("agent-1", b"original");
     let home_response = supervisor
-        .dispatch(RequestFrame::MaterializeAgentHome(plan.clone()))
+        .dispatch(materialize_home_request(plan.clone()))
         .await;
     assert!(
         matches!(home_response, ResponseFrame::MaterializeAgentHome(_)),
@@ -342,7 +356,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     );
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::MaterializeAgentHome(plan.clone()))
+            .dispatch(materialize_home_request(plan.clone()))
             .await,
         home_response
     );
@@ -351,11 +365,11 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     assert_eq!(
         failure(
             supervisor
-                .dispatch(RequestFrame::MaterializeAgentHome(changed_plan))
+                .dispatch(materialize_home_request(changed_plan))
                 .await
         )
         .code,
-        "runtime_mutation_replay_mismatch"
+        "mutation_authority_conflict"
     );
 
     let launch = launch(
@@ -364,7 +378,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
         "while IFS= read -r line; do printf '%s\\n' \"$line\"; done",
     );
     let open_response = supervisor
-        .dispatch(RequestFrame::OpenAgent(launch.clone()))
+        .dispatch(open_agent_request(launch.clone()))
         .await;
     assert!(
         matches!(open_response, ResponseFrame::OpenAgent(_)),
@@ -372,7 +386,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     );
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::OpenAgent(launch.clone()))
+            .dispatch(open_agent_request(launch.clone()))
             .await,
         open_response
     );
@@ -381,16 +395,16 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     assert_eq!(
         failure(
             supervisor
-                .dispatch(RequestFrame::OpenAgent(changed_launch))
+                .dispatch(open_agent_request(changed_launch))
                 .await
         )
         .code,
-        "runtime_mutation_replay_mismatch"
+        "mutation_authority_conflict"
     );
 
     let close = AgentCloseRequest::new("agent:agent-1:close:v1", AgentSlot::new("agent-1"));
     let close_response = supervisor
-        .dispatch(RequestFrame::CloseAgent(close.clone()))
+        .dispatch(close_agent_request(close.clone()))
         .await;
     assert!(
         matches!(close_response, ResponseFrame::CloseAgent(_)),
@@ -399,7 +413,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     assert!(config.agent_home("agent-1").is_dir());
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::CloseAgent(close.clone()))
+            .dispatch(close_agent_request(close.clone()))
             .await,
         close_response
     );
@@ -407,7 +421,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     assert_eq!(
         failure(
             supervisor
-                .dispatch(RequestFrame::CloseAgent(changed_close))
+                .dispatch(close_agent_request(changed_close))
                 .await
         )
         .code,
@@ -417,7 +431,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     let remove_home =
         AgentHomeRemoveRequest::new("agent:agent-1:home:remove:v1", AgentSlot::new("agent-1"));
     let remove_home_response = supervisor
-        .dispatch(RequestFrame::RemoveAgentHome(remove_home.clone()))
+        .dispatch(remove_home_request(remove_home.clone()))
         .await;
     assert!(
         matches!(remove_home_response, ResponseFrame::RemoveAgentHome(_)),
@@ -425,7 +439,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     );
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::RemoveAgentHome(remove_home.clone()))
+            .dispatch(remove_home_request(remove_home.clone()))
             .await,
         remove_home_response
     );
@@ -434,7 +448,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     assert_eq!(
         failure(
             supervisor
-                .dispatch(RequestFrame::RemoveAgentHome(changed_remove_home))
+                .dispatch(remove_home_request(changed_remove_home))
                 .await
         )
         .code,
@@ -444,7 +458,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     let remove_worktree =
         WorktreeRef::new("worktree:project:agent-1:remove:v1", "project", "agent-1");
     let remove_response = supervisor
-        .dispatch(RequestFrame::RemoveWorktree(remove_worktree.clone()))
+        .dispatch(remove_worktree_request(remove_worktree.clone()))
         .await;
     assert!(
         matches!(remove_response, ResponseFrame::RemoveWorktree(_)),
@@ -452,7 +466,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     );
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::RemoveWorktree(remove_worktree.clone()))
+            .dispatch(remove_worktree_request(remove_worktree.clone()))
             .await,
         remove_response
     );
@@ -461,7 +475,7 @@ async fn all_mutation_classes_replay_exactly_and_reject_changed_requests() {
     assert_eq!(
         failure(
             supervisor
-                .dispatch(RequestFrame::RemoveWorktree(changed_remove_worktree))
+                .dispatch(remove_worktree_request(changed_remove_worktree))
                 .await
         )
         .code,
@@ -480,49 +494,43 @@ async fn completed_filesystem_mutations_replay_after_supervisor_recreation() {
 
     let supervisor = recreate(&config).await;
     assert_eq!(
-        supervisor
-            .dispatch(RequestFrame::AddWorktree(add_request))
-            .await,
-        ResponseFrame::AddWorktree(worktree.clone())
+        supervisor.dispatch(add_worktree_request(add_request)).await,
+        ResponseFrame::AddWorktree(fenced_receipt(worktree.clone()))
     );
     let plan = home_plan("agent-1", b"durable");
     let home_response = supervisor
-        .dispatch(RequestFrame::MaterializeAgentHome(plan.clone()))
+        .dispatch(materialize_home_request(plan.clone()))
         .await;
     drop(supervisor);
 
     let supervisor = recreate(&config).await;
     assert_eq!(
-        supervisor
-            .dispatch(RequestFrame::MaterializeAgentHome(plan))
-            .await,
+        supervisor.dispatch(materialize_home_request(plan)).await,
         home_response
     );
     let remove_home =
         AgentHomeRemoveRequest::new("agent:agent-1:home:remove:v1", AgentSlot::new("agent-1"));
     let remove_home_response = supervisor
-        .dispatch(RequestFrame::RemoveAgentHome(remove_home.clone()))
+        .dispatch(remove_home_request(remove_home.clone()))
         .await;
     drop(supervisor);
 
     let supervisor = recreate(&config).await;
     assert_eq!(
-        supervisor
-            .dispatch(RequestFrame::RemoveAgentHome(remove_home))
-            .await,
+        supervisor.dispatch(remove_home_request(remove_home)).await,
         remove_home_response
     );
     let remove_worktree =
         WorktreeRef::new("worktree:project:agent-1:remove:v1", "project", "agent-1");
     let remove_worktree_response = supervisor
-        .dispatch(RequestFrame::RemoveWorktree(remove_worktree.clone()))
+        .dispatch(remove_worktree_request(remove_worktree.clone()))
         .await;
     drop(supervisor);
 
     let supervisor = recreate(&config).await;
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::RemoveWorktree(remove_worktree))
+            .dispatch(remove_worktree_request(remove_worktree))
             .await,
         remove_worktree_response
     );
@@ -537,9 +545,7 @@ async fn completed_open_requires_its_live_bridge_and_durable_lineage_blocks_clea
     let (_, worktree) = add_worktree(&original, workspace.resolved_commit).await;
     let plan = home_plan("agent-1", b"durable");
     assert!(matches!(
-        original
-            .dispatch(RequestFrame::MaterializeAgentHome(plan))
-            .await,
+        original.dispatch(materialize_home_request(plan)).await,
         ResponseFrame::MaterializeAgentHome(_)
     ));
     let launch = launch(
@@ -547,30 +553,21 @@ async fn completed_open_requires_its_live_bridge_and_durable_lineage_blocks_clea
         &worktree,
         "while IFS= read -r line; do printf '%s\\n' \"$line\"; done",
     );
-    let opened = original
-        .dispatch(RequestFrame::OpenAgent(launch.clone()))
-        .await;
+    let opened = original.dispatch(open_agent_request(launch.clone())).await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
     assert_eq!(
-        original
-            .dispatch(RequestFrame::OpenAgent(launch.clone()))
-            .await,
+        original.dispatch(open_agent_request(launch.clone())).await,
         opened
     );
 
     let recreated = recreate(&config).await;
     assert_eq!(
-        failure(
-            recreated
-                .dispatch(RequestFrame::OpenAgent(launch.clone()))
-                .await
-        )
-        .code,
+        failure(recreated.dispatch(open_agent_request(launch.clone())).await).code,
         "agent_process_not_live"
     );
     let blocked_home = failure(
         recreated
-            .dispatch(RequestFrame::RemoveAgentHome(AgentHomeRemoveRequest::new(
+            .dispatch(remove_home_request(AgentHomeRemoveRequest::new(
                 "agent:agent-1:home:remove:v1",
                 AgentSlot::new("agent-1"),
             )))
@@ -579,7 +576,7 @@ async fn completed_open_requires_its_live_bridge_and_durable_lineage_blocks_clea
     assert_eq!(blocked_home.code, "agent_running");
     let blocked_worktree = failure(
         recreated
-            .dispatch(RequestFrame::RemoveWorktree(WorktreeRef::new(
+            .dispatch(remove_worktree_request(WorktreeRef::new(
                 "worktree:project:agent-1:remove:v1",
                 "project",
                 "agent-1",
@@ -589,21 +586,19 @@ async fn completed_open_requires_its_live_bridge_and_durable_lineage_blocks_clea
     assert_eq!(blocked_worktree.code, "worktree_agent_open");
 
     let close = AgentCloseRequest::new("agent:agent-1:close:v1", AgentSlot::new("agent-1"));
-    let closed = original
-        .dispatch(RequestFrame::CloseAgent(close.clone()))
-        .await;
+    let closed = original.dispatch(close_agent_request(close.clone())).await;
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)), "{closed:?}");
     assert!(config.agent_home("agent-1").is_dir());
     drop(recreated);
 
     let after_close = recreate(&config).await;
     assert_eq!(
-        after_close.dispatch(RequestFrame::CloseAgent(close)).await,
+        after_close.dispatch(close_agent_request(close)).await,
         closed
     );
     assert!(matches!(
         after_close
-            .dispatch(RequestFrame::RemoveAgentHome(AgentHomeRemoveRequest::new(
+            .dispatch(remove_home_request(AgentHomeRemoveRequest::new(
                 "agent:agent-1:home:remove:v1",
                 AgentSlot::new("agent-1"),
             ),))
@@ -612,7 +607,7 @@ async fn completed_open_requires_its_live_bridge_and_durable_lineage_blocks_clea
     ));
     assert!(matches!(
         after_close
-            .dispatch(RequestFrame::RemoveWorktree(WorktreeRef::new(
+            .dispatch(remove_worktree_request(WorktreeRef::new(
                 "worktree:project:agent-1:remove:v1",
                 "project",
                 "agent-1",
@@ -642,10 +637,8 @@ async fn started_filesystem_mutations_converge_after_recreation() {
 
     let supervisor = recreate(&config).await;
     assert_eq!(
-        supervisor
-            .dispatch(RequestFrame::AddWorktree(add_request))
-            .await,
-        ResponseFrame::AddWorktree(worktree.clone())
+        supervisor.dispatch(add_worktree_request(add_request)).await,
+        ResponseFrame::AddWorktree(fenced_receipt(worktree.clone()))
     );
 
     let published_plan = home_plan("agent-1", b"published-before-terminal-record");
@@ -663,15 +656,16 @@ async fn started_filesystem_mutations_converge_after_recreation() {
 
     let supervisor = recreate(&config).await;
     let replayed_home = supervisor
-        .dispatch(RequestFrame::MaterializeAgentHome(published_plan.clone()))
+        .dispatch(materialize_home_request(published_plan.clone()))
         .await;
     assert!(matches!(
         replayed_home,
-        ResponseFrame::MaterializeAgentHome(ref receipt) if receipt.path == published.to_string_lossy()
+        ResponseFrame::MaterializeAgentHome(ref receipt)
+            if receipt.receipt.path == published.to_string_lossy()
     ));
     assert!(!staging.exists());
     let retried_home = supervisor
-        .dispatch(RequestFrame::MaterializeAgentHome(staged_plan))
+        .dispatch(materialize_home_request(staged_plan))
         .await;
     assert!(
         matches!(retried_home, ResponseFrame::MaterializeAgentHome(_)),
@@ -704,14 +698,12 @@ async fn started_filesystem_mutations_converge_after_recreation() {
 
     let supervisor = recreate(&config).await;
     assert!(matches!(
-        supervisor
-            .dispatch(RequestFrame::RemoveAgentHome(remove_home))
-            .await,
+        supervisor.dispatch(remove_home_request(remove_home)).await,
         ResponseFrame::RemoveAgentHome(_)
     ));
     assert!(matches!(
         supervisor
-            .dispatch(RequestFrame::RemoveWorktree(remove_worktree))
+            .dispatch(remove_worktree_request(remove_worktree))
             .await,
         ResponseFrame::RemoveWorktree(_)
     ));
@@ -726,9 +718,7 @@ async fn started_open_becomes_indeterminate_after_recreation_without_spawning() 
     let (_, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
     let plan = home_plan("agent-1", b"durable");
     assert!(matches!(
-        supervisor
-            .dispatch(RequestFrame::MaterializeAgentHome(plan))
-            .await,
+        supervisor.dispatch(materialize_home_request(plan)).await,
         ResponseFrame::MaterializeAgentHome(_)
     ));
     let marker = config.agent_home("agent-1").join("spawned");
@@ -743,17 +733,13 @@ async fn started_open_becomes_indeterminate_after_recreation_without_spawning() 
     let recreated = recreate(&config).await;
     assert!(!marker.exists());
     assert!(recreated.bridge("agent-1").await.is_none());
-    let replay = failure(
-        recreated
-            .dispatch(RequestFrame::OpenAgent(launch.clone()))
-            .await,
-    );
+    let replay = failure(recreated.dispatch(open_agent_request(launch.clone())).await);
     assert_eq!(replay.code, "agent_open_outcome_unknown");
     assert!(!replay.retryable);
     assert!(!marker.exists());
     let blocked_home = failure(
         recreated
-            .dispatch(RequestFrame::RemoveAgentHome(AgentHomeRemoveRequest::new(
+            .dispatch(remove_home_request(AgentHomeRemoveRequest::new(
                 "agent:agent-1:home:remove:v1",
                 AgentSlot::new("agent-1"),
             )))
@@ -763,13 +749,8 @@ async fn started_open_becomes_indeterminate_after_recreation_without_spawning() 
     let mut changed_launch = launch;
     changed_launch.args.push("changed".into());
     assert_eq!(
-        failure(
-            recreated
-                .dispatch(RequestFrame::OpenAgent(changed_launch))
-                .await
-        )
-        .code,
-        "runtime_mutation_replay_mismatch"
+        failure(recreated.dispatch(open_agent_request(changed_launch)).await).code,
+        "mutation_authority_conflict"
     );
     cleanup(&config);
 }
@@ -782,9 +763,7 @@ async fn invalid_launch_environment_is_refused_before_journal_admission() {
     let (_, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
     let plan = home_plan("agent-1", b"durable");
     assert!(matches!(
-        supervisor
-            .dispatch(RequestFrame::MaterializeAgentHome(plan))
-            .await,
+        supervisor.dispatch(materialize_home_request(plan)).await,
         ResponseFrame::MaterializeAgentHome(_)
     ));
     let mut launch = launch(&config, &worktree, "exit 0");
@@ -793,12 +772,12 @@ async fn invalid_launch_environment_is_refused_before_journal_admission() {
 
     let first = failure(
         supervisor
-            .dispatch(RequestFrame::OpenAgent(launch.clone()))
+            .dispatch(open_agent_request(launch.clone()))
             .await,
     );
     assert_eq!(first.code, "agent_environment_conflict");
     assert!(!mutation_journal::admitted(&config, &operation).unwrap());
-    let replay = failure(supervisor.dispatch(RequestFrame::OpenAgent(launch)).await);
+    let replay = failure(supervisor.dispatch(open_agent_request(launch)).await);
     assert_eq!(replay.code, "agent_environment_conflict");
     cleanup(&config);
 }
@@ -811,9 +790,7 @@ async fn started_process_mutations_reconcile_without_repeating_side_effects() {
     let (_, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
     let plan = home_plan("agent-1", b"durable");
     assert!(matches!(
-        supervisor
-            .dispatch(RequestFrame::MaterializeAgentHome(plan))
-            .await,
+        supervisor.dispatch(materialize_home_request(plan)).await,
         ResponseFrame::MaterializeAgentHome(_)
     ));
 
@@ -836,7 +813,7 @@ async fn started_process_mutations_reconcile_without_repeating_side_effects() {
     );
     wait_for_file(&starts).await;
 
-    let opened = supervisor.open_agent(launch).await.unwrap();
+    let opened = supervisor.open_agent(1, launch).await.unwrap();
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)));
     assert_eq!(std::fs::read_to_string(&starts).unwrap(), "started\n");
     let retained = supervisor.bridge("agent-1").await.unwrap();
@@ -856,10 +833,10 @@ async fn started_process_mutations_reconcile_without_repeating_side_effects() {
         request_sha256: close.request_sha256.clone(),
         agent_id: close.agent_id.clone(),
     };
-    let expected = ResponseFrame::CloseAgent(expected_receipt.clone());
+    let expected = ResponseFrame::CloseAgent(fenced_receipt(expected_receipt.clone()));
     assert_eq!(
         supervisor
-            .dispatch(RequestFrame::CloseAgent(close.clone()))
+            .dispatch(close_agent_request(close.clone()))
             .await,
         expected
     );
@@ -917,7 +894,7 @@ async fn post_start_mutation_journal_corruption_fences_mutations() {
 
     let home = failure(
         supervisor
-            .dispatch(RequestFrame::MaterializeAgentHome(home_plan(
+            .dispatch(materialize_home_request(home_plan(
                 "must-not-materialize",
                 b"blocked",
             )))
@@ -929,6 +906,7 @@ async fn post_start_mutation_journal_corruption_fences_mutations() {
 }
 
 fn start_operation<T: serde::de::DeserializeOwned>(config: &RuntimeConfig, operation: &Operation) {
+    crate::mutation_authority::admit(config, 1, operation).unwrap();
     assert!(matches!(
         mutation_journal::begin::<T>(config, operation).unwrap(),
         Begin::New(_)

@@ -1,4 +1,4 @@
-//! Kernel-neutral sandbox supervisor for the contract-2 runtime protocol.
+//! Kernel-neutral sandbox supervisor for the contract-3 runtime protocol.
 
 mod agent_home;
 mod bridge;
@@ -16,6 +16,7 @@ mod install;
 mod install_state;
 mod lanes;
 mod link;
+mod mutation_authority;
 mod mutation_journal;
 mod paths;
 mod resource_cgroup;

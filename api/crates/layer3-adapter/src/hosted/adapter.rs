@@ -282,50 +282,56 @@ impl SandboxAdapter for HostedAdapter {
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &WorktreeRequest,
     ) -> crate::Result<WorktreeReceipt> {
-        agent::add_worktree(self, handle, request).await
+        agent::add_worktree(self, handle, authority_fence, request).await
     }
 
     async fn remove_worktree(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &WorktreeRef,
     ) -> crate::Result<()> {
-        agent::remove_worktree(self, handle, request).await
+        agent::remove_worktree(self, handle, authority_fence, request).await
     }
 
     async fn materialize_agent_home(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentHomeRequest,
     ) -> crate::Result<()> {
-        agent::materialize_home(self, handle, request).await
+        agent::materialize_home(self, handle, authority_fence, request).await
     }
 
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentHomeRemoveRequest,
     ) -> crate::Result<()> {
-        agent::remove_home(self, handle, request).await
+        agent::remove_home(self, handle, authority_fence, request).await
     }
 
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        agent::open_agent(self, handle, request, updates).await
+        agent::open_agent(self, handle, authority_fence, request, updates).await
     }
 
     async fn close_agent(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentCloseRequest,
     ) -> crate::Result<()> {
-        agent::close_agent(self, handle, request).await
+        agent::close_agent(self, handle, authority_fence, request).await
     }
 
     async fn capture_agent(

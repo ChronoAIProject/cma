@@ -99,6 +99,10 @@ pub(crate) fn admitted(config: &RuntimeConfig, operation: &Operation) -> Result<
     Ok(true)
 }
 
+pub(crate) fn validate_operation(config: &RuntimeConfig, operation: &Operation) -> Result<()> {
+    validation::validate_operation(operation, config)
+}
+
 pub(crate) fn begin<T: DeserializeOwned>(
     config: &RuntimeConfig,
     operation: &Operation,
@@ -220,6 +224,13 @@ impl Ticket {
         self.record.receipt = None;
         self.record.failure = Some(stored_failure(error));
         self.persist_atomic()
+    }
+
+    pub(crate) fn supersede(self) -> Result<()> {
+        self.fail(&RuntimeError::rejected(
+            "mutation_authority_superseded",
+            "runtime mutation was superseded by newer resource authority",
+        ))
     }
 
     pub(crate) fn indeterminate(mut self, detail: &str) -> Result<RuntimeError> {

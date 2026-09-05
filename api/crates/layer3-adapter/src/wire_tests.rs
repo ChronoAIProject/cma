@@ -23,8 +23,16 @@ fn sha() -> String {
     "a".repeat(64)
 }
 
+fn fenced<T>(request: T) -> FencedRequest<T> {
+    FencedRequest::new(7, request)
+}
+
+fn fenced_receipt<T>(receipt: T) -> FencedReceipt<T> {
+    FencedReceipt::new(7, receipt)
+}
+
 #[test]
-fn every_contract_2_request_round_trips_with_its_exact_tag() {
+fn every_contract_3_request_round_trips_with_its_exact_tag() {
     let frames = vec![
         RequestFrame::Install(InstallRequest::bounded(
             "install-1",
@@ -52,18 +60,18 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
             "wks-repo",
             "repo",
         )),
-        RequestFrame::AddWorktree(WorktreeRequest::new(
+        RequestFrame::AddWorktree(fenced(WorktreeRequest::new(
             "worktree:repo:wt-1:add:v1",
             "repo",
             "wt-1",
             "abc123",
-        )),
-        RequestFrame::RemoveWorktree(WorktreeRef::new(
+        ))),
+        RequestFrame::RemoveWorktree(fenced(WorktreeRef::new(
             "worktree:repo:wt-1:remove:v1",
             "repo",
             "wt-1",
-        )),
-        RequestFrame::MaterializeAgentHome(AgentHomePlan {
+        ))),
+        RequestFrame::MaterializeAgentHome(fenced(AgentHomePlan {
             operation_id: "agent:agent-1:home:create:v1".into(),
             request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
@@ -81,12 +89,12 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
                 archive_sha256: sha(),
                 source_url: "https://ornn.example/review.tgz".into(),
             }],
-        }),
-        RequestFrame::RemoveAgentHome(AgentHomeRemoveRequest::new(
+        })),
+        RequestFrame::RemoveAgentHome(fenced(AgentHomeRemoveRequest::new(
             "agent:agent-1:home:remove:v1",
             AgentSlot("agent-1".into()),
-        )),
-        RequestFrame::OpenAgent(AgentLaunch {
+        ))),
+        RequestFrame::OpenAgent(fenced(AgentLaunch {
             operation_id: "agent:agent-1:open:v1".into(),
             request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
@@ -95,11 +103,11 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
             program: "bridge".into(),
             args: Vec::new(),
             env: BTreeMap::new(),
-        }),
-        RequestFrame::CloseAgent(AgentCloseRequest::new(
+        })),
+        RequestFrame::CloseAgent(fenced(AgentCloseRequest::new(
             "agent:agent-1:close:v1",
             AgentSlot("agent-1".into()),
-        )),
+        ))),
         RequestFrame::CaptureAgent(AgentRef {
             agent_id: AgentSlot("agent-1".into()),
         }),
@@ -147,6 +155,10 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
             assert!(json.get("timeout_seconds").is_none());
             assert!(json.get("output_limit_bytes").is_none());
         }
+        if tag == "add_worktree" {
+            assert_eq!(json["authority_fence"], 7);
+            assert_eq!(json["request"]["workspace"], "repo");
+        }
         let decoded: RequestFrame = serde_json::from_value(json).expect("request deserializes");
         assert_eq!(decoded, frame);
     }
@@ -154,7 +166,7 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
 }
 
 #[test]
-fn every_contract_2_reply_round_trips_and_failures_stay_typed() {
+fn every_contract_3_reply_round_trips_and_failures_stay_typed() {
     let command = CommandReceipt {
         index: 0,
         exit_code: 0,
@@ -186,7 +198,7 @@ fn every_contract_2_reply_round_trips_and_failures_stay_typed() {
             request_sha256: sha(),
             workspace_id: "wks-repo".into(),
         }),
-        ResponseFrame::AddWorktree(WorktreeReceipt {
+        ResponseFrame::AddWorktree(fenced_receipt(WorktreeReceipt {
             operation_id: "worktree:repo:wt-1:add:v1".into(),
             request_sha256: sha(),
             workspace: "repo".into(),
@@ -194,37 +206,37 @@ fn every_contract_2_reply_round_trips_and_failures_stay_typed() {
             path: "/home/cma/repo/.worktrees/wt-1".into(),
             branch: "cma/wt-1".into(),
             base_commit: sha(),
-        }),
-        ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
+        })),
+        ResponseFrame::RemoveWorktree(fenced_receipt(WorktreeRemoveReceipt {
             operation_id: "worktree:repo:wt-1:remove:v1".into(),
             request_sha256: sha(),
             workspace: "repo".into(),
             name: "wt-1".into(),
-        }),
-        ResponseFrame::MaterializeAgentHome(AgentHomeReceipt {
+        })),
+        ResponseFrame::MaterializeAgentHome(fenced_receipt(AgentHomeReceipt {
             operation_id: "agent:agent-1:home:create:v1".into(),
             request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
             path: "/home/cma/.cma/agents/agent-1/home".into(),
-        }),
-        ResponseFrame::RemoveAgentHome(AgentHomeRemoveReceipt {
+        })),
+        ResponseFrame::RemoveAgentHome(fenced_receipt(AgentHomeRemoveReceipt {
             operation_id: "agent:agent-1:home:remove:v1".into(),
             request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
-        }),
-        ResponseFrame::OpenAgent(AgentOpenReceipt {
+        })),
+        ResponseFrame::OpenAgent(fenced_receipt(AgentOpenReceipt {
             operation_id: "agent:agent-1:open:v1".into(),
             request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
             cwd: "/home/cma/repo/.worktrees/wt-1".into(),
             home: "/home/cma/.cma/agents/agent-1/home".into(),
             conversation_id: Some("conversation-1".into()),
-        }),
-        ResponseFrame::CloseAgent(AgentCloseReceipt {
+        })),
+        ResponseFrame::CloseAgent(fenced_receipt(AgentCloseReceipt {
             operation_id: "agent:agent-1:close:v1".into(),
             request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
-        }),
+        })),
         ResponseFrame::CaptureAgent(ConversationSnapshot {
             conversation_id: "conversation-1".into(),
             archive_sha256: sha(),

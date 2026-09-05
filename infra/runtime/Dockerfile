@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Bot-pod image for a contract-2 CMA Sandbox.
+# Bot-pod image for a contract-3 CMA Sandbox.
 #
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
 # 4 supervisor. The image supplies the one supported agent provider, the tools
@@ -17,7 +17,7 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 
 ARG CHRONO_BUILD_SHA=local-unpinned
 LABEL org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
-      dev.chrono.cma.runtime-contract="2"
+      dev.chrono.cma.runtime-contract="3"
 
 ARG NYXID_CLI_VERSION=v0.10.0
 ARG CODEX_VERSION=0.147.0

@@ -8,7 +8,7 @@ use super::HostedBackend;
 use crate::provider::{
     ProviderDeleteTarget, ProviderSandbox, ProviderSandboxRequest, SandboxClient,
 };
-use crate::wire::{AgentOpenReceipt, RequestFrame, ResponseFrame};
+use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
 use crate::{AdapterError, AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeHandle};
 
 const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(180);
@@ -26,11 +26,10 @@ pub trait HostedControlTransport: Send + Sync {
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
-        launch: AgentLaunch,
+        launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
-        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)>;
+    ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)>;
 
     async fn retire(&self, handle: &RuntimeHandle) -> crate::Result<()>;
 }
@@ -131,19 +130,12 @@ impl HostedBackend for ProviderHostedBackend {
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
-        launch: AgentLaunch,
+        launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
-        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
+    ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         self.transport
-            .open_agent(
-                handle,
-                launch,
-                resume_conversation,
-                connection_fence,
-                updates,
-            )
+            .open_agent(handle, launch, resume_conversation, updates)
             .await
     }
 

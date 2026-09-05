@@ -53,31 +53,45 @@ pub trait SandboxAdapter: Send + Sync {
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &WorktreeRequest,
     ) -> Result<WorktreeReceipt>;
 
-    async fn remove_worktree(&self, handle: &RuntimeHandle, request: &WorktreeRef) -> Result<()>;
+    async fn remove_worktree(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &WorktreeRef,
+    ) -> Result<()>;
 
     async fn materialize_agent_home(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentHomeRequest,
     ) -> Result<()>;
 
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentHomeRemoveRequest,
     ) -> Result<()>;
 
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
+        authority_fence: u64,
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel>;
 
-    async fn close_agent(&self, handle: &RuntimeHandle, request: &AgentCloseRequest) -> Result<()>;
+    async fn close_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentCloseRequest,
+    ) -> Result<()>;
 
     async fn capture_agent(
         &self,

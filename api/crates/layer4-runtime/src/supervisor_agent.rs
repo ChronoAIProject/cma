@@ -3,7 +3,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use layer3_adapter::wire::{
-    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, AgentOpenReceipt, ResponseFrame,
+    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, AgentOpenReceipt, FencedReceipt,
+    ResponseFrame,
 };
 use layer3_adapter::{AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch};
 
@@ -16,13 +17,10 @@ use crate::paths::{path_is_directory, safe_component};
 impl Supervisor {
     pub(super) async fn materialize_agent_home(
         &self,
+        authority_fence: u64,
         plan: AgentHomePlan,
     ) -> Result<ResponseFrame> {
-        validate_forwarded_identity(
-            &plan.operation_id,
-            &plan.request_sha256,
-            &format!("agent:{}:home:create:v1", plan.agent_id.as_str()),
-        )?;
+        super::agent_validation::materialize_home(&plan)?;
         let operation = Operation::create_agent_home(&plan);
         if !mutation_journal::admitted(&self.config, &operation)? {
             if self.agents.read().await.contains_key(&plan.agent_id)
@@ -38,16 +36,18 @@ impl Supervisor {
             crate::agent_home::preflight_materialize(&self.config, &plan)?;
         }
         match mutation_journal::begin::<AgentHomeReceipt>(&self.config, &operation)? {
-            Begin::Completed(receipt) => Ok(ResponseFrame::MaterializeAgentHome(receipt)),
+            Begin::Completed(receipt) => Ok(home_response(authority_fence, receipt)),
             Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
             Begin::New(ticket) | Begin::Started(ticket) => {
-                self.execute_materialize_agent_home(plan, ticket).await
+                self.execute_materialize_agent_home(authority_fence, plan, ticket)
+                    .await
             }
         }
     }
 
     async fn execute_materialize_agent_home(
         &self,
+        authority_fence: u64,
         plan: AgentHomePlan,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
@@ -56,7 +56,7 @@ impl Supervisor {
             plan.agent_id.as_str(),
             &plan.operation_id,
         ) {
-            Ok(Some(path)) => return complete_agent_home(ticket, &plan, path),
+            Ok(Some(path)) => return complete_agent_home(authority_fence, ticket, &plan, path),
             Ok(None) => {}
             Err(error) if error.retryable => return Err(error),
             Err(error) => {
@@ -67,13 +67,14 @@ impl Supervisor {
             }
         }
         match crate::agent_home::materialize(&self.config, &self.http, &plan).await {
-            Ok(path) => complete_agent_home(ticket, &plan, path),
-            Err(error) => self.finish_failed_agent_home(&plan, ticket, error),
+            Ok(path) => complete_agent_home(authority_fence, ticket, &plan, path),
+            Err(error) => self.finish_failed_agent_home(authority_fence, &plan, ticket, error),
         }
     }
 
     fn finish_failed_agent_home(
         &self,
+        authority_fence: u64,
         plan: &AgentHomePlan,
         ticket: Ticket,
         error: RuntimeError,
@@ -83,7 +84,7 @@ impl Supervisor {
             plan.agent_id.as_str(),
             &plan.operation_id,
         ) {
-            Ok(Some(path)) => complete_agent_home(ticket, plan, path),
+            Ok(Some(path)) => complete_agent_home(authority_fence, ticket, plan, path),
             Ok(None) if error.retryable => Err(error),
             Ok(None) => {
                 ticket.fail(&error)?;
@@ -105,14 +106,10 @@ impl Supervisor {
 
     pub(super) async fn remove_agent_home(
         &self,
+        authority_fence: u64,
         request: AgentHomeRemoveRequest,
     ) -> Result<ResponseFrame> {
-        validate_agent_request(
-            request.has_valid_sha256(),
-            &request.operation_id,
-            &request.request_sha256,
-            &format!("agent:{}:home:remove:v1", request.agent_id.as_str()),
-        )?;
+        super::agent_validation::remove_home(&request)?;
         let operation = Operation::remove_agent_home(&request);
         if self.agents.read().await.contains_key(&request.agent_id)
             || mutation_journal::active_agents(&self.config)?
@@ -128,16 +125,17 @@ impl Supervisor {
             crate::agent_home::preflight_remove(&self.config, request.agent_id.as_str())?;
         }
         match mutation_journal::begin::<AgentHomeRemoveReceipt>(&self.config, &operation)? {
-            Begin::Completed(receipt) => Ok(ResponseFrame::RemoveAgentHome(receipt)),
+            Begin::Completed(receipt) => Ok(remove_home_response(authority_fence, receipt)),
             Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
             Begin::New(ticket) | Begin::Started(ticket) => {
-                self.execute_remove_agent_home(request, ticket)
+                self.execute_remove_agent_home(authority_fence, request, ticket)
             }
         }
     }
 
     fn execute_remove_agent_home(
         &self,
+        authority_fence: u64,
         request: AgentHomeRemoveRequest,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
@@ -148,15 +146,17 @@ impl Supervisor {
                 agent_id: request.agent_id,
             }
         });
-        finish(ticket, result, ResponseFrame::RemoveAgentHome)
+        finish(ticket, result, |receipt| {
+            remove_home_response(authority_fence, receipt)
+        })
     }
 
-    pub(super) async fn open_agent(&self, launch: AgentLaunch) -> Result<ResponseFrame> {
-        validate_forwarded_identity(
-            &launch.operation_id,
-            &launch.request_sha256,
-            &format!("agent:{}:open:v1", launch.agent_id.as_str()),
-        )?;
+    pub(super) async fn open_agent(
+        &self,
+        authority_fence: u64,
+        launch: AgentLaunch,
+    ) -> Result<ResponseFrame> {
+        super::agent_validation::open(&launch)?;
         let operation = Operation::open_agent(&launch);
         if !mutation_journal::admitted(&self.config, &operation)? {
             self.validate_launch(&launch).await?;
@@ -165,7 +165,7 @@ impl Supervisor {
         match mutation_journal::begin::<AgentOpenReceipt>(&self.config, &operation)? {
             Begin::Completed(receipt) => {
                 if self.live_launch_matches(&launch).await {
-                    Ok(ResponseFrame::OpenAgent(receipt))
+                    Ok(open_response(authority_fence, receipt))
                 } else {
                     Err(RuntimeError::rejected(
                         "agent_process_not_live",
@@ -174,13 +174,20 @@ impl Supervisor {
                 }
             }
             Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
-            Begin::New(ticket) => self.execute_open_agent(launch, ticket).await,
-            Begin::Started(ticket) => self.reconcile_started_open(launch, ticket).await,
+            Begin::New(ticket) => {
+                self.execute_open_agent(authority_fence, launch, ticket)
+                    .await
+            }
+            Begin::Started(ticket) => {
+                self.reconcile_started_open(authority_fence, launch, ticket)
+                    .await
+            }
         }
     }
 
     async fn execute_open_agent(
         &self,
+        authority_fence: u64,
         launch: AgentLaunch,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
@@ -206,16 +213,17 @@ impl Supervisor {
                 bridge,
             },
         );
-        complete_agent_open(ticket, launch)
+        complete_agent_open(authority_fence, ticket, launch)
     }
 
     async fn reconcile_started_open(
         &self,
+        authority_fence: u64,
         launch: AgentLaunch,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
         if self.live_launch_matches(&launch).await {
-            complete_agent_open(ticket, launch)
+            complete_agent_open(authority_fence, ticket, launch)
         } else {
             Err(ticket.indeterminate(
                 "agent open may have spawned before its outcome became durable; a duplicate process will not be started",
@@ -296,26 +304,27 @@ impl Supervisor {
         Ok(())
     }
 
-    pub(super) async fn close_agent(&self, request: AgentCloseRequest) -> Result<ResponseFrame> {
-        validate_agent_request(
-            request.has_valid_sha256(),
-            &request.operation_id,
-            &request.request_sha256,
-            &format!("agent:{}:close:v1", request.agent_id.as_str()),
-        )?;
+    pub(super) async fn close_agent(
+        &self,
+        authority_fence: u64,
+        request: AgentCloseRequest,
+    ) -> Result<ResponseFrame> {
+        super::agent_validation::close(&request)?;
         safe_component(request.agent_id.as_str(), "agent id")?;
         let operation = Operation::close_agent(&request);
         match mutation_journal::begin::<AgentCloseReceipt>(&self.config, &operation)? {
-            Begin::Completed(receipt) => Ok(ResponseFrame::CloseAgent(receipt)),
+            Begin::Completed(receipt) => Ok(close_response(authority_fence, receipt)),
             Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
             Begin::New(ticket) | Begin::Started(ticket) => {
-                self.execute_close_agent(request, ticket).await
+                self.execute_close_agent(authority_fence, request, ticket)
+                    .await
             }
         }
     }
 
     pub(super) async fn execute_close_agent(
         &self,
+        authority_fence: u64,
         request: AgentCloseRequest,
         ticket: Ticket,
     ) -> Result<ResponseFrame> {
@@ -338,7 +347,7 @@ impl Supervisor {
             agent_id: request.agent_id,
         };
         ticket.complete(&receipt)?;
-        Ok(ResponseFrame::CloseAgent(receipt))
+        Ok(close_response(authority_fence, receipt))
     }
 
     async fn live_launch_matches(&self, launch: &AgentLaunch) -> bool {
@@ -386,6 +395,7 @@ fn finish<T: serde::Serialize>(
 }
 
 fn complete_agent_home(
+    authority_fence: u64,
     ticket: Ticket,
     plan: &AgentHomePlan,
     path: std::path::PathBuf,
@@ -397,10 +407,14 @@ fn complete_agent_home(
         path: path.to_string_lossy().into_owned(),
     };
     ticket.complete(&receipt)?;
-    Ok(ResponseFrame::MaterializeAgentHome(receipt))
+    Ok(home_response(authority_fence, receipt))
 }
 
-fn complete_agent_open(ticket: Ticket, launch: AgentLaunch) -> Result<ResponseFrame> {
+fn complete_agent_open(
+    authority_fence: u64,
+    ticket: Ticket,
+    launch: AgentLaunch,
+) -> Result<ResponseFrame> {
     let receipt = AgentOpenReceipt {
         operation_id: launch.operation_id,
         request_sha256: launch.request_sha256,
@@ -410,38 +424,21 @@ fn complete_agent_open(ticket: Ticket, launch: AgentLaunch) -> Result<ResponseFr
         conversation_id: None,
     };
     ticket.complete(&receipt)?;
-    Ok(ResponseFrame::OpenAgent(receipt))
+    Ok(open_response(authority_fence, receipt))
 }
 
-fn validate_agent_request(
-    digest_matches: bool,
-    operation_id: &str,
-    request_sha256: &str,
-    expected: &str,
-) -> Result<()> {
-    if !digest_matches {
-        return Err(RuntimeError::rejected(
-            "agent_request_digest_invalid",
-            "agent request digest does not match its execution fields",
-        ));
-    }
-    validate_forwarded_identity(operation_id, request_sha256, expected)
+fn home_response(authority_fence: u64, receipt: AgentHomeReceipt) -> ResponseFrame {
+    ResponseFrame::MaterializeAgentHome(FencedReceipt::new(authority_fence, receipt))
 }
 
-fn validate_forwarded_identity(
-    operation_id: &str,
-    request_sha256: &str,
-    expected: &str,
-) -> Result<()> {
-    let lower_sha256 = request_sha256.len() == 64
-        && request_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-    if operation_id != expected || operation_id.len() > 256 || !lower_sha256 {
-        return Err(RuntimeError::rejected(
-            "agent_operation_invalid",
-            "agent operation identity is invalid",
-        ));
-    }
-    Ok(())
+fn remove_home_response(authority_fence: u64, receipt: AgentHomeRemoveReceipt) -> ResponseFrame {
+    ResponseFrame::RemoveAgentHome(FencedReceipt::new(authority_fence, receipt))
+}
+
+fn open_response(authority_fence: u64, receipt: AgentOpenReceipt) -> ResponseFrame {
+    ResponseFrame::OpenAgent(FencedReceipt::new(authority_fence, receipt))
+}
+
+fn close_response(authority_fence: u64, receipt: AgentCloseReceipt) -> ResponseFrame {
+    ResponseFrame::CloseAgent(FencedReceipt::new(authority_fence, receipt))
 }

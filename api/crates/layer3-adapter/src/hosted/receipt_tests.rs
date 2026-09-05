@@ -5,13 +5,15 @@ use tokio::sync::mpsc;
 use super::{HostedBackend, InMemoryHostedBackend};
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
 use crate::provider::ProviderSandboxRequest;
-use crate::wire::{AgentOpenReceipt, RequestFrame, ResponseFrame};
+use crate::wire::{
+    AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame, WireOperation,
+};
 use crate::{
     AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentLaunch,
     AgentOpenRequest, AgentSlot, CheckpointRequest, ConversationChannel, ConversationUpdate,
     CredentialFrame, InstallRequest, RuntimeCredential, RuntimeHandle, RuntimeOptions,
-    SandboxAdapter, SandboxSpec, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
-    WorkspaceSource, WorktreeRef, WorktreeRequest,
+    SandboxAdapter, SandboxSpec, WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
+    WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
 #[derive(Clone, Copy)]
@@ -28,6 +30,7 @@ enum Corruption {
     AgentHomeRemovalIdentity,
     RemovalIdentity,
     CheckpointReference,
+    AuthorityFence,
 }
 
 #[derive(Clone, Default)]
@@ -45,6 +48,17 @@ impl CorruptingBackend {
         let Some(corruption) = self.next.lock().expect("corruption lock").take() else {
             return;
         };
+        if matches!(corruption, Corruption::AuthorityFence) {
+            match response {
+                ResponseFrame::AddWorktree(receipt) => receipt.authority_fence += 1,
+                ResponseFrame::RemoveWorktree(receipt) => receipt.authority_fence += 1,
+                ResponseFrame::MaterializeAgentHome(receipt) => receipt.authority_fence += 1,
+                ResponseFrame::RemoveAgentHome(receipt) => receipt.authority_fence += 1,
+                ResponseFrame::CloseAgent(receipt) => receipt.authority_fence += 1,
+                _ => panic!("authority corruption did not match a fenced runtime response"),
+            }
+            return;
+        }
         match (corruption, response) {
             (Corruption::Credential, ResponseFrame::Credential(receipt)) => {
                 receipt.installed = false;
@@ -59,19 +73,19 @@ impl CorruptingBackend {
                 receipt.commands[0].stdout_sha256 = "A".repeat(64);
             }
             (Corruption::WorktreePath, ResponseFrame::AddWorktree(receipt)) => {
-                receipt.path.push_str("-renamed");
+                receipt.receipt.path.push_str("-renamed");
             }
             (Corruption::WorktreeRemovalIdentity, ResponseFrame::RemoveWorktree(receipt)) => {
-                receipt.name.push_str("-other");
+                receipt.receipt.name.push_str("-other");
             }
             (Corruption::AgentHomePath, ResponseFrame::MaterializeAgentHome(receipt)) => {
-                receipt.path.push_str("-other");
+                receipt.receipt.path.push_str("-other");
             }
             (Corruption::AgentCloseIdentity, ResponseFrame::CloseAgent(receipt)) => {
-                receipt.agent_id = AgentSlot::new("agent-other");
+                receipt.receipt.agent_id = AgentSlot::new("agent-other");
             }
             (Corruption::AgentHomeRemovalIdentity, ResponseFrame::RemoveAgentHome(receipt)) => {
-                receipt.agent_id = AgentSlot::new("agent-other");
+                receipt.receipt.agent_id = AgentSlot::new("agent-other");
             }
             (Corruption::RemovalIdentity, ResponseFrame::RemoveWorkspace(receipt)) => {
                 receipt.workspace_id.push_str("-other");
@@ -79,18 +93,19 @@ impl CorruptingBackend {
             (Corruption::CheckpointReference, ResponseFrame::Checkpoint(receipt)) => {
                 receipt.object_reference = format!("renamed-{}", receipt.object_reference);
             }
+            (Corruption::AuthorityFence, _) => unreachable!(),
             _ => panic!("corruption did not match the runtime response"),
         }
     }
 
-    fn corrupt_open_receipt(&self, receipt: &mut AgentOpenReceipt) {
+    fn corrupt_open_receipt(&self, receipt: &mut FencedReceipt<AgentOpenReceipt>) {
         let Some(corruption) = self.next.lock().expect("corruption lock").take() else {
             return;
         };
-        if matches!(corruption, Corruption::AgentOpenIdentity) {
-            receipt.cwd.push_str("-other");
-        } else {
-            panic!("corruption did not match the runtime open response");
+        match corruption {
+            Corruption::AgentOpenIdentity => receipt.receipt.cwd.push_str("-other"),
+            Corruption::AuthorityFence => receipt.authority_fence += 1,
+            _ => panic!("corruption did not match the runtime open response"),
         }
     }
 }
@@ -114,20 +129,13 @@ impl HostedBackend for CorruptingBackend {
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
-        launch: AgentLaunch,
+        launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
-        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
+    ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         let (channel, mut receipt) = self
             .inner
-            .open_agent(
-                handle,
-                launch,
-                resume_conversation,
-                connection_fence,
-                updates,
-            )
+            .open_agent(handle, launch, resume_conversation, updates)
             .await?;
         self.corrupt_open_receipt(&mut receipt);
         Ok((channel, receipt))
@@ -140,6 +148,65 @@ impl HostedBackend for CorruptingBackend {
 
 fn rejected<T>(result: crate::Result<T>) {
     assert!(matches!(result, Err(AdapterError::Rejected(_))));
+}
+
+fn unavailable<T>(result: crate::Result<T>) {
+    assert!(matches!(result, Err(AdapterError::Unavailable(_))));
+}
+
+async fn ready_runtime(
+    adapter: &CodexAdapter,
+    sandbox_id: &str,
+    workspace: &str,
+) -> (RuntimeHandle, WorkspaceReceipt) {
+    let handle = adapter
+        .provision(&SandboxSpec {
+            sandbox_id: sandbox_id.into(),
+            ..SandboxSpec::default()
+        })
+        .await
+        .unwrap();
+    adapter
+        .run_install(
+            &handle,
+            &InstallRequest::new(format!("sandbox-install-v1:{workspace}"), Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(
+            &handle,
+            CredentialFrame {
+                operation_id: format!("credential-{workspace}"),
+                value: RuntimeCredential::new("opaque-runtime-credential"),
+                custody_generation: Some(1),
+            },
+        )
+        .await
+        .unwrap();
+    let workspace_id = format!("wks-{workspace}");
+    let receipt = adapter
+        .prepare_workspace(
+            &handle,
+            &WorkspaceRequest::new(
+                format!("workspace:{workspace_id}:prepare:v1"),
+                workspace_id,
+                workspace,
+                WorkspaceSource::Init,
+            ),
+        )
+        .await
+        .unwrap();
+    (handle, receipt)
+}
+
+fn runtime_options(worktree: &WorktreeReceipt, agent_id: &str) -> RuntimeOptions {
+    RuntimeOptions {
+        working_directory: worktree.path.clone(),
+        home_directory: format!("/home/cma/.cma/agents/{agent_id}/home"),
+        slot: AgentSlot::new(agent_id),
+        ..RuntimeOptions::default()
+    }
 }
 
 #[tokio::test]
@@ -223,8 +290,11 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
         workspace.resolved_commit,
     );
     backend.corrupt_next(Corruption::WorktreePath);
-    rejected(adapter.add_worktree(&handle, &add_worktree).await);
-    let worktree = adapter.add_worktree(&handle, &add_worktree).await.unwrap();
+    rejected(adapter.add_worktree(&handle, 1, &add_worktree).await);
+    let worktree = adapter
+        .add_worktree(&handle, 1, &add_worktree)
+        .await
+        .unwrap();
 
     let options = RuntimeOptions {
         working_directory: worktree.path,
@@ -239,23 +309,26 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
         Vec::new(),
     );
     backend.corrupt_next(Corruption::AgentHomePath);
-    rejected(adapter.materialize_agent_home(&handle, &home).await);
+    rejected(adapter.materialize_agent_home(&handle, 1, &home).await);
     adapter
-        .materialize_agent_home(&handle, &home)
+        .materialize_agent_home(&handle, 1, &home)
         .await
         .unwrap();
 
     let open = AgentOpenRequest::new("agent:agent-1:open:v1", options.clone(), None);
     backend.corrupt_next(Corruption::AgentOpenIdentity);
     let (updates, _updates_rx) = mpsc::channel(1);
-    rejected(adapter.open_agent(&handle, &open, updates).await);
+    rejected(adapter.open_agent(&handle, 1, &open, updates).await);
     let (updates, _updates_rx) = mpsc::channel(1);
-    adapter.open_agent(&handle, &open, updates).await.unwrap();
+    adapter
+        .open_agent(&handle, 1, &open, updates)
+        .await
+        .unwrap();
 
     let close = AgentCloseRequest::new("agent:agent-1:close:v1", options.slot.clone());
     backend.corrupt_next(Corruption::AgentCloseIdentity);
-    rejected(adapter.close_agent(&handle, &close).await);
-    adapter.close_agent(&handle, &close).await.unwrap();
+    rejected(adapter.close_agent(&handle, 1, &close).await);
+    adapter.close_agent(&handle, 1, &close).await.unwrap();
     assert!(backend
         .inner
         .snapshot(&handle)
@@ -267,18 +340,18 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
     let remove_home =
         AgentHomeRemoveRequest::new("agent:agent-1:home:remove:v1", options.slot.clone());
     backend.corrupt_next(Corruption::AgentHomeRemovalIdentity);
-    rejected(adapter.remove_agent_home(&handle, &remove_home).await);
+    rejected(adapter.remove_agent_home(&handle, 1, &remove_home).await);
     adapter
-        .remove_agent_home(&handle, &remove_home)
+        .remove_agent_home(&handle, 1, &remove_home)
         .await
         .unwrap();
 
     let remove_worktree =
         WorktreeRef::new("worktree:receipt:agent-1:remove:v1", "receipt", "agent-1");
     backend.corrupt_next(Corruption::WorktreeRemovalIdentity);
-    rejected(adapter.remove_worktree(&handle, &remove_worktree).await);
+    rejected(adapter.remove_worktree(&handle, 1, &remove_worktree).await);
     adapter
-        .remove_worktree(&handle, &remove_worktree)
+        .remove_worktree(&handle, 1, &remove_worktree)
         .await
         .unwrap();
 
@@ -308,4 +381,215 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
             )
             .await,
     );
+}
+
+#[tokio::test]
+async fn higher_fence_retries_recover_lost_mutation_responses_without_duplicate_effects() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let (handle, workspace) =
+        ready_runtime(&adapter, "sandbox-lost-fenced-responses", "lost").await;
+    let agent_id = "agent-lost";
+    let add = WorktreeRequest::new(
+        format!("worktree:lost:{agent_id}:add:v1"),
+        "lost",
+        agent_id,
+        workspace.resolved_commit,
+    );
+
+    backend.lose_next_response(WireOperation::AddWorktree);
+    unavailable(adapter.add_worktree(&handle, 7, &add).await);
+    let applied_worktree = backend
+        .snapshot(&handle)
+        .await
+        .unwrap()
+        .worktrees
+        .get(&("lost".into(), agent_id.into()))
+        .unwrap()
+        .clone();
+    let replayed_worktree = adapter.add_worktree(&handle, 8, &add).await.unwrap();
+    assert_eq!(replayed_worktree, applied_worktree);
+    assert_eq!(backend.snapshot(&handle).await.unwrap().worktrees.len(), 1);
+
+    let options = runtime_options(&replayed_worktree, agent_id);
+    let home = AgentHomeRequest::new(
+        format!("agent:{agent_id}:home:create:v1"),
+        options.clone(),
+        "prompt",
+        Vec::new(),
+    );
+    backend.lose_next_response(WireOperation::MaterializeAgentHome);
+    unavailable(adapter.materialize_agent_home(&handle, 7, &home).await);
+    let applied_home = backend
+        .snapshot(&handle)
+        .await
+        .unwrap()
+        .homes
+        .get(&options.slot)
+        .unwrap()
+        .clone();
+    adapter
+        .materialize_agent_home(&handle, 8, &home)
+        .await
+        .unwrap();
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert_eq!(snapshot.homes.len(), 1);
+    assert_eq!(snapshot.homes.get(&options.slot), Some(&applied_home));
+
+    let open = AgentOpenRequest::new(format!("agent:{agent_id}:open:v1"), options.clone(), None);
+    backend.lose_next_response(WireOperation::OpenAgent);
+    let (lost_updates, _lost_updates_rx) = mpsc::channel(1);
+    unavailable(adapter.open_agent(&handle, 7, &open, lost_updates).await);
+    let applied_launch = backend
+        .snapshot(&handle)
+        .await
+        .unwrap()
+        .agents
+        .get(&options.slot)
+        .unwrap()
+        .clone();
+    let (replay_updates, _replay_updates_rx) = mpsc::channel(1);
+    let channel = adapter
+        .open_agent(&handle, 8, &open, replay_updates)
+        .await
+        .unwrap();
+    assert_eq!(
+        channel.conversation_id.as_deref(),
+        Some("conversation-agent-lost")
+    );
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert_eq!(snapshot.agents.len(), 1);
+    assert_eq!(snapshot.agents.get(&options.slot), Some(&applied_launch));
+
+    let close = AgentCloseRequest::new(format!("agent:{agent_id}:close:v1"), options.slot.clone());
+    adapter.close_agent(&handle, 9, &close).await.unwrap();
+    let remove_home = AgentHomeRemoveRequest::new(
+        format!("agent:{agent_id}:home:remove:v1"),
+        options.slot.clone(),
+    );
+    adapter
+        .remove_agent_home(&handle, 10, &remove_home)
+        .await
+        .unwrap();
+    let remove_worktree = WorktreeRef::new(
+        format!("worktree:lost:{agent_id}:remove:v1"),
+        "lost",
+        agent_id,
+    );
+    adapter
+        .remove_worktree(&handle, 11, &remove_worktree)
+        .await
+        .unwrap();
+
+    rejected(adapter.add_worktree(&handle, 10, &add).await);
+    rejected(adapter.materialize_agent_home(&handle, 9, &home).await);
+    let (stale_updates, _stale_updates_rx) = mpsc::channel(1);
+    rejected(adapter.open_agent(&handle, 8, &open, stale_updates).await);
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert!(snapshot.worktrees.is_empty());
+    assert!(snapshot.homes.is_empty());
+    assert_eq!(snapshot.agents.len(), 1);
+    assert_eq!(snapshot.agents.get(&options.slot), Some(&applied_launch));
+}
+
+#[tokio::test]
+async fn corrupt_outer_fences_are_rejected_and_higher_retries_do_not_repeat_effects() {
+    let backend = CorruptingBackend::default();
+    let adapter = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
+    let (handle, workspace) =
+        ready_runtime(&adapter, "sandbox-corrupt-authority-fence", "fence").await;
+    let agent_id = "agent-fence";
+    let add = WorktreeRequest::new(
+        format!("worktree:fence:{agent_id}:add:v1"),
+        "fence",
+        agent_id,
+        workspace.resolved_commit,
+    );
+    let worktree = adapter.add_worktree(&handle, 1, &add).await.unwrap();
+    backend.corrupt_next(Corruption::AuthorityFence);
+    rejected(adapter.add_worktree(&handle, 2, &add).await);
+    assert_eq!(
+        adapter.add_worktree(&handle, 3, &add).await.unwrap(),
+        worktree
+    );
+    assert_eq!(
+        backend
+            .inner
+            .snapshot(&handle)
+            .await
+            .unwrap()
+            .worktrees
+            .len(),
+        1
+    );
+
+    let options = runtime_options(&worktree, agent_id);
+    let home = AgentHomeRequest::new(
+        format!("agent:{agent_id}:home:create:v1"),
+        options.clone(),
+        "prompt",
+        Vec::new(),
+    );
+    adapter
+        .materialize_agent_home(&handle, 1, &home)
+        .await
+        .unwrap();
+    backend.corrupt_next(Corruption::AuthorityFence);
+    rejected(adapter.materialize_agent_home(&handle, 2, &home).await);
+    adapter
+        .materialize_agent_home(&handle, 3, &home)
+        .await
+        .unwrap();
+    assert_eq!(
+        backend.inner.snapshot(&handle).await.unwrap().homes.len(),
+        1
+    );
+
+    let open = AgentOpenRequest::new(format!("agent:{agent_id}:open:v1"), options.clone(), None);
+    let (initial_updates, _initial_updates_rx) = mpsc::channel(1);
+    let initial = adapter
+        .open_agent(&handle, 1, &open, initial_updates)
+        .await
+        .unwrap();
+    backend.corrupt_next(Corruption::AuthorityFence);
+    let (corrupt_updates, _corrupt_updates_rx) = mpsc::channel(1);
+    rejected(adapter.open_agent(&handle, 2, &open, corrupt_updates).await);
+    let (retry_updates, _retry_updates_rx) = mpsc::channel(1);
+    let retried = adapter
+        .open_agent(&handle, 3, &open, retry_updates)
+        .await
+        .unwrap();
+    assert_eq!(retried.conversation_id, initial.conversation_id);
+    assert_eq!(
+        backend.inner.snapshot(&handle).await.unwrap().agents.len(),
+        1
+    );
+
+    adapter
+        .close_agent(
+            &handle,
+            4,
+            &AgentCloseRequest::new(format!("agent:{agent_id}:close:v1"), options.slot.clone()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .remove_agent_home(
+            &handle,
+            5,
+            &AgentHomeRemoveRequest::new(format!("agent:{agent_id}:home:remove:v1"), options.slot),
+        )
+        .await
+        .unwrap();
+    adapter
+        .remove_worktree(
+            &handle,
+            6,
+            &WorktreeRef::new(
+                format!("worktree:fence:{agent_id}:remove:v1"),
+                "fence",
+                agent_id,
+            ),
+        )
+        .await
+        .unwrap();
 }

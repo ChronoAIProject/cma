@@ -62,10 +62,11 @@ impl AgentWorker {
                 .await;
         }
         let request = close_request(&agent);
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
             .adapter
-            .close_agent(&context.runtime, &request)
+            .close_agent(&context.runtime, authority_fence, &request)
             .await
         {
             Ok(()) => {
@@ -215,10 +216,11 @@ impl AgentWorker {
         }
 
         let request = close_request(&agent);
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
             .adapter
-            .close_agent(&context.runtime, &request)
+            .close_agent(&context.runtime, authority_fence, &request)
             .await
         {
             Ok(()) => {
@@ -273,10 +275,11 @@ impl AgentWorker {
             format!("agent:{}:home:remove:v1", agent.id),
             AgentSlot::new(agent.id.to_string()),
         );
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
             .adapter
-            .remove_agent_home(&context.runtime, &request)
+            .remove_agent_home(&context.runtime, authority_fence, &request)
             .await
         {
             Ok(()) => {
@@ -323,10 +326,11 @@ impl AgentWorker {
             context.worktree.name.clone(),
         );
         if has_startup_evidence(&agent, AgentWorkStep::AddWorktree) {
+            let authority_fence = claimed_fence(&agent, &self.config.holder)?;
             if let Err(error) = self
                 .dependencies
                 .adapter
-                .remove_worktree(&context.runtime, &request)
+                .remove_worktree(&context.runtime, authority_fence, &request)
                 .await
             {
                 return self
