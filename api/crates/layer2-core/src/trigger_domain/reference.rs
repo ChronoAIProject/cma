@@ -41,17 +41,7 @@ impl TriggerReferenceError {
 }
 
 #[async_trait]
-pub trait TriggerProfileResolver: Send + Sync {
-    /// Authorizes every target against current profile visibility and retirement state.
-    ///
-    /// This is the publication-time path. Durable Trigger stores must evaluate it in the
-    /// same consistent write boundary as inserting the immutable Trigger revision.
-    async fn resolve_trigger_profiles(
-        &self,
-        trigger_owner: &SubjectId,
-        target: &TriggerTarget,
-    ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError>;
-
+pub trait TriggerProfileReader: Send + Sync {
     /// Reads exact immutable revisions that were authorized when the Trigger was published.
     ///
     /// Current profile visibility and retirement state must not invalidate an existing
@@ -63,46 +53,20 @@ pub trait TriggerProfileResolver: Send + Sync {
 }
 
 #[async_trait]
-impl TriggerProfileResolver for InMemoryProfileStore {
+pub trait TriggerProfileResolver: TriggerProfileReader {
+    /// Authorizes every target against current profile visibility and retirement state.
+    ///
+    /// This is the publication-time path. Durable Trigger stores must evaluate it in the
+    /// same consistent write boundary as inserting the immutable Trigger revision.
     async fn resolve_trigger_profiles(
         &self,
         trigger_owner: &SubjectId,
         target: &TriggerTarget,
-    ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError> {
-        let sandbox_field = "target.sandbox_profile";
-        let workspace_field = "target.workspace_profile";
-        let agent_field = "target.agent_profile";
+    ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError>;
+}
 
-        let sandbox_profile = find_sandbox(self, target.sandbox_profile.id.as_str()).await?;
-        require_public(
-            trigger_owner,
-            &sandbox_profile.owner,
-            sandbox_profile.visibility,
-            sandbox_profile.retired_at.as_deref(),
-            sandbox_field,
-        )?;
-
-        let workspace_profile = find_workspace(self, target.workspace_profile.id.as_str()).await?;
-        require_public(
-            trigger_owner,
-            &workspace_profile.owner,
-            workspace_profile.visibility,
-            workspace_profile.retired_at.as_deref(),
-            workspace_field,
-        )?;
-
-        let agent_profile = find_agent(self, target.agent_profile.id.as_str()).await?;
-        require_public(
-            trigger_owner,
-            &agent_profile.owner,
-            agent_profile.visibility,
-            agent_profile.retired_at.as_deref(),
-            agent_field,
-        )?;
-
-        self.read_trigger_profiles(target).await
-    }
-
+#[async_trait]
+impl TriggerProfileReader for InMemoryProfileStore {
     async fn read_trigger_profiles(
         &self,
         target: &TriggerTarget,
@@ -146,6 +110,48 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             workspace,
             agent,
         })
+    }
+}
+
+#[async_trait]
+impl TriggerProfileResolver for InMemoryProfileStore {
+    async fn resolve_trigger_profiles(
+        &self,
+        trigger_owner: &SubjectId,
+        target: &TriggerTarget,
+    ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError> {
+        let sandbox_field = "target.sandbox_profile";
+        let workspace_field = "target.workspace_profile";
+        let agent_field = "target.agent_profile";
+
+        let sandbox_profile = find_sandbox(self, target.sandbox_profile.id.as_str()).await?;
+        require_public(
+            trigger_owner,
+            &sandbox_profile.owner,
+            sandbox_profile.visibility,
+            sandbox_profile.retired_at.as_deref(),
+            sandbox_field,
+        )?;
+
+        let workspace_profile = find_workspace(self, target.workspace_profile.id.as_str()).await?;
+        require_public(
+            trigger_owner,
+            &workspace_profile.owner,
+            workspace_profile.visibility,
+            workspace_profile.retired_at.as_deref(),
+            workspace_field,
+        )?;
+
+        let agent_profile = find_agent(self, target.agent_profile.id.as_str()).await?;
+        require_public(
+            trigger_owner,
+            &agent_profile.owner,
+            agent_profile.visibility,
+            agent_profile.retired_at.as_deref(),
+            agent_field,
+        )?;
+
+        self.read_trigger_profiles(target).await
     }
 }
 
