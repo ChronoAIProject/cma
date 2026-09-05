@@ -1,8 +1,10 @@
 use sha2::{Digest, Sha256};
 
+use super::super::deployment::provider_request_identity;
 use super::{InMemoryHostedBackend, InMemoryRuntimeSnapshot, MemoryOperation, MemoryRuntime};
+use crate::provider::ProviderSandboxRequest;
 use crate::wire::{ResponseFrame, WireFailure, WireOperation};
-use crate::{AdapterError, CommandReceipt};
+use crate::{AdapterError, CommandReceipt, RuntimeHandle, RuntimeLifecycle, RuntimeObservation};
 use serde::Serialize;
 
 impl MemoryRuntime {
@@ -45,6 +47,25 @@ impl InMemoryHostedBackend {
         responses.remove(index);
         true
     }
+}
+
+pub(super) fn memory_observation(
+    handle: &RuntimeHandle,
+    request: &ProviderSandboxRequest,
+) -> crate::Result<RuntimeObservation> {
+    let identity = provider_request_identity(request)?;
+    Ok(RuntimeObservation {
+        sandbox_id: identity.sandbox_id,
+        generation: identity.generation,
+        handle: handle.clone(),
+        image_sha256: identity.image_sha256,
+        spec_fingerprint: identity.spec_fingerprint,
+        runtime_contract: identity.runtime_contract,
+        lifecycle: RuntimeLifecycle {
+            state: "Running".into(),
+            reason: None,
+        },
+    })
 }
 
 pub(super) fn require_credential(

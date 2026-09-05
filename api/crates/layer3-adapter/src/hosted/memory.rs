@@ -8,25 +8,28 @@ use super::deployment::provider_request_identity;
 use super::HostedBackend;
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{
-    Acknowledgement, AgentOpenReceipt, CredentialReceipt, FencedReceipt, FencedRequest,
-    RequestFrame, ResponseFrame, WireFailure, WireOperation,
+    AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame, WireFailure,
+    WireOperation,
 };
 use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointHoldReceipt,
-    CheckpointHoldRequest, CheckpointReceipt, CheckpointWriterResumeReceipt, CommandReceipt,
-    ConversationChannel, ConversationInputSender, ConversationSnapshot, ConversationUpdate,
-    InstallReceipt, ResourceReading, RestoreBootstrapReceipt, RuntimeHandle, RuntimeLifecycle,
-    RuntimeObservation, WorkspaceReceipt, WorktreeReceipt, WriterState,
+    CheckpointHoldRequest, ConversationChannel, ConversationInputSender, ConversationSnapshot,
+    ConversationUpdate, InstallReceipt, RestoreBootstrapReceipt, RuntimeHandle, RuntimeObservation,
+    WorkspaceReceipt, WorktreeReceipt,
 };
 
 #[path = "memory_state.rs"]
 mod state;
 use state::{
-    digest, fingerprint, refused, remember_operation, replay_operation, require_credential,
-    successful_commands, valid_sha256,
+    digest, fingerprint, memory_observation, refused, remember_operation, replay_operation,
+    require_credential, valid_sha256,
 };
 #[path = "memory_authority.rs"]
 mod authority;
+#[path = "memory_bootstrap.rs"]
+mod bootstrap;
+#[path = "memory_checkpoint.rs"]
+mod checkpoint;
 #[path = "memory_mutations.rs"]
 mod mutations;
 
@@ -262,79 +265,12 @@ impl HostedBackend for InMemoryHostedBackend {
         }
         let response = match request {
             RequestFrame::Install(request) => {
-                if request.operation_id.trim().is_empty() || !request.has_valid_sha256() {
-                    return refused(operation, "install_request_invalid");
-                }
-                if runtime.restore_bootstrap.is_some() {
-                    return refused(operation, "install_mode_conflict");
-                }
-                let identity = (request.operation_id.clone(), request.request_sha256.clone());
-                if let Some((completed, receipt)) = &runtime.install {
-                    return if completed == &identity {
-                        Ok(ResponseFrame::Install(receipt.clone()))
-                    } else {
-                        refused(operation, "install_replay_mismatch")
-                    };
-                }
-                let receipt = InstallReceipt {
-                    operation_id: request.operation_id.clone(),
-                    request_sha256: request.request_sha256,
-                    commands: successful_commands(&request.commands),
-                };
-                runtime.install = Some((identity, receipt.clone()));
-                let mut response = receipt;
-                if self.corrupt_install_receipt.swap(false, Ordering::Relaxed) {
-                    if let Some(first) = response.commands.first_mut() {
-                        first.index = u32::MAX;
-                    } else {
-                        response.commands.push(CommandReceipt {
-                            index: 0,
-                            exit_code: 0,
-                            stdout_sha256: digest(&[]),
-                            stderr_sha256: digest(&[]),
-                        });
-                    }
-                }
-                Ok(ResponseFrame::Install(response))
+                bootstrap::install(runtime, &self.corrupt_install_receipt, request, operation)
             }
             RequestFrame::BootstrapRestore(request) => {
-                let identity = provider_request_identity(&runtime.request)?;
-                if request.operation_id.trim().is_empty()
-                    || request.sandbox_id != identity.sandbox_id
-                    || !request.has_valid_sha256()
-                    || !request.checkpoint.has_valid_reference()
-                {
-                    return refused(operation, "restore_bootstrap_invalid");
-                }
-                if runtime.install.is_some() {
-                    return refused(operation, "install_mode_conflict");
-                }
-                let receipt = RestoreBootstrapReceipt {
-                    operation_id: request.operation_id,
-                    request_sha256: request.request_sha256,
-                    restore_request_sha256: request.checkpoint.computed_sha256(),
-                    installation_inherited: true,
-                };
-                if let Some(existing) = &runtime.restore_bootstrap {
-                    return if existing == &receipt {
-                        Ok(ResponseFrame::BootstrapRestore(existing.clone()))
-                    } else {
-                        refused(operation, "restore_bootstrap_conflict")
-                    };
-                }
-                runtime.restore_bootstrap = Some(receipt.clone());
-                Ok(ResponseFrame::BootstrapRestore(receipt))
+                bootstrap::restore(runtime, request, operation)
             }
-            RequestFrame::Credential(frame) => {
-                if runtime.install.is_none() && runtime.restore_bootstrap.is_none() {
-                    return refused(operation, "install_not_completed");
-                }
-                runtime.credential_delivered = true;
-                Ok(ResponseFrame::Credential(CredentialReceipt {
-                    operation_id: frame.operation_id,
-                    installed: true,
-                }))
-            }
+            RequestFrame::Credential(frame) => bootstrap::credential(runtime, frame, operation),
             RequestFrame::PrepareWorkspace(request) => {
                 require_credential(runtime, operation)?;
                 mutations::prepare_workspace(runtime, request)
@@ -384,98 +320,16 @@ impl HostedBackend for InMemoryHostedBackend {
                 }))
             }
             RequestFrame::Checkpoint(request) => {
-                require_credential(runtime, operation)?;
-                runtime.writer_fence_captures += 1;
-                let marker = format!(
-                    "{}:{}:{}",
-                    handle.0, request.epoch, runtime.writer_fence_captures
-                );
-                let sha256 = digest(marker.as_bytes());
-                Ok(ResponseFrame::Checkpoint(CheckpointReceipt {
-                    epoch: request.epoch,
-                    object_reference: format!("home-{sha256}.cma"),
-                    sha256,
-                    writers: WriterState::Resumed,
-                }))
+                checkpoint::capture(runtime, handle, request, operation)
             }
             RequestFrame::CheckpointForTeardown(request) => {
-                require_credential(runtime, operation)?;
-                if !request.has_valid_writer_resume_token() {
-                    return refused(operation, "writer_resume_token_invalid");
-                }
-                if let Some((held_request, held_receipt)) = &runtime.held_checkpoint {
-                    if held_request == &request {
-                        Ok(ResponseFrame::CheckpointForTeardown(held_receipt.clone()))
-                    } else {
-                        refused(operation, "checkpoint_hold_conflict")
-                    }
-                } else {
-                    runtime.writer_fence_captures += 1;
-                    let marker = format!(
-                        "{}:{}:{}",
-                        handle.0, request.checkpoint.epoch, runtime.writer_fence_captures
-                    );
-                    let sha256 = digest(marker.as_bytes());
-                    let receipt = CheckpointHoldReceipt {
-                        checkpoint: CheckpointReceipt {
-                            epoch: request.checkpoint.epoch,
-                            object_reference: format!("home-{sha256}.cma"),
-                            sha256,
-                            writers: WriterState::Held,
-                        },
-                        writer_resume_token: request.writer_resume_token.clone(),
-                    };
-                    runtime.held_checkpoint = Some((request, receipt.clone()));
-                    Ok(ResponseFrame::CheckpointForTeardown(receipt))
-                }
+                checkpoint::capture_for_teardown(runtime, handle, request, operation)
             }
             RequestFrame::ResumeCheckpointWriters(request) => {
-                if !request.has_valid_writer_resume_token() {
-                    return refused(operation, "writer_resume_token_invalid");
-                }
-                if runtime
-                    .held_checkpoint
-                    .as_ref()
-                    .is_some_and(|(held_request, _)| {
-                        !crate::writer_resume_tokens_match(
-                            &held_request.writer_resume_token,
-                            &request.writer_resume_token,
-                        )
-                    })
-                {
-                    refused(operation, "checkpoint_hold_conflict")
-                } else {
-                    runtime.held_checkpoint = None;
-                    Ok(ResponseFrame::ResumeCheckpointWriters(
-                        CheckpointWriterResumeReceipt {
-                            writer_resume_token: request.writer_resume_token,
-                            writers_resumed: true,
-                        },
-                    ))
-                }
+                checkpoint::resume_writers(runtime, request, operation)
             }
-            RequestFrame::Restore(request) => {
-                if !runtime.credential_delivered {
-                    return refused(operation, "credential_not_delivered");
-                }
-                if runtime.restore_bootstrap.as_ref().is_some_and(|bootstrap| {
-                    bootstrap.restore_request_sha256 != request.computed_sha256()
-                }) {
-                    return refused(operation, "restore_bootstrap_conflict");
-                }
-                runtime.restored_object = Some(request.object_reference);
-                Ok(ResponseFrame::Restore(Acknowledgement::default()))
-            }
-            RequestFrame::Resources => Ok(ResponseFrame::Resources(ResourceReading {
-                uptime_ms: 1,
-                cpu_millis_limit: runtime
-                    .request
-                    .resource_limits
-                    .get("cpu")
-                    .and_then(|value| value.strip_suffix('m'))
-                    .and_then(|value| value.parse().ok()),
-                ..ResourceReading::default()
-            })),
+            RequestFrame::Restore(request) => checkpoint::restore(runtime, request, operation),
+            RequestFrame::Resources => checkpoint::resources(runtime),
             RequestFrame::OpenAgent(_) => Err(AdapterError::Rejected(
                 "open_agent must use the hosted conversation path".into(),
             )),
@@ -626,25 +480,6 @@ impl HostedBackend for InMemoryHostedBackend {
         }
         Ok(())
     }
-}
-
-fn memory_observation(
-    handle: &RuntimeHandle,
-    request: &ProviderSandboxRequest,
-) -> crate::Result<RuntimeObservation> {
-    let identity = provider_request_identity(request)?;
-    Ok(RuntimeObservation {
-        sandbox_id: identity.sandbox_id,
-        generation: identity.generation,
-        handle: handle.clone(),
-        image_sha256: identity.image_sha256,
-        spec_fingerprint: identity.spec_fingerprint,
-        runtime_contract: identity.runtime_contract,
-        lifecycle: RuntimeLifecycle {
-            state: "Running".into(),
-            reason: None,
-        },
-    })
 }
 
 fn channel(conversation_id: Option<String>) -> ConversationChannel {

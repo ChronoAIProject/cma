@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -7,7 +6,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use super::reply::{
     expect_ack, failure_error, operation_name, response_operation, valid_checkpoint_reference,
-    valid_git_commit, valid_sha256, validate_command_receipts,
+    valid_sha256,
 };
 use super::{HostedAgentRuntime, HostedBackend, HostedDeployment};
 use crate::wire::{AgentRef, CredentialReceipt, RequestFrame, ResponseFrame};
@@ -29,6 +28,8 @@ mod agent;
 mod install;
 #[path = "adapter_runtime.rs"]
 mod runtime_lifecycle;
+#[path = "adapter_workspace.rs"]
+mod workspace;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeState {
@@ -265,32 +266,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorkspaceRequest,
     ) -> crate::Result<WorkspaceReceipt> {
-        let state = self.known_state(handle).await?;
-        validate_workspace_operation(
-            &request.operation_id,
-            &request.request_sha256,
-            request.has_valid_sha256(),
-        )?;
-        match self
-            .exchange(handle, RequestFrame::PrepareWorkspace(request.clone()))
-            .await?
-        {
-            ResponseFrame::PrepareWorkspace(receipt)
-                if receipt.name == request.name
-                    && receipt.workspace_id == request.workspace_id
-                    && receipt.operation_id == request.operation_id
-                    && receipt.request_sha256 == request.request_sha256
-                    && Path::new(&receipt.path)
-                        == Path::new(&state.home_directory).join(&request.name)
-                    && valid_git_commit(&receipt.resolved_commit) =>
-            {
-                Ok(receipt)
-            }
-            ResponseFrame::PrepareWorkspace(_) => Err(AdapterError::Rejected(
-                "workspace receipt names a different workspace".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        workspace::prepare(self, handle, request).await
     }
 
     async fn run_workspace_setup(
@@ -298,35 +274,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorkspaceSetupRequest,
     ) -> crate::Result<SetupReceipt> {
-        self.known_state(handle).await?;
-        validate_workspace_operation(
-            &request.operation_id,
-            &request.request_sha256,
-            request.has_valid_sha256(),
-        )?;
-        if request.timeout_seconds == 0 || request.output_limit_bytes == 0 {
-            return Err(AdapterError::Rejected(
-                "workspace setup command bounds are invalid".into(),
-            ));
-        }
-        match self
-            .exchange(handle, RequestFrame::WorkspaceSetup(request.clone()))
-            .await?
-        {
-            ResponseFrame::WorkspaceSetup(receipt) => {
-                if receipt.operation_id != request.operation_id
-                    || receipt.request_sha256 != request.request_sha256
-                    || receipt.workspace_id != request.workspace_id
-                {
-                    return Err(AdapterError::Rejected(
-                        "runtime returned a receipt for another workspace setup operation".into(),
-                    ));
-                }
-                validate_command_receipts(&receipt.commands, request.commands.len())?;
-                Ok(receipt)
-            }
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        workspace::setup(self, handle, request).await
     }
 
     async fn remove_workspace(
@@ -334,28 +282,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorkspaceRemoveRequest,
     ) -> crate::Result<()> {
-        self.known_state(handle).await?;
-        validate_workspace_operation(
-            &request.operation_id,
-            &request.request_sha256,
-            request.has_valid_sha256(),
-        )?;
-        match self
-            .exchange(handle, RequestFrame::RemoveWorkspace(request.clone()))
-            .await?
-        {
-            ResponseFrame::RemoveWorkspace(receipt)
-                if receipt.operation_id == request.operation_id
-                    && receipt.request_sha256 == request.request_sha256
-                    && receipt.workspace_id == request.workspace_id =>
-            {
-                Ok(())
-            }
-            ResponseFrame::RemoveWorkspace(_) => Err(AdapterError::Rejected(
-                "runtime returned a receipt for another workspace removal operation".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        workspace::remove(self, handle, request).await
     }
 
     async fn add_worktree(
@@ -562,22 +489,4 @@ impl SandboxAdapter for HostedAdapter {
         self.states.lock().await.remove(handle);
         Ok(())
     }
-}
-
-fn validate_workspace_operation(
-    operation_id: &str,
-    request_sha256: &str,
-    digest_matches: bool,
-) -> crate::Result<()> {
-    if operation_id.trim().is_empty()
-        || operation_id.len() > 256
-        || operation_id.chars().any(char::is_control)
-        || !valid_sha256(request_sha256)
-        || !digest_matches
-    {
-        return Err(AdapterError::Rejected(
-            "workspace operation id or request digest is invalid".into(),
-        ));
-    }
-    Ok(())
 }
