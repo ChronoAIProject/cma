@@ -2,6 +2,9 @@
 
 use utoipa::{openapi, OpenApi};
 
+mod projections;
+
+use self::projections::{EmbedDescriptor, EmbedSnippets, SignupOptions};
 use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
 use super::admin::sandboxes::{
     AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
@@ -20,14 +23,42 @@ use super::instances_openapi_shapes::{
     SandboxView, WorkspaceDetailView, WorkspaceListView, WorkspaceSourceView, WorkspaceView,
     WorktreeListView, WorktreeView,
 };
+use super::launch_events::*;
 use super::openapi_shapes::ConformanceDocument;
 use super::problems::ProblemDocument;
 use super::profiles_openapi_shapes::*;
+use super::trigger_openapi_shapes::*;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
         super::conformance,
+        projections::signup_options,
+        super::triggers::create,
+        super::triggers::list,
+        super::triggers::read,
+        super::triggers::update,
+        super::triggers::delete_trigger,
+        super::triggers::publish,
+        super::triggers::retire,
+        super::triggers::revisions,
+        super::triggers::statistics,
+        super::triggers::preview,
+        super::trigger_placements::create,
+        super::trigger_placements::list,
+        super::trigger_placements::retire,
+        super::launches::create,
+        super::launches::list,
+        super::launches::read,
+        super::launches::events,
+        super::launches::requirements,
+        super::launches::start,
+        super::launches::cancel,
+        super::service_connections::create,
+        super::service_connections::read,
+        projections::badge,
+        projections::embed,
+        projections::launch_event_companion,
         super::profiles_agent::create,
         super::profiles_agent::list,
         super::profiles_agent::read,
@@ -100,6 +131,69 @@ use super::profiles_openapi_shapes::*;
     components(schemas(
         ConformanceDocument,
         ProblemDocument,
+        SignupOptions,
+        EmbedDescriptor,
+        EmbedSnippets,
+        TriggerButtonLabelValue,
+        TriggerThemeValue,
+        SandboxReusePolicyValue,
+        WorkspaceReusePolicyValue,
+        AgentReusePolicyValue,
+        TriggerPresentationBody,
+        TriggerTargetBody,
+        TriggerReuseBody,
+        TriggerConsentBody,
+        TriggerContentBody,
+        CreateTriggerRequest,
+        UpdateTriggerRequest,
+        PublishTriggerRequest,
+        CreatePlacementRequest,
+        CreateLaunchRequest,
+        StartLaunchRequest,
+        CreateServiceConnectionRequest,
+        TriggerAvailabilityValue,
+        TriggerStatsView,
+        PlacementView,
+        TriggerRevisionView,
+        PublishedTriggerRevisionView,
+        TriggerView,
+        TriggerPageView,
+        TriggerPlacementStatsView,
+        TriggerStatisticsView,
+        TriggerTrustDisclosureView,
+        TriggerTrustPreviewView,
+        TriggerSizePreviewView,
+        TriggerTechnicalPreviewView,
+        TriggerPreviewView,
+        ResolvedResourceView,
+        LaunchResolutionView,
+        ServiceRequirementView,
+        RequirementsSnapshotView,
+        ReviewNeedView,
+        ReviewRequirementsView,
+        LaunchTrustResourceValue,
+        LaunchTrustDisclosureView,
+        LaunchTrustManifestView,
+        LaunchConsentSurfaceValue,
+        LaunchConfirmationView,
+        LaunchView,
+        LaunchPageView,
+        LaunchEventPageView,
+        ServiceConnectionStateValue,
+        CreatedServiceConnectionView,
+        ServiceConnectionStatusView,
+        LaunchStateValue,
+        LaunchStepKeyValue,
+        LaunchStepStatusValue,
+        RepeatChoiceValue,
+        ServiceRequirementStateValue,
+        FirstMessageStateValue,
+        LaunchEffectKindValue,
+        LaunchStepView,
+        LaunchBlockedReasonView,
+        LaunchFailureView,
+        LaunchEventKindView,
+        LaunchEventView,
         ProfileVisibilityValue,
         ThinkingEffortValue,
         PermissionLevelValue,
@@ -214,6 +308,10 @@ use super::profiles_openapi_shapes::*;
     )),
     tags(
         (name = "discovery", description = "Anonymous deployment discovery"),
+        (name = "triggers", description = "Publisher-owned Trigger drafts and public previews"),
+        (name = "trigger placements", description = "Owned Trigger placement and embed projections"),
+        (name = "trigger launches", description = "Owned Trigger Launch lifecycle and event replay"),
+        (name = "service connections", description = "Owner-scoped service authorization handoffs"),
         (name = "agent profiles", description = "Owned Agent Profile drafts and immutable revisions"),
         (name = "workspace profiles", description = "Owned Workspace Profile drafts and immutable revisions"),
         (name = "sandbox profiles", description = "Owned Sandbox Profile drafts and immutable revisions"),
@@ -263,7 +361,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
         .filter_map(|(method, operation)| operation.map(|operation| (method, operation)))
         {
             operation.operation_id = Some(operation_id(method, path));
-            operation.security = Some(if path == "/api/v1/conformance" {
+            operation.security = Some(if anonymous_path(path) {
                 Vec::new()
             } else {
                 vec![
@@ -280,6 +378,16 @@ pub fn document() -> utoipa::openapi::OpenApi {
         }
     }
     document
+}
+
+fn anonymous_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/auth/signup-options"
+            | "/api/v1/conformance"
+            | "/api/v1/triggers/public/{public_id}"
+            | "/api/v1/triggers/public/{public_id}/badge.svg"
+    )
 }
 
 fn operation_id(method: &str, path: &str) -> String {
@@ -307,133 +415,4 @@ fn operation_id(method: &str, path: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::*;
-
-    #[test]
-    fn every_profile_and_marketplace_route_is_documented_and_authenticated() {
-        let document = document();
-        let mut operation_ids = HashSet::new();
-        let profiles: Vec<_> = document
-            .paths
-            .paths
-            .iter()
-            .filter(|(path, _)| {
-                path.starts_with("/api/v1/agent-profiles")
-                    || path.starts_with("/api/v1/workspace-profiles")
-                    || path.starts_with("/api/v1/sandbox-profiles")
-                    || path.starts_with("/api/v1/marketplace")
-            })
-            .collect();
-        assert_eq!(profiles.len(), 21);
-        for (_, item) in profiles {
-            for operation in [
-                item.get.as_ref(),
-                item.put.as_ref(),
-                item.post.as_ref(),
-                item.delete.as_ref(),
-                item.patch.as_ref(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                assert!(operation_ids.insert(operation.operation_id.as_deref().unwrap()));
-                assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
-            }
-        }
-        for path in [
-            "/api/v1/agent-profiles",
-            "/api/v1/workspace-profiles/{id}/revisions/{revision}",
-            "/api/v1/sandbox-profiles/{id}/visibility",
-            "/api/v1/marketplace/{kind}/{id}/fork",
-        ] {
-            assert!(document.paths.paths.contains_key(path), "missing {path}");
-        }
-        assert_eq!(
-            operation_id("post", "/api/v1/marketplace/{kind}/{id}/fork"),
-            "post_api_v1_marketplace_by_kind_by_id_fork"
-        );
-    }
-
-    #[test]
-    fn every_admin_route_is_documented_and_authenticated() {
-        let document = document();
-        let mut operation_ids = HashSet::new();
-        let admin: Vec<_> = document
-            .paths
-            .paths
-            .iter()
-            .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
-            .collect();
-        assert_eq!(admin.len(), 12);
-        for (_, item) in admin {
-            for operation in [
-                item.get.as_ref(),
-                item.put.as_ref(),
-                item.post.as_ref(),
-                item.patch.as_ref(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                assert!(operation_ids.insert(operation.operation_id.as_deref().unwrap()));
-                assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
-            }
-        }
-        assert_eq!(operation_ids.len(), 14);
-        assert!(document
-            .paths
-            .paths
-            .contains_key("/api/v1/admin/profiles/{kind}/{id}/retire"));
-        assert!(document
-            .paths
-            .paths
-            .contains_key("/api/v1/admin/runtime-inventory"));
-    }
-
-    #[test]
-    fn every_owner_hierarchy_route_is_documented_and_authenticated() {
-        let document = document();
-        let hierarchy_paths = [
-            "/api/v1/sandboxes",
-            "/api/v1/sandboxes/{id}",
-            "/api/v1/sandboxes/{id}/events",
-            "/api/v1/sandboxes/{id}/workspaces",
-            "/api/v1/workspaces/{id}",
-            "/api/v1/workspaces/{id}/worktrees",
-            "/api/v1/worktrees/{id}",
-        ];
-        let paths: Vec<_> = hierarchy_paths
-            .iter()
-            .map(|path| {
-                document
-                    .paths
-                    .paths
-                    .get(*path)
-                    .unwrap_or_else(|| panic!("missing hierarchy path {path}"))
-            })
-            .collect();
-        let mut operations = Vec::new();
-        for item in paths {
-            operations.extend(
-                [item.get.as_ref(), item.post.as_ref(), item.delete.as_ref()]
-                    .into_iter()
-                    .flatten(),
-            );
-        }
-        assert_eq!(operations.len(), 11);
-        assert!(operations
-            .iter()
-            .all(|operation| operation.security.as_ref().map(Vec::len) == Some(2)));
-        assert!(!document
-            .paths
-            .paths
-            .contains_key("/api/v1/sandboxes/{id}/pause"));
-        assert!(!document
-            .paths
-            .paths
-            .contains_key("/api/v1/sandboxes/{id}/revive"));
-    }
-}
+mod tests;
