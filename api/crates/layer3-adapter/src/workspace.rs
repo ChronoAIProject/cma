@@ -243,26 +243,103 @@ fn hex(bytes: &[u8]) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorktreeRequest {
+    pub operation_id: String,
+    pub request_sha256: String,
     pub workspace: String,
     pub name: String,
     pub base: String,
+}
+
+impl WorktreeRequest {
+    pub fn new(
+        operation_id: impl Into<String>,
+        workspace: impl Into<String>,
+        name: impl Into<String>,
+        base: impl Into<String>,
+    ) -> Self {
+        let mut request = Self {
+            operation_id: operation_id.into(),
+            request_sha256: String::new(),
+            workspace: workspace.into(),
+            name: name.into(),
+            base: base.into(),
+        };
+        request.request_sha256 = request.computed_sha256();
+        request
+    }
+
+    pub fn computed_sha256(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"chrono.worktree.add.v1\0");
+        field(&mut digest, &self.workspace);
+        field(&mut digest, &self.name);
+        field(&mut digest, &self.base);
+        hex(&digest.finalize())
+    }
+
+    pub fn has_valid_sha256(&self) -> bool {
+        self.request_sha256 == self.computed_sha256()
+    }
 }
 
 /// Stable reference used to remove a worktree.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorktreeRef {
+    pub operation_id: String,
+    pub request_sha256: String,
     pub workspace: String,
     pub name: String,
+}
+
+impl WorktreeRef {
+    pub fn new(
+        operation_id: impl Into<String>,
+        workspace: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
+        let mut request = Self {
+            operation_id: operation_id.into(),
+            request_sha256: String::new(),
+            workspace: workspace.into(),
+            name: name.into(),
+        };
+        request.request_sha256 = request.computed_sha256();
+        request
+    }
+
+    pub fn computed_sha256(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"chrono.worktree.remove.v1\0");
+        field(&mut digest, &self.workspace);
+        field(&mut digest, &self.name);
+        hex(&digest.finalize())
+    }
+
+    pub fn has_valid_sha256(&self) -> bool {
+        self.request_sha256 == self.computed_sha256()
+    }
 }
 
 /// Paths and branch resolved by the runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorktreeReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
     pub workspace: String,
     pub name: String,
     pub path: String,
     pub branch: String,
     pub base_commit: String,
+}
+
+/// Correlated proof that one worktree and its private branch were removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorktreeRemoveReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub workspace: String,
+    pub name: String,
 }

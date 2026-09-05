@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use layer3_adapter::wire::{AgentRef, ResponseFrame, WireOperation};
 use layer3_adapter::{
-    AgentHomePlan, AgentLaunch, AgentSlot, CheckpointRequest, CredentialFrame, HomeFile,
-    InstallRequest, RestoreRequest, RuntimeCredential, WorkspaceRemoveRequest, WorkspaceRequest,
-    WorkspaceSetupRequest, WorkspaceSource, WorktreeRef, WorktreeRequest,
+    AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
+    CheckpointRequest, CredentialFrame, HomeFile, InstallRequest, RestoreRequest,
+    RuntimeCredential, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
+    WorkspaceSource, WorktreeRef, WorktreeRequest,
 };
 
 use super::*;
@@ -370,11 +371,12 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
     );
 
     let worktree = match supervisor
-        .dispatch(RequestFrame::AddWorktree(WorktreeRequest {
-            workspace: "project".into(),
-            name: "agent-1".into(),
-            base: workspace.resolved_commit,
-        }))
+        .dispatch(RequestFrame::AddWorktree(WorktreeRequest::new(
+            "worktree:project:agent-1:add:v1",
+            "project",
+            "agent-1",
+            workspace.resolved_commit,
+        )))
         .await
     {
         ResponseFrame::AddWorktree(receipt) => receipt,
@@ -382,6 +384,8 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
     };
     let materialized = supervisor
         .dispatch(RequestFrame::MaterializeAgentHome(AgentHomePlan {
+            operation_id: "agent:agent-1:home:create:v1".into(),
+            request_sha256: "a".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
             files: vec![HomeFile {
                 path: "config.toml".into(),
@@ -398,6 +402,8 @@ async fn complete_frame_sequence_uses_real_git_home_process_and_checkpoint() {
 
     let environment_file = agent_home.join("environment");
     let launch = AgentLaunch {
+        operation_id: "agent:agent-1:open:v1".into(),
+        request_sha256: "b".repeat(64),
         agent_id: AgentSlot::new("agent-1"),
         cwd: worktree.path.clone(),
         home: agent_home.to_string_lossy().into_owned(),
@@ -466,11 +472,23 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
     }
 
     let closed = supervisor
-        .dispatch(RequestFrame::CloseAgent(AgentRef {
-            agent_id: AgentSlot::new("agent-1"),
-        }))
+        .dispatch(RequestFrame::CloseAgent(AgentCloseRequest::new(
+            "agent:agent-1:close:v1",
+            AgentSlot::new("agent-1"),
+        )))
         .await;
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)), "{closed:?}");
+    assert!(agent_home.exists());
+    let removed_home = supervisor
+        .dispatch(RequestFrame::RemoveAgentHome(AgentHomeRemoveRequest::new(
+            "agent:agent-1:home:remove:v1",
+            AgentSlot::new("agent-1"),
+        )))
+        .await;
+    assert!(
+        matches!(removed_home, ResponseFrame::RemoveAgentHome(_)),
+        "{removed_home:?}"
+    );
     assert!(!agent_home.exists());
 
     std::fs::write(home.join("durable"), "before checkpoint").unwrap();
@@ -501,10 +519,11 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
     );
 
     let removed = supervisor
-        .dispatch(RequestFrame::RemoveWorktree(WorktreeRef {
-            workspace: "project".into(),
-            name: "agent-1".into(),
-        }))
+        .dispatch(RequestFrame::RemoveWorktree(WorktreeRef::new(
+            "worktree:project:agent-1:remove:v1",
+            "project",
+            "agent-1",
+        )))
         .await;
     assert!(
         matches!(removed, ResponseFrame::RemoveWorktree(_)),

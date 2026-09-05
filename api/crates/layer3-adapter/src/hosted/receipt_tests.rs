@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use super::{HostedBackend, InMemoryHostedBackend};
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
 use crate::provider::ProviderSandboxRequest;
-use crate::wire::{RequestFrame, ResponseFrame};
+use crate::wire::{AgentOpenReceipt, RequestFrame, ResponseFrame};
 use crate::{
     AdapterError, AgentLaunch, CheckpointRequest, ConversationChannel, ConversationUpdate,
     CredentialFrame, InstallRequest, RuntimeCredential, RuntimeHandle, SandboxAdapter, SandboxSpec,
@@ -88,7 +88,7 @@ impl HostedBackend for CorruptingBackend {
         launch: AgentLaunch,
         resume_conversation: Option<String>,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
         self.inner
             .open_agent(handle, launch, resume_conversation, updates)
             .await
@@ -182,11 +182,12 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
         adapter
             .add_worktree(
                 &handle,
-                &WorktreeRequest {
-                    workspace: "receipt".into(),
-                    name: "agent-1".into(),
-                    base: workspace.resolved_commit,
-                },
+                &WorktreeRequest::new(
+                    "worktree:receipt:agent-1:add:v1",
+                    "receipt",
+                    "agent-1",
+                    workspace.resolved_commit,
+                ),
             )
             .await,
     );

@@ -16,10 +16,11 @@ use crate::hosted::{
     HostedAdapter, HostedAgentRuntime, HostedBackend, HostedDeployment, InMemoryHostedBackend,
 };
 use crate::{
-    AdapterCapabilities, AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSlot,
-    CheckpointReceipt, CheckpointRequest, ConversationChannel, ConversationSnapshot,
-    ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest, ResourceReading,
-    RestoreRequest, RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
+    AdapterCapabilities, AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest,
+    AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSlot, CheckpointReceipt,
+    CheckpointRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
+    CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreRequest,
+    RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
     WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
     WorktreeRequest,
 };
@@ -152,6 +153,14 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.materialize_agent_home(handle, request).await
     }
 
+    async fn remove_agent_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentHomeRemoveRequest,
+    ) -> crate::Result<()> {
+        self.hosted.remove_agent_home(handle, request).await
+    }
+
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -161,8 +170,12 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.open_agent(handle, request, updates).await
     }
 
-    async fn close_agent(&self, handle: &RuntimeHandle, agent: &AgentSlot) -> crate::Result<()> {
-        self.hosted.close_agent(handle, agent).await
+    async fn close_agent(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentCloseRequest,
+    ) -> crate::Result<()> {
+        self.hosted.close_agent(handle, request).await
     }
 
     async fn capture_agent(

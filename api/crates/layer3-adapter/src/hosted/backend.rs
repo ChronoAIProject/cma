@@ -1,7 +1,7 @@
 use tokio::sync::mpsc;
 
 use crate::provider::ProviderSandboxRequest;
-use crate::wire::{RequestFrame, ResponseFrame};
+use crate::wire::{AgentOpenReceipt, RequestFrame, ResponseFrame};
 use crate::{
     AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, ConversationChannel,
     ConversationUpdate, Result, RuntimeHandle,
@@ -32,7 +32,7 @@ pub trait HostedBackend: Send + Sync {
         launch: AgentLaunch,
         resume_conversation: Option<String>,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> Result<ConversationChannel>;
+    ) -> Result<(ConversationChannel, AgentOpenReceipt)>;
 
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()>;
 }

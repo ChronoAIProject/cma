@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use super::HostedBackend;
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
 use crate::provider::ProviderSandboxRequest;
-use crate::wire::{RequestFrame, ResponseFrame};
+use crate::wire::{AgentOpenReceipt, RequestFrame, ResponseFrame};
 use crate::{
     AdapterError, AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeHandle,
     SandboxAdapter, SandboxSpec,
@@ -31,7 +31,7 @@ impl HostedBackend for ReusedHandleBackend {
         _launch: AgentLaunch,
         _resume_conversation: Option<String>,
         _updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
         Err(AdapterError::Unavailable("not used by this test".into()))
     }
 

@@ -2,11 +2,11 @@ use crate::codex::{CodexAdapter, CodexSandboxSpec};
 use crate::hosted::HostedDeployment;
 use crate::wire::{RequestFrame, WireOperation};
 use crate::{
-    AdapterError, AgentHomeRequest, AgentOpenRequest, AgentSlot, CheckpointRequest,
-    CredentialFrame, InstallRequest, PermissionLevel, ReasoningEffort, RestoreRequest,
-    RuntimeCredential, RuntimeImage, RuntimeOptions, SandboxAdapter, SandboxSpec,
-    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeRef,
-    WorktreeRequest, RUNTIME_CONTRACT_LABEL,
+    AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentOpenRequest,
+    AgentSlot, CheckpointRequest, CredentialFrame, InstallRequest, PermissionLevel,
+    ReasoningEffort, RestoreRequest, RuntimeCredential, RuntimeImage, RuntimeOptions,
+    SandboxAdapter, SandboxSpec, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
+    WorkspaceSource, WorktreeRef, WorktreeRequest, RUNTIME_CONTRACT_LABEL,
 };
 
 fn sandbox_spec(own_credential: bool) -> SandboxSpec {
@@ -205,11 +205,12 @@ async fn recreated_adapter_uses_the_reattached_runtime_lifecycle() {
     let worktree = adapter_b
         .add_worktree(
             &reattached,
-            &WorktreeRequest {
-                workspace: "recreated".into(),
-                name: "after-restart".into(),
-                base: workspace.resolved_commit,
-            },
+            &WorktreeRequest::new(
+                "worktree:recreated:after-restart:add:v1",
+                "recreated",
+                "after-restart",
+                workspace.resolved_commit,
+            ),
         )
         .await
         .expect("runtime accepts a credentialed mutation without install replay");
@@ -329,22 +330,24 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let tree_a = adapter
         .add_worktree(
             &handle,
-            &WorktreeRequest {
-                workspace: "alpha".into(),
-                name: "wt-1".into(),
-                base: workspace_a.resolved_commit,
-            },
+            &WorktreeRequest::new(
+                "worktree:alpha:wt-1:add:v1",
+                "alpha",
+                "wt-1",
+                workspace_a.resolved_commit,
+            ),
         )
         .await
         .expect("first worktree");
     let tree_b = adapter
         .add_worktree(
             &handle,
-            &WorktreeRequest {
-                workspace: "beta".into(),
-                name: "wt-2".into(),
-                base: workspace_b.resolved_commit,
-            },
+            &WorktreeRequest::new(
+                "worktree:beta:wt-2:add:v1",
+                "beta",
+                "wt-2",
+                workspace_b.resolved_commit,
+            ),
         )
         .await
         .expect("second worktree");
@@ -355,11 +358,12 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
         adapter
             .materialize_agent_home(
                 &handle,
-                &AgentHomeRequest {
-                    options: agent_options.clone(),
-                    system_prompt: format!("Prompt for {}", agent_options.slot.0),
-                    skills: Vec::new(),
-                },
+                &AgentHomeRequest::new(
+                    format!("agent:{}:home:create:v1", agent_options.slot.as_str()),
+                    agent_options.clone(),
+                    format!("Prompt for {}", agent_options.slot.0),
+                    Vec::new(),
+                ),
             )
             .await
             .expect("agent home materializes");
@@ -370,10 +374,7 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let channel_a = adapter
         .open_agent(
             &handle,
-            &AgentOpenRequest {
-                options: options_a.clone(),
-                resume_conversation: None,
-            },
+            &AgentOpenRequest::new("agent:agent-a:open:v1", options_a.clone(), None),
             updates_a,
         )
         .await
@@ -381,10 +382,11 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     let channel_b = adapter
         .open_agent(
             &handle,
-            &AgentOpenRequest {
-                options: options_b.clone(),
-                resume_conversation: Some("conversation-restored-b".into()),
-            },
+            &AgentOpenRequest::new(
+                "agent:agent-b:open:v1",
+                options_b.clone(),
+                Some("conversation-restored-b".into()),
+            ),
             updates_b,
         )
         .await
@@ -472,30 +474,44 @@ async fn a_trait_object_drives_two_agents_in_distinct_worktrees_end_to_end() {
     assert!(launches.iter().all(|launch| launch.program == "codex-acp"));
 
     adapter
-        .close_agent(&handle, &options_a.slot)
+        .close_agent(
+            &handle,
+            &AgentCloseRequest::new("agent:agent-a:close:v1", options_a.slot.clone()),
+        )
         .await
         .expect("first agent closes");
     adapter
-        .close_agent(&handle, &options_b.slot)
+        .close_agent(
+            &handle,
+            &AgentCloseRequest::new("agent:agent-b:close:v1", options_b.slot.clone()),
+        )
         .await
         .expect("second agent closes");
     adapter
+        .remove_agent_home(
+            &handle,
+            &AgentHomeRemoveRequest::new("agent:agent-a:home:remove:v1", options_a.slot.clone()),
+        )
+        .await
+        .expect("first agent home removes");
+    adapter
+        .remove_agent_home(
+            &handle,
+            &AgentHomeRemoveRequest::new("agent:agent-b:home:remove:v1", options_b.slot.clone()),
+        )
+        .await
+        .expect("second agent home removes");
+    adapter
         .remove_worktree(
             &handle,
-            &WorktreeRef {
-                workspace: "alpha".into(),
-                name: "wt-1".into(),
-            },
+            &WorktreeRef::new("worktree:alpha:wt-1:remove:v1", "alpha", "wt-1"),
         )
         .await
         .expect("first worktree removes");
     adapter
         .remove_worktree(
             &handle,
-            &WorktreeRef {
-                workspace: "beta".into(),
-                name: "wt-2".into(),
-            },
+            &WorktreeRef::new("worktree:beta:wt-2:remove:v1", "beta", "wt-2"),
         )
         .await
         .expect("second worktree removes");
@@ -604,15 +620,16 @@ async fn every_agent_uses_the_sandbox_wide_model_access_mode() {
         .await
         .expect("NyxID credential is independent of model access");
 
-    let mismatched = AgentHomeRequest {
-        options: options(
+    let mismatched = AgentHomeRequest::new(
+        "agent:agent-wrong-mode:home:create:v1",
+        options(
             "agent-wrong-mode",
             "/home/cma/repo/.worktrees/wt-1".into(),
             false,
         ),
-        system_prompt: String::new(),
-        skills: Vec::new(),
-    };
+        String::new(),
+        Vec::new(),
+    );
     let error = adapter
         .materialize_agent_home(&handle, &mismatched)
         .await

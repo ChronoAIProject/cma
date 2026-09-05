@@ -6,10 +6,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentHomePlan, AgentLaunch, AgentSlot, CheckpointReceipt, CheckpointRequest,
-    ConversationSnapshot, CredentialFrame, InstallReceipt, InstallRequest, ResourceReading,
-    RestoreRequest, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
-    WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
+    CheckpointReceipt, CheckpointRequest, ConversationSnapshot, CredentialFrame, InstallReceipt,
+    InstallRequest, ResourceReading, RestoreRequest, SetupReceipt, WorkspaceReceipt,
+    WorkspaceRemoveReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
+    WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
 };
 
 /// A stable reference to one agent slot.
@@ -44,9 +45,41 @@ pub struct CredentialReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentOpenReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
     pub agent_id: AgentSlot,
+    pub cwd: String,
+    pub home: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+}
+
+/// Correlated proof that an agent home was published.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHomeReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub agent_id: AgentSlot,
+    pub path: String,
+}
+
+/// Correlated proof that an agent process was stopped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCloseReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub agent_id: AgentSlot,
+}
+
+/// Correlated proof that a stopped agent's home was removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHomeRemoveReceipt {
+    pub operation_id: String,
+    pub request_sha256: String,
+    pub agent_id: AgentSlot,
 }
 
 /// Operation named by a typed runtime failure.
@@ -60,6 +93,7 @@ pub enum WireOperation {
     AddWorktree,
     RemoveWorktree,
     MaterializeAgentHome,
+    RemoveAgentHome,
     OpenAgent,
     CloseAgent,
     CaptureAgent,
@@ -90,8 +124,9 @@ pub enum RequestFrame {
     AddWorktree(WorktreeRequest),
     RemoveWorktree(WorktreeRef),
     MaterializeAgentHome(AgentHomePlan),
+    RemoveAgentHome(AgentHomeRemoveRequest),
     OpenAgent(AgentLaunch),
-    CloseAgent(AgentRef),
+    CloseAgent(AgentCloseRequest),
     CaptureAgent(AgentRef),
     Checkpoint(CheckpointRequest),
     Restore(RestoreRequest),
@@ -109,6 +144,7 @@ impl RequestFrame {
             Self::AddWorktree(_) => WireOperation::AddWorktree,
             Self::RemoveWorktree(_) => WireOperation::RemoveWorktree,
             Self::MaterializeAgentHome(_) => WireOperation::MaterializeAgentHome,
+            Self::RemoveAgentHome(_) => WireOperation::RemoveAgentHome,
             Self::OpenAgent(_) => WireOperation::OpenAgent,
             Self::CloseAgent(_) => WireOperation::CloseAgent,
             Self::CaptureAgent(_) => WireOperation::CaptureAgent,
@@ -129,10 +165,11 @@ pub enum ResponseFrame {
     WorkspaceSetup(SetupReceipt),
     RemoveWorkspace(WorkspaceRemoveReceipt),
     AddWorktree(WorktreeReceipt),
-    RemoveWorktree(Acknowledgement),
-    MaterializeAgentHome(Acknowledgement),
+    RemoveWorktree(WorktreeRemoveReceipt),
+    MaterializeAgentHome(AgentHomeReceipt),
+    RemoveAgentHome(AgentHomeRemoveReceipt),
     OpenAgent(AgentOpenReceipt),
-    CloseAgent(Acknowledgement),
+    CloseAgent(AgentCloseReceipt),
     CaptureAgent(ConversationSnapshot),
     Checkpoint(CheckpointReceipt),
     Restore(Acknowledgement),
