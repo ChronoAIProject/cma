@@ -14,6 +14,8 @@ mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
 };
+mod agent_conversation;
+pub use agent_conversation::{AgentConversationMutation, AgentConversationStore};
 mod agent_lifecycle;
 pub use agent_lifecycle::{AgentWorkMutation, AgentWorkerStore, VersionedWorktree};
 
@@ -355,7 +357,13 @@ pub trait WorkspaceLifecycleStore:
 }
 
 pub trait AgentServiceStore:
-    SandboxStore + WorkspaceStore + WorktreeStore + AgentStore + AgentAdmissionStore + AgentLogStore
+    SandboxStore
+    + WorkspaceStore
+    + WorktreeStore
+    + AgentStore
+    + AgentAdmissionStore
+    + AgentConversationStore
+    + AgentLogStore
 {
 }
 
@@ -375,6 +383,7 @@ impl<T> AgentServiceStore for T where
         + WorktreeStore
         + AgentStore
         + AgentAdmissionStore
+        + AgentConversationStore
         + AgentLogStore
 {
 }
