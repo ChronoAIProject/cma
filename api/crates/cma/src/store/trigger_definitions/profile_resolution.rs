@@ -46,6 +46,20 @@ pub(super) async fn authorize(
         session,
     )
     .await?;
+    let mut sandbox_workspaces =
+        Vec::with_capacity(sandbox_revision.content.workspace_profiles.len());
+    for reference in &sandbox_revision.content.workspace_profiles {
+        sandbox_workspaces.push(
+            workspace_revision_in_transaction(
+                store,
+                &reference.id.0,
+                reference.revision,
+                "target.sandbox_profile.workspace_profiles",
+                session,
+            )
+            .await?,
+        );
+    }
 
     let workspace = current_workspace(store, &target.workspace_profile.id.0, session).await?;
     require_public(
@@ -66,6 +80,7 @@ pub(super) async fn authorize(
         store,
         &target.workspace_profile.id.0,
         target.workspace_profile.revision,
+        "target.workspace_profile",
         session,
     )
     .await?;
@@ -95,6 +110,7 @@ pub(super) async fn authorize(
 
     Ok(ResolvedTriggerProfiles {
         sandbox: sandbox_revision,
+        sandbox_workspaces,
         workspace: workspace_revision,
         agent: agent_revision,
     })
@@ -104,7 +120,7 @@ pub(super) async fn read_exact(
     store: &MongoTriggerDefinitionStore,
     target: &TriggerTarget,
 ) -> Result<ResolvedTriggerProfiles, TriggerStoreError> {
-    let sandbox = store
+    let sandbox_document = store
         .profiles
         .sandbox_revisions
         .find_one(doc! {
@@ -114,6 +130,23 @@ pub(super) async fn read_exact(
         .await
         .map_err(|error| driver_error("read Trigger Sandbox Profile revision", error))?
         .ok_or_else(|| unavailable("target.sandbox_profile"))?;
+    let sandbox =
+        sandbox_profiles::read_revision(&sandbox_document).map_err(stored_profile_error)?;
+    let mut sandbox_workspaces = Vec::with_capacity(sandbox.content.workspace_profiles.len());
+    for reference in &sandbox.content.workspace_profiles {
+        let document = store
+            .profiles
+            .workspace_revisions
+            .find_one(doc! {
+                "profile_id": reference.id.as_str(),
+                "revision": i64::from(reference.revision),
+            })
+            .await
+            .map_err(|error| driver_error("read nested Trigger Workspace Profile revision", error))?
+            .ok_or_else(|| unavailable("target.sandbox_profile.workspace_profiles"))?;
+        sandbox_workspaces
+            .push(workspace_profiles::read_revision(&document).map_err(stored_profile_error)?);
+    }
     let workspace = store
         .profiles
         .workspace_revisions
@@ -135,7 +168,8 @@ pub(super) async fn read_exact(
         .map_err(|error| driver_error("read Trigger Agent Profile revision", error))?
         .ok_or_else(|| unavailable("target.agent_profile"))?;
     Ok(ResolvedTriggerProfiles {
-        sandbox: sandbox_profiles::read_revision(&sandbox).map_err(stored_profile_error)?,
+        sandbox,
+        sandbox_workspaces,
         workspace: workspace_profiles::read_revision(&workspace).map_err(stored_profile_error)?,
         agent: agent_profiles::read_revision(&agent).map_err(stored_profile_error)?,
     })
@@ -218,13 +252,14 @@ async fn workspace_revision_in_transaction(
     store: &MongoTriggerDefinitionStore,
     id: &str,
     revision: u32,
+    field: &'static str,
     session: &mut ClientSession,
 ) -> Result<WorkspaceProfileRevision, TransactionProfileError> {
     let document = exact_revision(
         &store.profiles.workspace_revisions,
         id,
         revision,
-        "target.workspace_profile",
+        field,
         session,
     )
     .await?;

@@ -587,18 +587,33 @@ async fn anonymous_preview_hides_profile_ids_and_full_first_message() {
         Some("Use your personal account.")
     );
     assert_eq!(preview.what_happens.len(), 3);
-    assert_eq!(preview.trust.sandbox_install_commands, vec!["install-lean"]);
     let sandbox_revision = seed
         .profiles
         .sandbox_profile_revision(&seed.target.sandbox_profile.id, 1)
         .await
         .unwrap()
         .unwrap();
+    let workspace_revision = seed
+        .profiles
+        .workspace_profile_revision(&seed.target.workspace_profile.id, 1)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        preview.trust.sandbox_environment_variables,
-        sandbox_revision.content.environment_variables
+        preview.trust.disclosures,
+        vec![
+            TriggerTrustPreviewDisclosure::Sandbox {
+                commands_digest: sandbox_revision.digest,
+                commands: vec!["install-lean".into()],
+                environment_variables: sandbox_revision.content.environment_variables,
+            },
+            TriggerTrustPreviewDisclosure::Workspace {
+                name: "proofs".into(),
+                commands_digest: workspace_revision.digest,
+                commands: vec!["lake update".into()],
+            },
+        ]
     );
-    assert_eq!(preview.trust.workspace_setup_commands, vec!["lake update"]);
     assert_eq!(preview.technical.provider, AgentProvider::Codex);
     assert_eq!(preview.technical.model.as_deref(), Some("gpt-5"));
     assert_eq!(preview.technical.effort, ThinkingEffort::High);
@@ -608,6 +623,7 @@ async fn anonymous_preview_hides_profile_ids_and_full_first_message() {
     assert!(!json.contains(seed.target.workspace_profile.id.as_str()));
     assert!(!json.contains(seed.target.agent_profile.id.as_str()));
     assert!(!json.contains(&full_message));
+    assert!(!json.contains("Check the requested proof."));
     assert!(json.contains("\"signup_hint\":\"Use your personal account.\""));
     assert!(!json.contains("target"));
 }

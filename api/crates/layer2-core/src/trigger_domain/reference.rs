@@ -12,6 +12,7 @@ use super::TriggerTarget;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedTriggerProfiles {
     pub sandbox: SandboxProfileRevision,
+    pub sandbox_workspaces: Vec<WorkspaceProfileRevision>,
     pub workspace: WorkspaceProfileRevision,
     pub agent: AgentProfileRevision,
 }
@@ -107,6 +108,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
         target: &TriggerTarget,
     ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError> {
         let sandbox_field = "target.sandbox_profile";
+        let sandbox_workspaces_field = "target.sandbox_profile.workspace_profiles";
         let workspace_field = "target.workspace_profile";
         let agent_field = "target.agent_profile";
 
@@ -115,6 +117,15 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             .await
             .map_err(|_| unavailable(sandbox_field))?
             .ok_or_else(|| unavailable(sandbox_field))?;
+        let mut sandbox_workspaces = Vec::with_capacity(sandbox.content.workspace_profiles.len());
+        for reference in &sandbox.content.workspace_profiles {
+            let revision = self
+                .workspace_profile_revision(&reference.id, reference.revision)
+                .await
+                .map_err(|_| unavailable(sandbox_workspaces_field))?
+                .ok_or_else(|| unavailable(sandbox_workspaces_field))?;
+            sandbox_workspaces.push(revision);
+        }
         let workspace = self
             .workspace_profile_revision(
                 &target.workspace_profile.id,
@@ -131,6 +142,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
 
         Ok(ResolvedTriggerProfiles {
             sandbox,
+            sandbox_workspaces,
             workspace,
             agent,
         })

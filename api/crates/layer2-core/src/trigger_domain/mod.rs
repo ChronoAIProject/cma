@@ -49,6 +49,7 @@ pub use launch_trust::{LaunchTrustDisclosure, LaunchTrustManifest, LaunchTrustRe
 pub use placement::{Placement, PlacementUpdate, MAX_LIVE_PLACEMENTS};
 pub use preview::{
     TriggerPreview, TriggerSizePreview, TriggerTechnicalPreview, TriggerTrustPreview,
+    TriggerTrustPreviewDisclosure,
 };
 pub use reference::{ResolvedTriggerProfiles, TriggerProfileResolver, TriggerReferenceError};
 pub use requirements::{
