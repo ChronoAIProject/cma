@@ -4,11 +4,11 @@ use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use crate::sandbox::store::{
     AgentAdmissionStore, AgentControlResult, AgentControlStore, AgentControlStoreError,
     AgentControlTarget, AgentDeleteRequest, AgentLogStore, AgentStopRequest, AgentStore,
-    AgentWorkMutation, AgentWorkerStore, SandboxEventStore, SandboxStoreError,
+    AgentWorkMutation, AgentWorkerStore, SandboxEventStore, SandboxStoreError, VersionedWorktree,
 };
 use crate::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentStopReason, AgentWorkStep, SandboxEventKind,
-    TypedFailure,
+    TypedFailure, WorktreeStatus,
 };
 
 use super::agent_admission_tests::{admission, created, ready_store, NOW};
@@ -38,6 +38,15 @@ fn delete_request(agent: &Agent) -> AgentDeleteRequest {
 
 fn replace_agent(store: &InMemorySandboxStore, agent: Agent) {
     store.lock().agents.insert(agent.id.clone(), agent);
+}
+
+fn replace_worktree_status(store: &InMemorySandboxStore, agent: &Agent, status: WorktreeStatus) {
+    store
+        .lock()
+        .worktrees
+        .get_mut(&agent.worktree_id)
+        .unwrap()
+        .status = status;
 }
 
 fn terminal_agent(mut agent: Agent, status: AgentStatus) -> Agent {

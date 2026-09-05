@@ -39,6 +39,12 @@ pub(super) struct LogSummary {
     encoded_bytes: usize,
 }
 
+impl LogSummary {
+    pub(super) const fn entry_count(&self) -> u64 {
+        self.entry_count
+    }
+}
+
 pub(super) async fn scan_complete_log<F>(
     store: &MongoSandboxStore,
     agent_id: &AgentId,

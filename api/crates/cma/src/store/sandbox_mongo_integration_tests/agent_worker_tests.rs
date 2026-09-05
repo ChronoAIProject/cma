@@ -134,12 +134,17 @@ async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event()
     let (client, name) = database("agent_work_publication").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (parent, mut worktree, claimed) = claimed_agent_work_fixture(&store, "publish").await;
+    let claimed = ready_publication_claim(claimed, "conversation-1");
+    replace_agent_fixture(&store, &claimed).await;
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut next = claimed.clone();
-    next.conversation.conversation_id = Some("conversation-1".into());
-    next.conversation.runtime_generation = Some(1);
     next.work
-        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
         .unwrap();
     next.transition(AgentStatus::Ready, NOW.into(), None)
         .unwrap();
@@ -212,7 +217,7 @@ async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event()
         .unwrap()
         .unwrap();
     assert_eq!(agent_row.get_i64("last_seq").unwrap(), 2);
-    assert!(!agent_row.get_bool("work_pending").unwrap());
+    assert!(agent_row.get_bool("work_pending").unwrap());
     assert_eq!(
         agent_row.get("work_lease_holder"),
         Some(&mongodb::bson::Bson::Null)
@@ -255,14 +260,14 @@ async fn agent_work_rejects_an_incorrect_agent_log_high_water_mark() {
 async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
     let (client, name) = database("agent_work_stop_intent").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let agent = agent_for_worker("agt_stop_intent", NOW);
-    store.create_agent(agent.clone()).await.unwrap();
-    let mut scheduled = agent.clone();
+    let (_, mut worktree, initial_claimed) =
+        claimed_agent_work_fixture(&store, "stop_intent").await;
+    let mut scheduled = initial_claimed.clone();
     scheduled
         .request_stop(AgentStopReason::Owner, NOW.into())
         .unwrap();
     store
-        .save_agent(agent.revision, scheduled.clone())
+        .save_agent(initial_claimed.revision, scheduled.clone())
         .await
         .unwrap();
     let claimed = store
@@ -299,6 +304,10 @@ async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
         Some(claimed.clone())
     );
 
+    let mut claimed = claimed;
+    claimed.work.step = AgentWorkStep::PublishStopped;
+    claimed.work.cleanup_not_before = None;
+    replace_agent_fixture(&store, &claimed).await;
     let mut stopped = claimed.clone();
     stopped
         .work
@@ -311,16 +320,28 @@ async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
             Some(AgentStopReason::Owner),
         )
         .unwrap();
+    stopped.conversation.last_seq += 1;
+    let expected_worktree_revision = worktree.revision;
+    worktree.transition(WorktreeStatus::Failed).unwrap();
     store
         .commit_agent_work(AgentWorkMutation {
             expected_agent_revision: claimed.revision,
             holder: "worker".into(),
             fence,
             agent: stopped.clone(),
-            worktree: None,
+            worktree: Some(VersionedWorktree {
+                expected_revision: expected_worktree_revision,
+                worktree,
+            }),
             appended_at: MINUTE.into(),
-            sandbox_event: None,
-            agent_logs: vec![],
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: stopped.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Stopped,
+            }),
+            agent_logs: vec![AgentLogKind::Stopped {
+                reason: AgentStopReason::Owner.as_str().into(),
+            }],
         })
         .await
         .unwrap();
@@ -529,6 +550,8 @@ async fn agent_work_late_event_conflict_rolls_back_agent_worktree_and_logs() {
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (parent, mut worktree, claimed) =
         claimed_agent_work_fixture(&store, "event_rollback").await;
+    let claimed = ready_publication_claim(claimed, "conversation-event-rollback");
+    replace_agent_fixture(&store, &claimed).await;
     let conflicting = SandboxEvent {
         sandbox_id: parent.id.clone(),
         seq: 1,
@@ -540,7 +563,18 @@ async fn agent_work_late_event_conflict_rolls_back_agent_worktree_and_logs() {
         .insert_one(event_document(&conflicting).unwrap())
         .await
         .unwrap();
-    let mut next = advance_claimed_agent(&claimed);
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let mut next = claimed.clone();
+    next.work
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
+        .unwrap();
+    next.transition(AgentStatus::Ready, NOW.into(), None)
+        .unwrap();
     next.conversation.last_seq += 2;
     let expected_worktree_revision = worktree.revision;
     worktree.transition(WorktreeStatus::Ready).unwrap();
@@ -550,17 +584,28 @@ async fn agent_work_late_event_conflict_rolls_back_agent_worktree_and_logs() {
             .commit_agent_work(AgentWorkMutation {
                 expected_agent_revision: claimed.revision,
                 holder: "worker".into(),
-                fence: claimed.work.lease.as_ref().unwrap().fence,
+                fence,
                 agent: next,
                 worktree: Some(VersionedWorktree {
                     expected_revision: expected_worktree_revision,
                     worktree: worktree.clone(),
                 }),
                 appended_at: NOW.into(),
-                sandbox_event: Some(SandboxEventKind::AgentDeleted {
+                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
                     agent_id: claimed.id.clone(),
+                    from: AgentStatus::Starting,
+                    to: AgentStatus::Ready,
                 }),
-                agent_logs: vec![AgentLogKind::Deleted, AgentLogKind::Deleted],
+                agent_logs: vec![
+                    AgentLogKind::ConversationOpened {
+                        conversation_id: "conversation-event-rollback".into(),
+                        runtime_generation: 1,
+                    },
+                    AgentLogKind::StatusChanged {
+                        from: AgentStatus::Starting,
+                        to: AgentStatus::Ready,
+                    },
+                ],
             })
             .await,
         Err(SandboxStoreError::SequenceConflict)
@@ -595,14 +640,37 @@ async fn agent_work_reopen_reconciliation_requires_every_exact_artifact() {
     let (client, name) = database("agent_work_reconcile").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (parent, mut worktree, claimed) = claimed_agent_work_fixture(&store, "reconcile").await;
+    let claimed = ready_publication_claim(claimed, "conversation-reconcile");
+    replace_agent_fixture(&store, &claimed).await;
     let fence = claimed.work.lease.as_ref().unwrap().fence;
-    let mut next = advance_claimed_agent(&claimed);
+    let mut next = claimed.clone();
+    next.work
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
+        .unwrap();
+    next.transition(AgentStatus::Ready, NOW.into(), None)
+        .unwrap();
     let expected_worktree_revision = worktree.revision;
     worktree.transition(WorktreeStatus::Ready).unwrap();
-    let log_kinds = vec![AgentLogKind::Deleted, AgentLogKind::Deleted];
+    let log_kinds = vec![
+        AgentLogKind::ConversationOpened {
+            conversation_id: "conversation-reconcile".into(),
+            runtime_generation: 1,
+        },
+        AgentLogKind::StatusChanged {
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        },
+    ];
     next.conversation.last_seq += u64::try_from(log_kinds.len()).unwrap();
-    let event_kind = SandboxEventKind::AgentDeleted {
+    let event_kind = SandboxEventKind::AgentStatusChanged {
         agent_id: next.id.clone(),
+        from: AgentStatus::Starting,
+        to: AgentStatus::Ready,
     };
     store
         .commit_agent_work(AgentWorkMutation {

@@ -3,50 +3,6 @@ use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAge
 use layer3_adapter::ConversationUpdate;
 
 #[test]
-fn mongo_agent_work_stop_intent_validation_matches_domain_rules() {
-    let current = agent_for_worker("agt_stop_intent_rules", NOW);
-    assert!(stop_intent_change_is_valid(&current, &current));
-
-    let mut invented = current.clone();
-    invented.requested_stop_reason = Some(AgentStopReason::Owner);
-    assert!(!stop_intent_change_is_valid(&current, &invented));
-
-    let mut requested = current.clone();
-    requested
-        .request_stop(AgentStopReason::Owner, NOW.into())
-        .unwrap();
-    assert!(stop_intent_change_is_valid(&requested, &requested));
-
-    let mut changed = requested.clone();
-    changed.requested_stop_reason = Some(AgentStopReason::Operator);
-    assert!(!stop_intent_change_is_valid(&requested, &changed));
-
-    let mut cleared = requested.clone();
-    cleared.requested_stop_reason = None;
-    assert!(!stop_intent_change_is_valid(&requested, &cleared));
-
-    let mut wrong_stop = requested.clone();
-    wrong_stop.requested_stop_reason = None;
-    wrong_stop.stop_reason = Some(AgentStopReason::Operator);
-    wrong_stop.status = AgentStatus::Stopped;
-    assert!(!stop_intent_change_is_valid(&requested, &wrong_stop));
-
-    let mut stopped = requested.clone();
-    stopped
-        .transition(
-            AgentStatus::Stopped,
-            MINUTE.into(),
-            Some(AgentStopReason::Owner),
-        )
-        .unwrap();
-    assert!(stop_intent_change_is_valid(&requested, &stopped));
-
-    let mut rewritten = stopped.clone();
-    rewritten.stop_reason = Some(AgentStopReason::Operator);
-    assert!(!stop_intent_change_is_valid(&stopped, &rewritten));
-}
-
-#[test]
 fn agent_log_terminal_capacity_requires_a_terminal_publication() {
     let starting = agent_for_worker("agt_log_capacity", NOW);
     let publication =
@@ -156,22 +112,6 @@ fn agent_log_terminal_capacity_requires_a_terminal_publication() {
         publication_capacity(&starting, &deleted),
         AppendCapacity::Normal
     );
-    assert!(agent_status_change_is_valid(
-        AgentStatus::Starting,
-        AgentStatus::Failed
-    ));
-    assert!(agent_status_change_is_valid(
-        AgentStatus::Stopped,
-        AgentStatus::Deleted
-    ));
-    assert!(!agent_status_change_is_valid(
-        AgentStatus::Starting,
-        AgentStatus::Deleted
-    ));
-    assert!(!agent_status_change_is_valid(
-        AgentStatus::Stopped,
-        AgentStatus::Failed
-    ));
 }
 
 #[test]
@@ -1390,7 +1330,7 @@ async fn agent_control_receipts_and_lineage_fences_survive_worker_progression() 
     );
     assert_eq!(
         store.get_worktree(&worktree.id).await.unwrap(),
-        Some(worktree)
+        Some(worktree.clone())
     );
 
     let agent_document = store
@@ -1448,11 +1388,14 @@ async fn agent_control_receipts_and_lineage_fences_survive_worker_progression() 
         marker
     );
 
-    let claimed_stop = store
+    let mut claimed_stop = store
         .claim_agent_work(&scheduled.id, "stop-worker", NOW.into(), MINUTE.into())
         .await
         .unwrap()
         .unwrap();
+    claimed_stop.work.step = AgentWorkStep::PublishStopped;
+    claimed_stop.work.cleanup_not_before = None;
+    replace_agent_fixture(&store, &claimed_stop).await;
     let stop_fence = claimed_stop.work.lease.as_ref().unwrap().fence;
     let mut stopped = claimed_stop.clone();
     stopped
@@ -1471,16 +1414,29 @@ async fn agent_control_receipts_and_lineage_fences_survive_worker_progression() 
             Some(AgentStopReason::Owner),
         )
         .unwrap();
+    stopped.conversation.last_seq += 1;
+    let mut failed_worktree = worktree;
+    let expected_worktree_revision = failed_worktree.revision;
+    failed_worktree.transition(WorktreeStatus::Failed).unwrap();
     store
         .commit_agent_work(AgentWorkMutation {
             expected_agent_revision: claimed_stop.revision,
             holder: "stop-worker".into(),
             fence: stop_fence,
             agent: stopped.clone(),
-            worktree: None,
+            worktree: Some(VersionedWorktree {
+                expected_revision: expected_worktree_revision,
+                worktree: failed_worktree.clone(),
+            }),
             appended_at: MINUTE.into(),
-            sandbox_event: None,
-            agent_logs: vec![],
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: stopped.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Stopped,
+            }),
+            agent_logs: vec![AgentLogKind::Stopped {
+                reason: AgentStopReason::Owner.as_str().into(),
+            }],
         })
         .await
         .unwrap();
@@ -1515,7 +1471,7 @@ async fn agent_control_receipts_and_lineage_fences_survive_worker_progression() 
         .unwrap()
         .clone();
 
-    let claimed_delete = store
+    let mut claimed_delete = store
         .claim_agent_work(
             &deleting.id,
             "delete-worker",
@@ -1525,6 +1481,10 @@ async fn agent_control_receipts_and_lineage_fences_survive_worker_progression() 
         .await
         .unwrap()
         .unwrap();
+    claimed_delete.work.step = AgentWorkStep::PublishDeleted;
+    replace_agent_fixture(&store, &claimed_delete).await;
+    failed_worktree.status = WorktreeStatus::Removed;
+    replace_worktree_fixture(&store, &failed_worktree).await;
     let delete_fence = claimed_delete.work.lease.as_ref().unwrap().fence;
     let mut deleted = claimed_delete.clone();
     deleted
@@ -1548,7 +1508,9 @@ async fn agent_control_receipts_and_lineage_fences_survive_worker_progression() 
             agent: deleted.clone(),
             worktree: None,
             appended_at: TWO_MINUTES.into(),
-            sandbox_event: None,
+            sandbox_event: Some(SandboxEventKind::AgentDeleted {
+                agent_id: deleted.id.clone(),
+            }),
             agent_logs: vec![AgentLogKind::Deleted],
         })
         .await
