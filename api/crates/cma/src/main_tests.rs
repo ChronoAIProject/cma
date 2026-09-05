@@ -3,13 +3,17 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use axum::{body::Body, http::Request};
 use layer1_public::{
-    rest::{profiles_router, ProfilesState},
+    rest::{hierarchy_router, profiles_router, HierarchyState, ProfilesState},
     AuthenticatedSubject,
 };
 use layer2_core::{
-    profiles::InMemoryProfileStore, ActivityQuery, ActivityRecord, ActivityService, ActivityStore,
-    Authorization, OperationClaim, OperationReservation, OperationStore, Page, PlatformSettings,
-    PlatformSettingsService, PlatformSettingsStore, StoreError, StoredPlatformSettings, SubjectId,
+    profiles::InMemoryProfileStore,
+    sandbox::{
+        HierarchyReadService, InMemorySandboxStore, SandboxPolicy, SandboxService, WorkspaceService,
+    },
+    ActivityQuery, ActivityRecord, ActivityService, ActivityStore, Authorization, OperationClaim,
+    OperationReservation, OperationStore, Page, PlatformSettings, PlatformSettingsService,
+    PlatformSettingsStore, StoreError, StoredPlatformSettings, SubjectId,
 };
 use tower::ServiceExt as _;
 
@@ -81,17 +85,30 @@ impl PlatformSettingsStore for MutableSettings {
 }
 
 fn composed_rest_router() -> Router {
+    let profile_store = Arc::new(InMemoryProfileStore::default());
+    let sandbox_store = Arc::new(InMemorySandboxStore::default());
+    let operations: Arc<dyn OperationStore> = Arc::new(NoopOperationStore);
     let settings = PlatformSettingsService::new(
         Arc::new(MutableSettings::new()),
         ActivityService::new(Arc::new(NoopActivityStore)),
     );
     let state = ProfilesState::new(
-        Arc::new(InMemoryProfileStore::default()),
-        Arc::new(NoopOperationStore),
+        Arc::clone(&profile_store),
+        Arc::clone(&operations),
         Arc::new(settings),
         profile_route_policy(),
     );
-    rest_router(profiles_router(state))
+    let hierarchy = HierarchyState::new(
+        SandboxService::new(
+            Arc::clone(&sandbox_store),
+            Arc::clone(&profile_store),
+            SandboxPolicy::default(),
+        ),
+        WorkspaceService::new(Arc::clone(&sandbox_store), profile_store),
+        HierarchyReadService::new(sandbox_store),
+        operations,
+    );
+    rest_router(profiles_router(state).merge(hierarchy_router(hierarchy)))
 }
 
 #[tokio::test]
@@ -122,6 +139,20 @@ async fn cors_preflight_grants_only_configured_origins_and_headers() {
 #[tokio::test]
 async fn profile_routes_are_composed_before_the_rest_fallback() {
     let mut request = Request::get("/api/v1/agent-profiles")
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId::new("owner-a")));
+    request.extensions_mut().insert(Authorization::none());
+    let response = composed_rest_router().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
+}
+
+#[tokio::test]
+async fn hierarchy_routes_are_composed_before_the_rest_fallback() {
+    let mut request = Request::get("/api/v1/sandboxes")
         .body(Body::empty())
         .unwrap();
     request

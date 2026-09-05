@@ -21,9 +21,14 @@ use axum::{
     routing::any,
     Router,
 };
-use layer1_public::rest::{profiles_router, HttpProblem, ProfilesState};
+use layer1_public::rest::{
+    hierarchy_router, profiles_router, HierarchyState, HttpProblem, ProfilesState,
+};
 use layer2_core::{
-    sandbox::{SandboxOperatorService, SandboxService, StoredSandboxRetirement},
+    sandbox::{
+        HierarchyReadService, SandboxOperatorService, SandboxService, StoredSandboxRetirement,
+        WorkspaceService,
+    },
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
 use tower_http::{
@@ -113,11 +118,16 @@ async fn serve() -> Result<(), String> {
         Arc::clone(&settings),
         config.baseline_services.clone(),
     ));
-    let _sandbox_service = SandboxService::with_policy_source(
+    let sandbox_service = SandboxService::with_policy_source(
         stores.sandbox_model.clone(),
         stores.sandbox_profiles.clone(),
         sandbox_policy,
     );
+    let workspace_service = WorkspaceService::new(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+    );
+    let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone());
     let admin = layer1_public::rest::admin::AdminState::new(
         Arc::clone(&settings),
         sandbox_operators,
@@ -126,10 +136,11 @@ async fn serve() -> Result<(), String> {
     let operations: Arc<dyn OperationStore> = stores.operations.clone();
     let profiles = ProfilesState::new(
         stores.sandbox_profiles.clone(),
-        operations,
+        Arc::clone(&operations),
         Arc::clone(&settings),
         profile_policy,
     );
+    let hierarchy = HierarchyState::new(sandbox_service, workspace_service, hierarchy, operations);
     let recorder = ActivityRecorder::new(Arc::clone(&activity));
     let auth = AuthState::with_store_and_nyxid_public_url(
         config.auth_mode.clone(),
@@ -160,8 +171,9 @@ async fn serve() -> Result<(), String> {
     }
 
     let limits = RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
-    let resource_routes =
-        profiles_router(profiles).merge(layer1_public::rest::admin::router(admin));
+    let resource_routes = profiles_router(profiles)
+        .merge(hierarchy_router(hierarchy))
+        .merge(layer1_public::rest::admin::router(admin));
     let public = rest_router(resource_routes)
         .merge(auth::router(Arc::clone(&auth)))
         .layer(axum::middleware::from_fn_with_state(
