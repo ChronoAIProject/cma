@@ -1,14 +1,32 @@
-use crate::sandbox::store::{
-    AgentAdmissionStore, AgentConversationMutation, AgentConversationStore, AgentStore,
-    AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+use std::sync::Arc;
+
+use layer3_adapter::{
+    ContentBlock, ContentChunk, ConversationUpdate, MessageId, PermissionLocator, PermissionOption,
+    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
+    SessionUpdate, ToolCallUpdate, ToolCallUpdateFields, TurnStopReason,
 };
-use crate::sandbox::{AgentLogKind, AgentStatus, AgentWorkStep, WorktreeStatus};
+
+use crate::sandbox::store::{
+    AgentAdmissionStore, AgentConversationMutation, AgentConversationStore, AgentLogStore,
+    AgentStore, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+};
+use crate::sandbox::{
+    AgentConversationError, AgentLogEntry, AgentLogKind, AgentMessageAssembly, AgentStatus,
+    AgentUpdateRecorder, AgentWorkStep, DurableAgentUpdateRecorder, FirstMessageDelivery,
+    FirstMessageRecord, WorktreeStatus,
+};
 
 use super::agent_admission_tests::*;
 
-async fn ready_agent() -> (super::InMemorySandboxStore, crate::sandbox::Agent) {
+async fn ready_agent(
+    first_message: Option<&str>,
+) -> (super::InMemorySandboxStore, crate::sandbox::Agent) {
     let store = ready_store(1).await;
-    let creation = created(store.admit_agent(admission("conversation")).await.unwrap());
+    let mut request = admission("conversation");
+    request.first_message = first_message.map(|text| {
+        FirstMessageRecord::new("conversation", text, NOW).expect("valid first message")
+    });
+    let creation = created(store.admit_agent(request).await.unwrap());
     let claimed = store
         .claim_agent_work(
             &creation.agent.id,
@@ -89,9 +107,74 @@ fn begin_turn(mut agent: crate::sandbox::Agent) -> AgentConversationMutation {
     }
 }
 
+fn begin_first_message(mut agent: crate::sandbox::Agent) -> AgentConversationMutation {
+    let expected_agent_revision = agent.revision;
+    let expected_last_seq = agent.conversation.last_seq;
+    let fence_sequence = expected_last_seq + 1;
+    let turn_sequence = expected_last_seq + 2;
+    let first_message = agent.conversation.first_message.as_mut().unwrap();
+    first_message
+        .fence_dispatch(turn_sequence, fence_sequence, NOW.into())
+        .unwrap();
+    first_message.mark_write_confirmed(NOW.into()).unwrap();
+    agent
+        .transition(AgentStatus::Working, NOW.into(), None)
+        .unwrap();
+    agent.conversation.active_turn = Some(turn_sequence);
+    agent.conversation.last_seq += 4;
+    AgentConversationMutation {
+        expected_agent_revision,
+        expected_last_seq,
+        runtime_generation: 1,
+        agent,
+        appended_at: NOW.into(),
+        agent_logs: vec![
+            AgentLogKind::FirstMessageChanged {
+                state: FirstMessageDelivery::DispatchFenced,
+                recovery_generation: 0,
+            },
+            AgentLogKind::TurnStarted {
+                turn_sequence,
+                origin_key: Some("conversation".into()),
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Inspect the proof.".into(),
+            },
+            AgentLogKind::FirstMessageChanged {
+                state: FirstMessageDelivery::WriteConfirmed,
+                recovery_generation: 0,
+            },
+        ],
+    }
+}
+
+async fn working_agent() -> (
+    super::InMemorySandboxStore,
+    crate::sandbox::Agent,
+    Arc<DurableAgentUpdateRecorder>,
+) {
+    let (store, agent) = ready_agent(None).await;
+    let mutation = begin_turn(agent);
+    let working = mutation.agent.clone();
+    store.commit_agent_conversation(mutation).await.unwrap();
+    let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
+    (store, working, recorder)
+}
+
+fn message_chunk(message_id: &str, content: &str) -> ConversationUpdate {
+    ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
+        ContentChunk::new(ContentBlock::from(content))
+            .message_id(MessageId::new(message_id.to_owned())),
+    ))
+}
+
+fn turn_ended() -> ConversationUpdate {
+    ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn))
+}
+
 #[tokio::test]
 async fn conversation_mutation_updates_agent_and_log_atomically() {
-    let (store, agent) = ready_agent().await;
+    let (store, agent) = ready_agent(None).await;
     let mutation = begin_turn(agent);
     let expected = mutation.agent.clone();
 
@@ -106,7 +189,7 @@ async fn conversation_mutation_updates_agent_and_log_atomically() {
 
 #[tokio::test]
 async fn stale_runtime_generation_cannot_write() {
-    let (store, agent) = ready_agent().await;
+    let (store, agent) = ready_agent(None).await;
     let mut mutation = begin_turn(agent.clone());
     mutation.runtime_generation = 2;
 
@@ -119,7 +202,7 @@ async fn stale_runtime_generation_cannot_write() {
 
 #[tokio::test]
 async fn late_sequence_failure_rolls_back_the_agent() {
-    let (store, agent) = ready_agent().await;
+    let (store, agent) = ready_agent(None).await;
     let mut mutation = begin_turn(agent.clone());
     mutation.agent.conversation.last_seq += 1;
 
@@ -128,4 +211,296 @@ async fn late_sequence_failure_rolls_back_the_agent() {
         crate::sandbox::store::SandboxStoreError::Conflict
     );
     assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+}
+
+#[tokio::test]
+async fn invalid_conversation_timestamp_is_rejected_atomically() {
+    let (store, agent) = ready_agent(None).await;
+    let mut mutation = begin_turn(agent.clone());
+    mutation.appended_at = "not-a-timestamp".into();
+
+    assert_eq!(
+        store.commit_agent_conversation(mutation).await.unwrap_err(),
+        crate::sandbox::store::SandboxStoreError::Conflict
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+}
+
+#[tokio::test]
+async fn chunks_stay_live_until_complete_messages_can_be_committed_in_order() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+
+    let first = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("message-1", "first "),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let second = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("message-1", "answer"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+
+    assert!(first.appended.is_empty());
+    assert!(second.appended.is_empty());
+    assert_eq!(assembly.content, "first answer");
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap(),
+        Some(working.clone())
+    );
+
+    let boundary = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("message-2", "second answer"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        boundary.appended.as_slice(),
+        [AgentLogEntry {
+            kind: AgentLogKind::AgentMessage { content },
+            ..
+        }] if content == "first answer"
+    ));
+    assert_eq!(assembly.content, "second answer");
+    assert!(assembly.prompt_evidence);
+
+    let terminal = recorder
+        .record_update(&working.id, 1, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .unwrap();
+    assert!(terminal.turn_closed);
+    assert!(assembly.is_empty());
+    assert!(matches!(
+        terminal.appended.as_slice(),
+        [
+            AgentLogEntry {
+                kind: AgentLogKind::AgentMessage { content },
+                ..
+            },
+            AgentLogEntry {
+                kind: AgentLogKind::TurnCompleted { .. },
+                ..
+            },
+            AgentLogEntry {
+                kind: AgentLogKind::StatusChanged {
+                    to: AgentStatus::Ready,
+                    ..
+                },
+                ..
+            }
+        ] if content == "second answer"
+    ));
+    let stored = store.get_agent(&working.id).await.unwrap().unwrap();
+    assert_eq!(stored.status, AgentStatus::Ready);
+    assert_eq!(stored.conversation.active_turn, None);
+}
+
+#[tokio::test]
+async fn first_message_progresses_from_write_confirmation_to_completion() {
+    let (store, agent) = ready_agent(Some("Inspect the proof.")).await;
+    let mutation = begin_first_message(agent);
+    let working = mutation.agent.clone();
+    store.commit_agent_conversation(mutation).await.unwrap();
+    let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
+    let mut assembly = AgentMessageAssembly::default();
+
+    let observed = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("reply", "Done."),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        observed.appended.as_slice(),
+        [AgentLogEntry {
+            kind: AgentLogKind::FirstMessageChanged {
+                state: FirstMessageDelivery::ExecutionObserved,
+                ..
+            },
+            ..
+        }]
+    ));
+    let observed_agent = store.get_agent(&working.id).await.unwrap().unwrap();
+    assert_eq!(
+        observed_agent.conversation.first_message.unwrap().state,
+        FirstMessageDelivery::ExecutionObserved
+    );
+
+    recorder
+        .record_update(&working.id, 1, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .unwrap();
+    let completed = store.get_agent(&working.id).await.unwrap().unwrap();
+    assert_eq!(
+        completed.conversation.first_message.unwrap().state,
+        FirstMessageDelivery::Completed
+    );
+    assert_eq!(completed.status, AgentStatus::Ready);
+}
+
+#[tokio::test]
+async fn recorder_rejects_stale_generations_without_touching_live_assembly() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+
+    assert_eq!(
+        recorder
+            .record_update(
+                &working.id,
+                2,
+                &mut assembly,
+                message_chunk("reply", "ignored"),
+                NOW.into(),
+            )
+            .await,
+        Err(AgentConversationError::StaleGeneration)
+    );
+    assert!(assembly.is_empty());
+    assert_eq!(store.get_agent(&working.id).await.unwrap(), Some(working));
+}
+
+#[tokio::test]
+async fn approval_requests_wait_and_can_be_reconstructed_after_restart() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    let request = PermissionRequest {
+        id: "approval-1".into(),
+        locator: Some(PermissionLocator::new("runtime-route-1")),
+        request: RequestPermissionRequest::new(
+            "conversation-1",
+            ToolCallUpdate::new("call-1", ToolCallUpdateFields::new().title("Run checks")),
+            vec![PermissionOption::new(
+                "allow-once",
+                "Allow once",
+                PermissionOptionKind::AllowOnce,
+            )],
+        ),
+    };
+
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Asked(request),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap().unwrap().status,
+        AgentStatus::WaitingApproval
+    );
+
+    drop(recorder);
+    let restarted_store = store.clone();
+    let pending = restarted_store
+        .pending_agent_approvals(&working.id)
+        .await
+        .unwrap();
+    assert!(matches!(
+        pending.as_slice(),
+        [AgentLogEntry {
+            kind: AgentLogKind::ApprovalRequested { approval_id, .. },
+            ..
+        }] if approval_id == "approval-1"
+    ));
+}
+
+#[tokio::test]
+async fn failed_turn_returns_to_ready() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+
+    let outcome = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Failed {
+                message: "runtime refused the turn".into(),
+                capability: Some("turn_refused".into()),
+            },
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+
+    assert!(outcome.turn_closed);
+    let stored = store.get_agent(&working.id).await.unwrap().unwrap();
+    assert_eq!(stored.status, AgentStatus::Ready);
+    assert_eq!(stored.conversation.active_turn, None);
+}
+
+#[tokio::test]
+async fn failed_atomic_commits_preserve_the_aggregate_and_live_assembly() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("reply", "still live"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let assembly_before = assembly.clone();
+    let aggregate_before = store.get_agent(&working.id).await.unwrap().unwrap();
+    {
+        let mut state = store.lock();
+        state
+            .agent_logs
+            .get_mut(&working.id)
+            .unwrap()
+            .push(AgentLogEntry {
+                agent_id: working.id.clone(),
+                seq: aggregate_before.conversation.last_seq + 1,
+                appended_at: NOW.into(),
+                kind: AgentLogKind::ConversationGap { frames: 1 },
+            });
+    }
+
+    assert!(matches!(
+        recorder
+            .record_update(
+                &working.id,
+                1,
+                &mut assembly,
+                ConversationUpdate::Lost { frames: 2 },
+                NOW.into(),
+            )
+            .await,
+        Err(AgentConversationError::Unavailable(_))
+    ));
+    assert_eq!(assembly, assembly_before);
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap(),
+        Some(aggregate_before)
+    );
+    assert_eq!(
+        store.agent_log(&working.id, 0, 200).await.unwrap().len(),
+        usize::try_from(working.conversation.last_seq + 1).unwrap()
+    );
 }

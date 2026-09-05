@@ -4,6 +4,10 @@ mod admin;
 mod agent;
 mod agent_service;
 mod agent_work;
+mod conversation;
+mod conversation_fold;
+mod conversation_fold_support;
+mod conversation_recorder;
 mod credential;
 mod error;
 mod event;
@@ -35,6 +39,11 @@ pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
 pub use agent_work::{
     AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,
 };
+pub use conversation::{
+    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
+    MAX_DURABLE_AGENT_MESSAGE_BYTES,
+};
+pub use conversation_recorder::DurableAgentUpdateRecorder;
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxSignInState,
 };

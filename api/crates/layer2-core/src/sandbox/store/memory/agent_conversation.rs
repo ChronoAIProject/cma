@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::sandbox::store::{AgentConversationMutation, AgentConversationStore};
+use crate::seconds_from_rfc3339;
 
 #[async_trait]
 impl AgentConversationStore for InMemorySandboxStore {
@@ -81,7 +82,8 @@ fn validate_mutation(
         .checked_add(count)
         .ok_or(SandboxStoreError::SequenceConflict)?;
 
-    if mutation.runtime_generation == 0
+    if seconds_from_rfc3339(&mutation.appended_at).is_none()
+        || mutation.runtime_generation == 0
         || mutation.agent_logs.is_empty()
         || current.revision != mutation.expected_agent_revision
         || mutation.agent.revision != next_revision
