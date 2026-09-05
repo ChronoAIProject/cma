@@ -224,7 +224,7 @@ pub(crate) struct AgentView {
     #[serde(skip_serializing_if = "Option::is_none")]
     first_message: Option<FirstMessageStateView>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    failure: Option<FailureView>,
+    failure: Option<AgentFailureView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop_reason: Option<String>,
     created_at: String,
@@ -238,7 +238,7 @@ pub(crate) struct AgentView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct FailureView {
+pub(crate) struct AgentFailureView {
     class: String,
     detail: String,
 }
@@ -306,7 +306,7 @@ impl AgentView {
             title: agent.title,
             paused_notice,
             first_message,
-            failure: agent.failure.map(|failure| FailureView {
+            failure: agent.failure.map(|failure| AgentFailureView {
                 class: failure.class,
                 detail: failure.detail,
             }),

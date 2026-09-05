@@ -13,6 +13,13 @@ use super::admin::settings::{
 };
 use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView};
 use super::agent_openapi_shapes::*;
+use super::instances_openapi_shapes::{
+    CreateSandboxRequest, CreateWorkspaceRequest, FailureView, OwnerAgentSummaryView,
+    OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
+    OwnerWorkspaceSummaryView, ProfileReferenceView, SandboxEventView, SandboxLimitsView,
+    SandboxView, WorkspaceDetailView, WorkspaceListView, WorkspaceSourceView, WorkspaceView,
+    WorktreeListView, WorktreeView,
+};
 use super::openapi_shapes::ConformanceDocument;
 use super::problems::ProblemDocument;
 use super::profiles_openapi_shapes::*;
@@ -64,6 +71,17 @@ use super::profiles_openapi_shapes::*;
         super::agent_operate::transcript,
         super::agent_operate::usage,
         super::agent_operate::resources,
+        super::sandboxes::create,
+        super::sandboxes::list,
+        super::sandboxes::read,
+        super::sandboxes::remove,
+        super::sandboxes::events,
+        super::workspaces::create,
+        super::workspaces::list,
+        super::workspaces::read,
+        super::workspaces::remove,
+        super::worktrees::list,
+        super::worktrees::read,
         super::admin::settings::read,
         super::admin::settings::replace,
         super::admin::settings::patch,
@@ -144,7 +162,7 @@ use super::profiles_openapi_shapes::*;
         AgentListItemView,
         AgentPageView,
         AgentView,
-        FailureView,
+        AgentFailureView,
         InputAcceptedView,
         AgentEventPageView,
         AgentEventView,
@@ -152,6 +170,24 @@ use super::profiles_openapi_shapes::*;
         AgentTranscriptTurnView,
         AgentUsageView,
         AgentResourcesView,
+        ProfileReferenceView,
+        CreateSandboxRequest,
+        CreateWorkspaceRequest,
+        FailureView,
+        SandboxLimitsView,
+        SandboxView,
+        OwnerSandboxSummaryView,
+        OwnerSandboxPageView,
+        OwnerWorkspaceSummaryView,
+        OwnerSandboxDetailView,
+        WorkspaceSourceView,
+        WorkspaceView,
+        WorktreeView,
+        OwnerAgentSummaryView,
+        WorkspaceDetailView,
+        WorkspaceListView,
+        WorktreeListView,
+        SandboxEventView,
         ProfileReferenceBody,
         PlatformDefaultsBody,
         InactivitySettingsBody,
@@ -185,6 +221,9 @@ use super::profiles_openapi_shapes::*;
         (name = "agents", description = "Owned CMA Agents and their durable history"),
         (name = "agent operations", description = "Input and control operations for owned CMA Agents"),
         (name = "agent usage", description = "Usage and resource readings for owned CMA Agents"),
+        (name = "sandboxes", description = "Owned Sandbox lifecycle and event replay"),
+        (name = "workspaces", description = "Owned Workspace lifecycle and hierarchy"),
+        (name = "worktrees", description = "Owned Worktree hierarchy reads"),
         (name = "administration", description = "Capability-gated deployment operations"),
     )
 )]
@@ -352,5 +391,41 @@ mod tests {
             .paths
             .paths
             .contains_key("/api/v1/admin/runtime-inventory"));
+    }
+
+    #[test]
+    fn every_owner_hierarchy_route_is_documented_and_authenticated() {
+        let document = document();
+        let paths: Vec<_> = document
+            .paths
+            .paths
+            .iter()
+            .filter(|(path, _)| {
+                path.starts_with("/api/v1/sandboxes")
+                    || path.starts_with("/api/v1/workspaces")
+                    || path.starts_with("/api/v1/worktrees")
+            })
+            .collect();
+        assert_eq!(paths.len(), 7);
+        let mut operations = Vec::new();
+        for (_, item) in paths {
+            operations.extend(
+                [item.get.as_ref(), item.post.as_ref(), item.delete.as_ref()]
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        assert_eq!(operations.len(), 11);
+        assert!(operations
+            .iter()
+            .all(|operation| operation.security.as_ref().map(Vec::len) == Some(2)));
+        assert!(!document
+            .paths
+            .paths
+            .contains_key("/api/v1/sandboxes/{id}/pause"));
+        assert!(!document
+            .paths
+            .paths
+            .contains_key("/api/v1/sandboxes/{id}/revive"));
     }
 }

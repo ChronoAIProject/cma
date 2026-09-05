@@ -42,9 +42,18 @@ mod trigger_assets_test_support;
 
 mod idempotency;
 mod instance_problem;
+mod instances;
+mod instances_openapi_shapes;
+mod instances_problem;
+#[cfg(test)]
+mod instances_tests;
+mod sandboxes;
+mod workspaces;
+mod worktrees;
 
 pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
+pub use instances::{hierarchy_router, HierarchyState};
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
 pub use profiles::{profiles_router, ProfileRoutePolicy, ProfilesState};
@@ -165,6 +174,10 @@ impl InterfaceProfile for RestInterface {
             Operation::ReadAgentUsage,
             Operation::ReadAgentResources,
             Operation::Administer,
+            Operation::ManageSandboxes,
+            Operation::ManageWorkspaces,
+            Operation::ReadWorktrees,
+            Operation::ReadSandboxEvents,
         ]
     }
 }

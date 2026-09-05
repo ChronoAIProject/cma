@@ -42,6 +42,14 @@ pub enum Operation {
     ReadAgentResources,
     /// Inspect and control deployment-wide resources.
     Administer,
+    /// Create, list, inspect, and retire owned Sandboxes.
+    ManageSandboxes,
+    /// Create, list, inspect, and remove owned Workspaces.
+    ManageWorkspaces,
+    /// Inspect Worktrees attached to owned Workspaces.
+    ReadWorktrees,
+    /// Replay an owned Sandbox event stream.
+    ReadSandboxEvents,
 }
 
 /// Protocol profiles declare only operations they currently implement.
