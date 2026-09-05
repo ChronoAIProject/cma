@@ -47,16 +47,33 @@ mod instances_openapi_shapes;
 mod instances_problem;
 #[cfg(test)]
 mod instances_tests;
+mod launch_events;
+mod launch_quota;
+mod launches;
 mod sandboxes;
+mod service_connections;
+mod trigger_openapi_shapes;
+mod trigger_placements;
+mod trigger_problem;
+#[cfg(test)]
+mod trigger_routes_tests;
+mod triggers;
 mod workspaces;
 mod worktrees;
 
 pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
 pub use instances::{hierarchy_router, HierarchyState};
+pub use launch_events::{
+    FirstMessageStateValue, LaunchBlockedReasonView, LaunchEffectKindValue, LaunchEventKindView,
+    LaunchEventView, LaunchFailureView, LaunchStateValue, LaunchStepKeyValue,
+    LaunchStepStatusValue, LaunchStepView, RepeatChoiceValue, ServiceRequirementStateValue,
+};
+pub use launch_quota::{LaunchQuota, LaunchQuotaError, LaunchQuotaPermit, LaunchQuotaRefusal};
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
 pub use profiles::{profiles_router, ProfileRoutePolicy, ProfilesState};
+pub use triggers::{trigger_router, TriggerRoutesState};
 
 use crate::{InterfaceProfile, Operation};
 use openapi_shapes::ConformanceDocument;
