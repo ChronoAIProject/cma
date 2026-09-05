@@ -16,15 +16,25 @@ use super::sandbox_mongo::{
 };
 
 pub(super) fn worktree_indexes() -> Vec<IndexModel> {
-    vec![IndexModel::builder()
-        .keys(doc! { "workspace_id": 1, "name": 1 })
-        .options(
-            IndexOptions::builder()
-                .name("worktrees_workspace_name".to_string())
-                .unique(true)
-                .build(),
-        )
-        .build()]
+    vec![
+        IndexModel::builder()
+            .keys(doc! { "workspace_id": 1, "name": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("worktrees_workspace_name".to_string())
+                    .unique(true)
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "sandbox_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("worktrees_sandbox".to_string())
+                    .build(),
+            )
+            .build(),
+    ]
 }
 
 pub(super) async fn ensure_indexes(
@@ -214,8 +224,14 @@ mod tests {
 
     #[test]
     fn worktree_name_index_is_unconditionally_unique() {
-        let index = worktree_indexes().remove(0);
+        let indexes = worktree_indexes();
+        let index = &indexes[0];
         assert_eq!(index.keys, doc! { "workspace_id": 1, "name": 1 });
-        assert_eq!(index.options.unwrap().unique, Some(true));
+        assert_eq!(index.options.as_ref().unwrap().unique, Some(true));
+        assert_eq!(indexes[1].keys, doc! { "sandbox_id": 1 });
+        assert_eq!(
+            indexes[1].options.as_ref().unwrap().name.as_deref(),
+            Some("worktrees_sandbox")
+        );
     }
 }
