@@ -106,3 +106,51 @@ async fn a_symlinked_agent_root_cannot_redirect_materialization() {
     std::fs::remove_dir_all(config.home).unwrap();
     std::fs::remove_dir_all(outside).unwrap();
 }
+
+#[tokio::test]
+async fn recovery_accepts_an_atomically_published_home() {
+    let config = config("recover-published");
+    let plan = AgentHomePlan {
+        operation_id: "agent:agent-1:home:create:v1".into(),
+        request_sha256: "d".repeat(64),
+        agent_id: AgentSlot::new("agent-1"),
+        files: vec![HomeFile {
+            path: "config.toml".into(),
+            bytes: b"published".to_vec(),
+        }],
+        symlinks: Vec::new(),
+        skills: Vec::new(),
+    };
+    let published = materialize(&config, &reqwest::Client::new(), &plan)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        recover_materialization(&config, "agent-1", &plan.operation_id).unwrap(),
+        Some(published)
+    );
+    std::fs::remove_dir_all(config.home).unwrap();
+}
+
+#[test]
+fn recovery_removes_incomplete_deterministic_staging() {
+    let config = config("recover-staging");
+    let operation_id = "agent:agent-1:home:create:v1";
+    let staging = staging_path(&config, "agent-1", operation_id);
+    std::fs::create_dir_all(&staging).unwrap();
+    std::fs::write(staging.join("partial"), b"incomplete").unwrap();
+
+    assert_eq!(
+        recover_materialization(&config, "agent-1", operation_id).unwrap(),
+        None
+    );
+    assert!(!staging.exists());
+    std::fs::remove_dir_all(config.home).unwrap();
+}
+
+#[test]
+fn removal_recovers_when_the_home_is_already_absent() {
+    let config = config("remove-absent");
+    assert!(!remove(&config, "agent-1").unwrap());
+    std::fs::remove_dir_all(config.home).unwrap();
+}

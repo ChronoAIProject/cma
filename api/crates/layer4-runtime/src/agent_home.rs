@@ -3,6 +3,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use layer3_adapter::{AgentHomePlan, HomeFile, HomeSymlink};
+use sha2::{Digest, Sha256};
 
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
@@ -30,17 +31,19 @@ pub(crate) async fn materialize(
     let target = config.agent_home(plan.agent_id.as_str());
     let agent_root = target.parent().expect("an agent home has a parent");
     ensure_parents(&config.home, agent_root)?;
-    if std::fs::symlink_metadata(&target).is_ok() {
+    if entry_exists(&target, "inspect existing agent home")? {
         return Err(RuntimeError::rejected(
             "agent_home_exists",
             "agent home already exists",
         ));
     }
-    let staging = agent_root.join(format!(
-        ".home-staging-{}-{}",
-        std::process::id(),
-        unique_stamp()
-    ));
+    let staging = staging_path(config, plan.agent_id.as_str(), &plan.operation_id);
+    if entry_exists(&staging, "inspect agent home staging path")? {
+        return Err(RuntimeError::rejected(
+            "agent_home_staging_conflict",
+            "agent home staging path already exists",
+        ));
+    }
     let mut cleanup = Cleanup::new(staging.clone());
     crate::fs_durability::create_dir(&staging).map_err(home_io("create staged agent home"))?;
 
@@ -59,6 +62,58 @@ pub(crate) async fn materialize(
     crate::fs_durability::rename(&staging, &target).map_err(home_io("publish agent home"))?;
     cleanup.disarm();
     Ok(target)
+}
+
+pub(crate) fn preflight_materialize(config: &RuntimeConfig, plan: &AgentHomePlan) -> Result<()> {
+    safe_component(plan.agent_id.as_str(), "agent id")?;
+    validate_plan(plan)?;
+    let target = config.agent_home(plan.agent_id.as_str());
+    let parent = target.parent().expect("an agent home has a parent");
+    if existing_parents_are_directories(&config.home, parent)? {
+        if entry_exists(&target, "inspect existing agent home")? {
+            return Err(RuntimeError::rejected(
+                "agent_home_exists",
+                "agent home already exists",
+            ));
+        }
+        let staging = staging_path(config, plan.agent_id.as_str(), &plan.operation_id);
+        if entry_exists(&staging, "inspect agent home staging path")? {
+            return Err(RuntimeError::rejected(
+                "agent_home_staging_conflict",
+                "agent home staging path already exists",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn recover_materialization(
+    config: &RuntimeConfig,
+    agent_id: &str,
+    operation_id: &str,
+) -> Result<Option<PathBuf>> {
+    safe_component(agent_id, "agent id")?;
+    let target = config.agent_home(agent_id);
+    let parent = target.parent().expect("an agent home has a parent");
+    if !existing_parents_are_directories(&config.home, parent)? {
+        return Ok(None);
+    }
+    let staging = staging_path(config, agent_id, operation_id);
+    let target_exists = real_directory_or_absent(&target, "agent home")?;
+    let staging_exists = real_directory_or_absent(&staging, "agent home staging path")?;
+    match (target_exists, staging_exists) {
+        (true, false) => Ok(Some(target)),
+        (false, true) => {
+            crate::fs_durability::remove_dir_all(&staging)
+                .map_err(home_io("remove incomplete staged agent home"))?;
+            Ok(None)
+        }
+        (false, false) => Ok(None),
+        (true, true) => Err(RuntimeError::rejected(
+            "agent_home_create_indeterminate",
+            "agent home has both staged and published directories",
+        )),
+    }
 }
 
 pub(crate) fn remove(config: &RuntimeConfig, agent_id: &str) -> Result<bool> {
@@ -84,6 +139,21 @@ pub(crate) fn remove(config: &RuntimeConfig, agent_id: &str) -> Result<bool> {
         let _ = crate::fs_durability::remove_dir(parent);
     }
     Ok(true)
+}
+
+pub(crate) fn preflight_remove(config: &RuntimeConfig, agent_id: &str) -> Result<()> {
+    safe_component(agent_id, "agent id")?;
+    let home = config.agent_home(agent_id);
+    let parent = home.parent().expect("an agent home has a parent");
+    if !existing_parents_are_directories(&config.home, parent)?
+        || !real_directory_or_absent(&home, "agent home")?
+    {
+        return Err(RuntimeError::rejected(
+            "agent_home_not_found",
+            "agent home was not found",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_plan(plan: &AgentHomePlan) -> Result<BTreeMap<PathBuf, PlannedKind>> {
@@ -300,11 +370,37 @@ fn verify_materialized(root: &Path, planned: &BTreeMap<PathBuf, PlannedKind>) ->
     Ok(())
 }
 
-fn unique_stamp() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
+fn staging_path(config: &RuntimeConfig, agent_id: &str, operation_id: &str) -> PathBuf {
+    let digest = Sha256::digest(operation_id.as_bytes());
+    let name = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    config
+        .agent_home(agent_id)
+        .parent()
+        .expect("an agent home has a parent")
+        .join(format!(".home-staging-{name}"))
+}
+
+fn real_directory_or_absent(path: &Path, label: &str) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(true),
+        Ok(_) => Err(RuntimeError::rejected(
+            "agent_home_invalid",
+            format!("{label} is not a real directory"),
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(home_io("inspect agent home recovery path")(error)),
+    }
+}
+
+fn entry_exists(path: &Path, operation: &'static str) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(home_io(operation)(error)),
+    }
 }
 
 fn home_io(operation: &'static str) -> impl FnOnce(std::io::Error) -> RuntimeError + Copy {
@@ -328,7 +424,7 @@ impl Cleanup {
 impl Drop for Cleanup {
     fn drop(&mut self) {
         if let Some(path) = self.path.take() {
-            let _ = std::fs::remove_dir_all(path);
+            let _ = crate::fs_durability::remove_dir_all(&path);
         }
     }
 }
