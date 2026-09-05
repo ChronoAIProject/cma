@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::profiles::store::{ProfileStoreError, ProfileUseRecorder, WorkspaceProfileStore};
 use crate::profiles::{
-    require_trust_confirmation, MarketplaceError, MarketplaceLocator, ProfileVisibility,
-    WorkspaceLocation, WorkspaceProfileRef, WorkspaceProfileRevision, WorkspaceProfileSnapshot,
+    content_digest, require_trust_confirmation, MarketplaceError, MarketplaceLocator,
+    ProfileVisibility, WorkspaceLocation, WorkspaceProfileRef, WorkspaceProfileRevision,
+    WorkspaceProfileSnapshot,
 };
 use crate::{now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
 
@@ -140,29 +141,32 @@ impl WorkspaceService {
         .await
     }
 
-    /// Launch-authorized admission with a durable origin used to reconcile
-    /// retries after an uncertain storage response.
     pub async fn create_for_launch(
         &self,
         caller: &Caller,
+        authority: Capability,
         sandbox_id: &SandboxId,
         request: CreateWorkspace,
         launch_id: String,
     ) -> Result<Workspace, WorkspaceServiceError> {
+        require_launch(caller, authority)?;
         if launch_id.trim().is_empty()
             || launch_id.len() > 128
             || launch_id.chars().any(char::is_control)
         {
             return Err(WorkspaceServiceError::InvalidOrigin);
         }
-        require(caller)?;
         let sandbox = self.owned_sandbox(caller, sandbox_id).await?;
+        if let Some(existing) = self
+            .launch_replay(&sandbox, &request.profile, &launch_id)
+            .await?
+        {
+            return Ok(existing);
+        }
         if sandbox.status != super::SandboxStatus::Active {
             return Err(WorkspaceServiceError::SandboxNotReady);
         }
-        let (owner, revision) = self
-            .read_visible_revision(&caller.subject, &request.profile)
-            .await?;
+        let (owner, revision) = self.read_frozen_revision(&request.profile).await?;
         require_trust_confirmation(
             &owner,
             &caller.subject,
@@ -312,6 +316,66 @@ impl WorkspaceService {
         Ok(revision)
     }
 
+    async fn read_frozen_revision(
+        &self,
+        reference: &WorkspaceProfileRef,
+    ) -> Result<(SubjectId, WorkspaceProfileRevision), WorkspaceServiceError> {
+        let profile = self
+            .profiles
+            .workspace_profile(&reference.id)
+            .await
+            .map_err(profile_error)?
+            .ok_or(WorkspaceServiceError::ProfileNotFound)?;
+        validate_workspace_profile(reference, &profile).map_err(profile_error)?;
+        Ok((profile.owner, self.exact_revision(reference).await?))
+    }
+
+    async fn launch_replay(
+        &self,
+        sandbox: &Sandbox,
+        reference: &WorkspaceProfileRef,
+        launch_id: &str,
+    ) -> Result<Option<Workspace>, WorkspaceServiceError> {
+        let mut request = PageRequest::default();
+        let mut found = None;
+        let origin = WorkspaceOrigin::Trigger {
+            launch_id: launch_id.into(),
+        };
+        loop {
+            let page = self
+                .store
+                .list_workspaces(&sandbox.id, &request)
+                .await
+                .map_err(store_error)?;
+            for workspace in page.items {
+                if workspace.origin != origin {
+                    continue;
+                }
+                let digest = content_digest(&workspace.profile.content)
+                    .map_err(|error| WorkspaceServiceError::Corrupt(error.to_string()))?;
+                if found.is_some()
+                    || workspace.sandbox_id != sandbox.id
+                    || workspace.owner != sandbox.owner
+                    || digest != workspace.profile.digest
+                {
+                    return Err(WorkspaceServiceError::Corrupt(
+                        "invalid launch replay".into(),
+                    ));
+                }
+                if workspace.profile.id != reference.id
+                    || workspace.profile.revision != reference.revision
+                {
+                    return Err(WorkspaceServiceError::OriginConflict);
+                }
+                found = Some(workspace);
+            }
+            match page.next {
+                Some(cursor) => request.cursor = Some(cursor),
+                None => return Ok(found),
+            }
+        }
+    }
+
     async fn owned_sandbox(
         &self,
         caller: &Caller,
@@ -387,6 +451,15 @@ fn require(caller: &Caller) -> Result<(), WorkspaceServiceError> {
         .allows(Capability::UseOwnSandboxes)
         .then_some(())
         .ok_or(WorkspaceServiceError::Forbidden)
+}
+
+fn require_launch(caller: &Caller, authority: Capability) -> Result<(), WorkspaceServiceError> {
+    (matches!(
+        authority,
+        Capability::LaunchTriggers | Capability::CreateSandbox
+    ) && caller.authorization.allows(authority))
+    .then_some(())
+    .ok_or(WorkspaceServiceError::Forbidden)
 }
 
 fn trust_error(error: MarketplaceError) -> WorkspaceServiceError {

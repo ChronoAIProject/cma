@@ -177,6 +177,10 @@ fn caller(subject: &str) -> Caller {
     )
 }
 
+fn launch_caller(subject: &str, authority: Capability) -> Caller {
+    Caller::new(SubjectId(subject.into()), Authorization::new([authority]))
+}
+
 fn profile(
     id: &str,
     owner: &str,
@@ -387,21 +391,66 @@ async fn launch_admission_replays_by_origin_and_rejects_changed_input() {
     let store = Arc::new(InMemorySandboxStore::default());
     let parent = sandbox("sbx_launch_origin", SandboxStatus::Active, Vec::new(), 4);
     store.create_sandbox(parent.clone()).await.unwrap();
-    let service = WorkspaceService::new(store, profiles.clone());
-    let consumer = caller("consumer");
+    let service = WorkspaceService::new(store.clone(), profiles.clone());
+    let creator = launch_caller("consumer", Capability::CreateSandbox);
+
+    assert_eq!(
+        service
+            .create_for_launch(
+                &caller("consumer"),
+                Capability::LaunchTriggers,
+                &parent.id,
+                request(reference.clone(), None),
+                "lch_unauthorized".into(),
+            )
+            .await,
+        Err(WorkspaceServiceError::Forbidden)
+    );
+    assert_eq!(
+        service
+            .create_for_launch(
+                &caller("consumer"),
+                Capability::UseOwnSandboxes,
+                &parent.id,
+                request(reference.clone(), None),
+                "lch_invalid_lane".into(),
+            )
+            .await,
+        Err(WorkspaceServiceError::Forbidden)
+    );
+    assert_eq!(
+        service
+            .create_for_launch(
+                &launch_caller("other", Capability::LaunchTriggers),
+                Capability::LaunchTriggers,
+                &parent.id,
+                request(reference.clone(), None),
+                "lch_wrong_owner".into(),
+            )
+            .await,
+        Err(WorkspaceServiceError::NotFound)
+    );
 
     let first = service
         .create_for_launch(
-            &consumer,
+            &creator,
+            Capability::CreateSandbox,
             &parent.id,
             request(reference.clone(), None),
             "lch_stable_origin".into(),
         )
         .await
         .unwrap();
-    let replay = service
+    let profile_store: Arc<dyn WorkspaceProfileStore> = Arc::new(CorruptingWorkspaceProfiles {
+        inner: profiles.clone(),
+        corruption: ProfileCorruption::AggregateId,
+    });
+    let profile_uses: Arc<dyn ProfileUseRecorder> = profiles.clone();
+    let replay_service = WorkspaceService::with_dependencies(store, profile_store, profile_uses);
+    let replay = replay_service
         .create_for_launch(
-            &consumer,
+            &creator,
+            Capability::CreateSandbox,
             &parent.id,
             request(reference.clone(), None),
             "lch_stable_origin".into(),
@@ -420,7 +469,8 @@ async fn launch_admission_replays_by_origin_and_rejects_changed_input() {
     assert_eq!(
         service
             .create_for_launch(
-                &consumer,
+                &creator,
+                Capability::CreateSandbox,
                 &parent.id,
                 request(changed, None),
                 "lch_stable_origin".into(),
@@ -431,7 +481,8 @@ async fn launch_admission_replays_by_origin_and_rejects_changed_input() {
     assert_eq!(
         service
             .create_for_launch(
-                &consumer,
+                &creator,
+                Capability::CreateSandbox,
                 &parent.id,
                 request(reference, None),
                 "invalid\norigin".into(),
@@ -439,6 +490,79 @@ async fn launch_admission_replays_by_origin_and_rejects_changed_input() {
             .await,
         Err(WorkspaceServiceError::InvalidOrigin)
     );
+}
+
+#[tokio::test]
+async fn frozen_launch_revision_survives_profile_retirement_with_exact_trust() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let reference = publish(
+        &profiles,
+        profile(
+            "wkp_frozen_launch",
+            "publisher",
+            "frozen-launch",
+            ProfileVisibility::Public,
+            vec!["cargo fetch".into()],
+        ),
+    )
+    .await;
+    let expected_digest = digest(&profiles, &reference).await;
+    profiles
+        .retire_workspace_profile(&reference.id, &SubjectId::new("publisher"), NOW.into())
+        .await
+        .unwrap();
+    let store = Arc::new(InMemorySandboxStore::default());
+    let parent = sandbox("sbx_frozen_launch", SandboxStatus::Active, Vec::new(), 4);
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let service = WorkspaceService::new(store, profiles.clone());
+
+    assert_eq!(
+        service
+            .create(
+                &caller("consumer"),
+                &parent.id,
+                request(reference.clone(), Some(expected_digest.clone())),
+            )
+            .await,
+        Err(WorkspaceServiceError::ProfileNotFound)
+    );
+    let visitor = launch_caller("consumer", Capability::LaunchTriggers);
+    assert_eq!(
+        service
+            .create_for_launch(
+                &visitor,
+                Capability::LaunchTriggers,
+                &parent.id,
+                request(reference.clone(), Some("wrong".into())),
+                "lch_frozen".into(),
+            )
+            .await,
+        Err(WorkspaceServiceError::TrustConfirmationRequired {
+            digest: expected_digest.clone()
+        })
+    );
+    let created = service
+        .create_for_launch(
+            &visitor,
+            Capability::LaunchTriggers,
+            &parent.id,
+            request(reference.clone(), Some(expected_digest.clone())),
+            "lch_frozen".into(),
+        )
+        .await
+        .unwrap();
+    let replay = service
+        .create_for_launch(
+            &visitor,
+            Capability::LaunchTriggers,
+            &parent.id,
+            request(reference.clone(), Some(expected_digest)),
+            "lch_frozen".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, created);
+    assert_eq!(use_count(&profiles, &reference.id).await, 1);
 }
 
 #[tokio::test]
@@ -554,6 +678,18 @@ async fn corrupt_aggregate_revision_or_content_fails_before_admission_or_use() {
                     &caller("consumer"),
                     &parent.id,
                     request(reference.clone(), None),
+                )
+                .await,
+            Err(WorkspaceServiceError::Corrupt(_))
+        ));
+        assert!(matches!(
+            service
+                .create_for_launch(
+                    &launch_caller("consumer", Capability::LaunchTriggers),
+                    Capability::LaunchTriggers,
+                    &parent.id,
+                    request(reference.clone(), None),
+                    format!("lch_corrupt_{index}"),
                 )
                 .await,
             Err(WorkspaceServiceError::Corrupt(_))

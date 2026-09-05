@@ -157,6 +157,39 @@ impl AgentService {
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
+        if !matches!(&request.origin, AgentOrigin::Manual) {
+            return Err(AgentServiceError::InvalidRequest(
+                "trigger origin requires launch admission".into(),
+            ));
+        }
+        self.create_with_profile(caller, workspace_id, request, false)
+            .await
+    }
+
+    pub async fn create_for_launch(
+        &self,
+        caller: &Caller,
+        authority: Capability,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+    ) -> Result<Agent, AgentServiceError> {
+        require_launch(caller, authority)?;
+        if !matches!(&request.origin, AgentOrigin::Trigger { .. }) {
+            return Err(AgentServiceError::InvalidRequest(
+                "launch admission requires trigger origin".into(),
+            ));
+        }
+        self.create_with_profile(caller, workspace_id, request, true)
+            .await
+    }
+
+    async fn create_with_profile(
+        &self,
+        caller: &Caller,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+        frozen_profile: bool,
+    ) -> Result<Agent, AgentServiceError> {
         self.runtime_capabilities
             .require([RuntimeCapability::Conversation])
             .map_err(|capability| AgentServiceError::CapabilityUnsupported { capability })?;
@@ -169,9 +202,12 @@ impl AgentService {
         if sandbox.status != SandboxStatus::Active {
             return Err(AgentServiceError::SandboxNotReady);
         }
-        let revision = self
-            .read_visible_revision(&caller.subject, &request.profile)
-            .await?;
+        let revision = if frozen_profile {
+            self.exact_revision(&request.profile).await?
+        } else {
+            self.read_visible_revision(&caller.subject, &request.profile)
+                .await?
+        };
         let now = now_rfc3339();
         let agent_id = AgentId::generate();
         let creation_key = creation_key(&request.origin, &agent_id)?;
@@ -290,6 +326,13 @@ impl AgentService {
         {
             return Err(AgentServiceError::ProfileNotFound);
         }
+        self.exact_revision(reference).await
+    }
+
+    async fn exact_revision(
+        &self,
+        reference: &AgentProfileRef,
+    ) -> Result<AgentProfileRevision, AgentServiceError> {
         let revision = self
             .profiles
             .agent_profile_revision(&reference.id, reference.revision)
@@ -396,6 +439,15 @@ fn require(caller: &Caller) -> Result<(), AgentServiceError> {
         .allows(Capability::UseOwnSandboxes)
         .then_some(())
         .ok_or(AgentServiceError::Forbidden)
+}
+
+fn require_launch(caller: &Caller, authority: Capability) -> Result<(), AgentServiceError> {
+    (matches!(
+        authority,
+        Capability::LaunchTriggers | Capability::CreateSandbox
+    ) && caller.authorization.allows(authority))
+    .then_some(())
+    .ok_or(AgentServiceError::Forbidden)
 }
 
 fn profile_error(error: ProfileStoreError) -> AgentServiceError {
