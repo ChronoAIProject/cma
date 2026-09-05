@@ -13,6 +13,11 @@ mod agent_worker;
 mod credential;
 #[allow(
     dead_code,
+    reason = "composed by the production Sandbox worker assembly introduced by #824"
+)]
+mod live_agent_stopper;
+#[allow(
+    dead_code,
     reason = "composed when the production agent lifecycle transport is available"
 )]
 mod live_agents;
@@ -43,6 +48,11 @@ pub(crate) use credential::{
     CredentialCustodyError, CredentialMaterial, CredentialRevocation, ManagedSandboxCredentials,
     SandboxCredentialCustody,
 };
+#[allow(
+    unused_imports,
+    reason = "exported for the production Sandbox worker composition introduced by #824"
+)]
+pub(crate) use live_agent_stopper::DurableLiveAgentStopper;
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::runtime_capabilities;
