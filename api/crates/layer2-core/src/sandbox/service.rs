@@ -16,6 +16,7 @@ use super::{Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus};
 pub const DEFAULT_OWNER_SANDBOX_LIMIT: u16 = 3;
 pub const DEFAULT_VISITOR_SANDBOX_LIMIT: u16 = 1;
 pub const DEFAULT_RETENTION_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+pub const DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS: u64 = 15 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -51,6 +52,7 @@ pub struct CreateSandbox {
 pub struct SandboxPolicy {
     pub max_sandboxes_per_owner: u16,
     pub max_sandboxes_per_visitor: u16,
+    pub inactivity_pause_after_seconds: u64,
     pub retention_grace: Duration,
     pub baseline_services: Vec<ServiceId>,
 }
@@ -76,6 +78,7 @@ impl Default for SandboxPolicy {
         Self {
             max_sandboxes_per_owner: DEFAULT_OWNER_SANDBOX_LIMIT,
             max_sandboxes_per_visitor: DEFAULT_VISITOR_SANDBOX_LIMIT,
+            inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
             retention_grace: DEFAULT_RETENTION_GRACE,
             baseline_services: Vec::new(),
         }
