@@ -145,7 +145,6 @@ impl Bridge {
         self.pending.lock().await.drain()
     }
 
-    #[cfg(not(unix))]
     pub(crate) fn is_ended(&self) -> bool {
         *self.ended.subscribe().borrow()
     }
