@@ -118,6 +118,12 @@ fn trigger_origin_and_fingerprint_round_trip_and_survive_replacement() {
         document.get_document("admission_name").unwrap(),
         &doc! { "mode": "allocate", "value": "research" }
     );
+    let record = document.get_document("record").unwrap();
+    assert_eq!(record.get_str("owner").unwrap(), "owner");
+    assert_eq!(
+        record.get_document("origin").unwrap(),
+        &doc! { "type": "trigger", "launch_id": "launch-schema" }
+    );
     assert_eq!(read_sandbox(&document).unwrap(), sandbox);
     let replay = read_sandbox_admission_replay(&document).unwrap();
     assert_eq!(replay.sandbox, sandbox);
@@ -163,6 +169,7 @@ fn trigger_query_fields_and_fingerprint_are_independently_validated() {
 #[test]
 fn sandbox_indexes_match_the_schema_contract() {
     let indexes = sandbox_indexes();
+    assert_eq!(indexes.len(), 8);
     assert_eq!(indexes[0].keys, doc! { "owner": 1, "name": 1 });
     let options = indexes[0].options.as_ref().unwrap();
     assert_eq!(options.unique, Some(true));
@@ -183,14 +190,28 @@ fn sandbox_indexes_match_the_schema_contract() {
     );
     assert_eq!(
         indexes[2].keys,
-        doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
+        doc! { "record.owner": 1, "record.origin.launch_id": 1 }
+    );
+    let options = indexes[2].options.as_ref().unwrap();
+    assert_eq!(options.unique, Some(true));
+    assert_eq!(
+        options.name.as_deref(),
+        Some("sandboxes_record_owner_trigger_launch")
+    );
+    assert_eq!(
+        options.partial_filter_expression,
+        Some(doc! { "record.origin.type": "trigger" })
     );
     assert_eq!(
         indexes[3].keys,
-        doc! { "owner": 1, "status": 1, "updated_at": -1 }
+        doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
     );
     assert_eq!(
         indexes[4].keys,
+        doc! { "owner": 1, "status": 1, "updated_at": -1 }
+    );
+    assert_eq!(
+        indexes[5].keys,
         doc! {
             "owner": 1,
             "status": 1,
@@ -199,17 +220,17 @@ fn sandbox_indexes_match_the_schema_contract() {
         }
     );
     assert_eq!(
-        indexes[4].options.as_ref().unwrap().name.as_deref(),
+        indexes[5].options.as_ref().unwrap().name.as_deref(),
         Some("sandboxes_operator_inventory")
     );
-    assert_eq!(indexes[5].keys, doc! { "owner": 1, "_id": 1 });
-    assert_eq!(
-        indexes[5].options.as_ref().unwrap().name.as_deref(),
-        Some("sandboxes_owner_page")
-    );
-    assert_eq!(indexes[6].keys, doc! { "owner": 1, "status": 1, "_id": 1 });
+    assert_eq!(indexes[6].keys, doc! { "owner": 1, "_id": 1 });
     assert_eq!(
         indexes[6].options.as_ref().unwrap().name.as_deref(),
+        Some("sandboxes_owner_page")
+    );
+    assert_eq!(indexes[7].keys, doc! { "owner": 1, "status": 1, "_id": 1 });
+    assert_eq!(
+        indexes[7].options.as_ref().unwrap().name.as_deref(),
         Some("sandboxes_owner_status_page")
     );
 }
