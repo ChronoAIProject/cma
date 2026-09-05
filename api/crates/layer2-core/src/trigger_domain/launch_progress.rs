@@ -1,5 +1,6 @@
 use crate::{seconds_from_rfc3339, AgentId, SandboxId, WorkspaceId};
 
+use super::launch_worker_control::require_bounded_retry_time;
 use super::{
     Launch, LaunchEffectKind, LaunchEffectState, LaunchEventKind, LaunchState, LaunchStepKey,
     LaunchStepStatus, LaunchWorkStep, ResolvedResource, TriggerError,
@@ -174,6 +175,50 @@ impl Launch {
         settle_worker_command(self, original, &command_at, result)
     }
 
+    pub fn settle_worker_sandbox_effect(
+        &mut self,
+        holder: &str,
+        fence: u64,
+        sandbox_id: &SandboxId,
+        retry_at: String,
+        at: String,
+    ) -> Result<Vec<LaunchEventKind>, TriggerError> {
+        let command_at = at.clone();
+        let original = self.clone();
+        require_command_time(&original, &command_at)?;
+        require_bounded_retry_time(&command_at, &retry_at)?;
+        let result = (|| {
+            self.require_worker(holder, fence, LaunchWorkStep::WaitForSandbox)?;
+            if self.state != LaunchState::SandboxPending
+                || self.resolution.sandbox.id() != Some(sandbox_id)
+                || !matches!(
+                    self.work.effect.as_ref(),
+                    Some(effect)
+                        if effect.state == LaunchEffectState::Applied
+                            && matches!(
+                                effect.kind,
+                                LaunchEffectKind::ReviveSandbox
+                                    | LaunchEffectKind::RepairSandboxServiceGrant
+                            )
+                            && effect.result_id.as_deref() == Some(sandbox_id.as_str())
+                )
+            {
+                return Err(progress_error());
+            }
+            self.work.advance(
+                holder,
+                fence,
+                LaunchWorkStep::WaitForSandbox,
+                retry_at.clone(),
+            )?;
+            self.updated_at = at;
+            self.bump_revision()?;
+            self.validate()?;
+            Ok(vec![LaunchEventKind::Deferred { retry_at }])
+        })();
+        settle_worker_command(self, original, &command_at, result)
+    }
+
     pub fn record_worker_workspace(
         &mut self,
         holder: &str,
@@ -343,7 +388,9 @@ impl Launch {
 
 fn progress_step(kind: LaunchEffectKind) -> LaunchStepKey {
     match kind {
-        LaunchEffectKind::CreateSandbox | LaunchEffectKind::ReviveSandbox => LaunchStepKey::Sandbox,
+        LaunchEffectKind::CreateSandbox
+        | LaunchEffectKind::ReviveSandbox
+        | LaunchEffectKind::RepairSandboxServiceGrant => LaunchStepKey::Sandbox,
         LaunchEffectKind::CreateWorkspace => LaunchStepKey::Workspace,
         LaunchEffectKind::CreateAgent => LaunchStepKey::Agent,
     }
@@ -353,6 +400,7 @@ fn running_detail(kind: LaunchEffectKind) -> &'static str {
     match kind {
         LaunchEffectKind::CreateSandbox => "Creating sandbox",
         LaunchEffectKind::ReviveSandbox => "Reviving sandbox",
+        LaunchEffectKind::RepairSandboxServiceGrant => "Repairing sandbox service access",
         LaunchEffectKind::CreateWorkspace => "Creating workspace",
         LaunchEffectKind::CreateAgent => "Creating agent",
     }
