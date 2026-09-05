@@ -24,6 +24,22 @@ pub enum Operation {
     ReadProfileMarketplace,
     /// Copy a published profile revision into an owned private draft.
     ForkMarketplaceProfile,
+    /// Create, read, stop, and delete owned Agents.
+    ManageAgents,
+    /// Send a new message to an Agent.
+    SendAgentInput,
+    /// Replay one Agent's durable events.
+    StreamAgentEvents,
+    /// Resolve an Agent approval request.
+    ResolveAgentApproval,
+    /// Interrupt an Agent's active turn.
+    InterruptAgent,
+    /// Add steering input to an Agent's active turn.
+    SteerAgent,
+    /// Read an Agent's durable token usage.
+    ReadAgentUsage,
+    /// Read the resources attributed to an Agent's Sandbox.
+    ReadAgentResources,
     /// Inspect and control deployment-wide resources.
     Administer,
 }

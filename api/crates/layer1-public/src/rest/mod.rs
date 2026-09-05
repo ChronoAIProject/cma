@@ -11,6 +11,11 @@ use axum::{
 use layer2_core::StoreError;
 
 pub mod admin;
+mod agent_openapi_shapes;
+mod agent_operate;
+mod agents;
+#[cfg(test)]
+mod agents_tests;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
@@ -36,7 +41,9 @@ mod profiles_workspace;
 mod trigger_assets_test_support;
 
 mod idempotency;
+mod instance_problem;
 
+pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
@@ -149,6 +156,14 @@ impl InterfaceProfile for RestInterface {
             Operation::ManageProfiles,
             Operation::ReadProfileMarketplace,
             Operation::ForkMarketplaceProfile,
+            Operation::ManageAgents,
+            Operation::SendAgentInput,
+            Operation::StreamAgentEvents,
+            Operation::ResolveAgentApproval,
+            Operation::InterruptAgent,
+            Operation::SteerAgent,
+            Operation::ReadAgentUsage,
+            Operation::ReadAgentResources,
             Operation::Administer,
         ]
     }
