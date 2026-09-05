@@ -18,7 +18,10 @@ use super::connections_nyxid::{NyxidServiceConnectionBroker, VisitorCredentialSo
 use crate::auth::persistence::SecretValue;
 
 const VISITOR_TOKEN: &str = "visitor-access-secret";
-const EXPIRES_AT: &str = "2026-09-05T12:15:00Z";
+const PROVIDER_EXPIRES_AT: &str = "2026-09-05T12:15:00.731Z";
+const CANONICAL_EXPIRES_AT: &str = "2026-09-05T12:15:00Z";
+const CONNECT_TOKEN: &str =
+    "nyx_clk_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 #[derive(Clone)]
 struct Reply {
@@ -71,8 +74,8 @@ impl ProviderState {
         Self {
             create_reply: Mutex::new(Reply::json(json!({
                 "id": "link-one",
-                "connect_url": "https://nyx.example/connect/nyx_clk_secret",
-                "expires_at": EXPIRES_AT,
+                "connect_url": trusted_connect_url(),
+                "expires_at": PROVIDER_EXPIRES_AT,
             }))),
             link_reply: Mutex::new(link_reply("pending")),
             services_reply: Mutex::new(Reply::json(json!({ "services": [] }))),
@@ -241,8 +244,10 @@ fn broker(provider: &Provider, tokens: Arc<Tokens>) -> NyxidServiceConnectionBro
             .build()
             .expect("HTTP client builds"),
         format!("{}/", provider.base_url),
+        "https://nyx.example",
         tokens,
     )
+    .expect("broker configuration is valid")
 }
 
 fn link_reply(status: &str) -> Reply {
@@ -251,23 +256,88 @@ fn link_reply(status: &str) -> Reply {
         "status": status,
         "service_name": "GitHub",
         "service_slug": "github",
-        "expires_at": EXPIRES_AT,
+        "expires_at": PROVIDER_EXPIRES_AT,
     }))
 }
 
+fn trusted_connect_url() -> String {
+    format!("https://nyx.example/connect/{CONNECT_TOKEN}")
+}
+
+fn create_reply(connect_url: impl Into<String>) -> Reply {
+    Reply::json(json!({
+        "id": "link-one",
+        "connect_url": connect_url.into(),
+        "expires_at": PROVIDER_EXPIRES_AT,
+    }))
+}
+
+fn malformed_error() -> ServiceConnectionError {
+    ServiceConnectionError::Malformed("NyxID response was not usable".into())
+}
+
+#[test]
+fn broker_requires_one_canonical_https_browser_origin() {
+    for origin in [
+        "http://nyx.example",
+        "https://nyx.example/",
+        "https://user@nyx.example",
+        "https://nyx.example/connect",
+        "https://nyx.example?next=elsewhere",
+    ] {
+        assert!(
+            NyxidServiceConnectionBroker::new(
+                reqwest::Client::new(),
+                "https://identity.example",
+                origin,
+                Tokens::available(),
+            )
+            .is_err(),
+            "accepted unsafe browser origin {origin}"
+        );
+    }
+}
+
 #[tokio::test]
-async fn requirements_preserve_order_and_map_active_inactive_missing_and_unknown() {
+async fn requirements_preserve_order_and_honor_provider_credential_access() {
     let provider = Provider::start().await;
     provider.state.set_services_reply(Reply::json(json!({
         "services": [
-            { "id": "by-id", "slug": "alias", "is_active": true },
-            { "id": "inactive-id", "slug": "inactive", "is_active": false },
-            { "id": "unknown-id", "slug": "unknown" }
+            {
+                "id": "by-id",
+                "slug": "alias",
+                "is_active": true,
+                "credential_source": { "type": "personal" }
+            },
+            {
+                "id": "org-id",
+                "slug": "org-service",
+                "is_active": true,
+                "credential_source": {
+                    "type": "org",
+                    "org_id": "org-one",
+                    "org_name": "Allowed org",
+                    "role": "member",
+                    "allowed": true
+                }
+            },
+            {
+                "id": "denied-id",
+                "slug": "denied",
+                "is_active": true,
+                "credential_source": {
+                    "type": "org",
+                    "org_id": "org-two",
+                    "org_name": "Read-only org",
+                    "role": "viewer",
+                    "allowed": false
+                }
+            }
         ]
     })));
     let tokens = Tokens::available();
     let owner = SubjectId::new("visitor-one");
-    let wanted = ["by-id", "inactive", "missing", "unknown"].map(ServiceId::new);
+    let wanted = ["by-id", "org-service", "denied", "missing"].map(ServiceId::new);
 
     let requirements = broker(&provider, Arc::clone(&tokens))
         .requirements(&owner, &wanted)
@@ -281,9 +351,9 @@ async fn requirements_preserve_order_and_map_active_inactive_missing_and_unknown
             .collect::<Vec<_>>(),
         vec![
             (&wanted[0], ServiceRequirementState::Satisfied),
-            (&wanted[1], ServiceRequirementState::Inactive),
-            (&wanted[2], ServiceRequirementState::Missing),
-            (&wanted[3], ServiceRequirementState::Unknown),
+            (&wanted[1], ServiceRequirementState::Satisfied),
+            (&wanted[2], ServiceRequirementState::Unknown),
+            (&wanted[3], ServiceRequirementState::Missing),
         ]
     );
     assert_eq!(
@@ -297,6 +367,33 @@ async fn requirements_preserve_order_and_map_active_inactive_missing_and_unknown
     assert_eq!(
         *tokens.owners.lock().expect("token owner lock"),
         vec![owner]
+    );
+}
+
+#[tokio::test]
+async fn legacy_bare_listing_maps_inactive_and_missing_activity_to_closed_states() {
+    let provider = Provider::start().await;
+    provider.state.set_services_reply(Reply::json(json!([
+        { "id": "inactive-id", "slug": "inactive", "is_active": false },
+        { "id": "unknown-id", "slug": "unknown" }
+    ])));
+    let wanted = ["inactive", "unknown", "missing"].map(ServiceId::new);
+
+    let requirements = broker(&provider, Tokens::available())
+        .requirements(&SubjectId::new("visitor-one"), &wanted)
+        .await
+        .expect("legacy requirements resolve");
+
+    assert_eq!(
+        requirements
+            .iter()
+            .map(|requirement| requirement.state)
+            .collect::<Vec<_>>(),
+        vec![
+            ServiceRequirementState::Inactive,
+            ServiceRequirementState::Unknown,
+            ServiceRequirementState::Missing,
+        ]
     );
 }
 
@@ -315,11 +412,8 @@ async fn handoff_creation_is_visitor_scoped_callback_free_and_exactly_fifteen_mi
         .expect("handoff is created");
 
     assert_eq!(handoff.external_id, "link-one");
-    assert_eq!(
-        handoff.hosted_url,
-        "https://nyx.example/connect/nyx_clk_secret"
-    );
-    assert_eq!(handoff.expires_at, EXPIRES_AT);
+    assert_eq!(handoff.hosted_url, trusted_connect_url());
+    assert_eq!(handoff.expires_at, CANONICAL_EXPIRES_AT);
     let creates = provider.state.creates.lock().expect("create requests lock");
     assert_eq!(creates.len(), 1);
     assert_eq!(
@@ -331,6 +425,39 @@ async fn handoff_creation_is_visitor_scoped_callback_free_and_exactly_fifteen_mi
         json!({ "service_slug": "github", "expires_in": 900 })
     );
     assert!(creates[0].body.get("callback_url").is_none());
+}
+
+#[tokio::test]
+async fn handoff_creation_rejects_foreign_insecure_or_malformed_connect_urls() {
+    let provider = Provider::start().await;
+    let invalid = [
+        format!("http://nyx.example/connect/{CONNECT_TOKEN}"),
+        format!("https://attacker.example/connect/{CONNECT_TOKEN}"),
+        format!("https://nyx.example.evil/connect/{CONNECT_TOKEN}"),
+        format!("https://user@nyx.example/connect/{CONNECT_TOKEN}"),
+        format!("https://nyx.example/not-connect/{CONNECT_TOKEN}"),
+        format!("https://nyx.example/connect/{CONNECT_TOKEN}/extra"),
+        format!("https://nyx.example/connect/{CONNECT_TOKEN}?next=elsewhere"),
+        format!("https://nyx.example/connect/{CONNECT_TOKEN}#fragment"),
+        "https://nyx.example/connect/nyx_clk_short".to_owned(),
+    ];
+
+    for connect_url in invalid {
+        provider
+            .state
+            .set_create_reply(create_reply(connect_url.clone()));
+        assert_eq!(
+            broker(&provider, Tokens::available())
+                .create_handoff(
+                    &SubjectId::new("visitor-one"),
+                    &ServiceId::new("github"),
+                    "intent-one",
+                )
+                .await,
+            Err(malformed_error()),
+            "accepted unsafe connect URL {connect_url}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -370,7 +497,7 @@ async fn completed_handoff_is_satisfied_only_for_the_exact_active_user_service()
         "status": "completed",
         "service_name": "GitHub",
         "service_slug": "github",
-        "expires_at": EXPIRES_AT,
+        "expires_at": PROVIDER_EXPIRES_AT,
         "connected_service": { "id": "user-service-one", "slug": "visitor-github" }
     })));
     let broker = broker(&provider, Tokens::available());
@@ -379,7 +506,12 @@ async fn completed_handoff_is_satisfied_only_for_the_exact_active_user_service()
 
     provider.state.set_services_reply(Reply::json(json!({
         "services": [
-            { "id": "user-service-one", "slug": "visitor-github", "is_active": true }
+            {
+                "id": "user-service-one",
+                "slug": "visitor-github",
+                "is_active": true,
+                "credential_source": { "type": "personal" }
+            }
         ]
     })));
     assert_eq!(
@@ -392,7 +524,12 @@ async fn completed_handoff_is_satisfied_only_for_the_exact_active_user_service()
 
     provider.state.set_services_reply(Reply::json(json!({
         "services": [
-            { "id": "user-service-one", "slug": "visitor-github", "is_active": false }
+            {
+                "id": "user-service-one",
+                "slug": "visitor-github",
+                "is_active": false,
+                "credential_source": { "type": "personal" }
+            }
         ]
     })));
     assert_eq!(
@@ -400,6 +537,30 @@ async fn completed_handoff_is_satisfied_only_for_the_exact_active_user_service()
             .handoff_state(&owner, "link-one", &service)
             .await
             .expect("inactive completion resolves"),
+        BrokerHandoffState::Failed
+    );
+
+    provider.state.set_services_reply(Reply::json(json!({
+        "services": [
+            {
+                "id": "user-service-one",
+                "slug": "visitor-github",
+                "is_active": true,
+                "credential_source": {
+                    "type": "org",
+                    "org_id": "org-one",
+                    "org_name": "Read-only org",
+                    "role": "viewer",
+                    "allowed": false
+                }
+            }
+        ]
+    })));
+    assert_eq!(
+        broker
+            .handoff_state(&owner, "link-one", &service)
+            .await
+            .expect("denied completion resolves"),
         BrokerHandoffState::Failed
     );
 }
@@ -431,6 +592,27 @@ async fn provider_and_credential_failures_are_typed_and_sanitized() {
             .await,
         Err(ServiceConnectionError::Refused)
     );
+
+    for status in [
+        StatusCode::REQUEST_TIMEOUT,
+        StatusCode::TOO_EARLY,
+        StatusCode::TOO_MANY_REQUESTS,
+        StatusCode::INTERNAL_SERVER_ERROR,
+    ] {
+        provider.state.set_create_reply(Reply::error(
+            status,
+            r#"{"message":"private retry detail"}"#,
+        ));
+        let error = broker(&provider, Tokens::available())
+            .create_handoff(&owner, &service, "intent-one")
+            .await
+            .expect_err("retryable provider failure is unavailable");
+        assert_eq!(
+            error,
+            ServiceConnectionError::Unavailable("NyxID request failed".into())
+        );
+        assert!(!error.to_string().contains("private retry detail"));
+    }
 
     provider.state.set_services_reply(Reply::error(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -489,4 +671,53 @@ async fn malformed_provider_payloads_fail_closed_without_echoing_the_body() {
         ServiceConnectionError::Malformed("NyxID response was not usable".into())
     );
     assert!(!error.to_string().contains("must-not-escape"));
+}
+
+#[tokio::test]
+async fn malformed_timestamps_and_provider_response_limits_fail_closed() {
+    let provider = Provider::start().await;
+    let owner = SubjectId::new("visitor-one");
+    let service = ServiceId::new("github");
+
+    provider.state.set_create_reply(Reply::json(json!({
+        "id": "link-one",
+        "connect_url": trusted_connect_url(),
+        "expires_at": "not-a-timestamp",
+    })));
+    assert_eq!(
+        broker(&provider, Tokens::available())
+            .create_handoff(&owner, &service, "intent-one")
+            .await,
+        Err(malformed_error())
+    );
+
+    provider
+        .state
+        .set_create_reply(Reply::error(StatusCode::OK, &"x".repeat(1024 * 1024 + 1)));
+    assert_eq!(
+        broker(&provider, Tokens::available())
+            .create_handoff(&owner, &service, "intent-one")
+            .await,
+        Err(malformed_error())
+    );
+
+    let rows = (0..=1_000)
+        .map(|index| {
+            json!({
+                "id": format!("service-{index}"),
+                "slug": format!("service-{index}"),
+                "is_active": true,
+                "credential_source": { "type": "personal" }
+            })
+        })
+        .collect::<Vec<_>>();
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({ "services": rows })));
+    assert_eq!(
+        broker(&provider, Tokens::available())
+            .requirements(&owner, std::slice::from_ref(&service))
+            .await,
+        Err(malformed_error())
+    );
 }
