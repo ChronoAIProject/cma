@@ -1,0 +1,303 @@
+use layer3_adapter::ConversationSendOutcome;
+
+use crate::now_rfc3339;
+
+use super::agent_operation_dispatch::{operation_log, PreWriteRollback, PreparedAgentOperation};
+use super::agent_operation_service::{operation_store_error, MAX_OPERATION_COMMIT_RETRIES};
+use super::store::{AgentConversationMutation, AgentStore};
+use super::{
+    Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationError,
+    AgentOperationFailure, AgentOperationReceipt, AgentOperationService, AgentStatus, TypedFailure,
+};
+
+enum SendClassification {
+    PreWrite(String),
+    Confirmed,
+    Ambiguous(String),
+}
+
+impl AgentOperationService {
+    pub(super) async fn dispatch_prepared(
+        &self,
+        prepared: PreparedAgentOperation,
+    ) -> Result<AgentOperationReceipt, AgentOperationError> {
+        let classification = match self.runtimes.resolve(&prepared.target).await {
+            Ok(connection) => match connection
+                .capabilities
+                .require(prepared.required.iter().copied())
+            {
+                Ok(()) => match connection
+                    .input
+                    .send_classified(prepared.input.clone())
+                    .await
+                {
+                    ConversationSendOutcome::PreWriteFailure(error) => {
+                        SendClassification::PreWrite(error.to_string())
+                    }
+                    ConversationSendOutcome::WriteConfirmed => SendClassification::Confirmed,
+                    ConversationSendOutcome::Ambiguous(error) => {
+                        SendClassification::Ambiguous(error.to_string())
+                    }
+                },
+                Err(capability) => SendClassification::PreWrite(format!(
+                    "runtime capability changed before dispatch: {capability:?}"
+                )),
+            },
+            Err(error) => SendClassification::PreWrite(error.to_string()),
+        };
+        self.settle_operation(prepared, classification).await
+    }
+
+    async fn settle_operation(
+        &self,
+        prepared: PreparedAgentOperation,
+        classification: SendClassification,
+    ) -> Result<AgentOperationReceipt, AgentOperationError> {
+        let detail = match &classification {
+            SendClassification::PreWrite(detail) | SendClassification::Ambiguous(detail) => {
+                Some(bounded_detail(detail))
+            }
+            SendClassification::Confirmed => None,
+        };
+        for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
+            let current = AgentStore::get_agent(self.store.as_ref(), &prepared.target.agent_id)
+                .await
+                .map_err(outcome_store_error)?
+                .ok_or(AgentOperationError::NotFound)?;
+            let record = current
+                .conversation
+                .operation
+                .as_ref()
+                .filter(|record| record.sequence == prepared.operation_sequence)
+                .ok_or_else(|| {
+                    AgentOperationError::OutcomeUnavailable(
+                        "the durable dispatch fence was replaced".into(),
+                    )
+                })?;
+            if matches!(
+                record.state,
+                AgentOperationDelivery::WriteConfirmed | AgentOperationDelivery::ExecutionObserved
+            ) {
+                return Ok(receipt(current, prepared.operation_sequence));
+            }
+            if record.state == AgentOperationDelivery::RecoveryRequired {
+                return Err(AgentOperationError::DeliveryAmbiguous {
+                    operation_sequence: record.sequence,
+                    detail: record
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.detail.clone())
+                        .unwrap_or_else(|| "delivery requires recovery".into()),
+                });
+            }
+            if record.state == AgentOperationDelivery::PreWriteFailed {
+                return Err(AgentOperationError::RuntimeUnavailable(
+                    record
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.detail.clone())
+                        .unwrap_or_else(|| "input was not written".into()),
+                ));
+            }
+
+            let at = now_rfc3339();
+            let mut next = current.clone();
+            let next_record = next
+                .conversation
+                .operation
+                .as_mut()
+                .expect("the matching operation was checked");
+            match &classification {
+                SendClassification::Confirmed => next_record
+                    .mark_write_confirmed(at.clone())
+                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
+                SendClassification::PreWrite(detail) => next_record
+                    .mark_pre_write_failed(operation_failure("input_not_written", detail, &at)?)
+                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
+                SendClassification::Ambiguous(detail) => next_record
+                    .require_recovery(operation_failure("input_write_ambiguous", detail, &at)?)
+                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
+            }
+            let mut logs = vec![operation_log(&next, prepared.operation_sequence)?];
+            if matches!(&classification, SendClassification::PreWrite(_)) {
+                append_pre_write_rollback(&current, &mut next, &prepared, &at, &mut logs)?;
+            }
+            match self.commit_change(&current, next, logs, at).await {
+                Ok((agent, _)) => {
+                    return match &classification {
+                        SendClassification::Confirmed => {
+                            Ok(receipt(agent, prepared.operation_sequence))
+                        }
+                        SendClassification::PreWrite(_) => {
+                            Err(AgentOperationError::RuntimeUnavailable(
+                                detail.clone().expect("failure detail exists"),
+                            ))
+                        }
+                        SendClassification::Ambiguous(_) => {
+                            Err(AgentOperationError::DeliveryAmbiguous {
+                                operation_sequence: prepared.operation_sequence,
+                                detail: detail.clone().expect("failure detail exists"),
+                            })
+                        }
+                    };
+                }
+                Err(AgentOperationError::Conflict) => continue,
+                Err(error) => return Err(outcome_error(error)),
+            }
+        }
+        Err(AgentOperationError::OutcomeUnavailable(
+            "agent changed during every outcome commit attempt".into(),
+        ))
+    }
+
+    pub(super) async fn commit_change(
+        &self,
+        current: &Agent,
+        mut next: Agent,
+        logs: Vec<AgentLogKind>,
+        at: String,
+    ) -> Result<(Agent, Vec<AgentLogEntry>), AgentOperationError> {
+        if next.revision == current.revision {
+            next.revision = current
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| AgentOperationError::Corrupt("agent revision overflow".into()))?;
+            next.updated_at = at.clone();
+        }
+        let count = u64::try_from(logs.len())
+            .map_err(|_| AgentOperationError::Corrupt("agent log overflow".into()))?;
+        next.conversation.last_seq = current
+            .conversation
+            .last_seq
+            .checked_add(count)
+            .ok_or_else(|| AgentOperationError::Corrupt("agent log overflow".into()))?;
+        next.validate_conversation()
+            .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+        let mutation = AgentConversationMutation {
+            expected_agent_revision: current.revision,
+            expected_last_seq: current.conversation.last_seq,
+            runtime_generation: current.conversation.runtime_generation.ok_or_else(|| {
+                AgentOperationError::Corrupt("runtime generation is absent".into())
+            })?,
+            agent: next.clone(),
+            appended_at: at,
+            agent_logs: logs,
+        };
+        let appended = self
+            .store
+            .commit_agent_conversation(mutation)
+            .await
+            .map_err(operation_store_error)?;
+        Ok((next, appended))
+    }
+}
+
+fn append_pre_write_rollback(
+    current: &Agent,
+    next: &mut Agent,
+    prepared: &PreparedAgentOperation,
+    at: &str,
+    logs: &mut Vec<AgentLogKind>,
+) -> Result<(), AgentOperationError> {
+    match &prepared.rollback {
+        PreWriteRollback::NewTurn
+            if current.status == AgentStatus::Working
+                && current.conversation.active_turn == Some(prepared.turn_sequence) =>
+        {
+            next.conversation.active_turn = None;
+            next.transition(AgentStatus::Ready, at.to_owned(), None)
+                .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+            logs.push(AgentLogKind::TurnFailed {
+                turn_sequence: prepared.turn_sequence,
+                failure: TypedFailure {
+                    class: "input_not_written".into(),
+                    detail: "the message did not reach the runtime writer".into(),
+                },
+            });
+            logs.push(AgentLogKind::StatusChanged {
+                from: AgentStatus::Working,
+                to: AgentStatus::Ready,
+            });
+        }
+        PreWriteRollback::Approval(snapshot)
+            if current.status == AgentStatus::Working
+                && current.conversation.active_turn == Some(prepared.turn_sequence) =>
+        {
+            next.transition(AgentStatus::WaitingApproval, at.to_owned(), None)
+                .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+            logs.push(AgentLogKind::ApprovalRequested {
+                approval_id: snapshot.approval_id.clone(),
+                action: snapshot.action.clone(),
+                detail: snapshot.detail.clone(),
+                runtime_locator: snapshot.runtime_locator.clone(),
+            });
+            logs.push(AgentLogKind::StatusChanged {
+                from: AgentStatus::Working,
+                to: AgentStatus::WaitingApproval,
+            });
+        }
+        PreWriteRollback::WaitingApproval
+            if current.status == AgentStatus::Working
+                && current.conversation.active_turn == Some(prepared.turn_sequence) =>
+        {
+            next.transition(AgentStatus::WaitingApproval, at.to_owned(), None)
+                .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+            logs.push(AgentLogKind::StatusChanged {
+                from: AgentStatus::Working,
+                to: AgentStatus::WaitingApproval,
+            });
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn receipt(agent: Agent, operation_sequence: u64) -> AgentOperationReceipt {
+    let (turn_sequence, delivery) = agent
+        .conversation
+        .operation
+        .as_ref()
+        .map(|record| (record.turn_sequence, record.state))
+        .expect("a settled operation retains its record");
+    AgentOperationReceipt {
+        agent,
+        operation_sequence,
+        turn_sequence,
+        delivery,
+    }
+}
+
+fn operation_failure(
+    code: &str,
+    detail: &str,
+    at: &str,
+) -> Result<AgentOperationFailure, AgentOperationError> {
+    AgentOperationFailure::new(code, bounded_detail(detail), at)
+        .map_err(|error| AgentOperationError::Corrupt(error.to_string()))
+}
+
+fn bounded_detail(value: &str) -> String {
+    let mut value = value.to_owned();
+    if value.len() <= 4 * 1024 {
+        return value;
+    }
+    let mut end = 4 * 1024;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    value
+}
+
+fn outcome_store_error(error: super::store::SandboxStoreError) -> AgentOperationError {
+    outcome_error(operation_store_error(error))
+}
+
+fn outcome_error(error: AgentOperationError) -> AgentOperationError {
+    match error {
+        AgentOperationError::NotFound => AgentOperationError::NotFound,
+        AgentOperationError::Corrupt(detail) => AgentOperationError::Corrupt(detail),
+        AgentOperationError::LogCapacityExceeded => AgentOperationError::LogCapacityExceeded,
+        other => AgentOperationError::OutcomeUnavailable(other.to_string()),
+    }
+}
