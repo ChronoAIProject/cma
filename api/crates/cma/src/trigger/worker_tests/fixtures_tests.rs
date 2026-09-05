@@ -103,6 +103,25 @@ impl LaunchStore for TestLaunchStore {
             .cloned())
     }
 
+    async fn list_launches(
+        &self,
+        _owner: &SubjectId,
+        _page: &layer2_core::trigger_domain::LaunchPageRequest,
+    ) -> Result<layer2_core::trigger_domain::LaunchPage, LaunchStoreError> {
+        Err(LaunchStoreError::Unavailable(
+            "worker test listing is unsupported".into(),
+        ))
+    }
+
+    async fn placement_stats(
+        &self,
+        _trigger_id: &TriggerId,
+    ) -> Result<Vec<layer2_core::trigger_domain::LaunchPlacementStats>, LaunchStoreError> {
+        Err(LaunchStoreError::Unavailable(
+            "worker test placement stats are unsupported".into(),
+        ))
+    }
+
     async fn commit_launch(&self, commit: LaunchCommit) -> Result<Launch, LaunchStoreError> {
         let mut launches = self.launches.lock().unwrap();
         let current = launches

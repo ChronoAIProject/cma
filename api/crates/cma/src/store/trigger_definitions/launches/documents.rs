@@ -35,6 +35,7 @@ pub(super) fn launch_document(
         "command_key_hash": &launch.command_key_hash,
         "command_fingerprint": &launch.command_fingerprint,
         "state": encode(&launch.state)?,
+        "created_at": &launch.created_at,
         "blocked_reason": encode(&launch.blocked_reason)?,
         "work_step": encode(&launch.work.step)?,
         "work_ready_at": &launch.work.ready_at,
@@ -68,6 +69,7 @@ pub(super) fn read_launch(document: &Document) -> Result<StoredLaunch, LaunchSto
         || !string_field_matches(document, "command_key_hash", &launch.command_key_hash)
         || !string_field_matches(document, "command_fingerprint", &launch.command_fingerprint)
         || document.get("state") != Some(&encode(&launch.state)?)
+        || !string_field_matches(document, "created_at", &launch.created_at)
         || document.get("blocked_reason") != Some(&encode(&launch.blocked_reason)?)
         || document.get("work_step") != Some(&encode(&launch.work.step)?)
         || !string_field_matches(document, "work_ready_at", &launch.work.ready_at)

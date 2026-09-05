@@ -102,7 +102,7 @@ async fn claim_once(
     else {
         return Ok(None);
     };
-    if current.launch.blocked_reason.is_some() || !current.launch.work.is_due(now) {
+    if !current.launch.is_worker_due(now) {
         return Ok(None);
     }
     let mut changed = current.launch.clone();

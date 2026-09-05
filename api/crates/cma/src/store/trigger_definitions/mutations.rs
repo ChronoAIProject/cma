@@ -2,7 +2,7 @@ use layer2_core::ids::SubjectId;
 use layer2_core::trigger_domain::{
     Trigger, TriggerError, TriggerId, TriggerStats, TriggerStoreError,
 };
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson};
 use mongodb::options::ReturnDocument;
 
 use super::super::sandbox_mongo::{is_duplicate_key, signed};
@@ -10,6 +10,31 @@ use super::super::schema::DOCUMENT_SCHEMA_VERSION;
 use super::documents::{read_trigger, trigger_document};
 use super::queries;
 use super::{driver_error, MongoTriggerDefinitionStore, MUTATION_ATTEMPTS};
+
+pub(super) async fn delete_unpublished(
+    store: &MongoTriggerDefinitionStore,
+    id: &TriggerId,
+    owner: &SubjectId,
+) -> Result<(), TriggerStoreError> {
+    let result = store
+        .definitions
+        .delete_one(doc! {
+            "_id": id.as_str(),
+            "owner": owner.as_str(),
+            "availability": "draft",
+            "public_id": Bson::Null,
+            "latest_revision": 0_i64,
+        })
+        .await
+        .map_err(|error| driver_error("delete unpublished Trigger definition", error))?;
+    if result.deleted_count == 1 {
+        return Ok(());
+    }
+    match queries::owned(store, id, owner).await? {
+        Some(_) => Err(TriggerStoreError::AlreadyPublished),
+        None => Err(TriggerStoreError::NotFound),
+    }
+}
 
 pub(super) async fn owned<T>(
     store: &MongoTriggerDefinitionStore,

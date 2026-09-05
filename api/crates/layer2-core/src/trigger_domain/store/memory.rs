@@ -72,24 +72,7 @@ impl InMemoryTriggerStore {
         &self,
         references: impl Fn(&TriggerRevision) -> bool,
     ) -> Result<(), TriggerStoreError> {
-        let mut trigger_ids: Vec<_> = self
-            .lock()
-            .triggers
-            .values()
-            .filter(|trigger| trigger.availability == TriggerAvailability::Published)
-            .filter_map(|trigger| {
-                trigger
-                    .latest_revision()
-                    .filter(|revision| references(revision))
-                    .map(|_| trigger.id.clone())
-            })
-            .collect();
-        trigger_ids.sort();
-        if trigger_ids.is_empty() {
-            Ok(())
-        } else {
-            Err(TriggerStoreError::ProfileReferenced { trigger_ids })
-        }
+        super::memory_guards::guard_references(&self.lock().triggers, references)
     }
 
     pub(crate) fn commit_launch_admission<T>(
@@ -188,6 +171,30 @@ impl TriggerStore for InMemoryTriggerStore {
             .get(id)
             .filter(|trigger| &trigger.owner == owner)
             .cloned())
+    }
+
+    async fn delete_unpublished_trigger(
+        &self,
+        id: &TriggerId,
+        owner: &SubjectId,
+    ) -> Result<(), TriggerStoreError> {
+        let mut state = self.lock();
+        let trigger = state
+            .triggers
+            .get(id)
+            .filter(|trigger| &trigger.owner == owner)
+            .ok_or(TriggerStoreError::NotFound)?;
+        trigger
+            .validate()
+            .map_err(|error| TriggerStoreError::Corrupt(error.to_string()))?;
+        if trigger.availability != TriggerAvailability::Draft
+            || trigger.public_id.is_some()
+            || !trigger.revisions.is_empty()
+        {
+            return Err(TriggerStoreError::AlreadyPublished);
+        }
+        state.triggers.remove(id);
+        Ok(())
     }
 
     async fn trigger_revision(

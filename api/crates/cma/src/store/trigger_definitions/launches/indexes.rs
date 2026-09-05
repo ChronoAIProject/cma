@@ -15,6 +15,38 @@ pub(super) fn launch_indexes() -> Vec<IndexModel> {
             doc! { "trigger_id": 1_i32, "_id": 1_i32 },
             "trigger_launches_trigger_id",
         ),
+        named_index(
+            doc! { "owner": 1_i32, "created_at": -1_i32, "_id": -1_i32 },
+            "trigger_launches_owner_created",
+        ),
+        named_index(
+            doc! {
+                "owner": 1_i32,
+                "trigger_id": 1_i32,
+                "created_at": -1_i32,
+                "_id": -1_i32,
+            },
+            "trigger_launches_owner_trigger_created",
+        ),
+        named_index(
+            doc! {
+                "owner": 1_i32,
+                "state": 1_i32,
+                "created_at": -1_i32,
+                "_id": -1_i32,
+            },
+            "trigger_launches_owner_state_created",
+        ),
+        named_index(
+            doc! {
+                "owner": 1_i32,
+                "trigger_id": 1_i32,
+                "state": 1_i32,
+                "created_at": -1_i32,
+                "_id": -1_i32,
+            },
+            "trigger_launches_owner_trigger_state_created",
+        ),
         unique_index(
             doc! { "owner": 1_i32, "public_id": 1_i32, "command_key_hash": 1_i32 },
             "trigger_launches_owner_command",
@@ -22,6 +54,7 @@ pub(super) fn launch_indexes() -> Vec<IndexModel> {
         named_index(
             doc! {
                 "blocked_reason": 1_i32,
+                "blocked_reason.type": 1_i32,
                 "work_step": 1_i32,
                 "work_ready_at": 1_i32,
                 "work_lease_expires_at": 1_i32,
@@ -101,7 +134,7 @@ mod tests {
     #[test]
     fn command_and_event_indexes_are_unique() {
         for index in [
-            &launch_indexes()[2],
+            &launch_indexes()[6],
             &event_indexes()[0],
             &handoff_indexes()[1],
         ] {

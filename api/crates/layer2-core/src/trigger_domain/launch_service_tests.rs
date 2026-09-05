@@ -24,6 +24,7 @@ use crate::{
 
 use super::*;
 
+mod request_validation;
 mod trust;
 
 const NOW: &str = "2026-09-05T00:00:00Z";

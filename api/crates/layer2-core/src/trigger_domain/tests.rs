@@ -20,7 +20,7 @@ const UPDATED: &str = "2026-09-05T02:00:00Z";
 const RETIRED: &str = "2026-09-05T03:00:00Z";
 
 #[derive(Clone, Copy)]
-struct Visibilities {
+pub(super) struct Visibilities {
     sandbox: ProfileVisibility,
     workspace: ProfileVisibility,
     agent: ProfileVisibility,
@@ -36,13 +36,16 @@ impl Default for Visibilities {
     }
 }
 
-struct SeededProfiles {
-    profiles: Arc<InMemoryProfileStore>,
-    target: TriggerTarget,
-    owner: SubjectId,
+pub(super) struct SeededProfiles {
+    pub(super) profiles: Arc<InMemoryProfileStore>,
+    pub(super) target: TriggerTarget,
+    pub(super) owner: SubjectId,
 }
 
-async fn seed_profiles(visibility: Visibilities, workspace_in_sandbox: bool) -> SeededProfiles {
+pub(super) async fn seed_profiles(
+    visibility: Visibilities,
+    workspace_in_sandbox: bool,
+) -> SeededProfiles {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let owner = SubjectId("publisher".into());
     let agent_id = AgentProfileId("agp_agent".into());
@@ -174,7 +177,7 @@ async fn seed_profiles(visibility: Visibilities, workspace_in_sandbox: bool) -> 
     }
 }
 
-fn content(target: TriggerTarget) -> TriggerContent {
+pub(super) fn content(target: TriggerTarget) -> TriggerContent {
     TriggerContent {
         presentation: Presentation {
             title: "Check this theorem".into(),
@@ -196,7 +199,7 @@ fn content(target: TriggerTarget) -> TriggerContent {
     }
 }
 
-fn trigger(owner: SubjectId, target: TriggerTarget) -> Trigger {
+pub(super) fn trigger(owner: SubjectId, target: TriggerTarget) -> Trigger {
     Trigger::new(
         TriggerId::generate(),
         owner,
@@ -206,7 +209,7 @@ fn trigger(owner: SubjectId, target: TriggerTarget) -> Trigger {
     .expect("trigger")
 }
 
-fn trigger_store(seed: &SeededProfiles) -> InMemoryTriggerStore {
+pub(super) fn trigger_store(seed: &SeededProfiles) -> InMemoryTriggerStore {
     let resolver: Arc<dyn TriggerProfileResolver> = seed.profiles.clone();
     InMemoryTriggerStore::new(resolver)
 }
@@ -426,6 +429,50 @@ async fn publishing_resolves_exact_public_revisions_and_keeps_latest_link() {
             .revision,
         second.revision
     );
+}
+
+#[tokio::test]
+async fn deletion_is_owner_scoped_and_permitted_only_before_first_publication() {
+    let seed = seed_profiles(Visibilities::default(), true).await;
+    let store = trigger_store(&seed);
+    let draft = trigger(seed.owner.clone(), seed.target.clone());
+    let draft_id = draft.id.clone();
+    store.create_trigger(draft).await.unwrap();
+
+    assert_eq!(
+        store
+            .delete_unpublished_trigger(&draft_id, &SubjectId::new("somebody-else"))
+            .await,
+        Err(TriggerStoreError::NotFound)
+    );
+    store
+        .delete_unpublished_trigger(&draft_id, &seed.owner)
+        .await
+        .expect("owned unpublished Trigger can be deleted");
+    assert!(store
+        .trigger(&draft_id, &seed.owner)
+        .await
+        .unwrap()
+        .is_none());
+
+    let published = trigger(seed.owner.clone(), seed.target);
+    let published_id = published.id.clone();
+    store.create_trigger(published).await.unwrap();
+    store
+        .publish_trigger(&published_id, &seed.owner, 1, PUBLISHED.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .delete_unpublished_trigger(&published_id, &seed.owner)
+            .await,
+        Err(TriggerStoreError::AlreadyPublished)
+    );
+    assert!(store
+        .trigger(&published_id, &seed.owner)
+        .await
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test]

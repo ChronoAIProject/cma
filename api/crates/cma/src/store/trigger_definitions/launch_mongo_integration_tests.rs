@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
-use layer2_core::ids::{LaunchId, ServiceHandoffId, ServiceId, SubjectId, TriggerId};
+use layer2_core::ids::{LaunchId, PlacementId, ServiceHandoffId, ServiceId, SubjectId, TriggerId};
 use layer2_core::sandbox::FirstMessageDelivery;
 use layer2_core::trigger_domain::{
     BrokerHandoffState, Launch, LaunchAdmission, LaunchAdmissionResult, LaunchAuthorityClass,
-    LaunchCommit, LaunchConfirmation, LaunchConsentSurface, LaunchEventKind, LaunchResolution,
-    LaunchSeed, LaunchState, LaunchStore, LaunchStoreError, LaunchTrustManifest, PublicTrigger,
-    RequirementsSnapshot, ReviewRequirements, ServiceConnectionHandoff, ServiceConnectionStore,
+    LaunchBlockedReason, LaunchCommit, LaunchConfirmation, LaunchConsentSurface, LaunchEventKind,
+    LaunchPageRequest, LaunchResolution, LaunchSeed, LaunchState, LaunchStore, LaunchStoreError,
+    LaunchTrustManifest, PublicTrigger, RequirementsSnapshot, ReviewRequirements,
+    ServiceConnectionHandoff, ServiceConnectionStore, ServiceRequirement, ServiceRequirementState,
     TriggerStats, TriggerStore,
 };
 use mongodb::bson::{doc, Document};
@@ -40,6 +41,10 @@ async fn published(seed: &Seeded, suffix: &str) -> PublicTrigger {
 }
 
 fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
+    launch_at(trigger, key, fingerprint, NOW)
+}
+
+fn launch_at(trigger: &PublicTrigger, key: char, fingerprint: char, created_at: &str) -> Launch {
     Launch::new(LaunchSeed {
         trigger_id: trigger.trigger_id.clone(),
         revision_digest: trigger.revision.digest.clone(),
@@ -61,9 +66,22 @@ fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
         has_first_message: true,
         command_key_hash: digest(key),
         command_fingerprint: digest(fingerprint),
-        created_at: NOW.into(),
+        created_at: created_at.into(),
     })
     .unwrap()
+}
+
+async fn admit_candidate(seed: &Seeded, trigger: &PublicTrigger, launch: Launch) -> Launch {
+    seed.store
+        .admit_launch(LaunchAdmission {
+            launch,
+            trigger: trigger.clone(),
+            events: vec![LaunchEventKind::Created],
+        })
+        .await
+        .unwrap()
+        .launch()
+        .clone()
 }
 
 async fn admit(seed: &Seeded, trigger: &PublicTrigger) -> Launch {
@@ -271,6 +289,185 @@ async fn commits_append_gap_free_events_claim_due_work_and_count_ready_once() {
         .await
         .unwrap();
     assert_eq!(stats(&seed, &public).await.agents_ready_total, 1);
+    seed.client.database(&seed.database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn listing_and_placement_stats_are_bounded_owned_and_filter_bound() {
+    let seed = seeded("launch_listing").await;
+    let public = published(&seed, "listing").await;
+    let placement = PlacementId("plc_readme".into());
+    let mut oldest = launch_at(&public, '1', 'a', NOW);
+    oldest.id = LaunchId("lch_page_oldest".into());
+    oldest.placement_id = Some(placement.clone());
+    let oldest = admit_candidate(&seed, &public, oldest).await;
+    let mut middle = launch_at(&public, '2', 'b', LATER);
+    middle.id = LaunchId("lch_page_middle".into());
+    middle.placement_id = Some(placement.clone());
+    let middle = admit_candidate(&seed, &public, middle).await;
+    let mut newest = launch_at(&public, '3', 'c', LATEST);
+    newest.id = LaunchId("lch_page_newest".into());
+    let newest = admit_candidate(&seed, &public, newest).await;
+
+    let request = LaunchPageRequest {
+        limit: 2,
+        cursor: None,
+        trigger: Some(public.trigger_id.clone()),
+        state: Some(LaunchState::Draft),
+    };
+    let first = seed
+        .store
+        .list_launches(&oldest.owner, &request)
+        .await
+        .unwrap();
+    assert_eq!(first.items, vec![newest, middle]);
+    let second = seed
+        .store
+        .list_launches(
+            &oldest.owner,
+            &LaunchPageRequest {
+                cursor: first.next.clone(),
+                ..request.clone()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.items, vec![oldest.clone()]);
+    assert!(second.next.is_none());
+    assert!(seed
+        .store
+        .list_launches(&SubjectId::new("other"), &request)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(
+        seed.store
+            .list_launches(
+                &oldest.owner,
+                &LaunchPageRequest {
+                    cursor: first.next,
+                    state: None,
+                    ..request
+                },
+            )
+            .await,
+        Err(LaunchStoreError::InvalidCursor)
+    );
+
+    let placement_stats = seed
+        .store
+        .placement_stats(&public.trigger_id)
+        .await
+        .unwrap();
+    assert_eq!(placement_stats.len(), 2);
+    assert_eq!(
+        placement_stats
+            .iter()
+            .find(|stats| stats.placement_id.is_none())
+            .map(|stats| stats.launches_total),
+        Some(1)
+    );
+    assert_eq!(
+        placement_stats
+            .iter()
+            .find(|stats| stats.placement_id.as_ref() == Some(&placement))
+            .map(|stats| stats.launches_total),
+        Some(2)
+    );
+    seed.client.database(&seed.database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn wakeable_blocked_launches_are_due_and_claimable_in_mongo() {
+    let seed = seeded("launch_wakeable_blocks").await;
+    let public = published(&seed, "wakeable_blocks").await;
+    let service = ServiceId::new("github");
+    let reasons = [
+        ('1', 'a', LaunchBlockedReason::OrchestrationPaused),
+        ('2', 'b', LaunchBlockedReason::SandboxPausedReviving),
+        (
+            '3',
+            'c',
+            LaunchBlockedReason::ConnectionRequired {
+                service: service.clone(),
+            },
+        ),
+    ];
+    let mut ids = Vec::new();
+    for (key, fingerprint, reason) in reasons {
+        let mut candidate = launch(&public, key, fingerprint);
+        if matches!(reason, LaunchBlockedReason::ConnectionRequired { .. }) {
+            candidate.requirements.services.push(ServiceRequirement {
+                service: service.clone(),
+                state: ServiceRequirementState::Satisfied,
+            });
+        }
+        let mut current = admit_candidate(&seed, &public, candidate).await;
+        let expected = current.revision;
+        current
+            .start(LaunchConfirmation {
+                surface: LaunchConsentSurface::Landing,
+                trust_confirmed_digest: None,
+                acknowledgements: vec![],
+                confirmed_at: NOW.into(),
+            })
+            .unwrap();
+        current = seed
+            .store
+            .commit_launch(LaunchCommit {
+                expected_revision: expected,
+                launch: current,
+                event_at: NOW.into(),
+                events: vec![LaunchEventKind::ConfirmationRecorded],
+            })
+            .await
+            .unwrap();
+        let claimed = seed
+            .store
+            .claim_launch(&current.id, "worker-a", NOW.into(), LATER.into())
+            .await
+            .unwrap()
+            .unwrap();
+        let fence = claimed.work.lease.as_ref().unwrap().fence;
+        let mut blocked = claimed.clone();
+        let refresh = matches!(reason, LaunchBlockedReason::ConnectionRequired { .. }).then(|| {
+            layer2_core::trigger_domain::LaunchRequirementRefresh {
+                service: service.clone(),
+                state: ServiceRequirementState::Missing,
+                checked_at: NOW.into(),
+            }
+        });
+        let events = blocked
+            .block_worker_launch("worker-a", fence, reason, refresh, LATER.into(), NOW.into())
+            .unwrap();
+        let blocked = seed
+            .store
+            .commit_launch(LaunchCommit {
+                expected_revision: claimed.revision,
+                launch: blocked,
+                event_at: NOW.into(),
+                events,
+            })
+            .await
+            .unwrap();
+        ids.push(blocked.id);
+    }
+
+    assert!(seed.store.due_launches(NOW, 10).await.unwrap().is_empty());
+    let due = seed.store.due_launches(LATER, 10).await.unwrap();
+    assert_eq!(due.len(), 3);
+    assert!(ids.iter().all(|id| due.contains(id)));
+    for id in ids {
+        assert!(seed
+            .store
+            .claim_launch(&id, "worker-b", LATER.into(), LATEST.into())
+            .await
+            .unwrap()
+            .is_some());
+    }
     seed.client.database(&seed.database).drop().await.unwrap();
 }
 

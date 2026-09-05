@@ -2,8 +2,9 @@
 
 use layer2_core::ids::{LaunchId, PublicTriggerId, ServiceHandoffId, SubjectId};
 use layer2_core::trigger_domain::{
-    Launch, LaunchAdmission, LaunchAdmissionResult, LaunchCommit, LaunchEvent, LaunchStore,
-    LaunchStoreError, ServiceConnectionHandoff, ServiceConnectionStore,
+    Launch, LaunchAdmission, LaunchAdmissionResult, LaunchCommit, LaunchEvent, LaunchPage,
+    LaunchPageRequest, LaunchPlacementStats, LaunchStore, LaunchStoreError,
+    ServiceConnectionHandoff, ServiceConnectionStore,
 };
 use layer2_core::StoreError;
 use mongodb::bson::Document;
@@ -76,6 +77,21 @@ impl LaunchStore for MongoTriggerDefinitionStore {
         queries::owned(self, id, owner).await
     }
 
+    async fn list_launches(
+        &self,
+        owner: &SubjectId,
+        page: &LaunchPageRequest,
+    ) -> Result<LaunchPage, LaunchStoreError> {
+        queries::list_owner(self, owner, page).await
+    }
+
+    async fn placement_stats(
+        &self,
+        trigger_id: &layer2_core::trigger_domain::TriggerId,
+    ) -> Result<Vec<LaunchPlacementStats>, LaunchStoreError> {
+        queries::placement_stats(self, trigger_id).await
+    }
+
     async fn commit_launch(&self, commit: LaunchCommit) -> Result<Launch, LaunchStoreError> {
         commits::commit(self, commit).await
     }
@@ -107,6 +123,15 @@ impl LaunchStore for MongoTriggerDefinitionStore {
 
 #[async_trait::async_trait]
 impl ServiceConnectionStore for MongoTriggerDefinitionStore {
+    async fn handoff_by_intent(
+        &self,
+        owner: &SubjectId,
+        launch_id: &LaunchId,
+        intent_id: &str,
+    ) -> Result<Option<ServiceConnectionHandoff>, LaunchStoreError> {
+        queries::handoff_by_intent(self, owner, launch_id, intent_id).await
+    }
+
     async fn create_handoff(
         &self,
         handoff: ServiceConnectionHandoff,
@@ -151,6 +176,7 @@ pub(super) fn trigger_error(
         TriggerStoreError::NotFound
         | TriggerStoreError::Duplicate
         | TriggerStoreError::Conflict { .. }
+        | TriggerStoreError::AlreadyPublished
         | TriggerStoreError::Reference(_)
         | TriggerStoreError::ProfileReferenced { .. } => LaunchStoreError::TriggerUnavailable,
     }
