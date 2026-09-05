@@ -1,11 +1,17 @@
 import { useState } from 'react';
-import type { User } from '../auth/types';
+import type { Capability, User } from '../auth/types';
+import type { AppRoute } from '../routing/routes';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import {
   IconDarkOutline16,
+  IconBrowseOutline16,
+  IconCodeOutline16,
   IconFollowsystemOutline16,
+  IconGoalOutline16,
   IconLightOutline16,
+  IconPersonalizationOutline16,
   IconRightUpOutline16,
+  IconSettingsOutline16,
 } from '../ui/icons';
 import {
   APPEARANCE_ORDER,
@@ -19,8 +25,27 @@ import './ProfileMenu.css';
 interface ProfileMenuProps {
   readonly user: User;
   readonly onSignOut: () => void;
+  readonly onNavigate?: (route: AppRoute) => void;
   readonly collapsed?: boolean;
 }
+
+const OPERATIONS_CAPABILITIES: readonly Capability[] = [
+  'read_all_sandboxes',
+  'control_any_sandbox',
+  'read_runtime_inventory',
+  'read_event_log',
+  'read_activity_log',
+  'read_user_directory',
+  'configure_platform',
+];
+
+const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
+  profiles: { kind: 'profiles' },
+  marketplace: { kind: 'marketplace' },
+  triggers: { kind: 'triggers' },
+  developer: { kind: 'developer' },
+  operations: { kind: 'operations' },
+};
 
 export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>): string {
   const source =
@@ -38,11 +63,23 @@ function appearanceIcon(appearance: Appearance) {
   return <IconFollowsystemOutline16 />;
 }
 
-export function ProfileMenu({ user, onSignOut, collapsed = false }: ProfileMenuProps) {
+export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
+  const canOperate = user.capabilities.some((capability) =>
+    OPERATIONS_CAPABILITIES.includes(capability),
+  );
   const items: MenuEntry[] = [
+    { id: 'profiles', icon: <IconPersonalizationOutline16 />, label: 'Profiles' },
+    { id: 'marketplace', icon: <IconBrowseOutline16 />, label: 'Marketplace' },
+    { id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' },
+    { type: 'separator', id: 'before-platform' },
+    { id: 'developer', icon: <IconCodeOutline16 />, label: 'Developer' },
+    ...(canOperate
+      ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
+      : []),
+    { type: 'separator', id: 'before-preferences' },
     {
       id: 'appearance',
       icon: appearanceIcon(appearance),
@@ -53,6 +90,12 @@ export function ProfileMenu({ user, onSignOut, collapsed = false }: ProfileMenuP
   ];
 
   const choose = (id: string) => {
+    const route = MENU_ROUTES[id];
+    if (route !== undefined) {
+      setOpen(false);
+      onNavigate?.(route);
+      return;
+    }
     if (id === 'appearance') {
       const at = APPEARANCE_ORDER.indexOf(appearance);
       const next = APPEARANCE_ORDER[(at + 1) % APPEARANCE_ORDER.length] ?? 'system';
