@@ -89,6 +89,8 @@ fn every_owner_hierarchy_route_is_documented_and_authenticated() {
     let hierarchy_paths = [
         "/api/v1/sandboxes",
         "/api/v1/sandboxes/{id}",
+        "/api/v1/sandboxes/{id}/pause",
+        "/api/v1/sandboxes/{id}/revive",
         "/api/v1/sandboxes/{id}/events",
         "/api/v1/sandboxes/{id}/workspaces",
         "/api/v1/workspaces/{id}",
@@ -113,18 +115,56 @@ fn every_owner_hierarchy_route_is_documented_and_authenticated() {
                 .flatten(),
         );
     }
-    assert_eq!(operations.len(), 11);
+    assert_eq!(operations.len(), 13);
     assert!(operations
         .iter()
         .all(|operation| operation.security.as_ref().map(Vec::len) == Some(2)));
-    assert!(!document
-        .paths
-        .paths
-        .contains_key("/api/v1/sandboxes/{id}/pause"));
-    assert!(!document
-        .paths
-        .paths
-        .contains_key("/api/v1/sandboxes/{id}/revive"));
+
+    let document = serde_json::to_value(document).expect("OpenAPI serializes");
+    for (path, operation_id, conflict) in [
+        (
+            "/api/v1/sandboxes/{id}/pause",
+            "post_api_v1_sandboxes_by_id_pause",
+            "sandbox_not_active",
+        ),
+        (
+            "/api/v1/sandboxes/{id}/revive",
+            "post_api_v1_sandboxes_by_id_revive",
+            "sandbox_not_paused",
+        ),
+    ] {
+        let operation = operation(&document, "post", path);
+        assert_eq!(operation["operationId"], operation_id);
+        assert!(operation.get("requestBody").is_none());
+        assert!(operation["parameters"]
+            .as_array()
+            .is_some_and(|parameters| {
+                parameters.iter().any(|parameter| {
+                    parameter["name"] == "Idempotency-Key"
+                        && parameter["in"] == "header"
+                        && parameter["required"] == true
+                })
+            }));
+        assert_eq!(
+            operation["responses"]["202"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SandboxView"
+        );
+        assert_eq!(
+            operation["responses"]["401"]["description"],
+            "not_authenticated"
+        );
+        for status in ["400", "401", "403", "404", "409", "422", "503"] {
+            assert_eq!(
+                operation["responses"][status]["content"]["application/problem+json"]["schema"]
+                    ["$ref"],
+                "#/components/schemas/ProblemDocument",
+                "problem schema for {status} on {path}"
+            );
+        }
+        assert!(operation["responses"]["409"]["description"]
+            .as_str()
+            .is_some_and(|description| description.contains(conflict)));
+    }
 }
 
 #[test]
