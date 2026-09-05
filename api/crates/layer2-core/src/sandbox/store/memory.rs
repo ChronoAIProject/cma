@@ -1,4 +1,4 @@
-use crate::sandbox::SandboxStatus;
+use crate::sandbox::{SandboxOrigin, SandboxStatus};
 use async_trait::async_trait;
 
 use super::*;
@@ -52,6 +52,11 @@ mod workspace_lifecycle;
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if matches!(&sandbox.origin, SandboxOrigin::Trigger { .. }) {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "trigger sandboxes require atomic admission",
+            ));
+        }
         let mut state = self.lock();
         if state.sandboxes.values().any(|stored| {
             stored.owner == sandbox.owner
@@ -75,6 +80,11 @@ impl SandboxStore for InMemorySandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let id = sandbox.id.clone();
         let mut state = self.lock();
+        if state.sandboxes.get(&id).is_some_and(|current| {
+            current.owner != sandbox.owner || current.origin != sandbox.origin
+        }) {
+            return Err(SandboxStoreError::Conflict);
+        }
         save_record!(state, sandboxes, id, expected_revision, sandbox)
     }
 
@@ -330,6 +340,11 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 event,
             } => {
                 let id = sandbox.id.clone();
+                if candidate.sandboxes.get(&id).is_some_and(|current| {
+                    current.owner != sandbox.owner || current.origin != sandbox.origin
+                }) {
+                    return Err(SandboxStoreError::Conflict);
+                }
                 save_record!(
                     candidate,
                     sandboxes,

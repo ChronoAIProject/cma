@@ -30,6 +30,11 @@ mod agent_work_transition_validation;
 mod agent_work_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
 pub use agent_work_validation::validate_agent_work_mutation;
+mod sandbox_admission;
+pub use sandbox_admission::{
+    valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult,
+    SandboxAdmissionStore,
+};
 #[cfg(test)]
 mod agent_work_validation_tests;
 
@@ -90,6 +95,8 @@ pub enum SandboxStoreError {
     WorkspaceHasLiveAgents,
     #[error("workspace provisioning origin is already occupied")]
     WorkspaceOriginConflict,
+    #[error("sandbox trigger origin is already bound to another request")]
+    SandboxOriginConflict,
     #[error("workspace is not ready for agent admission")]
     WorkspaceNotReady,
     #[error("agent limit reached: {live} of {limit}")]
@@ -248,29 +255,6 @@ pub trait SandboxEventStore: Send + Sync {
         after: u64,
         limit: u16,
     ) -> Result<Vec<SandboxEvent>, SandboxStoreError>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SandboxAdmissionName {
-    Exact(String),
-    Allocate(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct SandboxAdmission {
-    pub sandbox: Sandbox,
-    pub name: SandboxAdmissionName,
-    pub live_limit: u16,
-    pub event_at: String,
-}
-
-/// Atomic live-limit admission, name allocation, aggregate insert and Created event.
-#[async_trait]
-pub trait SandboxAdmissionStore: Send + Sync {
-    async fn admit_sandbox(
-        &self,
-        admission: SandboxAdmission,
-    ) -> Result<Sandbox, SandboxStoreError>;
 }
 
 /// Durable lifecycle work discovery, lease fencing and terminal purge.
@@ -448,6 +432,7 @@ struct State {
     workspaces: HashMap<WorkspaceId, Workspace>,
     worktrees: HashMap<WorktreeId, Worktree>,
     agents: HashMap<AgentId, Agent>,
+    sandbox_admissions: HashMap<(SubjectId, String), (SandboxId, String)>,
     sandbox_events: HashMap<SandboxId, Vec<SandboxEvent>>,
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
 }

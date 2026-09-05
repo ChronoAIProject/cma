@@ -13,12 +13,13 @@ use crate::profiles::{
 };
 use crate::{now_rfc3339, Caller, Capability, StoreError};
 
+use super::service_admission::requested_name;
 use super::service_trust::{
     foreign_workspace_setups, validate_sandbox_profile, validate_sandbox_revision,
 };
 use super::store::{
-    Page, PageRequest, SandboxAdmission, SandboxAdmissionName, SandboxServiceStore,
-    SandboxStoreError, SandboxTransaction,
+    Page, PageRequest, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult,
+    SandboxServiceStore, SandboxStoreError, SandboxTransaction,
 };
 use super::{
     Sandbox, SandboxCredentialState, SandboxEvent, SandboxEventKind, SandboxLimits,
@@ -28,7 +29,6 @@ use super::{
 pub const DEFAULT_OWNER_SANDBOX_LIMIT: u16 = 3;
 pub const DEFAULT_VISITOR_SANDBOX_LIMIT: u16 = 1;
 pub const DEFAULT_RETENTION_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-const MAX_SANDBOX_NAME_BYTES: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -110,6 +110,8 @@ pub enum SandboxServiceError {
     NameConflict,
     #[error("sandbox origin is invalid")]
     InvalidOrigin,
+    #[error("sandbox trigger origin is already bound to another request")]
+    SandboxOriginConflict,
     #[error("sandbox is not in a deletable state")]
     InvalidState,
     #[error("sandbox data is not usable: {0}")]
@@ -129,6 +131,7 @@ impl SandboxServiceError {
             Self::InvalidName => "invalid_sandbox_name",
             Self::NameConflict => "sandbox_name_conflict",
             Self::InvalidOrigin => "invalid_sandbox_origin",
+            Self::SandboxOriginConflict => "sandbox_origin_conflict",
             Self::InvalidState => "sandbox_invalid_state",
             Self::Corrupt(_) => "stored_sandbox_corrupt",
             Self::Unavailable(_) => "sandbox_service_unavailable",
@@ -199,11 +202,14 @@ impl SandboxService {
         request: CreateSandbox,
     ) -> Result<Sandbox, SandboxServiceError> {
         request.origin.validate()?;
-        let capability = match request.origin {
-            SandboxOrigin::Manual => Capability::CreateSandbox,
-            SandboxOrigin::Trigger { .. } => Capability::LaunchTriggers,
+        let owner_lane = caller.authorization.allows(Capability::CreateSandbox);
+        let authorized = match request.origin {
+            SandboxOrigin::Manual => owner_lane,
+            SandboxOrigin::Trigger { .. } => {
+                owner_lane || caller.authorization.allows(Capability::LaunchTriggers)
+            }
         };
-        if !caller.authorization.allows(capability) {
+        if !authorized {
             return Err(SandboxServiceError::Forbidden);
         }
         let policy = self
@@ -213,11 +219,9 @@ impl SandboxService {
             .map_err(policy_error)?;
         let limit = match request.origin {
             SandboxOrigin::Manual => policy.max_sandboxes_per_owner,
+            SandboxOrigin::Trigger { .. } if owner_lane => policy.max_sandboxes_per_owner,
             SandboxOrigin::Trigger { .. } => policy.max_sandboxes_per_visitor,
         };
-        if limit == 0 {
-            return Err(SandboxServiceError::SandboxLimitReached { limit, live: 0 });
-        }
         if request.profile.revision == 0 {
             return Err(SandboxServiceError::ProfileNotFound);
         }
@@ -258,10 +262,7 @@ impl SandboxService {
             });
         }
 
-        let name = match request.name {
-            Some(name) => SandboxAdmissionName::Exact(validate_name(name)?),
-            None => SandboxAdmissionName::Allocate(derived_name(&profile.name)),
-        };
+        let name = requested_name(request.name, &profile.name)?;
         let now = now_rfc3339();
         let reaches = revision
             .content
@@ -316,23 +317,23 @@ impl SandboxService {
             .map_err(|error| SandboxServiceError::Corrupt(error.to_string()))?;
         let admitted = self
             .store
-            .admit_sandbox(SandboxAdmission {
-                sandbox,
-                name,
-                live_limit: limit,
-                event_at: now,
-            })
+            .admit_sandbox(SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?)
             .await
             .map_err(store_error)?;
-        let locator = MarketplaceLocator::Sandbox(request.profile.id);
-        if let Err(error) = self.profile_uses.record_profile_use(&locator).await {
-            tracing::warn!(
-                profile_id = locator.as_str(),
-                error = %error,
-                "sandbox profile use was not recorded"
-            );
+        match admitted {
+            SandboxAdmissionResult::Created(sandbox) => {
+                let locator = MarketplaceLocator::Sandbox(request.profile.id);
+                if let Err(error) = self.profile_uses.record_profile_use(&locator).await {
+                    tracing::warn!(
+                        profile_id = locator.as_str(),
+                        error = %error,
+                        "sandbox profile use was not recorded"
+                    );
+                }
+                Ok(sandbox)
+            }
+            SandboxAdmissionResult::Existing(sandbox) => Ok(sandbox),
         }
-        Ok(admitted)
     }
 
     pub async fn list_own(
@@ -439,23 +440,6 @@ fn require(caller: &Caller, capability: Capability) -> Result<(), SandboxService
         .ok_or(SandboxServiceError::Forbidden)
 }
 
-fn validate_name(name: String) -> Result<String, SandboxServiceError> {
-    if name.trim().is_empty() || name.len() > MAX_SANDBOX_NAME_BYTES || name.contains('\0') {
-        Err(SandboxServiceError::InvalidName)
-    } else {
-        Ok(name)
-    }
-}
-
-fn derived_name(profile_name: &str) -> String {
-    let trimmed = profile_name.trim();
-    let mut end = trimmed.len().min(MAX_SANDBOX_NAME_BYTES);
-    while !trimmed.is_char_boundary(end) {
-        end -= 1;
-    }
-    trimmed[..end].to_string()
-}
-
 fn profile_error(error: ProfileStoreError) -> SandboxServiceError {
     match error {
         ProfileStoreError::NotFound => SandboxServiceError::ProfileNotFound,
@@ -478,6 +462,7 @@ fn store_error(error: SandboxStoreError) -> SandboxServiceError {
         SandboxStoreError::LimitReached { limit, live } => {
             SandboxServiceError::SandboxLimitReached { limit, live }
         }
+        SandboxStoreError::SandboxOriginConflict => SandboxServiceError::SandboxOriginConflict,
         SandboxStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
         SandboxStoreError::InvalidPage => SandboxServiceError::InvalidState,
         other => SandboxServiceError::Unavailable(other.to_string()),

@@ -38,6 +38,7 @@ impl HierarchyProblem {
             },
             SandboxServiceError::InvalidName => Self::Invalid("invalid_sandbox_name"),
             SandboxServiceError::NameConflict => Self::Conflict("sandbox_name_conflict"),
+            SandboxServiceError::SandboxOriginConflict => Self::Conflict("sandbox_origin_conflict"),
             SandboxServiceError::InvalidOrigin => Self::Invalid("invalid_sandbox_origin"),
             SandboxServiceError::InvalidState => Self::Conflict("sandbox_invalid_state"),
             SandboxServiceError::Corrupt(_) | SandboxServiceError::Unavailable(_) => {

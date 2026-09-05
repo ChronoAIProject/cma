@@ -3,9 +3,10 @@
 use std::time::Duration;
 
 use layer2_core::sandbox::store::{
-    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore, SandboxStoreError,
+    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus};
+use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind};
 use mongodb::bson::{doc, Bson};
 
 use super::sandbox_events::{event_document, read_event};
@@ -13,7 +14,7 @@ use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
-use super::sandboxes::{read_sandbox, sandbox_document};
+use super::sandboxes::{admitted_sandbox_document, read_admission_fingerprint, read_sandbox};
 
 const ADMISSION_TRANSACTION_ATTEMPTS: usize = 16;
 const ADMISSION_RETRY_MAX_DELAY_MILLIS: u64 = 32;
@@ -22,11 +23,24 @@ enum AdmissionError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
     Retry(mongodb::error::Error),
+    Duplicate,
 }
 
-struct AdmissionReceipt {
-    sandbox: Sandbox,
-    event: SandboxEvent,
+enum AdmissionReceipt {
+    Created {
+        sandbox: Sandbox,
+        event: SandboxEvent,
+    },
+    Existing(Sandbox),
+}
+
+impl AdmissionReceipt {
+    fn into_result(self) -> SandboxAdmissionResult {
+        match self {
+            Self::Created { sandbox, .. } => SandboxAdmissionResult::Created(sandbox),
+            Self::Existing(sandbox) => SandboxAdmissionResult::Existing(sandbox),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -34,8 +48,8 @@ impl SandboxAdmissionStore for MongoSandboxStore {
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
-    ) -> Result<Sandbox, SandboxStoreError> {
-        validate(&admission)?;
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        admission.validate()?;
         let mut last_transient = None;
         for attempt in 0..ADMISSION_TRANSACTION_ATTEMPTS {
             if attempt > 0 {
@@ -71,22 +85,27 @@ impl SandboxAdmissionStore for MongoSandboxStore {
                     last_transient = Some(error.to_string());
                     continue;
                 }
+                Err(AdmissionError::Duplicate) => {
+                    let _ = session.abort_transaction().await;
+                    return match durable_replay(self, &admission).await? {
+                        Some(sandbox) => Ok(SandboxAdmissionResult::Existing(sandbox)),
+                        None => Err(SandboxStoreError::Duplicate),
+                    };
+                }
                 Err(AdmissionError::Driver(error)) => {
                     let _ = session.abort_transaction().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
             match commit_transaction(&mut session).await {
-                CommitOutcome::Committed => return Ok(receipt.sandbox),
+                CommitOutcome::Committed => return Ok(receipt.into_result()),
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
-                    return if reconcile(self, &receipt).await? {
-                        Ok(receipt.sandbox)
-                    } else {
-                        Err(SandboxStoreError::Unavailable(format!(
+                    return reconcile(self, &admission, &receipt).await?.ok_or_else(|| {
+                        SandboxStoreError::Unavailable(format!(
                             "sandbox admission commit remained unknown: {error}"
-                        )))
-                    };
+                        ))
+                    });
                 }
                 CommitOutcome::Failed(error) => {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
@@ -107,21 +126,6 @@ fn admission_retry_delay(attempt: usize) -> Duration {
         .unwrap_or(u64::MAX)
         .min(ADMISSION_RETRY_MAX_DELAY_MILLIS);
     Duration::from_millis(millis)
-}
-
-fn validate(admission: &SandboxAdmission) -> Result<(), SandboxStoreError> {
-    admission.sandbox.validate().map_err(|error| {
-        SandboxStoreError::Corrupt(format!("sandbox aggregate is invalid: {error}"))
-    })?;
-    if admission.live_limit == 0
-        || admission.sandbox.revision != 1
-        || admission.sandbox.status != SandboxStatus::Provisioning
-    {
-        return Err(SandboxStoreError::InvalidTransaction(
-            "sandbox admission requires a positive limit and fresh aggregate",
-        ));
-    }
-    Ok(())
 }
 
 async fn apply(
@@ -149,6 +153,9 @@ async fn apply(
                 AdmissionError::Driver(error)
             }
         })?;
+    if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
+        return Ok(AdmissionReceipt::Existing(sandbox));
+    }
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
@@ -171,7 +178,10 @@ async fn apply(
     };
     store
         .sandboxes
-        .insert_one(sandbox_document(&sandbox, 1).map_err(AdmissionError::Domain)?)
+        .insert_one(
+            admitted_sandbox_document(&sandbox, 1, &admission.admission_fingerprint)
+                .map_err(AdmissionError::Domain)?,
+        )
         .session(&mut *session)
         .await
         .map_err(classify_insert)?;
@@ -181,7 +191,68 @@ async fn apply(
         .session(&mut *session)
         .await
         .map_err(classify_insert)?;
-    Ok(AdmissionReceipt { sandbox, event })
+    Ok(AdmissionReceipt::Created { sandbox, event })
+}
+
+async fn replay_in_transaction(
+    store: &MongoSandboxStore,
+    admission: &SandboxAdmission,
+    session: &mut mongodb::ClientSession,
+) -> Result<Option<Sandbox>, AdmissionError> {
+    let Some(filter) = trigger_filter(admission) else {
+        return Ok(None);
+    };
+    store
+        .sandboxes
+        .find_one(filter)
+        .session(session)
+        .await
+        .map_err(AdmissionError::Driver)?
+        .as_ref()
+        .map(|document| classify_replay(admission, document).map_err(AdmissionError::Domain))
+        .transpose()
+}
+
+async fn durable_replay(
+    store: &MongoSandboxStore,
+    admission: &SandboxAdmission,
+) -> Result<Option<Sandbox>, SandboxStoreError> {
+    let Some(filter) = trigger_filter(admission) else {
+        return Ok(None);
+    };
+    store
+        .sandboxes
+        .find_one(filter)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .as_ref()
+        .map(|document| classify_replay(admission, document))
+        .transpose()
+}
+
+fn trigger_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Document> {
+    admission.trigger_launch_id().map(|launch_id| {
+        doc! {
+            "owner": admission.sandbox.owner.as_str(),
+            "origin_type": "trigger",
+            "origin_launch_id": launch_id,
+        }
+    })
+}
+
+fn classify_replay(
+    admission: &SandboxAdmission,
+    document: &mongodb::bson::Document,
+) -> Result<Sandbox, SandboxStoreError> {
+    let sandbox = read_sandbox(document)?;
+    let fingerprint = read_admission_fingerprint(document, &sandbox)?.ok_or_else(|| {
+        SandboxStoreError::Corrupt("trigger sandbox has no admission fingerprint".into())
+    })?;
+    if fingerprint == admission.admission_fingerprint {
+        Ok(sandbox)
+    } else {
+        Err(SandboxStoreError::SandboxOriginConflict)
+    }
 }
 
 async fn choose_name(
@@ -241,7 +312,7 @@ fn suffixed(base: &str, number: u64) -> String {
 
 fn classify_insert(error: mongodb::error::Error) -> AdmissionError {
     if is_duplicate_key(&error) {
-        AdmissionError::Domain(SandboxStoreError::Duplicate)
+        AdmissionError::Duplicate
     } else {
         AdmissionError::Driver(error)
     }
@@ -249,25 +320,51 @@ fn classify_insert(error: mongodb::error::Error) -> AdmissionError {
 
 async fn reconcile(
     store: &MongoSandboxStore,
+    admission: &SandboxAdmission,
     receipt: &AdmissionReceipt,
-) -> Result<bool, SandboxStoreError> {
-    let sandbox = store
+) -> Result<Option<SandboxAdmissionResult>, SandboxStoreError> {
+    if let Some(current) = durable_replay(store, admission).await? {
+        return match receipt {
+            AdmissionReceipt::Created { sandbox, event } if current.id == sandbox.id => {
+                let stored_event = store
+                    .sandbox_events
+                    .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, 1) })
+                    .await
+                    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                    .as_ref()
+                    .map(read_event)
+                    .transpose()?;
+                Ok((stored_event.as_ref() == Some(event))
+                    .then_some(SandboxAdmissionResult::Created(current)))
+            }
+            AdmissionReceipt::Created { .. } | AdmissionReceipt::Existing(_) => {
+                Ok(Some(SandboxAdmissionResult::Existing(current)))
+            }
+        };
+    }
+    let AdmissionReceipt::Created { sandbox, event } = receipt else {
+        return Ok(None);
+    };
+    let stored_sandbox = store
         .sandboxes
-        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
+        .find_one(doc! { "_id": sandbox.id.as_str() })
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         .as_ref()
         .map(read_sandbox)
         .transpose()?;
-    let event = store
+    let stored_event = store
         .sandbox_events
-        .find_one(doc! { "_id": format!("{}:{:020}", receipt.event.sandbox_id, 1) })
+        .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, 1) })
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         .as_ref()
         .map(read_event)
         .transpose()?;
-    Ok(sandbox.as_ref() == Some(&receipt.sandbox) && event.as_ref() == Some(&receipt.event))
+    Ok(
+        (stored_sandbox.as_ref() == Some(sandbox) && stored_event.as_ref() == Some(event))
+            .then(|| SandboxAdmissionResult::Created(sandbox.clone())),
+    )
 }
 
 #[cfg(test)]

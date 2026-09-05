@@ -19,10 +19,10 @@ use layer2_core::sandbox::store::{
     AgentControlStore, AgentControlStoreError, AgentControlTarget, AgentConversationMutation,
     AgentConversationStore, AgentDeleteRequest, AgentLogStore, AgentStopRequest, AgentStore,
     AgentWorkMutation, AgentWorkerStore, SandboxAdmission, SandboxAdmissionName,
-    SandboxAdmissionStore, SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
-    SandboxTransactionStore, SandboxWorkerStore, VersionedWorktree, WorkspaceAdmission,
-    WorkspaceAdmissionKind, WorkspaceAdmissionResult, WorkspaceAdmissionStore, WorkspaceStore,
-    WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
+    SandboxAdmissionResult, SandboxAdmissionStore, SandboxEventStore, SandboxStore,
+    SandboxStoreError, SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore,
+    VersionedWorktree, WorkspaceAdmission, WorkspaceAdmissionKind, WorkspaceAdmissionResult,
+    WorkspaceAdmissionStore, WorkspaceStore, WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason,
@@ -176,12 +176,13 @@ fn provisioning_sandbox(id: &str) -> Sandbox {
 }
 
 fn admission(id: &str, limit: u16) -> SandboxAdmission {
-    SandboxAdmission {
-        sandbox: provisioning_sandbox(id),
-        name: SandboxAdmissionName::Allocate("research".into()),
-        live_limit: limit,
-        event_at: NOW.into(),
-    }
+    SandboxAdmission::new(
+        provisioning_sandbox(id),
+        SandboxAdmissionName::Allocate("research".into()),
+        limit,
+        NOW.into(),
+    )
+    .unwrap()
 }
 
 fn retired_sandbox(id: &str) -> Sandbox {
@@ -683,7 +684,7 @@ async fn concurrent_admission_serializes_the_limit_and_default_name_allocation()
     let mut admitted = Vec::new();
     for result in results {
         match result {
-            Ok(sandbox) => admitted.push(sandbox),
+            Ok(SandboxAdmissionResult::Created(sandbox)) => admitted.push(sandbox),
             Err(SandboxStoreError::LimitReached { limit: 3, live: 3 }) => {}
             other => panic!("unexpected concurrent admission result: {other:?}"),
         }

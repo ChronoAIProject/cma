@@ -245,6 +245,7 @@ impl OperatorError {
             | SandboxStoreError::WorkspaceLimitReached { .. }
             | SandboxStoreError::WorkspaceHasLiveAgents
             | SandboxStoreError::WorkspaceOriginConflict
+            | SandboxStoreError::SandboxOriginConflict
             | SandboxStoreError::WorkspaceNotReady
             | SandboxStoreError::AgentLimitReached { .. }
             | SandboxStoreError::AgentCreationConflict

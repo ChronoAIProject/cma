@@ -322,7 +322,7 @@ impl SandboxAdmissionStore for RacingStore {
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
-    ) -> Result<Sandbox, SandboxStoreError> {
+    ) -> Result<crate::sandbox::store::SandboxAdmissionResult, SandboxStoreError> {
         self.inner.admit_sandbox(admission).await
     }
 }
@@ -804,12 +804,27 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
     let manual_store = Arc::new(InMemorySandboxStore::default());
     let manual_service = SandboxService::new(manual_store, profiles.clone(), policy(3, 1));
     let manual = caller("owner", [Capability::CreateSandbox]);
-    for _ in 0..3 {
+    for _ in 0..2 {
         manual_service
             .create(&manual, request(reference.clone()))
             .await
             .unwrap();
     }
+    let mut trigger_request = request(reference.clone());
+    trigger_request.origin = SandboxOrigin::Trigger {
+        launch_id: "launch-owner".into(),
+    };
+    let owner_launch = manual_service
+        .create(&manual, trigger_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        manual_service
+            .create(&manual, trigger_request)
+            .await
+            .unwrap(),
+        owner_launch
+    );
     assert_eq!(
         manual_service
             .create(&manual, request(reference.clone()))
@@ -817,18 +832,6 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
             .unwrap_err(),
         SandboxServiceError::SandboxLimitReached { limit: 3, live: 3 }
     );
-    let mut trigger_request = request(reference.clone());
-    trigger_request.origin = SandboxOrigin::Trigger {
-        launch_id: "launch-1".into(),
-    };
-    assert_eq!(
-        manual_service
-            .create(&manual, trigger_request)
-            .await
-            .unwrap_err(),
-        SandboxServiceError::Forbidden
-    );
-
     let visitor_store = Arc::new(InMemorySandboxStore::default());
     let visitor_service = SandboxService::new(visitor_store, profiles, policy(3, 1));
     let launcher = caller("owner", [Capability::LaunchTriggers]);
@@ -836,10 +839,20 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
     trigger_request.origin = SandboxOrigin::Trigger {
         launch_id: "launch-1".into(),
     };
-    visitor_service
+    let visitor_launch = visitor_service
         .create(&launcher, trigger_request.clone())
         .await
         .unwrap();
+    assert_eq!(
+        visitor_service
+            .create(&launcher, trigger_request.clone())
+            .await
+            .unwrap(),
+        visitor_launch
+    );
+    trigger_request.origin = SandboxOrigin::Trigger {
+        launch_id: "launch-2".into(),
+    };
     assert_eq!(
         visitor_service
             .create(&launcher, trigger_request)
@@ -853,6 +866,135 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
             .await
             .unwrap_err(),
         SandboxServiceError::Forbidden
+    );
+}
+
+#[tokio::test]
+async fn trigger_replay_precedes_zero_quota_and_changed_security_input_conflicts() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let first_reference = publish(
+        &profiles,
+        profile(
+            "sbp_replay_first",
+            "owner",
+            "replay first",
+            ProfileVisibility::Private,
+            false,
+        ),
+    )
+    .await;
+    let mut second_profile = profile(
+        "sbp_replay_changed",
+        "owner",
+        "replay changed",
+        ProfileVisibility::Private,
+        false,
+    );
+    second_profile.draft.nyxid_services = vec![ServiceId::new("changed-security-reach")];
+    let second_reference = publish(&profiles, second_profile).await;
+    let store = Arc::new(InMemorySandboxStore::default());
+    let source = Arc::new(MutablePolicy(Mutex::new(policy(3, 1))));
+    let policy_source: Arc<dyn SandboxPolicySource> = source.clone();
+    let service =
+        SandboxService::with_policy_source(store.clone(), profiles.clone(), policy_source);
+    let launcher = caller("owner", [Capability::LaunchTriggers]);
+    let trigger = |profile| CreateSandbox {
+        profile,
+        name: None,
+        confirmed_digest: None,
+        origin: SandboxOrigin::Trigger {
+            launch_id: "launch-replay-zero".into(),
+        },
+    };
+
+    let created = service
+        .create(&launcher, trigger(first_reference.clone()))
+        .await
+        .unwrap();
+    let mut advanced = created.clone();
+    advanced.status = SandboxStatus::Active;
+    advanced.updated_at = LATER.into();
+    advanced.revision = 2;
+    store.save_sandbox(1, advanced.clone()).await.unwrap();
+    source
+        .0
+        .lock()
+        .expect("policy lock")
+        .max_sandboxes_per_visitor = 0;
+
+    assert_eq!(
+        service
+            .create(&launcher, trigger(first_reference.clone()))
+            .await
+            .unwrap(),
+        advanced
+    );
+    assert_eq!(
+        service
+            .create(&launcher, trigger(second_reference.clone()))
+            .await
+            .unwrap_err(),
+        SandboxServiceError::SandboxOriginConflict
+    );
+    assert_eq!(sandbox_use_count(&profiles, &first_reference.id).await, 1);
+    assert_eq!(sandbox_use_count(&profiles, &second_reference.id).await, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_trigger_replay_returns_one_sandbox_and_records_one_use() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let reference = publish(
+        &profiles,
+        profile(
+            "sbp_concurrent_replay",
+            "owner",
+            "concurrent replay",
+            ProfileVisibility::Private,
+            false,
+        ),
+    )
+    .await;
+    let profile_id = reference.id.clone();
+    let store = Arc::new(InMemorySandboxStore::default());
+    let service = SandboxService::new(store.clone(), profiles.clone(), policy(3, 1));
+    let launcher = caller("owner", [Capability::LaunchTriggers]);
+    let mut tasks = Vec::new();
+    for _ in 0..20 {
+        let service = service.clone();
+        let launcher = launcher.clone();
+        let mut request = request(reference.clone());
+        request.origin = SandboxOrigin::Trigger {
+            launch_id: "launch-concurrent-replay".into(),
+        };
+        tasks.push(tokio::spawn(async move {
+            service.create(&launcher, request).await
+        }));
+    }
+
+    let mut sandboxes = Vec::new();
+    for task in tasks {
+        sandboxes.push(task.await.unwrap().unwrap());
+    }
+    assert!(sandboxes
+        .iter()
+        .all(|sandbox| sandbox.id == sandboxes[0].id));
+    assert_eq!(sandbox_use_count(&profiles, &profile_id).await, 1);
+    assert_eq!(
+        store
+            .list_sandboxes(&SubjectId::new("owner"), &PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .sandbox_events(&sandboxes[0].id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
     );
 }
 
@@ -1359,6 +1501,10 @@ fn service_error_codes_are_stable_typed_refusals() {
             "sandbox_limit_reached",
         ),
         (SandboxServiceError::NameConflict, "sandbox_name_conflict"),
+        (
+            SandboxServiceError::SandboxOriginConflict,
+            "sandbox_origin_conflict",
+        ),
     ];
     for (error, code) in cases {
         assert_eq!(error.code(), code);
