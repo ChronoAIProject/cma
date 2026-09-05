@@ -1,7 +1,7 @@
 //! Atomic Mongo publication for one fenced agent work step.
 
 use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
-use layer2_core::sandbox::{Agent, AgentLogEntry, SandboxEvent, Worktree};
+use layer2_core::sandbox::{Agent, AgentLogEntry, AgentStatus, SandboxEvent, Worktree};
 use mongodb::bson::{doc, Bson};
 
 use super::agent_log::log_document;
@@ -199,10 +199,37 @@ fn validate_agent_mutation(
             .is_some_and(|lease| current.work.lease.as_ref() != Some(lease))
         || next.conversation.last_seq != next_last_seq
         || next.validate_conversation().is_err()
+        || !stop_intent_change_is_valid(current, next)
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     Ok(())
+}
+
+pub(super) fn stop_intent_change_is_valid(current: &Agent, next: &Agent) -> bool {
+    if current.stop_reason.is_some() && next.stop_reason != current.stop_reason {
+        return false;
+    }
+    match current.requested_stop_reason.as_ref() {
+        Some(requested) => {
+            (current.stop_reason.is_none()
+                && next.status == current.status
+                && next.requested_stop_reason.as_ref() == Some(requested)
+                && next.stop_reason == current.stop_reason)
+                || (current.status.is_live()
+                    && next.status == AgentStatus::Stopped
+                    && next.requested_stop_reason.is_none()
+                    && next.stop_reason.as_ref() == Some(requested))
+        }
+        None => {
+            next.requested_stop_reason.is_none()
+                && (next.stop_reason == current.stop_reason
+                    || (current.stop_reason.is_none()
+                        && current.status.is_live()
+                        && next.status == AgentStatus::Stopped
+                        && next.stop_reason.is_some()))
+        }
+    }
 }
 
 fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> bool {

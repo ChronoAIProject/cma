@@ -23,8 +23,8 @@ use layer2_core::sandbox::store::{
     WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep,
-    ConversationState, CreateWorkspace, Sandbox, SandboxCredentialAuthority,
+    Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkState,
+    AgentWorkStep, ConversationState, CreateWorkspace, Sandbox, SandboxCredentialAuthority,
     SandboxCredentialState, SandboxEvent, SandboxEventKind, SandboxLimits, SandboxOrigin,
     SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, TypedFailure, Workspace,
     WorkspaceOrigin, WorkspaceService, WorkspaceServiceError, WorkspaceSource, WorkspaceStatus,
@@ -41,7 +41,7 @@ use crate::sandbox::{
 
 use super::agent_log::log_document;
 use super::agent_worker_reconcile::reconcile_publication;
-use super::agent_worker_transaction::PublicationReceipt;
+use super::agent_worker_transaction::{stop_intent_change_is_valid, PublicationReceipt};
 use super::encryption::AuthEncryptionKey;
 use super::sandbox_credentials::{
     MongoSandboxCredentialStore, SANDBOX_CREDENTIALS, SANDBOX_CREDENTIAL_REVOCATIONS,
@@ -399,6 +399,50 @@ fn advance_claimed_agent(claimed: &Agent) -> Agent {
     next
 }
 
+#[test]
+fn mongo_agent_work_stop_intent_validation_matches_domain_rules() {
+    let current = agent_for_worker("agt_stop_intent_rules", NOW);
+    assert!(stop_intent_change_is_valid(&current, &current));
+
+    let mut invented = current.clone();
+    invented.requested_stop_reason = Some(AgentStopReason::Owner);
+    assert!(!stop_intent_change_is_valid(&current, &invented));
+
+    let mut requested = current.clone();
+    requested
+        .request_stop(AgentStopReason::Owner, NOW.into())
+        .unwrap();
+    assert!(stop_intent_change_is_valid(&requested, &requested));
+
+    let mut changed = requested.clone();
+    changed.requested_stop_reason = Some(AgentStopReason::Operator);
+    assert!(!stop_intent_change_is_valid(&requested, &changed));
+
+    let mut cleared = requested.clone();
+    cleared.requested_stop_reason = None;
+    assert!(!stop_intent_change_is_valid(&requested, &cleared));
+
+    let mut wrong_stop = requested.clone();
+    wrong_stop.requested_stop_reason = None;
+    wrong_stop.stop_reason = Some(AgentStopReason::Operator);
+    wrong_stop.status = AgentStatus::Stopped;
+    assert!(!stop_intent_change_is_valid(&requested, &wrong_stop));
+
+    let mut stopped = requested.clone();
+    stopped
+        .transition(
+            AgentStatus::Stopped,
+            MINUTE.into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    assert!(stop_intent_change_is_valid(&requested, &stopped));
+
+    let mut rewritten = stopped.clone();
+    rewritten.stop_reason = Some(AgentStopReason::Operator);
+    assert!(!stop_intent_change_is_valid(&stopped, &rewritten));
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn agent_work_due_query_is_bounded_sorted_and_supports_lease_takeover() {
@@ -645,6 +689,85 @@ async fn agent_work_rejects_an_incorrect_agent_log_high_water_mark() {
     );
     assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
     assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 0);
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
+    let (client, name) = database("agent_work_stop_intent").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let agent = agent_for_worker("agt_stop_intent", NOW);
+    store.create_agent(agent.clone()).await.unwrap();
+    let mut scheduled = agent.clone();
+    scheduled
+        .request_stop(AgentStopReason::Owner, NOW.into())
+        .unwrap();
+    store
+        .save_agent(agent.revision, scheduled.clone())
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_agent_work(&scheduled.id, "worker", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+
+    let mut cleared = claimed.clone();
+    cleared
+        .work
+        .advance("worker", fence, AgentWorkStep::CloseProcess, NOW.into())
+        .unwrap();
+    cleared.requested_stop_reason = None;
+    cleared.revision += 1;
+    assert_eq!(
+        store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: claimed.revision,
+                holder: "worker".into(),
+                fence,
+                agent: cleared,
+                worktree: None,
+                appended_at: NOW.into(),
+                sandbox_event: None,
+                agent_logs: vec![],
+            })
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_agent(&claimed.id).await.unwrap(),
+        Some(claimed.clone())
+    );
+
+    let mut stopped = claimed.clone();
+    stopped
+        .work
+        .advance("worker", fence, AgentWorkStep::None, MINUTE.into())
+        .unwrap();
+    stopped
+        .transition(
+            AgentStatus::Stopped,
+            MINUTE.into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    store
+        .commit_agent_work(AgentWorkMutation {
+            expected_agent_revision: claimed.revision,
+            holder: "worker".into(),
+            fence,
+            agent: stopped.clone(),
+            worktree: None,
+            appended_at: MINUTE.into(),
+            sandbox_event: None,
+            agent_logs: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(store.get_agent(&stopped.id).await.unwrap(), Some(stopped));
 
     client.database(&name).drop().await.unwrap();
 }
