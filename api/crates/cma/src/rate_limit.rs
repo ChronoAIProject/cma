@@ -47,6 +47,8 @@ use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
 mod visitor;
 
+#[allow(unused_imports)] // Consumed by the Trigger route composition that injects this slice.
+pub(crate) use visitor::CmaLaunchQuota;
 use visitor::VisitorLaunchQuota;
 
 const RETAIN_RECENT_EVERY: u64 = 1024;

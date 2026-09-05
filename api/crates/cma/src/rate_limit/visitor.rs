@@ -2,69 +2,122 @@
 
 use std::{
     collections::HashMap,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use layer2_core::SubjectId;
+use layer1_public::rest::{LaunchQuota, LaunchQuotaError, LaunchQuotaPermit, LaunchQuotaRefusal};
+use layer2_core::{Caller, Capability, PlatformSettingsService, SubjectId};
 
-use super::{retry_after_seconds, RateLimiters};
+use super::RateLimiters;
 
 const UTC_DAY_SECONDS: u64 = 24 * 60 * 60;
 const VISITOR_QUOTA_KEY_PREFIX: &str = "trigger-visitor:";
 
-impl RateLimiters {
-    /// Charge one newly-created visitor Launch against the current daily limit.
-    ///
-    /// The launch command calls this only after idempotency has distinguished a
-    /// new aggregate from an exact replay. The limit is supplied per call
-    /// because platform settings are live.
-    #[allow(dead_code)] // Wired by the post-refactor Launch service from #821.
-    pub(crate) fn admit_visitor_launch(
-        &self,
-        subject: &SubjectId,
-        limit: u32,
-        now: SystemTime,
-    ) -> Result<(), ResourceQuotaExceeded> {
-        self.visitor_launches.admit(subject, limit, now)
+/// CMA's live-settings adapter for the public Launch quota boundary.
+#[allow(dead_code)] // Constructed by the Trigger route composition that consumes this slice.
+pub(crate) struct CmaLaunchQuota {
+    limiters: Arc<RateLimiters>,
+    settings: Arc<PlatformSettingsService>,
+    clock: Arc<dyn Fn() -> SystemTime + Send + Sync>,
+}
+
+impl CmaLaunchQuota {
+    #[allow(dead_code)] // Constructed by the Trigger route composition that consumes this slice.
+    pub(crate) fn new(limiters: Arc<RateLimiters>, settings: Arc<PlatformSettingsService>) -> Self {
+        Self {
+            limiters,
+            settings,
+            clock: Arc::new(SystemTime::now),
+        }
     }
-}
 
-/// The resource whose count has reached a configured boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum QuotaResource {
-    VisitorLaunches,
-}
-
-impl QuotaResource {
-    #[allow(dead_code)] // Consumed by the #821 HTTP problem projection.
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::VisitorLaunches => "visitor_launches",
+    #[cfg(test)]
+    pub(super) fn with_clock(
+        limiters: Arc<RateLimiters>,
+        settings: Arc<PlatformSettingsService>,
+        clock: impl Fn() -> SystemTime + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            limiters,
+            settings,
+            clock: Arc::new(clock),
         }
     }
 }
 
-/// Typed information needed to render a `resource_quota` refusal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ResourceQuotaExceeded {
-    pub(crate) resource: QuotaResource,
-    pub(crate) limit: u32,
-    pub(crate) reset_at: SystemTime,
+#[async_trait::async_trait]
+impl LaunchQuota for CmaLaunchQuota {
+    async fn reserve(&self, caller: &Caller) -> Result<LaunchQuotaPermit, LaunchQuotaError> {
+        if !is_visitor(caller) {
+            return Ok(LaunchQuotaPermit::unmetered());
+        }
+        let settings = self.settings.current().await.map_err(|error| {
+            tracing::error!(error = %error, "could not read visitor Launch quota");
+            LaunchQuotaError::Unavailable
+        })?;
+        let reservation = self
+            .limiters
+            .admit_visitor_launch(
+                &caller.subject,
+                settings.settings.limits.visitor_max_launches_per_day,
+                (self.clock)(),
+            )
+            .map_err(LaunchQuotaError::ResourceQuota)?;
+        Ok(LaunchQuotaPermit::reserved(move |created| {
+            if created {
+                reservation.commit();
+            }
+        }))
+    }
 }
 
-impl ResourceQuotaExceeded {
-    #[allow(dead_code)] // Consumed by the #821 HTTP problem projection.
-    pub(crate) const fn code(&self) -> &'static str {
-        "resource_quota"
-    }
+fn is_visitor(caller: &Caller) -> bool {
+    caller.authorization.allows(Capability::LaunchTriggers)
+        && !caller.authorization.allows(Capability::CreateSandbox)
+}
 
-    #[allow(dead_code)] // Consumed by the #821 HTTP problem projection.
-    pub(crate) fn retry_after_seconds(&self, now: SystemTime) -> u64 {
-        self.reset_at
-            .duration_since(now)
-            .map(retry_after_seconds)
-            .unwrap_or(1)
+impl RateLimiters {
+    /// Atomically reserve one newly-created visitor Launch against a live limit.
+    pub(crate) fn admit_visitor_launch(
+        self: &Arc<Self>,
+        subject: &SubjectId,
+        limit: u32,
+        now: SystemTime,
+    ) -> Result<VisitorLaunchReservation, LaunchQuotaRefusal> {
+        let (utc_day, reset_at) = utc_day_window(now);
+        let key = visitor_quota_key(subject);
+        self.visitor_launches
+            .reserve(&key, utc_day, limit, reset_at)?;
+        Ok(VisitorLaunchReservation {
+            limiters: Arc::clone(self),
+            key,
+            utc_day,
+            active: true,
+        })
+    }
+}
+
+pub(crate) struct VisitorLaunchReservation {
+    limiters: Arc<RateLimiters>,
+    key: String,
+    utc_day: u64,
+    active: bool,
+}
+
+impl VisitorLaunchReservation {
+    pub(crate) fn commit(mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for VisitorLaunchReservation {
+    fn drop(&mut self) {
+        if self.active {
+            self.limiters
+                .visitor_launches
+                .release(&self.key, self.utc_day);
+        }
     }
 }
 
@@ -80,35 +133,49 @@ struct VisitorDayUsage {
 }
 
 impl VisitorLaunchQuota {
-    fn admit(
+    fn reserve(
         &self,
-        subject: &SubjectId,
+        key: &str,
+        utc_day: u64,
         limit: u32,
-        now: SystemTime,
-    ) -> Result<(), ResourceQuotaExceeded> {
-        let (utc_day, reset_at) = utc_day_window(now);
-        let mut usage = self
-            .usage
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if usage.utc_day != utc_day {
-            usage.utc_day = utc_day;
-            usage.launches.clear();
-        }
-
-        let used = usage
-            .launches
-            .entry(visitor_quota_key(subject))
-            .or_default();
+        reset_at: SystemTime,
+    ) -> Result<(), LaunchQuotaRefusal> {
+        let mut usage = self.lock();
+        reset_day(&mut usage, utc_day);
+        let used = usage.launches.entry(key.to_owned()).or_default();
         if *used >= limit {
-            return Err(ResourceQuotaExceeded {
-                resource: QuotaResource::VisitorLaunches,
-                limit,
-                reset_at,
-            });
+            return Err(LaunchQuotaRefusal::visitor_launches(limit, reset_at));
         }
         *used += 1;
         Ok(())
+    }
+
+    fn release(&self, key: &str, utc_day: u64) {
+        let mut usage = self.lock();
+        if usage.utc_day != utc_day {
+            return;
+        }
+        let remove = usage.launches.get_mut(key).is_some_and(|used| {
+            debug_assert!(*used > 0, "a visitor reservation is released at most once");
+            *used = used.saturating_sub(1);
+            *used == 0
+        });
+        if remove {
+            usage.launches.remove(key);
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, VisitorDayUsage> {
+        self.usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+fn reset_day(usage: &mut VisitorDayUsage, utc_day: u64) {
+    if usage.utc_day != utc_day {
+        usage.utc_day = utc_day;
+        usage.launches.clear();
     }
 }
 
