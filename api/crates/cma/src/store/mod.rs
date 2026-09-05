@@ -28,6 +28,7 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+mod hierarchy;
 mod marketplace;
 #[cfg(test)]
 mod marketplace_mongo_integration_tests;

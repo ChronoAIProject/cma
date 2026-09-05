@@ -56,6 +56,22 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_owner_page".to_string())
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "status": 1, "_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_owner_status_page".to_string())
+                    .build(),
+            )
+            .build(),
     ]
 }
 
@@ -307,6 +323,16 @@ mod tests {
         assert_eq!(
             indexes[3].options.as_ref().unwrap().name.as_deref(),
             Some("sandboxes_operator_inventory")
+        );
+        assert_eq!(indexes[4].keys, doc! { "owner": 1, "_id": 1 });
+        assert_eq!(
+            indexes[4].options.as_ref().unwrap().name.as_deref(),
+            Some("sandboxes_owner_page")
+        );
+        assert_eq!(indexes[5].keys, doc! { "owner": 1, "status": 1, "_id": 1 });
+        assert_eq!(
+            indexes[5].options.as_ref().unwrap().name.as_deref(),
+            Some("sandboxes_owner_status_page")
         );
     }
 }
