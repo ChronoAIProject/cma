@@ -1,8 +1,8 @@
 //! Internal schema-v1 checkpoint persistence.
 //!
-//! #802 exposes only `SandboxCheckpointRef`, not a checkpoint aggregate or a
-//! store port. This adapter keeps the durable record and atomic seal boundary
-//! private until the Layer 2 checkpoint contract is introduced.
+//! Layer 2 exposes checkpoint identity and retention, but not the final
+//! lifecycle store port. This adapter keeps the atomic seal boundary private
+//! until the sandbox orchestration contract is integrated.
 
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -223,15 +223,36 @@ impl MongoSandboxStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use layer2_core::ids::AgentId;
+    use layer2_core::sandbox::SandboxCheckpointConversation;
+    use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn checkpoint_documents_are_explicitly_schema_v1() {
         let id = SandboxId("sbx_checkpoint".into());
-        let checkpoint = SandboxCheckpointRef {
-            object_reference: "objects/checkpoint".into(),
-            sha256: "a".repeat(64),
-            sealed_at: "2026-09-05T00:00:00Z".into(),
-        };
+        let archive = b"conversation snapshot".to_vec();
+        let conversation = SandboxCheckpointConversation::new(
+            AgentId("agt_checkpoint".into()),
+            "conversation-checkpoint",
+            ConversationSnapshot {
+                conversation_id: "conversation-checkpoint".into(),
+                archive_sha256: format!("{:x}", Sha256::digest(&archive)),
+                archive,
+            },
+        )
+        .unwrap();
+        let checkpoint = SandboxCheckpointRef::seal(
+            &CheckpointReceipt {
+                epoch: 1,
+                object_reference: "objects/checkpoint".into(),
+                sha256: "a".repeat(64),
+                writers: WriterState::Resumed,
+            },
+            &[conversation],
+            "2026-09-05T00:00:00Z",
+        )
+        .unwrap();
         let document = checkpoint_document(&id, 4, &checkpoint).unwrap();
         assert_eq!(document.get_i64("document_schema_version").unwrap(), 1);
         assert_eq!(document.get_str("sandbox_id").unwrap(), id.as_str());
