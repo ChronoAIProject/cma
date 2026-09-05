@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, Mutex};
 
 use super::reply::{
-    expect_ack, failure_error, operation_name, response_operation, valid_sha256,
-    validate_command_receipts,
+    expect_ack, failure_error, operation_name, response_operation, valid_checkpoint_reference,
+    valid_git_commit, valid_sha256, validate_command_receipts,
 };
 use super::{HostedAgentRuntime, HostedBackend, HostedDeployment};
 use crate::wire::{AgentRef, CredentialReceipt, RequestFrame, ResponseFrame};
@@ -16,28 +17,17 @@ use crate::{
     ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest, ResourceReading,
     RestoreRequest, RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
     WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest,
+    WorktreeRequest, WriterState,
 };
 
 #[path = "adapter_install.rs"]
 mod install;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Provisioned,
-    Installing,
-    Installed,
-    DeliveringInitialCredential,
-    RotatingCredential,
-    Credentialed,
-}
-
 #[derive(Debug, Clone)]
 struct RuntimeState {
-    phase: Phase,
     own_credential: bool,
+    home_directory: String,
     provision: super::deployment::ProviderIdentity,
-    install: Option<(String, String)>,
 }
 
 /// Shared hosted implementation of the complete sandbox lifecycle.
@@ -75,17 +65,6 @@ impl HostedAdapter {
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))
     }
 
-    async fn require_credential(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeState> {
-        let state = self.known_state(handle).await?;
-        if !matches!(state.phase, Phase::Credentialed | Phase::RotatingCredential) {
-            return Err(AdapterError::Rejected(format!(
-                "runtime {} has not acknowledged its sandbox credential",
-                handle.0
-            )));
-        }
-        Ok(state)
-    }
-
     async fn exchange(
         &self,
         handle: &RuntimeHandle,
@@ -110,7 +89,7 @@ impl HostedAdapter {
         handle: &RuntimeHandle,
         options: &crate::RuntimeOptions,
     ) -> crate::Result<()> {
-        let state = self.require_credential(handle).await?;
+        let state = self.known_state(handle).await?;
         if options.own_credential != state.own_credential {
             return Err(AdapterError::Rejected(
                 "agent credential mode differs from its sandbox".into(),
@@ -156,10 +135,9 @@ impl SandboxAdapter for HostedAdapter {
         states.insert(
             handle.clone(),
             RuntimeState {
-                phase: Phase::Provisioned,
                 own_credential: spec.own_credential,
+                home_directory: spec.home_directory.clone(),
                 provision: identity,
-                install: None,
             },
         );
         Ok(handle)
@@ -186,56 +164,18 @@ impl SandboxAdapter for HostedAdapter {
                 "credential operation id, value, and non-zero generation are required".into(),
             ));
         }
-        let rollback_phase = {
-            let mut states = self.states.lock().await;
-            let state = states.get_mut(handle).ok_or_else(|| {
-                AdapterError::Unavailable(format!("unknown runtime {}", handle.0))
-            })?;
-            let rollback = match state.phase {
-                Phase::Installed => Phase::Installed,
-                Phase::Credentialed => Phase::Credentialed,
-                _ => {
-                    return Err(AdapterError::Rejected(
-                        "credential delivery requires a successful install receipt".into(),
-                    ))
-                }
-            };
-            state.phase = if rollback == Phase::Credentialed {
-                Phase::RotatingCredential
-            } else {
-                Phase::DeliveringInitialCredential
-            };
-            rollback
-        };
-
+        self.known_state(handle).await?;
         let operation_id = frame.operation_id.clone();
-        let response = self.exchange(handle, RequestFrame::Credential(frame)).await;
-        let mut states = self.states.lock().await;
-        let state = states.get_mut(handle).ok_or_else(|| {
-            AdapterError::Unavailable(format!(
-                "runtime {} disappeared during credential delivery",
-                handle.0
-            ))
-        })?;
-        match response {
+        match self.exchange(handle, RequestFrame::Credential(frame)).await {
             Ok(ResponseFrame::Credential(CredentialReceipt {
                 operation_id: returned,
                 installed: true,
-            })) if returned == operation_id => {
-                state.phase = Phase::Credentialed;
-                Ok(())
-            }
-            Ok(ResponseFrame::Credential(_)) => {
-                state.phase = rollback_phase;
-                Err(AdapterError::Rejected(
-                    "runtime did not acknowledge the exact credential operation".into(),
-                ))
-            }
+            })) if returned == operation_id => Ok(()),
+            Ok(ResponseFrame::Credential(_)) => Err(AdapterError::Rejected(
+                "runtime did not acknowledge the exact credential operation".into(),
+            )),
             Ok(_) => unreachable!("exchange verifies response operation"),
-            Err(error) => {
-                state.phase = rollback_phase;
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -244,7 +184,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorkspaceRequest,
     ) -> crate::Result<WorkspaceReceipt> {
-        self.known_state(handle).await?;
+        let state = self.known_state(handle).await?;
         validate_workspace_operation(
             &request.operation_id,
             &request.request_sha256,
@@ -258,7 +198,10 @@ impl SandboxAdapter for HostedAdapter {
                 if receipt.name == request.name
                     && receipt.workspace_id == request.workspace_id
                     && receipt.operation_id == request.operation_id
-                    && receipt.request_sha256 == request.request_sha256 =>
+                    && receipt.request_sha256 == request.request_sha256
+                    && Path::new(&receipt.path)
+                        == Path::new(&state.home_directory).join(&request.name)
+                    && valid_git_commit(&receipt.resolved_commit) =>
             {
                 Ok(receipt)
             }
@@ -339,13 +282,21 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorktreeRequest,
     ) -> crate::Result<WorktreeReceipt> {
-        self.require_credential(handle).await?;
+        let state = self.known_state(handle).await?;
         match self
             .exchange(handle, RequestFrame::AddWorktree(request.clone()))
             .await?
         {
             ResponseFrame::AddWorktree(receipt)
-                if receipt.workspace == request.workspace && receipt.name == request.name =>
+                if receipt.workspace == request.workspace
+                    && receipt.name == request.name
+                    && Path::new(&receipt.path)
+                        == Path::new(&state.home_directory)
+                            .join(&request.workspace)
+                            .join(".worktrees")
+                            .join(&request.name)
+                    && receipt.branch == format!("cma/{}", request.name)
+                    && valid_git_commit(&receipt.base_commit) =>
             {
                 Ok(receipt)
             }
@@ -361,7 +312,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorktreeRef,
     ) -> crate::Result<()> {
-        self.require_credential(handle).await?;
+        self.known_state(handle).await?;
         expect_ack(
             self.exchange(handle, RequestFrame::RemoveWorktree(request.clone()))
                 .await?,
@@ -408,7 +359,7 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn close_agent(&self, handle: &RuntimeHandle, agent: &AgentSlot) -> crate::Result<()> {
-        self.require_credential(handle).await?;
+        self.known_state(handle).await?;
         expect_ack(
             self.exchange(
                 handle,
@@ -425,7 +376,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         agent: &AgentSlot,
     ) -> crate::Result<ConversationSnapshot> {
-        self.require_credential(handle).await?;
+        self.known_state(handle).await?;
         match self
             .exchange(
                 handle,
@@ -455,15 +406,15 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &CheckpointRequest,
     ) -> crate::Result<CheckpointReceipt> {
-        self.require_credential(handle).await?;
+        self.known_state(handle).await?;
         match self
             .exchange(handle, RequestFrame::Checkpoint(request.clone()))
             .await?
         {
             ResponseFrame::Checkpoint(receipt)
                 if receipt.epoch == request.epoch
-                    && !receipt.object_reference.is_empty()
-                    && valid_sha256(&receipt.sha256) =>
+                    && valid_checkpoint_reference(&receipt.object_reference, &receipt.sha256)
+                    && receipt.writers == WriterState::Resumed =>
             {
                 Ok(receipt)
             }
@@ -475,8 +426,8 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {
-        self.require_credential(handle).await?;
-        if request.object_reference.is_empty() || !valid_sha256(&request.sha256) {
+        self.known_state(handle).await?;
+        if !valid_checkpoint_reference(&request.object_reference, &request.sha256) {
             return Err(AdapterError::Rejected(
                 "restore object reference or digest is invalid".into(),
             ));
@@ -511,8 +462,7 @@ fn validate_workspace_operation(
     if operation_id.trim().is_empty()
         || operation_id.len() > 256
         || operation_id.chars().any(char::is_control)
-        || request_sha256.len() != 64
-        || !request_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !valid_sha256(request_sha256)
         || !digest_matches
     {
         return Err(AdapterError::Rejected(

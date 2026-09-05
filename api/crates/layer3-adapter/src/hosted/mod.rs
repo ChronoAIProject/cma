@@ -22,3 +22,7 @@ mod tests;
 #[cfg(test)]
 #[path = "provision_tests.rs"]
 mod provision_tests;
+
+#[cfg(test)]
+#[path = "receipt_tests.rs"]
+mod receipt_tests;
