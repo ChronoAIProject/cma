@@ -139,9 +139,10 @@ pub use service::{
 pub(crate) use service_trust::foreign_workspace_setups;
 pub use status::{AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus};
 pub use store::{
-    InMemorySandboxStore, Page, PageRequest, SandboxLaunchCommandDisposition,
-    SandboxLaunchCommandOutcome, SandboxLifecycleCommandDisposition,
-    SandboxLifecycleCommandOutcome, SandboxStoreError,
+    InMemorySandboxStore, Page, PageRequest, SandboxImageRotationRequest,
+    SandboxInactivityPauseRequest, SandboxLaunchCommandDisposition, SandboxLaunchCommandOutcome,
+    SandboxLifecycleCommandDisposition, SandboxLifecycleCommandOutcome, SandboxMaintenanceOutcome,
+    SandboxMaintenanceStore, SandboxStoreError,
 };
 pub use title::{
     AgentTitle, AgentTitleError, AgentTitleGenerationContext, AgentTitleGenerationError,

@@ -1,0 +1,179 @@
+use super::*;
+
+use crate::sandbox::store::{
+    apply_image_rotation, apply_inactivity_pause, validate_image_rotation_request,
+    validate_inactivity_pause_request, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
+    SandboxMaintenanceApplication, SandboxMaintenanceOutcome, SandboxMaintenanceStore,
+};
+use crate::sandbox::{Agent, SandboxAgentActivity, SandboxStatus};
+
+#[async_trait]
+impl SandboxMaintenanceStore for InMemorySandboxStore {
+    async fn sandbox_maintenance_candidates(
+        &self,
+        request: &PageRequest,
+    ) -> Result<Page<SandboxId>, SandboxStoreError> {
+        let values = self
+            .lock()
+            .sandboxes
+            .iter()
+            .filter(|(_, sandbox)| sandbox.status == SandboxStatus::Active)
+            .map(|(stored_id, sandbox)| {
+                if stored_id != &sandbox.id {
+                    return Err(SandboxStoreError::Corrupt(
+                        "stored Sandbox key disagrees with its identity".into(),
+                    ));
+                }
+                Ok((sandbox.id.to_string(), sandbox.id.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        page(values, request)
+    }
+
+    async fn schedule_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        validate_inactivity_pause_request(&request)?;
+        let mut state = self.lock();
+        let current = state
+            .sandboxes
+            .get(&request.sandbox_id)
+            .cloned()
+            .ok_or(SandboxStoreError::NotFound)?;
+        let activities = live_agent_activities(&state, &current.id)?;
+        persist_application(
+            &mut state,
+            apply_inactivity_pause(&current, &activities, &request)?,
+            request.requested_at,
+        )
+    }
+
+    async fn schedule_image_rotation(
+        &self,
+        request: SandboxImageRotationRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        validate_image_rotation_request(&request)?;
+        let mut state = self.lock();
+        let current = state
+            .sandboxes
+            .get(&request.sandbox_id)
+            .cloned()
+            .ok_or(SandboxStoreError::NotFound)?;
+        let agents = sandbox_agents(&state, &current.id)?;
+        persist_application(
+            &mut state,
+            apply_image_rotation(&current, &agents, &request)?,
+            request.requested_at,
+        )
+    }
+}
+
+fn live_agent_activities(
+    state: &State,
+    sandbox_id: &SandboxId,
+) -> Result<Vec<SandboxAgentActivity>, SandboxStoreError> {
+    sandbox_agents(state, sandbox_id)?
+        .into_iter()
+        .filter(|agent| agent.status.is_live())
+        .map(|agent| {
+            let newest = newest_agent_log(state, &agent)?;
+            SandboxAgentActivity::from_live_agent(&agent, newest).map_err(|error| {
+                SandboxStoreError::Corrupt(format!("stored live Agent is invalid: {error}"))
+            })
+        })
+        .collect()
+}
+
+fn sandbox_agents(state: &State, sandbox_id: &SandboxId) -> Result<Vec<Agent>, SandboxStoreError> {
+    state
+        .agents
+        .iter()
+        .filter(|(_, agent)| &agent.sandbox_id == sandbox_id)
+        .map(|(stored_id, agent)| {
+            if stored_id != &agent.id {
+                return Err(SandboxStoreError::Corrupt(
+                    "stored Agent key disagrees with its identity".into(),
+                ));
+            }
+            Ok(agent.clone())
+        })
+        .collect()
+}
+
+fn newest_agent_log<'a>(
+    state: &'a State,
+    agent: &Agent,
+) -> Result<Option<&'a AgentLogEntry>, SandboxStoreError> {
+    let Some(entries) = state.agent_logs.get(&agent.id) else {
+        return Ok(None);
+    };
+    for (index, entry) in entries.iter().enumerate() {
+        let expected = u64::try_from(index)
+            .map_err(|_| SandboxStoreError::SequenceConflict)?
+            .checked_add(1)
+            .ok_or(SandboxStoreError::SequenceConflict)?;
+        if entry.seq != expected {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        if entry.agent_id != agent.id {
+            return Err(SandboxStoreError::Corrupt(
+                "stored Agent log disagrees with its Agent".into(),
+            ));
+        }
+    }
+    Ok(entries.last())
+}
+
+fn persist_application(
+    state: &mut State,
+    application: SandboxMaintenanceApplication,
+    appended_at: String,
+) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+    let (expected_revision, sandbox, event) = match application {
+        SandboxMaintenanceApplication::Persist {
+            expected_revision,
+            sandbox,
+            event,
+        } => (expected_revision, sandbox, event),
+        SandboxMaintenanceApplication::Complete(outcome) => return Ok(outcome),
+    };
+
+    validate_event_stream(state, &sandbox.id)?;
+    let mut candidate = state.clone();
+    let id = sandbox.id.clone();
+    save_record!(
+        candidate,
+        sandboxes,
+        id.clone(),
+        expected_revision,
+        *sandbox
+    )?;
+    append_sandbox_event(&mut candidate, &id, appended_at, event)?;
+    *state = candidate;
+    Ok(SandboxMaintenanceOutcome::Scheduled)
+}
+
+fn validate_event_stream(state: &State, sandbox_id: &SandboxId) -> Result<(), SandboxStoreError> {
+    for (index, event) in state
+        .sandbox_events
+        .get(sandbox_id)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let expected = u64::try_from(index)
+            .map_err(|_| SandboxStoreError::SequenceConflict)?
+            .checked_add(1)
+            .ok_or(SandboxStoreError::SequenceConflict)?;
+        if event.seq != expected {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        if &event.sandbox_id != sandbox_id {
+            return Err(SandboxStoreError::Corrupt(
+                "stored Sandbox event disagrees with its Sandbox".into(),
+            ));
+        }
+    }
+    Ok(())
+}
