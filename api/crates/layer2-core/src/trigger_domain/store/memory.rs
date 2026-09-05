@@ -190,6 +190,33 @@ impl TriggerStore for InMemoryTriggerStore {
             .cloned())
     }
 
+    async fn trigger_revision(
+        &self,
+        id: &TriggerId,
+        digest: &str,
+    ) -> Result<Option<TriggerRevision>, TriggerStoreError> {
+        let state = self.lock();
+        let Some(trigger) = state.triggers.get(id) else {
+            return Ok(None);
+        };
+        if &trigger.id != id {
+            return Err(TriggerStoreError::Corrupt(
+                "Trigger store key disagrees with its aggregate".into(),
+            ));
+        }
+        let Some(revision) = trigger
+            .revisions
+            .iter()
+            .find(|revision| revision.digest == digest)
+        else {
+            return Ok(None);
+        };
+        revision
+            .validate()
+            .map_err(|error| TriggerStoreError::Corrupt(error.to_string()))?;
+        Ok(Some(revision.clone()))
+    }
+
     async fn save_draft(
         &self,
         id: &TriggerId,

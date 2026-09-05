@@ -404,6 +404,19 @@ async fn publishing_resolves_exact_public_revisions_and_keeps_latest_link() {
         .unwrap();
     assert_eq!(first.public_id, second.public_id);
     assert_eq!(second.revision.revision, 2);
+    assert_eq!(first.revision.digest, second.revision.digest);
+    assert_eq!(
+        store
+            .trigger_revision(&id, &first.revision.digest)
+            .await
+            .unwrap(),
+        Some(first.revision.clone())
+    );
+    assert!(store
+        .trigger_revision(&TriggerId("trg_other".into()), &first.revision.digest)
+        .await
+        .unwrap()
+        .is_none());
     assert_eq!(
         store
             .trigger_by_public_id(&first.public_id)

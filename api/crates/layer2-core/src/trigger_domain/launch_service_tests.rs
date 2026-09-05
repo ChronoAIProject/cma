@@ -1039,7 +1039,7 @@ async fn existing_agent_still_requires_start_consent_and_owner_review() {
             .unwrap();
         assert_eq!(ready.state, LaunchState::Ready);
         assert_eq!(ready.confirmations[0].surface, LaunchConsentSurface::Review);
-        assert_eq!(ready.work.step, LaunchWorkStep::None);
+        assert_eq!(ready.work.step, LaunchWorkStep::Finish);
         assert_eq!(
             fixture.stats().await,
             TriggerStats {
@@ -1134,6 +1134,74 @@ async fn admitted_drafts_start_from_their_frozen_revision_after_retirement() {
         .unwrap();
     assert_eq!(ready.state, LaunchState::Ready);
     assert_eq!(ready.revision_digest, draft.revision_digest);
+}
+
+#[tokio::test]
+async fn admitted_draft_refreshes_review_from_its_frozen_revision_after_republish() {
+    let fixture = fixture(default_reuse(), PUBLISHER, true, false, vec![]).await;
+    let draft = fixture
+        .service
+        .create_or_resume(
+            &fixture.caller,
+            &fixture.public.public_id,
+            fixture.request("republished-start"),
+        )
+        .await
+        .unwrap()
+        .launch;
+    assert_eq!(draft.review.needs.len(), 1);
+    assert!(matches!(
+        draft.review.needs[0],
+        ReviewNeed::TrustConfirmation { .. }
+    ));
+
+    let mut changed = fixture.public.revision.content.clone();
+    changed.consent.always_review = true;
+    fixture
+        .definitions
+        .save_draft(
+            &fixture.public.trigger_id,
+            &fixture.public.owner,
+            1,
+            changed,
+            "2026-09-05T00:02:00Z".into(),
+        )
+        .await
+        .unwrap();
+    let republished = fixture
+        .definitions
+        .publish_trigger(
+            &fixture.public.trigger_id,
+            &fixture.public.owner,
+            2,
+            "2026-09-05T00:03:00Z".into(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(draft.revision_digest, republished.revision.digest);
+
+    assert_eq!(
+        fixture
+            .service
+            .start(
+                &fixture.caller,
+                &draft.id,
+                StartLaunch {
+                    trust_confirmed_digest: Some("b".repeat(64)),
+                    acknowledgements: vec![],
+                },
+            )
+            .await
+            .unwrap_err(),
+        LaunchServiceError::TrustConfirmationMismatch
+    );
+    let refreshed = fixture
+        .service
+        .read(&fixture.caller, &draft.id)
+        .await
+        .unwrap();
+    assert_eq!(refreshed.revision_digest, draft.revision_digest);
+    assert_eq!(refreshed.review.needs, draft.review.needs);
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@ use layer2_core::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspacePro
 use layer2_core::trigger_domain::{
     Placement, PlacementId, PlacementUpdate, PublicTrigger, PublicTriggerId, Trigger,
     TriggerAvailability, TriggerContent, TriggerError, TriggerId, TriggerPage, TriggerPageRequest,
-    TriggerPreview, TriggerStats, TriggerStore, TriggerStoreError,
+    TriggerPreview, TriggerRevision, TriggerStats, TriggerStore, TriggerStoreError,
 };
 use layer2_core::StoreError;
 use mongodb::bson::Document;
@@ -101,6 +101,14 @@ impl TriggerStore for MongoTriggerDefinitionStore {
         Ok(queries::owned(self, id, owner)
             .await?
             .map(|stored| stored.trigger))
+    }
+
+    async fn trigger_revision(
+        &self,
+        id: &TriggerId,
+        digest: &str,
+    ) -> Result<Option<TriggerRevision>, TriggerStoreError> {
+        queries::revision(self, id, digest).await
     }
 
     async fn save_draft(

@@ -12,6 +12,8 @@ use mongodb::ClientSession;
 use super::documents::{read_revision, read_trigger, StoredRevision, StoredTrigger};
 use super::{driver_error, MongoTriggerDefinitionStore};
 
+const EXACT_REVISION_LIMIT: i64 = 1;
+
 pub(super) async fn owned(
     store: &MongoTriggerDefinitionStore,
     id: &TriggerId,
@@ -62,6 +64,38 @@ pub(super) async fn public(
     let stored = read_trigger(&document)?;
     verify_revisions(store, std::slice::from_ref(&stored.trigger)).await?;
     project_public(stored.trigger).map(Some)
+}
+
+pub(super) async fn revision(
+    store: &MongoTriggerDefinitionStore,
+    id: &TriggerId,
+    digest: &str,
+) -> Result<Option<TriggerRevision>, TriggerStoreError> {
+    let mut cursor = store
+        .revisions
+        .find(doc! { "trigger_id": id.as_str(), "record.digest": digest })
+        .sort(doc! { "revision": 1_i32 })
+        .limit(EXACT_REVISION_LIMIT)
+        .await
+        .map_err(|error| driver_error("read exact immutable Trigger revision", error))?;
+    let Some(document) = cursor
+        .try_next()
+        .await
+        .map_err(|error| driver_error("stream exact immutable Trigger revision", error))?
+    else {
+        return Ok(None);
+    };
+    let stored = read_revision(&document)?;
+    if stored.trigger_id != id.as_str() || stored.revision.digest != digest {
+        return Err(TriggerStoreError::Corrupt(
+            "immutable Trigger revision crossed its lookup boundary".into(),
+        ));
+    }
+    stored
+        .revision
+        .validate()
+        .map_err(|error| TriggerStoreError::Corrupt(error.to_string()))?;
+    Ok(Some(stored.revision))
 }
 
 pub(super) async fn list_owner(
