@@ -2,6 +2,13 @@
 
 use crate::{InterfaceProfile, Operation};
 
+mod launch_companion;
+
+pub use launch_companion::{launch_companion_router, LaunchCompanionState};
+
+#[cfg(test)]
+mod launch_companion_tests;
+
 pub struct AguiInterface;
 
 impl InterfaceProfile for AguiInterface {
