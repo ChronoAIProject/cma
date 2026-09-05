@@ -18,6 +18,8 @@ async fn files_and_safe_links_publish_as_one_agent_home() {
         &config,
         &reqwest::Client::new(),
         &AgentHomePlan {
+            operation_id: "agent:agent-1:home:create:v1".into(),
+            request_sha256: "a".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
             files: vec![HomeFile {
                 path: "config.toml".into(),
@@ -53,6 +55,8 @@ async fn files_and_safe_links_publish_as_one_agent_home() {
 async fn traversal_and_symlink_parent_conflicts_leave_no_home() {
     let config = config("refuse");
     let plan = AgentHomePlan {
+        operation_id: "agent:agent-1:home:create:v1".into(),
+        request_sha256: "b".repeat(64),
         agent_id: AgentSlot::new("agent-1"),
         files: vec![HomeFile {
             path: "skills/link/owned".into(),
@@ -83,6 +87,8 @@ async fn a_symlinked_agent_root_cannot_redirect_materialization() {
         &config,
         &reqwest::Client::new(),
         &AgentHomePlan {
+            operation_id: "agent:agent-1:home:create:v1".into(),
+            request_sha256: "c".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
             files: vec![HomeFile {
                 path: "config.toml".into(),

@@ -4,6 +4,8 @@ use super::*;
 
 fn launch() -> AgentLaunch {
     AgentLaunch {
+        operation_id: "agent:test-agent:open:v1".into(),
+        request_sha256: "a".repeat(64),
         agent_id: AgentSlot::new("test-agent"),
         cwd: "/tmp".into(),
         home: "/tmp".into(),

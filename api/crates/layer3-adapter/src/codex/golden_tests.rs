@@ -83,16 +83,17 @@ fn config_goldens_cover_both_access_modes_permissions_and_all_efforts() {
 #[test]
 fn agent_home_contains_exact_profile_files_shared_auth_and_skills() {
     let prompt = "Line one\n\nDo exactly this.\n";
-    let request = AgentHomeRequest {
-        options: options(false, PermissionLevel::Guarded, ReasoningEffort::High),
-        system_prompt: prompt.into(),
-        skills: vec![AgentSkill {
+    let request = AgentHomeRequest::new(
+        "agent:agent-7:home:create:v1",
+        options(false, PermissionLevel::Guarded, ReasoningEffort::High),
+        prompt,
+        vec![AgentSkill {
             id: "proof-review".into(),
             version: Some("v3".into()),
             archive_sha256: "a".repeat(64),
             source_url: "https://ornn.example/proof-review.tgz".into(),
         }],
-    };
+    );
     let plan = render_agent_home(&request, &CodexConfig::default()).expect("home renders");
 
     assert_eq!(plan.agent_id, request.options.slot);
@@ -120,18 +121,23 @@ fn agent_home_contains_exact_profile_files_shared_auth_and_skills() {
 #[test]
 fn bridge_launch_uses_per_agent_home_worktree_slot_and_acp_resume() {
     let options = options(false, PermissionLevel::Autonomous, ReasoningEffort::XHigh);
-    let fresh = render_launch(&AgentOpenRequest {
-        options: options.clone(),
-        resume_conversation: None,
-    })
+    let fresh = render_launch(&AgentOpenRequest::new(
+        "agent:agent-7:open:v1",
+        options.clone(),
+        None,
+    ))
     .expect("fresh launch");
-    let resumed = render_launch(&AgentOpenRequest {
-        options: options.clone(),
-        resume_conversation: Some("conversation-old".into()),
-    })
+    let resumed = render_launch(&AgentOpenRequest::new(
+        "agent:agent-7:open:v1",
+        options.clone(),
+        Some("conversation-old".into()),
+    ))
     .expect("resume launch");
 
-    assert_eq!(fresh, resumed, "resume is an ACP load, not a CLI argument");
+    assert_ne!(fresh.request_sha256, resumed.request_sha256);
+    assert_eq!(fresh.program, resumed.program);
+    assert_eq!(fresh.args, resumed.args, "resume is not a CLI argument");
+    assert_eq!(fresh.env, resumed.env);
     assert_eq!(fresh.program, "codex-acp");
     assert!(fresh.args.is_empty());
     assert_eq!(fresh.agent_id, options.slot);
@@ -153,10 +159,11 @@ fn bridge_launch_rejects_non_normalized_or_misplaced_worktree_paths() {
         options.working_directory = cwd.into();
 
         assert!(
-            render_launch(&AgentOpenRequest {
+            render_launch(&AgentOpenRequest::new(
+                "agent:agent-7:open:v1",
                 options,
-                resume_conversation: None,
-            })
+                None,
+            ))
             .is_err(),
             "accepted invalid worktree cwd {cwd}"
         );
@@ -165,10 +172,11 @@ fn bridge_launch_rejects_non_normalized_or_misplaced_worktree_paths() {
 
 #[test]
 fn own_credentials_never_receive_the_managed_placeholder() {
-    let launch = render_launch(&AgentOpenRequest {
-        options: options(true, PermissionLevel::Guarded, ReasoningEffort::Minimal),
-        resume_conversation: None,
-    })
+    let launch = render_launch(&AgentOpenRequest::new(
+        "agent:agent-7:open:v1",
+        options(true, PermissionLevel::Guarded, ReasoningEffort::Minimal),
+        None,
+    ))
     .expect("own-credential launch");
     assert!(!launch.env.contains_key("CHRONO_UPSTREAM_PLACEHOLDER_KEY"));
 }

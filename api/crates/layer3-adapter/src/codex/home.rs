@@ -58,6 +58,8 @@ pub fn render_agent_home(
     }));
 
     Ok(AgentHomePlan {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
         agent_id: request.options.slot.clone(),
         files: vec![
             HomeFile {
@@ -96,6 +98,8 @@ pub fn render_launch(request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
         );
     }
     Ok(AgentLaunch {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
         agent_id: request.options.slot.clone(),
         cwd: request.options.working_directory.clone(),
         home: request.options.home_directory.clone(),

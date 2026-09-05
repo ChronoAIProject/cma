@@ -8,21 +8,23 @@ use super::deployment::provider_request_identity;
 use super::HostedBackend;
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{
-    Acknowledgement, CredentialReceipt, RequestFrame, ResponseFrame, WireFailure, WireOperation,
+    Acknowledgement, AgentOpenReceipt, CredentialReceipt, RequestFrame, ResponseFrame, WireFailure,
+    WireOperation,
 };
 use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointReceipt, CommandReceipt,
     ConversationChannel, ConversationInputSender, ConversationSnapshot, ConversationUpdate,
-    InstallReceipt, ResourceReading, RuntimeHandle, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRemoveReceipt, WorkspaceSource, WorktreeReceipt, WriterState,
+    InstallReceipt, ResourceReading, RuntimeHandle, WorkspaceReceipt, WorktreeReceipt, WriterState,
 };
 
 #[path = "memory_state.rs"]
 mod state;
 use state::{
-    digest, refused, remember_workspace_operation, replay_workspace_operation, require_credential,
-    runtime_home, safe_name, successful_commands,
+    digest, fingerprint, refused, remember_operation, replay_operation, require_credential,
+    successful_commands, valid_sha256,
 };
+#[path = "memory_mutations.rs"]
+mod mutations;
 
 /// Observable in-memory state used by Layer 2 lifecycle tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,12 +52,19 @@ struct MemoryRuntime {
     install: Option<((String, String), InstallReceipt)>,
     credential_delivered: bool,
     workspaces: BTreeMap<String, WorkspaceReceipt>,
-    workspace_operations: BTreeMap<String, (String, ResponseFrame)>,
+    operations: BTreeMap<String, MemoryOperation>,
     worktrees: BTreeMap<(String, String), WorktreeReceipt>,
     homes: BTreeMap<AgentSlot, AgentHomePlan>,
     agents: BTreeMap<AgentSlot, MemoryAgent>,
     writer_fence_captures: u64,
     restored_object: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct MemoryOperation {
+    request_sha256: String,
+    payload_sha256: String,
+    response: ResponseFrame,
 }
 
 /// Deterministic hosted backend with no filesystem or network effects.
@@ -138,7 +147,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 install: None,
                 credential_delivered: false,
                 workspaces: BTreeMap::new(),
-                workspace_operations: BTreeMap::new(),
+                operations: BTreeMap::new(),
                 worktrees: BTreeMap::new(),
                 homes: BTreeMap::new(),
                 agents: BTreeMap::new(),
@@ -213,168 +222,35 @@ impl HostedBackend for InMemoryHostedBackend {
             }
             RequestFrame::PrepareWorkspace(request) => {
                 require_credential(runtime, operation)?;
-                if !request.has_valid_sha256() || request.operation_id.trim().is_empty() {
-                    return refused(operation, "workspace_request_invalid");
-                }
-                if let Some(response) = replay_workspace_operation(
-                    runtime,
-                    &request.operation_id,
-                    &request.request_sha256,
-                    operation,
-                )? {
-                    return Ok(response);
-                }
-                if !safe_name(&request.name) || runtime.workspaces.contains_key(&request.name) {
-                    return refused(operation, "invalid_or_existing_workspace");
-                }
-                let commit_source = match &request.source {
-                    WorkspaceSource::Clone { url, reference } => {
-                        format!("{url}:{}", reference.as_deref().unwrap_or("default"))
-                    }
-                    WorkspaceSource::Init => format!("init:{}", request.name),
-                };
-                let receipt = WorkspaceReceipt {
-                    operation_id: request.operation_id.clone(),
-                    request_sha256: request.request_sha256.clone(),
-                    workspace_id: request.workspace_id.clone(),
-                    name: request.name.clone(),
-                    path: format!("{}/{}", runtime_home(runtime), request.name),
-                    resolved_commit: digest(commit_source.as_bytes()),
-                };
-                runtime.workspaces.insert(request.name, receipt.clone());
-                let response = ResponseFrame::PrepareWorkspace(receipt);
-                remember_workspace_operation(
-                    runtime,
-                    request.operation_id,
-                    request.request_sha256,
-                    response.clone(),
-                );
-                Ok(response)
+                mutations::prepare_workspace(runtime, request)
             }
             RequestFrame::WorkspaceSetup(request) => {
                 require_credential(runtime, operation)?;
-                if !request.has_valid_sha256() || request.operation_id.trim().is_empty() {
-                    return refused(operation, "workspace_request_invalid");
-                }
-                if let Some(response) = replay_workspace_operation(
-                    runtime,
-                    &request.operation_id,
-                    &request.request_sha256,
-                    operation,
-                )? {
-                    return Ok(response);
-                }
-                let Some(workspace) = runtime.workspaces.get(&request.name) else {
-                    return refused(operation, "workspace_not_found");
-                };
-                if workspace.workspace_id != request.workspace_id {
-                    return refused(operation, "workspace_identity_mismatch");
-                }
-                let response = ResponseFrame::WorkspaceSetup(SetupReceipt {
-                    operation_id: request.operation_id.clone(),
-                    request_sha256: request.request_sha256.clone(),
-                    workspace_id: request.workspace_id.clone(),
-                    commands: successful_commands(&request.commands),
-                });
-                remember_workspace_operation(
-                    runtime,
-                    request.operation_id,
-                    request.request_sha256,
-                    response.clone(),
-                );
-                Ok(response)
+                mutations::setup_workspace(runtime, request)
             }
             RequestFrame::RemoveWorkspace(request) => {
                 require_credential(runtime, operation)?;
-                if !request.has_valid_sha256() || request.operation_id.trim().is_empty() {
-                    return refused(operation, "workspace_request_invalid");
-                }
-                if let Some(response) = replay_workspace_operation(
-                    runtime,
-                    &request.operation_id,
-                    &request.request_sha256,
-                    operation,
-                )? {
-                    return Ok(response);
-                }
-                let Some(workspace) = runtime.workspaces.get(&request.name) else {
-                    return refused(operation, "workspace_not_found");
-                };
-                if workspace.workspace_id != request.workspace_id {
-                    return refused(operation, "workspace_identity_mismatch");
-                }
-                runtime.workspaces.remove(&request.name);
-                runtime
-                    .worktrees
-                    .retain(|(workspace, _), _| workspace != &request.name);
-                let response = ResponseFrame::RemoveWorkspace(WorkspaceRemoveReceipt {
-                    operation_id: request.operation_id.clone(),
-                    request_sha256: request.request_sha256.clone(),
-                    workspace_id: request.workspace_id.clone(),
-                });
-                remember_workspace_operation(
-                    runtime,
-                    request.operation_id,
-                    request.request_sha256,
-                    response.clone(),
-                );
-                Ok(response)
+                mutations::remove_workspace(runtime, request)
             }
             RequestFrame::AddWorktree(request) => {
                 require_credential(runtime, operation)?;
-                if !safe_name(&request.name)
-                    || !runtime.workspaces.contains_key(&request.workspace)
-                    || runtime
-                        .worktrees
-                        .contains_key(&(request.workspace.clone(), request.name.clone()))
-                {
-                    return refused(operation, "invalid_or_existing_worktree");
-                }
-                let receipt = WorktreeReceipt {
-                    workspace: request.workspace.clone(),
-                    name: request.name.clone(),
-                    path: format!(
-                        "{}/{}/.worktrees/{}",
-                        runtime_home(runtime),
-                        request.workspace,
-                        request.name
-                    ),
-                    branch: format!("cma/{}", request.name),
-                    base_commit: request.base,
-                };
-                runtime
-                    .worktrees
-                    .insert((request.workspace, request.name), receipt.clone());
-                Ok(ResponseFrame::AddWorktree(receipt))
+                mutations::add_worktree(runtime, request)
             }
-            RequestFrame::RemoveWorktree(reference) => {
+            RequestFrame::RemoveWorktree(request) => {
                 require_credential(runtime, operation)?;
-                if runtime
-                    .worktrees
-                    .remove(&(reference.workspace, reference.name))
-                    .is_none()
-                {
-                    return refused(operation, "worktree_not_found");
-                }
-                Ok(ResponseFrame::RemoveWorktree(Acknowledgement::default()))
+                mutations::remove_worktree(runtime, request)
             }
             RequestFrame::MaterializeAgentHome(plan) => {
                 require_credential(runtime, operation)?;
-                if plan.agent_id.0.is_empty() || runtime.homes.contains_key(&plan.agent_id) {
-                    return refused(operation, "invalid_or_existing_agent_home");
-                }
-                runtime.homes.insert(plan.agent_id.clone(), plan);
-                Ok(ResponseFrame::MaterializeAgentHome(
-                    Acknowledgement::default(),
-                ))
+                mutations::materialize_home(runtime, plan)
             }
-            RequestFrame::CloseAgent(reference) => {
+            RequestFrame::RemoveAgentHome(request) => {
                 require_credential(runtime, operation)?;
-                let Some(agent) = runtime.agents.get_mut(&reference.agent_id) else {
-                    return refused(operation, "agent_not_found");
-                };
-                agent.running = false;
-                Ok(ResponseFrame::CloseAgent(Acknowledgement::default()))
+                mutations::remove_home(runtime, request)
+            }
+            RequestFrame::CloseAgent(request) => {
+                require_credential(runtime, operation)?;
+                mutations::close_agent(runtime, request)
             }
             RequestFrame::CaptureAgent(reference) => {
                 require_credential(runtime, operation)?;
@@ -434,7 +310,7 @@ impl HostedBackend for InMemoryHostedBackend {
         launch: AgentLaunch,
         resume_conversation: Option<String>,
         _updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
         self.requests
             .lock()
             .await
@@ -451,6 +327,30 @@ impl HostedBackend for InMemoryHostedBackend {
             .get_mut(handle)
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
         require_credential(runtime, WireOperation::OpenAgent)?;
+        let expected = format!("agent:{}:open:v1", launch.agent_id.as_str());
+        if launch.operation_id != expected || !valid_sha256(&launch.request_sha256) {
+            return refused(WireOperation::OpenAgent, "operation_request_invalid");
+        }
+        let payload = fingerprint(&(launch.clone(), resume_conversation.clone()))?;
+        if let Some(response) = replay_operation(
+            runtime,
+            &launch.operation_id,
+            &launch.request_sha256,
+            &payload,
+            WireOperation::OpenAgent,
+        )? {
+            let ResponseFrame::OpenAgent(receipt) = response else {
+                return refused(WireOperation::OpenAgent, "operation_replay_mismatch");
+            };
+            let live = runtime
+                .agents
+                .get(&launch.agent_id)
+                .is_some_and(|agent| agent.running && agent.launch == launch);
+            if !live {
+                return refused(WireOperation::OpenAgent, "agent_process_not_live");
+            }
+            return Ok((channel(receipt.conversation_id.clone()), receipt));
+        }
         if !runtime.homes.contains_key(&launch.agent_id)
             || !runtime
                 .worktrees
@@ -468,6 +368,14 @@ impl HostedBackend for InMemoryHostedBackend {
 
         let conversation_id =
             resume_conversation.unwrap_or_else(|| format!("conversation-{}", launch.agent_id.0));
+        let receipt = AgentOpenReceipt {
+            operation_id: launch.operation_id.clone(),
+            request_sha256: launch.request_sha256.clone(),
+            agent_id: launch.agent_id.clone(),
+            cwd: launch.cwd.clone(),
+            home: launch.home.clone(),
+            conversation_id: Some(conversation_id.clone()),
+        };
         runtime.agents.insert(
             launch.agent_id.clone(),
             MemoryAgent {
@@ -476,10 +384,14 @@ impl HostedBackend for InMemoryHostedBackend {
                 running: true,
             },
         );
-        Ok(ConversationChannel {
-            input: ConversationInputSender::spawn(1, |_| async { Ok(()) }),
-            conversation_id: Some(conversation_id),
-        })
+        remember_operation(
+            runtime,
+            receipt.operation_id.clone(),
+            receipt.request_sha256.clone(),
+            payload,
+            ResponseFrame::OpenAgent(receipt.clone()),
+        );
+        Ok((channel(Some(conversation_id)), receipt))
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
@@ -490,5 +402,12 @@ impl HostedBackend for InMemoryHostedBackend {
             )));
         }
         Ok(())
+    }
+}
+
+fn channel(conversation_id: Option<String>) -> ConversationChannel {
+    ConversationChannel {
+        input: ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+        conversation_id,
     }
 }

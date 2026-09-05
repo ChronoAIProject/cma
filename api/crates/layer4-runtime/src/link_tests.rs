@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use layer3_adapter::wire::{AgentRef, RequestFrame, ResponseFrame, WireOperation};
+use layer3_adapter::wire::{RequestFrame, ResponseFrame, WireOperation};
 use layer3_adapter::{
-    AgentHomePlan, AgentLaunch, AgentSlot, CheckpointRequest, CredentialFrame, InstallRequest,
-    RestoreRequest, RuntimeCredential, WorkspaceRequest, WorkspaceSource, WorktreeRequest,
+    AgentCloseRequest, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointRequest, CredentialFrame,
+    InstallRequest, RestoreRequest, RuntimeCredential, WorkspaceRequest, WorkspaceSource,
+    WorktreeRequest,
 };
 use tokio_tungstenite::tungstenite::Message as ClientMessage;
 
@@ -175,11 +176,12 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
         other => panic!("workspace preparation failed: {other:?}"),
     };
     let worktree = match supervisor
-        .dispatch(RequestFrame::AddWorktree(WorktreeRequest {
-            workspace: "project".into(),
-            name: "agent-1".into(),
-            base: workspace.resolved_commit,
-        }))
+        .dispatch(RequestFrame::AddWorktree(WorktreeRequest::new(
+            "worktree:project:agent-1:add:v1",
+            "project",
+            "agent-1",
+            workspace.resolved_commit,
+        )))
         .await
     {
         ResponseFrame::AddWorktree(receipt) => receipt,
@@ -187,6 +189,8 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     };
     let materialized = supervisor
         .dispatch(RequestFrame::MaterializeAgentHome(AgentHomePlan {
+            operation_id: "agent:agent-1:home:create:v1".into(),
+            request_sha256: "a".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
             files: Vec::new(),
             symlinks: Vec::new(),
@@ -200,6 +204,8 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     let agent_home = crate::config::RuntimeConfig::for_test(home.clone()).agent_home("agent-1");
     let opened = supervisor
         .dispatch(RequestFrame::OpenAgent(AgentLaunch {
+            operation_id: "agent:agent-1:open:v1".into(),
+            request_sha256: "b".repeat(64),
             agent_id: AgentSlot::new("agent-1"),
             cwd: worktree.path,
             home: agent_home.to_string_lossy().into_owned(),
@@ -251,9 +257,10 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     assert_eq!(echoed, lanes::frame(lanes::CONVERSATION, payload));
     socket.close(None).await.unwrap();
     let closed = supervisor
-        .dispatch(RequestFrame::CloseAgent(AgentRef {
-            agent_id: AgentSlot::new("agent-1"),
-        }))
+        .dispatch(RequestFrame::CloseAgent(AgentCloseRequest::new(
+            "agent:agent-1:close:v1",
+            AgentSlot::new("agent-1"),
+        )))
         .await;
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)));
 

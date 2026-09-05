@@ -3,11 +3,12 @@
 use tokio::sync::mpsc;
 
 use crate::{
-    AdapterCapabilities, AgentHomeRequest, AgentOpenRequest, AgentSlot, CheckpointReceipt,
-    CheckpointRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
-    CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreRequest, Result,
-    RuntimeHandle, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest,
-    WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
+    AgentOpenRequest, AgentSlot, CheckpointReceipt, CheckpointRequest, ConversationChannel,
+    ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest,
+    ResourceReading, RestoreRequest, Result, RuntimeHandle, SandboxSpec, SetupReceipt,
+    WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
+    WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
@@ -63,6 +64,12 @@ pub trait SandboxAdapter: Send + Sync {
         request: &AgentHomeRequest,
     ) -> Result<()>;
 
+    async fn remove_agent_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentHomeRemoveRequest,
+    ) -> Result<()>;
+
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -70,7 +77,7 @@ pub trait SandboxAdapter: Send + Sync {
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel>;
 
-    async fn close_agent(&self, handle: &RuntimeHandle, agent: &AgentSlot) -> Result<()>;
+    async fn close_agent(&self, handle: &RuntimeHandle, request: &AgentCloseRequest) -> Result<()>;
 
     async fn capture_agent(
         &self,

@@ -43,11 +43,12 @@ async fn preexisting_worktree_branch_is_preserved() {
     let error = add(
         &home,
         true,
-        &WorktreeRequest {
-            workspace: "project".into(),
-            name: "agent-1".into(),
-            base: workspace.resolved_commit,
-        },
+        &WorktreeRequest::new(
+            "worktree:project:agent-1:add:v1",
+            "project",
+            "agent-1",
+            workspace.resolved_commit,
+        ),
     )
     .await
     .unwrap_err();
@@ -76,11 +77,12 @@ async fn real_git_worktrees_use_the_contract_path_and_branch() {
     let receipt = add(
         &home,
         true,
-        &WorktreeRequest {
-            workspace: "project".into(),
-            name: "agent-1".into(),
-            base: workspace.resolved_commit,
-        },
+        &WorktreeRequest::new(
+            "worktree:project:agent-1:add:v1",
+            "project",
+            "agent-1",
+            workspace.resolved_commit,
+        ),
     )
     .await
     .unwrap();
@@ -98,10 +100,7 @@ async fn real_git_worktrees_use_the_contract_path_and_branch() {
     remove(
         &home,
         true,
-        &WorktreeRef {
-            workspace: "project".into(),
-            name: "agent-1".into(),
-        },
+        &WorktreeRef::new("worktree:project:agent-1:remove:v1", "project", "agent-1"),
     )
     .await
     .unwrap();

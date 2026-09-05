@@ -3,10 +3,7 @@ use crate::AdapterError;
 
 pub(super) fn expect_ack(response: ResponseFrame) -> crate::Result<()> {
     let acknowledgement = match response {
-        ResponseFrame::RemoveWorktree(value)
-        | ResponseFrame::MaterializeAgentHome(value)
-        | ResponseFrame::CloseAgent(value)
-        | ResponseFrame::Restore(value) => value,
+        ResponseFrame::Restore(value) => value,
         _ => {
             return Err(AdapterError::Rejected(
                 "runtime returned no acknowledgement".into(),
@@ -31,6 +28,7 @@ pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
         ResponseFrame::AddWorktree(_) => WireOperation::AddWorktree,
         ResponseFrame::RemoveWorktree(_) => WireOperation::RemoveWorktree,
         ResponseFrame::MaterializeAgentHome(_) => WireOperation::MaterializeAgentHome,
+        ResponseFrame::RemoveAgentHome(_) => WireOperation::RemoveAgentHome,
         ResponseFrame::OpenAgent(_) => WireOperation::OpenAgent,
         ResponseFrame::CloseAgent(_) => WireOperation::CloseAgent,
         ResponseFrame::CaptureAgent(_) => WireOperation::CaptureAgent,
@@ -62,6 +60,7 @@ pub(super) const fn operation_name(operation: WireOperation) -> &'static str {
         WireOperation::AddWorktree => "add worktree",
         WireOperation::RemoveWorktree => "remove worktree",
         WireOperation::MaterializeAgentHome => "materialize agent home",
+        WireOperation::RemoveAgentHome => "remove agent home",
         WireOperation::OpenAgent => "open agent",
         WireOperation::CloseAgent => "close agent",
         WireOperation::CaptureAgent => "capture agent",

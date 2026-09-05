@@ -13,6 +13,7 @@ pub(crate) async fn add(
     allow_local_git: bool,
     request: &WorktreeRequest,
 ) -> Result<WorktreeReceipt> {
+    validate_add_request(request)?;
     safe_component(&request.workspace, "workspace name")?;
     safe_component(&request.name, "worktree name")?;
     validate_selector(&request.base, "worktree base")?;
@@ -54,6 +55,8 @@ pub(crate) async fn add(
     ))?;
     crate::fs_durability::sync_tree(&path).map_err(worktree_io("sync added worktree"))?;
     Ok(WorktreeReceipt {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
         workspace: request.workspace.clone(),
         name: request.name.clone(),
         path: path.to_string_lossy().into_owned(),
@@ -109,6 +112,7 @@ pub(crate) async fn remove(
     allow_local_git: bool,
     reference: &WorktreeRef,
 ) -> Result<()> {
+    validate_remove_request(reference)?;
     safe_component(&reference.workspace, "workspace name")?;
     safe_component(&reference.name, "worktree name")?;
     let repository = home.join(&reference.workspace);
@@ -144,6 +148,45 @@ pub(crate) async fn remove(
     crate::fs_durability::sync_tree(&repository.join(".git")).map_err(worktree_io(
         "sync repository metadata after removing worktree",
     ))?;
+    Ok(())
+}
+
+fn validate_add_request(request: &WorktreeRequest) -> Result<()> {
+    let expected = format!("worktree:{}:{}:add:v1", request.workspace, request.name);
+    validate_operation(
+        request.has_valid_sha256(),
+        &request.operation_id,
+        &request.request_sha256,
+        &expected,
+    )
+}
+
+fn validate_remove_request(request: &WorktreeRef) -> Result<()> {
+    let expected = format!("worktree:{}:{}:remove:v1", request.workspace, request.name);
+    validate_operation(
+        request.has_valid_sha256(),
+        &request.operation_id,
+        &request.request_sha256,
+        &expected,
+    )
+}
+
+fn validate_operation(
+    digest_matches: bool,
+    operation_id: &str,
+    request_sha256: &str,
+    expected: &str,
+) -> Result<()> {
+    let lower_sha256 = request_sha256.len() == 64
+        && request_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !digest_matches || operation_id != expected || operation_id.len() > 256 || !lower_sha256 {
+        return Err(RuntimeError::rejected(
+            "worktree_operation_invalid",
+            "worktree operation identity is invalid",
+        ));
+    }
     Ok(())
 }
 

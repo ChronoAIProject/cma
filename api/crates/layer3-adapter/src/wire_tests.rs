@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::{
-    AgentSkill, CommandReceipt, HomeFile, HomeSymlink, PermissionLevel, ReasoningEffort,
-    RuntimeCredential, RuntimeOptions, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
-    WorkspaceSource, WriterState,
+    AgentCloseRequest, AgentHomeRemoveRequest, AgentSkill, CommandReceipt, HomeFile, HomeSymlink,
+    PermissionLevel, ReasoningEffort, RuntimeCredential, RuntimeOptions, WorkspaceRemoveReceipt,
+    WorkspaceRemoveRequest, WorkspaceSource, WorktreeRemoveReceipt, WriterState,
 };
 
 fn options() -> RuntimeOptions {
@@ -52,16 +52,20 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
             "wks-repo",
             "repo",
         )),
-        RequestFrame::AddWorktree(WorktreeRequest {
-            workspace: "repo".into(),
-            name: "wt-1".into(),
-            base: "abc123".into(),
-        }),
-        RequestFrame::RemoveWorktree(WorktreeRef {
-            workspace: "repo".into(),
-            name: "wt-1".into(),
-        }),
+        RequestFrame::AddWorktree(WorktreeRequest::new(
+            "worktree:repo:wt-1:add:v1",
+            "repo",
+            "wt-1",
+            "abc123",
+        )),
+        RequestFrame::RemoveWorktree(WorktreeRef::new(
+            "worktree:repo:wt-1:remove:v1",
+            "repo",
+            "wt-1",
+        )),
         RequestFrame::MaterializeAgentHome(AgentHomePlan {
+            operation_id: "agent:agent-1:home:create:v1".into(),
+            request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
             files: vec![HomeFile {
                 path: "AGENTS.md".into(),
@@ -78,7 +82,13 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
                 source_url: "https://ornn.example/review.tgz".into(),
             }],
         }),
+        RequestFrame::RemoveAgentHome(AgentHomeRemoveRequest::new(
+            "agent:agent-1:home:remove:v1",
+            AgentSlot("agent-1".into()),
+        )),
         RequestFrame::OpenAgent(AgentLaunch {
+            operation_id: "agent:agent-1:open:v1".into(),
+            request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
             cwd: options().working_directory,
             home: options().home_directory,
@@ -86,9 +96,10 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
             args: Vec::new(),
             env: BTreeMap::new(),
         }),
-        RequestFrame::CloseAgent(AgentRef {
-            agent_id: AgentSlot("agent-1".into()),
-        }),
+        RequestFrame::CloseAgent(AgentCloseRequest::new(
+            "agent:agent-1:close:v1",
+            AgentSlot("agent-1".into()),
+        )),
         RequestFrame::CaptureAgent(AgentRef {
             agent_id: AgentSlot("agent-1".into()),
         }),
@@ -115,6 +126,7 @@ fn every_contract_2_request_round_trips_with_its_exact_tag() {
         "add_worktree",
         "remove_worktree",
         "materialize_agent_home",
+        "remove_agent_home",
         "open_agent",
         "close_agent",
         "capture_agent",
@@ -175,19 +187,44 @@ fn every_contract_2_reply_round_trips_and_failures_stay_typed() {
             workspace_id: "wks-repo".into(),
         }),
         ResponseFrame::AddWorktree(WorktreeReceipt {
+            operation_id: "worktree:repo:wt-1:add:v1".into(),
+            request_sha256: sha(),
             workspace: "repo".into(),
             name: "wt-1".into(),
             path: "/home/cma/repo/.worktrees/wt-1".into(),
             branch: "cma/wt-1".into(),
             base_commit: sha(),
         }),
-        ResponseFrame::RemoveWorktree(Acknowledgement::default()),
-        ResponseFrame::MaterializeAgentHome(Acknowledgement::default()),
-        ResponseFrame::OpenAgent(AgentOpenReceipt {
+        ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
+            operation_id: "worktree:repo:wt-1:remove:v1".into(),
+            request_sha256: sha(),
+            workspace: "repo".into(),
+            name: "wt-1".into(),
+        }),
+        ResponseFrame::MaterializeAgentHome(AgentHomeReceipt {
+            operation_id: "agent:agent-1:home:create:v1".into(),
+            request_sha256: sha(),
             agent_id: AgentSlot("agent-1".into()),
+            path: "/home/cma/.cma/agents/agent-1/home".into(),
+        }),
+        ResponseFrame::RemoveAgentHome(AgentHomeRemoveReceipt {
+            operation_id: "agent:agent-1:home:remove:v1".into(),
+            request_sha256: sha(),
+            agent_id: AgentSlot("agent-1".into()),
+        }),
+        ResponseFrame::OpenAgent(AgentOpenReceipt {
+            operation_id: "agent:agent-1:open:v1".into(),
+            request_sha256: sha(),
+            agent_id: AgentSlot("agent-1".into()),
+            cwd: "/home/cma/repo/.worktrees/wt-1".into(),
+            home: "/home/cma/.cma/agents/agent-1/home".into(),
             conversation_id: Some("conversation-1".into()),
         }),
-        ResponseFrame::CloseAgent(Acknowledgement::default()),
+        ResponseFrame::CloseAgent(AgentCloseReceipt {
+            operation_id: "agent:agent-1:close:v1".into(),
+            request_sha256: sha(),
+            agent_id: AgentSlot("agent-1".into()),
+        }),
         ResponseFrame::CaptureAgent(ConversationSnapshot {
             conversation_id: "conversation-1".into(),
             archive_sha256: sha(),

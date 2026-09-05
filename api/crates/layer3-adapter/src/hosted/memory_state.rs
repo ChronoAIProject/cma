@@ -1,8 +1,9 @@
 use sha2::{Digest, Sha256};
 
-use super::{InMemoryHostedBackend, InMemoryRuntimeSnapshot, MemoryRuntime};
+use super::{InMemoryHostedBackend, InMemoryRuntimeSnapshot, MemoryOperation, MemoryRuntime};
 use crate::wire::{ResponseFrame, WireFailure, WireOperation};
 use crate::{AdapterError, CommandReceipt};
+use serde::Serialize;
 
 impl MemoryRuntime {
     pub(super) fn snapshot(&self) -> InMemoryRuntimeSnapshot {
@@ -46,30 +47,37 @@ pub(super) fn require_credential(
     }
 }
 
-pub(super) fn replay_workspace_operation(
+pub(super) fn replay_operation(
     runtime: &MemoryRuntime,
     operation_id: &str,
     request_sha256: &str,
+    payload_sha256: &str,
     operation: WireOperation,
 ) -> crate::Result<Option<ResponseFrame>> {
-    let Some((stored_digest, response)) = runtime.workspace_operations.get(operation_id) else {
+    let Some(stored) = runtime.operations.get(operation_id) else {
         return Ok(None);
     };
-    if stored_digest != request_sha256 {
-        return refused(operation, "workspace_replay_mismatch");
+    if stored.request_sha256 != request_sha256 || stored.payload_sha256 != payload_sha256 {
+        return refused(operation, "operation_replay_mismatch");
     }
-    Ok(Some(response.clone()))
+    Ok(Some(stored.response.clone()))
 }
 
-pub(super) fn remember_workspace_operation(
+pub(super) fn remember_operation(
     runtime: &mut MemoryRuntime,
     operation_id: String,
     request_sha256: String,
+    payload_sha256: String,
     response: ResponseFrame,
 ) {
-    runtime
-        .workspace_operations
-        .insert(operation_id, (request_sha256, response));
+    runtime.operations.insert(
+        operation_id,
+        MemoryOperation {
+            request_sha256,
+            payload_sha256,
+            response,
+        },
+    );
 }
 
 pub(super) fn refused<T>(operation: WireOperation, code: &str) -> crate::Result<T> {
@@ -106,6 +114,19 @@ pub(super) fn safe_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+pub(super) fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+pub(super) fn fingerprint(value: &impl Serialize) -> crate::Result<String> {
+    serde_json::to_vec(value)
+        .map(|bytes| digest(&bytes))
+        .map_err(|error| AdapterError::Rejected(format!("encode replay request: {error}")))
 }
 
 pub(super) fn digest(bytes: &[u8]) -> String {

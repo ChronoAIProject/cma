@@ -21,9 +21,9 @@ pub mod wire;
 
 pub use adapter::SandboxAdapter;
 pub use agent::{
-    AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSkill, AgentSlot,
-    ConversationSnapshot, HomeFile, HomeSymlink, PermissionLevel, ReasoningEffort, RuntimeOptions,
-    ThinkingEffort,
+    AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentHomeRequest, AgentLaunch,
+    AgentOpenRequest, AgentSkill, AgentSlot, ConversationSnapshot, HomeFile, HomeSymlink,
+    PermissionLevel, ReasoningEffort, RuntimeOptions, ThinkingEffort,
 };
 pub use capabilities::{
     AdapterCapabilities, RuntimeContract, RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION,
@@ -49,5 +49,5 @@ pub use runtime::{
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest,
+    WorktreeRemoveReceipt, WorktreeRequest,
 };

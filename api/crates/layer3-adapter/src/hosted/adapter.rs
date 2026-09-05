@@ -12,14 +12,16 @@ use super::reply::{
 use super::{HostedAgentRuntime, HostedBackend, HostedDeployment};
 use crate::wire::{AgentRef, CredentialReceipt, RequestFrame, ResponseFrame};
 use crate::{
-    AdapterCapabilities, AdapterError, AgentHomeRequest, AgentOpenRequest, AgentSlot,
-    CheckpointReceipt, CheckpointRequest, ConversationChannel, ConversationSnapshot,
-    ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest, ResourceReading,
-    RestoreRequest, RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest, WriterState,
+    AdapterCapabilities, AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
+    AgentOpenRequest, AgentSlot, CheckpointReceipt, CheckpointRequest, ConversationChannel,
+    ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest,
+    ResourceReading, RestoreRequest, RuntimeHandle, SandboxAdapter, SandboxSpec, SetupReceipt,
+    WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
+    WorktreeReceipt, WorktreeRef, WorktreeRequest, WriterState,
 };
 
+#[path = "adapter_agent.rs"]
+mod agent;
 #[path = "adapter_install.rs"]
 mod install;
 
@@ -282,29 +284,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorktreeRequest,
     ) -> crate::Result<WorktreeReceipt> {
-        let state = self.known_state(handle).await?;
-        match self
-            .exchange(handle, RequestFrame::AddWorktree(request.clone()))
-            .await?
-        {
-            ResponseFrame::AddWorktree(receipt)
-                if receipt.workspace == request.workspace
-                    && receipt.name == request.name
-                    && Path::new(&receipt.path)
-                        == Path::new(&state.home_directory)
-                            .join(&request.workspace)
-                            .join(".worktrees")
-                            .join(&request.name)
-                    && receipt.branch == format!("cma/{}", request.name)
-                    && valid_git_commit(&receipt.base_commit) =>
-            {
-                Ok(receipt)
-            }
-            ResponseFrame::AddWorktree(_) => Err(AdapterError::Rejected(
-                "worktree receipt names a different worktree".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        agent::add_worktree(self, handle, request).await
     }
 
     async fn remove_worktree(
@@ -312,11 +292,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &WorktreeRef,
     ) -> crate::Result<()> {
-        self.known_state(handle).await?;
-        expect_ack(
-            self.exchange(handle, RequestFrame::RemoveWorktree(request.clone()))
-                .await?,
-        )
+        agent::remove_worktree(self, handle, request).await
     }
 
     async fn materialize_agent_home(
@@ -324,17 +300,15 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &AgentHomeRequest,
     ) -> crate::Result<()> {
-        self.validate_options(handle, &request.options).await?;
-        let plan = self.runtime.home_plan(request)?;
-        if plan.agent_id != request.options.slot {
-            return Err(AdapterError::Rejected(
-                "agent home plan changed the requested slot".into(),
-            ));
-        }
-        expect_ack(
-            self.exchange(handle, RequestFrame::MaterializeAgentHome(plan))
-                .await?,
-        )
+        agent::materialize_home(self, handle, request).await
+    }
+
+    async fn remove_agent_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentHomeRemoveRequest,
+    ) -> crate::Result<()> {
+        agent::remove_home(self, handle, request).await
     }
 
     async fn open_agent(
@@ -343,32 +317,15 @@ impl SandboxAdapter for HostedAdapter {
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        self.validate_options(handle, &request.options).await?;
-        let launch = self.runtime.launch(request)?;
-        if launch.agent_id != request.options.slot
-            || launch.cwd != request.options.working_directory
-            || launch.home != request.options.home_directory
-        {
-            return Err(AdapterError::Rejected(
-                "agent launch changed its slot, working directory, or home".into(),
-            ));
-        }
-        self.backend
-            .open_agent(handle, launch, request.resume_conversation.clone(), updates)
-            .await
+        agent::open_agent(self, handle, request, updates).await
     }
 
-    async fn close_agent(&self, handle: &RuntimeHandle, agent: &AgentSlot) -> crate::Result<()> {
-        self.known_state(handle).await?;
-        expect_ack(
-            self.exchange(
-                handle,
-                RequestFrame::CloseAgent(AgentRef {
-                    agent_id: agent.clone(),
-                }),
-            )
-            .await?,
-        )
+    async fn close_agent(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentCloseRequest,
+    ) -> crate::Result<()> {
+        agent::close_agent(self, handle, request).await
     }
 
     async fn capture_agent(

@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use layer3_adapter::wire::{
-    Acknowledgement, AgentOpenReceipt, CredentialReceipt, RequestFrame, ResponseFrame,
-};
+use layer3_adapter::wire::{Acknowledgement, CredentialReceipt, RequestFrame, ResponseFrame};
 use layer3_adapter::{AgentLaunch, AgentSlot, InstallRequest};
 use tokio::sync::{Mutex, RwLock};
 
@@ -18,6 +16,9 @@ use crate::upstream::{CredentialHolder, PreparedProxies};
 use crate::writer_fence::{SupervisorBoundary, WriterFence};
 
 const MAX_AGENT_SLOTS: usize = 16;
+
+#[path = "supervisor_agent.rs"]
+mod agent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -157,22 +158,19 @@ impl Supervisor {
                 self.ensure_worktree_idle(&path).await?;
                 crate::worktree::remove(&self.config.home, self.config.allow_local_git, &reference)
                     .await?;
-                Ok(ResponseFrame::RemoveWorktree(Acknowledgement::default()))
-            }
-            RequestFrame::MaterializeAgentHome(plan) => {
-                if self.agents.read().await.contains_key(&plan.agent_id) {
-                    return Err(RuntimeError::rejected(
-                        "agent_running",
-                        "agent process is already open",
-                    ));
-                }
-                crate::agent_home::materialize(&self.config, &self.http, &plan).await?;
-                Ok(ResponseFrame::MaterializeAgentHome(
-                    Acknowledgement::default(),
+                Ok(ResponseFrame::RemoveWorktree(
+                    layer3_adapter::WorktreeRemoveReceipt {
+                        operation_id: reference.operation_id,
+                        request_sha256: reference.request_sha256,
+                        workspace: reference.workspace,
+                        name: reference.name,
+                    },
                 ))
             }
+            RequestFrame::MaterializeAgentHome(plan) => self.materialize_agent_home(plan).await,
+            RequestFrame::RemoveAgentHome(request) => self.remove_agent_home(request).await,
             RequestFrame::OpenAgent(launch) => self.open_agent(launch).await,
-            RequestFrame::CloseAgent(reference) => self.close_agent(&reference.agent_id).await,
+            RequestFrame::CloseAgent(request) => self.close_agent(request).await,
             RequestFrame::CaptureAgent(reference) => {
                 safe_component(reference.agent_id.as_str(), "agent id")?;
                 let home = self.config.agent_home(reference.agent_id.as_str());
@@ -253,118 +251,6 @@ impl Supervisor {
             operation_id: frame.operation_id,
             installed: true,
         }))
-    }
-
-    async fn open_agent(&self, launch: AgentLaunch) -> Result<ResponseFrame> {
-        self.validate_launch(&launch).await?;
-        let mut environment = self.config.process_env.clone();
-        for (name, value) in &launch.env {
-            validate_environment(name, value)?;
-            if reserved(name) && environment.get(name) != Some(value) {
-                return Err(RuntimeError::rejected(
-                    "agent_environment_conflict",
-                    format!("agent environment cannot override reserved variable {name}"),
-                ));
-            }
-            environment.insert(name.clone(), value.clone());
-        }
-        environment.insert("HOME".into(), launch.home.clone());
-        let bridge = Arc::new(Bridge::start(&launch, &environment).map_err(|error| {
-            RuntimeError::unavailable("agent_spawn_failed", format!("start agent bridge: {error}"))
-        })?);
-        self.agents.write().await.insert(
-            launch.agent_id.clone(),
-            AgentProcess {
-                launch: launch.clone(),
-                bridge,
-            },
-        );
-        Ok(ResponseFrame::OpenAgent(AgentOpenReceipt {
-            agent_id: launch.agent_id,
-            conversation_id: None,
-        }))
-    }
-
-    async fn validate_launch(&self, launch: &AgentLaunch) -> Result<()> {
-        safe_component(launch.agent_id.as_str(), "agent id")?;
-        let agents = self.agents.read().await;
-        if agents.contains_key(&launch.agent_id) {
-            return Err(RuntimeError::rejected(
-                "agent_already_open",
-                "agent slot already has a process",
-            ));
-        }
-        if agents.len() >= MAX_AGENT_SLOTS {
-            return Err(RuntimeError::rejected(
-                "agent_capacity_reached",
-                format!("runtime already has its maximum {MAX_AGENT_SLOTS} agent slots"),
-            ));
-        }
-        drop(agents);
-        let expected_home = self.config.agent_home(launch.agent_id.as_str());
-        if Path::new(&launch.home) != expected_home || !path_is_directory(&expected_home) {
-            return Err(RuntimeError::rejected(
-                "agent_home_invalid",
-                "agent launch does not name its materialized home",
-            ));
-        }
-        let cwd = Path::new(&launch.cwd);
-        if crate::worktree::parse_path(&self.config.home, cwd).is_none()
-            || !path_is_directory(cwd)
-            || !cwd.join(".git").is_file()
-        {
-            return Err(RuntimeError::rejected(
-                "agent_worktree_invalid",
-                "agent launch cwd is not a prepared worktree",
-            ));
-        }
-        if self
-            .agents
-            .read()
-            .await
-            .values()
-            .any(|agent| agent.launch.cwd == launch.cwd)
-        {
-            return Err(RuntimeError::rejected(
-                "worktree_agent_exists",
-                "worktree already has an agent process",
-            ));
-        }
-        if launch.program.is_empty()
-            || launch.program.contains('\0')
-            || launch.args.iter().any(|argument| argument.contains('\0'))
-        {
-            return Err(RuntimeError::rejected(
-                "agent_program_invalid",
-                "agent program or argument contains an invalid value",
-            ));
-        }
-        Ok(())
-    }
-
-    async fn close_agent(&self, agent_id: &AgentSlot) -> Result<ResponseFrame> {
-        safe_component(agent_id.as_str(), "agent id")?;
-        let bridge = self
-            .agents
-            .read()
-            .await
-            .get(agent_id)
-            .map(|process| Arc::clone(&process.bridge));
-        if let Some(bridge) = bridge {
-            bridge
-                .terminate()
-                .await
-                .map_err(|error| RuntimeError::unavailable("agent_termination_failed", error))?;
-        }
-        let process = self.agents.write().await.remove(agent_id);
-        let removed_home = crate::agent_home::remove(&self.config, agent_id.as_str())?;
-        if process.is_none() && !removed_home {
-            return Err(RuntimeError::rejected(
-                "agent_not_found",
-                "agent process and home were not found",
-            ));
-        }
-        Ok(ResponseFrame::CloseAgent(Acknowledgement::default()))
     }
 
     async fn checkpoint(
