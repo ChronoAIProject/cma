@@ -1,0 +1,75 @@
+use std::path::Path;
+
+use super::{Phase, Supervisor};
+use crate::failure::{Result, RuntimeError};
+use crate::paths::safe_component;
+
+impl Supervisor {
+    pub(super) async fn ensure_workspace_idle(&self, workspace: &str) -> Result<()> {
+        safe_component(workspace, "workspace name")?;
+        let root = self.config.home.join(workspace);
+        if self
+            .agents
+            .read()
+            .await
+            .values()
+            .any(|agent| Path::new(&agent.launch.cwd).starts_with(&root))
+        {
+            return Err(RuntimeError::rejected(
+                "workspace_agent_open",
+                "workspace still has an open agent",
+            ));
+        }
+        if crate::mutation_journal::active_agents(&self.config)?
+            .iter()
+            .any(|agent| Path::new(&agent.cwd).starts_with(&root))
+        {
+            return Err(RuntimeError::rejected(
+                "workspace_agent_open",
+                "workspace has a durable agent open without a completed close",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) async fn ensure_worktree_idle(&self, worktree: &Path) -> Result<()> {
+        if self
+            .agents
+            .read()
+            .await
+            .values()
+            .any(|agent| Path::new(&agent.launch.cwd) == worktree)
+        {
+            return Err(RuntimeError::rejected(
+                "worktree_agent_open",
+                "worktree still has an open agent",
+            ));
+        }
+        if crate::mutation_journal::active_agents(&self.config)?
+            .iter()
+            .any(|agent| Path::new(&agent.cwd) == worktree)
+        {
+            return Err(RuntimeError::rejected(
+                "worktree_agent_open",
+                "worktree has a durable agent open without a completed close",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) async fn require_credentialed(&self) -> Result<()> {
+        match *self.phase.read().await {
+            Phase::Credentialed => Ok(()),
+            Phase::RestoreCredentialed => Err(RuntimeError::rejected(
+                "restore_not_completed",
+                "operation is fenced until the admitted checkpoint restore completes",
+            )),
+            Phase::Provisioned | Phase::Installed | Phase::RestorePending => {
+                Err(RuntimeError::rejected(
+                    "credential_not_installed",
+                    "operation is not valid before credential delivery",
+                ))
+            }
+        }
+    }
+}
