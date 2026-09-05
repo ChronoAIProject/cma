@@ -2,7 +2,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, SandboxId, WorkspaceId, WorktreeId};
 
-use super::{AgentStatus, SandboxStatus, SandboxWorkStep, TypedFailure};
+use super::{AgentStatus, AgentWorkStep, SandboxStatus, SandboxWorkStep, TypedFailure};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPlanStep {
+    pub title: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfigOption {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentAvailableCommand {
+    pub name: String,
+    pub description: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -14,6 +36,13 @@ pub enum AgentLogKind {
     ConversationOpened {
         conversation_id: String,
         runtime_generation: u64,
+    },
+    WorkStepCompleted {
+        step: AgentWorkStep,
+    },
+    WorkStepFailed {
+        step: AgentWorkStep,
+        failure: TypedFailure,
     },
     TurnStarted {
         turn_sequence: u64,
@@ -36,18 +65,26 @@ pub enum AgentLogKind {
     TurnInterrupted {
         turn_sequence: u64,
     },
-    ToolCall {
+    ToolCallStarted {
         call_id: String,
-        name: String,
+        title: String,
+        kind: String,
         status: String,
     },
-    Approval {
-        approval_id: String,
-        decision: String,
+    ToolCallUpdated {
+        call_id: String,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
     },
     ApprovalRequested {
         approval_id: String,
-        runtime_locator: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runtime_locator: Option<String>,
     },
     ApprovalResolved {
         approval_id: String,
@@ -56,6 +93,31 @@ pub enum AgentLogKind {
     Usage {
         input_tokens: u64,
         output_tokens: u64,
+        context_used: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<u64>,
+    },
+    ModeChanged {
+        mode: String,
+    },
+    PlanSet {
+        entries: Vec<AgentPlanStep>,
+    },
+    ConfigOptionsSet {
+        options: Vec<AgentConfigOption>,
+    },
+    AvailableCommandsSet {
+        commands: Vec<AgentAvailableCommand>,
+    },
+    ConversationGap {
+        frames: u64,
+    },
+    SignInRequired {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
     StatusChanged {
         from: AgentStatus,
