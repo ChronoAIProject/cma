@@ -106,6 +106,8 @@ pub use worktree::Worktree;
 #[cfg(test)]
 mod agent_model_tests;
 #[cfg(test)]
+mod agent_operation_tests;
+#[cfg(test)]
 mod agent_service_tests;
 #[cfg(test)]
 mod service_tests;
