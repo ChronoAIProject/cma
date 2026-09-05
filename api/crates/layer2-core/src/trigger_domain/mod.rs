@@ -64,7 +64,9 @@ pub use preview::{
     TriggerPreview, TriggerSizePreview, TriggerTechnicalPreview, TriggerTrustPreview,
     TriggerTrustPreviewDisclosure,
 };
-pub use reference::{ResolvedTriggerProfiles, TriggerProfileResolver, TriggerReferenceError};
+pub use reference::{
+    ResolvedTriggerProfiles, TriggerProfileReader, TriggerProfileResolver, TriggerReferenceError,
+};
 pub use requirements::{
     RequirementsSnapshot, ReviewNeed, ReviewRequirements, ServiceRequirement,
     ServiceRequirementState,

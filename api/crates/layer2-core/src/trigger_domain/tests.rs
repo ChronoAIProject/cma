@@ -432,6 +432,26 @@ async fn publishing_resolves_exact_public_revisions_and_keeps_latest_link() {
 }
 
 #[tokio::test]
+async fn immutable_profile_reader_ignores_current_retirement_state() {
+    let seed = seed_profiles(Visibilities::default(), true).await;
+    seed.profiles
+        .retire_agent_profile(&seed.target.agent_profile.id, &seed.owner, RETIRED.into())
+        .await
+        .unwrap();
+    let reader: Arc<dyn TriggerProfileReader> = seed.profiles;
+
+    let profiles = reader.read_trigger_profiles(&seed.target).await.unwrap();
+
+    assert_eq!(profiles.sandbox.profile_id, seed.target.sandbox_profile.id);
+    assert_eq!(profiles.sandbox_workspaces.len(), 1);
+    assert_eq!(
+        profiles.workspace.profile_id,
+        seed.target.workspace_profile.id
+    );
+    assert_eq!(profiles.agent.profile_id, seed.target.agent_profile.id);
+}
+
+#[tokio::test]
 async fn deletion_is_owner_scoped_and_permitted_only_before_first_publication() {
     let seed = seed_profiles(Visibilities::default(), true).await;
     let store = trigger_store(&seed);

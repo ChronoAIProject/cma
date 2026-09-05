@@ -1,14 +1,17 @@
 use layer2_core::ids::SubjectId;
 use layer2_core::profiles::{
-    AgentProfile, AgentProfileRevision, ProfileStoreError, ProfileVisibility, SandboxProfile,
-    SandboxProfileRevision, WorkspaceProfile, WorkspaceProfileRevision,
+    AgentProfile, AgentProfileRevision, AgentProfileStore, ProfileStoreError, ProfileVisibility,
+    SandboxProfile, SandboxProfileRevision, SandboxProfileStore, WorkspaceProfile,
+    WorkspaceProfileRevision, WorkspaceProfileStore,
 };
 use layer2_core::trigger_domain::{
-    ResolvedTriggerProfiles, TriggerReferenceError, TriggerStoreError, TriggerTarget,
+    ResolvedTriggerProfiles, TriggerProfileReader, TriggerReferenceError, TriggerStoreError,
+    TriggerTarget,
 };
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::{ClientSession, Collection};
 
+use super::super::sandbox_mongo::MongoProfileStore;
 use super::super::schema::DOCUMENT_SCHEMA_VERSION;
 use super::super::{agent_profiles, sandbox_profiles, workspace_profiles};
 use super::{driver_error, MongoTriggerDefinitionStore};
@@ -173,6 +176,54 @@ pub(super) async fn read_exact(
         workspace: workspace_profiles::read_revision(&workspace).map_err(stored_profile_error)?,
         agent: agent_profiles::read_revision(&agent).map_err(stored_profile_error)?,
     })
+}
+
+#[async_trait::async_trait]
+impl TriggerProfileReader for MongoProfileStore {
+    async fn read_trigger_profiles(
+        &self,
+        target: &TriggerTarget,
+    ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError> {
+        let sandbox_field = "target.sandbox_profile";
+        let sandbox_workspaces_field = "target.sandbox_profile.workspace_profiles";
+        let workspace_field = "target.workspace_profile";
+        let agent_field = "target.agent_profile";
+
+        let sandbox = self
+            .sandbox_profile_revision(&target.sandbox_profile.id, target.sandbox_profile.revision)
+            .await
+            .map_err(|_| reference_unavailable(sandbox_field))?
+            .ok_or_else(|| reference_unavailable(sandbox_field))?;
+        let mut sandbox_workspaces = Vec::with_capacity(sandbox.content.workspace_profiles.len());
+        for reference in &sandbox.content.workspace_profiles {
+            let revision = self
+                .workspace_profile_revision(&reference.id, reference.revision)
+                .await
+                .map_err(|_| reference_unavailable(sandbox_workspaces_field))?
+                .ok_or_else(|| reference_unavailable(sandbox_workspaces_field))?;
+            sandbox_workspaces.push(revision);
+        }
+        let workspace = self
+            .workspace_profile_revision(
+                &target.workspace_profile.id,
+                target.workspace_profile.revision,
+            )
+            .await
+            .map_err(|_| reference_unavailable(workspace_field))?
+            .ok_or_else(|| reference_unavailable(workspace_field))?;
+        let agent = self
+            .agent_profile_revision(&target.agent_profile.id, target.agent_profile.revision)
+            .await
+            .map_err(|_| reference_unavailable(agent_field))?
+            .ok_or_else(|| reference_unavailable(agent_field))?;
+
+        Ok(ResolvedTriggerProfiles {
+            sandbox,
+            sandbox_workspaces,
+            workspace,
+            agent,
+        })
+    }
 }
 
 async fn current_sandbox(
@@ -357,6 +408,10 @@ fn require_public(
 
 fn unavailable(field: &'static str) -> TriggerStoreError {
     TriggerReferenceError::Unavailable { field }.into()
+}
+
+fn reference_unavailable(field: &'static str) -> TriggerReferenceError {
+    TriggerReferenceError::Unavailable { field }
 }
 
 fn transaction_unavailable(field: &'static str) -> TransactionProfileError {

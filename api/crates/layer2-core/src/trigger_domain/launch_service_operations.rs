@@ -29,7 +29,7 @@ impl LaunchService {
         }
         let revision = self.launch_revision(&launch).await?;
         let profiles = self
-            .profile_resolver
+            .profile_reader
             .read_trigger_profiles(&revision.content.target)
             .await
             .map_err(|error| LaunchServiceError::Unavailable(error.to_string()))?;

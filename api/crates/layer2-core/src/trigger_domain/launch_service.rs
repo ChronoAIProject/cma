@@ -16,7 +16,7 @@ use super::{
     ExistingAgentChoice, Launch, LaunchAdmission, LaunchAuthorityClass, LaunchConfirmation,
     LaunchConsentSurface, LaunchContextReader, LaunchEventKind, LaunchResolution, LaunchSeed,
     LaunchState, LaunchStore, PublicTrigger, PublicTriggerId, RepeatChoice, RequirementsSnapshot,
-    ReviewRequirements, ServiceConnectionBroker, TriggerAvailability, TriggerProfileResolver,
+    ReviewRequirements, ServiceConnectionBroker, TriggerAvailability, TriggerProfileReader,
     TriggerStore,
 };
 
@@ -136,7 +136,7 @@ impl LaunchServiceError {
 
 pub struct LaunchService {
     pub(super) definitions: Arc<dyn TriggerStore>,
-    pub(super) profile_resolver: Arc<dyn TriggerProfileResolver>,
+    pub(super) profile_reader: Arc<dyn TriggerProfileReader>,
     pub(super) sandbox_profiles: Arc<dyn SandboxProfileStore>,
     pub(super) workspace_profiles: Arc<dyn WorkspaceProfileStore>,
     pub(super) launches: Arc<dyn LaunchStore>,
@@ -156,18 +156,18 @@ impl LaunchService {
     ) -> Arc<Self>
     where
         T: TriggerStore + 'static,
-        P: TriggerProfileResolver + SandboxProfileStore + WorkspaceProfileStore + 'static,
+        P: TriggerProfileReader + SandboxProfileStore + WorkspaceProfileStore + 'static,
         L: LaunchStore + 'static,
         C: LaunchContextReader + 'static,
         B: ServiceConnectionBroker + 'static,
         S: LaunchPolicySource + 'static,
     {
-        let profile_resolver: Arc<dyn TriggerProfileResolver> = profiles.clone();
+        let profile_reader: Arc<dyn TriggerProfileReader> = profiles.clone();
         let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
         let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles;
         Arc::new(Self {
             definitions,
-            profile_resolver,
+            profile_reader,
             sandbox_profiles,
             workspace_profiles,
             launches,
@@ -205,7 +205,7 @@ impl LaunchService {
             }
             let trigger = self.public_trigger(public_id).await?;
             let profiles = self
-                .profile_resolver
+                .profile_reader
                 .read_trigger_profiles(&trigger.revision.content.target)
                 .await
                 .map_err(|error| LaunchServiceError::Unavailable(error.to_string()))?;
