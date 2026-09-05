@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::{
     AgentStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::Agent;
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 
@@ -54,6 +54,19 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
             )
             .build(),
         IndexModel::builder()
+            .keys(doc! {
+                "work_pending": 1,
+                "work_ready_at": 1,
+                "work_lease_expires_at": 1,
+                "_id": 1,
+            })
+            .options(
+                IndexOptions::builder()
+                    .name("agents_due_work".to_string())
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
             .keys(doc! { "worktree_id": 1 })
             .options(
                 IndexOptions::builder()
@@ -81,6 +94,7 @@ pub(super) fn agent_updated_at(agent: &Agent) -> &str {
 }
 
 pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreError> {
+    let lease = agent.work.lease.as_ref();
     Ok(doc! {
         "_id": agent.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -92,6 +106,22 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
         "creation_fingerprint": &agent.creation_fingerprint,
         "status": record_bson(&agent.status).map_err(SandboxStoreError::Corrupt)?,
         "updated_at": agent_updated_at(agent),
+        "work_pending": agent.work.step.is_pending(),
+        "work_ready_at": &agent.work.ready_at,
+        "work_lease_holder": lease
+            .map(|lease| Bson::String(lease.holder.clone()))
+            .unwrap_or(Bson::Null),
+        "work_lease_fence": lease
+            .map(|lease| signed(lease.fence, "agent work lease fence"))
+            .transpose()
+            .map_err(SandboxStoreError::Corrupt)?
+            .map(Bson::Int64)
+            .unwrap_or(Bson::Null),
+        "work_lease_expires_at": lease
+            .map(|lease| Bson::String(lease.expires_at.clone()))
+            .unwrap_or(Bson::Null),
+        "work_next_fence": signed(agent.work.next_fence, "agent work next fence")
+            .map_err(SandboxStoreError::Corrupt)?,
         "revision": signed(agent.revision, "agent revision")
             .map_err(SandboxStoreError::Corrupt)?,
         "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
@@ -106,6 +136,21 @@ pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError
     let revision = signed(agent.revision, "agent revision").map_err(SandboxStoreError::Corrupt)?;
     let last_seq = signed(agent.conversation.last_seq, "agent log sequence")
         .map_err(SandboxStoreError::Corrupt)?;
+    let lease = agent.work.lease.as_ref();
+    let lease_holder = lease
+        .map(|lease| Bson::String(lease.holder.clone()))
+        .unwrap_or(Bson::Null);
+    let lease_fence = lease
+        .map(|lease| signed(lease.fence, "agent work lease fence"))
+        .transpose()
+        .map_err(SandboxStoreError::Corrupt)?
+        .map(Bson::Int64)
+        .unwrap_or(Bson::Null);
+    let lease_expires_at = lease
+        .map(|lease| Bson::String(lease.expires_at.clone()))
+        .unwrap_or(Bson::Null);
+    let next_fence = signed(agent.work.next_fence, "agent work next fence")
+        .map_err(SandboxStoreError::Corrupt)?;
     if !string_field_matches(document, "_id", agent.id.as_str())
         || !string_field_matches(document, "owner", agent.owner.as_str())
         || !string_field_matches(document, "sandbox_id", agent.sandbox_id.as_str())
@@ -119,6 +164,12 @@ pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError
         )
         || document.get("status") != Some(&status)
         || !string_field_matches(document, "updated_at", agent_updated_at(&agent))
+        || document.get_bool("work_pending").ok() != Some(agent.work.step.is_pending())
+        || !string_field_matches(document, "work_ready_at", &agent.work.ready_at)
+        || document.get("work_lease_holder") != Some(&lease_holder)
+        || document.get("work_lease_fence") != Some(&lease_fence)
+        || document.get("work_lease_expires_at") != Some(&lease_expires_at)
+        || !i64_field_matches(document, "work_next_fence", next_fence)
         || !i64_field_matches(document, "revision", revision)
         || !i64_field_matches(document, "last_seq", last_seq)
     {
@@ -129,7 +180,7 @@ pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError
     Ok(agent)
 }
 
-fn replacement_fields(agent: &Agent) -> Result<Document, SandboxStoreError> {
+pub(super) fn agent_replacement_fields(agent: &Agent) -> Result<Document, SandboxStoreError> {
     let mut document = agent_document(agent)?;
     document.remove("_id");
     document.remove("last_seq");
@@ -209,7 +260,7 @@ impl AgentStore for MongoSandboxStore {
                     "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
                         .map_err(SandboxStoreError::Corrupt)?,
                 },
-                doc! { "$set": replacement_fields(&agent)? },
+                doc! { "$set": agent_replacement_fields(&agent)? },
             )
             .await
             .map_err(|error| {
@@ -289,8 +340,21 @@ mod tests {
         );
         assert_eq!(indexes[2].keys, doc! { "sandbox_id": 1 });
         assert_eq!(indexes[3].keys, doc! { "workspace_id": 1, "status": 1 });
-        assert_eq!(indexes[4].keys, doc! { "worktree_id": 1 });
-        let options = indexes[4].options.as_ref().unwrap();
+        assert_eq!(
+            indexes[4].keys,
+            doc! {
+                "work_pending": 1,
+                "work_ready_at": 1,
+                "work_lease_expires_at": 1,
+                "_id": 1,
+            }
+        );
+        assert_eq!(
+            indexes[4].options.as_ref().unwrap().name.as_deref(),
+            Some("agents_due_work")
+        );
+        assert_eq!(indexes[5].keys, doc! { "worktree_id": 1 });
+        let options = indexes[5].options.as_ref().unwrap();
         assert_eq!(options.unique, Some(true));
         assert_eq!(
             options.partial_filter_expression,

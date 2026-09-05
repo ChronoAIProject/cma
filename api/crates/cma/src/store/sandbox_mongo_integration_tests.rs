@@ -16,10 +16,11 @@ use layer2_core::profiles::{
 };
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentLogStore, AgentStore,
-    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore, SandboxEventStore, SandboxStore,
-    SandboxStoreError, SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore,
-    WorkspaceAdmission, WorkspaceAdmissionKind, WorkspaceAdmissionResult, WorkspaceAdmissionStore,
-    WorkspaceStore, WorkspaceWorkerStore, WorktreeStore,
+    AgentWorkerStore, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore,
+    SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
+    SandboxTransactionStore, SandboxWorkerStore, WorkspaceAdmission, WorkspaceAdmissionKind,
+    WorkspaceAdmissionResult, WorkspaceAdmissionStore, WorkspaceStore, WorkspaceWorkerStore,
+    WorktreeStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep,
@@ -345,6 +346,83 @@ fn created_agent(result: AgentAdmissionResult) -> layer2_core::sandbox::store::A
         AgentAdmissionResult::Created(creation) => creation,
         AgentAdmissionResult::Existing(_) => panic!("expected a fresh agent admission"),
     }
+}
+
+fn agent_for_worker(id: &str, ready_at: &str) -> Agent {
+    let (_, mut agent) = worktree_and_agent(&SandboxId("sbx_agent_worker".into()));
+    agent.id = AgentId(id.into());
+    agent.worktree_id = WorktreeId(format!("wkt_{id}"));
+    agent.creation_key = format!("create-{id}");
+    agent.work.ready_at = ready_at.into();
+    agent
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_due_query_is_bounded_sorted_and_supports_lease_takeover() {
+    const BEFORE: &str = "2026-09-04T23:59:00Z";
+    const MINUTE: &str = "2026-09-05T00:01:00Z";
+
+    let (client, name) = database("agent_work_due").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let first = agent_for_worker("agt_a_due", NOW);
+    let mut held = agent_for_worker("agt_b_held", BEFORE);
+    held.work
+        .claim("worker-a".into(), BEFORE, MINUTE.into())
+        .unwrap();
+    let future = agent_for_worker("agt_c_future", MINUTE);
+    let mut expired = agent_for_worker("agt_m_expired", BEFORE);
+    expired
+        .work
+        .claim("worker-a".into(), BEFORE, NOW.into())
+        .unwrap();
+    let last = agent_for_worker("agt_z_due", BEFORE);
+    for agent in [&last, &expired, &future, &held, &first] {
+        store.create_agent(agent.clone()).await.unwrap();
+    }
+
+    assert_eq!(
+        store.due_agent_work(NOW, 0).await,
+        Err(SandboxStoreError::InvalidPage)
+    );
+    assert_eq!(
+        store.due_agent_work(NOW, MAX_PAGE_SIZE + 1).await,
+        Err(SandboxStoreError::InvalidPage)
+    );
+    assert_eq!(
+        store.due_agent_work(NOW, 2).await.unwrap(),
+        vec![first.id.clone(), expired.id.clone()]
+    );
+    assert!(store
+        .claim_agent_work(
+            &AgentId("agt_missing".into()),
+            "worker-b",
+            NOW.into(),
+            MINUTE.into(),
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .claim_agent_work(&future.id, "worker-b", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .is_none());
+
+    let takeover = store
+        .claim_agent_work(&expired.id, "worker-b", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(takeover.work.owns("worker-b", 2));
+    assert_eq!(takeover.work.next_fence, 3);
+    assert_eq!(takeover.revision, expired.revision + 1);
+    assert_eq!(
+        store.due_agent_work(NOW, 5).await.unwrap(),
+        vec![first.id, last.id]
+    );
+
+    client.database(&name).drop().await.unwrap();
 }
 
 #[tokio::test]
