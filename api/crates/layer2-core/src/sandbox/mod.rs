@@ -39,7 +39,10 @@ pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxSignInState,
 };
 pub use error::SandboxModelError;
-pub use event::{AgentLogEntry, AgentLogKind, SandboxEvent, SandboxEventKind};
+pub use event::{
+    AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
+    SandboxEvent, SandboxEventKind,
+};
 pub use first_message::{
     FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
 };
