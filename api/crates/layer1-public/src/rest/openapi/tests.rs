@@ -1,0 +1,331 @@
+use std::collections::{BTreeSet, HashSet};
+
+use super::*;
+
+#[test]
+fn every_profile_and_marketplace_route_is_documented_and_authenticated() {
+    let document = document();
+    let mut operation_ids = HashSet::new();
+    let profiles: Vec<_> = document
+        .paths
+        .paths
+        .iter()
+        .filter(|(path, _)| {
+            path.starts_with("/api/v1/agent-profiles")
+                || path.starts_with("/api/v1/workspace-profiles")
+                || path.starts_with("/api/v1/sandbox-profiles")
+                || path.starts_with("/api/v1/marketplace")
+        })
+        .collect();
+    assert_eq!(profiles.len(), 21);
+    for (_, item) in profiles {
+        for operation in [
+            item.get.as_ref(),
+            item.put.as_ref(),
+            item.post.as_ref(),
+            item.delete.as_ref(),
+            item.patch.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(operation_ids.insert(operation.operation_id.as_deref().unwrap()));
+            assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
+        }
+    }
+    for path in [
+        "/api/v1/agent-profiles",
+        "/api/v1/workspace-profiles/{id}/revisions/{revision}",
+        "/api/v1/sandbox-profiles/{id}/visibility",
+        "/api/v1/marketplace/{kind}/{id}/fork",
+    ] {
+        assert!(document.paths.paths.contains_key(path), "missing {path}");
+    }
+    assert_eq!(
+        operation_id("post", "/api/v1/marketplace/{kind}/{id}/fork"),
+        "post_api_v1_marketplace_by_kind_by_id_fork"
+    );
+}
+
+#[test]
+fn every_admin_route_is_documented_and_authenticated() {
+    let document = document();
+    let mut operation_ids = HashSet::new();
+    let admin: Vec<_> = document
+        .paths
+        .paths
+        .iter()
+        .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
+        .collect();
+    assert_eq!(admin.len(), 12);
+    for (_, item) in admin {
+        for operation in [
+            item.get.as_ref(),
+            item.put.as_ref(),
+            item.post.as_ref(),
+            item.patch.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(operation_ids.insert(operation.operation_id.as_deref().unwrap()));
+            assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
+        }
+    }
+    assert_eq!(operation_ids.len(), 14);
+    assert!(document
+        .paths
+        .paths
+        .contains_key("/api/v1/admin/profiles/{kind}/{id}/retire"));
+    assert!(document
+        .paths
+        .paths
+        .contains_key("/api/v1/admin/runtime-inventory"));
+}
+
+#[test]
+fn every_owner_hierarchy_route_is_documented_and_authenticated() {
+    let document = document();
+    let hierarchy_paths = [
+        "/api/v1/sandboxes",
+        "/api/v1/sandboxes/{id}",
+        "/api/v1/sandboxes/{id}/events",
+        "/api/v1/sandboxes/{id}/workspaces",
+        "/api/v1/workspaces/{id}",
+        "/api/v1/workspaces/{id}/worktrees",
+        "/api/v1/worktrees/{id}",
+    ];
+    let paths: Vec<_> = hierarchy_paths
+        .iter()
+        .map(|path| {
+            document
+                .paths
+                .paths
+                .get(*path)
+                .unwrap_or_else(|| panic!("missing hierarchy path {path}"))
+        })
+        .collect();
+    let mut operations = Vec::new();
+    for item in paths {
+        operations.extend(
+            [item.get.as_ref(), item.post.as_ref(), item.delete.as_ref()]
+                .into_iter()
+                .flatten(),
+        );
+    }
+    assert_eq!(operations.len(), 11);
+    assert!(operations
+        .iter()
+        .all(|operation| operation.security.as_ref().map(Vec::len) == Some(2)));
+    assert!(!document
+        .paths
+        .paths
+        .contains_key("/api/v1/sandboxes/{id}/pause"));
+    assert!(!document
+        .paths
+        .paths
+        .contains_key("/api/v1/sandboxes/{id}/revive"));
+}
+
+#[test]
+fn every_trigger_launch_and_connection_operation_is_documented() {
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    let expected = [
+        ("get", "/auth/signup-options"),
+        ("get", "/api/v1/triggers"),
+        ("post", "/api/v1/triggers"),
+        ("get", "/api/v1/triggers/{id}"),
+        ("put", "/api/v1/triggers/{id}"),
+        ("delete", "/api/v1/triggers/{id}"),
+        ("post", "/api/v1/triggers/{id}/publish"),
+        ("post", "/api/v1/triggers/{id}/retire"),
+        ("get", "/api/v1/triggers/{id}/revisions"),
+        ("get", "/api/v1/triggers/{id}/stats"),
+        ("get", "/api/v1/triggers/public/{public_id}"),
+        ("get", "/api/v1/triggers/public/{public_id}/badge.svg"),
+        ("get", "/api/v1/triggers/{id}/embed"),
+        ("get", "/api/v1/triggers/{id}/placements"),
+        ("post", "/api/v1/triggers/{id}/placements"),
+        (
+            "post",
+            "/api/v1/triggers/{id}/placements/{placement_id}/retire",
+        ),
+        ("post", "/api/v1/triggers/public/{public_id}/launches"),
+        ("get", "/api/v1/launches"),
+        ("get", "/api/v1/launches/{id}"),
+        ("get", "/api/v1/launches/{id}/events"),
+        ("get", "/api/v1/launches/{id}/requirements"),
+        ("post", "/api/v1/launches/{id}/start"),
+        ("post", "/api/v1/launches/{id}/cancel"),
+        ("post", "/api/v1/service-connections"),
+        ("get", "/api/v1/service-connections/{handoff_id}"),
+        ("get", "/api/v1/agui/launches/{id}/events"),
+    ];
+
+    for (method, path) in expected {
+        assert!(
+            !operation(&document, method, path).is_null(),
+            "missing {method} {path}"
+        );
+    }
+}
+
+#[test]
+fn only_the_four_public_operations_are_anonymous() {
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    let authenticated = serde_json::json!([
+        {"bearerAuth": []},
+        {"sessionCookie": []},
+    ]);
+    let mut anonymous = BTreeSet::new();
+
+    for (path, item) in document["paths"].as_object().expect("paths object") {
+        for method in ["get", "put", "post", "delete", "patch"] {
+            let Some(operation) = item.get(method) else {
+                continue;
+            };
+            let security = &operation["security"];
+            if security.as_array().is_some_and(Vec::is_empty) {
+                anonymous.insert(format!("{method} {path}"));
+            } else {
+                assert_eq!(security, &authenticated, "security for {method} {path}");
+            }
+        }
+    }
+
+    assert_eq!(
+        anonymous,
+        BTreeSet::from([
+            "get /api/v1/conformance".to_owned(),
+            "get /api/v1/triggers/public/{public_id}".to_owned(),
+            "get /api/v1/triggers/public/{public_id}/badge.svg".to_owned(),
+            "get /auth/signup-options".to_owned(),
+        ])
+    );
+    assert_eq!(
+        operation(
+            &document,
+            "post",
+            "/api/v1/triggers/public/{public_id}/launches",
+        )["security"],
+        authenticated
+    );
+}
+
+#[test]
+fn every_trigger_and_launch_wire_schema_is_registered() {
+    let document = document();
+    let schemas = &document.components.expect("components").schemas;
+    for name in [
+        "SignupOptions",
+        "EmbedDescriptor",
+        "EmbedSnippets",
+        "TriggerButtonLabelValue",
+        "TriggerThemeValue",
+        "SandboxReusePolicyValue",
+        "WorkspaceReusePolicyValue",
+        "AgentReusePolicyValue",
+        "TriggerPresentationBody",
+        "TriggerTargetBody",
+        "TriggerReuseBody",
+        "TriggerConsentBody",
+        "TriggerContentBody",
+        "CreateTriggerRequest",
+        "UpdateTriggerRequest",
+        "PublishTriggerRequest",
+        "CreatePlacementRequest",
+        "CreateLaunchRequest",
+        "StartLaunchRequest",
+        "CreateServiceConnectionRequest",
+        "TriggerAvailabilityValue",
+        "TriggerStatsView",
+        "PlacementView",
+        "TriggerRevisionView",
+        "PublishedTriggerRevisionView",
+        "TriggerView",
+        "TriggerPageView",
+        "TriggerPlacementStatsView",
+        "TriggerStatisticsView",
+        "TriggerTrustDisclosureView",
+        "TriggerTrustPreviewView",
+        "TriggerSizePreviewView",
+        "TriggerTechnicalPreviewView",
+        "TriggerPreviewView",
+        "ResolvedResourceView",
+        "LaunchResolutionView",
+        "ServiceRequirementView",
+        "RequirementsSnapshotView",
+        "ReviewNeedView",
+        "ReviewRequirementsView",
+        "LaunchTrustResourceValue",
+        "LaunchTrustDisclosureView",
+        "LaunchTrustManifestView",
+        "LaunchConsentSurfaceValue",
+        "LaunchConfirmationView",
+        "LaunchView",
+        "LaunchPageView",
+        "LaunchEventPageView",
+        "ServiceConnectionStateValue",
+        "CreatedServiceConnectionView",
+        "ServiceConnectionStatusView",
+        "LaunchStateValue",
+        "LaunchStepKeyValue",
+        "LaunchStepStatusValue",
+        "RepeatChoiceValue",
+        "ServiceRequirementStateValue",
+        "FirstMessageStateValue",
+        "LaunchEffectKindValue",
+        "LaunchStepView",
+        "LaunchBlockedReasonView",
+        "LaunchFailureView",
+        "LaunchEventKindView",
+        "LaunchEventView",
+    ] {
+        assert!(schemas.contains_key(name), "missing schema {name}");
+    }
+}
+
+#[test]
+fn manual_projections_preserve_signup_shape_and_stream_media_types() {
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    let signup = &document["components"]["schemas"]["SignupOptions"];
+    let fields: BTreeSet<_> = signup["properties"]
+        .as_object()
+        .expect("signup properties")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        fields,
+        BTreeSet::from([
+            "email_signup",
+            "invite_code_required",
+            "register_available",
+            "social_providers",
+        ])
+    );
+    assert!(
+        operation(&document, "get", "/auth/signup-options")["responses"]["200"]["content"]
+            ["application/json"]
+            .is_object()
+    );
+    assert!(operation(
+        &document,
+        "get",
+        "/api/v1/triggers/public/{public_id}/badge.svg",
+    )["responses"]["200"]["content"]["image/svg+xml"]
+        .is_object());
+    assert!(
+        operation(&document, "get", "/api/v1/agui/launches/{id}/events",)["responses"]["200"]
+            ["content"]["text/event-stream"]
+            .is_object()
+    );
+}
+
+fn operation<'a>(
+    document: &'a serde_json::Value,
+    method: &str,
+    path: &str,
+) -> &'a serde_json::Value {
+    &document["paths"][path][method]
+}
