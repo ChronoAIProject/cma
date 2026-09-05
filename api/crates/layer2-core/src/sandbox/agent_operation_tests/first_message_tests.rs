@@ -4,6 +4,11 @@ use std::sync::{Arc, Mutex};
 use layer3_adapter::{AdapterError, ConversationInput, ConversationInputSender};
 
 use crate::sandbox::store::{AgentLogStore, AgentStore};
+use crate::trigger_domain::{
+    Launch, LaunchAuthorityClass, LaunchConfirmation, LaunchConsentSurface, LaunchResolution,
+    LaunchSeed, LaunchState, LaunchTrustManifest, PublicTriggerId, RequirementsSnapshot,
+    ReviewRequirements, TriggerId,
+};
 
 use super::super::*;
 use super::fixtures::*;
@@ -418,6 +423,157 @@ async fn late_terminal_evidence_resolves_first_message_ambiguity() {
         store.get_agent(&agent.id).await.unwrap().unwrap().status,
         AgentStatus::Ready
     );
+}
+
+#[tokio::test]
+async fn trigger_launch_observes_the_real_first_message_dispatch_without_resending() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut agent = test_agent(AgentStatus::Ready, Some("Inspect the workspace"));
+    authorize_first_message_work(&mut agent, 5);
+    store.create_agent(agent.clone()).await.unwrap();
+    let (sender, inputs) = recording_sender(Ok(()));
+    let service = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+    let mut launch = Launch::new(LaunchSeed {
+        trigger_id: TriggerId("trg_first_message_integration".into()),
+        revision_digest: "a".repeat(64),
+        public_id: PublicTriggerId("pub_first_message_integration".into()),
+        owner: agent.owner.clone(),
+        authority: LaunchAuthorityClass::Visitor,
+        placement_id: None,
+        referrer_origin: None,
+        requirements: RequirementsSnapshot {
+            services: Vec::new(),
+            checked_at: NOW.into(),
+        },
+        review: ReviewRequirements {
+            needs: Vec::new(),
+            can_start_now: true,
+        },
+        trust: LaunchTrustManifest::none(),
+        resolution: LaunchResolution::pending(),
+        has_first_message: true,
+        command_key_hash: "b".repeat(64),
+        command_fingerprint: "c".repeat(64),
+        created_at: NOW.into(),
+    })
+    .unwrap();
+    launch
+        .start(LaunchConfirmation {
+            surface: LaunchConsentSurface::Landing,
+            trust_confirmed_digest: None,
+            acknowledgements: Vec::new(),
+            confirmed_at: NOW.into(),
+        })
+        .unwrap();
+
+    let fence = launch
+        .work
+        .claim("launch-worker".into(), NOW, LATER.into())
+        .unwrap();
+    launch
+        .record_worker_sandbox(
+            "launch-worker",
+            fence,
+            agent.sandbox_id.clone(),
+            true,
+            NOW.into(),
+        )
+        .unwrap();
+    let fence = launch
+        .work
+        .claim("launch-worker".into(), NOW, LATER.into())
+        .unwrap();
+    launch
+        .record_worker_sandbox_ready(
+            "launch-worker",
+            fence,
+            Some(agent.workspace_id.clone()),
+            NOW.into(),
+        )
+        .unwrap();
+    let fence = launch
+        .work
+        .claim("launch-worker".into(), NOW, LATER.into())
+        .unwrap();
+    launch
+        .record_worker_workspace(
+            "launch-worker",
+            fence,
+            agent.workspace_id.clone(),
+            true,
+            NOW.into(),
+        )
+        .unwrap();
+    let fence = launch
+        .work
+        .claim("launch-worker".into(), NOW, LATER.into())
+        .unwrap();
+    launch
+        .record_worker_workspace_ready("launch-worker", fence, NOW.into())
+        .unwrap();
+    let fence = launch
+        .work
+        .claim("launch-worker".into(), NOW, LATER.into())
+        .unwrap();
+    launch
+        .record_worker_agent("launch-worker", fence, agent.id.clone(), true, NOW.into())
+        .unwrap();
+    let queued = agent.conversation.first_message.as_ref().unwrap();
+    let fence = launch
+        .work
+        .claim("launch-worker".into(), NOW, LATER.into())
+        .unwrap();
+    launch
+        .record_worker_agent_ready("launch-worker", fence, &agent.id, Some(queued), NOW.into())
+        .unwrap();
+
+    let outcome = service
+        .dispatch_queued_first_message(&agent.id, work_authority(5))
+        .await
+        .unwrap();
+    let FirstMessageDispatchOutcome::Accepted(record) = outcome else {
+        panic!("real Agent operation service must accept the first message")
+    };
+    let fence = launch
+        .work
+        .claim(
+            "launch-observer".into(),
+            LATEST,
+            "2026-09-05T00:00:03Z".into(),
+        )
+        .unwrap();
+    launch
+        .record_worker_first_message(
+            "launch-observer",
+            fence,
+            &agent.id,
+            &record,
+            LATEST.into(),
+            LATEST.into(),
+        )
+        .unwrap();
+    let fence = launch
+        .work
+        .claim(
+            "launch-finisher".into(),
+            LATEST,
+            "2026-09-05T00:00:03Z".into(),
+        )
+        .unwrap();
+    launch
+        .finish_worker_launch("launch-finisher", fence, LATEST.into())
+        .unwrap();
+
+    assert_eq!(launch.state, LaunchState::Ready);
+    assert_eq!(launch.first_message, FirstMessageDelivery::WriteConfirmed);
+    assert_eq!(
+        launch.first_message_evidence.as_ref().unwrap().agent_id,
+        agent.id
+    );
+    assert_eq!(inputs.lock().unwrap().len(), 1);
 }
 
 fn fenced_first_message_agent(dispatch_generation: u64) -> Agent {
