@@ -100,6 +100,16 @@ pub trait TriggerStore: Send + Sync {
         owner: &SubjectId,
     ) -> Result<Option<Trigger>, TriggerStoreError>;
 
+    /// Reads the first immutable revision whose content digest matches exactly.
+    ///
+    /// Implementations must bound the result to one deterministic row and validate that the
+    /// returned revision belongs to `id` and that its content produces `digest`.
+    async fn trigger_revision(
+        &self,
+        id: &TriggerId,
+        digest: &str,
+    ) -> Result<Option<TriggerRevision>, TriggerStoreError>;
+
     async fn save_draft(
         &self,
         id: &TriggerId,

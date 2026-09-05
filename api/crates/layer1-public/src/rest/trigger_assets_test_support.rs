@@ -12,8 +12,8 @@ use layer2_core::{
         AgentReusePolicy, ButtonLabel, Placement, PlacementId, PlacementUpdate, Presentation,
         PublicTrigger, PublicTriggerId, ReusePolicy, SandboxReusePolicy, Theme, Trigger,
         TriggerAvailability, TriggerConsent, TriggerContent, TriggerId, TriggerPage,
-        TriggerPageRequest, TriggerPreview, TriggerStats, TriggerStore, TriggerStoreError,
-        TriggerTarget, WorkspaceReusePolicy,
+        TriggerPageRequest, TriggerPreview, TriggerRevision, TriggerStats, TriggerStore,
+        TriggerStoreError, TriggerTarget, WorkspaceReusePolicy,
     },
     SubjectId,
 };
@@ -173,6 +173,28 @@ impl TriggerStore for ReadOnlyTriggerStore {
         owner: &SubjectId,
     ) -> Result<Option<Trigger>, TriggerStoreError> {
         Ok((&self.trigger.id == id && &self.trigger.owner == owner).then(|| self.trigger.clone()))
+    }
+
+    async fn trigger_revision(
+        &self,
+        id: &TriggerId,
+        digest: &str,
+    ) -> Result<Option<TriggerRevision>, TriggerStoreError> {
+        let revision = (&self.trigger.id == id)
+            .then_some(&self.trigger)
+            .and_then(|trigger| {
+                trigger
+                    .revisions
+                    .iter()
+                    .find(|revision| revision.digest == digest)
+            })
+            .cloned();
+        if let Some(revision) = &revision {
+            revision
+                .validate()
+                .map_err(|error| TriggerStoreError::Corrupt(error.to_string()))?;
+        }
+        Ok(revision)
     }
 
     async fn save_draft(

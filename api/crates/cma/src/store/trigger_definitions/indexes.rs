@@ -42,17 +42,23 @@ pub(super) fn definition_indexes() -> Vec<IndexModel> {
 }
 
 pub(super) fn revision_indexes() -> Vec<IndexModel> {
-    let mut indexes = vec![IndexModel::builder()
-        .keys(doc! { "trigger_id": 1_i32, "revision": 1_i32 })
-        .options(
-            IndexOptions::builder()
-                .name(String::from(
-                    "trigger_definition_revisions_trigger_revision",
-                ))
-                .unique(true)
-                .build(),
-        )
-        .build()];
+    let mut indexes = vec![
+        IndexModel::builder()
+            .keys(doc! { "trigger_id": 1_i32, "revision": 1_i32 })
+            .options(
+                IndexOptions::builder()
+                    .name(String::from(
+                        "trigger_definition_revisions_trigger_revision",
+                    ))
+                    .unique(true)
+                    .build(),
+            )
+            .build(),
+        named_index(
+            doc! { "trigger_id": 1_i32, "record.digest": 1_i32, "revision": 1_i32 },
+            "trigger_definition_revisions_trigger_digest",
+        ),
+    ];
     for (field, name) in [
         (
             "sandbox_profile_id",
@@ -151,5 +157,24 @@ mod tests {
             assert_eq!(revision.keys.get_i32(&reference).unwrap(), 1);
             assert_eq!(revision.keys.get_i32("trigger_id").unwrap(), 1);
         }
+    }
+
+    #[test]
+    fn exact_revision_reads_have_a_deterministic_lookup_index() {
+        let index = revision_indexes()
+            .into_iter()
+            .find(|index| {
+                index
+                    .options
+                    .as_ref()
+                    .and_then(|options| options.name.as_deref())
+                    == Some("trigger_definition_revisions_trigger_digest")
+            })
+            .unwrap();
+        assert_eq!(
+            index.keys,
+            doc! { "trigger_id": 1_i32, "record.digest": 1_i32, "revision": 1_i32 }
+        );
+        assert_eq!(index.options.unwrap().unique, None);
     }
 }

@@ -218,17 +218,21 @@ impl LaunchService {
                 "Launch public mapping does not match".into(),
             ));
         }
-        let trigger = self
+        let revision = self
             .definitions
-            .trigger(&launch.trigger_id, &public.owner)
+            .trigger_revision(&launch.trigger_id, &launch.revision_digest)
             .await
             .map_err(trigger_error)?
-            .ok_or_else(|| LaunchServiceError::Corrupt("published Trigger is missing".into()))?;
-        trigger
-            .revisions
-            .into_iter()
-            .find(|revision| revision.digest == launch.revision_digest)
-            .ok_or_else(|| LaunchServiceError::Corrupt("Launch revision is missing".into()))
+            .ok_or_else(|| LaunchServiceError::Corrupt("Launch revision is missing".into()))?;
+        revision
+            .validate()
+            .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+        if revision.digest != launch.revision_digest {
+            return Err(LaunchServiceError::Corrupt(
+                "Launch revision digest does not match".into(),
+            ));
+        }
+        Ok(revision)
     }
 
     async fn commit_review_refresh(

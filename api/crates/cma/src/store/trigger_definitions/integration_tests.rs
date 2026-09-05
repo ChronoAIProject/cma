@@ -351,6 +351,13 @@ async fn authoring_public_lookup_preview_and_retirement_are_durable() {
     assert_eq!(second.revision.revision, 2);
     assert_eq!(
         seed.store
+            .trigger_revision(&id, &first.revision.digest)
+            .await
+            .unwrap(),
+        Some(first.revision.clone())
+    );
+    assert_eq!(
+        seed.store
             .revisions
             .find_one(doc! { "trigger_id": id.as_str(), "revision": 1_i64 })
             .await
@@ -403,6 +410,45 @@ async fn authoring_public_lookup_preview_and_retirement_are_durable() {
             .availability,
         TriggerAvailability::Retired
     );
+    seed.client.database(&seed.database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn exact_revision_reads_validate_the_stored_content_digest() {
+    let seed = seeded("exact_revision").await;
+    let id = TriggerId("trg_exact_revision".into());
+    seed.store
+        .create_trigger(trigger(id.as_str(), &seed.owner, &seed.target))
+        .await
+        .unwrap();
+    let public = seed
+        .store
+        .publish_trigger(&id, &seed.owner, 1, T2.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        seed.store
+            .trigger_revision(&id, &public.revision.digest)
+            .await
+            .unwrap(),
+        Some(public.revision.clone())
+    );
+
+    seed.store
+        .revisions
+        .update_one(
+            doc! { "trigger_id": id.as_str(), "revision": 1_i64 },
+            doc! { "$set": { "record.content.presentation.title": "corrupt title" } },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        seed.store
+            .trigger_revision(&id, &public.revision.digest)
+            .await,
+        Err(TriggerStoreError::Corrupt(_))
+    ));
     seed.client.database(&seed.database).drop().await.unwrap();
 }
 
