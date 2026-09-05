@@ -17,10 +17,13 @@ use crate::{
     auth::{keys::KeyIssuer, AuthMode, AuthState, SignInRecords},
     config::Config,
     profile_policy::profile_route_policy,
-    projections::{AgentProjectionServices, UnavailableSandboxResources},
+    projections::{AdapterSandboxResources, AgentProjectionServices},
     rate_limit::RateLimiters,
     sandbox::{
-        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, ManagedSandboxCredentials,
+        runtime_capabilities, DurableCheckpointObjectPurger, LiveAgentRegistry, LiveSandboxPolicy,
+        ManagedSandboxCredentials, OrnnAgentSkillResolver, SandboxCredentialController,
+        SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
+        UnavailableSandboxCredentials,
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
@@ -30,6 +33,7 @@ use crate::{
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     pub launch_scheduler: super::trigger::LaunchScheduler,
+    pub sandbox_lifecycle: SandboxLifecycleComposition,
 }
 
 impl ControlPlaneComposition {
@@ -78,10 +82,11 @@ impl ControlPlaneComposition {
             Arc::clone(&settings),
             config.baseline_services.clone(),
         ));
+        let adapter = production_adapter(config, Arc::clone(&stores.checkpoint_objects)).await?;
         let sandbox_service = SandboxService::with_policy_source(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
-            sandbox_policy,
+            sandbox_policy.clone(),
         );
         let workspace_service = WorkspaceService::new(
             stores.sandbox_model.clone(),
@@ -92,8 +97,8 @@ impl ControlPlaneComposition {
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
             Arc::clone(&live_agents),
-            Arc::new(UnavailableSandboxResources),
-            runtime_capabilities(layer3_adapter::RuntimeContract::V3.capabilities()),
+            Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
+            runtime_capabilities(adapter.capabilities()),
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone());
         let admin = layer1_public::rest::admin::AdminState::new(
@@ -124,8 +129,8 @@ impl ControlPlaneComposition {
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
         );
-        let _sandbox_credentials = match &config.auth_mode {
-            AuthMode::Provider { base_url, .. } => Some(ManagedSandboxCredentials::new(
+        let sandbox_credentials: Arc<dyn SandboxCredentialController> = match &config.auth_mode {
+            AuthMode::Provider { base_url, .. } => ManagedSandboxCredentials::new(
                 Arc::new(KeyIssuer::new(
                     reqwest::Client::builder()
                         .timeout(std::time::Duration::from_secs(15))
@@ -137,16 +142,46 @@ impl ControlPlaneComposition {
                 )),
                 Arc::clone(&auth),
                 Arc::clone(&stores.sandbox_credentials),
-            )),
-            AuthMode::Trusted { .. } => None,
+            ),
+            AuthMode::Trusted { .. } => Arc::new(UnavailableSandboxCredentials),
         };
         if !auth.requires_credential() {
             tracing::warn!(
                 "running with a trusted fixed subject; this mode is for local development only"
             );
         }
+        let agent_skills = match &config.auth_mode {
+            AuthMode::Provider { .. } => OrnnAgentSkillResolver::authenticated(
+                &config.runtime.platform_base_url,
+                Arc::clone(&auth),
+            )?,
+            AuthMode::Trusted { .. } => {
+                OrnnAgentSkillResolver::anonymous(&config.runtime.platform_base_url)?
+            }
+        };
 
         let limits = RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
+        let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
+        let sandbox_lifecycle = SandboxLifecycleComposition::new(
+            SandboxLifecycleDependencies {
+                store: stores.sandbox_model.clone(),
+                adapter,
+                credentials: sandbox_credentials,
+                checkpoints: Arc::new(DurableCheckpointObjectPurger::new(
+                    stores.checkpoint_objects.clone(),
+                )),
+                registry: Arc::clone(&live_agents),
+                workspaces: Arc::clone(&workspace_service),
+                operations: projections.operations(),
+                policy: sandbox_policy,
+                skills: agent_skills,
+            },
+            SandboxLifecycleConfig {
+                holder: worker_holder.clone(),
+                deployment_id: config.deployment_id.clone(),
+                runtime_version: config.runtime.sandbox_image.clone(),
+            },
+        );
         let broker = Arc::new(
             CmaServiceConnectionBroker::from_auth_config(
                 &config.auth_mode,
@@ -166,7 +201,7 @@ impl ControlPlaneComposition {
             operations: Arc::clone(&operations),
             rate_limiters: Arc::clone(&limits),
             public_origin: config.public_url.clone(),
-            worker_holder: format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4()),
+            worker_holder,
         })?;
         let (trigger_routes, launch_scheduler) = trigger.into_parts();
         let resource_routes = profiles_router(profiles)
@@ -200,6 +235,51 @@ impl ControlPlaneComposition {
         Ok(Self {
             router,
             launch_scheduler,
+            sandbox_lifecycle,
         })
     }
+}
+
+async fn production_adapter(
+    config: &Config,
+    checkpoint_objects: Arc<crate::store::MongoCheckpointObjectStore>,
+) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
+    use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
+    use layer3_adapter::hosted::{
+        CheckpointArchiveStoreFactory, HostedDeployment, ProviderHostedBackend,
+    };
+    use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
+
+    let reclaimer =
+        BatchSandboxReclaimer::infer_namespaced(config.runtime.sandbox_namespace.clone())
+            .await
+            .map_err(|error| format!("sandbox cleanup authority is not usable: {error}"))?
+            .for_creator(config.deployment_id.clone());
+    reclaimer
+        .preflight_cleanup_authority()
+        .await
+        .map_err(|error| format!("sandbox cleanup authority is not readable: {error}"))?;
+    let client = SandboxClient::new(
+        config.runtime.sandbox_base_url.clone(),
+        config.runtime.sandbox_api_key.clone(),
+    )
+    .with_reclaimer(reclaimer);
+    let archive_factory: Arc<dyn CheckpointArchiveStoreFactory> = checkpoint_objects;
+    let backend = ProviderHostedBackend::production(client, archive_factory)
+        .map_err(|error| format!("hosted runtime transport is not usable: {error}"))?;
+    let mut deployment = HostedDeployment::default();
+    deployment.image.uri = config.runtime.sandbox_image.clone();
+    deployment.upstream_base_url = config.runtime.upstream_base_url.clone();
+    deployment.upstream_wire_api = config.runtime.upstream_wire_api.clone();
+    deployment.platform_base_url = config.runtime.platform_base_url.clone();
+    deployment
+        .contract()
+        .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;
+    Ok(Arc::new(CodexAdapter::with_backend(
+        backend,
+        CodexSandboxSpec {
+            deployment,
+            ..CodexSandboxSpec::default()
+        },
+    )))
 }

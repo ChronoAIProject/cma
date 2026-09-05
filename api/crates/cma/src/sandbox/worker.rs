@@ -4,14 +4,16 @@ use std::time::{Duration, SystemTime};
 use layer2_core::profiles::WorkspaceProfileRef;
 use layer2_core::sandbox::store::{SandboxLifecycleStore, SandboxStoreError};
 use layer2_core::sandbox::{
-    AgentOperationService, AgentUpdateRecorder, Sandbox, SandboxPolicy, SandboxPolicySource,
-    SandboxWorkStep,
+    AgentOperationService, AgentUpdateRecorder, Sandbox, SandboxPolicySource, SandboxWorkStep,
 };
 use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::{RuntimeHandle, SandboxAdapter};
 
 use super::credential::SandboxCredentialController;
 use super::live_agents::LiveAgentRegistry;
+
+#[cfg(test)]
+use layer2_core::sandbox::SandboxPolicy;
 
 mod lifecycle;
 mod provisioning;
@@ -90,6 +92,7 @@ pub(crate) struct SandboxWorkerConfig {
 }
 
 impl SandboxWorkerConfig {
+    #[cfg(test)]
     pub fn new(
         holder: impl Into<String>,
         deployment_id: impl Into<String>,

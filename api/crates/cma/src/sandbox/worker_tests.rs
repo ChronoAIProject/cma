@@ -380,6 +380,7 @@ impl Harness {
         let policy = SandboxPolicy {
             max_sandboxes_per_owner: 3,
             max_sandboxes_per_visitor: 1,
+            inactivity_pause_after_seconds: 15 * 60,
             retention_grace: retention,
             baseline_services: vec![ServiceId::new("baseline-model")],
         };

@@ -81,6 +81,7 @@ async fn serve() -> Result<(), String> {
     let mut shutdown = ShutdownCoordinator::new();
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
+    composition.sandbox_lifecycle.spawn(&mut shutdown);
     let http_signal = shutdown.subscribe();
     let server_result = {
         let server = axum::serve(
