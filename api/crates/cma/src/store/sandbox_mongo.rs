@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::sync::Semaphore;
 
+use super::MongoCheckpointObjectStore;
 use super::{durability::majority_collection, schema::initialize_collections};
 
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
@@ -64,6 +65,7 @@ const PROFILE_COLLECTIONS: &[&str] = &[
 #[derive(Clone)]
 pub struct MongoSandboxStore {
     pub(super) client: Client,
+    pub(super) checkpoint_objects: MongoCheckpointObjectStore,
     pub(super) sandboxes: Collection<Document>,
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
@@ -79,8 +81,10 @@ impl MongoSandboxStore {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
         initialize_collections(&database, SANDBOX_COLLECTIONS).await?;
+        let checkpoint_objects = MongoCheckpointObjectStore::open(client, name).await?;
         let store = Self {
             client: client.clone(),
+            checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
