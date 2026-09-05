@@ -109,3 +109,21 @@ fn agent_work_lease_takeover_fences_the_stale_holder() {
     .unwrap();
     assert_eq!(work.step, AgentWorkStep::MaterializeHome);
 }
+
+#[test]
+fn invalid_agent_work_advance_preserves_delayed_cleanup_state() {
+    let mut work = AgentWorkState::new(AgentWorkStep::FenceInteraction, NOW.into());
+    work.cleanup_not_before = Some(LATER.into());
+    let fence = work.claim("stop-worker".into(), NOW, LATER.into()).unwrap();
+    let original = work.clone();
+
+    assert!(work
+        .advance(
+            "stop-worker",
+            fence,
+            AgentWorkStep::PublishStopped,
+            NOW.into(),
+        )
+        .is_err());
+    assert_eq!(work, original);
+}

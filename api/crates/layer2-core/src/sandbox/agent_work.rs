@@ -156,11 +156,11 @@ impl AgentWorkState {
         if !self.owns(holder, fence) {
             return Err(SandboxModelError::invalid_value("agent.work.fence"));
         }
-        let ready_at = match (self.step, next, self.cleanup_not_before.take()) {
+        let ready_at = match (self.step, next, self.cleanup_not_before.as_ref()) {
             (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before))
-                if not_before > ready_at =>
+                if not_before > &ready_at =>
             {
-                not_before
+                not_before.clone()
             }
             (_, _, Some(_)) => {
                 return Err(SandboxModelError::invalid_value(
