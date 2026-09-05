@@ -12,8 +12,8 @@ use crate::sandbox::store::{
 };
 use crate::sandbox::{
     AgentConversationError, AgentLogEntry, AgentLogKind, AgentMessageAssembly, AgentStatus,
-    AgentUpdateRecorder, AgentWorkStep, DurableAgentUpdateRecorder, FirstMessageDelivery,
-    FirstMessageRecord, WorktreeStatus,
+    AgentStopReason, AgentUpdateRecorder, AgentWorkStep, DurableAgentUpdateRecorder,
+    FirstMessageDelivery, FirstMessageRecord, WorktreeStatus,
 };
 
 use super::agent_admission_tests::*;
@@ -218,6 +218,19 @@ async fn invalid_conversation_timestamp_is_rejected_atomically() {
     let (store, agent) = ready_agent(None).await;
     let mut mutation = begin_turn(agent.clone());
     mutation.appended_at = "not-a-timestamp".into();
+
+    assert_eq!(
+        store.commit_agent_conversation(mutation).await.unwrap_err(),
+        crate::sandbox::store::SandboxStoreError::Conflict
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+}
+
+#[tokio::test]
+async fn conversation_mutation_cannot_change_requested_stop_intent() {
+    let (store, agent) = ready_agent(None).await;
+    let mut mutation = begin_turn(agent.clone());
+    mutation.agent.requested_stop_reason = Some(AgentStopReason::Owner);
 
     assert_eq!(
         store.commit_agent_conversation(mutation).await.unwrap_err(),
