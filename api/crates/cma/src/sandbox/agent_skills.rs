@@ -39,9 +39,11 @@ pub(crate) trait AgentSkillResolver: Send + Sync {
     ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError>;
 }
 
+#[cfg(test)]
 #[derive(Default)]
 pub(crate) struct EmptyAgentSkillResolver;
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl AgentSkillResolver for EmptyAgentSkillResolver {
     async fn resolve(

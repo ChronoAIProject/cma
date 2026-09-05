@@ -150,6 +150,7 @@ impl LiveAgentRegistry {
     }
 }
 
+#[cfg(test)]
 impl super::LiveAgentAttachment {
     pub(crate) fn identity(&self) -> LiveAgentAttachmentIdentity {
         LiveAgentAttachmentIdentity {

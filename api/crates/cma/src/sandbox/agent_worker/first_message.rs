@@ -64,7 +64,11 @@ impl AgentWorker {
 
     async fn ensure_dispatch_connection(&self, agent: &Agent) -> Result<(), WorkerFailure> {
         let target = live_target(agent)?;
-        if self.dependencies.registry.resolve(&target).is_some() {
+        if self
+            .dependencies
+            .registry
+            .published_target_is_attached(&target)
+        {
             return Ok(());
         }
         let context = self.connection_context(agent).await?;

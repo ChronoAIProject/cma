@@ -1,4 +1,3 @@
-use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, AgentWorkStep};
 use layer3_adapter::{WorktreeReceipt, WorktreeRequest};
 
@@ -59,10 +58,6 @@ pub(super) fn registry_failure(error: LiveAgentRegistryError) -> WorkerFailure {
             WorkerFailure::terminal("agent_conversation_identity_mismatch", error.to_string())
         }
     }
-}
-
-pub(super) fn registry_store_error(error: LiveAgentRegistryError) -> SandboxStoreError {
-    SandboxStoreError::Unavailable(error.to_string())
 }
 
 pub(super) fn has_startup_evidence(agent: &Agent, step: AgentWorkStep) -> bool {

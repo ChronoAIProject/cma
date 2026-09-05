@@ -471,6 +471,9 @@ impl ProfileWorkspaceProvisioner for DurableProfileWorkspaceProvisioner {
                 layer2_core::sandbox::WorkspaceServiceError::Unavailable(detail) => {
                     SandboxDependencyError::Transient(detail)
                 }
+                error @ layer2_core::sandbox::WorkspaceServiceError::LimitReached { .. } => {
+                    SandboxDependencyError::ResourceQuota(error.to_string())
+                }
                 error => SandboxDependencyError::Validation(error.to_string()),
             })?;
         let workspace = self

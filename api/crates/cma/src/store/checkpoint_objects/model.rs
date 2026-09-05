@@ -181,6 +181,7 @@ pub(super) fn manifest_id(sandbox_id: &str, object_reference: &str) -> String {
     format!("cpo_{:x}", digest.finalize())
 }
 
+#[cfg(test)]
 pub(super) fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

@@ -35,10 +35,10 @@ pub(crate) struct LiveAgentTarget {
     pub runtime_generation: u64,
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct LiveAgentConnection {
     pub capabilities: RuntimeCapabilities,
-    pub input: ConversationInputSender,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +195,7 @@ impl LiveAgentRegistry {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn resolve(&self, target: &LiveAgentTarget) -> Option<LiveAgentConnection> {
         self.lock().entries.get(&target.agent_id).and_then(|entry| {
             (entry.published
@@ -202,9 +203,12 @@ impl LiveAgentRegistry {
                 && entry.runtime_generation == target.runtime_generation)
                 .then(|| LiveAgentConnection {
                     capabilities: entry.capabilities.clone(),
-                    input: entry.input.clone(),
                 })
         })
+    }
+
+    pub(crate) fn published_target_is_attached(&self, target: &LiveAgentTarget) -> bool {
+        target_matches(&self.lock().entries, target)
     }
 
     pub(crate) fn target_is_attached(&self, target: &LiveAgentTarget) -> bool {
