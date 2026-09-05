@@ -120,6 +120,8 @@ impl Launch {
         if next == LaunchState::Ready {
             self.ready_at = Some(at);
             self.work = LaunchWorkState::new(LaunchWorkStep::None, self.updated_at.clone());
+        } else if next == LaunchState::Cancelled {
+            self.work.stop_preserving_effect(self.updated_at.clone());
         } else if next.is_terminal() {
             self.work = LaunchWorkState::new(LaunchWorkStep::None, self.updated_at.clone());
         }
@@ -132,6 +134,7 @@ impl Launch {
         }
         self.blocked_reason = Some(reason);
         self.updated_at = at;
+        self.work.release_lease();
         self.bump_revision()
     }
 
@@ -154,9 +157,6 @@ impl Launch {
         }
         self.transition(LaunchState::Cancelled, at)?;
         self.blocked_reason = None;
-        self.work.step = LaunchWorkStep::None;
-        self.work.lease = None;
-        self.work.effect = None;
         Ok(())
     }
 
@@ -176,6 +176,8 @@ impl Launch {
             .validate_for_launch(&self.requirements, self.started_at.is_none())?;
         self.trust.validate()?;
         self.resolution.validate()?;
+        self.work
+            .validate(&self.id, self.state == LaunchState::Cancelled)?;
         for confirmation in &self.confirmations {
             confirmation.validate()?;
         }

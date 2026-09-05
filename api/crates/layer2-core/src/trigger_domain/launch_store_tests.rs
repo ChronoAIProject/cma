@@ -329,12 +329,42 @@ async fn due_work_claims_are_atomic_and_expired_leases_can_be_taken_over() {
         .await
         .unwrap()
         .is_none());
+    let first_fence = first.work.lease.as_ref().unwrap().fence;
+    let mut executing = first.clone();
+    executing
+        .work
+        .prepare_effect(
+            "worker-a",
+            first_fence,
+            LaunchEffectKind::CreateSandbox,
+            LaunchEffectKind::CreateSandbox.intent_key(&launch.id),
+            NOW.into(),
+        )
+        .unwrap();
+    executing
+        .work
+        .mark_effect_executing("worker-a", first_fence, NOW.into())
+        .unwrap();
+    executing.revision += 1;
+    store
+        .commit_launch(LaunchCommit {
+            expected_revision: first.revision,
+            launch: executing,
+            event_at: NOW.into(),
+            events: vec![],
+        })
+        .await
+        .unwrap();
     let second = store
         .claim_launch(&launch.id, "worker-b", LATER.into(), LATEST.into())
         .await
         .unwrap()
         .unwrap();
-    assert!(second.work.lease.as_ref().unwrap().fence > first.work.lease.as_ref().unwrap().fence);
+    assert!(second.work.lease.as_ref().unwrap().fence > first_fence);
+    assert_eq!(
+        second.work.effect.as_ref().unwrap().state,
+        LaunchEffectState::RecoveryRequired
+    );
 }
 
 #[tokio::test]
