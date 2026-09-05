@@ -1,4 +1,6 @@
 use super::*;
+use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder};
+use layer3_adapter::ConversationUpdate;
 
 #[test]
 fn mongo_agent_work_stop_intent_validation_matches_domain_rules() {
@@ -397,6 +399,64 @@ async fn agent_conversation_rejects_invalid_and_stale_mutations_without_partial_
             Some(ready.clone())
         );
         assert_eq!(store.agent_log(&ready.id, 0, 10).await.unwrap().len(), 2);
+    }
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn terminal_agents_reject_matching_generation_runtime_updates_without_writes() {
+    let (client, name) = database("agent_conversation_terminal_updates").await;
+    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+
+    for (suffix, status) in [
+        ("stopped", AgentStatus::Stopped),
+        ("deleted", AgentStatus::Deleted),
+    ] {
+        let ready = ready_conversation_fixture(&store, suffix).await;
+        let mut terminal = ready.clone();
+        terminal.status = status;
+        terminal.stopped_at = Some(MINUTE.into());
+        terminal.stop_reason = Some(AgentStopReason::Owner);
+        terminal.updated_at = MINUTE.into();
+        terminal.deleted_at = (status == AgentStatus::Deleted).then(|| MINUTE.into());
+        terminal.revision += 1;
+        store
+            .save_agent(ready.revision, terminal.clone())
+            .await
+            .unwrap();
+        let before_logs = store.agent_log(&terminal.id, 0, 20).await.unwrap();
+        let recorder = DurableAgentUpdateRecorder::new(store.clone());
+
+        let updates = [
+            ConversationUpdate::Lost { frames: 3 },
+            ConversationUpdate::SignInRequired {
+                url: "https://signin.example/continue".into(),
+                code: Some("verification-code".into()),
+                message: Some("sign in required".into()),
+            },
+        ];
+        for update in updates {
+            let mut assembly = AgentMessageAssembly::default();
+            assert_eq!(
+                recorder
+                    .record_update(&terminal.id, 1, &mut assembly, update, TWO_MINUTES.into())
+                    .await,
+                Err(layer2_core::sandbox::AgentConversationError::InvalidState(
+                    "conversation updates require a live agent"
+                ))
+            );
+            assert!(assembly.is_empty());
+            assert_eq!(
+                store.get_agent(&terminal.id).await.unwrap(),
+                Some(terminal.clone())
+            );
+            assert_eq!(
+                store.agent_log(&terminal.id, 0, 20).await.unwrap(),
+                before_logs
+            );
+        }
     }
 
     client.database(&name).drop().await.unwrap();
