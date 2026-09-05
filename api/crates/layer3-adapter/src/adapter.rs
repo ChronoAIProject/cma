@@ -53,6 +53,13 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Reclaim one exact provider observation without trusting a reused handle.
+    async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "observed runtime reclamation is not supported".into(),
+        ))
+    }
+
     /// Run sandbox-wide installation before any credential is delivered.
     async fn run_install(
         &self,

@@ -189,6 +189,10 @@ impl SandboxAdapter for HostedAdapter {
         self.adopt_exact(request).await
     }
 
+    async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> crate::Result<()> {
+        self.reclaim_exact(observation).await
+    }
+
     async fn run_install(
         &self,
         handle: &RuntimeHandle,

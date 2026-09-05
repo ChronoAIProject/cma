@@ -48,6 +48,12 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "hosted runtime reclamation is not supported".into(),
+        ))
+    }
+
     async fn exchange(
         &self,
         handle: &RuntimeHandle,

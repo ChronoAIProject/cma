@@ -234,6 +234,11 @@ impl HostedBackend for InMemoryHostedBackend {
         memory_observation(handle, &runtime.request).map(Some)
     }
 
+    async fn reclaim(&self, observation: &RuntimeObservation) -> crate::Result<()> {
+        let mut runtimes = self.runtimes.lock().await;
+        state::reclaim(&mut runtimes, observation)
+    }
+
     async fn exchange(
         &self,
         handle: &RuntimeHandle,

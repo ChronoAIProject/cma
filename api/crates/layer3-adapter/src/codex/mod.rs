@@ -121,6 +121,10 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.adopt_runtime(request).await
     }
 
+    async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> crate::Result<()> {
+        self.hosted.reclaim_runtime(observation).await
+    }
+
     async fn run_install(
         &self,
         handle: &RuntimeHandle,

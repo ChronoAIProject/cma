@@ -169,6 +169,25 @@ impl HostedBackend for ProviderHostedBackend {
         Ok(observation)
     }
 
+    async fn reclaim(&self, observation: &RuntimeObservation) -> crate::Result<()> {
+        let Some(target) = self
+            .client
+            .capture_delete_target(&observation.handle)
+            .await?
+        else {
+            return Ok(());
+        };
+        let current = provider_inventory(self.client.list().await?)?
+            .into_iter()
+            .find(|current| current.handle == observation.handle);
+        if current.as_ref() != Some(observation) {
+            return Err(identity_mismatch());
+        }
+        self.transport.retire(&observation.handle).await?;
+        self.client.delete_captured(target).await?;
+        Ok(())
+    }
+
     async fn exchange(
         &self,
         handle: &RuntimeHandle,
