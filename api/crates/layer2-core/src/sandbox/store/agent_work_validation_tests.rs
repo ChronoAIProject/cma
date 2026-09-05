@@ -66,6 +66,13 @@ fn intent_retry_and_startup_advance_have_exact_work_deltas() {
     );
     assert_valid(&intent_current, &worktree, &advanced);
 
+    let mut changed_grants = advanced.clone();
+    changed_grants.agent.capabilities = crate::RuntimeCapabilities::new([
+        crate::RuntimeCapability::Conversation,
+        crate::RuntimeCapability::Resources,
+    ]);
+    assert_conflict(&intent_current, &worktree, &changed_grants);
+
     let mut mismatched = advanced.clone();
     mismatched
         .agent
@@ -502,6 +509,7 @@ fn claimed(
                 system_prompt: "Be exact.".into(),
             },
         },
+        capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
             conversation_id: None,

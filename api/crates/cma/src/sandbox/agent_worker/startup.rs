@@ -419,6 +419,15 @@ impl AgentWorker {
                     "agent lifecycle lease is no longer held",
                 )
             })?;
+        let offered = runtime_capabilities(self.dependencies.adapter.capabilities());
+        offered
+            .require(agent.capabilities.iter())
+            .map_err(|capability| {
+                WorkerFailure::terminal(
+                    "agent_capability_grant_unavailable",
+                    format!("replacement runtime does not provide {capability:?}"),
+                )
+            })?;
         self.dependencies
             .registry
             .attach(
@@ -426,7 +435,7 @@ impl AgentWorker {
                 conversation_id,
                 runtime_generation,
                 fence,
-                runtime_capabilities(self.dependencies.adapter.capabilities()),
+                agent.capabilities.clone(),
                 input,
                 updates,
                 self.dependencies.updates.clone(),

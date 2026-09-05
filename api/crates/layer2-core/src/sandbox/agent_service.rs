@@ -7,7 +7,10 @@ use crate::profiles::{
     content_digest, AgentProfileRef, AgentProfileRevision, AgentProfileSnapshot,
     MarketplaceLocator, ProfileVisibility,
 };
-use crate::{now_rfc3339, AgentId, Caller, Capability, SubjectId, WorkspaceId, WorktreeId};
+use crate::{
+    now_rfc3339, AgentId, Caller, Capability, RuntimeCapabilities, RuntimeCapability, SubjectId,
+    WorkspaceId, WorktreeId,
+};
 
 use super::service_trust::{validate_agent_profile, validate_agent_revision};
 use super::store::{
@@ -48,6 +51,8 @@ pub enum AgentServiceError {
     WorkspaceNotReady,
     #[error("sandbox is not active")]
     SandboxNotReady,
+    #[error("agent runtime does not support {capability:?}")]
+    CapabilityUnsupported { capability: RuntimeCapability },
     #[error("agent limit reached: {live} of {limit}")]
     LimitReached { limit: u8, live: u8 },
     #[error("agent creation key is already bound to another request")]
@@ -79,6 +84,7 @@ impl AgentServiceError {
             Self::NotFound => "agent_not_found",
             Self::WorkspaceNotReady => "workspace_not_ready",
             Self::SandboxNotReady => "sandbox_not_ready",
+            Self::CapabilityUnsupported { .. } => "agent_capability_unsupported",
             Self::LimitReached { .. } => "agent_limit_reached",
             Self::CreationConflict => "agent_creation_conflict",
             Self::StatusConflict { .. } => "agent_status_conflict",
@@ -98,10 +104,16 @@ pub struct AgentService {
     profiles: Arc<dyn AgentProfileStore>,
     profile_uses: Arc<dyn ProfileUseRecorder>,
     runtimes: Arc<dyn AgentRuntimeRegistry>,
+    runtime_capabilities: RuntimeCapabilities,
 }
 
 impl AgentService {
-    pub fn new<S, P, R>(store: Arc<S>, profiles: Arc<P>, runtimes: Arc<R>) -> Arc<Self>
+    pub fn new<S, P, R>(
+        store: Arc<S>,
+        profiles: Arc<P>,
+        runtimes: Arc<R>,
+        runtime_capabilities: RuntimeCapabilities,
+    ) -> Arc<Self>
     where
         S: AgentServiceStore + 'static,
         P: AgentProfileStore + ProfileUseRecorder + 'static,
@@ -109,7 +121,13 @@ impl AgentService {
     {
         let agent_profiles: Arc<dyn AgentProfileStore> = profiles.clone();
         let profile_uses: Arc<dyn ProfileUseRecorder> = profiles;
-        Self::with_dependencies(store, agent_profiles, profile_uses, runtimes)
+        Self::with_dependencies(
+            store,
+            agent_profiles,
+            profile_uses,
+            runtimes,
+            runtime_capabilities,
+        )
     }
 
     pub(crate) fn with_dependencies<S, R>(
@@ -117,6 +135,7 @@ impl AgentService {
         profiles: Arc<dyn AgentProfileStore>,
         profile_uses: Arc<dyn ProfileUseRecorder>,
         runtimes: Arc<R>,
+        runtime_capabilities: RuntimeCapabilities,
     ) -> Arc<Self>
     where
         S: AgentServiceStore + 'static,
@@ -127,6 +146,7 @@ impl AgentService {
             profiles,
             profile_uses,
             runtimes,
+            runtime_capabilities,
         })
     }
 
@@ -137,6 +157,9 @@ impl AgentService {
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
+        self.runtime_capabilities
+            .require([RuntimeCapability::Conversation])
+            .map_err(|capability| AgentServiceError::CapabilityUnsupported { capability })?;
         validate_title(request.title.as_deref())?;
         let workspace = self.owned_workspace(caller, workspace_id).await?;
         if workspace.status != WorkspaceStatus::Ready || workspace.resolved_commit.is_none() {
@@ -165,6 +188,7 @@ impl AgentService {
                 agent_id,
                 worktree_id: WorktreeId::generate(),
                 profile: AgentProfileSnapshot::from(&revision),
+                capabilities: self.runtime_capabilities.clone(),
                 title: request.title,
                 first_message,
                 origin: request.origin,

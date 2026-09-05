@@ -123,6 +123,7 @@ impl AgentOperationService {
         self.validate_message(&text)?;
         for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
+            require_granted(&current, [RuntimeCapability::Conversation])?;
             self.require_first_message_settled(&current)?;
             self.require_dispatch_available(&current)?;
             match current.status {
@@ -158,6 +159,10 @@ impl AgentOperationService {
         self.validate_message(&text)?;
         for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
+            require_granted(
+                &current,
+                [RuntimeCapability::Conversation, RuntimeCapability::Steer],
+            )?;
             self.require_active_status(&current, &[AgentStatus::Working])?;
             self.require_first_message_dispatch_settled(&current)?;
             self.require_dispatch_available(&current)?;
@@ -178,6 +183,13 @@ impl AgentOperationService {
         self.require_owner_authority(caller)?;
         for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
+            require_granted(
+                &current,
+                [
+                    RuntimeCapability::Conversation,
+                    RuntimeCapability::Interrupt,
+                ],
+            )?;
             self.require_active_status(
                 &current,
                 &[AgentStatus::Working, AgentStatus::WaitingApproval],
@@ -204,6 +216,7 @@ impl AgentOperationService {
         self.validate_approval_id(&approval_id)?;
         for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
+            require_granted(&current, [RuntimeCapability::Conversation])?;
             self.require_active_status(&current, &[AgentStatus::WaitingApproval])?;
             self.require_first_message_dispatch_settled(&current)?;
             self.require_dispatch_available(&current)?;
@@ -310,6 +323,16 @@ impl AgentOperationService {
             _ => Ok(()),
         }
     }
+}
+
+fn require_granted(
+    agent: &Agent,
+    required: impl IntoIterator<Item = RuntimeCapability>,
+) -> Result<(), AgentOperationError> {
+    agent
+        .capabilities
+        .require(required)
+        .map_err(|capability| AgentOperationError::CapabilityUnsupported { capability })
 }
 
 pub(super) fn operation_store_error(error: SandboxStoreError) -> AgentOperationError {

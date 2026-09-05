@@ -1,164 +1,15 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-
-use crate::ids::{AgentId, SandboxId, WorkspaceId};
+use crate::ids::AgentId;
 use crate::{Caller, Capability, SubjectId};
 
 use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
 use super::store::{AgentReadStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
-use super::{Agent, AgentLogEntry, AgentStatus, Sandbox, TypedFailure, Workspace, Worktree};
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentListQuery {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox_id: Option<SandboxId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<WorkspaceId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<AgentStatus>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentTurnOutcome {
-    Active,
-    Completed { at: String },
-    Failed { at: String, failure: TypedFailure },
-    Interrupted { at: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentTranscriptTurn {
-    pub turn_sequence: u64,
-    pub started_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin_key: Option<String>,
-    pub owner_message: String,
-    pub agent_messages: Vec<String>,
-    pub outcome: AgentTurnOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentTranscript {
-    pub agent_id: AgentId,
-    pub through_seq: u64,
-    pub turns: Vec<AgentTranscriptTurn>,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub context_used: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_window: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentUsageReading {
-    pub agent_id: AgentId,
-    pub through_seq: u64,
-    pub usage: AgentUsage,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SandboxResourceReading {
-    pub uptime_ms: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_usage_usec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_millis_limit: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_bytes_used: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_bytes_limit: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_bytes_peak: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stall_permille: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ceiling_hits: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allocation_failures: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kills: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub received_bytes: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sent_bytes: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentResourceReading {
-    pub agent_id: AgentId,
-    pub sandbox_id: SandboxId,
-    pub reading: SandboxResourceReading,
-}
-
-/// Exact owner-validated hierarchy for one Agent read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentLineage {
-    pub agent: Agent,
-    pub worktree: Worktree,
-    pub workspace: Workspace,
-    pub sandbox: Sandbox,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum SandboxResourceReadError {
-    #[error("sandbox does not support resource readings: {0}")]
-    Unsupported(String),
-    #[error("sandbox resource binding is corrupt: {0}")]
-    Corrupt(String),
-    #[error("sandbox resource reader is unavailable: {0}")]
-    Unavailable(String),
-}
-
-#[async_trait]
-pub trait SandboxResourceReader: Send + Sync {
-    async fn sandbox_resources(
-        &self,
-        sandbox: &Sandbox,
-    ) -> Result<SandboxResourceReading, SandboxResourceReadError>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum AgentReadError {
-    #[error("forbidden")]
-    Forbidden,
-    #[error("agent not found")]
-    NotFound,
-    #[error("invalid page request")]
-    InvalidPage,
-    #[error("agent sandbox does not support resource readings: {0}")]
-    ResourcesUnsupported(String),
-    #[error("agent data is not usable: {0}")]
-    Corrupt(String),
-    #[error("agent read dependency is unavailable: {0}")]
-    Unavailable(String),
-}
-
-impl AgentReadError {
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::Forbidden => "forbidden",
-            Self::NotFound => "agent_not_found",
-            Self::InvalidPage => "invalid_page",
-            Self::ResourcesUnsupported(_) => "agent_resources_unsupported",
-            Self::Corrupt(_) => "stored_agent_corrupt",
-            Self::Unavailable(_) => "agent_read_unavailable",
-        }
-    }
-}
+use super::{
+    Agent, AgentLineage, AgentListQuery, AgentLogEntry, AgentReadError, AgentResourceReading,
+    AgentTranscript, AgentUsageReading, Sandbox, SandboxResourceReadError, SandboxResourceReader,
+    Workspace, Worktree,
+};
 
 pub struct AgentReadService {
     store: Arc<dyn AgentReadStore>,
@@ -230,7 +81,9 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentTranscript, AgentReadError> {
-        let projection = self.projection(caller, id).await?;
+        let projection = self
+            .projection(caller, id, crate::RuntimeCapability::Conversation)
+            .await?;
         Ok(projection.transcript)
     }
 
@@ -239,7 +92,9 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentUsageReading, AgentReadError> {
-        let projection = self.projection(caller, id).await?;
+        let projection = self
+            .projection(caller, id, crate::RuntimeCapability::Usage)
+            .await?;
         Ok(projection.usage)
     }
 
@@ -250,6 +105,7 @@ impl AgentReadService {
     ) -> Result<AgentResourceReading, AgentReadError> {
         require(caller)?;
         let lineage = self.owned_lineage(caller, id).await?;
+        require_granted(&lineage.agent, crate::RuntimeCapability::Resources)?;
         let reading = self
             .resources
             .sandbox_resources(&lineage.sandbox)
@@ -266,9 +122,11 @@ impl AgentReadService {
         &self,
         caller: &Caller,
         id: &AgentId,
+        capability: crate::RuntimeCapability,
     ) -> Result<AgentLogProjection, AgentReadError> {
         require(caller)?;
         let lineage = self.owned_lineage(caller, id).await?;
+        require_granted(&lineage.agent, capability)?;
         let entries = self.complete_log(&lineage.agent).await?;
         fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)
     }
@@ -458,6 +316,15 @@ impl AgentReadService {
     }
 }
 
+fn require_granted(
+    agent: &Agent,
+    capability: crate::RuntimeCapability,
+) -> Result<(), AgentReadError> {
+    agent
+        .capabilities
+        .require([capability])
+        .map_err(|capability| AgentReadError::CapabilityUnsupported { capability })
+}
 fn validate_limit(limit: u16) -> Result<(), AgentReadError> {
     (limit > 0 && limit <= MAX_PAGE_SIZE)
         .then_some(())

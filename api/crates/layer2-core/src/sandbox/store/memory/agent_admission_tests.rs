@@ -129,6 +129,7 @@ pub(super) fn admission(key: &str) -> AgentAdmission {
         agent_id: AgentId::generate(),
         worktree_id: WorktreeId::generate(),
         profile: profile(),
+        capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         title: None,
         first_message: None,
         origin: AgentOrigin::Manual,
@@ -247,6 +248,16 @@ async fn exact_creation_key_replay_returns_existing_and_changed_payload_conflict
         store.admit_agent(request.clone()).await.unwrap(),
         AgentAdmissionResult::Existing(_)
     ));
+
+    let mut changed_grants = request.clone();
+    changed_grants.capabilities = crate::RuntimeCapabilities::new([
+        crate::RuntimeCapability::Conversation,
+        crate::RuntimeCapability::Resources,
+    ]);
+    assert_eq!(
+        store.admit_agent(changed_grants).await.unwrap_err(),
+        SandboxStoreError::AgentCreationConflict
+    );
 
     let mut changed = request;
     changed.title = Some("different".into());

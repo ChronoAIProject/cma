@@ -325,6 +325,9 @@ async fn agent_conversation_rejects_invalid_and_stale_mutations_without_partial_
     let mut invalid = mutation.clone();
     invalid.expected_last_seq += 1;
     invalid_mutations.push(invalid);
+    let mut invalid = mutation.clone();
+    invalid.agent.capabilities = layer2_core::RuntimeCapabilities::default();
+    invalid_mutations.push(invalid);
     let mut invalid = mutation;
     invalid.agent.requested_stop_reason = Some(AgentStopReason::Owner);
     invalid_mutations.push(invalid);
