@@ -257,6 +257,69 @@ fn resource_progress_is_fenced_ordered_and_reevaluates_nested_workspace_reuse() 
 }
 
 #[test]
+fn applied_waiting_sandbox_effect_settles_only_for_the_exact_resource() {
+    let mut launch = launch();
+    let sandbox_id = SandboxId("sbx_repair".into());
+    let fence = claim(&mut launch, "sandbox-resolver");
+    apply_effect(
+        &mut launch,
+        "sandbox-resolver",
+        fence,
+        LaunchEffectKind::CreateSandbox,
+        sandbox_id.as_str(),
+    );
+    launch
+        .record_worker_sandbox(
+            "sandbox-resolver",
+            fence,
+            sandbox_id.clone(),
+            false,
+            NOW.into(),
+        )
+        .unwrap();
+
+    let fence = claim(&mut launch, "sandbox-repairer");
+    apply_effect(
+        &mut launch,
+        "sandbox-repairer",
+        fence,
+        LaunchEffectKind::RepairSandboxServiceGrant,
+        sandbox_id.as_str(),
+    );
+    let before = launch.clone();
+    let wrong_id = SandboxId("sbx_other".into());
+    let rejected = launch.settle_worker_sandbox_effect(
+        "sandbox-repairer",
+        fence,
+        &wrong_id,
+        LATER.into(),
+        NOW.into(),
+    );
+    assert_rejected_unchanged(&launch, &before, rejected);
+
+    let events = launch
+        .settle_worker_sandbox_effect(
+            "sandbox-repairer",
+            fence,
+            &sandbox_id,
+            LATER.into(),
+            NOW.into(),
+        )
+        .unwrap();
+    assert_eq!(
+        events,
+        [LaunchEventKind::Deferred {
+            retry_at: LATER.into()
+        }]
+    );
+    assert_eq!(launch.state, LaunchState::SandboxPending);
+    assert_eq!(launch.work.step, LaunchWorkStep::WaitForSandbox);
+    assert!(launch.work.effect.is_none());
+    assert!(launch.work.lease.is_none());
+    launch.validate().unwrap();
+}
+
+#[test]
 fn resource_progress_rejects_an_uncorrelated_effect_result() {
     let mut launch = launch();
     let fence = claim(&mut launch, "worker");

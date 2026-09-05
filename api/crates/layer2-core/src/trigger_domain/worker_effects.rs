@@ -34,14 +34,15 @@ impl LaunchWorkStep {
         matches!(
             (self, kind),
             (
-                Self::ResolveSandbox,
+                Self::ResolveSandbox | Self::WaitForSandbox,
                 LaunchEffectKind::CreateSandbox | LaunchEffectKind::ReviveSandbox
-            ) | (Self::WaitForSandbox, LaunchEffectKind::CreateSandbox)
-                | (
-                    Self::ResolveWorkspace | Self::WaitForWorkspace,
-                    LaunchEffectKind::CreateWorkspace
-                )
-                | (Self::ResolveAgent, LaunchEffectKind::CreateAgent)
+            ) | (
+                Self::WaitForSandbox,
+                LaunchEffectKind::RepairSandboxServiceGrant
+            ) | (
+                Self::ResolveWorkspace | Self::WaitForWorkspace,
+                LaunchEffectKind::CreateWorkspace
+            ) | (Self::ResolveAgent, LaunchEffectKind::CreateAgent)
         )
     }
 }
@@ -59,6 +60,7 @@ pub struct LaunchWorkLease {
 pub enum LaunchEffectKind {
     CreateSandbox,
     ReviveSandbox,
+    RepairSandboxServiceGrant,
     CreateWorkspace,
     CreateAgent,
 }
@@ -68,6 +70,7 @@ impl LaunchEffectKind {
         let operation = match self {
             Self::CreateSandbox => "create-sandbox",
             Self::ReviveSandbox => "revive-sandbox",
+            Self::RepairSandboxServiceGrant => "repair-sandbox-service-grant",
             Self::CreateWorkspace => "create-workspace",
             Self::CreateAgent => "create-agent",
         };
@@ -76,7 +79,7 @@ impl LaunchEffectKind {
 
     const fn result_prefix(self) -> &'static str {
         match self {
-            Self::CreateSandbox | Self::ReviveSandbox => "sbx_",
+            Self::CreateSandbox | Self::ReviveSandbox | Self::RepairSandboxServiceGrant => "sbx_",
             Self::CreateWorkspace => "wks_",
             Self::CreateAgent => "agt_",
         }
