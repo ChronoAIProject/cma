@@ -1,19 +1,21 @@
-//! Internal schema-v1 checkpoint persistence.
-//!
-//! Layer 2 exposes checkpoint identity and retention, but not the final
-//! lifecycle store port. This adapter keeps the atomic seal boundary private
-//! until the sandbox orchestration contract is integrated.
+//! Atomic schema-v1 checkpoint metadata publication.
 
 use layer2_core::ids::SandboxId;
-use layer2_core::sandbox::store::SandboxStoreError;
-use layer2_core::sandbox::{Sandbox, SandboxCheckpointRef};
+use layer2_core::sandbox::store::{
+    validate_checkpoint_mutation, SandboxCheckpointMutation, SandboxStoreError,
+};
+use layer2_core::sandbox::{Sandbox, SandboxCheckpointRef, SandboxEvent, SandboxEventKind};
 use mongodb::bson::{doc, Document};
-use mongodb::Collection;
+use mongodb::options::IndexOptions;
+use mongodb::{Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
+use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
+use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
-    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 
@@ -29,11 +31,26 @@ struct CheckpointDoc {
 }
 
 pub(super) async fn ensure_indexes(
-    _collection: &Collection<Document>,
+    collection: &Collection<Document>,
 ) -> Result<(), layer2_core::StoreError> {
-    // `_id` is the only checkpoint index in #804. Explicit collection creation
-    // in sandbox_mongo.rs makes this no-op intentional rather than lazy DDL.
-    Ok(())
+    collection
+        .create_indexes(checkpoint_indexes())
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            layer2_core::StoreError::Unavailable(format!("checkpoint indexes: {error}"))
+        })
+}
+
+fn checkpoint_indexes() -> Vec<IndexModel> {
+    vec![IndexModel::builder()
+        .keys(doc! { "sandbox_id": 1, "sandbox_revision": -1 })
+        .options(
+            IndexOptions::builder()
+                .name("checkpoints_sandbox_revision".to_string())
+                .build(),
+        )
+        .build()]
 }
 
 fn checkpoint_id(sandbox_id: &SandboxId, revision: u64) -> String {
@@ -69,151 +86,275 @@ fn read_checkpoint(document: Document) -> Result<CheckpointDoc, SandboxStoreErro
     Ok(checkpoint)
 }
 
-enum SealError {
+enum PublishError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
 }
 
-impl MongoSandboxStore {
-    /// Atomically retain a sealed checkpoint and advance the sandbox CAS.
-    ///
-    /// This remains crate-private because Layer 2 has not named the checkpoint
-    /// command yet; callers cannot accidentally depend on this provisional
-    /// adapter shape.
-    pub(crate) async fn seal_checkpoint(
-        &self,
-        expected_revision: u64,
-        sandbox: Sandbox,
-    ) -> Result<(), SandboxStoreError> {
-        if sandbox.revision
-            != expected_revision
-                .checked_add(1)
-                .ok_or(SandboxStoreError::Conflict)?
-        {
-            return Err(SandboxStoreError::Conflict);
+impl From<LifecycleLoadError> for PublishError {
+    fn from(error: LifecycleLoadError) -> Self {
+        match error {
+            LifecycleLoadError::Domain(error) => Self::Domain(error),
+            LifecycleLoadError::Driver(error) => Self::Driver(error),
         }
-        let checkpoint = sandbox.lifecycle.checkpoints.latest.as_ref().ok_or(
-            SandboxStoreError::InvalidTransaction("sealed sandbox has no checkpoint reference"),
-        )?;
-        let checkpoint_document = checkpoint_document(&sandbox.id, sandbox.revision, checkpoint)?;
-        let mut last_transient = None;
-        for attempt in 0..TRANSACTION_ATTEMPTS {
-            if attempt > 0 {
-                tokio::task::yield_now().await;
+    }
+}
+
+impl From<TransactionEventError> for PublishError {
+    fn from(error: TransactionEventError) -> Self {
+        match error {
+            TransactionEventError::Domain(error) => Self::Domain(error),
+            TransactionEventError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+struct PublicationReceipt {
+    sandbox: Sandbox,
+    checkpoint: SandboxCheckpointRef,
+    event: SandboxEvent,
+}
+
+pub(super) async fn publish_checkpoint(
+    store: &MongoSandboxStore,
+    mutation: SandboxCheckpointMutation,
+) -> Result<(), SandboxStoreError> {
+    let mut last_transient = None;
+    for attempt in 0..TRANSACTION_ATTEMPTS {
+        if attempt > 0 {
+            tokio::task::yield_now().await;
+        }
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => {
+                last_transient = Some(error.to_string());
+                continue;
             }
-            let mut session = match self.client.start_session().await {
-                Ok(session) => session,
-                Err(error) if is_transient(&error) => {
-                    last_transient = Some(error.to_string());
-                    continue;
+            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+        };
+        if let Err(error) = start_transaction(&mut session).await {
+            if is_transient(&error) {
+                last_transient = Some(error.to_string());
+                continue;
+            }
+            return Err(SandboxStoreError::Unavailable(error.to_string()));
+        }
+        let receipt = match apply_publication(store, &mutation, &mut session).await {
+            Ok(receipt) => receipt,
+            Err(PublishError::Domain(error)) => {
+                let _ = session.abort_transaction().await;
+                if error == SandboxStoreError::Duplicate
+                    && reconcile_publication(store, &mutation).await?
+                {
+                    return Ok(());
                 }
-                Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
-            };
-            if let Err(error) = start_transaction(&mut session).await {
-                if is_transient(&error) {
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
+                return Err(error);
+            }
+            Err(PublishError::Driver(error)) if is_transient(&error) => {
+                let _ = session.abort_transaction().await;
+                last_transient = Some(error.to_string());
+                continue;
+            }
+            Err(PublishError::Driver(error)) => {
+                let _ = session.abort_transaction().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
-            let result = async {
-                self.checkpoints
-                    .insert_one(checkpoint_document.clone())
-                    .session(&mut session)
-                    .await
-                    .map_err(|error| {
-                        if is_duplicate_key(&error) {
-                            SealError::Domain(SandboxStoreError::Duplicate)
-                        } else {
-                            SealError::Driver(error)
-                        }
-                    })?;
-                let updated = self
-                    .sandboxes
-                    .find_one_and_update(
-                        doc! {
-                            "_id": sandbox.id.as_str(),
-                            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                            "revision": signed(expected_revision, "expected sandbox revision")
-                                .map_err(SandboxStoreError::Corrupt)
-                                .map_err(SealError::Domain)?,
-                        },
-                        doc! { "$set": sandbox_replacement_fields(&sandbox)
-                        .map_err(SealError::Domain)? },
-                    )
-                    .session(&mut session)
-                    .await
-                    .map_err(SealError::Driver)?;
-                if updated.is_none() {
-                    return Err(SealError::Domain(SandboxStoreError::Conflict));
-                }
-                Ok::<(), SealError>(())
-            }
-            .await;
-            match result {
-                Ok(()) => {}
-                Err(SealError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
-                    if error == SandboxStoreError::Duplicate
-                        && self.reconcile_checkpoint(&sandbox).await?
-                    {
-                        return Ok(());
+        };
+        match commit_transaction(&mut session).await {
+            CommitOutcome::Committed => return Ok(()),
+            CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+            CommitOutcome::Unknown(error) => {
+                let commit_error = error.to_string();
+                let unresolved = commit_error.clone();
+                let store = store.clone();
+                return wait_for_reconciliation("checkpoint publication", async move {
+                    if reconcile_receipt(&store, &receipt).await? {
+                        Ok(())
+                    } else {
+                        Err(SandboxStoreError::Unavailable(format!(
+                            "checkpoint publication commit remained unknown: {unresolved}"
+                        )))
                     }
-                    return Err(error);
-                }
-                Err(SealError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
-                Err(SealError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
-                    return Err(SandboxStoreError::Unavailable(error.to_string()));
-                }
+                })
+                .await
+                .map_err(|deadline| {
+                    SandboxStoreError::Unavailable(format!(
+                        "{deadline}; ambiguous commit: {commit_error}"
+                    ))
+                })?;
             }
-            match commit_transaction(&mut session).await {
-                CommitOutcome::Committed => return Ok(()),
-                CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
-                CommitOutcome::Unknown(error) => {
-                    if self.reconcile_checkpoint(&sandbox).await? {
-                        return Ok(());
-                    }
-                    return Err(SandboxStoreError::Unavailable(format!(
-                        "checkpoint seal commit remained unknown: {error}"
-                    )));
-                }
-                CommitOutcome::Failed(error) => {
-                    return Err(SandboxStoreError::Unavailable(error.to_string()));
-                }
+            CommitOutcome::Failed(error) => {
+                return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         }
-        Err(SandboxStoreError::Unavailable(format!(
-            "checkpoint seal exhausted its retry budget: {}",
-            last_transient.unwrap_or_else(|| "no driver result".into())
-        )))
     }
+    Err(SandboxStoreError::Unavailable(format!(
+        "checkpoint publication exhausted its retry budget: {}",
+        last_transient.unwrap_or_else(|| "no driver result".into())
+    )))
+}
 
-    async fn reconcile_checkpoint(&self, sandbox: &Sandbox) -> Result<bool, SandboxStoreError> {
-        let stored_sandbox = self
-            .sandboxes
-            .find_one(doc! { "_id": sandbox.id.as_str() })
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-            .as_ref()
-            .map(read_sandbox)
-            .transpose()?;
-        let stored_checkpoint = self
-            .checkpoints
-            .find_one(doc! { "_id": checkpoint_id(&sandbox.id, sandbox.revision) })
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-            .map(read_checkpoint)
-            .transpose()?;
-        Ok(stored_sandbox.as_ref() == Some(sandbox)
-            && stored_checkpoint.as_ref().is_some_and(|stored| {
-                sandbox.lifecycle.checkpoints.latest.as_ref() == Some(&stored.record)
-            }))
+async fn apply_publication(
+    store: &MongoSandboxStore,
+    mutation: &SandboxCheckpointMutation,
+    session: &mut mongodb::ClientSession,
+) -> Result<PublicationReceipt, PublishError> {
+    let current = store
+        .sandboxes
+        .find_one(doc! { "_id": mutation.guard.sandbox_id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(PublishError::Driver)?
+        .as_ref()
+        .map(read_sandbox)
+        .transpose()
+        .map_err(PublishError::Domain)?
+        .ok_or(PublishError::Domain(SandboxStoreError::NotFound))?;
+    let agents = load_sandbox_agents(store, &current.id, session).await?;
+    validate_checkpoint_mutation(&current, &agents, mutation).map_err(PublishError::Domain)?;
+
+    store
+        .checkpoints
+        .insert_one(
+            checkpoint_document(
+                &mutation.sandbox.id,
+                mutation.sandbox.revision,
+                &mutation.checkpoint,
+            )
+            .map_err(PublishError::Domain)?,
+        )
+        .session(&mut *session)
+        .await
+        .map_err(classify_write)?;
+    prune_checkpoint_metadata(store, &mutation.sandbox, session).await?;
+    let advanced = store
+        .sandboxes
+        .update_one(
+            doc! {
+                "_id": current.id.as_str(),
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": signed(current.revision, "checkpoint sandbox revision")
+                    .map_err(|_| PublishError::Domain(SandboxStoreError::Conflict))?,
+            },
+            doc! { "$set": sandbox_replacement_fields(&mutation.sandbox)
+            .map_err(PublishError::Domain)? },
+        )
+        .session(&mut *session)
+        .await
+        .map_err(classify_write)?;
+    if advanced.matched_count != 1 {
+        return Err(PublishError::Domain(SandboxStoreError::Conflict));
     }
+    let event = append_in_transaction(
+        store,
+        session,
+        &current.id,
+        mutation.appended_at.clone(),
+        SandboxEventKind::CheckpointSealed {
+            object_reference: mutation.checkpoint.object_reference.clone(),
+        },
+    )
+    .await?;
+    Ok(PublicationReceipt {
+        sandbox: mutation.sandbox.clone(),
+        checkpoint: mutation.checkpoint.clone(),
+        event,
+    })
+}
+
+async fn prune_checkpoint_metadata(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), PublishError> {
+    let retained = sandbox
+        .lifecycle
+        .checkpoints
+        .latest
+        .iter()
+        .chain(sandbox.lifecycle.checkpoints.previous.iter())
+        .map(|checkpoint| {
+            signed(checkpoint.epoch, "retained checkpoint epoch")
+                .map_err(SandboxStoreError::Corrupt)
+                .map_err(PublishError::Domain)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    store
+        .checkpoints
+        .delete_many(doc! {
+            "sandbox_id": sandbox.id.as_str(),
+            "record.epoch": { "$nin": retained },
+        })
+        .session(session)
+        .await
+        .map(|_| ())
+        .map_err(PublishError::Driver)
+}
+
+fn classify_write(error: mongodb::error::Error) -> PublishError {
+    if is_duplicate_key(&error) {
+        PublishError::Domain(SandboxStoreError::Duplicate)
+    } else {
+        PublishError::Driver(error)
+    }
+}
+
+async fn reconcile_publication(
+    store: &MongoSandboxStore,
+    mutation: &SandboxCheckpointMutation,
+) -> Result<bool, SandboxStoreError> {
+    let event = store
+        .sandbox_events
+        .find_one(doc! {
+            "sandbox_id": mutation.sandbox.id.as_str(),
+            "record.kind.type": "checkpoint_sealed",
+            "record.kind.object_reference": &mutation.checkpoint.object_reference,
+        })
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .as_ref()
+        .map(super::sandbox_events::read_event)
+        .transpose()?;
+    let Some(event) = event else {
+        return Ok(false);
+    };
+    reconcile_receipt(
+        store,
+        &PublicationReceipt {
+            sandbox: mutation.sandbox.clone(),
+            checkpoint: mutation.checkpoint.clone(),
+            event,
+        },
+    )
+    .await
+}
+
+async fn reconcile_receipt(
+    store: &MongoSandboxStore,
+    receipt: &PublicationReceipt,
+) -> Result<bool, SandboxStoreError> {
+    let stored_sandbox = store
+        .sandboxes
+        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .as_ref()
+        .map(read_sandbox)
+        .transpose()?;
+    let stored_checkpoint = store
+        .checkpoints
+        .find_one(doc! {
+            "_id": checkpoint_id(&receipt.sandbox.id, receipt.sandbox.revision)
+        })
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .map(read_checkpoint)
+        .transpose()?;
+    Ok(stored_sandbox.as_ref() == Some(&receipt.sandbox)
+        && stored_checkpoint
+            .as_ref()
+            .is_some_and(|stored| stored.record == receipt.checkpoint)
+        && reconcile_event(store, &receipt.event).await?.is_some())
 }
 
 #[cfg(test)]
@@ -243,7 +384,7 @@ mod tests {
                 epoch: 1,
                 object_reference: "objects/checkpoint".into(),
                 sha256: "a".repeat(64),
-                writers: WriterState::Resumed,
+                writers: WriterState::Held,
             },
             &[conversation],
             "2026-09-05T00:00:00Z",
@@ -253,5 +394,15 @@ mod tests {
         assert_eq!(document.get_i64("document_schema_version").unwrap(), 1);
         assert_eq!(document.get_str("sandbox_id").unwrap(), id.as_str());
         assert_eq!(document.get_i64("sandbox_revision").unwrap(), 4);
+    }
+
+    #[test]
+    fn checkpoint_index_supports_retention_and_purge_by_sandbox() {
+        let index = checkpoint_indexes().remove(0);
+        assert_eq!(index.keys, doc! { "sandbox_id": 1, "sandbox_revision": -1 });
+        assert_eq!(
+            index.options.unwrap().name.as_deref(),
+            Some("checkpoints_sandbox_revision")
+        );
     }
 }

@@ -51,6 +51,9 @@ mod agent_reads;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_command_tests;
+mod lifecycle_execution;
+#[cfg(test)]
+mod lifecycle_execution_tests;
 mod workspace_lifecycle;
 
 #[async_trait]

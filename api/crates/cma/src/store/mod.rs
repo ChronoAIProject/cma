@@ -22,7 +22,6 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 mod agents;
 pub mod auth;
-#[allow(dead_code)] // Layer 2 has not exposed the checkpoint port yet.
 mod checkpoints;
 mod default_profiles;
 pub mod directory;
@@ -32,6 +31,8 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+mod lifecycle_execution;
+mod lifecycle_transaction;
 mod marketplace;
 #[cfg(test)]
 mod marketplace_mongo_integration_tests;
