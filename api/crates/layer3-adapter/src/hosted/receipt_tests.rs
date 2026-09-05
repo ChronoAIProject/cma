@@ -116,11 +116,18 @@ impl HostedBackend for CorruptingBackend {
         handle: &RuntimeHandle,
         launch: AgentLaunch,
         resume_conversation: Option<String>,
+        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
         let (channel, mut receipt) = self
             .inner
-            .open_agent(handle, launch, resume_conversation, updates)
+            .open_agent(
+                handle,
+                launch,
+                resume_conversation,
+                connection_fence,
+                updates,
+            )
             .await?;
         self.corrupt_open_receipt(&mut receipt);
         Ok((channel, receipt))

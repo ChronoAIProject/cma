@@ -44,6 +44,8 @@ struct MemoryAgent {
     launch: AgentLaunch,
     conversation_id: String,
     running: bool,
+    connection_fence: u64,
+    updates: mpsc::Sender<ConversationUpdate>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +76,7 @@ pub struct InMemoryHostedBackend {
     runtimes: Arc<Mutex<BTreeMap<RuntimeHandle, MemoryRuntime>>>,
     requests: Arc<Mutex<Vec<(RuntimeHandle, RequestFrame)>>>,
     failures: Arc<StdMutex<VecDeque<WireFailure>>>,
+    lost_responses: Arc<StdMutex<VecDeque<WireOperation>>>,
     corrupt_install_receipt: Arc<AtomicBool>,
     corrupt_capture_digest: Arc<AtomicBool>,
 }
@@ -92,6 +95,28 @@ impl InMemoryHostedBackend {
         self.requests.lock().await.clone()
     }
 
+    /// Emit one conversation update from an inspectable runtime.
+    pub async fn send_agent_update(
+        &self,
+        handle: &RuntimeHandle,
+        agent_id: &AgentSlot,
+        update: ConversationUpdate,
+    ) -> crate::Result<()> {
+        let updates = self
+            .runtimes
+            .lock()
+            .await
+            .get(handle)
+            .and_then(|runtime| runtime.agents.get(agent_id))
+            .filter(|agent| agent.running)
+            .map(|agent| agent.updates.clone())
+            .ok_or_else(|| AdapterError::Unavailable("agent update channel is not live".into()))?;
+        updates
+            .send(update)
+            .await
+            .map_err(|_| AdapterError::Unavailable("agent update receiver ended".into()))
+    }
+
     /// Return one typed runtime failure the next time this operation is sent.
     pub fn fail_next(
         &self,
@@ -108,6 +133,14 @@ impl InMemoryHostedBackend {
                 detail: detail.into(),
                 retryable: false,
             });
+    }
+
+    /// Apply one operation but report a lost response to exercise durable replay.
+    pub fn lose_next_response(&self, operation: WireOperation) {
+        self.lost_responses
+            .lock()
+            .expect("in-memory lost-response queue lock")
+            .push_back(operation);
     }
 
     /// Make the next successful install reply carry an invalid receipt.
@@ -176,7 +209,7 @@ impl HostedBackend for InMemoryHostedBackend {
         let runtime = runtimes
             .get_mut(handle)
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
-        match request {
+        let response = match request {
             RequestFrame::Install(request) => {
                 if request.operation_id.trim().is_empty() || !request.has_valid_sha256() {
                     return refused(operation, "install_request_invalid");
@@ -301,7 +334,13 @@ impl HostedBackend for InMemoryHostedBackend {
             RequestFrame::OpenAgent(_) => Err(AdapterError::Rejected(
                 "open_agent must use the hosted conversation path".into(),
             )),
+        }?;
+        if self.take_lost_response(operation) {
+            return Err(AdapterError::Unavailable(format!(
+                "{operation:?}: response lost after effect"
+            )));
         }
+        Ok(response)
     }
 
     async fn open_agent(
@@ -309,7 +348,8 @@ impl HostedBackend for InMemoryHostedBackend {
         handle: &RuntimeHandle,
         launch: AgentLaunch,
         resume_conversation: Option<String>,
-        _updates: mpsc::Sender<ConversationUpdate>,
+        connection_fence: u64,
+        updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, AgentOpenReceipt)> {
         self.requests
             .lock()
@@ -328,7 +368,10 @@ impl HostedBackend for InMemoryHostedBackend {
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
         require_credential(runtime, WireOperation::OpenAgent)?;
         let expected = format!("agent:{}:open:v1", launch.agent_id.as_str());
-        if launch.operation_id != expected || !valid_sha256(&launch.request_sha256) {
+        if launch.operation_id != expected
+            || !valid_sha256(&launch.request_sha256)
+            || connection_fence == 0
+        {
             return refused(WireOperation::OpenAgent, "operation_request_invalid");
         }
         let payload = fingerprint(&(launch.clone(), resume_conversation.clone()))?;
@@ -349,7 +392,22 @@ impl HostedBackend for InMemoryHostedBackend {
             if !live {
                 return refused(WireOperation::OpenAgent, "agent_process_not_live");
             }
-            return Ok((channel(receipt.conversation_id.clone()), receipt));
+            if let Some(agent) = runtime.agents.get_mut(&launch.agent_id) {
+                if connection_fence < agent.connection_fence {
+                    return refused(WireOperation::OpenAgent, "connection_fence_stale");
+                }
+                if connection_fence > agent.connection_fence {
+                    agent.connection_fence = connection_fence;
+                    agent.updates = updates;
+                }
+            }
+            let result = (channel(receipt.conversation_id.clone()), receipt);
+            if self.take_lost_response(WireOperation::OpenAgent) {
+                return Err(AdapterError::Unavailable(
+                    "OpenAgent: response lost after effect".into(),
+                ));
+            }
+            return Ok(result);
         }
         if !runtime.homes.contains_key(&launch.agent_id)
             || !runtime
@@ -382,6 +440,8 @@ impl HostedBackend for InMemoryHostedBackend {
                 launch,
                 conversation_id: conversation_id.clone(),
                 running: true,
+                connection_fence,
+                updates,
             },
         );
         remember_operation(
@@ -391,7 +451,13 @@ impl HostedBackend for InMemoryHostedBackend {
             payload,
             ResponseFrame::OpenAgent(receipt.clone()),
         );
-        Ok((channel(Some(conversation_id)), receipt))
+        let result = (channel(Some(conversation_id)), receipt);
+        if self.take_lost_response(WireOperation::OpenAgent) {
+            return Err(AdapterError::Unavailable(
+                "OpenAgent: response lost after effect".into(),
+            ));
+        }
+        Ok(result)
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {

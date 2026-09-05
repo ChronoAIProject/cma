@@ -31,6 +31,7 @@ pub trait HostedBackend: Send + Sync {
         handle: &RuntimeHandle,
         launch: AgentLaunch,
         resume_conversation: Option<String>,
+        connection_fence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<(ConversationChannel, AgentOpenReceipt)>;
 

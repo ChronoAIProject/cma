@@ -1,0 +1,447 @@
+use std::time::SystemTime;
+
+use layer2_core::rfc3339_at;
+use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
+use layer2_core::sandbox::{
+    Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
+};
+use layer3_adapter::{AgentHomeRequest, AgentOpenRequest, ConversationChannel, WorktreeRequest};
+use tokio::sync::mpsc;
+
+use super::startup_support::{
+    live_target, registry_failure, valid_conversation_id, valid_worktree_receipt,
+};
+use super::support::{
+    adapter_failure, bump_log_sequence, claimed_fence, request_evidence, runtime_capabilities,
+    runtime_options, skill_failure, validate_skills, AgentContext, WorkerFailure,
+};
+use super::AgentWorker;
+use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentTarget};
+
+const UPDATE_BUFFER: usize = 256;
+
+impl AgentWorker {
+    pub(super) async fn add_worktree(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let request = WorktreeRequest::new(
+            format!(
+                "worktree:{}:{}:add:v1",
+                context.workspace.name, context.worktree.name
+            ),
+            context.workspace.name.clone(),
+            context.worktree.name.clone(),
+            context.worktree.base_commit.clone(),
+        );
+        let evidence = request_evidence(
+            AgentWorkStep::AddWorktree,
+            &request.operation_id,
+            &request.request_sha256,
+        );
+        let agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        match self
+            .dependencies
+            .adapter
+            .add_worktree(&context.runtime, &request)
+            .await
+        {
+            Ok(receipt) if valid_worktree_receipt(&context, &request, &receipt) => {
+                self.progress(
+                    agent,
+                    AgentWorkStep::MaterializeHome,
+                    now,
+                    Some(evidence),
+                    Vec::new(),
+                    None,
+                    None,
+                )
+                .await
+            }
+            Ok(_) => {
+                self.handle_failure(
+                    agent,
+                    WorkerFailure::terminal(
+                        "agent_runtime_receipt_invalid",
+                        "runtime returned invalid worktree evidence",
+                    ),
+                    now,
+                )
+                .await
+            }
+            Err(error) => {
+                self.handle_failure(agent, adapter_failure(error), now)
+                    .await
+            }
+        }
+    }
+
+    pub(super) async fn materialize_home(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let skills = match self
+            .dependencies
+            .skills
+            .resolve(&agent.profile.content.skills)
+            .await
+        {
+            Ok(skills) => skills,
+            Err(error) => return self.handle_failure(agent, skill_failure(error), now).await,
+        };
+        if let Err(failure) = validate_skills(&agent.profile.content.skills, &skills) {
+            return self.handle_failure(agent, failure, now).await;
+        }
+        let request = AgentHomeRequest::new(
+            format!("agent:{}:home:create:v1", agent.id),
+            runtime_options(&agent, &context),
+            agent.profile.content.system_prompt.clone(),
+            skills,
+        );
+        let evidence = request_evidence(
+            AgentWorkStep::MaterializeHome,
+            &request.operation_id,
+            &request.request_sha256,
+        );
+        let agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        match self
+            .dependencies
+            .adapter
+            .materialize_agent_home(&context.runtime, &request)
+            .await
+        {
+            Ok(()) => {
+                self.progress(
+                    agent,
+                    AgentWorkStep::OpenConversation,
+                    now,
+                    Some(evidence),
+                    Vec::new(),
+                    None,
+                    None,
+                )
+                .await
+            }
+            Err(error) => {
+                self.handle_failure(agent, adapter_failure(error), now)
+                    .await
+            }
+        }
+    }
+
+    pub(super) async fn open_conversation(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        if agent.conversation.conversation_id.is_some()
+            || agent.conversation.runtime_generation.is_some()
+        {
+            return self
+                .handle_failure(
+                    agent,
+                    WorkerFailure::terminal(
+                        "agent_conversation_state_invalid",
+                        "an unopened starting agent already has runtime identity",
+                    ),
+                    now,
+                )
+                .await;
+        }
+        let request = AgentOpenRequest::new(
+            format!("agent:{}:open:v1", agent.id),
+            runtime_options(&agent, &context),
+            None,
+        )
+        .with_connection_fence(claimed_fence(&agent, &self.config.holder)?);
+        let evidence = request_evidence(
+            AgentWorkStep::OpenConversation,
+            &request.operation_id,
+            &request.request_sha256,
+        );
+        let mut agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        let (channel, updates) = match self.open(&context, &request).await {
+            Ok(opened) => opened,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let conversation_id = match valid_conversation_id(channel.conversation_id) {
+            Ok(id) => id,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let generation = 1;
+        let attachment = match self.attach(
+            &agent,
+            conversation_id.clone(),
+            generation,
+            channel.input,
+            updates,
+        ) {
+            Ok(attachment) => attachment,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        agent.conversation.conversation_id = Some(conversation_id);
+        agent.conversation.runtime_generation = Some(generation);
+        let result = self
+            .progress(
+                agent,
+                AgentWorkStep::PublishReady,
+                now,
+                Some(evidence),
+                Vec::new(),
+                None,
+                None,
+            )
+            .await;
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.dependencies.registry.rollback(&attachment);
+                Err(error)
+            }
+        }
+    }
+
+    pub(super) async fn publish_ready(
+        &self,
+        mut agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let target = match live_target(&agent) {
+            Ok(target) => target,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
+        let attachment = match self
+            .dependencies
+            .registry
+            .attachment(&target, authority_fence)
+        {
+            Ok(Some(attachment)) => attachment,
+            Ok(None) => match self.reattach(&agent, &context, &target).await {
+                Ok(attachment) => attachment,
+                Err(failure) => return self.handle_failure(agent, failure, now).await,
+            },
+            Err(error) => {
+                return self
+                    .handle_failure(agent, registry_failure(error), now)
+                    .await
+            }
+        };
+        let expected = agent.revision;
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        let stamp = rfc3339_at(now);
+        agent
+            .work
+            .advance(
+                &self.config.holder,
+                fence,
+                AgentWorkStep::PublishConnection,
+                stamp.clone(),
+            )
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        agent
+            .transition(AgentStatus::Ready, stamp.clone(), None)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        let conversation_id = target.conversation_id;
+        let runtime_generation = target.runtime_generation;
+        let logs = vec![
+            AgentLogKind::ConversationOpened {
+                conversation_id,
+                runtime_generation,
+            },
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            },
+        ];
+        bump_log_sequence(&mut agent, logs.len())?;
+        let mut worktree = context.worktree;
+        let expected_worktree_revision = worktree.revision;
+        worktree
+            .transition(WorktreeStatus::Ready)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        let result = self
+            .dependencies
+            .store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: expected,
+                holder: self.config.holder.clone(),
+                fence,
+                agent: agent.clone(),
+                worktree: Some(VersionedWorktree {
+                    expected_revision: expected_worktree_revision,
+                    worktree,
+                }),
+                appended_at: stamp,
+                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                    agent_id: agent.id.clone(),
+                    from: AgentStatus::Starting,
+                    to: AgentStatus::Ready,
+                }),
+                agent_logs: logs,
+            })
+            .await;
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.dependencies.registry.rollback(&attachment);
+                Err(error)
+            }
+        }
+    }
+
+    pub(super) async fn defer_first_message_dispatch(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.handle_failure(
+            agent,
+            WorkerFailure::retryable(
+                "agent_first_message_dispatch_unavailable",
+                "the durable first-message dispatcher is not composed yet",
+            ),
+            now,
+        )
+        .await
+    }
+
+    pub(super) async fn reattach(
+        &self,
+        agent: &Agent,
+        context: &AgentContext,
+        target: &LiveAgentTarget,
+    ) -> Result<LiveAgentAttachment, WorkerFailure> {
+        let connection_fence = agent
+            .work
+            .lease
+            .as_ref()
+            .filter(|lease| lease.holder == self.config.holder)
+            .map(|lease| lease.fence)
+            .ok_or_else(|| {
+                WorkerFailure::retryable(
+                    "agent_lifecycle_fence_lost",
+                    "agent lifecycle lease is no longer held",
+                )
+            })?;
+        let request = AgentOpenRequest::new(
+            format!("agent:{}:open:v1", agent.id),
+            runtime_options(agent, context),
+            None,
+        )
+        .with_connection_fence(connection_fence);
+        if agent
+            .work
+            .receipts
+            .iter()
+            .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+            .filter(|receipt| {
+                receipt.operation_id == request.operation_id
+                    && receipt.request_sha256 == request.request_sha256
+            })
+            .is_none()
+        {
+            return Err(WorkerFailure::terminal(
+                "agent_conversation_receipt_invalid",
+                "the durable conversation-open receipt does not match replay",
+            ));
+        }
+        let (channel, updates) = self.open(context, &request).await?;
+        let conversation_id = valid_conversation_id(channel.conversation_id)?;
+        if conversation_id != target.conversation_id {
+            return Err(WorkerFailure::terminal(
+                "agent_conversation_identity_mismatch",
+                "runtime replay returned another conversation",
+            ));
+        }
+        self.attach(
+            agent,
+            conversation_id,
+            target.runtime_generation,
+            channel.input,
+            updates,
+        )
+    }
+
+    async fn open(
+        &self,
+        context: &AgentContext,
+        request: &AgentOpenRequest,
+    ) -> Result<
+        (
+            ConversationChannel,
+            mpsc::Receiver<layer3_adapter::ConversationUpdate>,
+        ),
+        WorkerFailure,
+    > {
+        let (updates, receiver) = mpsc::channel(UPDATE_BUFFER);
+        match tokio::time::timeout(
+            self.config.open_timeout,
+            self.dependencies
+                .adapter
+                .open_agent(&context.runtime, request, updates),
+        )
+        .await
+        {
+            Ok(Ok(channel)) => Ok((channel, receiver)),
+            Ok(Err(error)) => Err(adapter_failure(error)),
+            Err(_) => Err(WorkerFailure::retryable(
+                "agent_conversation_open_timeout",
+                "conversation did not become ready within 120 seconds",
+            )),
+        }
+    }
+
+    fn attach(
+        &self,
+        agent: &Agent,
+        conversation_id: String,
+        runtime_generation: u64,
+        input: layer3_adapter::ConversationInputSender,
+        updates: mpsc::Receiver<layer3_adapter::ConversationUpdate>,
+    ) -> Result<LiveAgentAttachment, WorkerFailure> {
+        let fence = agent
+            .work
+            .lease
+            .as_ref()
+            .filter(|lease| lease.holder == self.config.holder)
+            .map(|lease| lease.fence)
+            .ok_or_else(|| {
+                WorkerFailure::retryable(
+                    "agent_lifecycle_fence_lost",
+                    "agent lifecycle lease is no longer held",
+                )
+            })?;
+        self.dependencies
+            .registry
+            .attach(
+                agent.id.clone(),
+                conversation_id,
+                runtime_generation,
+                fence,
+                runtime_capabilities(self.dependencies.adapter.capabilities()),
+                input,
+                updates,
+                self.dependencies.updates.clone(),
+            )
+            .map_err(registry_failure)
+    }
+}

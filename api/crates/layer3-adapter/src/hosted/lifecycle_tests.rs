@@ -294,8 +294,9 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         "agent:agent-replay:open:v1",
         agent_options.clone(),
         Some("conversation-replay".into()),
-    );
-    let (updates, _updates_rx) = tokio::sync::mpsc::channel(1);
+    )
+    .with_connection_fence(10);
+    let (updates, mut updates_rx) = tokio::sync::mpsc::channel(4);
     let channel = adapter_a.open_agent(&handle, &open, updates).await.unwrap();
     assert_eq!(
         channel.conversation_id.as_deref(),
@@ -308,6 +309,45 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
     assert!(matches!(
         adapter_a.open_agent(&handle, &changed_open, updates).await,
         Err(AdapterError::Rejected(_))
+    ));
+    let stale_open = open.clone().with_connection_fence(9);
+    let (stale_updates, _stale_updates_rx) = tokio::sync::mpsc::channel(1);
+    assert!(matches!(
+        adapter_a
+            .open_agent(&handle, &stale_open, stale_updates)
+            .await,
+        Err(AdapterError::Rejected(_))
+    ));
+    backend
+        .send_agent_update(
+            &handle,
+            &agent_options.slot,
+            crate::ConversationUpdate::Lost { frames: 1 },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        updates_rx.recv().await,
+        Some(crate::ConversationUpdate::Lost { frames: 1 })
+    ));
+
+    let current_open = open.clone().with_connection_fence(11);
+    let (current_updates, mut current_updates_rx) = tokio::sync::mpsc::channel(4);
+    adapter_a
+        .open_agent(&handle, &current_open, current_updates)
+        .await
+        .unwrap();
+    backend
+        .send_agent_update(
+            &handle,
+            &agent_options.slot,
+            crate::ConversationUpdate::Lost { frames: 2 },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        current_updates_rx.recv().await,
+        Some(crate::ConversationUpdate::Lost { frames: 2 })
     ));
     drop(adapter_a);
 
@@ -323,10 +363,22 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         .expect("completed home creation replays after adapter recreation");
     let (updates, _updates_rx) = tokio::sync::mpsc::channel(1);
     let replayed_channel = adapter_b
-        .open_agent(&handle, &open, updates)
+        .open_agent(&handle, &current_open, updates)
         .await
         .expect("a retained live process can replay its open receipt");
     assert_eq!(replayed_channel.conversation_id, channel.conversation_id);
+    backend
+        .send_agent_update(
+            &handle,
+            &agent_options.slot,
+            crate::ConversationUpdate::Lost { frames: 3 },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        current_updates_rx.recv().await,
+        Some(crate::ConversationUpdate::Lost { frames: 3 })
+    ));
 
     let close = AgentCloseRequest::new("agent:agent-replay:close:v1", agent_options.slot.clone());
     adapter_b.close_agent(&handle, &close).await.unwrap();

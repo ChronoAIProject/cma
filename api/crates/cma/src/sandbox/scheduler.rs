@@ -5,6 +5,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
+use super::agent_worker::AgentWorker;
 use super::worker::SandboxWorker;
 
 const DEFAULT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
@@ -27,8 +28,22 @@ impl SandboxSweep for SandboxWorker {
     }
 }
 
+#[async_trait::async_trait]
+impl SandboxSweep for AgentWorker {
+    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        AgentWorker::run_due(self, now).await
+    }
+}
+
 impl SandboxScheduler {
     pub(crate) fn new(worker: Arc<SandboxWorker>) -> Self {
+        Self {
+            worker,
+            sweep_interval: DEFAULT_SWEEP_INTERVAL,
+        }
+    }
+
+    pub(crate) fn for_agents(worker: Arc<AgentWorker>) -> Self {
         Self {
             worker,
             sweep_interval: DEFAULT_SWEEP_INTERVAL,

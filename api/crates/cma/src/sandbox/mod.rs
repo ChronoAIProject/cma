@@ -1,6 +1,21 @@
 //! Sandbox lifecycle orchestration below the public API boundary.
 
+#[allow(
+    dead_code,
+    reason = "composed when the production agent lifecycle transport is available"
+)]
+mod agent_skills;
+#[allow(
+    dead_code,
+    reason = "composed when the production agent lifecycle transport is available"
+)]
+mod agent_worker;
 mod credential;
+#[allow(
+    dead_code,
+    reason = "composed when the production agent lifecycle transport is available"
+)]
+mod live_agents;
 mod policy;
 #[allow(
     dead_code,
@@ -29,5 +44,7 @@ pub(crate) use credential::{
 };
 pub(crate) use policy::LiveSandboxPolicy;
 
+#[cfg(test)]
+mod agent_worker_tests;
 #[cfg(test)]
 mod worker_tests;

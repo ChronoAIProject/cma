@@ -393,6 +393,54 @@ async fn recorder_rejects_stale_generations_without_touching_live_assembly() {
 }
 
 #[tokio::test]
+async fn recorder_rejects_updates_after_stop_or_delete_without_mutation() {
+    for status in [AgentStatus::Stopped, AgentStatus::Deleted] {
+        for update in [
+            ConversationUpdate::Lost { frames: 2 },
+            ConversationUpdate::SignInRequired {
+                url: "https://signin.example/device".into(),
+                code: Some("ABCD".into()),
+                message: Some("Sign in".into()),
+            },
+        ] {
+            let (store, mut terminal) = ready_agent(None).await;
+            terminal.status = status;
+            terminal.stop_reason = Some(AgentStopReason::Owner);
+            terminal.stopped_at = Some(NOW.into());
+            terminal.deleted_at = (status == AgentStatus::Deleted).then(|| NOW.into());
+            terminal.updated_at = NOW.into();
+            let expected_revision = terminal.revision;
+            terminal.revision += 1;
+            store
+                .save_agent(expected_revision, terminal.clone())
+                .await
+                .unwrap();
+            let logs_before = store.agent_log(&terminal.id, 0, 200).await.unwrap();
+            let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
+            let mut assembly = AgentMessageAssembly::default();
+
+            assert_eq!(
+                recorder
+                    .record_update(&terminal.id, 1, &mut assembly, update, NOW.into(),)
+                    .await,
+                Err(AgentConversationError::InvalidState(
+                    "conversation updates require a live agent"
+                ))
+            );
+            assert!(assembly.is_empty());
+            assert_eq!(store.get_agent(&terminal.id).await.unwrap(), Some(terminal));
+            assert_eq!(
+                store
+                    .agent_log(&logs_before[0].agent_id, 0, 200)
+                    .await
+                    .unwrap(),
+                logs_before
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn approval_requests_wait_and_can_be_reconstructed_after_restart() {
     let (store, working, recorder) = working_agent().await;
     let mut assembly = AgentMessageAssembly::default();

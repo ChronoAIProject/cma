@@ -181,6 +181,7 @@ fn can_supersede_with_stop(step: AgentWorkStep) -> bool {
             | AgentWorkStep::MaterializeHome
             | AgentWorkStep::OpenConversation
             | AgentWorkStep::PublishReady
+            | AgentWorkStep::PublishConnection
             | AgentWorkStep::DispatchFirstMessage
             | AgentWorkStep::None
     )
