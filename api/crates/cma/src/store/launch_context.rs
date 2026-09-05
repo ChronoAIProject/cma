@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::{
     AgentStore, Page, PageRequest, SandboxStore, SandboxStoreError, WorkspaceStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
-    Agent, AgentOrigin, Sandbox, SandboxStatus, Workspace, WorkspaceStatus,
+    Agent, AgentOrigin, AgentStatus, Sandbox, SandboxStatus, Workspace, WorkspaceStatus,
 };
 use layer2_core::trigger_domain::{LaunchContextReader, LaunchResolutionError, TriggerId};
 use layer2_core::{seconds_from_rfc3339, SandboxId, SubjectId};
@@ -37,6 +37,7 @@ impl LaunchContextReader for MongoSandboxStore {
                     return Err(corrupt("Sandbox query escaped its owner scope"));
                 }
                 if sandbox.profile.id == *profile_id && sandbox.status != SandboxStatus::Retired {
+                    validate_resource_id(sandbox.id.as_str(), "sbx_", "Sandbox")?;
                     rank_newest(
                         &mut newest,
                         sandbox.created_at.clone(),
@@ -78,9 +79,7 @@ impl LaunchContextReader for MongoSandboxStore {
                 if workspace.profile.id == *profile_id
                     && workspace.status != WorkspaceStatus::Removed
                 {
-                    workspace.validate_origin().map_err(|error| {
-                        corrupt(&format!("matching Workspace is invalid: {error}"))
-                    })?;
+                    validate_reusable_workspace(&workspace)?;
                     rank_newest(
                         &mut newest,
                         workspace.created_at.clone(),
@@ -115,6 +114,7 @@ impl LaunchContextReader for MongoSandboxStore {
                     return Err(corrupt("Agent query escaped its owner scope"));
                 }
                 if agent.status.is_live() && trigger_origin_matches(&agent.origin, trigger_id)? {
+                    validate_live_agent(&agent)?;
                     agent.validate_conversation().map_err(|error| {
                         corrupt(&format!("matching Agent conversation is invalid: {error}"))
                     })?;
@@ -229,6 +229,74 @@ fn rank_newest<T>(
     Ok(())
 }
 
+fn validate_resource_id(
+    value: &str,
+    prefix: &str,
+    resource: &str,
+) -> Result<(), LaunchResolutionError> {
+    if !value.starts_with(prefix) || value.len() == prefix.len() {
+        return Err(corrupt(&format!(
+            "matching {resource} has an invalid resource ID"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_reusable_workspace(workspace: &Workspace) -> Result<(), LaunchResolutionError> {
+    validate_resource_id(workspace.id.as_str(), "wks_", "Workspace")?;
+    workspace
+        .validate_origin()
+        .map_err(|error| corrupt(&format!("matching Workspace is invalid: {error}")))?;
+
+    let failure_is_consistent =
+        (workspace.status == WorkspaceStatus::Failed) == workspace.failed.is_some();
+    let ready_is_consistent = match workspace.status {
+        WorkspaceStatus::Preparing => workspace.ready_at.is_none(),
+        WorkspaceStatus::Ready => {
+            workspace.ready_at.is_some() && workspace.resolved_commit.is_some()
+        }
+        WorkspaceStatus::Failed | WorkspaceStatus::Removing => true,
+        WorkspaceStatus::Removed => false,
+    };
+    let ready_time_is_valid = workspace
+        .ready_at
+        .as_deref()
+        .is_none_or(|value| seconds_from_rfc3339(value).is_some());
+    if !failure_is_consistent
+        || !ready_is_consistent
+        || !ready_time_is_valid
+        || workspace.removed_at.is_some()
+    {
+        return Err(corrupt("matching Workspace has an invalid lifecycle"));
+    }
+    Ok(())
+}
+
+fn validate_live_agent(agent: &Agent) -> Result<(), LaunchResolutionError> {
+    let ready_is_consistent = match agent.status {
+        AgentStatus::Starting => agent.ready_at.is_none(),
+        AgentStatus::Ready
+        | AgentStatus::Working
+        | AgentStatus::WaitingApproval
+        | AgentStatus::Paused => agent.ready_at.is_some(),
+        AgentStatus::Stopped | AgentStatus::Deleted | AgentStatus::Failed => false,
+    };
+    let ready_time_is_valid = agent
+        .ready_at
+        .as_deref()
+        .is_none_or(|value| seconds_from_rfc3339(value).is_some());
+    if !ready_is_consistent
+        || !ready_time_is_valid
+        || agent.failure.is_some()
+        || agent.stopped_at.is_some()
+        || agent.stop_reason.is_some()
+        || agent.deleted_at.is_some()
+    {
+        return Err(corrupt("matching Agent has an invalid lifecycle"));
+    }
+    Ok(())
+}
+
 fn trigger_origin_matches(
     origin: &AgentOrigin,
     expected: &TriggerId,
@@ -297,6 +365,28 @@ mod tests {
         assert!(validate_page_order(&["a"], None, Some("a"), "test").is_err());
         assert!(validate_page_order(&["a"], Some("different"), None, "test").is_err());
         assert!(validate_page_order(&[], Some("a"), None, "test").is_err());
+        let oversized = vec!["a"; usize::from(MAX_PAGE_SIZE) + 1];
+        assert!(validate_page_order(&oversized, None, None, "test").is_err());
+    }
+
+    #[test]
+    fn resource_ids_and_store_errors_fail_closed() {
+        assert!(validate_resource_id("sbx_valid", "sbx_", "Sandbox").is_ok());
+        assert!(validate_resource_id("invalid", "sbx_", "Sandbox").is_err());
+        assert!(validate_resource_id("wks_", "wks_", "Workspace").is_err());
+
+        assert_eq!(
+            query_error("query", SandboxStoreError::Unavailable("offline".into())),
+            LaunchResolutionError::Unavailable("query: offline".into())
+        );
+        assert_eq!(
+            query_error("query", SandboxStoreError::Corrupt("broken".into())),
+            LaunchResolutionError::Corrupt("query: broken".into())
+        );
+        assert!(matches!(
+            query_error("query", SandboxStoreError::NotFound),
+            LaunchResolutionError::Corrupt(_)
+        ));
     }
 
     #[test]

@@ -52,8 +52,16 @@ async fn context_matches_exact_lineage_and_selects_newest_deterministically() {
         class: "service_not_granted".into(),
         detail: "github".into(),
     });
+    store.create_sandbox(old_sandbox.clone()).await.unwrap();
+    let failed_sandbox = store
+        .newest_matching_sandbox(&owner, &sandbox_profile)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed_sandbox.id, old_sandbox.id);
     let tied_low = sandbox("sbx_match_a", &owner, &sandbox_profile, 3, LATER);
-    let tied_high = sandbox("sbx_match_z", &owner, &sandbox_profile, 7, LATER);
+    let mut tied_high = sandbox("sbx_match_z", &owner, &sandbox_profile, 7, LATER);
+    tied_high.status = SandboxStatus::Retiring;
     let mut retired = sandbox("sbx_retired", &owner, &sandbox_profile, 8, LATEST);
     retired.status = SandboxStatus::Retired;
     retired.retired_at = Some(LATEST.into());
@@ -72,7 +80,6 @@ async fn context_matches_exact_lineage_and_selects_newest_deterministically() {
         LATEST,
     );
     for candidate in [
-        old_sandbox,
         tied_low,
         tied_high.clone(),
         retired,
@@ -95,12 +102,18 @@ async fn context_matches_exact_lineage_and_selects_newest_deterministically() {
     let workspace_profile = WorkspaceProfileId("wkp_target".into());
     let mut old_workspace = workspace("wks_match_old", &tied_high, &workspace_profile, 88, NOW);
     old_workspace.status = WorkspaceStatus::Failed;
-    old_workspace.failed = Some(TypedFailure {
-        class: "setup_failed".into(),
-        detail: "inspect logs".into(),
-    });
+    old_workspace.failed = old_sandbox.failure.clone();
+    store.create_workspace(old_workspace.clone()).await.unwrap();
+    let failed_workspace = store
+        .matching_workspace(&owner, &tied_high.id, &workspace_profile)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed_workspace.id, old_workspace.id);
     let tied_workspace_low = workspace("wks_match_a", &tied_high, &workspace_profile, 4, LATER);
-    let tied_workspace_high = workspace("wks_match_z", &tied_high, &workspace_profile, 6, LATER);
+    let mut tied_workspace_high =
+        workspace("wks_match_z", &tied_high, &workspace_profile, 6, LATER);
+    tied_workspace_high.status = WorkspaceStatus::Removing;
     let mut removed = workspace("wks_removed", &tied_high, &workspace_profile, 9, LATEST);
     removed.status = WorkspaceStatus::Removed;
     removed.removed_at = Some(LATEST.into());
@@ -112,7 +125,6 @@ async fn context_matches_exact_lineage_and_selects_newest_deterministically() {
         LATEST,
     );
     for candidate in [
-        old_workspace,
         tied_workspace_low,
         tied_workspace_high.clone(),
         removed,
@@ -258,20 +270,52 @@ async fn context_rejects_corrupt_scope_and_trigger_origin() {
     ));
 
     let parent = sandbox("sbx_parent", &owner, &profile, 1, NOW);
-    let mut foreign_child = workspace(
-        "wks_foreign",
-        &parent,
-        &WorkspaceProfileId("wkp_target".into()),
-        1,
-        NOW,
-    );
+    let workspace_profile = WorkspaceProfileId("wkp_target".into());
+    let mut foreign_child = workspace("wks_foreign", &parent, &workspace_profile, 1, NOW);
     foreign_child.owner = wrong_owner;
     WorkspaceStore::create_workspace(&store, foreign_child)
         .await
         .unwrap();
     assert!(matches!(
         store
-            .matching_workspace(&owner, &parent.id, &WorkspaceProfileId("wkp_target".into()))
+            .matching_workspace(&owner, &parent.id, &workspace_profile)
+            .await,
+        Err(LaunchResolutionError::Corrupt(_))
+    ));
+
+    let lifecycle_parent = sandbox("sbx_lifecycle", &owner, &profile, 1, NOW);
+    let mut bad_workspace = workspace(
+        "wks_bad_lifecycle",
+        &lifecycle_parent,
+        &workspace_profile,
+        1,
+        NOW,
+    );
+    bad_workspace.removed_at = Some(NOW.into());
+    WorkspaceStore::create_workspace(&store, bad_workspace)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .matching_workspace(&owner, &lifecycle_parent.id, &workspace_profile)
+            .await,
+        Err(LaunchResolutionError::Corrupt(_))
+    ));
+
+    let lifecycle_owner = SubjectId::new("lifecycle-owner");
+    let lifecycle_trigger = TriggerId("trg_lifecycle".into());
+    let mut bad_agent = agent(
+        "agt_bad_lifecycle",
+        &lifecycle_owner,
+        AgentStatus::Ready,
+        trigger_origin(&lifecycle_trigger, "lch_lifecycle"),
+        NOW,
+    );
+    bad_agent.deleted_at = Some(NOW.into());
+    AgentStore::create_agent(&store, bad_agent).await.unwrap();
+    assert!(matches!(
+        store
+            .newest_live_trigger_agent(&lifecycle_owner, &lifecycle_trigger)
             .await,
         Err(LaunchResolutionError::Corrupt(_))
     ));
