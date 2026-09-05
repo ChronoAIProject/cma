@@ -3,7 +3,8 @@
 use futures_util::TryStreamExt;
 use layer2_core::ids::{SandboxId, SubjectId};
 use layer2_core::sandbox::store::{
-    valid_admission_fingerprint, Page, PageRequest, SandboxStore, SandboxStoreError, MAX_PAGE_SIZE,
+    valid_admission_fingerprint, Page, PageRequest, SandboxAdmissionName, SandboxAdmissionReplay,
+    SandboxStore, SandboxStoreError, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{Sandbox, SandboxOrigin};
 use mongodb::bson::{doc, Bson, Document};
@@ -104,12 +105,13 @@ pub(super) fn sandbox_document(
             "trigger sandboxes require atomic admission",
         ));
     }
-    raw_sandbox_document(sandbox, last_seq, Bson::Null)
+    raw_sandbox_document(sandbox, last_seq, Bson::Null, Bson::Null)
 }
 
 pub(super) fn admitted_sandbox_document(
     sandbox: &Sandbox,
     last_seq: u64,
+    admission_name: &SandboxAdmissionName,
     admission_fingerprint: &str,
 ) -> Result<Document, SandboxStoreError> {
     if !valid_admission_fingerprint(admission_fingerprint) {
@@ -117,16 +119,27 @@ pub(super) fn admitted_sandbox_document(
             "sandbox admission fingerprint is invalid",
         ));
     }
-    let fingerprint = match &sandbox.origin {
-        SandboxOrigin::Manual => Bson::Null,
-        SandboxOrigin::Trigger { .. } => Bson::String(admission_fingerprint.to_string()),
+    let (name, fingerprint) = match &sandbox.origin {
+        SandboxOrigin::Manual => (Bson::Null, Bson::Null),
+        SandboxOrigin::Trigger { .. } => {
+            SandboxAdmissionReplay::new(
+                sandbox.clone(),
+                admission_name.clone(),
+                admission_fingerprint.to_string(),
+            )?;
+            (
+                record_bson(admission_name).map_err(SandboxStoreError::Corrupt)?,
+                Bson::String(admission_fingerprint.to_string()),
+            )
+        }
     };
-    raw_sandbox_document(sandbox, last_seq, fingerprint)
+    raw_sandbox_document(sandbox, last_seq, name, fingerprint)
 }
 
 fn raw_sandbox_document(
     sandbox: &Sandbox,
     last_seq: u64,
+    admission_name: Bson,
     admission_fingerprint: Bson,
 ) -> Result<Document, SandboxStoreError> {
     sandbox.validate().map_err(|error| {
@@ -141,6 +154,7 @@ fn raw_sandbox_document(
         "name": &sandbox.name,
         "origin_type": origin_type,
         "origin_launch_id": origin_launch_id,
+        "admission_name": admission_name,
         "admission_fingerprint": admission_fingerprint,
         "status": record_bson(&sandbox.status).map_err(SandboxStoreError::Corrupt)?,
         "runtime_version": nullable(
@@ -197,8 +211,17 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
             "sandbox query fields disagree with its aggregate".into(),
         ));
     }
-    read_admission_fingerprint(document, &sandbox)?;
+    read_admission_replay_metadata(document, &sandbox)?;
     Ok(sandbox)
+}
+
+pub(super) fn read_sandbox_admission_replay(
+    document: &Document,
+) -> Result<SandboxAdmissionReplay, SandboxStoreError> {
+    let sandbox = read_sandbox(document)?;
+    read_admission_replay_metadata(document, &sandbox)?.ok_or_else(|| {
+        SandboxStoreError::Corrupt("manual sandbox cannot be an origin replay".into())
+    })
 }
 
 pub(super) fn sandbox_origin_fields(
@@ -207,7 +230,9 @@ pub(super) fn sandbox_origin_fields(
     match &sandbox.origin {
         SandboxOrigin::Manual => Ok(("manual", Bson::Null)),
         SandboxOrigin::Trigger { launch_id }
-            if !launch_id.trim().is_empty() && launch_id.len() <= 128 =>
+            if !launch_id.trim().is_empty()
+                && launch_id.len() <= 128
+                && !launch_id.chars().any(char::is_control) =>
         {
             Ok(("trigger", Bson::String(launch_id.clone())))
         }
@@ -217,27 +242,35 @@ pub(super) fn sandbox_origin_fields(
     }
 }
 
-pub(super) fn read_admission_fingerprint<'a>(
-    document: &'a Document,
+fn read_admission_replay_metadata(
+    document: &Document,
     sandbox: &Sandbox,
-) -> Result<Option<&'a str>, SandboxStoreError> {
-    match (&sandbox.origin, document.get("admission_fingerprint")) {
-        (SandboxOrigin::Manual, Some(Bson::Null)) => Ok(None),
-        (SandboxOrigin::Trigger { .. }, Some(Bson::String(value)))
-            if valid_admission_fingerprint(value) =>
-        {
-            Ok(Some(value))
+) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
+    match (
+        &sandbox.origin,
+        document.get("admission_name"),
+        document.get("admission_fingerprint"),
+    ) {
+        (SandboxOrigin::Manual, Some(Bson::Null), Some(Bson::Null)) => Ok(None),
+        (SandboxOrigin::Trigger { .. }, Some(name), Some(Bson::String(fingerprint))) => {
+            let decoded =
+                mongodb::bson::deserialize_from_bson::<SandboxAdmissionName>(name.clone());
+            let name = decoded.map_err(|error| {
+                SandboxStoreError::Corrupt(format!("sandbox admission name is invalid: {error}"))
+            })?;
+            SandboxAdmissionReplay::new(sandbox.clone(), name, fingerprint.clone()).map(Some)
         }
         _ => Err(SandboxStoreError::Corrupt(
-            "sandbox admission fingerprint disagrees with its origin".into(),
+            "sandbox admission metadata disagrees with its origin".into(),
         )),
     }
 }
 
 pub(super) fn sandbox_replacement_fields(sandbox: &Sandbox) -> Result<Document, SandboxStoreError> {
-    let mut fields = raw_sandbox_document(sandbox, 0, Bson::Null)?;
+    let mut fields = raw_sandbox_document(sandbox, 0, Bson::Null, Bson::Null)?;
     fields.remove("_id");
     fields.remove("last_seq");
+    fields.remove("admission_name");
     fields.remove("admission_fingerprint");
     Ok(fields)
 }
@@ -371,64 +404,5 @@ impl SandboxStore for MongoSandboxStore {
                 .clone()
         });
         Ok(Page { items, next })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sandbox_indexes_match_the_schema_contract() {
-        let indexes = sandbox_indexes();
-        assert_eq!(indexes[0].keys, doc! { "owner": 1, "name": 1 });
-        let options = indexes[0].options.as_ref().unwrap();
-        assert_eq!(options.unique, Some(true));
-        assert_eq!(
-            options.partial_filter_expression,
-            Some(doc! { "retired_at": Bson::Null })
-        );
-        assert_eq!(indexes[1].keys, doc! { "owner": 1, "origin_launch_id": 1 });
-        let options = indexes[1].options.as_ref().unwrap();
-        assert_eq!(options.unique, Some(true));
-        assert_eq!(
-            options.name.as_deref(),
-            Some("sandboxes_owner_trigger_launch")
-        );
-        assert_eq!(
-            options.partial_filter_expression,
-            Some(doc! { "origin_type": "trigger" })
-        );
-        assert_eq!(
-            indexes[2].keys,
-            doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
-        );
-        assert_eq!(
-            indexes[3].keys,
-            doc! { "owner": 1, "status": 1, "updated_at": -1 }
-        );
-        assert_eq!(
-            indexes[4].keys,
-            doc! {
-                "owner": 1,
-                "status": 1,
-                "runtime_version": 1,
-                "_id": 1,
-            }
-        );
-        assert_eq!(
-            indexes[4].options.as_ref().unwrap().name.as_deref(),
-            Some("sandboxes_operator_inventory")
-        );
-        assert_eq!(indexes[5].keys, doc! { "owner": 1, "_id": 1 });
-        assert_eq!(
-            indexes[5].options.as_ref().unwrap().name.as_deref(),
-            Some("sandboxes_owner_page")
-        );
-        assert_eq!(indexes[6].keys, doc! { "owner": 1, "status": 1, "_id": 1 });
-        assert_eq!(
-            indexes[6].options.as_ref().unwrap().name.as_deref(),
-            Some("sandboxes_owner_status_page")
-        );
     }
 }

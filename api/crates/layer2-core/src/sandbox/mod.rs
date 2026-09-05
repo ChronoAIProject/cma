@@ -30,6 +30,7 @@ mod queued_message;
 mod sandbox;
 mod service;
 mod service_admission;
+mod service_creation;
 mod service_trust;
 mod status;
 pub mod store;

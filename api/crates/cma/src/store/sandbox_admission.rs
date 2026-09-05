@@ -2,9 +2,10 @@
 
 use std::time::Duration;
 
+use layer2_core::ids::SubjectId;
 use layer2_core::sandbox::store::{
-    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult, SandboxAdmissionStore,
-    SandboxStoreError,
+    allocated_sandbox_name, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay,
+    SandboxAdmissionResult, SandboxAdmissionStore, SandboxStoreError,
 };
 use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind};
 use mongodb::bson::{doc, Bson};
@@ -14,7 +15,7 @@ use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
-use super::sandboxes::{admitted_sandbox_document, read_admission_fingerprint, read_sandbox};
+use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
 const ADMISSION_TRANSACTION_ATTEMPTS: usize = 16;
 const ADMISSION_RETRY_MAX_DELAY_MILLIS: u64 = 32;
@@ -45,6 +46,14 @@ impl AdmissionReceipt {
 
 #[async_trait::async_trait]
 impl SandboxAdmissionStore for MongoSandboxStore {
+    async fn sandbox_admission_replay(
+        &self,
+        owner: &SubjectId,
+        launch_id: &str,
+    ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
+        durable_origin_replay(self, owner, launch_id).await
+    }
+
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
@@ -179,8 +188,13 @@ async fn apply(
     store
         .sandboxes
         .insert_one(
-            admitted_sandbox_document(&sandbox, 1, &admission.admission_fingerprint)
-                .map_err(AdmissionError::Domain)?,
+            admitted_sandbox_document(
+                &sandbox,
+                1,
+                &admission.name,
+                &admission.admission_fingerprint,
+            )
+            .map_err(AdmissionError::Domain)?,
         )
         .session(&mut *session)
         .await
@@ -217,39 +231,57 @@ async fn durable_replay(
     store: &MongoSandboxStore,
     admission: &SandboxAdmission,
 ) -> Result<Option<Sandbox>, SandboxStoreError> {
-    let Some(filter) = trigger_filter(admission) else {
+    let Some(launch_id) = admission.trigger_launch_id() else {
         return Ok(None);
     };
+    durable_origin_replay(store, &admission.sandbox.owner, launch_id)
+        .await?
+        .map(|replay| classify_replay_record(admission, replay))
+        .transpose()
+}
+
+async fn durable_origin_replay(
+    store: &MongoSandboxStore,
+    owner: &SubjectId,
+    launch_id: &str,
+) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
     store
         .sandboxes
-        .find_one(filter)
+        .find_one(origin_filter(owner.as_str(), launch_id))
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         .as_ref()
-        .map(|document| classify_replay(admission, document))
+        .map(read_sandbox_admission_replay)
         .transpose()
 }
 
 fn trigger_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Document> {
-    admission.trigger_launch_id().map(|launch_id| {
-        doc! {
-            "owner": admission.sandbox.owner.as_str(),
-            "origin_type": "trigger",
-            "origin_launch_id": launch_id,
-        }
-    })
+    admission
+        .trigger_launch_id()
+        .map(|launch_id| origin_filter(admission.sandbox.owner.as_str(), launch_id))
+}
+
+fn origin_filter(owner: &str, launch_id: &str) -> mongodb::bson::Document {
+    doc! {
+        "owner": owner,
+        "origin_type": "trigger",
+        "origin_launch_id": launch_id,
+    }
 }
 
 fn classify_replay(
     admission: &SandboxAdmission,
     document: &mongodb::bson::Document,
 ) -> Result<Sandbox, SandboxStoreError> {
-    let sandbox = read_sandbox(document)?;
-    let fingerprint = read_admission_fingerprint(document, &sandbox)?.ok_or_else(|| {
-        SandboxStoreError::Corrupt("trigger sandbox has no admission fingerprint".into())
-    })?;
-    if fingerprint == admission.admission_fingerprint {
-        Ok(sandbox)
+    classify_replay_record(admission, read_sandbox_admission_replay(document)?)
+}
+
+fn classify_replay_record(
+    admission: &SandboxAdmission,
+    replay: SandboxAdmissionReplay,
+) -> Result<Sandbox, SandboxStoreError> {
+    if replay.admission_fingerprint == admission.admission_fingerprint {
+        Ok(replay.sandbox)
     } else {
         Err(SandboxStoreError::SandboxOriginConflict)
     }
@@ -298,16 +330,7 @@ async fn name_exists(
 }
 
 fn suffixed(base: &str, number: u64) -> String {
-    if number == 1 {
-        return base.to_string();
-    }
-    let suffix = format!("-{number}");
-    let maximum = 64_usize.saturating_sub(suffix.len());
-    let mut end = base.len().min(maximum);
-    while !base.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{}", &base[..end], suffix)
+    allocated_sandbox_name(base, number).expect("admission names are validated before allocation")
 }
 
 fn classify_insert(error: mongodb::error::Error) -> AdmissionError {
@@ -387,7 +410,7 @@ mod tests {
     fn allocated_suffixes_preserve_the_name_limit_and_utf8() {
         assert_eq!(suffixed("research", 1), "research");
         assert_eq!(suffixed("research", 2), "research-2");
-        let value = suffixed(&"é".repeat(40), 12);
+        let value = suffixed(&"é".repeat(32), 12);
         assert!(value.len() <= 64);
         assert!(value.ends_with("-12"));
     }

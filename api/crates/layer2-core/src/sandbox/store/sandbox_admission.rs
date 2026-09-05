@@ -1,13 +1,19 @@
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use crate::ids::SubjectId;
 use crate::profiles::{content_digest, SandboxProfileSnapshot};
 
 use super::SandboxStoreError;
 use crate::sandbox::{Sandbox, SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "mode", content = "value", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "mode",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum SandboxAdmissionName {
     Exact(String),
     Allocate(String),
@@ -56,13 +62,17 @@ impl SandboxAdmission {
         if self.sandbox.revision != 1
             || self.sandbox.status != SandboxStatus::Provisioning
             || self.sandbox.name != self.name.value()
+            || !valid_requested_name(self.name.value())
         {
             return Err(SandboxStoreError::InvalidTransaction(
                 "sandbox admission requires a fresh aggregate and matching requested name",
             ));
         }
         if let SandboxOrigin::Trigger { launch_id } = &self.sandbox.origin {
-            if launch_id.trim().is_empty() || launch_id.len() > 128 {
+            if launch_id.trim().is_empty()
+                || launch_id.len() > 128
+                || launch_id.chars().any(char::is_control)
+            {
                 return Err(SandboxStoreError::InvalidTransaction(
                     "sandbox trigger origin is invalid",
                 ));
@@ -86,11 +96,99 @@ impl SandboxAdmission {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxAdmissionReplay {
+    pub sandbox: Sandbox,
+    pub name: SandboxAdmissionName,
+    pub admission_fingerprint: String,
+}
+
+impl SandboxAdmissionReplay {
+    pub fn new(
+        sandbox: Sandbox,
+        name: SandboxAdmissionName,
+        admission_fingerprint: String,
+    ) -> Result<Self, SandboxStoreError> {
+        let replay = Self {
+            sandbox,
+            name,
+            admission_fingerprint,
+        };
+        replay.validate()?;
+        Ok(replay)
+    }
+
+    pub fn validate(&self) -> Result<(), SandboxStoreError> {
+        self.sandbox.validate().map_err(|error| {
+            SandboxStoreError::Corrupt(format!("replayed sandbox aggregate is invalid: {error}"))
+        })?;
+        let SandboxOrigin::Trigger { launch_id } = &self.sandbox.origin else {
+            return Err(corrupt_replay("origin is not a trigger"));
+        };
+        if launch_id.trim().is_empty()
+            || launch_id.len() > 128
+            || launch_id.chars().any(char::is_control)
+            || !valid_requested_name(self.name.value())
+            || !stored_name_matches(&self.name, &self.sandbox.name)
+        {
+            return Err(corrupt_replay("origin or requested name is invalid"));
+        }
+        let profile_digest = content_digest(&self.sandbox.profile.content)
+            .map_err(|error| corrupt_replay(&error.to_string()))?;
+        if profile_digest != self.sandbox.profile.digest
+            || !valid_admission_fingerprint(&self.admission_fingerprint)
+            || self.admission_fingerprint != fingerprint(&self.sandbox, &self.name)?
+        {
+            return Err(corrupt_replay(
+                "profile snapshot or admission fingerprint is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
 pub fn valid_admission_fingerprint(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+pub fn allocated_sandbox_name(base: &str, number: u64) -> Option<String> {
+    if number == 0 || !valid_requested_name(base) {
+        return None;
+    }
+    if number == 1 {
+        return Some(base.to_string());
+    }
+    let suffix = format!("-{number}");
+    let maximum = 64_usize.saturating_sub(suffix.len());
+    let mut end = base.len().min(maximum);
+    while !base.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(format!("{}{}", &base[..end], suffix))
+}
+
+fn stored_name_matches(requested: &SandboxAdmissionName, stored: &str) -> bool {
+    match requested {
+        SandboxAdmissionName::Exact(name) => name == stored,
+        SandboxAdmissionName::Allocate(base) if base == stored => true,
+        SandboxAdmissionName::Allocate(base) => stored
+            .rsplit_once('-')
+            .and_then(|(_, number)| number.parse::<u64>().ok())
+            .filter(|number| *number >= 2)
+            .and_then(|number| allocated_sandbox_name(base, number))
+            .is_some_and(|expected| expected == stored),
+    }
+}
+
+fn valid_requested_name(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 64 && !value.contains('\0')
+}
+
+fn corrupt_replay(detail: &str) -> SandboxStoreError {
+    SandboxStoreError::Corrupt(format!("sandbox admission replay {detail}"))
 }
 
 fn fingerprint(
@@ -106,7 +204,7 @@ fn fingerprint(
         name,
         profile: &sandbox.profile,
         reaches: &reaches,
-        sign_in: sandbox.credential.sign_in,
+        sign_in: AdmissionSignInMode::from(sandbox.credential.sign_in),
         limits: sandbox.limits,
     })
     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
@@ -119,8 +217,24 @@ struct AdmissionIdentity<'a> {
     name: &'a SandboxAdmissionName,
     profile: &'a SandboxProfileSnapshot,
     reaches: &'a [crate::ids::ServiceId],
-    sign_in: SandboxSignInState,
+    sign_in: AdmissionSignInMode,
     limits: SandboxLimits,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AdmissionSignInMode {
+    NotRequired,
+    OwnCredentials,
+}
+
+impl From<SandboxSignInState> for AdmissionSignInMode {
+    fn from(state: SandboxSignInState) -> Self {
+        match state {
+            SandboxSignInState::NotRequired => Self::NotRequired,
+            SandboxSignInState::Required | SandboxSignInState::Complete => Self::OwnCredentials,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +246,12 @@ pub enum SandboxAdmissionResult {
 /// Atomic origin replay, live-limit admission, name allocation, insert and Created event.
 #[async_trait]
 pub trait SandboxAdmissionStore: Send + Sync {
+    async fn sandbox_admission_replay(
+        &self,
+        owner: &SubjectId,
+        launch_id: &str,
+    ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError>;
+
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
