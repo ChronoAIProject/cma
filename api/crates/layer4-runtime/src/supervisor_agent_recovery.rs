@@ -77,17 +77,6 @@ impl Supervisor {
         let Subject::CloseAgent { agent_id } = &pending.operation.subject else {
             return Err(corrupt("agent close recovery received another operation"));
         };
-        if !self
-            .agents
-            .read()
-            .await
-            .contains_key(&AgentSlot::new(agent_id))
-        {
-            pending.ticket.indeterminate(
-                "agent close lost its process handle before the termination outcome became durable",
-            )?;
-            return Ok(());
-        }
         let request = AgentCloseRequest {
             operation_id: pending.operation.operation_id,
             request_sha256: pending.operation.request_sha256,

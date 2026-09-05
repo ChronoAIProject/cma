@@ -184,7 +184,9 @@ pub(crate) async fn remove(
     safe_component(&reference.workspace, "workspace name")?;
     safe_component(&reference.name, "worktree name")?;
     let repository = home.join(&reference.workspace);
-    require_repository(&repository)?;
+    if !repository_exists(&repository)? {
+        return Ok(());
+    }
     let path = repository.join(".worktrees").join(&reference.name);
     let git = GitRunner::new(allow_local_git);
     if real_directory_or_absent(&path)? {
@@ -236,21 +238,13 @@ pub(crate) async fn preflight_remove(
     safe_component(&reference.workspace, "workspace name")?;
     safe_component(&reference.name, "worktree name")?;
     let repository = home.join(&reference.workspace);
-    require_repository(&repository)?;
+    if !repository_exists(&repository)? {
+        return Ok(());
+    }
     let path = expected_path(home, &reference.workspace, &reference.name);
-    if !real_directory_or_absent(&path)? {
-        return Err(RuntimeError::rejected(
-            "worktree_not_found",
-            "worktree directory was not found",
-        ));
-    }
+    real_directory_or_absent(&path)?;
     let git = GitRunner::new(allow_local_git);
-    if !branch_exists(&git, &repository, &branch_name(&reference.name)).await? {
-        return Err(RuntimeError::rejected(
-            "worktree_not_found",
-            "worktree branch was not found",
-        ));
-    }
+    branch_exists(&git, &repository, &branch_name(&reference.name)).await?;
     Ok(())
 }
 
@@ -315,13 +309,31 @@ pub(crate) fn expected_path(home: &Path, workspace: &str, name: &str) -> PathBuf
 }
 
 fn require_repository(repository: &Path) -> Result<()> {
-    if !path_is_directory(repository) || !path_is_directory(&repository.join(".git")) {
+    if !repository_exists(repository)? {
         return Err(RuntimeError::rejected(
             "workspace_not_found",
             "workspace is not a main Git checkout",
         ));
     }
     Ok(())
+}
+
+fn repository_exists(repository: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(repository) {
+        Ok(metadata)
+            if metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && path_is_directory(&repository.join(".git")) =>
+        {
+            Ok(true)
+        }
+        Ok(_) => Err(RuntimeError::rejected(
+            "workspace_not_found",
+            "workspace is not a main Git checkout",
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(worktree_io("inspect workspace repository")(error)),
+    }
 }
 
 fn ensure_worktree_parent(parent: &Path) -> Result<()> {

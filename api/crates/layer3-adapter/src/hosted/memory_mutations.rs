@@ -207,10 +207,25 @@ pub(super) fn remove_worktree(
     let expected = format!("worktree:{}:{}:remove:v1", request.workspace, request.name);
     validate(
         request.has_valid_sha256(),
-        request.operation_id == expected,
+        request.operation_id == expected
+            && safe_identity(&request.workspace)
+            && safe_identity(&request.name),
         operation,
     )?;
     let payload = fingerprint(&request)?;
+    let path = format!(
+        "{}/{}/.worktrees/{}",
+        runtime_home(runtime),
+        request.workspace,
+        request.name
+    );
+    if runtime
+        .agents
+        .values()
+        .any(|agent| agent.running && agent.launch.cwd == path)
+    {
+        return refused(operation, "worktree_agent_open");
+    }
     if let Some(response) = replay_operation(
         runtime,
         &request.operation_id,
@@ -221,16 +236,6 @@ pub(super) fn remove_worktree(
         return Ok(response);
     }
     let key = (request.workspace.clone(), request.name.clone());
-    let Some(worktree) = runtime.worktrees.get(&key) else {
-        return refused(operation, "worktree_not_found");
-    };
-    if runtime
-        .agents
-        .values()
-        .any(|agent| agent.running && agent.launch.cwd == worktree.path)
-    {
-        return refused(operation, "worktree_agent_open");
-    }
     runtime.worktrees.remove(&key);
     let response = ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
         operation_id: request.operation_id.clone(),
@@ -299,7 +304,7 @@ pub(super) fn close_agent(
     let expected = format!("agent:{}:close:v1", request.agent_id.as_str());
     validate(
         request.has_valid_sha256(),
-        request.operation_id == expected,
+        request.operation_id == expected && safe_identity(request.agent_id.as_str()),
         operation,
     )?;
     let payload = fingerprint(&request)?;
@@ -312,13 +317,9 @@ pub(super) fn close_agent(
     )? {
         return Ok(response);
     }
-    let Some(agent) = runtime.agents.get_mut(&request.agent_id) else {
-        return refused(operation, "agent_not_found");
-    };
-    if !agent.running {
-        return refused(operation, "agent_not_running");
+    if let Some(agent) = runtime.agents.get_mut(&request.agent_id) {
+        agent.running = false;
     }
-    agent.running = false;
     let response = ResponseFrame::CloseAgent(AgentCloseReceipt {
         operation_id: request.operation_id.clone(),
         request_sha256: request.request_sha256.clone(),
@@ -341,10 +342,17 @@ pub(super) fn remove_home(
     let expected = format!("agent:{}:home:remove:v1", request.agent_id.as_str());
     validate(
         request.has_valid_sha256(),
-        request.operation_id == expected,
+        request.operation_id == expected && safe_identity(request.agent_id.as_str()),
         operation,
     )?;
     let payload = fingerprint(&request)?;
+    if runtime
+        .agents
+        .get(&request.agent_id)
+        .is_some_and(|agent| agent.running)
+    {
+        return refused(operation, "agent_running");
+    }
     if let Some(response) = replay_operation(
         runtime,
         &request.operation_id,
@@ -354,16 +362,7 @@ pub(super) fn remove_home(
     )? {
         return Ok(response);
     }
-    if runtime
-        .agents
-        .get(&request.agent_id)
-        .is_some_and(|agent| agent.running)
-    {
-        return refused(operation, "agent_running");
-    }
-    if runtime.homes.remove(&request.agent_id).is_none() {
-        return refused(operation, "agent_home_not_found");
-    }
+    runtime.homes.remove(&request.agent_id);
     let response = ResponseFrame::RemoveAgentHome(AgentHomeRemoveReceipt {
         operation_id: request.operation_id.clone(),
         request_sha256: request.request_sha256.clone(),
@@ -405,4 +404,8 @@ fn validate(
     } else {
         refused(operation, "operation_request_invalid")
     }
+}
+
+fn safe_identity(value: &str) -> bool {
+    value.len() <= 64 && !value.starts_with('.') && safe_name(value)
 }
