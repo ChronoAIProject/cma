@@ -8,7 +8,7 @@ use crate::{Caller, Capability, SubjectId};
 
 use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
 use super::store::{AgentReadStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
-use super::{Agent, AgentLogEntry, AgentStatus, Sandbox, TypedFailure};
+use super::{Agent, AgentLogEntry, AgentStatus, Sandbox, TypedFailure, Workspace, Worktree};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,6 +104,15 @@ pub struct AgentResourceReading {
     pub reading: SandboxResourceReading,
 }
 
+/// Exact owner-validated hierarchy for one Agent read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentLineage {
+    pub agent: Agent,
+    pub worktree: Worktree,
+    pub workspace: Workspace,
+    pub sandbox: Sandbox,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxResourceReadError {
     #[error("sandbox does not support resource readings: {0}")]
@@ -187,6 +196,16 @@ impl AgentReadService {
         Ok(self.owned_lineage(caller, id).await?.agent)
     }
 
+    /// Read the Agent and every parent needed to project its public context.
+    pub async fn lineage(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+    ) -> Result<AgentLineage, AgentReadError> {
+        require(caller)?;
+        self.owned_lineage(caller, id).await
+    }
+
     pub async fn log(
         &self,
         caller: &Caller,
@@ -258,7 +277,7 @@ impl AgentReadService {
         &self,
         caller: &Caller,
         id: &AgentId,
-    ) -> Result<OwnedAgentLineage, AgentReadError> {
+    ) -> Result<AgentLineage, AgentReadError> {
         let agent = self
             .store
             .get_agent(id)
@@ -266,15 +285,20 @@ impl AgentReadService {
             .map_err(store_error)?
             .filter(|agent| agent.id == *id && agent.owner == caller.subject)
             .ok_or(AgentReadError::NotFound)?;
-        let sandbox = self.validate_lineage(&caller.subject, &agent).await?;
-        Ok(OwnedAgentLineage { agent, sandbox })
+        let (worktree, workspace, sandbox) = self.validate_lineage(&caller.subject, &agent).await?;
+        Ok(AgentLineage {
+            agent,
+            worktree,
+            workspace,
+            sandbox,
+        })
     }
 
     async fn validate_lineage(
         &self,
         owner: &SubjectId,
         agent: &Agent,
-    ) -> Result<Sandbox, AgentReadError> {
+    ) -> Result<(Worktree, Workspace, Sandbox), AgentReadError> {
         agent
             .validate_conversation()
             .map_err(|error| AgentReadError::Corrupt(error.to_string()))?;
@@ -321,7 +345,7 @@ impl AgentReadService {
         {
             return Err(corrupt("agent sandbox lineage does not match"));
         }
-        Ok(sandbox)
+        Ok((worktree, workspace, sandbox))
     }
 
     async fn validate_page(
@@ -432,11 +456,6 @@ impl AgentReadService {
         }
         Ok(())
     }
-}
-
-struct OwnedAgentLineage {
-    agent: Agent,
-    sandbox: Sandbox,
 }
 
 fn validate_limit(limit: u16) -> Result<(), AgentReadError> {

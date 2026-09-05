@@ -460,6 +460,14 @@ async fn reads_require_owner_authority_and_hide_foreign_agents() {
     )
     .await;
     let reads = service(store);
+    let lineage = reads
+        .lineage(&caller("owner", true), &agent.id)
+        .await
+        .unwrap();
+    assert_eq!(lineage.agent.id, agent.id);
+    assert_eq!(lineage.worktree.id, agent.worktree_id);
+    assert_eq!(lineage.workspace.id, agent.workspace_id);
+    assert_eq!(lineage.sandbox.id, agent.sandbox_id);
     assert_eq!(
         reads.read(&caller("owner", false), &agent.id).await,
         Err(AgentReadError::Forbidden)

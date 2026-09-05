@@ -54,9 +54,9 @@ pub use agent_operation_service::{
     AgentOperationStore,
 };
 pub use agent_reads::{
-    AgentListQuery, AgentReadError, AgentReadService, AgentResourceReading, AgentTranscript,
-    AgentTranscriptTurn, AgentTurnOutcome, AgentUsage, AgentUsageReading, SandboxResourceReadError,
-    SandboxResourceReader, SandboxResourceReading,
+    AgentLineage, AgentListQuery, AgentReadError, AgentReadService, AgentResourceReading,
+    AgentTranscript, AgentTranscriptTurn, AgentTurnOutcome, AgentUsage, AgentUsageReading,
+    SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
