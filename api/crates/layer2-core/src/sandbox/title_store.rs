@@ -134,6 +134,8 @@ pub enum AgentTitleStoreError {
     InvalidTimestamp,
     #[error("agent log sequence would not be gap-free")]
     SequenceConflict,
+    #[error("agent log capacity exceeded")]
+    AgentLogCapacityExceeded,
     #[error("invalid agent title page")]
     InvalidPage,
     #[error("agent title store unavailable")]

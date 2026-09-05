@@ -10,6 +10,7 @@ use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 
+use super::agent_title_state::{initial_title_fields, preserve_title_fields, record_title_value};
 use super::sandbox_mongo::{
     i64_field_matches, is_duplicate_key, read_record, record_bson, require_version, signed,
     string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -95,7 +96,7 @@ pub(super) fn agent_updated_at(agent: &Agent) -> &str {
 
 pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreError> {
     let lease = agent.work.lease.as_ref();
-    Ok(doc! {
+    let mut document = doc! {
         "_id": agent.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "owner": agent.owner.as_str(),
@@ -127,7 +128,9 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
         "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
             .map_err(SandboxStoreError::Corrupt)?,
         "record": record_bson(agent).map_err(SandboxStoreError::Corrupt)?,
-    })
+    };
+    document.extend(initial_title_fields(agent)?);
+    Ok(document)
 }
 
 pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
@@ -184,6 +187,7 @@ pub(super) fn agent_replacement_fields(agent: &Agent) -> Result<Document, Sandbo
     let mut document = agent_document(agent)?;
     document.remove("_id");
     document.remove("last_seq");
+    preserve_title_fields(&mut document);
     Ok(document)
 }
 
@@ -259,6 +263,7 @@ impl AgentStore for MongoSandboxStore {
                         .map_err(|_| SandboxStoreError::Conflict)?,
                     "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
                         .map_err(SandboxStoreError::Corrupt)?,
+                    "record.title": record_title_value(&agent),
                 },
                 doc! { "$set": agent_replacement_fields(&agent)? },
             )
