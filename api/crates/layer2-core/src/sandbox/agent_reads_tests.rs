@@ -166,6 +166,7 @@ fn agent(
             last_seq: 1,
             first_message: None,
             active_turn: None,
+            operation: None,
             queued_messages: vec![],
         },
         work: AgentWorkState::new(AgentWorkStep::None, NOW.into()),
