@@ -6,9 +6,10 @@ use layer2_core::StoreError;
 use mongodb::{bson::doc, Client};
 
 use super::{
-    AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
-    MongoPlatformSettingsStore, MongoProfileStore, MongoSandboxCredentialStore, MongoSandboxStore,
-    MongoTriggerDefinitionStore, MongoUserDirectoryStore,
+    AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoCheckpointObjectStore,
+    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
+    MongoUserDirectoryStore,
 };
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -19,6 +20,8 @@ pub struct MongoStores {
     pub sandbox_profiles: Arc<MongoProfileStore>,
     /// Encrypted one-time key values awaiting runtime acknowledgement.
     pub(crate) sandbox_credentials: Arc<MongoSandboxCredentialStore>,
+    /// Sandbox-confined whole-home checkpoint archive authority.
+    pub checkpoint_objects: Arc<MongoCheckpointObjectStore>,
     /// Versioned Trigger definitions, placements, and immutable revisions.
     #[allow(dead_code)] // Opened and validated here; #824 composes the public routes.
     pub trigger_definitions: Arc<MongoTriggerDefinitionStore>,
@@ -48,6 +51,8 @@ impl MongoStores {
             MongoSandboxCredentialStore::open(&client, database, deployment, auth_encryption_key)
                 .await?,
         );
+        let checkpoint_objects =
+            Arc::new(MongoCheckpointObjectStore::open(&client, database).await?);
         let trigger_definitions = Arc::new(
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
                 .await?,
@@ -64,6 +69,7 @@ impl MongoStores {
             sandbox_model,
             sandbox_profiles,
             sandbox_credentials,
+            checkpoint_objects,
             trigger_definitions,
             auth,
             activity,

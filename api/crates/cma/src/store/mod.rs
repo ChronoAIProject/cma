@@ -22,6 +22,7 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 mod agents;
 pub mod auth;
+mod checkpoint_objects;
 mod checkpoints;
 mod default_profiles;
 pub mod directory;
@@ -80,6 +81,7 @@ mod worktrees;
 
 pub use activity::MongoActivityStore;
 pub use auth::MongoAuthStore;
+pub use checkpoint_objects::MongoCheckpointObjectStore;
 pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;

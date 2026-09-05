@@ -1,0 +1,113 @@
+//! Durable, sandbox-confined authority for whole-home checkpoint archives.
+
+use std::sync::Arc;
+
+use layer2_core::StoreError;
+use layer3_adapter::hosted::{
+    CheckpointArchiveDownload, CheckpointArchiveReceipt, CheckpointArchiveStore,
+    CheckpointArchiveStoreFactory, CheckpointArchiveUpload,
+};
+use layer3_adapter::{AdapterError, Result as AdapterResult};
+use mongodb::bson::Document;
+use mongodb::gridfs::GridFsBucket;
+use mongodb::{Client, Collection};
+
+use super::durability::majority_collection;
+use super::schema::initialize_collections;
+
+mod download;
+mod model;
+mod purge;
+mod upload;
+
+use model::{
+    bucket_options, ensure_indexes, validate_sandbox_id, GRIDFS_CHUNKS, GRIDFS_FILES, MANIFESTS,
+};
+
+/// Mongo-backed archive authority shared by all sandbox-confined views.
+#[derive(Clone)]
+pub struct MongoCheckpointObjectStore {
+    manifests: Collection<Document>,
+    files: Collection<Document>,
+    chunks: Collection<Document>,
+    bucket: GridFsBucket,
+}
+
+impl MongoCheckpointObjectStore {
+    pub(crate) async fn open(client: &Client, database_name: &str) -> Result<Self, StoreError> {
+        let database = client.database(database_name);
+        initialize_collections(&database, &[MANIFESTS]).await?;
+
+        let manifests = majority_collection(&database, MANIFESTS);
+        let files = majority_collection(&database, GRIDFS_FILES);
+        let chunks = majority_collection(&database, GRIDFS_CHUNKS);
+        ensure_indexes(&manifests, &files, &chunks).await?;
+
+        Ok(Self {
+            manifests,
+            files,
+            chunks,
+            bucket: database.gridfs_bucket(bucket_options()),
+        })
+    }
+
+    /// Return an archive authority whose every operation is bound to one sandbox.
+    pub fn for_sandbox(&self, sandbox_id: &str) -> AdapterResult<Arc<dyn CheckpointArchiveStore>> {
+        validate_sandbox_id(sandbox_id)?;
+        Ok(Arc::new(SandboxCheckpointArchiveStore {
+            store: self.clone(),
+            sandbox_id: sandbox_id.to_owned(),
+        }))
+    }
+
+    /// Delete one sandbox's manifests, files, and closed-but-unpublished stages.
+    ///
+    /// Work is deliberately bounded. `Unavailable` after partial progress asks the
+    /// lifecycle worker to retry; each retry continues idempotently.
+    pub async fn purge_sandbox(&self, sandbox_id: &str) -> AdapterResult<()> {
+        validate_sandbox_id(sandbox_id)?;
+        purge::purge_sandbox(self, sandbox_id).await
+    }
+}
+
+impl CheckpointArchiveStoreFactory for MongoCheckpointObjectStore {
+    fn for_sandbox(&self, sandbox_id: &str) -> AdapterResult<Arc<dyn CheckpointArchiveStore>> {
+        MongoCheckpointObjectStore::for_sandbox(self, sandbox_id)
+    }
+}
+
+#[derive(Clone)]
+struct SandboxCheckpointArchiveStore {
+    store: MongoCheckpointObjectStore,
+    sandbox_id: String,
+}
+
+#[async_trait::async_trait]
+impl CheckpointArchiveStore for SandboxCheckpointArchiveStore {
+    async fn upload(
+        &self,
+        archive: CheckpointArchiveUpload,
+    ) -> AdapterResult<CheckpointArchiveReceipt> {
+        upload::upload(&self.store, &self.sandbox_id, archive).await
+    }
+
+    async fn download(&self, object_reference: &str) -> AdapterResult<CheckpointArchiveDownload> {
+        download::download(&self.store, &self.sandbox_id, object_reference).await
+    }
+}
+
+fn unavailable(message: &'static str) -> AdapterError {
+    AdapterError::Unavailable(message.into())
+}
+
+fn rejected(message: &'static str) -> AdapterError {
+    AdapterError::Rejected(message.into())
+}
+
+#[cfg(test)]
+#[path = "checkpoint_objects/tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "checkpoint_objects/mongo_integration_tests.rs"]
+mod mongo_integration_tests;
