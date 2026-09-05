@@ -103,6 +103,14 @@ impl TriggerStore for MongoTriggerDefinitionStore {
             .map(|stored| stored.trigger))
     }
 
+    async fn delete_unpublished_trigger(
+        &self,
+        id: &TriggerId,
+        owner: &SubjectId,
+    ) -> Result<(), TriggerStoreError> {
+        mutations::delete_unpublished(self, id, owner).await
+    }
+
     async fn trigger_revision(
         &self,
         id: &TriggerId,

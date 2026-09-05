@@ -1655,6 +1655,7 @@ name = "layer2-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "layer3-adapter",
  "ring",
  "serde",

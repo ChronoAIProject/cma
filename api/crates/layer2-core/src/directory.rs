@@ -36,6 +36,7 @@ pub struct DirectoryQuery {
 #[async_trait::async_trait]
 pub trait UserDirectoryStore: Send + Sync {
     async fn observe(&self, identity: &PublicIdentity) -> Result<(), StoreError>;
+    async fn user(&self, subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError>;
     async fn list(&self, query: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError>;
 }
 
@@ -50,6 +51,10 @@ impl UserDirectory {
 
     pub async fn observe(&self, identity: &PublicIdentity) -> Result<(), StoreError> {
         self.store.observe(identity).await
+    }
+
+    pub async fn user(&self, subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError> {
+        self.store.user(subject).await
     }
 
     pub async fn list(

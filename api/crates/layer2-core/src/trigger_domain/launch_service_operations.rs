@@ -7,8 +7,9 @@ use super::launch_service_support::{
 use super::launch_trust::LaunchTrustManifest;
 use super::{
     Launch, LaunchCommit, LaunchConfirmation, LaunchConsentSurface, LaunchEvent, LaunchEventKind,
-    LaunchService, LaunchServiceError, LaunchState, RequirementsSnapshot, ReviewRequirements,
-    StartLaunch, TriggerRevision, DEFAULT_LAUNCH_EVENT_LIMIT,
+    LaunchPage, LaunchPageRequest, LaunchService, LaunchServiceError, LaunchState,
+    RequirementsSnapshot, ReviewRequirements, StartLaunch, TriggerRevision,
+    DEFAULT_LAUNCH_EVENT_LIMIT,
 };
 
 impl LaunchService {
@@ -172,6 +173,19 @@ impl LaunchService {
     pub async fn read(&self, caller: &Caller, id: &LaunchId) -> Result<Launch, LaunchServiceError> {
         require_launcher(caller)?;
         self.owned(id, &caller.subject).await
+    }
+
+    pub async fn list(
+        &self,
+        caller: &Caller,
+        page: &LaunchPageRequest,
+    ) -> Result<LaunchPage, LaunchServiceError> {
+        require_launcher(caller)?;
+        page.validate().map_err(store_error)?;
+        self.launches
+            .list_launches(&caller.subject, page)
+            .await
+            .map_err(store_error)
     }
 
     pub async fn requirements(

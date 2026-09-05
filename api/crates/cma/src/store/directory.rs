@@ -103,6 +103,24 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
         Ok(())
     }
 
+    async fn user(&self, subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError> {
+        let row = self
+            .users
+            .find_one(doc! { "_id": subject.as_str() })
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("read directory user: {error}")))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        schema::require_current(row.document_schema_version)?;
+        if row.subject != subject.as_str() {
+            return Err(StoreError::Malformed(
+                "directory user query crossed its subject boundary".into(),
+            ));
+        }
+        Ok(Some(row.into_record()))
+    }
+
     async fn list(&self, query: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError> {
         query
             .validate()

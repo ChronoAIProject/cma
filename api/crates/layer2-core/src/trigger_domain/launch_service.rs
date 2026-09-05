@@ -398,11 +398,12 @@ impl LaunchService {
             .await
             .map_err(trigger_error)?
             .ok_or_else(|| LaunchServiceError::Corrupt("published Trigger is missing".into()))?;
-        Ok(aggregate
+        aggregate
             .placements
             .iter()
             .find(|placement| &placement.id == requested && placement.retired_at.is_none())
-            .map(|placement| placement.id.clone()))
+            .map(|placement| Some(placement.id.clone()))
+            .ok_or_else(|| LaunchServiceError::InvalidRequest("placement_id is unavailable".into()))
     }
 
     pub(super) async fn owned(

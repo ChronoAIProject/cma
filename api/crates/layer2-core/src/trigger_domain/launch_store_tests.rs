@@ -73,6 +73,10 @@ fn store_fixture() -> (
 }
 
 fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
+    launch_at(trigger, key, fingerprint, NOW)
+}
+
+fn launch_at(trigger: &PublicTrigger, key: char, fingerprint: char, created_at: &str) -> Launch {
     Launch::new(LaunchSeed {
         trigger_id: trigger.trigger_id.clone(),
         revision_digest: trigger.revision.digest.clone(),
@@ -94,9 +98,26 @@ fn launch(trigger: &PublicTrigger, key: char, fingerprint: char) -> Launch {
         has_first_message: true,
         command_key_hash: digest(key),
         command_fingerprint: digest(fingerprint),
-        created_at: NOW.into(),
+        created_at: created_at.into(),
     })
     .unwrap()
+}
+
+async fn admit_candidate(
+    store: &InMemoryLaunchStore,
+    trigger: &PublicTrigger,
+    launch: Launch,
+) -> Launch {
+    store
+        .admit_launch(LaunchAdmission {
+            launch,
+            trigger: trigger.clone(),
+            events: vec![LaunchEventKind::Created],
+        })
+        .await
+        .unwrap()
+        .launch()
+        .clone()
 }
 
 async fn admitted(store: &InMemoryLaunchStore, trigger: &PublicTrigger) -> Launch {
@@ -233,6 +254,121 @@ async fn concurrent_same_command_admission_counts_once() {
             agents_ready_total: 0,
         }
     );
+}
+
+#[tokio::test]
+async fn launch_pages_are_owner_scoped_filter_bound_and_deterministic() {
+    let (_, store, trigger) = store_fixture();
+    let oldest = admit_candidate(&store, &trigger, launch_at(&trigger, '1', 'a', NOW)).await;
+    let middle = admit_candidate(&store, &trigger, launch_at(&trigger, '2', 'b', LATER)).await;
+    let newest = admit_candidate(&store, &trigger, launch_at(&trigger, '3', 'c', LATEST)).await;
+    let mut foreign = launch_at(&trigger, '4', 'd', LATEST);
+    foreign.owner = SubjectId::new("somebody-else");
+    let foreign = admit_candidate(&store, &trigger, foreign).await;
+
+    let first = store
+        .list_launches(
+            &oldest.owner,
+            &LaunchPageRequest {
+                limit: 2,
+                ..LaunchPageRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .map(|launch| &launch.id)
+            .collect::<Vec<_>>(),
+        [&newest.id, &middle.id]
+    );
+    let second = store
+        .list_launches(
+            &oldest.owner,
+            &LaunchPageRequest {
+                limit: 2,
+                cursor: first.next.clone(),
+                ..LaunchPageRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.items, vec![oldest.clone()]);
+    assert!(second.next.is_none());
+    assert_eq!(
+        store
+            .list_launches(
+                &foreign.owner,
+                &LaunchPageRequest {
+                    limit: 2,
+                    ..LaunchPageRequest::default()
+                },
+            )
+            .await
+            .unwrap()
+            .items,
+        vec![foreign]
+    );
+
+    let changed_filter = LaunchPageRequest {
+        limit: 2,
+        cursor: first.next,
+        trigger: Some(trigger.trigger_id.clone()),
+        state: None,
+    };
+    assert_eq!(
+        store.list_launches(&oldest.owner, &changed_filter).await,
+        Err(LaunchStoreError::InvalidCursor)
+    );
+    assert_eq!(
+        store
+            .list_launches(
+                &oldest.owner,
+                &LaunchPageRequest {
+                    limit: 0,
+                    ..LaunchPageRequest::default()
+                },
+            )
+            .await,
+        Err(LaunchStoreError::InvalidCursor)
+    );
+}
+
+#[tokio::test]
+async fn placement_stats_include_unattributed_launches_without_crossing_triggers() {
+    let (_, store, trigger) = store_fixture();
+    let placement = PlacementId("plc_readme".into());
+    for (key, fingerprint, placement_id) in [
+        ('1', 'a', Some(placement.clone())),
+        ('2', 'b', Some(placement.clone())),
+        ('3', 'c', None),
+    ] {
+        let mut candidate = launch(&trigger, key, fingerprint);
+        candidate.placement_id = placement_id;
+        admit_candidate(&store, &trigger, candidate).await;
+    }
+    assert_eq!(
+        store.placement_stats(&trigger.trigger_id).await.unwrap(),
+        vec![
+            LaunchPlacementStats {
+                placement_id: None,
+                launches_total: 1,
+                agents_ready_total: 0,
+            },
+            LaunchPlacementStats {
+                placement_id: Some(placement),
+                launches_total: 2,
+                agents_ready_total: 0,
+            },
+        ]
+    );
+    assert!(store
+        .placement_stats(&TriggerId("trg_other".into()))
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -653,6 +789,27 @@ async fn handoffs_are_owner_scoped_and_intent_idempotent() {
         revision: 1,
     };
     let created = store.create_handoff(handoff.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .handoff_by_intent(&created.owner, &created.launch_id, &created.intent_id)
+            .await
+            .unwrap(),
+        Some(created.clone())
+    );
+    assert!(store
+        .handoff_by_intent(
+            &SubjectId::new("stranger"),
+            &created.launch_id,
+            &created.intent_id,
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .handoff_by_intent(&created.owner, &created.launch_id, "different-intent")
+        .await
+        .unwrap()
+        .is_none());
     let mut replay = handoff.clone();
     replay.id = ServiceHandoffId::generate();
     assert_eq!(store.create_handoff(replay).await.unwrap(), created);

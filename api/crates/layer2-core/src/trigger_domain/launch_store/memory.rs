@@ -18,8 +18,8 @@ pub struct InMemoryLaunchStore {
 }
 
 #[derive(Default)]
-struct State {
-    launches: HashMap<LaunchId, Launch>,
+pub(super) struct State {
+    pub(super) launches: HashMap<LaunchId, Launch>,
     commands: HashMap<CommandKey, LaunchId>,
     events: HashMap<LaunchId, Vec<LaunchEvent>>,
     handoffs: HashMap<ServiceHandoffId, ServiceConnectionHandoff>,
@@ -122,6 +122,21 @@ impl LaunchStore for InMemoryLaunchStore {
             .get(id)
             .filter(|launch| &launch.owner == owner)
             .cloned())
+    }
+
+    async fn list_launches(
+        &self,
+        owner: &SubjectId,
+        page: &LaunchPageRequest,
+    ) -> Result<LaunchPage, LaunchStoreError> {
+        super::memory_queries::list(&self.lock(), owner, page)
+    }
+
+    async fn placement_stats(
+        &self,
+        trigger_id: &TriggerId,
+    ) -> Result<Vec<LaunchPlacementStats>, LaunchStoreError> {
+        super::memory_queries::placement_stats(&self.lock(), trigger_id)
     }
 
     async fn commit_launch(&self, commit: LaunchCommit) -> Result<Launch, LaunchStoreError> {
@@ -234,6 +249,31 @@ impl LaunchStore for InMemoryLaunchStore {
 
 #[async_trait]
 impl ServiceConnectionStore for InMemoryLaunchStore {
+    async fn handoff_by_intent(
+        &self,
+        owner: &SubjectId,
+        launch_id: &LaunchId,
+        intent_id: &str,
+    ) -> Result<Option<ServiceConnectionHandoff>, LaunchStoreError> {
+        let state = self.lock();
+        let key = (owner.clone(), launch_id.clone(), intent_id.to_owned());
+        let Some(id) = state.handoff_commands.get(&key) else {
+            return Ok(None);
+        };
+        let handoff = state
+            .handoffs
+            .get(id)
+            .ok_or_else(|| corrupt("handoff command points to no record"))?;
+        if &handoff.owner != owner
+            || &handoff.launch_id != launch_id
+            || handoff.intent_id != intent_id
+        {
+            return Err(corrupt("handoff command crossed its intent boundary"));
+        }
+        handoff.validate()?;
+        Ok(Some(handoff.clone()))
+    }
+
     async fn create_handoff(
         &self,
         handoff: ServiceConnectionHandoff,

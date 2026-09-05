@@ -8,6 +8,7 @@ use super::{
 };
 
 mod memory;
+mod memory_guards;
 
 pub use memory::InMemoryTriggerStore;
 
@@ -63,6 +64,8 @@ pub enum TriggerStoreError {
     Duplicate,
     #[error("trigger draft changed: expected {expected}, found {actual}")]
     Conflict { expected: u64, actual: u64 },
+    #[error("trigger has already been published")]
+    AlreadyPublished,
     #[error(transparent)]
     Reference(#[from] TriggerReferenceError),
     #[error("profile is referenced by published triggers: {trigger_ids:?}")]
@@ -81,6 +84,7 @@ impl TriggerStoreError {
             Self::NotFound => "trigger_not_found",
             Self::Duplicate => "trigger_already_exists",
             Self::Conflict { .. } => "trigger_draft_changed",
+            Self::AlreadyPublished => "trigger_already_published",
             Self::Reference(error) => error.code(),
             Self::ProfileReferenced { .. } => "profile_referenced_by_published_trigger",
             Self::Unavailable(_) => "trigger_store_unavailable",
@@ -99,6 +103,13 @@ pub trait TriggerStore: Send + Sync {
         id: &TriggerId,
         owner: &SubjectId,
     ) -> Result<Option<Trigger>, TriggerStoreError>;
+
+    /// Deletes an owned Trigger only when no immutable revision has ever existed.
+    async fn delete_unpublished_trigger(
+        &self,
+        id: &TriggerId,
+        owner: &SubjectId,
+    ) -> Result<(), TriggerStoreError>;
 
     /// Reads the first immutable revision whose content digest matches exactly.
     ///

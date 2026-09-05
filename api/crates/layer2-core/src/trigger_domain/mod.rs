@@ -23,7 +23,9 @@ mod reference;
 mod requirements;
 mod resolution;
 mod revision;
+mod service_connection_service;
 pub mod store;
+mod trigger_service;
 mod worker_effects;
 
 use serde::{Deserialize, Serialize};
@@ -50,8 +52,10 @@ pub use launch_service::{
     LaunchServiceError, StartLaunch,
 };
 pub use launch_store::{
-    InMemoryLaunchStore, LaunchAdmission, LaunchAdmissionResult, LaunchCommit, LaunchStore,
-    LaunchStoreError, ServiceConnectionStore, DEFAULT_LAUNCH_EVENT_LIMIT, MAX_LAUNCH_EVENT_LIMIT,
+    InMemoryLaunchStore, LaunchAdmission, LaunchAdmissionResult, LaunchCommit, LaunchPage,
+    LaunchPageBoundary, LaunchPageRequest, LaunchPlacementStats, LaunchStore, LaunchStoreError,
+    ServiceConnectionStore, DEFAULT_LAUNCH_EVENT_LIMIT, DEFAULT_LAUNCH_PAGE_SIZE,
+    MAX_LAUNCH_EVENT_LIMIT, MAX_LAUNCH_PAGE_SIZE,
 };
 pub use launch_trust::{LaunchTrustDisclosure, LaunchTrustManifest, LaunchTrustResource};
 pub use launch_worker_control::LaunchRequirementRefresh;
@@ -70,10 +74,14 @@ pub use resolution::{
     RepeatChoice, ResolvedResource,
 };
 pub use revision::{trigger_content_digest, TriggerRevision};
+pub use service_connection_service::{
+    CreateServiceConnection, ServiceConnectionService, ServiceConnectionServiceError,
+};
 pub use store::{
     InMemoryTriggerStore, PublicTrigger, TriggerPage, TriggerPageRequest, TriggerStore,
     TriggerStoreError,
 };
+pub use trigger_service::{TriggerService, TriggerServiceError, TriggerStatistics};
 pub use worker_effects::{
     LaunchEffectKind, LaunchEffectRecord, LaunchEffectState, LaunchWorkLease, LaunchWorkState,
     LaunchWorkStep, MAX_LAUNCH_RETRY_DELAY_SECONDS, MAX_LAUNCH_WORK_ATTEMPTS,
@@ -417,6 +425,12 @@ mod launch_progress_tests;
 
 #[cfg(test)]
 mod launch_store_tests;
+
+#[cfg(test)]
+mod service_connection_service_tests;
+
+#[cfg(test)]
+mod trigger_service_tests;
 
 #[cfg(test)]
 mod launch_worker_control_tests;
