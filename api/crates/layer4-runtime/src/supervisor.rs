@@ -384,5 +384,8 @@ fn reserved(name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "supervisor_mutation_tests.rs"]
+mod mutation_tests;
+#[cfg(test)]
 #[path = "supervisor_tests.rs"]
 mod tests;
