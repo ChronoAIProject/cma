@@ -13,31 +13,13 @@ pub(crate) async fn add(
     allow_local_git: bool,
     request: &WorktreeRequest,
 ) -> Result<WorktreeReceipt> {
-    validate_add_request(request)?;
-    safe_component(&request.workspace, "workspace name")?;
-    safe_component(&request.name, "worktree name")?;
-    validate_selector(&request.base, "worktree base")?;
+    preflight_add(home, allow_local_git, request).await?;
     let repository = home.join(&request.workspace);
-    require_repository(&repository)?;
     let parent = repository.join(".worktrees");
-    ensure_worktree_parent(&parent)?;
     let path = parent.join(&request.name);
-    if std::fs::symlink_metadata(&path).is_ok() {
-        return Err(RuntimeError::rejected(
-            "worktree_exists",
-            "worktree path already exists",
-        ));
-    }
-
     let git = GitRunner::new(allow_local_git);
     let base_commit = resolve_commit(&repository, &git, &request.base).await?;
-    let branch = format!("cma/{}", request.name);
-    if branch_exists(&git, &repository, &branch).await? {
-        return Err(RuntimeError::rejected(
-            "worktree_exists",
-            "worktree branch already exists",
-        ));
-    }
+    let branch = branch_name(&request.name);
     let args = vec![
         OsString::from("worktree"),
         OsString::from("add"),
@@ -63,6 +45,92 @@ pub(crate) async fn add(
         branch,
         base_commit,
     })
+}
+
+pub(crate) async fn preflight_add(
+    home: &Path,
+    allow_local_git: bool,
+    request: &WorktreeRequest,
+) -> Result<()> {
+    validate_add_request(request)?;
+    safe_component(&request.workspace, "workspace name")?;
+    safe_component(&request.name, "worktree name")?;
+    validate_selector(&request.base, "worktree base")?;
+    let repository = home.join(&request.workspace);
+    require_repository(&repository)?;
+    let parent = repository.join(".worktrees");
+    ensure_worktree_parent(&parent)?;
+    if entry_exists(
+        &parent.join(&request.name),
+        "inspect existing worktree path",
+    )? {
+        return Err(RuntimeError::rejected(
+            "worktree_exists",
+            "worktree path already exists",
+        ));
+    }
+    let git = GitRunner::new(allow_local_git);
+    resolve_commit(&repository, &git, &request.base).await?;
+    if branch_exists(&git, &repository, &branch_name(&request.name)).await? {
+        return Err(RuntimeError::rejected(
+            "worktree_exists",
+            "worktree branch already exists",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn inspect_add(
+    home: &Path,
+    allow_local_git: bool,
+    request: &WorktreeRequest,
+) -> Result<Option<WorktreeReceipt>> {
+    validate_add_request(request)?;
+    safe_component(&request.workspace, "workspace name")?;
+    safe_component(&request.name, "worktree name")?;
+    validate_selector(&request.base, "worktree base")?;
+    let repository = home.join(&request.workspace);
+    require_repository(&repository)?;
+    let path = expected_path(home, &request.workspace, &request.name);
+    let path_exists = real_directory_or_absent(&path)?;
+    let git = GitRunner::new(allow_local_git);
+    let branch = branch_name(&request.name);
+    let branch_exists = branch_exists(&git, &repository, &branch).await?;
+    match (path_exists, branch_exists) {
+        (false, false) => return Ok(None),
+        (true, true) => {}
+        _ => {
+            return Err(add_indeterminate(
+                "worktree path and branch were only partly created",
+            ))
+        }
+    }
+    if !real_file(&path.join(".git"))? {
+        return Err(add_indeterminate(
+            "recovered worktree does not have a Git link file",
+        ));
+    }
+    let expected_commit = resolve_commit(&repository, &git, &request.base).await?;
+    let branch_commit = resolve_commit(&repository, &git, &branch).await?;
+    let worktree_commit = resolve_commit(&path, &git, "HEAD").await?;
+    let actual_branch = symbolic_branch(&git, &path).await?;
+    if branch_commit != expected_commit
+        || worktree_commit != expected_commit
+        || actual_branch != branch
+    {
+        return Err(add_indeterminate(
+            "recovered worktree branch or commit differs from the admitted addition",
+        ));
+    }
+    Ok(Some(WorktreeReceipt {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
+        workspace: request.workspace.clone(),
+        name: request.name.clone(),
+        path: path.to_string_lossy().into_owned(),
+        branch,
+        base_commit: expected_commit,
+    }))
 }
 
 async fn branch_exists(git: &GitRunner, repository: &Path, branch: &str) -> Result<bool> {
@@ -118,40 +186,75 @@ pub(crate) async fn remove(
     let repository = home.join(&reference.workspace);
     require_repository(&repository)?;
     let path = repository.join(".worktrees").join(&reference.name);
-    if !path_is_directory(&path) {
-        return Err(RuntimeError::rejected(
-            "worktree_not_found",
-            "worktree directory was not found",
-        ));
-    }
     let git = GitRunner::new(allow_local_git);
-    git.checked(
-        &repository,
-        [
-            OsString::from("worktree"),
-            OsString::from("remove"),
-            OsString::from("--force"),
-            path.as_os_str().to_owned(),
-        ],
-        "remove worktree",
-    )
-    .await?;
-    let branch = format!("cma/{}", reference.name);
-    git.checked(
-        &repository,
-        ["branch", "-D", branch.as_str()],
-        "delete worktree branch",
-    )
-    .await?;
-    crate::fs_durability::sync_directory(&repository.join(".worktrees"))
-        .map_err(worktree_io("sync worktree removal"))?;
+    if real_directory_or_absent(&path)? {
+        git.checked(
+            &repository,
+            [
+                OsString::from("worktree"),
+                OsString::from("remove"),
+                OsString::from("--force"),
+                path.as_os_str().to_owned(),
+            ],
+            "remove worktree",
+        )
+        .await?;
+    } else {
+        git.checked(
+            &repository,
+            ["worktree", "prune", "--expire", "now"],
+            "prune removed worktree",
+        )
+        .await?;
+    }
+    let branch = branch_name(&reference.name);
+    if branch_exists(&git, &repository, &branch).await? {
+        git.checked(
+            &repository,
+            ["branch", "-D", branch.as_str()],
+            "delete worktree branch",
+        )
+        .await?;
+    }
+    let parent = repository.join(".worktrees");
+    if path_is_directory(&parent) {
+        crate::fs_durability::sync_directory(&parent)
+            .map_err(worktree_io("sync worktree removal"))?;
+    }
     crate::fs_durability::sync_tree(&repository.join(".git")).map_err(worktree_io(
         "sync repository metadata after removing worktree",
     ))?;
     Ok(())
 }
 
-fn validate_add_request(request: &WorktreeRequest) -> Result<()> {
+pub(crate) async fn preflight_remove(
+    home: &Path,
+    allow_local_git: bool,
+    reference: &WorktreeRef,
+) -> Result<()> {
+    validate_remove_request(reference)?;
+    safe_component(&reference.workspace, "workspace name")?;
+    safe_component(&reference.name, "worktree name")?;
+    let repository = home.join(&reference.workspace);
+    require_repository(&repository)?;
+    let path = expected_path(home, &reference.workspace, &reference.name);
+    if !real_directory_or_absent(&path)? {
+        return Err(RuntimeError::rejected(
+            "worktree_not_found",
+            "worktree directory was not found",
+        ));
+    }
+    let git = GitRunner::new(allow_local_git);
+    if !branch_exists(&git, &repository, &branch_name(&reference.name)).await? {
+        return Err(RuntimeError::rejected(
+            "worktree_not_found",
+            "worktree branch was not found",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_add_request(request: &WorktreeRequest) -> Result<()> {
     let expected = format!("worktree:{}:{}:add:v1", request.workspace, request.name);
     validate_operation(
         request.has_valid_sha256(),
@@ -161,7 +264,7 @@ fn validate_add_request(request: &WorktreeRequest) -> Result<()> {
     )
 }
 
-fn validate_remove_request(request: &WorktreeRef) -> Result<()> {
+pub(crate) fn validate_remove_request(request: &WorktreeRef) -> Result<()> {
     let expected = format!("worktree:{}:{}:remove:v1", request.workspace, request.name);
     validate_operation(
         request.has_valid_sha256(),
@@ -240,6 +343,59 @@ fn ensure_worktree_parent(parent: &Path) -> Result<()> {
             "worktree_io_failed",
             format!("inspect .worktrees directory: {error}"),
         )),
+    }
+}
+
+fn real_directory_or_absent(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(true),
+        Ok(_) => Err(RuntimeError::rejected(
+            "worktree_invalid",
+            "worktree path is not a real directory",
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(worktree_io("inspect worktree path")(error)),
+    }
+}
+
+async fn symbolic_branch(git: &GitRunner, path: &Path) -> Result<String> {
+    git.checked(
+        path,
+        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        "inspect worktree branch",
+    )
+    .await
+    .map(|output| output.stdout.trim().to_string())
+    .map_err(|error| {
+        if error.retryable {
+            error
+        } else {
+            add_indeterminate(&error.detail)
+        }
+    })
+}
+
+fn branch_name(name: &str) -> String {
+    format!("cma/{name}")
+}
+
+fn add_indeterminate(detail: &str) -> RuntimeError {
+    RuntimeError::rejected("worktree_add_indeterminate", detail)
+}
+
+fn entry_exists(path: &Path, operation: &'static str) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(worktree_io(operation)(error)),
+    }
+}
+
+fn real_file(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file() && !metadata.file_type().is_symlink()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(worktree_io("inspect worktree Git link")(error)),
     }
 }
 
