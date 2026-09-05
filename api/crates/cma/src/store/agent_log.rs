@@ -42,7 +42,7 @@ fn log_id(id: &AgentId, seq: u64) -> String {
     format!("{}:{seq:020}", id.as_str())
 }
 
-fn log_document(entry: &AgentLogEntry) -> Result<Document, SandboxStoreError> {
+pub(super) fn log_document(entry: &AgentLogEntry) -> Result<Document, SandboxStoreError> {
     Ok(doc! {
         "_id": log_id(&entry.agent_id, entry.seq),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -52,7 +52,7 @@ fn log_document(entry: &AgentLogEntry) -> Result<Document, SandboxStoreError> {
     })
 }
 
-fn read_entry(document: &Document) -> Result<AgentLogEntry, SandboxStoreError> {
+pub(super) fn read_entry(document: &Document) -> Result<AgentLogEntry, SandboxStoreError> {
     let entry: AgentLogEntry = read_record(document).map_err(SandboxStoreError::Corrupt)?;
     let seq = signed(entry.seq, "agent log sequence").map_err(SandboxStoreError::Corrupt)?;
     if !string_field_matches(document, "_id", &log_id(&entry.agent_id, entry.seq))
@@ -165,7 +165,7 @@ async fn append_in_transaction(
     Ok(entry)
 }
 
-async fn reconcile_entry(
+pub(super) async fn reconcile_entry(
     store: &MongoSandboxStore,
     expected: &AgentLogEntry,
 ) -> Result<Option<AgentLogEntry>, SandboxStoreError> {

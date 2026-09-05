@@ -29,6 +29,15 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
             )
             .build(),
         IndexModel::builder()
+            .keys(doc! { "owner": 1, "creation_key": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("agents_owner_creation_key".to_string())
+                    .unique(true)
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
             .keys(doc! { "sandbox_id": 1 })
             .options(
                 IndexOptions::builder()
@@ -79,6 +88,8 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
         "sandbox_id": agent.sandbox_id.as_str(),
         "workspace_id": agent.workspace_id.as_str(),
         "worktree_id": agent.worktree_id.as_str(),
+        "creation_key": &agent.creation_key,
+        "creation_fingerprint": &agent.creation_fingerprint,
         "status": record_bson(&agent.status).map_err(SandboxStoreError::Corrupt)?,
         "updated_at": agent_updated_at(agent),
         "revision": signed(agent.revision, "agent revision")
@@ -100,6 +111,12 @@ pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError
         || !string_field_matches(document, "sandbox_id", agent.sandbox_id.as_str())
         || !string_field_matches(document, "workspace_id", agent.workspace_id.as_str())
         || !string_field_matches(document, "worktree_id", agent.worktree_id.as_str())
+        || !string_field_matches(document, "creation_key", &agent.creation_key)
+        || !string_field_matches(
+            document,
+            "creation_fingerprint",
+            &agent.creation_fingerprint,
+        )
         || document.get("status") != Some(&status)
         || !string_field_matches(document, "updated_at", agent_updated_at(&agent))
         || !i64_field_matches(document, "revision", revision)
@@ -263,10 +280,17 @@ mod tests {
             indexes[0].keys,
             doc! { "owner": 1, "status": 1, "updated_at": -1 }
         );
-        assert_eq!(indexes[1].keys, doc! { "sandbox_id": 1 });
-        assert_eq!(indexes[2].keys, doc! { "workspace_id": 1, "status": 1 });
-        assert_eq!(indexes[3].keys, doc! { "worktree_id": 1 });
-        let options = indexes[3].options.as_ref().unwrap();
+        assert_eq!(indexes[1].keys, doc! { "owner": 1, "creation_key": 1 });
+        let creation_options = indexes[1].options.as_ref().unwrap();
+        assert_eq!(creation_options.unique, Some(true));
+        assert_eq!(
+            creation_options.name.as_deref(),
+            Some("agents_owner_creation_key")
+        );
+        assert_eq!(indexes[2].keys, doc! { "sandbox_id": 1 });
+        assert_eq!(indexes[3].keys, doc! { "workspace_id": 1, "status": 1 });
+        assert_eq!(indexes[4].keys, doc! { "worktree_id": 1 });
+        let options = indexes[4].options.as_ref().unwrap();
         assert_eq!(options.unique, Some(true));
         assert_eq!(
             options.partial_filter_expression,

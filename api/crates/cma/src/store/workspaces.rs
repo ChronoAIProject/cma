@@ -76,6 +76,11 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
         "work_pending": workspace.work.step.is_pending(),
         "work_ready_at": &workspace.work.ready_at,
         "work_lease_expires_at": nullable(lease_expires_at),
+        "next_worktree_number": signed(
+            workspace.next_worktree_number,
+            "workspace next worktree number",
+        )
+        .map_err(SandboxStoreError::Corrupt)?,
         "revision": signed(workspace.revision, "workspace revision")
             .map_err(SandboxStoreError::Corrupt)?,
         "record": record_bson(workspace).map_err(SandboxStoreError::Corrupt)?,
@@ -88,6 +93,11 @@ pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxSt
     let (origin_type, origin_index) = origin_fields(&workspace.origin);
     let revision =
         signed(workspace.revision, "workspace revision").map_err(SandboxStoreError::Corrupt)?;
+    let next_worktree_number = signed(
+        workspace.next_worktree_number,
+        "workspace next worktree number",
+    )
+    .map_err(SandboxStoreError::Corrupt)?;
     if !string_field_matches(document, "_id", workspace.id.as_str())
         || !string_field_matches(document, "sandbox_id", workspace.sandbox_id.as_str())
         || !string_field_matches(document, "owner", workspace.owner.as_str())
@@ -102,6 +112,7 @@ pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxSt
             != Some(&nullable(
                 workspace.work.lease.as_ref().map(|lease| &lease.expires_at),
             ))
+        || !i64_field_matches(document, "next_worktree_number", next_worktree_number)
         || !i64_field_matches(document, "revision", revision)
     {
         return Err(SandboxStoreError::Corrupt(
