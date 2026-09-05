@@ -38,6 +38,16 @@ pub(super) fn workspace_indexes() -> Vec<IndexModel> {
             )
             .build(),
         IndexModel::builder()
+            .keys(doc! { "sandbox_id": 1, "origin_launch_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("workspaces_sandbox_trigger_origin".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "origin_type": "trigger" })
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
             .keys(doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 })
             .options(
                 IndexOptions::builder()
@@ -61,7 +71,7 @@ pub(super) async fn ensure_indexes(
 }
 
 pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, SandboxStoreError> {
-    let (origin_type, origin_index) = origin_fields(&workspace.origin);
+    let (origin_type, origin_index, origin_launch_id) = origin_fields(&workspace.origin);
     let lease_expires_at = workspace.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": workspace.id.as_str(),
@@ -71,6 +81,7 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
         "name": &workspace.name,
         "origin_type": origin_type,
         "origin_index": origin_index,
+        "origin_launch_id": origin_launch_id,
         "status": record_bson(&workspace.status).map_err(SandboxStoreError::Corrupt)?,
         "removed_at": nullable(workspace.removed_at.as_ref()),
         "work_pending": workspace.work.step.is_pending(),
@@ -90,7 +101,7 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
 pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxStoreError> {
     let workspace: Workspace = read_record(document).map_err(SandboxStoreError::Corrupt)?;
     let status = record_bson(&workspace.status).map_err(SandboxStoreError::Corrupt)?;
-    let (origin_type, origin_index) = origin_fields(&workspace.origin);
+    let (origin_type, origin_index, origin_launch_id) = origin_fields(&workspace.origin);
     let revision =
         signed(workspace.revision, "workspace revision").map_err(SandboxStoreError::Corrupt)?;
     let next_worktree_number = signed(
@@ -104,6 +115,7 @@ pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxSt
         || !string_field_matches(document, "name", &workspace.name)
         || !string_field_matches(document, "origin_type", origin_type)
         || document.get("origin_index") != Some(&origin_index)
+        || document.get("origin_launch_id") != Some(&origin_launch_id)
         || document.get("status") != Some(&status)
         || document.get("removed_at") != Some(&nullable(workspace.removed_at.as_ref()))
         || document.get_bool("work_pending").ok() != Some(workspace.work.step.is_pending())
@@ -130,11 +142,16 @@ pub(super) fn workspace_replacement_fields(
     Ok(document)
 }
 
-fn origin_fields(origin: &WorkspaceOrigin) -> (&'static str, Bson) {
+fn origin_fields(origin: &WorkspaceOrigin) -> (&'static str, Bson, Bson) {
     match origin {
-        WorkspaceOrigin::Manual => ("manual", Bson::Null),
-        WorkspaceOrigin::SandboxProfile { index } => {
-            ("sandbox_profile", Bson::Int64(i64::from(*index)))
+        WorkspaceOrigin::Manual => ("manual", Bson::Null, Bson::Null),
+        WorkspaceOrigin::SandboxProfile { index } => (
+            "sandbox_profile",
+            Bson::Int64(i64::from(*index)),
+            Bson::Null,
+        ),
+        WorkspaceOrigin::Trigger { launch_id } => {
+            ("trigger", Bson::Null, Bson::String(launch_id.clone()))
         }
     }
 }
@@ -275,7 +292,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_indexes_cover_live_names_profile_slots_and_due_work() {
+    fn workspace_indexes_cover_live_names_durable_origins_and_due_work() {
         let indexes = workspace_indexes();
         assert_eq!(indexes[0].keys, doc! { "sandbox_id": 1, "name": 1 });
         let options = indexes[0].options.as_ref().unwrap();
@@ -293,10 +310,20 @@ mod tests {
         );
         assert_eq!(
             indexes[2].keys,
+            doc! { "sandbox_id": 1, "origin_launch_id": 1 }
+        );
+        let options = indexes[2].options.as_ref().unwrap();
+        assert_eq!(options.unique, Some(true));
+        assert_eq!(
+            options.partial_filter_expression.as_ref(),
+            Some(&doc! { "origin_type": "trigger" })
+        );
+        assert_eq!(
+            indexes[3].keys,
             doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
         );
         assert_eq!(
-            indexes[2].options.as_ref().unwrap().name.as_deref(),
+            indexes[3].options.as_ref().unwrap().name.as_deref(),
             Some("workspaces_due_work")
         );
     }

@@ -24,7 +24,7 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
             return Err(SandboxStoreError::WorkspaceOriginConflict);
         }
 
-        if admission.kind == WorkspaceAdmissionKind::SandboxProfile {
+        if admission.kind != WorkspaceAdmissionKind::Manual {
             if let Some(existing) = state.workspaces.values().find(|stored| {
                 stored.sandbox_id == workspace.sandbox_id && stored.origin == workspace.origin
             }) {
@@ -167,6 +167,10 @@ fn validate_fresh(
             | (
                 WorkspaceOrigin::SandboxProfile { .. },
                 WorkspaceAdmissionKind::SandboxProfile
+            )
+            | (
+                WorkspaceOrigin::Trigger { .. },
+                WorkspaceAdmissionKind::Trigger
             )
     );
     if !origin_matches

@@ -216,14 +216,27 @@ async fn apply_admission(
         ));
     }
 
-    if let WorkspaceOrigin::SandboxProfile { index } = candidate.origin {
-        if let Some(document) = store
-            .workspaces
-            .find_one(doc! {
+    if admission.kind != WorkspaceAdmissionKind::Manual {
+        let origin_filter = match &candidate.origin {
+            WorkspaceOrigin::SandboxProfile { index } => doc! {
                 "sandbox_id": candidate.sandbox_id.as_str(),
                 "origin_type": "sandbox_profile",
-                "origin_index": i64::from(index),
-            })
+                "origin_index": i64::from(*index),
+            },
+            WorkspaceOrigin::Trigger { launch_id } => doc! {
+                "sandbox_id": candidate.sandbox_id.as_str(),
+                "origin_type": "trigger",
+                "origin_launch_id": launch_id,
+            },
+            WorkspaceOrigin::Manual => {
+                return Err(ApplyError::Domain(
+                    SandboxStoreError::WorkspaceOriginConflict,
+                ));
+            }
+        };
+        if let Some(document) = store
+            .workspaces
+            .find_one(origin_filter)
             .session(&mut *session)
             .await
             .map_err(ApplyError::Driver)?
@@ -326,6 +339,10 @@ fn validate_fresh(
             | (
                 WorkspaceOrigin::SandboxProfile { .. },
                 WorkspaceAdmissionKind::SandboxProfile
+            )
+            | (
+                WorkspaceOrigin::Trigger { .. },
+                WorkspaceAdmissionKind::Trigger
             )
     );
     if !origin_matches

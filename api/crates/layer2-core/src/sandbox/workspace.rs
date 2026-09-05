@@ -15,6 +15,7 @@ use super::{
 pub enum WorkspaceOrigin {
     Manual,
     SandboxProfile { index: u16 },
+    Trigger { launch_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +71,18 @@ impl Workspace {
             })
     }
 
+    pub fn validate_origin(&self) -> Result<(), SandboxModelError> {
+        if let WorkspaceOrigin::Trigger { launch_id } = &self.origin {
+            if launch_id.trim().is_empty()
+                || launch_id.len() > 128
+                || launch_id.chars().any(char::is_control)
+            {
+                return Err(SandboxModelError::invalid_value("workspace.origin"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate_prerequisites(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         self.validate_for_admission(sandbox, super::SandboxStatus::Active)
     }
@@ -93,6 +106,7 @@ impl Workspace {
         }
         validate_workspace_name(&self.name)
             .map_err(|_| SandboxModelError::invalid_value("workspace.name"))?;
+        self.validate_origin()?;
         if self.path != format!("/home/cma/{}", self.name) || self.revision == 0 {
             return Err(SandboxModelError::invalid_value("workspace.path"));
         }

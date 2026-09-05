@@ -143,12 +143,13 @@ pub trait WorkspaceStore: Send + Sync {
 pub enum WorkspaceAdmissionKind {
     Manual,
     SandboxProfile,
+    Trigger,
 }
 
 impl WorkspaceAdmissionKind {
     pub const fn allowed_status(self) -> SandboxStatus {
         match self {
-            Self::Manual => SandboxStatus::Active,
+            Self::Manual | Self::Trigger => SandboxStatus::Active,
             Self::SandboxProfile => SandboxStatus::Installing,
         }
     }
