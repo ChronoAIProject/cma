@@ -138,7 +138,6 @@ impl TriggerService {
         caller: &Caller,
         id: &TriggerId,
     ) -> Result<Trigger, TriggerServiceError> {
-        require_publisher(caller)?;
         self.owned(id, &caller.subject).await
     }
 
@@ -149,7 +148,6 @@ impl TriggerService {
         expected_draft_version: u64,
         draft: TriggerContent,
     ) -> Result<Trigger, TriggerServiceError> {
-        require_publisher(caller)?;
         self.definitions
             .save_draft(
                 id,
@@ -163,7 +161,6 @@ impl TriggerService {
     }
 
     pub async fn delete(&self, caller: &Caller, id: &TriggerId) -> Result<(), TriggerServiceError> {
-        require_publisher(caller)?;
         self.definitions
             .delete_unpublished_trigger(id, &caller.subject)
             .await
@@ -176,7 +173,6 @@ impl TriggerService {
         id: &TriggerId,
         expected_draft_version: u64,
     ) -> Result<PublicTrigger, TriggerServiceError> {
-        require_publisher(caller)?;
         self.definitions
             .publish_trigger(id, &caller.subject, expected_draft_version, now_rfc3339())
             .await
@@ -188,7 +184,6 @@ impl TriggerService {
         caller: &Caller,
         id: &TriggerId,
     ) -> Result<Trigger, TriggerServiceError> {
-        require_publisher(caller)?;
         self.definitions
             .retire_trigger(id, &caller.subject, now_rfc3339())
             .await
@@ -210,7 +205,6 @@ impl TriggerService {
         source_url: String,
         label: String,
     ) -> Result<Placement, TriggerServiceError> {
-        require_publisher(caller)?;
         self.definitions
             .create_placement(id, &caller.subject, source_url, label)
             .await
@@ -223,7 +217,6 @@ impl TriggerService {
         id: &TriggerId,
         include_retired: bool,
     ) -> Result<Vec<Placement>, TriggerServiceError> {
-        require_publisher(caller)?;
         self.definitions
             .list_placements(id, &caller.subject, include_retired)
             .await
@@ -236,7 +229,6 @@ impl TriggerService {
         id: &TriggerId,
         placement_id: &PlacementId,
     ) -> Result<Placement, TriggerServiceError> {
-        require_publisher(caller)?;
         self.definitions
             .retire_placement(id, &caller.subject, placement_id, now_rfc3339())
             .await
@@ -248,7 +240,6 @@ impl TriggerService {
         caller: &Caller,
         id: &TriggerId,
     ) -> Result<TriggerStatistics, TriggerServiceError> {
-        require_publisher(caller)?;
         let trigger = self.owned(id, &caller.subject).await?;
         let stored = self
             .launches

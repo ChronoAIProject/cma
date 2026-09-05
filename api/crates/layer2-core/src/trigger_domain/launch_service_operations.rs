@@ -1,7 +1,7 @@
 use crate::{now_rfc3339, Caller, LaunchId};
 
 use super::launch_service_support::{
-    connection_error, require_launcher, store_error, trigger_error, validate_requirement_identity,
+    connection_error, store_error, trigger_error, validate_requirement_identity,
     validate_start_request,
 };
 use super::launch_trust::LaunchTrustManifest;
@@ -19,7 +19,6 @@ impl LaunchService {
         id: &LaunchId,
         request: StartLaunch,
     ) -> Result<Launch, LaunchServiceError> {
-        require_launcher(caller)?;
         validate_start_request(&request)?;
         if !self.policy.current_launch_policy().await?.enabled {
             return Err(LaunchServiceError::Disabled);
@@ -145,7 +144,6 @@ impl LaunchService {
         caller: &Caller,
         id: &LaunchId,
     ) -> Result<Launch, LaunchServiceError> {
-        require_launcher(caller)?;
         let mut launch = self.owned(id, &caller.subject).await?;
         let from = launch.state;
         let expected = launch.revision;
@@ -171,7 +169,6 @@ impl LaunchService {
     }
 
     pub async fn read(&self, caller: &Caller, id: &LaunchId) -> Result<Launch, LaunchServiceError> {
-        require_launcher(caller)?;
         self.owned(id, &caller.subject).await
     }
 
@@ -180,7 +177,6 @@ impl LaunchService {
         caller: &Caller,
         page: &LaunchPageRequest,
     ) -> Result<LaunchPage, LaunchServiceError> {
-        require_launcher(caller)?;
         page.validate().map_err(store_error)?;
         self.launches
             .list_launches(&caller.subject, page)
@@ -203,7 +199,6 @@ impl LaunchService {
         after: u64,
         limit: Option<u16>,
     ) -> Result<Vec<LaunchEvent>, LaunchServiceError> {
-        require_launcher(caller)?;
         self.launches
             .launch_events(
                 id,
