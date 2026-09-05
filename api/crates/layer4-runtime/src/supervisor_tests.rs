@@ -64,14 +64,14 @@ fn failure(response: ResponseFrame) -> layer3_adapter::wire::WireFailure {
     }
 }
 
-async fn wait_for_file(path: &Path) {
+async fn wait_for_contents(path: &Path, expected: &[u8]) {
     tokio::time::timeout(Duration::from_secs(3), async {
-        while !path.is_file() {
+        while !std::fs::read(path).is_ok_and(|contents| contents == expected) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("agent produced its fixture file");
+    .expect("agent produced its complete fixture file");
 }
 
 #[tokio::test]
@@ -426,14 +426,20 @@ while IFS= read -r line; do printf '%s\n' "$line"; done"#
     };
     let opened = supervisor.dispatch(RequestFrame::OpenAgent(launch)).await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
-    wait_for_file(&environment_file).await;
+    let expected_environment = format!(
+        "chrono-visible|nyxid-visible|agent-visible|{}",
+        agent_home.display()
+    );
+    wait_for_contents(&environment_file, expected_environment.as_bytes()).await;
     assert_eq!(
         std::fs::read_to_string(&environment_file).unwrap(),
-        format!(
-            "chrono-visible|nyxid-visible|agent-visible|{}",
-            agent_home.display()
-        )
+        expected_environment
     );
+    wait_for_contents(
+        &agent_home.join("sessions/rollout.jsonl"),
+        b"{\"payload\":{\"id\":\"conversation-1\"}}\n",
+    )
+    .await;
     let captured = supervisor
         .dispatch(RequestFrame::CaptureAgent(AgentRef {
             agent_id: AgentSlot::new("agent-1"),
