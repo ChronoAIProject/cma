@@ -14,6 +14,14 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::auth::{persistence::SecretValue, AuthState};
 
+mod composition;
+
+#[allow(
+    unused_imports,
+    reason = "exported for the production Trigger composition introduced by #824"
+)]
+pub(crate) use composition::CmaServiceConnectionBroker;
+
 const CONNECT_LINKS_PATH: &str = "/api/v1/connect-links";
 const USER_SERVICES_PATH: &str = "/api/v1/user-services";
 const CONNECT_LINK_TOKEN_PREFIX: &str = "nyx_clk_";
