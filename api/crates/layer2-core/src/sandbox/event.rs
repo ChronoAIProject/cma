@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, SandboxId, WorkspaceId, WorktreeId};
 
-use super::{AgentStatus, AgentWorkStep, SandboxStatus, SandboxWorkStep, TypedFailure};
+use super::{
+    AgentOperationDelivery, AgentOperationKind, AgentStatus, AgentWorkStep, SandboxStatus,
+    SandboxWorkStep, TypedFailure,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,6 +92,11 @@ pub enum AgentLogKind {
     ApprovalResolved {
         approval_id: String,
         decision: String,
+    },
+    OperationDeliveryChanged {
+        operation_sequence: u64,
+        operation: AgentOperationKind,
+        state: AgentOperationDelivery,
     },
     Usage {
         input_tokens: u64,

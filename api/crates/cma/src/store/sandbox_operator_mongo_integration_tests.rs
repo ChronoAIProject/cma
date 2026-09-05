@@ -162,6 +162,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
             last_seq: 0,
             first_message: None,
             active_turn: None,
+            operation: None,
             queued_messages: vec![],
         },
         work: AgentWorkState::new(AgentWorkStep::None, NOW.into()),

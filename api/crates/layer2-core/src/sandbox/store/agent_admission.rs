@@ -70,6 +70,7 @@ impl AgentAdmission {
                 last_seq: 1,
                 first_message: self.first_message.clone(),
                 active_turn: None,
+                operation: None,
                 queued_messages: Vec::new(),
             },
             work: AgentWorkState::new(AgentWorkStep::AddWorktree, self.event_at.clone()),

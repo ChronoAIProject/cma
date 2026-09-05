@@ -192,6 +192,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
             last_seq: 0,
             first_message: None,
             active_turn: None,
+            operation: None,
             queued_messages: vec![],
         },
         work: super::super::AgentWorkState::new(super::super::AgentWorkStep::None, NOW.into()),

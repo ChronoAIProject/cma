@@ -1,9 +1,44 @@
 use layer3_adapter::{ContentBlock, ConversationUpdate};
 
 use super::{
-    Agent, AgentConversationError, AgentLogKind, AgentMessageAssembly, FirstMessageDelivery,
-    FirstMessageFailure,
+    Agent, AgentConversationError, AgentLogKind, AgentMessageAssembly, AgentOperationDelivery,
+    AgentOperationIntent, FirstMessageDelivery, FirstMessageFailure,
 };
+
+pub(super) fn observe_operation(
+    agent: &mut Agent,
+    prompt_evidence: bool,
+    interruption_evidence: bool,
+    at: &str,
+    logs: &mut Vec<AgentLogKind>,
+) -> Result<(), AgentConversationError> {
+    let Some(record) = agent.conversation.operation.as_mut() else {
+        return Ok(());
+    };
+    let evidence_matches = match &record.intent {
+        AgentOperationIntent::Interrupt => interruption_evidence,
+        _ => prompt_evidence,
+    };
+    if !evidence_matches
+        || !matches!(
+            record.state,
+            AgentOperationDelivery::DispatchFenced
+                | AgentOperationDelivery::WriteConfirmed
+                | AgentOperationDelivery::RecoveryRequired
+        )
+    {
+        return Ok(());
+    }
+    record
+        .mark_execution_observed(at.to_owned())
+        .map_err(|_| AgentConversationError::InvalidState("operation evidence was refused"))?;
+    logs.push(AgentLogKind::OperationDeliveryChanged {
+        operation_sequence: record.sequence,
+        operation: record.intent.kind(),
+        state: record.state,
+    });
+    Ok(())
+}
 
 pub(super) fn observe_first_message(
     agent: &mut Agent,
@@ -17,7 +52,9 @@ pub(super) fn observe_first_message(
     if !prompt_evidence
         || !matches!(
             record.state,
-            FirstMessageDelivery::DispatchFenced | FirstMessageDelivery::WriteConfirmed
+            FirstMessageDelivery::DispatchFenced
+                | FirstMessageDelivery::WriteConfirmed
+                | FirstMessageDelivery::RecoveryRequired
         )
     {
         return Ok(());
@@ -45,6 +82,7 @@ pub(super) fn complete_first_message(
         FirstMessageDelivery::DispatchFenced
             | FirstMessageDelivery::WriteConfirmed
             | FirstMessageDelivery::ExecutionObserved
+            | FirstMessageDelivery::RecoveryRequired
     ) {
         return Ok(());
     }
@@ -72,6 +110,7 @@ pub(super) fn fail_first_message(
         FirstMessageDelivery::DispatchFenced
             | FirstMessageDelivery::WriteConfirmed
             | FirstMessageDelivery::ExecutionObserved
+            | FirstMessageDelivery::RecoveryRequired
     ) {
         return Ok(());
     }
@@ -114,7 +153,10 @@ pub(super) fn prompt_evidence(update: ConversationUpdate) -> (ConversationUpdate
             let (update, _) = prompt_evidence(*update);
             (update, false)
         }
-        update => (update, true),
+        update => {
+            let is_evidence = update.turn_evidence().is_some();
+            (update, is_evidence)
+        }
     }
 }
 

@@ -71,6 +71,8 @@ pub struct FirstMessageRecord {
     pub attempt: u32,
     pub recovery_generation: u32,
     pub fence_sequence: u64,
+    #[serde(default)]
+    pub dispatch_generation: u64,
     pub queued_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatch_fenced_at: Option<String>,
@@ -103,6 +105,7 @@ impl FirstMessageRecord {
             attempt: 0,
             recovery_generation: 0,
             fence_sequence: 0,
+            dispatch_generation: 0,
             queued_at: queued_at.into(),
             dispatch_fenced_at: None,
             write_confirmed_at: None,
@@ -139,13 +142,15 @@ impl FirstMessageRecord {
 
         let fenced = self.attempt > 0
             && self.fence_sequence > 0
+            && self.dispatch_generation > 0
             && self.dispatch_fenced_at.is_some()
             && self.turn_sequence.is_some_and(|value| value > 0);
         let no_terminal =
             self.completed_at.is_none() && self.failed_at.is_none() && self.failure.is_none();
         let shape_is_valid = match self.state {
             FirstMessageDelivery::Queued => {
-                self.dispatch_fenced_at.is_none()
+                self.dispatch_generation == 0
+                    && self.dispatch_fenced_at.is_none()
                     && self.write_confirmed_at.is_none()
                     && self.execution_observed_at.is_none()
                     && no_terminal
@@ -186,9 +191,20 @@ impl FirstMessageRecord {
         fence_sequence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        self.fence_dispatch_for(turn_sequence, fence_sequence, fence_sequence, at)
+    }
+
+    pub fn fence_dispatch_for(
+        &mut self,
+        turn_sequence: u64,
+        fence_sequence: u64,
+        dispatch_generation: u64,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
         if self.state != FirstMessageDelivery::Queued
             || turn_sequence == 0
             || fence_sequence == 0
+            || dispatch_generation == 0
             || self
                 .turn_sequence
                 .is_some_and(|existing| existing != turn_sequence)
@@ -204,6 +220,7 @@ impl FirstMessageRecord {
         self.state = FirstMessageDelivery::DispatchFenced;
         self.attempt = attempt;
         self.fence_sequence = fence_sequence;
+        self.dispatch_generation = dispatch_generation;
         self.dispatch_fenced_at = Some(at);
         self.turn_sequence = Some(turn_sequence);
         self.validate()
@@ -219,12 +236,16 @@ impl FirstMessageRecord {
     pub fn mark_execution_observed(&mut self, at: String) -> Result<(), SandboxModelError> {
         if !matches!(
             self.state,
-            FirstMessageDelivery::DispatchFenced | FirstMessageDelivery::WriteConfirmed
+            FirstMessageDelivery::DispatchFenced
+                | FirstMessageDelivery::WriteConfirmed
+                | FirstMessageDelivery::RecoveryRequired
         ) {
             return Err(SandboxModelError::invalid_value(
                 "agent.conversation.first_message.execution",
             ));
         }
+        self.failed_at = None;
+        self.failure = None;
         self.state = FirstMessageDelivery::ExecutionObserved;
         self.execution_observed_at = Some(at);
         self.validate()
@@ -236,11 +257,14 @@ impl FirstMessageRecord {
             FirstMessageDelivery::DispatchFenced
                 | FirstMessageDelivery::WriteConfirmed
                 | FirstMessageDelivery::ExecutionObserved
+                | FirstMessageDelivery::RecoveryRequired
         ) {
             return Err(SandboxModelError::invalid_value(
                 "agent.conversation.first_message.completion",
             ));
         }
+        self.failed_at = None;
+        self.failure = None;
         self.state = FirstMessageDelivery::Completed;
         self.completed_at = Some(at);
         self.validate()
@@ -252,6 +276,7 @@ impl FirstMessageRecord {
             FirstMessageDelivery::DispatchFenced
                 | FirstMessageDelivery::WriteConfirmed
                 | FirstMessageDelivery::ExecutionObserved
+                | FirstMessageDelivery::RecoveryRequired
         ) {
             return Err(SandboxModelError::invalid_value(
                 "agent.conversation.first_message.failure",
@@ -285,6 +310,7 @@ impl FirstMessageRecord {
         self.require_state(FirstMessageDelivery::DispatchFenced)?;
         self.state = FirstMessageDelivery::Queued;
         self.dispatch_fenced_at = None;
+        self.dispatch_generation = 0;
         self.validate()
     }
 
@@ -309,6 +335,7 @@ impl FirstMessageRecord {
         self.state = FirstMessageDelivery::Queued;
         self.queued_at = queued_at;
         self.dispatch_fenced_at = None;
+        self.dispatch_generation = 0;
         self.write_confirmed_at = None;
         self.execution_observed_at = None;
         self.failed_at = None;
