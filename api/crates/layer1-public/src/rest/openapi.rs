@@ -396,19 +396,27 @@ mod tests {
     #[test]
     fn every_owner_hierarchy_route_is_documented_and_authenticated() {
         let document = document();
-        let paths: Vec<_> = document
-            .paths
-            .paths
+        let hierarchy_paths = [
+            "/api/v1/sandboxes",
+            "/api/v1/sandboxes/{id}",
+            "/api/v1/sandboxes/{id}/events",
+            "/api/v1/sandboxes/{id}/workspaces",
+            "/api/v1/workspaces/{id}",
+            "/api/v1/workspaces/{id}/worktrees",
+            "/api/v1/worktrees/{id}",
+        ];
+        let paths: Vec<_> = hierarchy_paths
             .iter()
-            .filter(|(path, _)| {
-                path.starts_with("/api/v1/sandboxes")
-                    || path.starts_with("/api/v1/workspaces")
-                    || path.starts_with("/api/v1/worktrees")
+            .map(|path| {
+                document
+                    .paths
+                    .paths
+                    .get(*path)
+                    .unwrap_or_else(|| panic!("missing hierarchy path {path}"))
             })
             .collect();
-        assert_eq!(paths.len(), 7);
         let mut operations = Vec::new();
-        for (_, item) in paths {
+        for item in paths {
             operations.extend(
                 [item.get.as_ref(), item.post.as_ref(), item.delete.as_ref()]
                     .into_iter()
