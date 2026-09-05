@@ -1,6 +1,6 @@
 use layer2_core::ids::{SandboxId, SandboxProfileId, ServiceId, SubjectId};
 use layer2_core::profiles::{
-    AgentProvider, ModelAccess, SandboxProfileContent, SandboxProfileSnapshot,
+    content_digest, AgentProvider, ModelAccess, SandboxProfileContent, SandboxProfileSnapshot,
 };
 use layer2_core::sandbox::store::{
     SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult, SandboxAdmissionStore,
@@ -27,6 +27,18 @@ async fn database(prefix: &str) -> (Client, String) {
 }
 
 fn sandbox(id: &str, launch_id: &str) -> Sandbox {
+    let content = SandboxProfileContent {
+        cpu_millis: 1_000,
+        memory_mib: 2_048,
+        nyxid_services: vec![ServiceId::new("profile-service")],
+        agent_provider: AgentProvider::Codex,
+        model_access: ModelAccess::OwnCredentials,
+        max_workspaces: 4,
+        max_agents_per_workspace: 4,
+        workspace_profiles: vec![],
+        software_install_commands: vec![],
+        environment_variables: vec![],
+    };
     Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId("owner".into()),
@@ -37,19 +49,8 @@ fn sandbox(id: &str, launch_id: &str) -> Sandbox {
         profile: SandboxProfileSnapshot {
             id: SandboxProfileId("sbp_trigger".into()),
             revision: 1,
-            digest: "a".repeat(64),
-            content: SandboxProfileContent {
-                cpu_millis: 1_000,
-                memory_mib: 2_048,
-                nyxid_services: vec![ServiceId::new("profile-service")],
-                agent_provider: AgentProvider::Codex,
-                model_access: ModelAccess::ChronoaiManaged,
-                max_workspaces: 4,
-                max_agents_per_workspace: 4,
-                workspace_profiles: vec![],
-                software_install_commands: vec![],
-                environment_variables: vec![],
-            },
+            digest: content_digest(&content).unwrap(),
+            content,
         },
         status: SandboxStatus::Provisioning,
         failure: None,
@@ -61,7 +62,7 @@ fn sandbox(id: &str, launch_id: &str) -> Sandbox {
             current: None,
             pending: None,
             revoke_debt: vec![],
-            sign_in: SandboxSignInState::NotRequired,
+            sign_in: SandboxSignInState::Required,
         },
         work: SandboxWorkState::new(SandboxWorkStep::ProvisionRuntime, NOW.into()),
         limits: SandboxLimits {
@@ -113,12 +114,58 @@ async fn trigger_replay_survives_lifecycle_changes_and_precedes_zero_quota() {
         document.get_str("admission_fingerprint").unwrap(),
         first.admission_fingerprint
     );
+    assert_eq!(
+        document.get_document("admission_name").unwrap(),
+        &doc! { "mode": "allocate", "value": "trigger-research" }
+    );
+    let replay = store
+        .sandbox_admission_replay(&SubjectId::new("owner"), "launch-replay")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay.sandbox, created);
+    assert_eq!(replay.name, first.name);
+    assert_eq!(replay.admission_fingerprint, first.admission_fingerprint);
+    assert!(store
+        .sandbox_admission_replay(&SubjectId::new("other"), "launch-replay")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .sandbox_admission_replay(&SubjectId::new("owner"), "launch-missing")
+        .await
+        .unwrap()
+        .is_none());
 
     let mut advanced = created;
     advanced.status = SandboxStatus::Active;
+    advanced.credential.sign_in = SandboxSignInState::Complete;
     advanced.updated_at = LATER.into();
     advanced.revision = 2;
     store.save_sandbox(1, advanced.clone()).await.unwrap();
+    let document = store
+        .sandboxes
+        .find_one(doc! { "_id": advanced.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        document.get_document("admission_name").unwrap(),
+        &doc! { "mode": "allocate", "value": "trigger-research" }
+    );
+    assert_eq!(
+        document.get_str("admission_fingerprint").unwrap(),
+        first.admission_fingerprint
+    );
+    assert_eq!(
+        store
+            .sandbox_admission_replay(&SubjectId::new("owner"), "launch-replay")
+            .await
+            .unwrap()
+            .unwrap()
+            .sandbox,
+        advanced
+    );
     assert_eq!(
         store
             .admit_sandbox(admission("sbx_retry", "launch-replay", 0))

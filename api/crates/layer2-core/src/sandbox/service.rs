@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,23 +7,11 @@ use crate::ids::{SandboxId, ServiceId};
 use crate::profiles::store::{
     ProfileStoreError, ProfileUseRecorder, SandboxProfileStore, WorkspaceProfileStore,
 };
-use crate::profiles::{
-    MarketplaceLocator, ModelAccess, ProfileVisibility, SandboxProfileRef, SandboxProfileSnapshot,
-};
+use crate::profiles::SandboxProfileRef;
 use crate::{now_rfc3339, Caller, Capability, StoreError};
 
-use super::service_admission::requested_name;
-use super::service_trust::{
-    foreign_workspace_setups, validate_sandbox_profile, validate_sandbox_revision,
-};
-use super::store::{
-    Page, PageRequest, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult,
-    SandboxServiceStore, SandboxStoreError, SandboxTransaction,
-};
-use super::{
-    Sandbox, SandboxCredentialState, SandboxEvent, SandboxEventKind, SandboxLimits,
-    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
-};
+use super::store::{Page, PageRequest, SandboxServiceStore, SandboxStoreError, SandboxTransaction};
+use super::{Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus};
 
 pub const DEFAULT_OWNER_SANDBOX_LIMIT: u16 = 3;
 pub const DEFAULT_VISITOR_SANDBOX_LIMIT: u16 = 1;
@@ -38,9 +25,12 @@ pub enum SandboxOrigin {
 }
 
 impl SandboxOrigin {
-    fn validate(&self) -> Result<(), SandboxServiceError> {
+    pub(super) fn validate(&self) -> Result<(), SandboxServiceError> {
         if let Self::Trigger { launch_id } = self {
-            if launch_id.trim().is_empty() || launch_id.len() > 128 {
+            if launch_id.trim().is_empty()
+                || launch_id.len() > 128
+                || launch_id.chars().any(char::is_control)
+            {
                 return Err(SandboxServiceError::InvalidOrigin);
             }
         }
@@ -140,11 +130,11 @@ impl SandboxServiceError {
 }
 
 pub struct SandboxService {
-    store: Arc<dyn SandboxServiceStore>,
-    profiles: Arc<dyn SandboxProfileStore>,
-    workspace_profiles: Arc<dyn WorkspaceProfileStore>,
-    profile_uses: Arc<dyn ProfileUseRecorder>,
-    policy: Arc<dyn SandboxPolicySource>,
+    pub(super) store: Arc<dyn SandboxServiceStore>,
+    pub(super) profiles: Arc<dyn SandboxProfileStore>,
+    pub(super) workspace_profiles: Arc<dyn WorkspaceProfileStore>,
+    pub(super) profile_uses: Arc<dyn ProfileUseRecorder>,
+    pub(super) policy: Arc<dyn SandboxPolicySource>,
 }
 
 impl SandboxService {
@@ -194,146 +184,6 @@ impl SandboxService {
             profile_uses,
             policy,
         })
-    }
-
-    pub async fn create(
-        &self,
-        caller: &Caller,
-        request: CreateSandbox,
-    ) -> Result<Sandbox, SandboxServiceError> {
-        request.origin.validate()?;
-        let owner_lane = caller.authorization.allows(Capability::CreateSandbox);
-        let authorized = match request.origin {
-            SandboxOrigin::Manual => owner_lane,
-            SandboxOrigin::Trigger { .. } => {
-                owner_lane || caller.authorization.allows(Capability::LaunchTriggers)
-            }
-        };
-        if !authorized {
-            return Err(SandboxServiceError::Forbidden);
-        }
-        let policy = self
-            .policy
-            .current_sandbox_policy()
-            .await
-            .map_err(policy_error)?;
-        let limit = match request.origin {
-            SandboxOrigin::Manual => policy.max_sandboxes_per_owner,
-            SandboxOrigin::Trigger { .. } if owner_lane => policy.max_sandboxes_per_owner,
-            SandboxOrigin::Trigger { .. } => policy.max_sandboxes_per_visitor,
-        };
-        if request.profile.revision == 0 {
-            return Err(SandboxServiceError::ProfileNotFound);
-        }
-        let profile = self
-            .profiles
-            .sandbox_profile(&request.profile.id)
-            .await
-            .map_err(profile_error)?
-            .ok_or(SandboxServiceError::ProfileNotFound)?;
-        validate_sandbox_profile(&request.profile, &profile).map_err(profile_error)?;
-        if profile.retired_at.is_some()
-            || (profile.owner != caller.subject && profile.visibility != ProfileVisibility::Public)
-        {
-            return Err(SandboxServiceError::ProfileNotFound);
-        }
-        let revision = self
-            .profiles
-            .sandbox_profile_revision(&request.profile.id, request.profile.revision)
-            .await
-            .map_err(profile_error)?
-            .ok_or(SandboxServiceError::ProfileNotFound)?;
-        validate_sandbox_revision(&request.profile, &revision).map_err(profile_error)?;
-        let nested_needs_trust = !foreign_workspace_setups(
-            self.workspace_profiles.as_ref(),
-            &revision.content.workspace_profiles,
-            &caller.subject,
-        )
-        .await
-        .map_err(profile_error)?
-        .is_empty();
-        let needs_trust = (profile.owner != caller.subject
-            && (!revision.content.software_install_commands.is_empty()
-                || !revision.content.environment_variables.is_empty()))
-            || nested_needs_trust;
-        if needs_trust && request.confirmed_digest.as_deref() != Some(revision.digest.as_str()) {
-            return Err(SandboxServiceError::TrustConfirmationRequired {
-                commands_digest: revision.digest.clone(),
-            });
-        }
-
-        let name = requested_name(request.name, &profile.name)?;
-        let now = now_rfc3339();
-        let reaches = revision
-            .content
-            .nyxid_services
-            .iter()
-            .chain(&policy.baseline_services)
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let sign_in = match revision.content.model_access {
-            ModelAccess::ChronoaiManaged => SandboxSignInState::NotRequired,
-            ModelAccess::OwnCredentials => SandboxSignInState::Required,
-        };
-        let sandbox = Sandbox {
-            id: SandboxId::generate(),
-            owner: caller.subject.clone(),
-            name: match &name {
-                SandboxAdmissionName::Exact(value) | SandboxAdmissionName::Allocate(value) => {
-                    value.clone()
-                }
-            },
-            origin: request.origin,
-            profile: SandboxProfileSnapshot::from(&revision),
-            status: SandboxStatus::Provisioning,
-            failure: None,
-            runtime: None,
-            credential: SandboxCredentialState {
-                reaches,
-                key_generation: 0,
-                delivered: false,
-                current: None,
-                pending: None,
-                revoke_debt: Vec::new(),
-                sign_in,
-            },
-            work: SandboxWorkState::new(SandboxWorkStep::ProvisionRuntime, now.clone()),
-            limits: SandboxLimits {
-                max_workspaces: revision.content.max_workspaces,
-                max_agents_per_workspace: revision.content.max_agents_per_workspace,
-            },
-            checkpoint: None,
-            last_activity_at: now.clone(),
-            created_at: now.clone(),
-            updated_at: now.clone(),
-            retired_at: None,
-            purge_after: None,
-            revision: 1,
-        };
-        sandbox
-            .validate()
-            .map_err(|error| SandboxServiceError::Corrupt(error.to_string()))?;
-        let admitted = self
-            .store
-            .admit_sandbox(SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?)
-            .await
-            .map_err(store_error)?;
-        match admitted {
-            SandboxAdmissionResult::Created(sandbox) => {
-                let locator = MarketplaceLocator::Sandbox(request.profile.id);
-                if let Err(error) = self.profile_uses.record_profile_use(&locator).await {
-                    tracing::warn!(
-                        profile_id = locator.as_str(),
-                        error = %error,
-                        "sandbox profile use was not recorded"
-                    );
-                }
-                Ok(sandbox)
-            }
-            SandboxAdmissionResult::Existing(sandbox) => Ok(sandbox),
-        }
     }
 
     pub async fn list_own(
@@ -432,7 +282,7 @@ impl SandboxService {
     }
 }
 
-fn require(caller: &Caller, capability: Capability) -> Result<(), SandboxServiceError> {
+pub(super) fn require(caller: &Caller, capability: Capability) -> Result<(), SandboxServiceError> {
     caller
         .authorization
         .allows(capability)
@@ -440,7 +290,7 @@ fn require(caller: &Caller, capability: Capability) -> Result<(), SandboxService
         .ok_or(SandboxServiceError::Forbidden)
 }
 
-fn profile_error(error: ProfileStoreError) -> SandboxServiceError {
+pub(super) fn profile_error(error: ProfileStoreError) -> SandboxServiceError {
     match error {
         ProfileStoreError::NotFound => SandboxServiceError::ProfileNotFound,
         ProfileStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
@@ -448,14 +298,14 @@ fn profile_error(error: ProfileStoreError) -> SandboxServiceError {
     }
 }
 
-fn policy_error(error: StoreError) -> SandboxServiceError {
+pub(super) fn policy_error(error: StoreError) -> SandboxServiceError {
     match error {
         StoreError::Malformed(detail) => SandboxServiceError::Corrupt(detail),
         other => SandboxServiceError::Unavailable(other.to_string()),
     }
 }
 
-fn store_error(error: SandboxStoreError) -> SandboxServiceError {
+pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
     match error {
         SandboxStoreError::NotFound => SandboxServiceError::NotFound,
         SandboxStoreError::Duplicate => SandboxServiceError::NameConflict,

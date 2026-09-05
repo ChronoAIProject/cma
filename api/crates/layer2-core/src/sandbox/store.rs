@@ -32,8 +32,8 @@ pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_
 pub use agent_work_validation::validate_agent_work_mutation;
 mod sandbox_admission;
 pub use sandbox_admission::{
-    valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult,
-    SandboxAdmissionStore,
+    allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,
+    SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
 };
 #[cfg(test)]
 mod agent_work_validation_tests;
@@ -432,7 +432,7 @@ struct State {
     workspaces: HashMap<WorkspaceId, Workspace>,
     worktrees: HashMap<WorktreeId, Worktree>,
     agents: HashMap<AgentId, Agent>,
-    sandbox_admissions: HashMap<(SubjectId, String), (SandboxId, String)>,
+    sandbox_admissions: HashMap<(SubjectId, String), (SandboxId, SandboxAdmissionName, String)>,
     sandbox_events: HashMap<SandboxId, Vec<SandboxEvent>>,
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
 }

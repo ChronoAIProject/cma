@@ -36,6 +36,15 @@ impl SandboxPolicySource for MutablePolicy {
     }
 }
 
+struct UnavailablePolicy;
+
+#[async_trait::async_trait]
+impl SandboxPolicySource for UnavailablePolicy {
+    async fn current_sandbox_policy(&self) -> Result<SandboxPolicy, crate::StoreError> {
+        Err(crate::StoreError::Unavailable("test policy failure".into()))
+    }
+}
+
 #[derive(Default)]
 struct RacingStore {
     inner: InMemorySandboxStore,
@@ -50,7 +59,7 @@ impl RacingStore {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum RevisionCorruption {
     MissingRevision,
     AggregateProfileId,
@@ -161,19 +170,22 @@ impl WorkspaceProfileStore for CorruptingWorkspaceProfiles {
     }
 }
 
-struct CorruptingSandboxProfileId {
+struct CorruptingSandboxProfiles {
     inner: Arc<InMemoryProfileStore>,
+    corruption: RevisionCorruption,
 }
 
 #[async_trait::async_trait]
-impl SandboxProfileStore for CorruptingSandboxProfileId {
+impl SandboxProfileStore for CorruptingSandboxProfiles {
     async fn sandbox_profile(
         &self,
         id: &SandboxProfileId,
     ) -> Result<Option<SandboxProfile>, ProfileStoreError> {
         let mut stored = self.inner.sandbox_profile(id).await?;
-        if let Some(stored) = &mut stored {
-            stored.id = SandboxProfileId("sbp_wrong_aggregate".into());
+        if matches!(self.corruption, RevisionCorruption::AggregateProfileId) {
+            if let Some(stored) = &mut stored {
+                stored.id = SandboxProfileId("sbp_wrong_aggregate".into());
+            }
         }
         Ok(stored)
     }
@@ -219,7 +231,22 @@ impl SandboxProfileStore for CorruptingSandboxProfileId {
         id: &SandboxProfileId,
         revision: u32,
     ) -> Result<Option<SandboxProfileRevision>, ProfileStoreError> {
-        self.inner.sandbox_profile_revision(id, revision).await
+        let mut stored = self.inner.sandbox_profile_revision(id, revision).await?;
+        if matches!(self.corruption, RevisionCorruption::MissingRevision) {
+            return Ok(None);
+        }
+        if let Some(stored) = &mut stored {
+            match self.corruption {
+                RevisionCorruption::MissingRevision => unreachable!(),
+                RevisionCorruption::AggregateProfileId => {}
+                RevisionCorruption::RevisionProfileId => {
+                    stored.profile_id = SandboxProfileId("sbp_wrong".into());
+                }
+                RevisionCorruption::RevisionNumber => stored.revision += 1,
+                RevisionCorruption::RevisionDigest => stored.digest = "wrong-digest".into(),
+            }
+        }
+        Ok(stored)
     }
 
     async fn list_sandbox_profile_revisions(
@@ -319,6 +346,14 @@ impl SandboxEventStore for RacingStore {
 
 #[async_trait::async_trait]
 impl SandboxAdmissionStore for RacingStore {
+    async fn sandbox_admission_replay(
+        &self,
+        owner: &SubjectId,
+        launch_id: &str,
+    ) -> Result<Option<crate::sandbox::store::SandboxAdmissionReplay>, SandboxStoreError> {
+        self.inner.sandbox_admission_replay(owner, launch_id).await
+    }
+
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
@@ -679,8 +714,9 @@ async fn corrupt_outer_profile_aggregate_id_fails_closed_before_owner_is_trusted
         ),
     )
     .await;
-    let sandbox_profiles: Arc<dyn SandboxProfileStore> = Arc::new(CorruptingSandboxProfileId {
+    let sandbox_profiles: Arc<dyn SandboxProfileStore> = Arc::new(CorruptingSandboxProfiles {
         inner: profiles.clone(),
+        corruption: RevisionCorruption::AggregateProfileId,
     });
     let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
     let profile_uses: Arc<dyn ProfileUseRecorder> = profiles.clone();
@@ -803,7 +839,75 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
 
     let manual_store = Arc::new(InMemorySandboxStore::default());
     let manual_service = SandboxService::new(manual_store, profiles.clone(), policy(3, 1));
-    let manual = caller("owner", [Capability::CreateSandbox]);
+    let manual = caller(
+        "owner",
+        [Capability::CreateSandbox, Capability::UseOwnSandboxes],
+    );
+    let mut rejected_trigger = request(reference.clone());
+    rejected_trigger.origin = SandboxOrigin::Trigger {
+        launch_id: "launch-rejected-public".into(),
+    };
+    assert_eq!(
+        manual_service
+            .create(&manual, rejected_trigger.clone())
+            .await
+            .unwrap_err(),
+        SandboxServiceError::InvalidOrigin
+    );
+    assert_eq!(
+        manual_service
+            .create_for_launch(
+                &manual,
+                Capability::CreateSandbox,
+                request(reference.clone()),
+            )
+            .await
+            .unwrap_err(),
+        SandboxServiceError::InvalidOrigin
+    );
+    assert_eq!(
+        manual_service
+            .create_for_launch(
+                &manual,
+                Capability::LaunchTriggers,
+                rejected_trigger.clone(),
+            )
+            .await
+            .unwrap_err(),
+        SandboxServiceError::Forbidden
+    );
+    assert_eq!(
+        manual_service
+            .create_for_launch(
+                &manual,
+                Capability::UseOwnSandboxes,
+                rejected_trigger.clone(),
+            )
+            .await
+            .unwrap_err(),
+        SandboxServiceError::Forbidden
+    );
+    rejected_trigger.origin = SandboxOrigin::Trigger {
+        launch_id: "launch\ninvalid".into(),
+    };
+    assert_eq!(
+        manual_service
+            .create_for_launch(&manual, Capability::CreateSandbox, rejected_trigger.clone(),)
+            .await
+            .unwrap_err(),
+        SandboxServiceError::InvalidOrigin
+    );
+    assert_eq!(
+        manual_service
+            .create_for_launch(
+                &caller("owner", []),
+                Capability::LaunchTriggers,
+                rejected_trigger,
+            )
+            .await
+            .unwrap_err(),
+        SandboxServiceError::Forbidden
+    );
     for _ in 0..2 {
         manual_service
             .create(&manual, request(reference.clone()))
@@ -815,12 +919,12 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
         launch_id: "launch-owner".into(),
     };
     let owner_launch = manual_service
-        .create(&manual, trigger_request.clone())
+        .create_for_launch(&manual, Capability::CreateSandbox, trigger_request.clone())
         .await
         .unwrap();
     assert_eq!(
         manual_service
-            .create(&manual, trigger_request)
+            .create_for_launch(&manual, Capability::CreateSandbox, trigger_request)
             .await
             .unwrap(),
         owner_launch
@@ -833,19 +937,27 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
         SandboxServiceError::SandboxLimitReached { limit: 3, live: 3 }
     );
     let visitor_store = Arc::new(InMemorySandboxStore::default());
-    let visitor_service = SandboxService::new(visitor_store, profiles, policy(3, 1));
+    let visitor_service = SandboxService::new(visitor_store, profiles.clone(), policy(3, 1));
     let launcher = caller("owner", [Capability::LaunchTriggers]);
     let mut trigger_request = request(reference.clone());
     trigger_request.origin = SandboxOrigin::Trigger {
         launch_id: "launch-1".into(),
     };
     let visitor_launch = visitor_service
-        .create(&launcher, trigger_request.clone())
+        .create_for_launch(
+            &launcher,
+            Capability::LaunchTriggers,
+            trigger_request.clone(),
+        )
         .await
         .unwrap();
     assert_eq!(
         visitor_service
-            .create(&launcher, trigger_request.clone())
+            .create_for_launch(
+                &launcher,
+                Capability::LaunchTriggers,
+                trigger_request.clone(),
+            )
             .await
             .unwrap(),
         visitor_launch
@@ -855,18 +967,50 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
     };
     assert_eq!(
         visitor_service
-            .create(&launcher, trigger_request)
+            .create_for_launch(&launcher, Capability::LaunchTriggers, trigger_request)
             .await
             .unwrap_err(),
         SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
     );
     assert_eq!(
         visitor_service
-            .create(&launcher, request(reference))
+            .create(&launcher, request(reference.clone()))
             .await
             .unwrap_err(),
         SandboxServiceError::Forbidden
     );
+
+    let dual_service = SandboxService::new(
+        Arc::new(InMemorySandboxStore::default()),
+        profiles,
+        policy(2, 1),
+    );
+    let dual = caller(
+        "owner",
+        [Capability::CreateSandbox, Capability::LaunchTriggers],
+    );
+    let launch = |launch_id: &str| {
+        let mut create = request(reference.clone());
+        create.origin = SandboxOrigin::Trigger {
+            launch_id: launch_id.into(),
+        };
+        create
+    };
+    dual_service
+        .create_for_launch(&dual, Capability::LaunchTriggers, launch("launch-dual-1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        dual_service
+            .create_for_launch(&dual, Capability::LaunchTriggers, launch("launch-dual-2"))
+            .await
+            .unwrap_err(),
+        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
+    );
+    dual_service
+        .create_for_launch(&dual, Capability::CreateSandbox, launch("launch-dual-2"))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -908,7 +1052,11 @@ async fn trigger_replay_precedes_zero_quota_and_changed_security_input_conflicts
     };
 
     let created = service
-        .create(&launcher, trigger(first_reference.clone()))
+        .create_for_launch(
+            &launcher,
+            Capability::LaunchTriggers,
+            trigger(first_reference.clone()),
+        )
         .await
         .unwrap();
     let mut advanced = created.clone();
@@ -922,16 +1070,44 @@ async fn trigger_replay_precedes_zero_quota_and_changed_security_input_conflicts
         .expect("policy lock")
         .max_sandboxes_per_visitor = 0;
 
+    let mut replay = trigger(first_reference.clone());
+    replay.confirmed_digest = Some("confirmation-policy-drift".into());
     assert_eq!(
         service
-            .create(&launcher, trigger(first_reference.clone()))
+            .create_for_launch(&launcher, Capability::LaunchTriggers, replay)
             .await
             .unwrap(),
         advanced
     );
+    let mut changed_name_mode = trigger(first_reference.clone());
+    changed_name_mode.name = Some(advanced.name.clone());
     assert_eq!(
         service
-            .create(&launcher, trigger(second_reference.clone()))
+            .create_for_launch(&launcher, Capability::LaunchTriggers, changed_name_mode,)
+            .await
+            .unwrap_err(),
+        SandboxServiceError::SandboxOriginConflict
+    );
+    assert_eq!(
+        service
+            .create_for_launch(
+                &launcher,
+                Capability::LaunchTriggers,
+                trigger(second_reference.clone()),
+            )
+            .await
+            .unwrap_err(),
+        SandboxServiceError::SandboxOriginConflict
+    );
+    let mut changed_revision = first_reference.clone();
+    changed_revision.revision += 1;
+    assert_eq!(
+        service
+            .create_for_launch(
+                &launcher,
+                Capability::LaunchTriggers,
+                trigger(changed_revision),
+            )
             .await
             .unwrap_err(),
         SandboxServiceError::SandboxOriginConflict
@@ -967,7 +1143,9 @@ async fn concurrent_trigger_replay_returns_one_sandbox_and_records_one_use() {
             launch_id: "launch-concurrent-replay".into(),
         };
         tasks.push(tokio::spawn(async move {
-            service.create(&launcher, request).await
+            service
+                .create_for_launch(&launcher, Capability::LaunchTriggers, request)
+                .await
         }));
     }
 
@@ -996,6 +1174,198 @@ async fn concurrent_trigger_replay_returns_one_sandbox_and_records_one_use() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn frozen_launch_profiles_survive_outer_and_nested_retirement_with_exact_trust() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let mut nested_profile = workspace_profile(
+        "wkp_launch_retired",
+        "nested-publisher",
+        vec!["cargo fetch".into()],
+    );
+    nested_profile.visibility = ProfileVisibility::Public;
+    let nested = publish_workspace(&profiles, nested_profile).await;
+    let mut outer = profile(
+        "sbp_launch_retired",
+        "outer-publisher",
+        "retired launch",
+        ProfileVisibility::Private,
+        true,
+    );
+    outer.draft.workspace_profiles = vec![nested.clone()];
+    let outer = publish(&profiles, outer).await;
+    let digest = sandbox_digest(&profiles, &outer).await;
+    profiles
+        .retire_workspace_profile(
+            &nested.id,
+            &SubjectId::new("nested-publisher"),
+            LATER.into(),
+        )
+        .await
+        .unwrap();
+    profiles
+        .retire_sandbox_profile(&outer.id, &SubjectId::new("outer-publisher"), LATER.into())
+        .await
+        .unwrap();
+    let service = SandboxService::new(
+        Arc::new(InMemorySandboxStore::default()),
+        profiles.clone(),
+        policy(3, 1),
+    );
+    let launcher = caller("consumer", [Capability::LaunchTriggers]);
+    let launch = |confirmed_digest| CreateSandbox {
+        profile: outer.clone(),
+        name: None,
+        confirmed_digest,
+        origin: SandboxOrigin::Trigger {
+            launch_id: "launch-retired-profiles".into(),
+        },
+    };
+
+    assert_eq!(
+        service
+            .create_for_launch(
+                &launcher,
+                Capability::LaunchTriggers,
+                launch(Some("stale-digest".into())),
+            )
+            .await
+            .unwrap_err(),
+        SandboxServiceError::TrustConfirmationRequired {
+            commands_digest: digest.clone()
+        }
+    );
+    let created = service
+        .create_for_launch(
+            &launcher,
+            Capability::LaunchTriggers,
+            launch(Some(digest.clone())),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.profile.id, outer.id);
+    assert_eq!(created.profile.revision, outer.revision);
+    assert_eq!(created.profile.digest, digest);
+    assert_eq!(sandbox_use_count(&profiles, &outer.id).await, 1);
+}
+
+#[tokio::test]
+async fn launch_exact_outer_revision_corruption_fails_closed() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let reference = publish(
+        &profiles,
+        profile(
+            "sbp_launch_corrupt",
+            "owner",
+            "launch corrupt",
+            ProfileVisibility::Private,
+            false,
+        ),
+    )
+    .await;
+    let launcher = caller("owner", [Capability::CreateSandbox]);
+
+    for corruption in [
+        RevisionCorruption::MissingRevision,
+        RevisionCorruption::AggregateProfileId,
+        RevisionCorruption::RevisionProfileId,
+        RevisionCorruption::RevisionNumber,
+        RevisionCorruption::RevisionDigest,
+    ] {
+        let sandbox_profiles: Arc<dyn SandboxProfileStore> = Arc::new(CorruptingSandboxProfiles {
+            inner: profiles.clone(),
+            corruption,
+        });
+        let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
+        let profile_uses: Arc<dyn ProfileUseRecorder> = profiles.clone();
+        let policy_source: Arc<dyn SandboxPolicySource> = Arc::new(policy(3, 1));
+        let service = SandboxService::with_dependencies(
+            Arc::new(InMemorySandboxStore::default()),
+            sandbox_profiles,
+            workspace_profiles,
+            profile_uses,
+            policy_source,
+        );
+        let mut create = request(reference.clone());
+        create.origin = SandboxOrigin::Trigger {
+            launch_id: format!("launch-corrupt-{corruption:?}"),
+        };
+        let error = service
+            .create_for_launch(&launcher, Capability::CreateSandbox, create)
+            .await
+            .unwrap_err();
+        if matches!(corruption, RevisionCorruption::MissingRevision) {
+            assert_eq!(error, SandboxServiceError::ProfileNotFound);
+        } else {
+            assert!(matches!(error, SandboxServiceError::Corrupt(_)));
+        }
+    }
+    assert_eq!(sandbox_use_count(&profiles, &reference.id).await, 0);
+}
+
+#[tokio::test]
+async fn launch_replay_precedes_failed_policy_retired_profile_and_sign_in_completion() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let mut own_credentials = profile(
+        "sbp_launch_early_replay",
+        "owner",
+        "early replay",
+        ProfileVisibility::Private,
+        false,
+    );
+    own_credentials.draft.model_access = ModelAccess::OwnCredentials;
+    let reference = publish(&profiles, own_credentials).await;
+    let store = Arc::new(InMemorySandboxStore::default());
+    let service = SandboxService::new(store.clone(), profiles.clone(), policy(3, 1));
+    let launcher = caller("owner", [Capability::LaunchTriggers]);
+    let launch = || CreateSandbox {
+        profile: reference.clone(),
+        name: None,
+        confirmed_digest: None,
+        origin: SandboxOrigin::Trigger {
+            launch_id: "launch-early-replay".into(),
+        },
+    };
+    let created = service
+        .create_for_launch(&launcher, Capability::LaunchTriggers, launch())
+        .await
+        .unwrap();
+    assert_eq!(created.credential.sign_in, SandboxSignInState::Required);
+    let mut advanced = created;
+    advanced.credential.sign_in = SandboxSignInState::Complete;
+    advanced.updated_at = LATER.into();
+    advanced.revision = 2;
+    store.save_sandbox(1, advanced.clone()).await.unwrap();
+    profiles
+        .retire_sandbox_profile(&reference.id, &SubjectId::new("owner"), LATER.into())
+        .await
+        .unwrap();
+
+    let sandbox_profiles: Arc<dyn SandboxProfileStore> = Arc::new(CorruptingSandboxProfiles {
+        inner: profiles.clone(),
+        corruption: RevisionCorruption::AggregateProfileId,
+    });
+    let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
+    let profile_uses: Arc<dyn ProfileUseRecorder> = profiles.clone();
+    let policy_source: Arc<dyn SandboxPolicySource> = Arc::new(UnavailablePolicy);
+    let replay_service = SandboxService::with_dependencies(
+        store,
+        sandbox_profiles,
+        workspace_profiles,
+        profile_uses,
+        policy_source,
+    );
+    let mut replay = launch();
+    replay.confirmed_digest = Some("confirmation-no-longer-current".into());
+    assert_eq!(
+        replay_service
+            .create_for_launch(&launcher, Capability::LaunchTriggers, replay)
+            .await
+            .unwrap(),
+        advanced
+    );
+    assert_eq!(sandbox_use_count(&profiles, &reference.id).await, 1);
 }
 
 #[tokio::test]

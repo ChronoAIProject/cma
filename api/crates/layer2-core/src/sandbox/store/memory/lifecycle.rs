@@ -2,6 +2,14 @@ use super::*;
 
 #[async_trait]
 impl SandboxAdmissionStore for InMemorySandboxStore {
+    async fn sandbox_admission_replay(
+        &self,
+        owner: &SubjectId,
+        launch_id: &str,
+    ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
+        sandbox_admission_replay(&self.lock(), owner, launch_id)
+    }
+
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
@@ -11,24 +19,23 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
         let replay_key = admission
             .trigger_launch_id()
             .map(|launch_id| (admission.sandbox.owner.clone(), launch_id.to_string()));
-        if let Some((sandbox_id, fingerprint)) = replay_key
+        if let Some(replay) = replay_key
             .as_ref()
-            .and_then(|key| state.sandbox_admissions.get(key))
+            .map(|(owner, launch_id)| sandbox_admission_replay(&state, owner, launch_id))
+            .transpose()?
+            .flatten()
         {
-            if fingerprint != &admission.admission_fingerprint {
+            if replay.admission_fingerprint != admission.admission_fingerprint {
                 return Err(SandboxStoreError::SandboxOriginConflict);
             }
-            let sandbox = state.sandboxes.get(sandbox_id).ok_or_else(|| {
-                SandboxStoreError::Corrupt("sandbox admission points to a missing aggregate".into())
-            })?;
-            if sandbox.owner != admission.sandbox.owner
-                || sandbox.origin != admission.sandbox.origin
+            if replay.sandbox.owner != admission.sandbox.owner
+                || replay.sandbox.origin != admission.sandbox.origin
             {
                 return Err(SandboxStoreError::Corrupt(
                     "sandbox admission identity disagrees with its aggregate".into(),
                 ));
             }
-            return Ok(SandboxAdmissionResult::Existing(sandbox.clone()));
+            return Ok(SandboxAdmissionResult::Existing(replay.sandbox));
         }
         let live = state
             .sandboxes
@@ -44,22 +51,24 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
             });
         }
         let mut sandbox = admission.sandbox;
-        sandbox.name = match admission.name {
+        let admission_name = admission.name;
+        sandbox.name = match &admission_name {
             SandboxAdmissionName::Exact(name) => {
-                if name_in_use(&state, &sandbox.owner, &name) {
+                if name_in_use(&state, &sandbox.owner, name) {
                     return Err(SandboxStoreError::Duplicate);
                 }
-                name
+                name.clone()
             }
-            SandboxAdmissionName::Allocate(base) => allocated_name(&state, &sandbox.owner, &base),
+            SandboxAdmissionName::Allocate(base) => allocated_name(&state, &sandbox.owner, base),
         };
         let mut candidate = state.clone();
         let id = sandbox.id.clone();
         create_record!(candidate, sandboxes, id.clone(), sandbox.clone())?;
         if let Some(key) = replay_key {
-            candidate
-                .sandbox_admissions
-                .insert(key, (id.clone(), admission.admission_fingerprint));
+            candidate.sandbox_admissions.insert(
+                key,
+                (id.clone(), admission_name, admission.admission_fingerprint),
+            );
         }
         append_sandbox_event(
             &mut candidate,
@@ -152,7 +161,7 @@ impl SandboxWorkerStore for InMemorySandboxStore {
         state.sandboxes.remove(id);
         state
             .sandbox_admissions
-            .retain(|_, (sandbox_id, _)| sandbox_id != id);
+            .retain(|_, (sandbox_id, _, _)| sandbox_id != id);
         state.sandbox_events.remove(id);
         state.workspaces.retain(|_, row| &row.sandbox_id != id);
         state.worktrees.retain(|_, row| &row.sandbox_id != id);
@@ -171,20 +180,52 @@ fn name_in_use(state: &State, owner: &SubjectId, name: &str) -> bool {
 }
 
 fn allocated_name(state: &State, owner: &SubjectId, base: &str) -> String {
-    if !name_in_use(state, owner, base) {
-        return base.to_string();
-    }
-    for number in 2_u64.. {
-        let suffix = format!("-{number}");
-        let maximum = 64_usize.saturating_sub(suffix.len());
-        let mut end = base.len().min(maximum);
-        while !base.is_char_boundary(end) {
-            end -= 1;
-        }
-        let candidate = format!("{}{}", &base[..end], suffix);
+    for number in 1_u64.. {
+        let candidate = allocated_sandbox_name(base, number)
+            .expect("a validated admission name can always be allocated");
         if !name_in_use(state, owner, &candidate) {
             return candidate;
         }
     }
     unreachable!("the unbounded numeric suffix space always has a free name")
+}
+
+fn sandbox_admission_replay(
+    state: &State,
+    owner: &SubjectId,
+    launch_id: &str,
+) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
+    let origin = SandboxOrigin::Trigger {
+        launch_id: launch_id.to_string(),
+    };
+    let matching_ids = state
+        .sandboxes
+        .values()
+        .filter(|sandbox| sandbox.owner == *owner && sandbox.origin == origin)
+        .map(|sandbox| &sandbox.id)
+        .collect::<Vec<_>>();
+    let Some((sandbox_id, name, fingerprint)) = state
+        .sandbox_admissions
+        .get(&(owner.clone(), launch_id.to_string()))
+    else {
+        return if matching_ids.is_empty() {
+            Ok(None)
+        } else {
+            Err(SandboxStoreError::Corrupt(
+                "trigger sandbox is missing admission replay metadata".into(),
+            ))
+        };
+    };
+    let sandbox = state.sandboxes.get(sandbox_id).ok_or_else(|| {
+        SandboxStoreError::Corrupt("sandbox admission points to a missing aggregate".into())
+    })?;
+    if matching_ids.as_slice() != [sandbox_id]
+        || sandbox.owner != *owner
+        || sandbox.origin != origin
+    {
+        return Err(SandboxStoreError::Corrupt(
+            "sandbox admission origin disagrees with its aggregate".into(),
+        ));
+    }
+    SandboxAdmissionReplay::new(sandbox.clone(), name.clone(), fingerprint.clone()).map(Some)
 }
