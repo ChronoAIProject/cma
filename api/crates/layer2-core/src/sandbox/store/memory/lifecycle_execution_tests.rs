@@ -71,6 +71,40 @@ async fn checkpoint_publication_rejects_an_incomplete_conversation_set_atomicall
 }
 
 #[tokio::test]
+async fn lifecycle_checkpoint_accepts_an_exact_empty_live_agent_set() {
+    let store = InMemorySandboxStore::default();
+    let mut value = sandbox();
+    value.revision = 1;
+    value.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+    store.create_sandbox(value.clone()).await.unwrap();
+    store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            value.id.clone(),
+            value.owner,
+            NOW.into(),
+            None,
+        ))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&value.id, "worker", NOW.into(), LEASE_END.into())
+        .await
+        .unwrap()
+        .unwrap();
+
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint_for(&[], 1)))
+        .await
+        .unwrap();
+
+    let stored = store.get_sandbox(&value.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.lifecycle.checkpoints.latest.unwrap().conversations,
+        []
+    );
+}
+
+#[tokio::test]
 async fn checkpoint_metadata_retains_only_the_latest_two_complete_generations() {
     let store = InMemorySandboxStore::default();
     let mut value = sandbox();
@@ -235,6 +269,27 @@ async fn all_live_scope_rejects_a_partial_agent_set() {
 }
 
 #[tokio::test]
+async fn lifecycle_phase_rejects_unrelated_sandbox_changes() {
+    let (store, claimed, agents) = pause_fixture().await;
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint_for(&agents, 1)))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", LATER.into(), LEASE_END.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut mutation = pause_agents_mutation(&claimed, &agents);
+    mutation.sandbox.last_activity_at = LATER.into();
+
+    assert!(matches!(
+        store.commit_sandbox_lifecycle(mutation).await,
+        Err(SandboxStoreError::InvalidTransaction(_))
+    ));
+}
+
+#[tokio::test]
 async fn sandbox_agent_reads_are_scoped_and_cursor_bounded() {
     let (store, claimed, agents) = pause_fixture().await;
     let mut foreign = agent("agt_foreign", "conversation-foreign", 1);
@@ -344,31 +399,9 @@ fn checkpoint_mutation(
     checkpoint: SandboxCheckpointRef,
 ) -> SandboxCheckpointMutation {
     let mut next = claimed.clone();
-    next.lifecycle
-        .checkpoints
-        .publish(checkpoint.clone())
-        .unwrap();
-    let Some(SandboxLifecycleOperation::Pause {
-        phase,
-        checkpoint_epoch,
-        ..
-    }) = next.lifecycle.operation.as_mut()
-    else {
-        panic!("fixture must be pausing");
-    };
-    *phase = SandboxPausePhase::PauseAgents;
-    *checkpoint_epoch = Some(checkpoint.epoch);
     let lease = claimed.work.lease.as_ref().unwrap();
-    next.work
-        .advance(
-            &lease.holder,
-            lease.fence,
-            SandboxWorkStep::RunLifecycleOperation,
-            NOW.into(),
-        )
+    next.publish_lifecycle_checkpoint(checkpoint.clone(), &lease.holder, lease.fence, NOW.into())
         .unwrap();
-    next.revision += 1;
-    next.updated_at = NOW.into();
     SandboxCheckpointMutation {
         guard: SandboxMutationGuard::capture(claimed),
         checkpoint,
@@ -379,24 +412,10 @@ fn checkpoint_mutation(
 
 fn pause_agents_mutation(claimed: &Sandbox, agents: &[Agent]) -> SandboxLifecycleMutation {
     let mut next_sandbox = claimed.clone();
-    let Some(SandboxLifecycleOperation::Pause { phase, .. }) =
-        next_sandbox.lifecycle.operation.as_mut()
-    else {
-        panic!("fixture must be pausing");
-    };
-    *phase = SandboxPausePhase::TeardownRuntime;
     let lease = claimed.work.lease.as_ref().unwrap();
     next_sandbox
-        .work
-        .advance(
-            &lease.holder,
-            lease.fence,
-            SandboxWorkStep::RunLifecycleOperation,
-            LATER.into(),
-        )
+        .complete_lifecycle_agent_pause(&lease.holder, lease.fence, LATER.into())
         .unwrap();
-    next_sandbox.revision += 1;
-    next_sandbox.updated_at = LATER.into();
 
     let mut events = Vec::new();
     let changes = agents

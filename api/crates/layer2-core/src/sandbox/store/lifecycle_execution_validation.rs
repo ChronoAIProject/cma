@@ -1,132 +1,218 @@
 use crate::sandbox::{
-    SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxPausePhase, SandboxRevivePhase,
+    Sandbox, SandboxCheckpointRef, SandboxImageRotationPhase, SandboxLifecycleOperation,
+    SandboxPausePhase, SandboxRevivePhase, SandboxStatus,
 };
 
-pub(super) fn checkpoint_operation_advanced(
-    current: Option<&SandboxLifecycleOperation>,
-    next: Option<&SandboxLifecycleOperation>,
-    epoch: u64,
+pub(super) fn checkpoint_sandbox_advanced(
+    current: &Sandbox,
+    next: &Sandbox,
+    checkpoint: &SandboxCheckpointRef,
+    appended_at: &str,
 ) -> bool {
-    match (current, next) {
-        (None, None) => true,
-        (
-            Some(SandboxLifecycleOperation::Pause {
-                authority,
-                phase: SandboxPausePhase::CaptureAndPublishCheckpoint,
-                checkpoint_epoch: None,
-            }),
-            Some(SandboxLifecycleOperation::Pause {
-                authority: next_authority,
-                phase: SandboxPausePhase::PauseAgents,
-                checkpoint_epoch: Some(next_epoch),
-            }),
-        ) => authority == next_authority && epoch == *next_epoch,
-        (
-            Some(SandboxLifecycleOperation::ImageRotation {
-                authority,
-                phase: SandboxImageRotationPhase::CaptureAndPublishCheckpoint,
-                checkpoint_epoch: None,
-                target_runtime_version,
-                identity,
-            }),
-            Some(SandboxLifecycleOperation::ImageRotation {
-                authority: next_authority,
-                phase: SandboxImageRotationPhase::PauseAgents,
-                checkpoint_epoch: Some(next_epoch),
-                target_runtime_version: next_version,
-                identity: next_identity,
-            }),
-        ) => {
-            authority == next_authority
-                && epoch == *next_epoch
-                && target_runtime_version == next_version
-                && identity == next_identity
+    let mut expected = current.clone();
+    let result = if current.lifecycle.operation.is_none() {
+        expected
+            .publish_opportunistic_checkpoint(checkpoint.clone(), appended_at.into())
+            .map(|_| ())
+    } else {
+        let Some(lease) = current.work.lease.as_ref() else {
+            return false;
+        };
+        expected
+            .publish_lifecycle_checkpoint(
+                checkpoint.clone(),
+                &lease.holder,
+                lease.fence,
+                appended_at.into(),
+            )
+            .map(|_| ())
+    };
+    result.is_ok() && expected == *next
+}
+
+pub(super) fn lifecycle_sandbox_advanced(
+    current: &Sandbox,
+    next: &Sandbox,
+    appended_at: &str,
+) -> bool {
+    let Some(lease) = current.work.lease.as_ref() else {
+        return false;
+    };
+    let mut expected = current.clone();
+    let result = if let (SandboxStatus::Failed, None, Some(failure)) = (
+        next.status,
+        next.lifecycle.operation.as_ref(),
+        next.failure.as_ref(),
+    ) {
+        expected
+            .fail_lifecycle(
+                failure.detail.clone(),
+                &lease.holder,
+                lease.fence,
+                appended_at.into(),
+            )
+            .map(|_| ())
+    } else {
+        advance_phase(&mut expected, next, &lease.holder, lease.fence, appended_at)
+    };
+    result.is_ok() && expected == *next
+}
+
+fn advance_phase(
+    expected: &mut Sandbox,
+    submitted: &Sandbox,
+    holder: &str,
+    fence: u64,
+    at: &str,
+) -> Result<(), crate::sandbox::SandboxModelError> {
+    match expected
+        .lifecycle
+        .operation
+        .clone()
+        .ok_or_else(invalid_execution)?
+    {
+        SandboxLifecycleOperation::Pause { phase, .. } => match phase {
+            SandboxPausePhase::CaptureAndPublishCheckpoint => Err(invalid_execution()),
+            SandboxPausePhase::PauseAgents => {
+                expected.complete_lifecycle_agent_pause(holder, fence, at.into())
+            }
+            SandboxPausePhase::TeardownRuntime => {
+                expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+            }
+            SandboxPausePhase::PublishPaused => {
+                expected.publish_lifecycle_paused(holder, fence, at.into())
+            }
+        },
+        SandboxLifecycleOperation::Revive { phase, .. } => {
+            advance_revive_phase(expected, submitted, phase, holder, fence, at)
         }
-        _ => false,
+        SandboxLifecycleOperation::ImageRotation { phase, .. } => {
+            advance_rotation_phase(expected, submitted, phase, holder, fence, at)
+        }
     }
 }
 
-pub(super) fn operation_advanced(
-    current: Option<&SandboxLifecycleOperation>,
-    next: Option<&SandboxLifecycleOperation>,
-) -> bool {
-    match (current, next) {
-        (Some(current), Some(next)) => operation_step_matches(current, next),
-        (Some(SandboxLifecycleOperation::Pause { phase, .. }), None) => {
-            *phase == SandboxPausePhase::PublishPaused
+fn advance_revive_phase(
+    expected: &mut Sandbox,
+    submitted: &Sandbox,
+    phase: SandboxRevivePhase,
+    holder: &str,
+    fence: u64,
+    at: &str,
+) -> Result<(), crate::sandbox::SandboxModelError> {
+    match phase {
+        SandboxRevivePhase::CheckpointVerification => {
+            verify_checkpoint(expected, holder, fence, at)
         }
-        (Some(SandboxLifecycleOperation::Revive { phase, .. }), None) => {
-            *phase == SandboxRevivePhase::PublishActive
+        SandboxRevivePhase::RuntimeProvisioning => {
+            bind_runtime(expected, submitted, holder, fence, at)
         }
-        (Some(SandboxLifecycleOperation::ImageRotation { phase, .. }), None) => {
-            *phase == SandboxImageRotationPhase::PublishActive
+        SandboxRevivePhase::CredentialDelivery => {
+            expected.complete_lifecycle_credential_delivery(holder, fence, at.into())
         }
-        _ => false,
+        SandboxRevivePhase::HomeRestore => {
+            expected.complete_lifecycle_home_restore(holder, fence, at.into())
+        }
+        SandboxRevivePhase::ConversationReopen => {
+            expected.complete_lifecycle_conversation_reopen(holder, fence, at.into())
+        }
+        SandboxRevivePhase::QueuedMessageDelivery => {
+            advance_queue(expected, submitted, holder, fence, at)
+        }
+        SandboxRevivePhase::PublishActive => publish_active(expected, submitted, holder, fence, at),
     }
 }
 
-fn operation_step_matches(
-    current: &SandboxLifecycleOperation,
-    next: &SandboxLifecycleOperation,
-) -> bool {
-    match (current, next) {
-        (
-            SandboxLifecycleOperation::Pause {
-                authority,
-                phase,
-                checkpoint_epoch,
-            },
-            SandboxLifecycleOperation::Pause {
-                authority: next_authority,
-                phase: next_phase,
-                checkpoint_epoch: next_epoch,
-            },
-        ) => {
-            authority == next_authority
-                && (*phase == *next_phase || phase.next() == Some(*next_phase))
-                && checkpoint_epoch == next_epoch
+fn advance_rotation_phase(
+    expected: &mut Sandbox,
+    submitted: &Sandbox,
+    phase: SandboxImageRotationPhase,
+    holder: &str,
+    fence: u64,
+    at: &str,
+) -> Result<(), crate::sandbox::SandboxModelError> {
+    match phase {
+        SandboxImageRotationPhase::CaptureAndPublishCheckpoint => Err(invalid_execution()),
+        SandboxImageRotationPhase::PauseAgents => {
+            expected.complete_lifecycle_agent_pause(holder, fence, at.into())
         }
-        (
-            SandboxLifecycleOperation::Revive {
-                authority,
-                phase,
-                cause,
-                checkpoint_epoch,
-            },
-            SandboxLifecycleOperation::Revive {
-                authority: next_authority,
-                phase: next_phase,
-                cause: next_cause,
-                checkpoint_epoch: next_epoch,
-            },
-        ) => {
-            authority == next_authority
-                && (*phase == *next_phase || phase.next() == Some(*next_phase))
-                && cause == next_cause
-                && checkpoint_epoch == next_epoch
+        SandboxImageRotationPhase::TeardownRuntime => {
+            expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
         }
-        (
-            SandboxLifecycleOperation::ImageRotation {
-                authority,
-                phase,
-                checkpoint_epoch,
-                target_runtime_version,
-                identity,
-            },
-            SandboxLifecycleOperation::ImageRotation {
-                authority: next_authority,
-                phase: next_phase,
-                checkpoint_epoch: next_epoch,
-                target_runtime_version: next_version,
-                identity: next_identity,
-            },
-        ) => {
-            authority == next_authority
-                && (*phase == *next_phase || phase.next() == Some(*next_phase))
-                && checkpoint_epoch == next_epoch
-                && target_runtime_version == next_version
-                && identity == next_identity
+        SandboxImageRotationPhase::CheckpointVerification => {
+            verify_checkpoint(expected, holder, fence, at)
         }
-        _ => false,
+        SandboxImageRotationPhase::RuntimeProvisioning => {
+            bind_runtime(expected, submitted, holder, fence, at)
+        }
+        SandboxImageRotationPhase::CredentialDelivery => {
+            expected.complete_lifecycle_credential_delivery(holder, fence, at.into())
+        }
+        SandboxImageRotationPhase::HomeRestore => {
+            expected.complete_lifecycle_home_restore(holder, fence, at.into())
+        }
+        SandboxImageRotationPhase::ConversationReopen => {
+            expected.complete_lifecycle_conversation_reopen(holder, fence, at.into())
+        }
+        SandboxImageRotationPhase::QueuedMessageDelivery => {
+            advance_queue(expected, submitted, holder, fence, at)
+        }
+        SandboxImageRotationPhase::PublishActive => {
+            publish_active(expected, submitted, holder, fence, at)
+        }
     }
+}
+
+fn verify_checkpoint(
+    expected: &mut Sandbox,
+    holder: &str,
+    fence: u64,
+    at: &str,
+) -> Result<(), crate::sandbox::SandboxModelError> {
+    let checkpoint = expected
+        .lifecycle
+        .checkpoints
+        .latest
+        .clone()
+        .ok_or_else(invalid_execution)?;
+    expected.complete_lifecycle_checkpoint_verification(&checkpoint, holder, fence, at.into())
+}
+
+fn bind_runtime(
+    expected: &mut Sandbox,
+    submitted: &Sandbox,
+    holder: &str,
+    fence: u64,
+    at: &str,
+) -> Result<(), crate::sandbox::SandboxModelError> {
+    let binding = submitted.runtime.clone().ok_or_else(invalid_execution)?;
+    expected.bind_lifecycle_runtime(binding, holder, fence, at.into())
+}
+
+fn advance_queue(
+    expected: &mut Sandbox,
+    submitted: &Sandbox,
+    holder: &str,
+    fence: u64,
+    at: &str,
+) -> Result<(), crate::sandbox::SandboxModelError> {
+    if expected.lifecycle.operation == submitted.lifecycle.operation {
+        expected.publish_lifecycle_queue_progress(holder, fence, at.into())
+    } else {
+        expected.complete_lifecycle_queued_message_delivery(holder, fence, at.into())
+    }
+}
+
+fn publish_active(
+    expected: &mut Sandbox,
+    submitted: &Sandbox,
+    holder: &str,
+    fence: u64,
+    at: &str,
+) -> Result<(), crate::sandbox::SandboxModelError> {
+    expected.publish_lifecycle_active(submitted.work.ready_at.clone(), holder, fence, at.into())
+}
+
+const fn invalid_execution() -> crate::sandbox::SandboxModelError {
+    crate::sandbox::SandboxModelError::invalid_value("sandbox.lifecycle.execution")
 }

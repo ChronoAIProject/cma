@@ -57,7 +57,6 @@ impl SandboxRotationIdentity {
                 .profile_digest
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            || self.agents.is_empty()
         {
             return Err(invalid_rotation_identity());
         }
@@ -110,9 +109,6 @@ impl SandboxRotationIdentity {
                 worktree_id: agent.worktree_id.clone(),
                 conversation_id: conversation_id.into(),
             });
-        }
-        if identities.is_empty() {
-            return Err(invalid_rotation_identity());
         }
         identities.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
         let identity = Self {

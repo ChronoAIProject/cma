@@ -141,7 +141,6 @@ impl SandboxCheckpointRef {
             || !valid_sha256(&self.sha256)
             || !valid_sha256(&self.manifest_sha256)
             || seconds_from_rfc3339(&self.sealed_at).is_none()
-            || self.conversations.is_empty()
         {
             return Err(invalid_checkpoint());
         }
