@@ -68,6 +68,14 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
             )
             .build(),
         IndexModel::builder()
+            .keys(doc! { "status": 1, "_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("agents_live_connections".to_string())
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
             .keys(doc! { "worktree_id": 1 })
             .options(
                 IndexOptions::builder()
@@ -358,8 +366,13 @@ mod tests {
             indexes[4].options.as_ref().unwrap().name.as_deref(),
             Some("agents_due_work")
         );
-        assert_eq!(indexes[5].keys, doc! { "worktree_id": 1 });
-        let options = indexes[5].options.as_ref().unwrap();
+        assert_eq!(indexes[5].keys, doc! { "status": 1, "_id": 1 });
+        assert_eq!(
+            indexes[5].options.as_ref().unwrap().name.as_deref(),
+            Some("agents_live_connections")
+        );
+        assert_eq!(indexes[6].keys, doc! { "worktree_id": 1 });
+        let options = indexes[6].options.as_ref().unwrap();
         assert_eq!(options.unique, Some(true));
         assert_eq!(
             options.partial_filter_expression,

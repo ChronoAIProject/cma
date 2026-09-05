@@ -24,7 +24,11 @@ pub use agent_admission::{
 mod agent_conversation;
 pub use agent_conversation::{AgentConversationMutation, AgentConversationStore};
 mod agent_lifecycle;
-pub use agent_lifecycle::{AgentWorkMutation, AgentWorkerStore, VersionedWorktree};
+pub use agent_lifecycle::{
+    apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
+    AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
+    AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+};
 mod agent_work_evidence_validation;
 mod agent_work_transition_validation;
 mod agent_work_validation;

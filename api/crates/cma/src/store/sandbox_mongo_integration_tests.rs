@@ -15,10 +15,11 @@ use layer2_core::profiles::{
     WorkspaceProfileRef, WorkspaceProfileSnapshot,
 };
 use layer2_core::sandbox::store::{
-    AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentControlResult,
+    AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentConnectionRecoveryCause,
+    AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentControlResult,
     AgentControlStore, AgentControlStoreError, AgentControlTarget, AgentConversationMutation,
     AgentConversationStore, AgentDeleteRequest, AgentLogStore, AgentStopRequest, AgentStore,
-    AgentWorkMutation, AgentWorkerStore, SandboxAdmission, SandboxAdmissionName,
+    AgentWorkMutation, AgentWorkerStore, PageRequest, SandboxAdmission, SandboxAdmissionName,
     SandboxAdmissionResult, SandboxAdmissionStore, SandboxEventStore, SandboxStore,
     SandboxStoreError, SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore,
     VersionedWorktree, WorkspaceAdmission, WorkspaceAdmissionKind, WorkspaceAdmissionResult,

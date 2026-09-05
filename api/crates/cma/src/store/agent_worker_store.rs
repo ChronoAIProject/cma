@@ -3,7 +3,10 @@
 use futures_util::TryStreamExt as _;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
-    AgentStore, AgentWorkMutation, AgentWorkerStore, SandboxStoreError, MAX_PAGE_SIZE,
+    apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
+    AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome,
+    AgentConnectionRecoveryRequest, AgentStore, AgentWorkMutation, AgentWorkerStore, Page,
+    PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
 };
 use mongodb::bson::{doc, Bson};
 
@@ -11,6 +14,89 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTI
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn live_agent_connections(
+        &self,
+        page: &PageRequest,
+    ) -> Result<Page<AgentConnectionRecoveryCandidate>, SandboxStoreError> {
+        if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        let mut filter = doc! {
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "status": { "$in": super::agents::LIVE_STATUSES },
+            "record.conversation.conversation_id": { "$type": "string", "$ne": "" },
+            "record.conversation.runtime_generation": { "$gt": 0_i64 },
+        };
+        if let Some(cursor) = page.cursor.as_ref() {
+            filter.insert("_id", doc! { "$gt": cursor });
+        }
+        let mut cursor = self
+            .agents
+            .find(filter)
+            .sort(doc! { "_id": 1 })
+            .limit(i64::from(page.limit) + 1)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        let mut items = Vec::new();
+        while let Some(document) = cursor
+            .try_next()
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        {
+            let agent = super::agents::read_agent(&document)?;
+            let candidate =
+                AgentConnectionRecoveryCandidate::from_agent(&agent).ok_or_else(|| {
+                    SandboxStoreError::Corrupt(
+                        "agent connection query returned an invalid candidate".into(),
+                    )
+                })?;
+            items.push(candidate);
+        }
+        let has_more = items.len() > usize::from(page.limit);
+        if has_more {
+            items.pop();
+        }
+        let next = has_more.then(|| {
+            items
+                .last()
+                .expect("a bounded connection page has a last item")
+                .agent_id
+                .to_string()
+        });
+        Ok(Page { items, next })
+    }
+
+    async fn schedule_agent_connection_recovery(
+        &self,
+        request: AgentConnectionRecoveryRequest,
+    ) -> Result<AgentConnectionRecoveryOutcome, SandboxStoreError> {
+        let current = self
+            .get_agent(&request.agent_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        match apply_agent_connection_recovery(&current, &request)? {
+            AgentConnectionRecoveryApplication::Complete(outcome) => Ok(outcome),
+            AgentConnectionRecoveryApplication::Persist(agent) => {
+                match self.save_agent(current.revision, *agent).await {
+                    Ok(()) => Ok(AgentConnectionRecoveryOutcome::Scheduled),
+                    Err(SandboxStoreError::Conflict) => {
+                        let current = self
+                            .get_agent(&request.agent_id)
+                            .await?
+                            .ok_or(SandboxStoreError::NotFound)?;
+                        match apply_agent_connection_recovery(&current, &request)? {
+                            AgentConnectionRecoveryApplication::Complete(outcome) => Ok(outcome),
+                            AgentConnectionRecoveryApplication::Persist(_) => {
+                                Ok(AgentConnectionRecoveryOutcome::Superseded)
+                            }
+                        }
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+        }
+    }
+
     async fn due_agent_work(
         &self,
         now: &str,

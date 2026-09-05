@@ -7,11 +7,12 @@ use layer2_core::{rfc3339_at, AgentId};
 use layer3_adapter::SandboxAdapter;
 
 use super::agent_skills::AgentSkillResolver;
-use super::live_agents::LiveAgentRegistry;
+use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
 mod cleanup;
 mod connection;
 mod first_message;
+mod reconcile;
 mod startup;
 mod startup_support;
 mod support;
@@ -58,6 +59,9 @@ pub(crate) struct AgentWorker {
 
 impl AgentWorker {
     pub fn new(dependencies: AgentWorkerDependencies, config: AgentWorkerConfig) -> Arc<Self> {
+        dependencies.registry.install_connection_loss_handler(
+            DurableAgentConnectionLossHandler::new(dependencies.store.clone()),
+        );
         Arc::new(Self {
             dependencies,
             config,
@@ -65,6 +69,7 @@ impl AgentWorker {
     }
 
     pub async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        self.reconcile_connections(now).await?;
         let due = self
             .dependencies
             .store
