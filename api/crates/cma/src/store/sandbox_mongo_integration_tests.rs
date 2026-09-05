@@ -371,6 +371,12 @@ async fn claimed_agent_work_fixture(
 ) -> (Sandbox, Worktree, Agent) {
     let parent = sandbox(&format!("sbx_agent_work_{suffix}"));
     store.create_sandbox(parent.clone()).await.unwrap();
+    let workspace = ready_workspace(
+        &parent,
+        &format!("wks_agent_work_{suffix}"),
+        &format!("agent-work-{suffix}"),
+    );
+    store.create_workspace(workspace).await.unwrap();
     let (mut worktree, mut agent) = worktree_and_agent(&parent.id);
     let agent_id = AgentId(format!("agt_agent_work_{suffix}"));
     worktree.id = WorktreeId(format!("wkt_agent_work_{suffix}"));
