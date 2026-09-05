@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
-use layer2_core::sandbox::{Agent, AgentUpdateRecorder, AgentWorkStep};
+use layer2_core::sandbox::{Agent, AgentOperationService, AgentUpdateRecorder, AgentWorkStep};
 use layer2_core::{rfc3339_at, AgentId};
 use layer3_adapter::SandboxAdapter;
 
@@ -11,6 +11,7 @@ use super::live_agents::LiveAgentRegistry;
 
 mod cleanup;
 mod connection;
+mod first_message;
 mod startup;
 mod startup_support;
 mod support;
@@ -26,6 +27,7 @@ pub(crate) struct AgentWorkerDependencies {
     pub skills: Arc<dyn AgentSkillResolver>,
     pub registry: Arc<LiveAgentRegistry>,
     pub updates: Arc<dyn AgentUpdateRecorder>,
+    pub operations: Arc<AgentOperationService>,
 }
 
 #[derive(Clone)]
@@ -107,9 +109,7 @@ impl AgentWorker {
             AgentWorkStep::OpenConversation => self.open_conversation(agent, now).await,
             AgentWorkStep::PublishReady => self.publish_ready(agent, now).await,
             AgentWorkStep::PublishConnection => self.publish_connection(agent, now).await,
-            AgentWorkStep::DispatchFirstMessage => {
-                self.defer_first_message_dispatch(agent, now).await
-            }
+            AgentWorkStep::DispatchFirstMessage => self.dispatch_first_message(agent, now).await,
             AgentWorkStep::FenceInteraction => self.fence_interaction(agent, now).await,
             AgentWorkStep::CloseProcess => self.close_process(agent, now).await,
             AgentWorkStep::PublishStopped => self.publish_stopped(agent, now).await,
