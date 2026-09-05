@@ -333,6 +333,9 @@ data:
   # never leaves the cluster, and the sandbox provider terminates no TLS of its
   # own. This mirrors how the neighbouring control plane reaches it.
   CHRONO_SANDBOX_BASE_URL: "http://opensandbox-server.opensandbox-system.svc.cluster.local"
+  # BatchSandbox cleanup is deliberately confined to the namespace granted by
+  # the namespaced Role in serviceaccount.yaml.
+  CHRONO_SANDBOX_NAMESPACE: "chrono-bot"
   # Image each session's sandbox runs: the agent kernel plus the supervisor that
   # hosts it under a pseudo-terminal. Built from infra/runtime/Dockerfile.
   # Published alongside the control plane from this repository, in the registry
