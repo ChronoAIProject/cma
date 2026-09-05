@@ -1,12 +1,78 @@
+use async_trait::async_trait;
 use axum::body::Body;
-use layer2_core::SubjectId;
+use layer1_public::rest::{LaunchQuota, LaunchQuotaError};
+use layer2_core::{
+    ActivityQuery, ActivityRecord, ActivityService, ActivityStore, Authorization, Caller,
+    Capability, Page, PlatformSettings, PlatformSettingsService, PlatformSettingsStore, StoreError,
+    StoredPlatformSettings, SubjectId,
+};
 use std::{
     num::NonZeroU32,
+    sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use super::visitor::{visitor_quota_key, QuotaResource};
+use super::visitor::visitor_quota_key;
 use super::*;
+
+#[derive(Default)]
+struct NoopActivity;
+
+#[async_trait]
+impl ActivityStore for NoopActivity {
+    async fn append(&self, _record: &ActivityRecord) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    async fn list(&self, _query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
+        Ok(Page::new(Vec::new(), None))
+    }
+}
+
+struct MutableSettings(Mutex<StoredPlatformSettings>);
+
+impl MutableSettings {
+    fn new(visitor_launch_limit: u32) -> Self {
+        let mut settings = PlatformSettings::default();
+        settings.limits.visitor_max_launches_per_day = visitor_launch_limit;
+        Self(Mutex::new(StoredPlatformSettings {
+            revision: 1,
+            settings,
+        }))
+    }
+
+    fn set_visitor_launch_limit(&self, limit: u32) {
+        let mut stored = self.0.lock().unwrap();
+        stored.revision += 1;
+        stored.settings.limits.visitor_max_launches_per_day = limit;
+    }
+}
+
+#[async_trait]
+impl PlatformSettingsStore for MutableSettings {
+    async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+
+    async fn replace(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+    ) -> Result<StoredPlatformSettings, StoreError> {
+        let mut stored = self.0.lock().unwrap();
+        if stored.revision != expected_revision {
+            return Err(StoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: stored.revision,
+            });
+        }
+        *stored = StoredPlatformSettings {
+            revision: expected_revision + 1,
+            settings: settings.clone(),
+        };
+        Ok(stored.clone())
+    }
+}
 
 fn request(method: Method, path: &str) -> Request {
     Request::builder()
@@ -118,43 +184,67 @@ fn visitor_launches_use_the_subject_and_exact_daily_limit() {
     for _ in 0..5 {
         limiters
             .admit_visitor_launch(&subject, 5, now)
-            .expect("five launches fit");
+            .expect("five launches fit")
+            .commit();
     }
     let exhausted = limiters
         .admit_visitor_launch(&subject, 5, now)
-        .expect_err("the sixth launch is refused");
+        .err()
+        .expect("the sixth launch is refused");
     assert_eq!(exhausted.code(), "resource_quota");
-    assert_eq!(exhausted.resource, QuotaResource::VisitorLaunches);
-    assert_eq!(exhausted.resource.as_str(), "visitor_launches");
-    assert_eq!(exhausted.limit, 5);
+    assert_eq!(exhausted.resource(), "visitor_launches");
+    assert_eq!(exhausted.limit(), 5);
     assert_eq!(exhausted.retry_after_seconds(now), 12 * 60 * 60);
     limiters
         .admit_visitor_launch(&SubjectId::new("visitor-b"), 5, now)
-        .expect("subjects have independent counts");
+        .expect("subjects have independent counts")
+        .commit();
+}
+
+#[test]
+fn visitor_launch_reservation_releases_on_drop_and_commit_retains_usage() {
+    let limiters = visitor_limiters();
+    let subject = SubjectId::new("visitor-release");
+    let now = time_on_day(20_000, 1);
+    let reservation = limiters.admit_visitor_launch(&subject, 1, now).unwrap();
+    assert!(limiters.admit_visitor_launch(&subject, 1, now).is_err());
+    drop(reservation);
+
+    limiters
+        .admit_visitor_launch(&subject, 1, now)
+        .unwrap()
+        .commit();
+    assert!(limiters.admit_visitor_launch(&subject, 1, now).is_err());
 }
 
 #[test]
 fn visitor_launch_admission_is_atomic_under_concurrency() {
     let limiters = visitor_limiters();
     let now = time_on_day(20_000, 1);
-    let admitted = std::thread::scope(|scope| {
+    let reservations = std::thread::scope(|scope| {
         let handles = (0..32)
             .map(|_| {
                 let limiters = Arc::clone(&limiters);
                 scope.spawn(move || {
                     limiters
                         .admit_visitor_launch(&SubjectId::new("visitor-race"), 5, now)
-                        .is_ok()
+                        .ok()
                 })
             })
             .collect::<Vec<_>>();
         handles
             .into_iter()
-            .map(|handle| handle.join().unwrap())
-            .filter(|admitted| *admitted)
-            .count()
+            .filter_map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
     });
-    assert_eq!(admitted, 5);
+    assert_eq!(reservations.len(), 5);
+    assert!(limiters
+        .admit_visitor_launch(&SubjectId::new("visitor-race"), 5, now)
+        .is_err());
+    drop(reservations);
+    assert!(limiters
+        .admit_visitor_launch(&SubjectId::new("visitor-race"), 5, now)
+        .is_ok());
 }
 
 #[test]
@@ -166,20 +256,72 @@ fn visitor_launch_limit_is_live_and_resets_at_utc_midnight() {
     for _ in 0..3 {
         limiters
             .admit_visitor_launch(&subject, 5, before_midnight)
-            .unwrap();
+            .unwrap()
+            .commit();
     }
     let reduced = limiters
         .admit_visitor_launch(&subject, 2, before_midnight)
-        .expect_err("a reduced live limit applies immediately");
-    assert_eq!(reduced.limit, 2);
+        .err()
+        .expect("a reduced live limit applies immediately");
+    assert_eq!(reduced.limit(), 2);
     assert_eq!(reduced.retry_after_seconds(before_midnight), 1);
     limiters
         .admit_visitor_launch(&subject, 4, before_midnight)
-        .expect("raising the limit admits one more");
+        .expect("raising the limit admits one more")
+        .commit();
     assert!(limiters
         .admit_visitor_launch(&subject, 4, before_midnight)
         .is_err());
     limiters
         .admit_visitor_launch(&subject, 1, time_on_day(20_001, 0))
-        .expect("the next UTC day has a fresh count");
+        .expect("the next UTC day has a fresh count")
+        .commit();
+}
+
+#[tokio::test]
+async fn cma_launch_quota_reads_live_settings_and_bypasses_only_nonvisitors() {
+    let limiters = visitor_limiters();
+    let settings_store = Arc::new(MutableSettings::new(1));
+    let settings = Arc::new(PlatformSettingsService::new(
+        settings_store.clone(),
+        ActivityService::new(Arc::new(NoopActivity)),
+    ));
+    let now = time_on_day(20_000, 60);
+    let quota = CmaLaunchQuota::with_clock(Arc::clone(&limiters), settings, move || now);
+    let visitor = Caller::new(
+        SubjectId::new("visitor-live"),
+        Authorization::new([Capability::LaunchTriggers]),
+    );
+
+    let first = quota.reserve(&visitor).await.unwrap();
+    let refusal = quota.reserve(&visitor).await.unwrap_err();
+    assert!(matches!(
+        refusal,
+        LaunchQuotaError::ResourceQuota(refusal)
+            if refusal.limit() == 1
+                && refusal.reset_at() == time_on_day(20_001, 0)
+    ));
+    drop(first);
+
+    let first = quota.reserve(&visitor).await.unwrap();
+    settings_store.set_visitor_launch_limit(2);
+    let second = quota.reserve(&visitor).await.unwrap();
+    settings_store.set_visitor_launch_limit(1);
+    assert!(matches!(
+        quota.reserve(&visitor).await,
+        Err(LaunchQuotaError::ResourceQuota(refusal)) if refusal.limit() == 1
+    ));
+    drop((first, second));
+
+    settings_store.set_visitor_launch_limit(0);
+    for authorization in [
+        Authorization::new([Capability::LaunchTriggers, Capability::CreateSandbox]),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    ] {
+        let nonvisitor = Caller::new(SubjectId::new("not-a-visitor"), authorization);
+        quota
+            .reserve(&nonvisitor)
+            .await
+            .expect("non-visitors are unmetered");
+    }
 }
