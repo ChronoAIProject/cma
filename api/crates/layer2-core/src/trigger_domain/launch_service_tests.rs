@@ -1391,7 +1391,7 @@ async fn partial_requirement_refresh_is_durable_before_start_is_refused() {
 }
 
 #[tokio::test]
-async fn ownership_cancellation_and_event_cursor_bounds_are_explicit() {
+async fn owner_operations_need_ownership_not_current_launch_authority() {
     let fixture = fixture(default_reuse(), VISITOR, false, false, vec![]).await;
     let launch = fixture
         .service
@@ -1403,7 +1403,20 @@ async fn ownership_cancellation_and_event_cursor_bounds_are_explicit() {
         .await
         .unwrap()
         .launch;
-    let foreign = launcher("other");
+    let owner = Caller::new(SubjectId::new(VISITOR), Authorization::none());
+    assert_eq!(
+        fixture.service.read(&owner, &launch.id).await.unwrap(),
+        launch
+    );
+    assert_eq!(
+        fixture
+            .service
+            .requirements(&owner, &launch.id)
+            .await
+            .unwrap(),
+        launch.requirements
+    );
+    let foreign = Caller::new(SubjectId::new("other"), Authorization::none());
     assert_eq!(
         fixture
             .service
@@ -1415,7 +1428,46 @@ async fn ownership_cancellation_and_event_cursor_bounds_are_explicit() {
     assert_eq!(
         fixture
             .service
-            .events(&fixture.caller, &launch.id, launch.event_head + 1, None)
+            .read(&owner, &LaunchId("lch_missing".into()))
+            .await
+            .unwrap_err(),
+        LaunchServiceError::NotFound
+    );
+    assert_eq!(
+        fixture
+            .service
+            .start(
+                &foreign,
+                &launch.id,
+                StartLaunch {
+                    trust_confirmed_digest: None,
+                    acknowledgements: Vec::new(),
+                },
+            )
+            .await
+            .unwrap_err(),
+        LaunchServiceError::NotFound
+    );
+    assert_eq!(
+        fixture
+            .service
+            .cancel(&foreign, &launch.id)
+            .await
+            .unwrap_err(),
+        LaunchServiceError::NotFound
+    );
+    assert_eq!(
+        fixture
+            .service
+            .events(&foreign, &launch.id, 0, None)
+            .await
+            .unwrap_err(),
+        LaunchServiceError::NotFound
+    );
+    assert_eq!(
+        fixture
+            .service
+            .events(&owner, &launch.id, launch.event_head + 1, None)
             .await
             .unwrap_err(),
         LaunchServiceError::InvalidCursor
@@ -1424,22 +1476,31 @@ async fn ownership_cancellation_and_event_cursor_bounds_are_explicit() {
         assert_eq!(
             fixture
                 .service
-                .events(&fixture.caller, &launch.id, 0, Some(limit))
+                .events(&owner, &launch.id, 0, Some(limit))
                 .await
                 .unwrap_err(),
             LaunchServiceError::InvalidCursor
         );
     }
-    let cancelled = fixture
+    let started = fixture
         .service
-        .cancel(&fixture.caller, &launch.id)
+        .start(
+            &owner,
+            &launch.id,
+            StartLaunch {
+                trust_confirmed_digest: None,
+                acknowledgements: Vec::new(),
+            },
+        )
         .await
         .unwrap();
+    assert_eq!(started.state, LaunchState::Resolving);
+    let cancelled = fixture.service.cancel(&owner, &launch.id).await.unwrap();
     assert_eq!(cancelled.state, LaunchState::Cancelled);
     assert_eq!(
         fixture
             .service
-            .cancel(&fixture.caller, &launch.id)
+            .cancel(&owner, &launch.id)
             .await
             .unwrap_err(),
         LaunchServiceError::NotStartable

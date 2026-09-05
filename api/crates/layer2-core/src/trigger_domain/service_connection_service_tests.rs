@@ -7,8 +7,8 @@ use crate::profiles::{
     AgentProfileRef, InMemoryProfileStore, SandboxProfileRef, WorkspaceProfileRef,
 };
 use crate::{
-    rfc3339_at, Authorization, Caller, Capability, SandboxProfileId, ServiceHandoffId, ServiceId,
-    SubjectId, WorkspaceProfileId,
+    rfc3339_at, Authorization, Caller, SandboxProfileId, ServiceHandoffId, ServiceId, SubjectId,
+    WorkspaceProfileId,
 };
 
 use super::*;
@@ -171,7 +171,7 @@ async fn fixture() -> Fixture {
         store,
         broker,
         service,
-        caller: Caller::new(owner, Authorization::new([Capability::LaunchTriggers])),
+        caller: Caller::new(owner, Authorization::none()),
         launch,
     }
 }
@@ -220,10 +220,7 @@ async fn creation_replays_before_the_broker_and_validates_the_launch_requirement
     );
     assert_eq!(fixture.broker.calls(), (1, 0));
 
-    let other = Caller::new(
-        SubjectId::new("other"),
-        Authorization::new([Capability::LaunchTriggers]),
-    );
+    let other = Caller::new(SubjectId::new("other"), Authorization::none());
     assert_eq!(
         fixture
             .service
@@ -262,12 +259,16 @@ async fn polling_persists_one_terminal_provider_observation_and_hides_ownership(
     );
     assert_eq!(fixture.broker.calls(), (1, 1));
 
-    let other = Caller::new(
-        SubjectId::new("other"),
-        Authorization::new([Capability::LaunchTriggers]),
-    );
+    let other = Caller::new(SubjectId::new("other"), Authorization::none());
     assert_eq!(
         fixture.service.read_and_refresh(&other, &created.id).await,
+        Err(ServiceConnectionServiceError::NotFound)
+    );
+    assert_eq!(
+        fixture
+            .service
+            .read_and_refresh(&fixture.caller, &ServiceHandoffId("hnd_missing".into()))
+            .await,
         Err(ServiceConnectionServiceError::NotFound)
     );
 }

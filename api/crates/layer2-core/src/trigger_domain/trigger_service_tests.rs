@@ -73,32 +73,38 @@ fn visitor_launch(trigger: &PublicTrigger, placement_id: Option<PlacementId>, ke
 }
 
 #[tokio::test]
-async fn authoring_requires_publish_authority_and_hides_foreign_ownership() {
+async fn collections_require_publish_authority_while_owner_operations_use_ownership() {
     let seed = seed_profiles(Visibilities::default(), true).await;
     let definitions = Arc::new(trigger_store(&seed));
     let launches = Arc::new(InMemoryLaunchStore::new(definitions.clone()));
     let service = TriggerService::new(definitions, launches, directory(Ok(None)));
-    let owner = publisher(seed.owner.clone());
+    let publisher = publisher(seed.owner.clone());
     let denied = Caller::new(seed.owner.clone(), Authorization::none());
     assert_eq!(
         service.create(&denied, content(seed.target.clone())).await,
         Err(TriggerServiceError::Forbidden)
     );
+    assert_eq!(
+        service.list(&denied, &TriggerPageRequest::default()).await,
+        Err(TriggerServiceError::Forbidden)
+    );
 
     let created = service
-        .create(&owner, content(seed.target.clone()))
+        .create(&publisher, content(seed.target.clone()))
         .await
         .unwrap();
     assert_eq!(created.owner, seed.owner);
     assert_eq!(
         service
-            .list(&owner, &TriggerPageRequest::default())
+            .list(&publisher, &TriggerPageRequest::default())
             .await
             .unwrap()
             .items,
         vec![created.clone()]
     );
-    let foreign = publisher(SubjectId::new("different-publisher"));
+    let owner = Caller::new(seed.owner.clone(), Authorization::none());
+    assert_eq!(service.read(&owner, &created.id).await.unwrap(), created);
+    let foreign = Caller::new(SubjectId::new("different-publisher"), Authorization::none());
     assert_eq!(
         service.read(&foreign, &created.id).await,
         Err(TriggerServiceError::NotFound)
@@ -157,7 +163,10 @@ async fn authoring_requires_publish_authority_and_hides_foreign_ownership() {
         TriggerAvailability::Retired
     );
 
-    let disposable = service.create(&owner, content(seed.target)).await.unwrap();
+    let disposable = service
+        .create(&publisher, content(seed.target))
+        .await
+        .unwrap();
     service.delete(&owner, &disposable.id).await.unwrap();
     assert_eq!(
         service.read(&owner, &disposable.id).await,

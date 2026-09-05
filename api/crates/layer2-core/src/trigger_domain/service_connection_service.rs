@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{now_rfc3339, seconds_from_rfc3339, Caller, LaunchId, ServiceHandoffId, ServiceId};
 
-use super::launch_service_support::require_launcher;
 use super::{
     BrokerHandoffState, LaunchStore, LaunchStoreError, ServiceConnectionBroker,
     ServiceConnectionError, ServiceConnectionHandoff, ServiceConnectionStore,
@@ -80,7 +79,6 @@ impl ServiceConnectionService {
         caller: &Caller,
         request: CreateServiceConnection,
     ) -> Result<ServiceConnectionHandoff, ServiceConnectionServiceError> {
-        require_launcher(caller).map_err(|_| ServiceConnectionServiceError::Forbidden)?;
         validate_request(&request)?;
         if let Some(existing) = self
             .handoffs
@@ -141,7 +139,6 @@ impl ServiceConnectionService {
         caller: &Caller,
         id: &ServiceHandoffId,
     ) -> Result<ServiceConnectionHandoff, ServiceConnectionServiceError> {
-        require_launcher(caller).map_err(|_| ServiceConnectionServiceError::Forbidden)?;
         let mut handoff = self.owned(id, caller).await?;
         if handoff.state != BrokerHandoffState::Pending {
             return Ok(handoff);

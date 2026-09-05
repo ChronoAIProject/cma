@@ -62,7 +62,7 @@ async fn requested_placements_must_exist_and_remain_live() {
 }
 
 #[tokio::test]
-async fn launch_listing_requires_launch_authority_and_hides_other_owners() {
+async fn launch_listing_is_owner_scoped_without_current_launch_authority() {
     let fixture = fixture(default_reuse(), VISITOR, false, false, vec![]).await;
     let launch = fixture
         .service
@@ -74,27 +74,17 @@ async fn launch_listing_requires_launch_authority_and_hides_other_owners() {
         .await
         .unwrap()
         .launch;
+    let owner = Caller::new(SubjectId::new(VISITOR), Authorization::none());
     assert_eq!(
         fixture
             .service
-            .list(&fixture.caller, &LaunchPageRequest::default())
+            .list(&owner, &LaunchPageRequest::default())
             .await
             .unwrap()
             .items,
         vec![launch]
     );
-    let denied = Caller::new(SubjectId::new(VISITOR), Authorization::none());
-    assert_eq!(
-        fixture
-            .service
-            .list(&denied, &LaunchPageRequest::default())
-            .await,
-        Err(LaunchServiceError::Forbidden)
-    );
-    let other = Caller::new(
-        SubjectId::new("other"),
-        Authorization::new([Capability::LaunchTriggers]),
-    );
+    let other = Caller::new(SubjectId::new("other"), Authorization::none());
     assert!(fixture
         .service
         .list(&other, &LaunchPageRequest::default())
