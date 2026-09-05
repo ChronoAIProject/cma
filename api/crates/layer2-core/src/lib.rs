@@ -49,8 +49,8 @@ pub use directory::{
 pub use error::CoreError;
 pub use event::{Event, EventKind, PressureDimension};
 pub use ids::{
-    AgentId, AgentProfileId, SandboxId, SandboxProfileId, ServiceId, SkillId, SubjectId,
-    WorkspaceId, WorkspaceProfileId, WorktreeId,
+    AgentId, AgentProfileId, LaunchId, SandboxId, SandboxProfileId, ServiceHandoffId, ServiceId,
+    SkillId, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId,
 };
 pub use inventory::{ProviderInventory, RuntimeEntry, RuntimeInventory, RuntimeStatus};
 pub use limits::CountLimit;

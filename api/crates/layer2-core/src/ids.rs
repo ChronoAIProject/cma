@@ -87,6 +87,12 @@ generated_id!(
     "Stable public identifier of a CMA Trigger."
 );
 generated_id!(PlacementId, "plc_", "Identifier of a Trigger placement.");
+generated_id!(LaunchId, "lch_", "Identifier of a Trigger Launch.");
+generated_id!(
+    ServiceHandoffId,
+    "hnd_",
+    "Identifier of a service-connection handoff."
+);
 
 #[cfg(test)]
 mod tests {
@@ -115,5 +121,7 @@ mod tests {
         assert!(TriggerId::generate().as_str().starts_with("trg_"));
         assert!(PublicTriggerId::generate().as_str().starts_with("pub_"));
         assert!(PlacementId::generate().as_str().starts_with("plc_"));
+        assert!(LaunchId::generate().as_str().starts_with("lch_"));
+        assert!(ServiceHandoffId::generate().as_str().starts_with("hnd_"));
     }
 }
