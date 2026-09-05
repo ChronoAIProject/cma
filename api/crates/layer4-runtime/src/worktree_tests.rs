@@ -113,3 +113,133 @@ async fn real_git_worktrees_use_the_contract_path_and_branch() {
     assert!(branches.stdout.is_empty());
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[tokio::test]
+async fn inspect_add_recovers_the_exact_published_worktree() {
+    let home = root();
+    let workspace = crate::workspace_source::prepare(
+        &home,
+        true,
+        &WorkspaceRequest::new(
+            "workspace:wks_project_recover:prepare:v1",
+            "wks_project_recover",
+            "project",
+            WorkspaceSource::Init,
+        ),
+    )
+    .await
+    .unwrap();
+    let request = WorktreeRequest::new(
+        "worktree:project:agent-1:add:v1",
+        "project",
+        "agent-1",
+        workspace.resolved_commit,
+    );
+    let receipt = add(&home, true, &request).await.unwrap();
+
+    assert_eq!(
+        inspect_add(&home, true, &request).await.unwrap(),
+        Some(receipt)
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn remove_converges_when_only_the_branch_remains() {
+    let home = root();
+    let workspace = crate::workspace_source::prepare(
+        &home,
+        true,
+        &WorkspaceRequest::new(
+            "workspace:wks_project_path_gone:prepare:v1",
+            "wks_project_path_gone",
+            "project",
+            WorkspaceSource::Init,
+        ),
+    )
+    .await
+    .unwrap();
+    let request = WorktreeRequest::new(
+        "worktree:project:agent-1:add:v1",
+        "project",
+        "agent-1",
+        workspace.resolved_commit,
+    );
+    let receipt = add(&home, true, &request).await.unwrap();
+    let repository = home.join("project");
+    let git = GitRunner::new(true);
+    git.checked(
+        &repository,
+        ["worktree", "remove", "--force", receipt.path.as_str()],
+        "remove fixture worktree path",
+    )
+    .await
+    .unwrap();
+    assert!(!Path::new(&receipt.path).exists());
+    assert!(branch_exists(&git, &repository, "cma/agent-1")
+        .await
+        .unwrap());
+
+    remove(
+        &home,
+        true,
+        &WorktreeRef::new("worktree:project:agent-1:remove:v1", "project", "agent-1"),
+    )
+    .await
+    .unwrap();
+    assert!(!branch_exists(&git, &repository, "cma/agent-1")
+        .await
+        .unwrap());
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn remove_converges_when_only_the_worktree_path_remains() {
+    let home = root();
+    let workspace = crate::workspace_source::prepare(
+        &home,
+        true,
+        &WorkspaceRequest::new(
+            "workspace:wks_project_branch_gone:prepare:v1",
+            "wks_project_branch_gone",
+            "project",
+            WorkspaceSource::Init,
+        ),
+    )
+    .await
+    .unwrap();
+    let request = WorktreeRequest::new(
+        "worktree:project:agent-1:add:v1",
+        "project",
+        "agent-1",
+        workspace.resolved_commit,
+    );
+    let receipt = add(&home, true, &request).await.unwrap();
+    let repository = home.join("project");
+    let path = Path::new(&receipt.path);
+    let git = GitRunner::new(true);
+    git.checked(path, ["switch", "--detach"], "detach fixture worktree")
+        .await
+        .unwrap();
+    git.checked(
+        &repository,
+        ["branch", "-D", "cma/agent-1"],
+        "remove fixture worktree branch",
+    )
+    .await
+    .unwrap();
+    assert!(path.is_dir());
+    assert!(!branch_exists(&git, &repository, "cma/agent-1")
+        .await
+        .unwrap());
+
+    remove(
+        &home,
+        true,
+        &WorktreeRef::new("worktree:project:agent-1:remove:v1", "project", "agent-1"),
+    )
+    .await
+    .unwrap();
+    assert!(!path.exists());
+    std::fs::remove_dir_all(home).unwrap();
+}
