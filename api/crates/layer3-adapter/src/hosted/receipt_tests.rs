@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
-use super::{HostedBackend, InMemoryHostedBackend};
+use super::{HostedAgentOpenSettings, HostedBackend, InMemoryHostedBackend};
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{
@@ -136,11 +136,12 @@ impl HostedBackend for CorruptingBackend {
         handle: &RuntimeHandle,
         launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
+        settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         let (channel, mut receipt) = self
             .inner
-            .open_agent(handle, launch, resume_conversation, updates)
+            .open_agent(handle, launch, resume_conversation, settings, updates)
             .await?;
         self.corrupt_open_receipt(&mut receipt);
         Ok((channel, receipt))

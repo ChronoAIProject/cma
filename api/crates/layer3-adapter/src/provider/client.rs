@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt as _;
 use serde::Deserialize;
 
 use super::reclaimer::CapturedSandbox;
@@ -12,6 +13,8 @@ use crate::RuntimeHandle;
 
 const API_KEY_HEADER: &str = "OPEN-SANDBOX-API-KEY";
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(240);
+const PROVIDER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const PROVIDER_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const LIST_PAGE_SIZE: u32 = 100;
 const LIST_PAGE_LIMIT: u32 = 50;
 
@@ -48,6 +51,8 @@ impl SandboxClient {
             api_key: Arc::from(api_key.into()),
             http: reqwest::Client::builder()
                 .timeout(PROVIDER_TIMEOUT)
+                .connect_timeout(PROVIDER_CONNECT_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("provider HTTP client builds"),
             reclaimer: None,
@@ -126,15 +131,17 @@ impl SandboxClient {
                 .send()
                 .await
                 .map_err(|error| ProviderError::Unreachable(format!("GET {url}: {error}")))?;
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let (status, body) = bounded_body(response).await?;
             if !status.is_success() {
                 return Err(ProviderError::Rejected {
                     status: status.as_u16(),
-                    detail: format!("listing sandboxes page {pages_read}: {}", truncate(&body)),
+                    detail: format!(
+                        "listing sandboxes page {pages_read}: {}",
+                        truncate(&String::from_utf8_lossy(&body))
+                    ),
                 });
             }
-            let listing: Listing = serde_json::from_str(&body).map_err(|error| {
+            let listing: Listing = serde_json::from_slice(&body).map_err(|error| {
                 ProviderError::Malformed(format!(
                     "sandbox listing page {pages_read} not readable: {error}"
                 ))
@@ -210,9 +217,10 @@ impl SandboxClient {
         if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
             return Ok(());
         }
+        let (_, body) = bounded_body(response).await?;
         Err(ProviderError::Rejected {
             status: status.as_u16(),
-            detail: truncate(&response.text().await.unwrap_or_default()),
+            detail: truncate(&String::from_utf8_lossy(&body)),
         })
     }
 }
@@ -220,15 +228,42 @@ impl SandboxClient {
 async fn decode<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ProviderError> {
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let (status, body) = bounded_body(response).await?;
     if !status.is_success() {
         return Err(ProviderError::Rejected {
             status: status.as_u16(),
-            detail: truncate(&body),
+            detail: truncate(&String::from_utf8_lossy(&body)),
         });
     }
-    serde_json::from_str(&body).map_err(|error| ProviderError::Malformed(error.to_string()))
+    serde_json::from_slice(&body).map_err(|error| ProviderError::Malformed(error.to_string()))
+}
+
+async fn bounded_body(
+    response: reqwest::Response,
+) -> Result<(reqwest::StatusCode, Vec<u8>), ProviderError> {
+    let status = response.status();
+    if response
+        .content_length()
+        .is_some_and(|length| length > PROVIDER_RESPONSE_BYTES as u64)
+    {
+        return Err(ProviderError::Malformed(
+            "provider response exceeded the size limit".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            ProviderError::Unreachable(format!("reading provider response: {error}"))
+        })?;
+        if bytes.len().saturating_add(chunk.len()) > PROVIDER_RESPONSE_BYTES {
+            return Err(ProviderError::Malformed(
+                "provider response exceeded the size limit".into(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok((status, bytes))
 }
 
 fn truncate(body: &str) -> String {

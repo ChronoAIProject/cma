@@ -67,6 +67,24 @@ async fn serve(replies: Vec<Reply>) -> Fixture {
     }
 }
 
+async fn serve_raw(response: String) -> (String, tokio::task::JoinHandle<String>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("raw fixture binds");
+    let address = listener.local_addr().expect("raw fixture address");
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("raw fixture accepts");
+        let request = read_request(&mut stream).await;
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("raw fixture writes");
+        stream.shutdown().await.expect("raw fixture closes");
+        request
+    });
+    (format!("http://{address}"), task)
+}
+
 async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
     let mut bytes = Vec::new();
     let header_end = loop {
@@ -213,5 +231,55 @@ fn provider_client_never_places_its_key_in_the_base_url() {
     assert_eq!(
         client.auth_header(),
         ("OPEN-SANDBOX-API-KEY", "provider-secret")
+    );
+}
+
+#[tokio::test]
+async fn provider_client_rejects_oversized_responses_before_reading_them() {
+    let (base_url, request) = serve_raw(format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        4 * 1024 * 1024 + 1
+    ))
+    .await;
+    let error = SandboxClient::new(base_url, "provider-secret")
+        .get("runtime-1")
+        .await
+        .expect_err("oversized provider response is refused");
+
+    assert!(matches!(error, ProviderError::Malformed(detail)
+        if detail.contains("size limit")));
+    assert!(request
+        .await
+        .expect("raw fixture completes")
+        .starts_with("GET /v1/sandboxes/runtime-1 HTTP/1.1"));
+}
+
+#[tokio::test]
+async fn provider_redirects_are_not_followed_or_given_the_api_key() {
+    let redirect_target = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("redirect target binds");
+    let target = redirect_target
+        .local_addr()
+        .expect("redirect target address");
+    let (base_url, request) = serve_raw(format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://{target}/stolen\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    ))
+    .await;
+    let error = SandboxClient::new(base_url, "provider-secret")
+        .get("runtime-1")
+        .await
+        .expect_err("provider redirect is refused");
+
+    assert!(matches!(error, ProviderError::Rejected { status: 302, .. }));
+    let request = request.await.expect("redirect fixture completes");
+    assert!(request
+        .to_ascii_lowercase()
+        .contains("open-sandbox-api-key: provider-secret"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), redirect_target.accept())
+            .await
+            .is_err(),
+        "redirect target unexpectedly received the provider credential"
     );
 }

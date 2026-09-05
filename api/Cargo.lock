@@ -1678,6 +1678,7 @@ dependencies = [
  "agent-client-protocol-schema",
  "async-trait",
  "base64",
+ "futures-util",
  "k8s-openapi",
  "kube",
  "reqwest",
@@ -1686,6 +1687,9 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3292,7 +3296,11 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite 0.24.0",
 ]
 
@@ -3464,6 +3472,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.8",
+ "rustls",
+ "rustls-pki-types",
  "sha1 0.10.7",
  "thiserror 1.0.69",
  "utf-8",

@@ -1,0 +1,365 @@
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+
+use super::acp::{Blocked, Bridge};
+use super::update_relay::UpdateRelay;
+use crate::{
+    ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind,
+    PermissionRequest, SessionUpdate,
+};
+
+const PERMISSION_LOCATOR_VERSION: u8 = 1;
+const PERMISSION_ID_DOMAIN: &[u8] = b"chrono-hosted-permission-v1\0";
+const MAX_PERMISSION_CALL_BYTES: usize = 256;
+
+impl Bridge {
+    pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) {
+        let Ok(frame) = serde_json::from_slice::<serde_json::Value>(payload) else {
+            tracing::warn!(bytes = payload.len(), "ACP conversation frame was not JSON");
+            return;
+        };
+
+        if let Some(id) = frame.get("id").and_then(serde_json::Value::as_i64) {
+            if frame.get("method").is_none() {
+                let waiting = self.pending.lock().await.remove(&id);
+                if let Some(waiting) = waiting {
+                    if waiting.prompt {
+                        updates.send(super::acp_turn::scoped_turn_outcome(
+                            super::acp_turn::turn_outcome(frame.clone()),
+                            true,
+                        ));
+                    }
+                    let _ = waiting.answer.send(frame);
+                    return;
+                }
+                if self
+                    .orphaned_prompt_response
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    self.answered.lock().await.clear();
+                    updates.send(super::acp_turn::turn_outcome(frame).into_update());
+                }
+                return;
+            }
+        }
+
+        match frame.get("method").and_then(serde_json::Value::as_str) {
+            Some("session/update") => self.session_update(&frame, updates).await,
+            Some("session/request_permission") => self.blocked_on(frame, updates).await,
+            Some("elicitation/create") => self.sign_in(&frame, updates).await,
+            Some(method) => {
+                if let Some(id) = frame.get("id") {
+                    tracing::info!(%method, "refusing ACP request not offered by this client");
+                    let _ = self
+                        .send(&serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32601,
+                                "message": "not offered by this client"
+                            },
+                        }))
+                        .await;
+                }
+            }
+            None => {}
+        }
+    }
+
+    async fn session_update(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
+        let Some(session) = frame
+            .pointer("/params/sessionId")
+            .and_then(serde_json::Value::as_str)
+        else {
+            tracing::warn!("ACP session update named no conversation");
+            return;
+        };
+        let Some(value) = frame.pointer("/params/update") else {
+            return;
+        };
+        match serde_json::from_value::<SessionUpdate>(value.clone()) {
+            Ok(update) => {
+                self.route_update(session, ConversationUpdate::Said(update), updates)
+                    .await;
+            }
+            Err(error) => {
+                tracing::debug!(%error, "ACP update is newer than this client understands");
+            }
+        }
+    }
+
+    async fn sign_in(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
+        let Some((url, code, message)) = sign_in_from(frame.get("params")) else {
+            tracing::warn!("ACP sign-in request contained no URL");
+            if let Some(id) = frame.get("id") {
+                let _ = self
+                    .send(&serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": { "action": "decline" },
+                    }))
+                    .await;
+            }
+            return;
+        };
+        updates.send(ConversationUpdate::SignInRequired { url, code, message });
+        if let Some(id) = frame.get("id") {
+            let _ = self
+                .send(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "action": "accept" },
+                }))
+                .await;
+        }
+    }
+
+    async fn blocked_on(&self, frame: serde_json::Value, updates: &UpdateRelay) {
+        let Some(params) = frame.get("params") else {
+            return;
+        };
+        let Ok(request) = serde_json::from_value::<crate::RequestPermissionRequest>(params.clone())
+        else {
+            tracing::warn!("ACP permission request has an unreadable shape");
+            return;
+        };
+        let session = request.session_id.0.to_string();
+        if self.session().await.as_deref() != Ok(session.as_str()) {
+            tracing::warn!("discarding permission request for another conversation");
+            self.refuse_invalid_call(&frame).await;
+            return;
+        }
+        let Some(call) = frame.get("id").cloned().filter(valid_call) else {
+            tracing::warn!("ACP permission request has an invalid correlation id");
+            return;
+        };
+        let locator = permission_locator(&session, &call, &request.options);
+        let id = permission_id(&locator);
+        if let Some(answer) = self.answered.lock().await.get(&id).cloned() {
+            let _ = self.send(&answer).await;
+            return;
+        }
+        let owns_prompt_waiter = self
+            .owned_prompt_waiters
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0;
+        self.blocked.lock().await.insert(
+            id.clone(),
+            Blocked {
+                call,
+                options: request.options.clone(),
+                owns_prompt_waiter,
+            },
+        );
+        self.route_update(
+            &session,
+            ConversationUpdate::Asked(PermissionRequest {
+                id,
+                locator: Some(locator),
+                request,
+            }),
+            updates,
+        )
+        .await;
+    }
+
+    async fn refuse_invalid_call(&self, frame: &serde_json::Value) {
+        if let Some(id) = frame.get("id") {
+            let _ = self
+                .send(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": "conversation does not match" },
+                }))
+                .await;
+        }
+    }
+}
+
+pub(super) fn scope_activity(update: ConversationUpdate, owns_prompt: bool) -> ConversationUpdate {
+    let is_activity = matches!(
+        update.turn_evidence(),
+        Some(crate::TurnEvidence::Activity(_))
+    );
+    if is_activity && !owns_prompt {
+        update.without_prompt_evidence()
+    } else {
+        update
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredPermissionKind {
+    AllowOnce,
+    AllowAlways,
+    RejectOnce,
+    RejectAlways,
+}
+
+impl StoredPermissionKind {
+    fn from_option(kind: PermissionOptionKind) -> Option<Self> {
+        match kind {
+            PermissionOptionKind::AllowOnce => Some(Self::AllowOnce),
+            PermissionOptionKind::AllowAlways => Some(Self::AllowAlways),
+            PermissionOptionKind::RejectOnce => Some(Self::RejectOnce),
+            PermissionOptionKind::RejectAlways => Some(Self::RejectAlways),
+            _ => None,
+        }
+    }
+}
+
+impl From<StoredPermissionKind> for PermissionOptionKind {
+    fn from(kind: StoredPermissionKind) -> Self {
+        match kind {
+            StoredPermissionKind::AllowOnce => Self::AllowOnce,
+            StoredPermissionKind::AllowAlways => Self::AllowAlways,
+            StoredPermissionKind::RejectOnce => Self::RejectOnce,
+            StoredPermissionKind::RejectAlways => Self::RejectAlways,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredPermissionOption {
+    id: String,
+    kind: StoredPermissionKind,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostedPermissionLocator {
+    version: u8,
+    session: String,
+    call: serde_json::Value,
+    options: Vec<StoredPermissionOption>,
+}
+
+fn permission_locator(
+    session: &str,
+    call: &serde_json::Value,
+    options: &[PermissionOption],
+) -> crate::PermissionLocator {
+    let locator = HostedPermissionLocator {
+        version: PERMISSION_LOCATOR_VERSION,
+        session: session.to_string(),
+        call: call.clone(),
+        options: options
+            .iter()
+            .filter_map(|option| {
+                Some(StoredPermissionOption {
+                    id: option.option_id.0.to_string(),
+                    kind: StoredPermissionKind::from_option(option.kind)?,
+                })
+            })
+            .collect(),
+    };
+    crate::PermissionLocator::new(
+        serde_json::to_string(&locator).expect("permission locator is serializable"),
+    )
+}
+
+pub(super) fn permission_id(locator: &crate::PermissionLocator) -> String {
+    let mut digest = Sha256::new();
+    digest.update(PERMISSION_ID_DOMAIN);
+    digest.update(locator.as_str().as_bytes());
+    hex(&digest.finalize())
+}
+
+pub(super) fn blocked_from_locator(
+    id: &str,
+    locator: &crate::PermissionLocator,
+    session: &str,
+) -> crate::Result<Blocked> {
+    if permission_id(locator) != id {
+        return Err(crate::AdapterError::Rejected(
+            "permission locator does not belong to this request".into(),
+        ));
+    }
+    let stored: HostedPermissionLocator = serde_json::from_str(locator.as_str())
+        .map_err(|_| crate::AdapterError::Rejected("permission locator is not readable".into()))?;
+    if stored.version != PERMISSION_LOCATOR_VERSION
+        || stored.session != session
+        || !valid_call(&stored.call)
+    {
+        return Err(crate::AdapterError::Rejected(
+            "permission locator belongs to another conversation or version".into(),
+        ));
+    }
+    Ok(Blocked {
+        call: stored.call,
+        options: stored
+            .options
+            .into_iter()
+            .map(|option| {
+                PermissionOption::new(
+                    crate::PermissionOptionId::new(option.id),
+                    String::new(),
+                    option.kind.into(),
+                )
+            })
+            .collect(),
+        owns_prompt_waiter: false,
+    })
+}
+
+pub(crate) fn sign_in_from(
+    params: Option<&serde_json::Value>,
+) -> Option<(String, Option<String>, Option<String>)> {
+    let text = |key: &str| {
+        params
+            .and_then(|params| params.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let url = text("url")?;
+    Some((
+        url,
+        text("userCode").or_else(|| text("code")),
+        text("message"),
+    ))
+}
+
+pub(crate) fn outcome_for(
+    decision: PermissionDecision,
+    options: &[PermissionOption],
+) -> serde_json::Value {
+    let wanted: &[PermissionOptionKind] = match decision {
+        PermissionDecision::Allow => &[
+            PermissionOptionKind::AllowOnce,
+            PermissionOptionKind::AllowAlways,
+        ],
+        PermissionDecision::Deny => &[
+            PermissionOptionKind::RejectOnce,
+            PermissionOptionKind::RejectAlways,
+        ],
+        PermissionDecision::Abort => &[],
+    };
+    for kind in wanted {
+        if let Some(option) = options.iter().find(|option| &option.kind == kind) {
+            return serde_json::json!({
+                "outcome": "selected",
+                "optionId": option.option_id.0.to_string(),
+            });
+        }
+    }
+    serde_json::json!({ "outcome": "cancelled" })
+}
+
+fn valid_call(call: &serde_json::Value) -> bool {
+    matches!(
+        call,
+        serde_json::Value::String(_) | serde_json::Value::Number(_)
+    ) && call.to_string().len() <= MAX_PERMISSION_CALL_BYTES
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}

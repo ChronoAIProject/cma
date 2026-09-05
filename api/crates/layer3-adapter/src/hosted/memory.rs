@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, Mutex};
 
 use super::deployment::provider_request_identity;
-use super::HostedBackend;
+use super::{HostedAgentOpenSettings, HostedBackend};
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{
     AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame, WireFailure,
@@ -347,6 +347,7 @@ impl HostedBackend for InMemoryHostedBackend {
         handle: &RuntimeHandle,
         launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
+        _settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         self.requests
