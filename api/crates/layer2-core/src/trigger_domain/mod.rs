@@ -15,6 +15,8 @@ mod launch_service_support;
 mod launch_store;
 mod launch_trust;
 mod launch_validation;
+mod launch_worker_control;
+mod launch_worker_replacement;
 mod placement;
 mod preview;
 mod reference;
@@ -52,6 +54,7 @@ pub use launch_store::{
     LaunchStoreError, ServiceConnectionStore, DEFAULT_LAUNCH_EVENT_LIMIT, MAX_LAUNCH_EVENT_LIMIT,
 };
 pub use launch_trust::{LaunchTrustDisclosure, LaunchTrustManifest, LaunchTrustResource};
+pub use launch_worker_control::LaunchRequirementRefresh;
 pub use placement::{Placement, PlacementUpdate, MAX_LIVE_PLACEMENTS};
 pub use preview::{
     TriggerPreview, TriggerSizePreview, TriggerTechnicalPreview, TriggerTrustPreview,
@@ -73,7 +76,7 @@ pub use store::{
 };
 pub use worker_effects::{
     LaunchEffectKind, LaunchEffectRecord, LaunchEffectState, LaunchWorkLease, LaunchWorkState,
-    LaunchWorkStep,
+    LaunchWorkStep, MAX_LAUNCH_RETRY_DELAY_SECONDS, MAX_LAUNCH_WORK_ATTEMPTS,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,6 +417,9 @@ mod launch_progress_tests;
 
 #[cfg(test)]
 mod launch_store_tests;
+
+#[cfg(test)]
+mod launch_worker_control_tests;
 
 #[cfg(test)]
 mod launch_service_tests;

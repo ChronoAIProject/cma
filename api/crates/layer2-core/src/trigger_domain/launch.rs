@@ -92,6 +92,17 @@ pub enum LaunchBlockedReason {
     RecoveryRequired,
 }
 
+impl LaunchBlockedReason {
+    pub const fn is_wakeable(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionRequired { .. }
+                | Self::OrchestrationPaused
+                | Self::SandboxPausedReviving
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaunchStepKey {

@@ -1,10 +1,11 @@
 use crate::sandbox::{FirstMessageDelivery, FirstMessageRecord};
-use crate::{seconds_from_rfc3339, AgentId};
+use crate::AgentId;
 
 use super::launch_message_evidence::{
     observe_first_message, validate_first_message_record, EvidenceMode,
 };
 use super::launch_progress::{progress_error, require_command_time, settle_worker_command};
+use super::launch_worker_control::require_bounded_retry_time;
 use super::{
     Launch, LaunchBlockedReason, LaunchEffectState, LaunchEventKind, LaunchFailure, LaunchState,
     LaunchStepKey, LaunchStepStatus, LaunchWorkStep, TriggerError,
@@ -99,7 +100,7 @@ impl Launch {
         let command_at = at.clone();
         let original = self.clone();
         require_command_time(&original, &command_at)?;
-        require_retry_time(&command_at, &retry_at)?;
+        require_bounded_retry_time(&command_at, &retry_at)?;
         let result = (|| {
             let work_step = self.work.step;
             if !message_work_step(work_step) {
@@ -138,7 +139,7 @@ impl Launch {
         let command_at = at.clone();
         let original = self.clone();
         require_command_time(&original, &command_at)?;
-        require_retry_time(&command_at, &retry_at)?;
+        require_bounded_retry_time(&command_at, &retry_at)?;
         let result = (|| {
             if self.state != LaunchState::MessagePending
                 || self.first_message != FirstMessageDelivery::RecoveryRequired
@@ -423,13 +424,6 @@ fn schedule_without_lease(
 fn finish_in_place(launch: &mut Launch, at: String) -> Result<(), TriggerError> {
     launch.updated_at = at;
     launch.bump_revision()
-}
-
-fn require_retry_time(at: &str, retry_at: &str) -> Result<(), TriggerError> {
-    match (seconds_from_rfc3339(at), seconds_from_rfc3339(retry_at)) {
-        (Some(command), Some(retry)) if retry >= command => Ok(()),
-        _ => Err(progress_error()),
-    }
 }
 
 fn message_work_step(step: LaunchWorkStep) -> bool {

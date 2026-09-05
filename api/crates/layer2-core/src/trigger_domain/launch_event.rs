@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{AgentId, LaunchId, SandboxId, ServiceId, WorkspaceId};
 
 use super::{
-    LaunchBlockedReason, LaunchFailure, LaunchState, LaunchStep, RepeatChoice,
+    LaunchBlockedReason, LaunchEffectKind, LaunchFailure, LaunchState, LaunchStep, RepeatChoice,
     ServiceRequirementState,
 };
 use crate::sandbox::FirstMessageDelivery;
@@ -24,9 +24,17 @@ pub enum LaunchEventKind {
         sandbox_id: SandboxId,
         reused: bool,
     },
+    SandboxReplaced {
+        previous_sandbox_id: SandboxId,
+        sandbox_id: SandboxId,
+    },
     WorkspaceResolved {
         workspace_id: WorkspaceId,
         reused: bool,
+    },
+    WorkspaceReplaced {
+        previous_workspace_id: WorkspaceId,
+        workspace_id: WorkspaceId,
     },
     AgentResolved {
         agent_id: AgentId,
@@ -44,6 +52,17 @@ pub enum LaunchEventKind {
     },
     Resumed {
         reason: LaunchBlockedReason,
+    },
+    Deferred {
+        retry_at: String,
+    },
+    RetryScheduled {
+        attempt: u32,
+        retry_at: String,
+    },
+    EffectReconciled {
+        kind: LaunchEffectKind,
+        result_id: String,
     },
     FirstMessageChanged {
         state: FirstMessageDelivery,
