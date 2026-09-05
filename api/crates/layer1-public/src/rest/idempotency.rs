@@ -30,6 +30,10 @@ impl<T> RequestBody<T> {
     pub(super) fn into_parts(self) -> (Result<T, BodyProblem>, [u8; 32]) {
         (self.value, self.fingerprint)
     }
+
+    pub(super) fn value(&self) -> Option<&T> {
+        self.value.as_ref().ok()
+    }
 }
 
 impl<T, S> FromRequest<S> for RequestBody<T>
