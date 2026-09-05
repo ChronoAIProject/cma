@@ -21,6 +21,7 @@ mod event;
 mod first_message;
 mod first_message_dispatch;
 mod first_message_service;
+mod hierarchy;
 mod limits;
 mod provision;
 mod queued_message;
@@ -82,6 +83,12 @@ pub use first_message::{
     FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
 };
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
+pub use hierarchy::{
+    AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyRecord, SandboxHierarchySummary,
+    SandboxHierarchyView, SandboxInventoryRecord, WorkspaceHierarchyRecord,
+    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchySummary,
+};
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
 pub use queued_message::{
@@ -119,6 +126,8 @@ mod agent_operation_tests;
 mod agent_reads_tests;
 #[cfg(test)]
 mod agent_service_tests;
+#[cfg(test)]
+mod hierarchy_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

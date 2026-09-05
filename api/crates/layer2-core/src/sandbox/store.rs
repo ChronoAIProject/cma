@@ -482,4 +482,5 @@ fn page<T: Clone>(
 }
 
 mod admin_memory;
+mod hierarchy_memory;
 mod memory;
