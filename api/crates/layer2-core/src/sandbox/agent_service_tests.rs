@@ -321,6 +321,10 @@ fn service_error_codes_are_stable() {
         ),
         (AgentServiceError::ControlConflict, "agent_control_conflict"),
         (
+            AgentServiceError::LogCapacityExceeded,
+            "agent_log_capacity_exceeded",
+        ),
+        (
             AgentServiceError::InvalidRequest("bad".into()),
             "invalid_agent_request",
         ),

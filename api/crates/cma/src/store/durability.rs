@@ -1,13 +1,13 @@
 //! Mongo collection defaults required by authority-bearing records.
 
-use mongodb::options::{CollectionOptions, WriteConcern};
+use mongodb::options::{CollectionOptions, ReadConcern, WriteConcern};
 use mongodb::{Collection, Database};
 
-/// Open a collection whose writes are acknowledged by a replica-set majority.
+/// Open a collection whose reads and writes use a replica-set majority.
 ///
-/// Setting this on the collection makes it apply equally to inserts, CAS
-/// replacements, deletes, and find-and-modify operations. A caller adding a
-/// new write cannot accidentally fall back to the driver's `w: 1` default.
+/// Setting both concerns on the collection prevents authority decisions from
+/// observing rollbackable local state and makes every write wait for durable
+/// acknowledgement. Multi-record decisions still use a snapshot transaction.
 pub(super) fn majority_collection<T: Send + Sync>(
     database: &Database,
     name: &str,
@@ -15,6 +15,7 @@ pub(super) fn majority_collection<T: Send + Sync>(
     database.collection_with_options(
         name,
         CollectionOptions::builder()
+            .read_concern(ReadConcern::majority())
             .write_concern(WriteConcern::majority())
             .build(),
     )
@@ -22,17 +23,21 @@ pub(super) fn majority_collection<T: Send + Sync>(
 
 #[cfg(test)]
 mod tests {
-    use mongodb::options::Acknowledgment;
+    use mongodb::options::{Acknowledgment, ReadConcernLevel};
 
     use super::*;
 
     #[tokio::test]
-    async fn authority_collections_request_majority_acknowledgement() {
+    async fn authority_collections_require_majority_reads_and_writes() {
         let client = mongodb::Client::with_uri_str("mongodb://127.0.0.1:27017")
             .await
             .expect("URI parses without opening a connection");
         let collection =
             majority_collection::<mongodb::bson::Document>(&client.database("test"), "authority");
+        assert_eq!(
+            collection.read_concern().map(|concern| &concern.level),
+            Some(&ReadConcernLevel::Majority)
+        );
         assert_eq!(
             collection
                 .write_concern()

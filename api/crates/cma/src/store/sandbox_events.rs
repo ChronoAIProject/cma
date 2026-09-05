@@ -5,13 +5,14 @@ use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind};
 use mongodb::bson::{doc, Document};
-use mongodb::options::IndexOptions;
+use mongodb::options::{IndexOptions, ReadConcern};
 use mongodb::{ClientSession, Collection, IndexModel};
 
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, read_record,
     record_bson, require_version, signed, start_transaction, string_field_matches, unsigned,
-    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    TRANSACTION_ATTEMPTS,
 };
 
 pub(super) fn sandbox_event_indexes() -> Vec<IndexModel> {
@@ -169,6 +170,67 @@ pub(super) async fn reconcile_event(
     }
 }
 
+pub(super) async fn reconcile_event_with_snapshot_session(
+    store: &MongoSandboxStore,
+    expected: &SandboxEvent,
+    session: &mut ClientSession,
+) -> Result<Option<SandboxEvent>, SandboxStoreError> {
+    let found = store
+        .sandbox_events
+        .find_one(doc! { "_id": event_id(&expected.sandbox_id, expected.seq) })
+        .read_concern(ReadConcern::snapshot())
+        .session(session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    match found {
+        Some(document) => {
+            let actual = read_event(&document)?;
+            if &actual == expected {
+                Ok(Some(actual))
+            } else {
+                Err(SandboxStoreError::SequenceConflict)
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+async fn reconcile_append_after_unknown(
+    store: &MongoSandboxStore,
+    expected: &SandboxEvent,
+    snapshot_time: mongodb::bson::Timestamp,
+) -> Result<Option<SandboxEvent>, SandboxStoreError> {
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .snapshot_time(snapshot_time)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    let aggregate = store
+        .sandboxes
+        .find_one(doc! { "_id": expected.sandbox_id.as_str() })
+        .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    let Some(aggregate) = aggregate else {
+        return Ok(None);
+    };
+    require_version(&aggregate).map_err(SandboxStoreError::Corrupt)?;
+    let last_seq = aggregate
+        .get_i64("last_seq")
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+        .and_then(|seq| {
+            unsigned(seq, "sandbox event sequence").map_err(SandboxStoreError::Corrupt)
+        })?;
+    if last_seq != expected.seq {
+        return Ok(None);
+    }
+    reconcile_event_with_snapshot_session(store, expected, &mut session).await
+}
+
 #[async_trait::async_trait]
 impl SandboxEventStore for MongoSandboxStore {
     async fn append_sandbox_event(
@@ -225,11 +287,29 @@ impl SandboxEventStore for MongoSandboxStore {
                 CommitOutcome::Committed => return Ok(event),
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
-                    return reconcile_event(self, &event).await?.ok_or_else(|| {
+                    let snapshot_time = session.operation_time().ok_or_else(|| {
                         SandboxStoreError::Unavailable(format!(
-                            "sandbox event commit remained unknown: {error}"
+                            "sandbox event commit remained unknown without an operation time: {error}"
                         ))
-                    });
+                    })?;
+                    let commit_error = error.to_string();
+                    let unresolved_error = commit_error.clone();
+                    let store = self.clone();
+                    return wait_for_reconciliation("sandbox event commit", async move {
+                        reconcile_append_after_unknown(&store, &event, snapshot_time)
+                            .await?
+                            .ok_or_else(|| {
+                                SandboxStoreError::Unavailable(format!(
+                                    "sandbox event commit remained unknown: {unresolved_error}"
+                                ))
+                            })
+                    })
+                    .await
+                    .map_err(|deadline| {
+                        SandboxStoreError::Unavailable(format!(
+                            "{deadline}; ambiguous commit: {commit_error}"
+                        ))
+                    })?;
                 }
                 CommitOutcome::Failed(error) => {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));

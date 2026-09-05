@@ -25,6 +25,7 @@ mod agent_lifecycle;
 pub use agent_lifecycle::{AgentWorkMutation, AgentWorkerStore, VersionedWorktree};
 
 pub const MAX_PAGE_SIZE: u16 = 200;
+pub const MAX_AGENT_LOG_BATCH_SIZE: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageRequest {
@@ -66,6 +67,8 @@ pub enum SandboxStoreError {
     Conflict,
     #[error("event sequence would not be gap-free")]
     SequenceConflict,
+    #[error("agent log capacity exceeded")]
+    AgentLogCapacityExceeded,
     #[error("sandbox limit reached: {live} of {limit}")]
     LimitReached { limit: u16, live: u16 },
     #[error("sandbox is not ready for workspace admission")]

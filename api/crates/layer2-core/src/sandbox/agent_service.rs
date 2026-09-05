@@ -59,6 +59,8 @@ pub enum AgentServiceError {
     StopReasonConflict,
     #[error("agent changed while the operation was requested")]
     ControlConflict,
+    #[error("agent log capacity exceeded")]
+    LogCapacityExceeded,
     #[error("invalid agent request: {0}")]
     InvalidRequest(String),
     #[error("agent data is not usable: {0}")]
@@ -82,6 +84,7 @@ impl AgentServiceError {
             Self::WorkConflict { .. } => "agent_work_conflict",
             Self::StopReasonConflict => "agent_stop_reason_conflict",
             Self::ControlConflict => "agent_control_conflict",
+            Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
             Self::InvalidRequest(_) => "invalid_agent_request",
             Self::Corrupt(_) => "stored_agent_corrupt",
             Self::Unavailable(_) => "agent_service_unavailable",
@@ -376,6 +379,7 @@ fn store_error(error: SandboxStoreError) -> AgentServiceError {
             AgentServiceError::LimitReached { limit, live }
         }
         SandboxStoreError::AgentCreationConflict => AgentServiceError::CreationConflict,
+        SandboxStoreError::AgentLogCapacityExceeded => AgentServiceError::LogCapacityExceeded,
         SandboxStoreError::Corrupt(detail) => AgentServiceError::Corrupt(detail),
         SandboxStoreError::InvalidTransaction(detail) => AgentServiceError::Corrupt(detail.into()),
         other => AgentServiceError::Unavailable(other.to_string()),

@@ -3,10 +3,15 @@
 pub mod activity;
 mod agent_admission;
 mod agent_admission_records;
+mod agent_control_lineage;
+mod agent_control_receipt;
 mod agent_control_store;
+mod agent_control_transaction;
 mod agent_conversation_store;
 mod agent_log;
+mod agent_log_integrity;
 mod agent_profiles;
+mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;

@@ -10,12 +10,14 @@ use super::agent_admission_records::{
     reconcile_created, replay_after_duplicate, replay_in_transaction, AdmissionReceipt,
     CreatedReceipt, LoadError,
 };
-use super::agent_log::log_document;
+use super::agent_log::{log_document, scan_complete_log_with_session};
+use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
 use super::agents::{agent_document, LIVE_STATUSES};
 use super::sandbox_events::{append_in_transaction, TransactionEventError};
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
-    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
@@ -41,6 +43,15 @@ impl From<TransactionEventError> for ApplyError {
         match error {
             TransactionEventError::Domain(error) => Self::Domain(error),
             TransactionEventError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+impl From<TransactionLogError> for ApplyError {
+    fn from(error: TransactionLogError) -> Self {
+        match error {
+            TransactionLogError::Domain(error) => Self::Domain(error),
+            TransactionLogError::Driver(error) => Self::Driver(error),
         }
     }
 }
@@ -73,8 +84,18 @@ impl AgentAdmissionStore for MongoSandboxStore {
             }
             let receipt = match apply_admission(self, &admission, &mut session).await {
                 Ok(AdmissionReceipt::Existing(creation)) => {
-                    let _ = session.abort_transaction().await;
-                    return Ok(AgentAdmissionResult::Existing(*creation));
+                    match commit_transaction(&mut session).await {
+                        CommitOutcome::Committed => {
+                            return Ok(AgentAdmissionResult::Existing(*creation));
+                        }
+                        CommitOutcome::Retry(error) | CommitOutcome::Unknown(error) => {
+                            last_transient = Some(error.to_string());
+                            continue;
+                        }
+                        CommitOutcome::Failed(error) => {
+                            return Err(SandboxStoreError::Unavailable(error.to_string()));
+                        }
+                    }
                 }
                 Ok(AdmissionReceipt::Created(receipt)) => receipt,
                 Err(ApplyError::Domain(error)) => {
@@ -82,10 +103,24 @@ impl AgentAdmissionStore for MongoSandboxStore {
                     return Err(error);
                 }
                 Err(ApplyError::AgentDuplicate) => {
+                    let replay_time = session.operation_time();
                     let _ = session.abort_transaction().await;
-                    return replay_after_duplicate(self, &admission)
-                        .await?
-                        .ok_or(SandboxStoreError::Duplicate);
+                    let replay_time = replay_time.ok_or_else(|| {
+                        SandboxStoreError::Unavailable(
+                            "agent admission duplicate replay has no Mongo operation time".into(),
+                        )
+                    })?;
+                    let store = self.clone();
+                    return wait_for_reconciliation(
+                        "agent admission duplicate replay",
+                        async move {
+                            replay_after_duplicate(&store, &admission, replay_time)
+                                .await?
+                                .ok_or(SandboxStoreError::Duplicate)
+                        },
+                    )
+                    .await
+                    .map_err(SandboxStoreError::Unavailable)?;
                 }
                 Err(ApplyError::Driver(error)) if is_transient(&error) => {
                     let _ = session.abort_transaction().await;
@@ -103,13 +138,29 @@ impl AgentAdmissionStore for MongoSandboxStore {
                 }
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
-                    return if reconcile_created(self, &receipt).await? {
-                        Ok(AgentAdmissionResult::Created(receipt.creation))
-                    } else {
-                        Err(SandboxStoreError::Unavailable(format!(
-                            "agent admission commit remained unknown: {error}"
-                        )))
-                    };
+                    let reconciliation_time = session.operation_time().ok_or_else(|| {
+                        SandboxStoreError::Unavailable(format!(
+                            "agent admission commit remained unknown with no Mongo operation time: {error}"
+                        ))
+                    })?;
+                    let commit_error = error.to_string();
+                    let unresolved_error = commit_error.clone();
+                    let store = self.clone();
+                    return wait_for_reconciliation("agent admission commit", async move {
+                        if reconcile_created(&store, &receipt, reconciliation_time).await? {
+                            Ok(AgentAdmissionResult::Created(receipt.creation))
+                        } else {
+                            Err(SandboxStoreError::Unavailable(format!(
+                                "agent admission commit remained unknown: {unresolved_error}"
+                            )))
+                        }
+                    })
+                    .await
+                    .map_err(|deadline| {
+                        SandboxStoreError::Unavailable(format!(
+                            "{deadline}; ambiguous commit: {commit_error}"
+                        ))
+                    })?;
                 }
                 CommitOutcome::Failed(error) => {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
@@ -184,6 +235,14 @@ async fn apply_admission(
     let creation = admission
         .materialize(&workspace)
         .map_err(ApplyError::Domain)?;
+    let log_summary =
+        scan_complete_log_with_session(store, &creation.agent.id, 0, session, |_| Ok(())).await?;
+    ensure_append_capacity(
+        &log_summary,
+        std::slice::from_ref(&creation.initial_log),
+        AppendCapacity::Normal,
+    )
+    .map_err(ApplyError::Domain)?;
     let next_workspace = next_workspace(&workspace)?;
     let next_sandbox = next_sandbox(&sandbox, &admission.event_at)?;
     advance_workspace(store, &workspace, &next_workspace, session).await?;
@@ -351,3 +410,7 @@ fn classify_log_insert(error: mongodb::error::Error) -> ApplyError {
         ApplyError::Driver(error)
     }
 }
+
+#[cfg(test)]
+#[path = "agent_admission_mongo_integration_tests.rs"]
+mod mongo_integration_tests;

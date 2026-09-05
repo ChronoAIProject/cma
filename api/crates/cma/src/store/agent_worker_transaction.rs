@@ -4,12 +4,17 @@ use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, Versione
 use layer2_core::sandbox::{Agent, AgentLogEntry, AgentStatus, SandboxEvent, Worktree};
 use mongodb::bson::{doc, Bson};
 
-use super::agent_log::log_document;
+use super::agent_log::{log_document, scan_complete_log_with_session};
+use super::agent_log_integrity::{
+    ensure_append_batch_size, ensure_append_capacity, TransactionLogError,
+};
+use super::agent_worker_capacity::publication_capacity;
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_events::{append_in_transaction, TransactionEventError};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, record_bson, signed, start_transaction,
-    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    TRANSACTION_ATTEMPTS,
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
@@ -35,10 +40,20 @@ impl From<TransactionEventError> for ApplyError {
     }
 }
 
+impl From<TransactionLogError> for ApplyError {
+    fn from(error: TransactionLogError) -> Self {
+        match error {
+            TransactionLogError::Domain(error) => Self::Domain(error),
+            TransactionLogError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
 pub(super) async fn commit_agent_work(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
+    ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         if attempt > 0 {
@@ -79,15 +94,35 @@ pub(super) async fn commit_agent_work(
             CommitOutcome::Committed => return Ok(()),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
-                return if super::agent_worker_reconcile::reconcile_publication(store, &receipt)
+                let snapshot_time = session.operation_time().ok_or_else(|| {
+                    SandboxStoreError::Unavailable(format!(
+                        "agent work publication commit remained unknown without an operation time: {error}"
+                    ))
+                })?;
+                let commit_error = error.to_string();
+                let unresolved_error = commit_error.clone();
+                let store = store.clone();
+                return wait_for_reconciliation("agent work publication commit", async move {
+                    if super::agent_worker_reconcile::reconcile_publication_after_unknown(
+                        &store,
+                        &receipt,
+                        snapshot_time,
+                    )
                     .await?
-                {
-                    Ok(())
-                } else {
-                    Err(SandboxStoreError::Unavailable(format!(
-                        "agent work publication commit remained unknown: {error}"
-                    )))
-                };
+                    {
+                        Ok(())
+                    } else {
+                        Err(SandboxStoreError::Unavailable(format!(
+                            "agent work publication commit remained unknown: {unresolved_error}"
+                        )))
+                    }
+                })
+                .await
+                .map_err(|deadline| {
+                    SandboxStoreError::Unavailable(format!(
+                        "{deadline}; ambiguous commit: {commit_error}"
+                    ))
+                })?;
             }
             CommitOutcome::Failed(error) => {
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
@@ -117,6 +152,14 @@ async fn apply_publication(
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     validate_agent_mutation(&current, mutation)?;
+    let complete_log = scan_complete_log_with_session(
+        store,
+        &current.id,
+        current.conversation.last_seq,
+        session,
+        |_| Ok(()),
+    )
+    .await?;
 
     let current_worktree = match mutation.worktree.as_ref() {
         Some(versioned) => {
@@ -138,6 +181,12 @@ async fn apply_publication(
     };
 
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
+    ensure_append_capacity(
+        &complete_log,
+        &logs,
+        publication_capacity(&current, mutation),
+    )
+    .map_err(ApplyError::Domain)?;
     advance_agent(store, &current, &final_agent, mutation, session).await?;
     if let (Some(current), Some(versioned)) =
         (current_worktree.as_ref(), mutation.worktree.as_ref())
@@ -190,6 +239,7 @@ fn validate_agent_mutation(
         || mutation.holder.trim().is_empty()
         || mutation.fence == 0
         || !current.work.owns(&mutation.holder, mutation.fence)
+        || !agent_status_change_is_valid(current.status, next.status)
         || immutable_agent_fields_changed(current, next)
         || next.work.next_fence != current.work.next_fence
         || next
@@ -204,6 +254,10 @@ fn validate_agent_mutation(
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     Ok(())
+}
+
+pub(super) fn agent_status_change_is_valid(current: AgentStatus, next: AgentStatus) -> bool {
+    current == next || current.transition(next).is_ok()
 }
 
 pub(super) fn stop_intent_change_is_valid(current: &Agent, next: &Agent) -> bool {

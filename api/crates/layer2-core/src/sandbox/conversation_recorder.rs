@@ -79,7 +79,12 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                         turn_closed: change.turn_closed,
                     });
                 }
-                Err(SandboxStoreError::Conflict | SandboxStoreError::SequenceConflict) => {}
+                Err(SandboxStoreError::Conflict) => {}
+                Err(SandboxStoreError::SequenceConflict) => {
+                    return Err(AgentConversationError::Corrupt(
+                        "agent log sequence is inconsistent".into(),
+                    ));
+                }
                 Err(error) => return Err(store_error(error)),
             }
         }
@@ -92,6 +97,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
 fn store_error(error: SandboxStoreError) -> AgentConversationError {
     match error {
         SandboxStoreError::NotFound => AgentConversationError::NotFound,
+        SandboxStoreError::AgentLogCapacityExceeded => AgentConversationError::CapacityExceeded,
         SandboxStoreError::Corrupt(detail) => AgentConversationError::Corrupt(detail),
         other => AgentConversationError::Unavailable(other.to_string()),
     }

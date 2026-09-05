@@ -1,5 +1,8 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
 
+use std::future::Future;
+use std::time::Duration;
+
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::error::{
@@ -9,6 +12,7 @@ use mongodb::options::{ReadConcern, WriteConcern};
 use mongodb::{Client, ClientSession, Collection, Database};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use tokio::sync::Semaphore;
 
 use super::{durability::majority_collection, schema::initialize_collections};
 
@@ -16,6 +20,10 @@ pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
 const COMMIT_ATTEMPTS: usize = 5;
 const DUPLICATE_KEY: i32 = 11_000;
+const SNAPSHOT_READ_MIN_WIRE_VERSION: i64 = 13;
+const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_PENDING_RECONCILIATIONS: usize = 16;
+static RECONCILIATION_SLOTS: Semaphore = Semaphore::const_new(MAX_PENDING_RECONCILIATIONS);
 
 pub(super) const SANDBOXES: &str = "sandboxes";
 pub(super) const WORKSPACES: &str = "workspaces";
@@ -99,15 +107,32 @@ pub(super) async fn require_transaction_topology(database: &Database) -> Result<
         .run_command(doc! { "hello": 1_i32 })
         .await
         .map_err(|error| unavailable("inspect Mongo transaction topology", error))?;
-    if reply.get_str("setName").is_ok()
-        || matches!(reply.get_str("msg"), Ok(message) if message == "isdbgrid")
+    validate_transaction_server(&reply)
+}
+
+fn validate_transaction_server(reply: &Document) -> Result<(), StoreError> {
+    if reply.get_str("setName").is_err()
+        && !matches!(reply.get_str("msg"), Ok(message) if message == "isdbgrid")
     {
-        Ok(())
-    } else {
-        Err(StoreError::Unavailable(
+        return Err(StoreError::Unavailable(
             "sandbox-model transactions require a replica set or mongos".into(),
-        ))
+        ));
     }
+    let max_wire_version = match reply.get("maxWireVersion") {
+        Some(Bson::Int32(version)) => i64::from(*version),
+        Some(Bson::Int64(version)) => *version,
+        _ => {
+            return Err(StoreError::Unavailable(
+                "MongoDB did not report a usable maxWireVersion".into(),
+            ));
+        }
+    };
+    if max_wire_version < SNAPSHOT_READ_MIN_WIRE_VERSION {
+        return Err(StoreError::Unavailable(format!(
+            "snapshot reads require MongoDB 5.0 or later (maxWireVersion >= {SNAPSHOT_READ_MIN_WIRE_VERSION}); server reported {max_wire_version}"
+        )));
+    }
+    Ok(())
 }
 
 /// Profile drafts and revisions are separate from runtime aggregates, but use
@@ -228,12 +253,79 @@ pub(super) async fn commit_transaction(session: &mut ClientSession) -> CommitOut
     unreachable!("the bounded commit loop always returns")
 }
 
+/// Bound reconciliation without cancelling a Mongo driver future mid-command.
+pub(super) async fn wait_for_reconciliation<F, T>(
+    context: &'static str,
+    future: F,
+) -> Result<T, String>
+where
+    F: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    wait_for_reconciliation_with_deadline(context, RECONCILIATION_TIMEOUT, future).await
+}
+
+async fn wait_for_reconciliation_with_deadline<F, T>(
+    context: &'static str,
+    deadline: Duration,
+    future: F,
+) -> Result<T, String>
+where
+    F: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let permit = RECONCILIATION_SLOTS.try_acquire().map_err(|_| {
+        format!(
+            "{context} cannot start while {MAX_PENDING_RECONCILIATIONS} prior reconciliations remain pending"
+        )
+    })?;
+    let mut task = tokio::spawn(async move {
+        let _permit = permit;
+        future.await
+    });
+    match tokio::time::timeout(deadline, &mut task).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(error)) => {
+            tracing::error!(
+                context,
+                panicked = error.is_panic(),
+                "reconciliation task terminated"
+            );
+            Err(format!("{context} task terminated before completion"))
+        }
+        Err(_) => {
+            tracing::warn!(
+                context,
+                deadline_seconds = deadline.as_secs(),
+                "reconciliation exceeded its deadline and will finish in the background"
+            );
+            tokio::spawn(async move {
+                match task.await {
+                    Ok(_) => tracing::info!(context, "timed-out reconciliation finished"),
+                    Err(error) => tracing::error!(
+                        context,
+                        panicked = error.is_panic(),
+                        "timed-out reconciliation task terminated"
+                    ),
+                }
+            });
+            Err(format!(
+                "{context} exceeded its {} second deadline",
+                deadline.as_secs()
+            ))
+        }
+    }
+}
+
 pub(super) fn unavailable(context: &str, error: Error) -> StoreError {
     StoreError::Unavailable(format!("{context}: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]
@@ -243,5 +335,73 @@ mod tests {
         assert!(require_version(&doc! { "document_schema_version": 2_i64 }).is_err());
         assert!(require_version(&doc! { "document_schema_version": 1.0 }).is_err());
         assert!(require_version(&Document::new()).is_err());
+    }
+
+    #[test]
+    fn transaction_server_requires_topology_and_snapshot_support() {
+        assert!(
+            validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 13_i32 })
+                .is_ok()
+        );
+        assert!(
+            validate_transaction_server(&doc! { "msg": "isdbgrid", "maxWireVersion": 25_i64 })
+                .is_ok()
+        );
+
+        let standalone = validate_transaction_server(&doc! { "maxWireVersion": 25_i32 })
+            .unwrap_err()
+            .to_string();
+        assert!(standalone.contains("replica set or mongos"));
+        let old = validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 12_i32 })
+            .unwrap_err()
+            .to_string();
+        assert!(old.contains("MongoDB 5.0 or later"));
+        let missing = validate_transaction_server(&doc! { "setName": "rs0" })
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("maxWireVersion"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reconciliation_deadline_detaches_instead_of_cancelling_driver_work() {
+        let (release, blocked) = tokio::sync::oneshot::channel::<()>();
+        let finished = Arc::new(AtomicBool::new(false));
+        let completed = Arc::clone(&finished);
+        let result = wait_for_reconciliation_with_deadline(
+            "test reconciliation",
+            Duration::from_secs(1),
+            async move {
+                let _ = blocked.await;
+                completed.store(true, Ordering::SeqCst);
+            },
+        )
+        .await;
+
+        assert_eq!(
+            result,
+            Err("test reconciliation exceeded its 1 second deadline".into())
+        );
+        assert!(!finished.load(Ordering::SeqCst));
+        release.send(()).unwrap();
+        tokio::task::yield_now().await;
+        assert!(finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn caller_cancellation_detaches_an_active_reconciliation() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel::<()>();
+        let caller = tokio::spawn(wait_for_reconciliation("cancelled caller", async move {
+            started_tx.send(()).unwrap();
+            let _ = release_rx.await;
+            finished_tx.send(()).unwrap();
+        }));
+
+        started_rx.await.unwrap();
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        release_tx.send(()).unwrap();
+        finished_rx.await.unwrap();
     }
 }

@@ -34,6 +34,18 @@ pub enum AgentStopReason {
     Failed,
 }
 
+impl AgentStopReason {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Operator => "operator",
+            Self::RuntimeLost => "runtime_lost",
+            Self::SandboxRetired => "sandbox_retired",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentOrigin {
