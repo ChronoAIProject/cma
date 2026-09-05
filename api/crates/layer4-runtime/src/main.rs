@@ -16,6 +16,7 @@ mod install;
 mod install_state;
 mod lanes;
 mod link;
+mod mutation_journal;
 mod paths;
 mod resource_cgroup;
 mod resource_network;
