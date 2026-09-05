@@ -269,7 +269,9 @@ fn trust_manifest_shape_and_frozen_content_are_strict() {
 #[test]
 fn transition_graph_refuses_skips_and_keeps_ready_history() {
     let review = ReviewRequirements::build(&requirements(&[]), None, false, false).unwrap();
-    let mut launch = Launch::new(seed(review)).unwrap();
+    let mut launch_seed = seed(review);
+    launch_seed.has_first_message = false;
+    let mut launch = Launch::new(launch_seed).unwrap();
     launch
         .start(confirmation(LaunchConsentSurface::Review))
         .unwrap();
@@ -486,6 +488,161 @@ fn effect_kind_and_intent_are_bound_to_the_work_step() {
     assert_eq!(
         work.validate(&id, false).unwrap_err().code,
         "invalid_launch_work"
+    );
+}
+
+#[test]
+fn persisted_launch_steps_have_exact_keys_safe_details_and_timestamp_shapes() {
+    let review = ReviewRequirements::build(&requirements(&[]), None, false, false).unwrap();
+    let launch = Launch::new(seed(review)).unwrap();
+
+    let mut reordered = launch.clone();
+    reordered.steps.swap(2, 3);
+    assert_eq!(
+        reordered.validate().unwrap_err().code,
+        "invalid_launch_steps"
+    );
+
+    let mut duplicate = launch.clone();
+    duplicate.steps[3].key = LaunchStepKey::Sandbox;
+    assert_eq!(
+        duplicate.validate().unwrap_err().code,
+        "invalid_launch_steps"
+    );
+
+    let mut pending_started = launch.clone();
+    pending_started.steps[2].started_at = Some(NOW.into());
+    assert_eq!(
+        pending_started.validate().unwrap_err().code,
+        "invalid_launch_step"
+    );
+
+    let mut completed_without_time = launch.clone();
+    completed_without_time.steps[0].completed_at = None;
+    assert_eq!(
+        completed_without_time.validate().unwrap_err().code,
+        "invalid_launch_step"
+    );
+
+    let mut oversized = launch.clone();
+    oversized.steps[0].safe_detail = "x".repeat(513);
+    assert_eq!(
+        oversized.validate().unwrap_err().code,
+        "invalid_launch_step"
+    );
+
+    let mut unsafe_control = launch;
+    unsafe_control.steps[0].safe_detail = "public\nsecret".into();
+    assert_eq!(
+        unsafe_control.validate().unwrap_err().code,
+        "invalid_launch_step"
+    );
+}
+
+#[test]
+fn failure_payloads_are_bounded_and_match_the_failed_state() {
+    let review = ReviewRequirements::build(&requirements(&[]), None, false, false).unwrap();
+    let mut retryable = Launch::new(seed(review)).unwrap();
+    retryable
+        .start(confirmation(LaunchConsentSurface::Landing))
+        .unwrap();
+    retryable.state = LaunchState::FailedRetryable;
+    retryable.failure = Some(LaunchFailure {
+        code: "runtime_unavailable".into(),
+        safe_detail: "Agent runtime is temporarily unavailable".into(),
+        retryable: true,
+        occurred_at: LATER.into(),
+    });
+    retryable.validate().unwrap();
+
+    let mut wrong_retryability = retryable.clone();
+    wrong_retryability.failure.as_mut().unwrap().retryable = false;
+    assert_eq!(
+        wrong_retryability.validate().unwrap_err().code,
+        "invalid_launch_failure"
+    );
+
+    let mut wrong_state = retryable.clone();
+    wrong_state.state = LaunchState::Resolving;
+    assert_eq!(
+        wrong_state.validate().unwrap_err().code,
+        "invalid_launch_failure"
+    );
+
+    let mut oversized = retryable.clone();
+    oversized.failure.as_mut().unwrap().safe_detail = "x".repeat(513);
+    assert_eq!(
+        oversized.validate().unwrap_err().code,
+        "invalid_launch_failure"
+    );
+
+    let mut terminal = retryable;
+    terminal.state = LaunchState::FailedTerminal;
+    terminal.failure.as_mut().unwrap().retryable = false;
+    terminal.work = LaunchWorkState::new(LaunchWorkStep::None, LATER.into());
+    terminal.validate().unwrap();
+}
+
+#[test]
+fn recovery_blocks_require_durable_recovery_evidence_and_no_lease() {
+    let review = ReviewRequirements::build(&requirements(&[]), None, false, false).unwrap();
+    let mut missing_evidence = Launch::new(seed(review)).unwrap();
+    missing_evidence
+        .start(confirmation(LaunchConsentSurface::Landing))
+        .unwrap();
+    missing_evidence
+        .block(LaunchBlockedReason::RecoveryRequired, LATER.into())
+        .unwrap();
+    assert_eq!(
+        missing_evidence.validate().unwrap_err().code,
+        "invalid_launch_block"
+    );
+
+    let mut recovered_effect = missing_evidence;
+    recovered_effect.blocked_reason = None;
+    let fence = recovered_effect
+        .work
+        .claim("worker".into(), LATER, LATEST.into())
+        .unwrap();
+    recovered_effect
+        .work
+        .prepare_effect(
+            "worker",
+            fence,
+            LaunchEffectKind::CreateSandbox,
+            LaunchEffectKind::CreateSandbox.intent_key(&recovered_effect.id),
+            LATER.into(),
+        )
+        .unwrap();
+    recovered_effect
+        .work
+        .mark_effect_executing("worker", fence, LATER.into())
+        .unwrap();
+    recovered_effect
+        .work
+        .mark_effect_recovery_required("worker", fence, LATER.into())
+        .unwrap();
+    recovered_effect
+        .block(LaunchBlockedReason::RecoveryRequired, LATER.into())
+        .unwrap();
+    recovered_effect.validate().unwrap();
+
+    let mut wrong_reason = recovered_effect.clone();
+    wrong_reason.blocked_reason = Some(LaunchBlockedReason::OrchestrationPaused);
+    assert_eq!(
+        wrong_reason.validate().unwrap_err().code,
+        "invalid_launch_block"
+    );
+
+    let mut leased_block = recovered_effect;
+    leased_block.work.lease = Some(LaunchWorkLease {
+        holder: "worker".into(),
+        fence,
+        expires_at: LATEST.into(),
+    });
+    assert_eq!(
+        leased_block.validate().unwrap_err().code,
+        "invalid_launch_block"
     );
 }
 

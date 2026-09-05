@@ -5,12 +5,16 @@ mod content;
 mod launch;
 mod launch_event;
 mod launch_lifecycle;
+mod launch_message_evidence;
+mod launch_message_progress;
+mod launch_progress;
 mod launch_resolution_service;
 mod launch_service;
 mod launch_service_operations;
 mod launch_service_support;
 mod launch_store;
 mod launch_trust;
+mod launch_validation;
 mod placement;
 mod preview;
 mod reference;
@@ -35,7 +39,8 @@ pub use content::{
 };
 pub use launch::{
     Launch, LaunchAuthorityClass, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface,
-    LaunchFailure, LaunchSeed, LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus,
+    LaunchFailure, LaunchMessageEvidence, LaunchSeed, LaunchState, LaunchStep, LaunchStepKey,
+    LaunchStepStatus,
 };
 pub use launch_event::{LaunchEvent, LaunchEventKind};
 pub use launch_service::{
@@ -403,6 +408,9 @@ mod tests;
 
 #[cfg(test)]
 mod launch_tests;
+
+#[cfg(test)]
+mod launch_progress_tests;
 
 #[cfg(test)]
 mod launch_store_tests;

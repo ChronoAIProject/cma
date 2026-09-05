@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{LaunchId, PlacementId, PublicTriggerId, SubjectId, TriggerId};
+use crate::ids::{AgentId, LaunchId, PlacementId, PublicTriggerId, SubjectId, TriggerId};
 use crate::sandbox::FirstMessageDelivery;
 
 use super::{
@@ -136,6 +136,20 @@ pub struct LaunchFailure {
     pub occurred_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchMessageEvidence {
+    pub agent_id: AgentId,
+    pub origin_key: String,
+    pub payload_sha256: String,
+    pub recovery_generation: u32,
+    pub attempt: u32,
+    pub fence_sequence: u64,
+    pub dispatch_generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_sequence: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaunchConsentSurface {
@@ -200,6 +214,8 @@ pub struct Launch {
     pub review: ReviewRequirements,
     pub trust: LaunchTrustManifest,
     pub first_message: FirstMessageDelivery,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_message_evidence: Option<LaunchMessageEvidence>,
     #[serde(default)]
     pub confirmations: Vec<LaunchConfirmation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

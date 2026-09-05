@@ -31,6 +31,7 @@ impl Launch {
             review: seed.review,
             trust: seed.trust,
             first_message,
+            first_message_evidence: None,
             confirmations: Vec::new(),
             blocked_reason: None,
             failure: None,
@@ -160,50 +161,7 @@ impl Launch {
         Ok(())
     }
 
-    pub fn validate(&self) -> Result<(), TriggerError> {
-        if !valid_digest(&self.revision_digest)
-            || !valid_digest(&self.command_key_hash)
-            || !valid_digest(&self.command_fingerprint)
-            || self.revision == 0
-            || seconds_from_rfc3339(&self.created_at).is_none()
-            || seconds_from_rfc3339(&self.updated_at).is_none()
-        {
-            return Err(TriggerError::new("invalid_launch", "launch"));
-        }
-        validate_referrer(self.referrer_origin.as_deref())?;
-        self.requirements.validate()?;
-        self.review
-            .validate_for_launch(&self.requirements, self.started_at.is_none())?;
-        self.trust.validate()?;
-        self.resolution.validate()?;
-        self.work
-            .validate(&self.id, self.state == LaunchState::Cancelled)?;
-        for confirmation in &self.confirmations {
-            confirmation.validate()?;
-        }
-        let requires_start = !matches!(self.state, LaunchState::Draft | LaunchState::Cancelled);
-        let was_ready = matches!(self.state, LaunchState::Ready | LaunchState::Completed);
-        if (self.state == LaunchState::Draft && self.started_at.is_some())
-            || (requires_start && self.started_at.is_none())
-            || (self.started_at.is_some() == self.confirmations.is_empty())
-            || self.confirmations.len() > 1
-            || (self.started_at.is_none()
-                && self.review.trust_digest() != self.trust.confirmation_digest.as_deref())
-            || self.confirmations.iter().any(|confirmation| {
-                confirmation.trust_confirmed_digest.as_deref()
-                    != self.trust.confirmation_digest.as_deref()
-            })
-            || (was_ready != self.ready_at.is_some())
-            || self.state.is_terminal() && self.work.step.is_pending()
-            || self.blocked_reason.is_some() && self.state.is_terminal()
-            || self.steps.len() != 7
-        {
-            return Err(TriggerError::new("invalid_launch", "state"));
-        }
-        Ok(())
-    }
-
-    fn bump_revision(&mut self) -> Result<(), TriggerError> {
+    pub(super) fn bump_revision(&mut self) -> Result<(), TriggerError> {
         self.revision = self
             .revision
             .checked_add(1)
@@ -263,27 +221,4 @@ fn initial_steps(at: &str, first_message: FirstMessageDelivery) -> Vec<LaunchSte
         completed_at: matches!(status, LaunchStepStatus::Completed).then(|| at.to_string()),
     })
     .collect()
-}
-
-fn validate_referrer(value: Option<&str>) -> Result<(), TriggerError> {
-    let Some(value) = value else {
-        return Ok(());
-    };
-    let url = url::Url::parse(value)
-        .map_err(|_| TriggerError::new("invalid_referrer_origin", "referrer_origin"))?;
-    if value.len() > 512
-        || !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || url.username() != ""
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !matches!(url.path(), "" | "/")
-    {
-        return Err(TriggerError::new(
-            "invalid_referrer_origin",
-            "referrer_origin",
-        ));
-    }
-    Ok(())
 }

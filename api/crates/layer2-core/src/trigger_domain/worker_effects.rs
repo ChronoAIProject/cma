@@ -36,10 +36,6 @@ impl LaunchWorkStep {
                 LaunchEffectKind::CreateSandbox | LaunchEffectKind::ReviveSandbox
             ) | (Self::ResolveWorkspace, LaunchEffectKind::CreateWorkspace)
                 | (Self::ResolveAgent, LaunchEffectKind::CreateAgent)
-                | (
-                    Self::DeliverFirstMessage,
-                    LaunchEffectKind::DeliverFirstMessage
-                )
         )
     }
 }
@@ -59,7 +55,6 @@ pub enum LaunchEffectKind {
     ReviveSandbox,
     CreateWorkspace,
     CreateAgent,
-    DeliverFirstMessage,
 }
 
 impl LaunchEffectKind {
@@ -69,7 +64,6 @@ impl LaunchEffectKind {
             Self::ReviveSandbox => "revive-sandbox",
             Self::CreateWorkspace => "create-workspace",
             Self::CreateAgent => "create-agent",
-            Self::DeliverFirstMessage => "deliver-first-message",
         };
         format!("launch:{launch_id}:{operation}:v1")
     }
