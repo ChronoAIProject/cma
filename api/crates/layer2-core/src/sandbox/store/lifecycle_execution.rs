@@ -114,6 +114,8 @@ pub trait SandboxLifecycleExecutionStore: Send + Sync {
 
 pub trait SandboxLifecycleStore:
     SandboxStore
+    + super::WorkspaceStore
+    + super::WorktreeStore
     + SandboxEventStore
     + SandboxTransactionStore
     + SandboxWorkerStore
@@ -123,6 +125,8 @@ pub trait SandboxLifecycleStore:
 
 impl<T> SandboxLifecycleStore for T where
     T: SandboxStore
+        + super::WorkspaceStore
+        + super::WorktreeStore
         + SandboxEventStore
         + SandboxTransactionStore
         + SandboxWorkerStore

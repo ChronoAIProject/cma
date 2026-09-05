@@ -289,6 +289,29 @@ impl Sandbox {
         })
     }
 
+    /// Release a transiently blocked phase for a fenced retry.
+    pub fn retry_lifecycle(
+        &mut self,
+        ready_at: String,
+        holder: &str,
+        fence: u64,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.require_lifecycle_authority(holder, fence)?;
+        if crate::seconds_from_rfc3339(&ready_at).is_none()
+            || crate::seconds_from_rfc3339(&at).is_none()
+        {
+            return Err(invalid_execution());
+        }
+        let mut next = self.clone();
+        next.work.retry(holder, fence, ready_at)?;
+        next.revision = self.revision.checked_add(1).ok_or_else(invalid_execution)?;
+        next.updated_at = at;
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
     pub fn complete_lifecycle_queued_message_delivery(
         &mut self,
         holder: &str,

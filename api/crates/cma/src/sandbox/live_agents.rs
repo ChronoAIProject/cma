@@ -365,8 +365,9 @@ fn validate_authority(
     }
     if state.watermarks.get(agent_id).is_some_and(|watermark| {
         runtime_generation < watermark.runtime_generation
-            || authority_fence < watermark.authority_fence
-            || (watermark.fenced && authority_fence == watermark.authority_fence)
+            || (runtime_generation == watermark.runtime_generation
+                && (authority_fence < watermark.authority_fence
+                    || (watermark.fenced && authority_fence == watermark.authority_fence)))
     }) {
         return Err(LiveAgentRegistryError::StaleGeneration);
     }
@@ -380,11 +381,14 @@ fn accept_authority(
     authority_fence: u64,
 ) {
     let watermark = state.watermarks.entry(agent_id.clone()).or_default();
-    let advances = runtime_generation > watermark.runtime_generation
-        || authority_fence > watermark.authority_fence;
-    watermark.runtime_generation = watermark.runtime_generation.max(runtime_generation);
-    watermark.authority_fence = watermark.authority_fence.max(authority_fence);
-    if advances {
+    if runtime_generation > watermark.runtime_generation {
+        watermark.runtime_generation = runtime_generation;
+        watermark.authority_fence = authority_fence;
+        watermark.fenced = false;
+    } else if runtime_generation == watermark.runtime_generation
+        && authority_fence > watermark.authority_fence
+    {
+        watermark.authority_fence = authority_fence;
         watermark.fenced = false;
     }
 }
@@ -396,8 +400,9 @@ fn fence_authority(
     authority_fence: u64,
 ) -> bool {
     let watermark = state.watermarks.entry(agent_id.clone()).or_default();
-    if authority_fence >= watermark.authority_fence
-        && runtime_generation >= watermark.runtime_generation
+    if runtime_generation > watermark.runtime_generation
+        || (runtime_generation == watermark.runtime_generation
+            && authority_fence >= watermark.authority_fence)
     {
         watermark.runtime_generation = runtime_generation;
         watermark.authority_fence = authority_fence;

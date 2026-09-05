@@ -15,8 +15,11 @@ use super::AgentWorker;
 
 mod effects;
 mod mapping;
+pub(super) use crate::sandbox::runtime_mapping::{
+    runtime_capabilities, runtime_options, sandbox_spec,
+};
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
-pub(super) use mapping::{runtime_capabilities, runtime_options, sandbox_spec, validate_skills};
+pub(super) use mapping::validate_skills;
 
 pub(super) struct AgentContext {
     pub(super) sandbox: Sandbox,

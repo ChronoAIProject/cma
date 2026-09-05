@@ -105,7 +105,7 @@ impl AgentWorker {
         }
         let request = AgentHomeRequest::new(
             format!("agent:{}:home:create:v1", agent.id),
-            runtime_options(&agent, &context),
+            runtime_options(&agent, &context.sandbox, &context.worktree),
             agent.profile.content.system_prompt.clone(),
             skills,
         );
@@ -166,7 +166,7 @@ impl AgentWorker {
         }
         let request = AgentOpenRequest::new(
             format!("agent:{}:open:v1", agent.id),
-            runtime_options(&agent, &context),
+            runtime_options(&agent, &context.sandbox, &context.worktree),
             None,
         );
         let evidence = request_evidence(
@@ -330,7 +330,7 @@ impl AgentWorker {
             })?;
         let request = AgentOpenRequest::new(
             format!("agent:{}:open:v1", agent.id),
-            runtime_options(agent, context),
+            runtime_options(agent, &context.sandbox, &context.worktree),
             None,
         );
         if agent
