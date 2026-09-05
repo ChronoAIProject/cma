@@ -3,9 +3,9 @@
 use futures_util::TryStreamExt;
 use layer2_core::ids::{SandboxId, SubjectId};
 use layer2_core::sandbox::store::{
-    Page, PageRequest, SandboxStore, SandboxStoreError, MAX_PAGE_SIZE,
+    valid_admission_fingerprint, Page, PageRequest, SandboxStore, SandboxStoreError, MAX_PAGE_SIZE,
 };
-use layer2_core::sandbox::Sandbox;
+use layer2_core::sandbox::{Sandbox, SandboxOrigin};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
@@ -24,6 +24,16 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
                     .name("sandboxes_owner_name_live".to_string())
                     .unique(true)
                     .partial_filter_expression(doc! { "retired_at": Bson::Null })
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "origin_launch_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_owner_trigger_launch".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "origin_type": "trigger" })
                     .build(),
             )
             .build(),
@@ -89,15 +99,49 @@ pub(super) fn sandbox_document(
     sandbox: &Sandbox,
     last_seq: u64,
 ) -> Result<Document, SandboxStoreError> {
+    if matches!(&sandbox.origin, SandboxOrigin::Trigger { .. }) {
+        return Err(SandboxStoreError::InvalidTransaction(
+            "trigger sandboxes require atomic admission",
+        ));
+    }
+    raw_sandbox_document(sandbox, last_seq, Bson::Null)
+}
+
+pub(super) fn admitted_sandbox_document(
+    sandbox: &Sandbox,
+    last_seq: u64,
+    admission_fingerprint: &str,
+) -> Result<Document, SandboxStoreError> {
+    if !valid_admission_fingerprint(admission_fingerprint) {
+        return Err(SandboxStoreError::InvalidTransaction(
+            "sandbox admission fingerprint is invalid",
+        ));
+    }
+    let fingerprint = match &sandbox.origin {
+        SandboxOrigin::Manual => Bson::Null,
+        SandboxOrigin::Trigger { .. } => Bson::String(admission_fingerprint.to_string()),
+    };
+    raw_sandbox_document(sandbox, last_seq, fingerprint)
+}
+
+fn raw_sandbox_document(
+    sandbox: &Sandbox,
+    last_seq: u64,
+    admission_fingerprint: Bson,
+) -> Result<Document, SandboxStoreError> {
     sandbox.validate().map_err(|error| {
         SandboxStoreError::Corrupt(format!("sandbox aggregate is invalid: {error}"))
     })?;
+    let (origin_type, origin_launch_id) = sandbox_origin_fields(sandbox)?;
     let lease_expires_at = sandbox.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": sandbox.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "owner": sandbox.owner.as_str(),
         "name": &sandbox.name,
+        "origin_type": origin_type,
+        "origin_launch_id": origin_launch_id,
+        "admission_fingerprint": admission_fingerprint,
         "status": record_bson(&sandbox.status).map_err(SandboxStoreError::Corrupt)?,
         "runtime_version": nullable(
             sandbox.runtime.as_ref().map(|runtime| &runtime.runtime_version)
@@ -130,9 +174,12 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
             .as_ref()
             .map(|runtime| &runtime.runtime_version),
     );
+    let (origin_type, origin_launch_id) = sandbox_origin_fields(&sandbox)?;
     if !string_field_matches(document, "_id", sandbox.id.as_str())
         || !string_field_matches(document, "owner", sandbox.owner.as_str())
         || !string_field_matches(document, "name", &sandbox.name)
+        || !string_field_matches(document, "origin_type", origin_type)
+        || document.get("origin_launch_id") != Some(&origin_launch_id)
         || document.get("status") != Some(&status)
         || document.get("runtime_version") != Some(&runtime_version)
         || !string_field_matches(document, "updated_at", &sandbox.updated_at)
@@ -150,13 +197,48 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
             "sandbox query fields disagree with its aggregate".into(),
         ));
     }
+    read_admission_fingerprint(document, &sandbox)?;
     Ok(sandbox)
 }
 
+pub(super) fn sandbox_origin_fields(
+    sandbox: &Sandbox,
+) -> Result<(&'static str, Bson), SandboxStoreError> {
+    match &sandbox.origin {
+        SandboxOrigin::Manual => Ok(("manual", Bson::Null)),
+        SandboxOrigin::Trigger { launch_id }
+            if !launch_id.trim().is_empty() && launch_id.len() <= 128 =>
+        {
+            Ok(("trigger", Bson::String(launch_id.clone())))
+        }
+        SandboxOrigin::Trigger { .. } => Err(SandboxStoreError::Corrupt(
+            "stored sandbox trigger origin is invalid".into(),
+        )),
+    }
+}
+
+pub(super) fn read_admission_fingerprint<'a>(
+    document: &'a Document,
+    sandbox: &Sandbox,
+) -> Result<Option<&'a str>, SandboxStoreError> {
+    match (&sandbox.origin, document.get("admission_fingerprint")) {
+        (SandboxOrigin::Manual, Some(Bson::Null)) => Ok(None),
+        (SandboxOrigin::Trigger { .. }, Some(Bson::String(value)))
+            if valid_admission_fingerprint(value) =>
+        {
+            Ok(Some(value))
+        }
+        _ => Err(SandboxStoreError::Corrupt(
+            "sandbox admission fingerprint disagrees with its origin".into(),
+        )),
+    }
+}
+
 pub(super) fn sandbox_replacement_fields(sandbox: &Sandbox) -> Result<Document, SandboxStoreError> {
-    let mut fields = sandbox_document(sandbox, 0)?;
+    let mut fields = raw_sandbox_document(sandbox, 0, Bson::Null)?;
     fields.remove("_id");
     fields.remove("last_seq");
+    fields.remove("admission_fingerprint");
     Ok(fields)
 }
 
@@ -221,6 +303,7 @@ impl SandboxStore for MongoSandboxStore {
         }
         let expected = signed(expected_revision, "expected sandbox revision")
             .map_err(|_| SandboxStoreError::Conflict)?;
+        let (origin_type, origin_launch_id) = sandbox_origin_fields(&sandbox)?;
         let result = self
             .sandboxes
             .update_one(
@@ -228,6 +311,8 @@ impl SandboxStore for MongoSandboxStore {
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": expected,
+                    "origin_type": origin_type,
+                    "origin_launch_id": origin_launch_id,
                 },
                 doc! { "$set": sandbox_replacement_fields(&sandbox)? },
             )
@@ -303,16 +388,27 @@ mod tests {
             options.partial_filter_expression,
             Some(doc! { "retired_at": Bson::Null })
         );
+        assert_eq!(indexes[1].keys, doc! { "owner": 1, "origin_launch_id": 1 });
+        let options = indexes[1].options.as_ref().unwrap();
+        assert_eq!(options.unique, Some(true));
         assert_eq!(
-            indexes[1].keys,
-            doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
+            options.name.as_deref(),
+            Some("sandboxes_owner_trigger_launch")
+        );
+        assert_eq!(
+            options.partial_filter_expression,
+            Some(doc! { "origin_type": "trigger" })
         );
         assert_eq!(
             indexes[2].keys,
-            doc! { "owner": 1, "status": 1, "updated_at": -1 }
+            doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
         );
         assert_eq!(
             indexes[3].keys,
+            doc! { "owner": 1, "status": 1, "updated_at": -1 }
+        );
+        assert_eq!(
+            indexes[4].keys,
             doc! {
                 "owner": 1,
                 "status": 1,
@@ -321,17 +417,17 @@ mod tests {
             }
         );
         assert_eq!(
-            indexes[3].options.as_ref().unwrap().name.as_deref(),
+            indexes[4].options.as_ref().unwrap().name.as_deref(),
             Some("sandboxes_operator_inventory")
         );
-        assert_eq!(indexes[4].keys, doc! { "owner": 1, "_id": 1 });
-        assert_eq!(
-            indexes[4].options.as_ref().unwrap().name.as_deref(),
-            Some("sandboxes_owner_page")
-        );
-        assert_eq!(indexes[5].keys, doc! { "owner": 1, "status": 1, "_id": 1 });
+        assert_eq!(indexes[5].keys, doc! { "owner": 1, "_id": 1 });
         assert_eq!(
             indexes[5].options.as_ref().unwrap().name.as_deref(),
+            Some("sandboxes_owner_page")
+        );
+        assert_eq!(indexes[6].keys, doc! { "owner": 1, "status": 1, "_id": 1 });
+        assert_eq!(
+            indexes[6].options.as_ref().unwrap().name.as_deref(),
             Some("sandboxes_owner_status_page")
         );
     }

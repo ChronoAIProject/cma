@@ -29,6 +29,7 @@ mod queued_message;
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;
+mod service_admission;
 mod service_trust;
 mod status;
 pub mod store;

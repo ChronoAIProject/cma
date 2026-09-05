@@ -47,6 +47,8 @@ mod profile_index_tests;
 mod profile_operator_mongo_integration_tests;
 mod profiles;
 mod sandbox_admission;
+#[cfg(test)]
+mod sandbox_admission_mongo_integration_tests;
 mod sandbox_credentials;
 mod sandbox_events;
 mod sandbox_mongo;
@@ -58,6 +60,8 @@ mod sandbox_profiles;
 mod sandbox_transactions;
 mod sandbox_worker_store;
 mod sandboxes;
+#[cfg(test)]
+mod sandboxes_tests;
 mod schema;
 #[cfg(test)]
 mod schema_mongo_integration_tests;

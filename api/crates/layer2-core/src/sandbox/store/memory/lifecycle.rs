@@ -5,8 +5,31 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
-    ) -> Result<Sandbox, SandboxStoreError> {
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        admission.validate()?;
         let mut state = self.lock();
+        let replay_key = admission
+            .trigger_launch_id()
+            .map(|launch_id| (admission.sandbox.owner.clone(), launch_id.to_string()));
+        if let Some((sandbox_id, fingerprint)) = replay_key
+            .as_ref()
+            .and_then(|key| state.sandbox_admissions.get(key))
+        {
+            if fingerprint != &admission.admission_fingerprint {
+                return Err(SandboxStoreError::SandboxOriginConflict);
+            }
+            let sandbox = state.sandboxes.get(sandbox_id).ok_or_else(|| {
+                SandboxStoreError::Corrupt("sandbox admission points to a missing aggregate".into())
+            })?;
+            if sandbox.owner != admission.sandbox.owner
+                || sandbox.origin != admission.sandbox.origin
+            {
+                return Err(SandboxStoreError::Corrupt(
+                    "sandbox admission identity disagrees with its aggregate".into(),
+                ));
+            }
+            return Ok(SandboxAdmissionResult::Existing(sandbox.clone()));
+        }
         let live = state
             .sandboxes
             .values()
@@ -30,17 +53,14 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
             }
             SandboxAdmissionName::Allocate(base) => allocated_name(&state, &sandbox.owner, &base),
         };
-        sandbox.validate().map_err(|error| {
-            SandboxStoreError::Corrupt(format!("sandbox aggregate is invalid: {error}"))
-        })?;
-        if sandbox.revision != 1 || sandbox.status != SandboxStatus::Provisioning {
-            return Err(SandboxStoreError::InvalidTransaction(
-                "admitted sandbox is not a fresh provisioning aggregate",
-            ));
-        }
         let mut candidate = state.clone();
         let id = sandbox.id.clone();
         create_record!(candidate, sandboxes, id.clone(), sandbox.clone())?;
+        if let Some(key) = replay_key {
+            candidate
+                .sandbox_admissions
+                .insert(key, (id.clone(), admission.admission_fingerprint));
+        }
         append_sandbox_event(
             &mut candidate,
             &id,
@@ -48,7 +68,7 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
             SandboxEventKind::Created,
         )?;
         *state = candidate;
-        Ok(sandbox)
+        Ok(SandboxAdmissionResult::Created(sandbox))
     }
 }
 
@@ -130,6 +150,9 @@ impl SandboxWorkerStore for InMemorySandboxStore {
             .map(|agent| agent.id.clone())
             .collect();
         state.sandboxes.remove(id);
+        state
+            .sandbox_admissions
+            .retain(|_, (sandbox_id, _)| sandbox_id != id);
         state.sandbox_events.remove(id);
         state.workspaces.retain(|_, row| &row.sandbox_id != id);
         state.worktrees.retain(|_, row| &row.sandbox_id != id);

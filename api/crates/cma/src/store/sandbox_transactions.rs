@@ -12,7 +12,7 @@ use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, unsigned,
     CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
-use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::sandboxes::{read_sandbox, sandbox_origin_fields, sandbox_replacement_fields};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::{read_worktree, worktree_document};
 
@@ -173,6 +173,8 @@ async fn apply_transaction(
                 .checked_add(1)
                 .ok_or(ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
             let mut fields = sandbox_replacement_fields(sandbox).map_err(ApplyError::Domain)?;
+            let (origin_type, origin_launch_id) =
+                sandbox_origin_fields(sandbox).map_err(ApplyError::Domain)?;
             fields.insert(
                 "last_seq",
                 signed(seq, "sandbox event sequence")
@@ -190,6 +192,8 @@ async fn apply_transaction(
                         "last_seq": signed(previous, "sandbox event sequence")
                             .map_err(SandboxStoreError::Corrupt)
                             .map_err(ApplyError::Domain)?,
+                        "origin_type": origin_type,
+                        "origin_launch_id": origin_launch_id,
                     },
                     doc! { "$set": fields },
                 )
