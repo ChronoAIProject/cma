@@ -1,5 +1,6 @@
 use crate::sandbox::FirstMessageDelivery;
 use crate::{AgentId, LaunchId, SandboxId, ServiceHandoffId, ServiceId, SubjectId, WorkspaceId};
+use sha2::{Digest, Sha256};
 
 use super::*;
 
@@ -34,6 +35,7 @@ fn seed(review: ReviewRequirements) -> LaunchSeed {
         referrer_origin: Some("https://example.com".into()),
         requirements: requirements(&[]),
         review,
+        trust: LaunchTrustManifest::none(),
         resolution: LaunchResolution::pending(),
         has_first_message: true,
         command_key_hash: digest('b'),
@@ -85,6 +87,31 @@ fn review_needs_are_closed_ordered_and_deduplicated() {
         duplicate.validate().unwrap_err().code,
         "invalid_launch_requirements"
     );
+
+    let mut reordered = review.clone();
+    reordered.needs.swap(1, 2);
+    assert_eq!(
+        reordered.validate().unwrap_err().code,
+        "invalid_launch_review"
+    );
+
+    let missing = requirements(&[("service-a", ServiceRequirementState::Missing)]);
+    let mut omitted = seed(ReviewRequirements {
+        needs: vec![],
+        can_start_now: true,
+    });
+    omitted.requirements = missing.clone();
+    assert_eq!(
+        Launch::new(omitted).unwrap_err().code,
+        "invalid_launch_review"
+    );
+
+    let mut extraneous = seed(ReviewRequirements::build(&missing, None, false, false).unwrap());
+    extraneous.requirements = requirements(&[]);
+    assert_eq!(
+        Launch::new(extraneous).unwrap_err().code,
+        "invalid_launch_review"
+    );
 }
 
 #[test]
@@ -130,6 +157,112 @@ fn start_requires_a_clear_review_and_records_consent() {
     assert_eq!(launch.started_at.as_deref(), Some(LATER));
     assert_eq!(launch.confirmations.len(), 1);
     launch.validate().unwrap();
+}
+
+#[test]
+fn review_and_confirmation_are_bound_to_the_trust_manifest() {
+    let commands_digest = digest('d');
+    let trust = LaunchTrustManifest {
+        version: 1,
+        confirmation_digest: Some(commands_digest.clone()),
+        sandbox_digest: Some(commands_digest.clone()),
+        workspace_digest: None,
+        disclosures: vec![LaunchTrustDisclosure {
+            resource: LaunchTrustResource::Sandbox,
+            name: "Foreign Sandbox".into(),
+            commands_digest: commands_digest.clone(),
+            commands: vec!["install-tool".into()],
+            environment_variables: Vec::new(),
+        }],
+    };
+    let review = ReviewRequirements::build(
+        &requirements(&[]),
+        Some(commands_digest.clone()),
+        false,
+        false,
+    )
+    .unwrap();
+    let mut trusted_seed = seed(review);
+    trusted_seed.trust = trust;
+    let mut launch = Launch::new(trusted_seed).unwrap();
+
+    launch.review =
+        ReviewRequirements::build(&requirements(&[]), Some(digest('e')), false, false).unwrap();
+    assert_eq!(launch.validate().unwrap_err().code, "invalid_launch");
+
+    launch.review = ReviewRequirements::build(&requirements(&[]), None, false, false).unwrap();
+    let mut confirmed = confirmation(LaunchConsentSurface::Review);
+    confirmed.trust_confirmed_digest = Some(commands_digest);
+    launch.start(confirmed).unwrap();
+    launch.confirmations[0].trust_confirmed_digest = Some(digest('e'));
+    assert_eq!(launch.validate().unwrap_err().code, "invalid_launch");
+}
+
+#[test]
+fn trust_manifest_shape_and_frozen_content_are_strict() {
+    let sandbox_digest = digest('d');
+    let workspace_digest = digest('e');
+    let mut hasher = Sha256::new();
+    hasher.update(b"cma.trigger-launch.trust-manifest.v1\0");
+    hasher.update(b"sandbox\0");
+    hasher.update(sandbox_digest.as_bytes());
+    hasher.update(b"\0workspace\0");
+    hasher.update(workspace_digest.as_bytes());
+    let manifest = LaunchTrustManifest {
+        version: 1,
+        confirmation_digest: Some(format!("{:x}", hasher.finalize())),
+        sandbox_digest: Some(sandbox_digest.clone()),
+        workspace_digest: Some(workspace_digest.clone()),
+        disclosures: vec![
+            LaunchTrustDisclosure {
+                resource: LaunchTrustResource::Sandbox,
+                name: "Foreign Sandbox".into(),
+                commands_digest: sandbox_digest,
+                commands: vec!["install-tool".into()],
+                environment_variables: Vec::new(),
+            },
+            LaunchTrustDisclosure {
+                resource: LaunchTrustResource::Workspace,
+                name: "Foreign Workspace".into(),
+                commands_digest: workspace_digest,
+                commands: vec!["prepare-workspace".into()],
+                environment_variables: Vec::new(),
+            },
+        ],
+    };
+    manifest.validate().unwrap();
+
+    let mut reordered = manifest.clone();
+    reordered.disclosures.swap(0, 1);
+    assert_eq!(
+        reordered.validate().unwrap_err().code,
+        "invalid_launch_trust_manifest"
+    );
+    let mut wrong_digest = manifest.clone();
+    wrong_digest.disclosures[0].commands_digest = digest('f');
+    assert_eq!(
+        wrong_digest.validate().unwrap_err().code,
+        "invalid_launch_trust_manifest"
+    );
+    let mut wrong_resource = manifest.clone();
+    wrong_resource.disclosures[1].resource = LaunchTrustResource::Sandbox;
+    assert_eq!(
+        wrong_resource.validate().unwrap_err().code,
+        "invalid_launch_trust_manifest"
+    );
+
+    let mut changed = manifest.clone();
+    changed.disclosures[0].commands.push("unexpected".into());
+    assert!(!manifest.matches_frozen(&changed));
+    changed = manifest.clone();
+    changed.disclosures[0].environment_variables = vec![crate::profiles::EnvironmentVariable {
+        name: "TOOL_PATH".into(),
+        value: "/different".into(),
+    }];
+    assert!(!manifest.matches_frozen(&changed));
+    changed = manifest.clone();
+    changed.disclosures[0].name = "Renamed Sandbox".into();
+    assert!(manifest.matches_frozen(&changed));
 }
 
 #[test]

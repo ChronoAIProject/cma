@@ -103,12 +103,12 @@ pub(super) fn validate_workspace_revision(
     Ok(())
 }
 
-pub(super) async fn nested_workspaces_require_trust(
+pub(crate) async fn foreign_workspace_setups(
     profiles: &dyn WorkspaceProfileStore,
     references: &[WorkspaceProfileRef],
     consumer: &SubjectId,
-) -> Result<bool, ProfileStoreError> {
-    let mut requires_trust = false;
+) -> Result<Vec<WorkspaceProfileRevision>, ProfileStoreError> {
+    let mut unsafe_revisions = Vec::new();
     for reference in references {
         let profile = profiles
             .workspace_profile(&reference.id)
@@ -120,9 +120,11 @@ pub(super) async fn nested_workspaces_require_trust(
             .await?
             .ok_or_else(|| corrupt_dependency("workspace profile revision is missing"))?;
         validate_workspace_revision(reference, &revision)?;
-        requires_trust |= profile.owner != *consumer && !revision.content.setup_commands.is_empty();
+        if profile.owner != *consumer && !revision.content.setup_commands.is_empty() {
+            unsafe_revisions.push(revision);
+        }
     }
-    Ok(requires_trust)
+    Ok(unsafe_revisions)
 }
 
 fn corrupt_dependency(detail: &str) -> ProfileStoreError {

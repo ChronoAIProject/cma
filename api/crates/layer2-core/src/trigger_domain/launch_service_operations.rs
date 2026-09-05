@@ -1,0 +1,272 @@
+use crate::{now_rfc3339, Caller, LaunchId};
+
+use super::launch_service_support::{
+    connection_error, require_launcher, store_error, trigger_error, validate_requirement_identity,
+    validate_start_request,
+};
+use super::launch_trust::LaunchTrustManifest;
+use super::{
+    Launch, LaunchCommit, LaunchConfirmation, LaunchConsentSurface, LaunchEvent, LaunchEventKind,
+    LaunchService, LaunchServiceError, LaunchState, RequirementsSnapshot, ReviewRequirements,
+    StartLaunch, TriggerRevision, DEFAULT_LAUNCH_EVENT_LIMIT,
+};
+
+impl LaunchService {
+    pub async fn start(
+        &self,
+        caller: &Caller,
+        id: &LaunchId,
+        request: StartLaunch,
+    ) -> Result<Launch, LaunchServiceError> {
+        require_launcher(caller)?;
+        validate_start_request(&request)?;
+        if !self.policy.current_launch_policy().await?.enabled {
+            return Err(LaunchServiceError::Disabled);
+        }
+        let mut launch = self.owned(id, &caller.subject).await?;
+        if launch.state != LaunchState::Draft {
+            return Err(LaunchServiceError::NotStartable);
+        }
+        let revision = self.launch_revision(&launch).await?;
+        let profiles = self
+            .profile_resolver
+            .read_trigger_profiles(&revision.content.target)
+            .await
+            .map_err(|error| LaunchServiceError::Unavailable(error.to_string()))?;
+        let requirements = if launch.resolution.sandbox.is_pending() {
+            RequirementsSnapshot {
+                services: self
+                    .connections
+                    .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
+                    .await
+                    .map_err(connection_error)?,
+                checked_at: now_rfc3339(),
+            }
+        } else {
+            RequirementsSnapshot {
+                services: Vec::new(),
+                checked_at: now_rfc3339(),
+            }
+        };
+        requirements
+            .validate()
+            .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+        validate_requirement_identity(
+            &profiles.sandbox.content.nyxid_services,
+            &requirements,
+            launch.resolution.sandbox.is_pending(),
+        )?;
+        let changed_events = changed_requirement_events(&launch.requirements, &requirements);
+        let missing = requirements
+            .services
+            .iter()
+            .filter(|requirement| requirement.needs_connection())
+            .map(|requirement| requirement.service.clone())
+            .collect::<Vec<_>>();
+        let refreshed_review = ReviewRequirements::build(
+            &requirements,
+            launch.trust.confirmation_digest.clone(),
+            revision.content.consent.always_review,
+            false,
+        )
+        .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+        if !missing.is_empty() {
+            self.commit_review_refresh(launch, requirements, refreshed_review, changed_events)
+                .await?;
+            return Err(LaunchServiceError::RequirementsNotMet { services: missing });
+        }
+        if launch.review.trust_digest() != launch.trust.confirmation_digest.as_deref() {
+            return Err(LaunchServiceError::Corrupt(
+                "Launch review does not match its trust manifest".into(),
+            ));
+        }
+        if launch.review.trust_digest() != request.trust_confirmed_digest.as_deref() {
+            self.commit_review_refresh(launch, requirements, refreshed_review, changed_events)
+                .await?;
+            return Err(LaunchServiceError::TrustConfirmationMismatch);
+        }
+        let trust = LaunchTrustManifest::resolve_version(
+            launch.trust.version,
+            self.sandbox_profiles.as_ref(),
+            self.workspace_profiles.as_ref(),
+            &profiles,
+            &launch.resolution,
+            &caller.subject,
+        )
+        .await?;
+        if !launch.trust.matches_frozen(&trust) {
+            return Err(LaunchServiceError::Corrupt(
+                "Launch trust manifest no longer matches its frozen profiles".into(),
+            ));
+        }
+        let expected = launch.revision;
+        let mut events = changed_events;
+        launch.requirements = requirements;
+        launch.review = ReviewRequirements {
+            needs: Vec::new(),
+            can_start_now: true,
+        };
+        let now = now_rfc3339();
+        let confirmation = LaunchConfirmation {
+            surface: LaunchConsentSurface::Review,
+            trust_confirmed_digest: request.trust_confirmed_digest,
+            acknowledgements: request.acknowledgements,
+            confirmed_at: now.clone(),
+        };
+        let target = if matches!(launch.resolution.agent, super::ResolvedResource::Reused(_)) {
+            launch
+                .start_existing(confirmation)
+                .map(|()| LaunchState::Ready)
+        } else {
+            launch.start(confirmation).map(|()| LaunchState::Resolving)
+        }
+        .map_err(|_| LaunchServiceError::NotStartable)?;
+        events.extend([
+            LaunchEventKind::ConfirmationRecorded,
+            LaunchEventKind::StateChanged {
+                from: LaunchState::Draft,
+                to: target,
+            },
+        ]);
+        self.launches
+            .commit_launch(LaunchCommit {
+                expected_revision: expected,
+                launch,
+                event_at: now,
+                events,
+            })
+            .await
+            .map_err(store_error)
+    }
+
+    pub async fn cancel(
+        &self,
+        caller: &Caller,
+        id: &LaunchId,
+    ) -> Result<Launch, LaunchServiceError> {
+        require_launcher(caller)?;
+        let mut launch = self.owned(id, &caller.subject).await?;
+        let from = launch.state;
+        let expected = launch.revision;
+        let now = now_rfc3339();
+        launch
+            .cancel(now.clone())
+            .map_err(|_| LaunchServiceError::NotStartable)?;
+        self.launches
+            .commit_launch(LaunchCommit {
+                expected_revision: expected,
+                launch,
+                event_at: now,
+                events: vec![
+                    LaunchEventKind::StateChanged {
+                        from,
+                        to: LaunchState::Cancelled,
+                    },
+                    LaunchEventKind::Cancelled,
+                ],
+            })
+            .await
+            .map_err(store_error)
+    }
+
+    pub async fn read(&self, caller: &Caller, id: &LaunchId) -> Result<Launch, LaunchServiceError> {
+        require_launcher(caller)?;
+        self.owned(id, &caller.subject).await
+    }
+
+    pub async fn requirements(
+        &self,
+        caller: &Caller,
+        id: &LaunchId,
+    ) -> Result<RequirementsSnapshot, LaunchServiceError> {
+        Ok(self.read(caller, id).await?.requirements)
+    }
+
+    pub async fn events(
+        &self,
+        caller: &Caller,
+        id: &LaunchId,
+        after: u64,
+        limit: Option<u16>,
+    ) -> Result<Vec<LaunchEvent>, LaunchServiceError> {
+        require_launcher(caller)?;
+        self.launches
+            .launch_events(
+                id,
+                &caller.subject,
+                after,
+                limit.unwrap_or(DEFAULT_LAUNCH_EVENT_LIMIT),
+            )
+            .await
+            .map_err(store_error)
+    }
+
+    async fn launch_revision(
+        &self,
+        launch: &Launch,
+    ) -> Result<TriggerRevision, LaunchServiceError> {
+        let public = self
+            .definitions
+            .trigger_by_public_id(&launch.public_id)
+            .await
+            .map_err(trigger_error)?
+            .ok_or_else(|| {
+                LaunchServiceError::Corrupt("Launch public mapping is missing".into())
+            })?;
+        if public.public_id != launch.public_id || public.trigger_id != launch.trigger_id {
+            return Err(LaunchServiceError::Corrupt(
+                "Launch public mapping does not match".into(),
+            ));
+        }
+        let trigger = self
+            .definitions
+            .trigger(&launch.trigger_id, &public.owner)
+            .await
+            .map_err(trigger_error)?
+            .ok_or_else(|| LaunchServiceError::Corrupt("published Trigger is missing".into()))?;
+        trigger
+            .revisions
+            .into_iter()
+            .find(|revision| revision.digest == launch.revision_digest)
+            .ok_or_else(|| LaunchServiceError::Corrupt("Launch revision is missing".into()))
+    }
+
+    async fn commit_review_refresh(
+        &self,
+        mut launch: Launch,
+        requirements: RequirementsSnapshot,
+        review: ReviewRequirements,
+        events: Vec<LaunchEventKind>,
+    ) -> Result<Launch, LaunchServiceError> {
+        let expected_revision = launch.revision;
+        let now = now_rfc3339();
+        launch
+            .refresh_review(requirements, review, now.clone())
+            .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+        self.launches
+            .commit_launch(LaunchCommit {
+                expected_revision,
+                launch,
+                event_at: now,
+                events,
+            })
+            .await
+            .map_err(store_error)
+    }
+}
+
+fn changed_requirement_events(
+    previous: &RequirementsSnapshot,
+    refreshed: &RequirementsSnapshot,
+) -> Vec<LaunchEventKind> {
+    refreshed
+        .services
+        .iter()
+        .zip(&previous.services)
+        .filter(|(refreshed, previous)| refreshed.state != previous.state)
+        .map(|(refreshed, _)| LaunchEventKind::RequirementChanged {
+            service: refreshed.service.clone(),
+            state: refreshed.state,
+        })
+        .collect()
+}

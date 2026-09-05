@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::ServiceId;
-use crate::profiles::{AgentProvider, ThinkingEffort};
+use crate::profiles::{AgentProvider, EnvironmentVariable, ThinkingEffort};
 
 use super::{ButtonLabel, Theme};
 use super::{
@@ -13,8 +13,12 @@ const MAX_FIRST_MESSAGE_PREVIEW_CHARS: usize = 140;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerTrustPreview {
-    pub install_commands_present: bool,
-    pub commands_digest: String,
+    #[serde(default)]
+    pub sandbox_install_commands: Vec<String>,
+    #[serde(default)]
+    pub sandbox_environment_variables: Vec<EnvironmentVariable>,
+    #[serde(default)]
+    pub workspace_setup_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,12 +85,17 @@ impl TriggerPreview {
             what_happens: content.reuse.what_happens(),
             availability,
             trust: TriggerTrustPreview {
-                install_commands_present: !profiles
+                sandbox_install_commands: profiles
                     .sandbox
                     .content
                     .software_install_commands
-                    .is_empty(),
-                commands_digest: profiles.sandbox.digest.clone(),
+                    .clone(),
+                sandbox_environment_variables: profiles
+                    .sandbox
+                    .content
+                    .environment_variables
+                    .clone(),
+                workspace_setup_commands: profiles.workspace.content.setup_commands.clone(),
             },
             technical: TriggerTechnicalPreview {
                 provider: profiles.sandbox.content.agent_provider,

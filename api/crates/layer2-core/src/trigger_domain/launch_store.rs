@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 
+use crate::ids::PublicTriggerId;
 use crate::{LaunchId, ServiceHandoffId, SubjectId};
 
 use super::{
-    Launch, LaunchEvent, LaunchEventKind, PublicTrigger, ServiceConnectionHandoff, TriggerError,
+    Launch, LaunchEvent, LaunchEventKind, LaunchState, PublicTrigger, ServiceConnectionHandoff,
+    TriggerError,
 };
 
 mod memory;
@@ -93,7 +95,8 @@ impl LaunchStoreError {
 #[async_trait]
 pub trait LaunchStore: Send + Sync {
     /// Atomically verifies the exact published Trigger revision, inserts the
-    /// Launch and its initial events, and increments the Trigger launch count.
+    /// Launch and its initial events, and increments the Trigger launch count
+    /// plus the ready count when admission itself resolves an existing Agent.
     /// A replay of the same command returns the original Launch; the same key
     /// with a different fingerprint fails without changing either aggregate.
     async fn admit_launch(
@@ -101,12 +104,23 @@ pub trait LaunchStore: Send + Sync {
         admission: LaunchAdmission,
     ) -> Result<LaunchAdmissionResult, LaunchStoreError>;
 
+    /// Looks up an already admitted owner command before any mutable launch
+    /// dependencies are consulted.
+    async fn launch_by_command(
+        &self,
+        owner: &SubjectId,
+        public_id: &PublicTriggerId,
+        command_key_hash: &str,
+    ) -> Result<Option<Launch>, LaunchStoreError>;
+
     async fn launch(
         &self,
         id: &LaunchId,
         owner: &SubjectId,
     ) -> Result<Option<Launch>, LaunchStoreError>;
 
+    /// Commits the aggregate and events and atomically increments the Trigger
+    /// ready count on the first transition that records `ready_at`.
     async fn commit_launch(&self, commit: LaunchCommit) -> Result<Launch, LaunchStoreError>;
 
     async fn launch_events(

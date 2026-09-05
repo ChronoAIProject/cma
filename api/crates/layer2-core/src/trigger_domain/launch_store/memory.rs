@@ -1,19 +1,20 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 
-use crate::ids::{LaunchId, PublicTriggerId, ServiceHandoffId, SubjectId, TriggerId};
+use crate::ids::{LaunchId, PublicTriggerId, ServiceHandoffId, SubjectId};
 
 use super::*;
-use crate::trigger_domain::TriggerAvailability;
+use crate::trigger_domain::{InMemoryTriggerStore, TriggerAvailability};
 
 type CommandKey = (SubjectId, PublicTriggerId, String);
 type HandoffCommandKey = (SubjectId, LaunchId, String);
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct InMemoryLaunchStore {
     state: Arc<Mutex<State>>,
+    triggers: Arc<InMemoryTriggerStore>,
 }
 
 #[derive(Default)]
@@ -23,19 +24,20 @@ struct State {
     events: HashMap<LaunchId, Vec<LaunchEvent>>,
     handoffs: HashMap<ServiceHandoffId, ServiceConnectionHandoff>,
     handoff_commands: HashMap<HandoffCommandKey, ServiceHandoffId>,
-    trigger_launches: BTreeMap<TriggerId, u64>,
 }
 
 impl InMemoryLaunchStore {
+    pub fn new(triggers: Arc<InMemoryTriggerStore>) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State::default())),
+            triggers,
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn trigger_launch_count(&self, id: &TriggerId) -> u64 {
-        self.lock().trigger_launches.get(id).copied().unwrap_or(0)
     }
 }
 
@@ -45,7 +47,6 @@ impl LaunchStore for InMemoryLaunchStore {
         &self,
         admission: LaunchAdmission,
     ) -> Result<LaunchAdmissionResult, LaunchStoreError> {
-        validate_admission(&admission)?;
         let mut state = self.lock();
         let key = (
             admission.launch.owner.clone(),
@@ -62,6 +63,7 @@ impl LaunchStore for InMemoryLaunchStore {
             }
             return Ok(LaunchAdmissionResult::Existing(stored.clone()));
         }
+        validate_admission(&admission)?;
         if state.launches.contains_key(&admission.launch.id) {
             return Err(LaunchStoreError::Duplicate);
         }
@@ -69,17 +71,44 @@ impl LaunchStore for InMemoryLaunchStore {
         let event_at = launch.created_at.clone();
         let events = append_events(&mut launch, admission.events, event_at)?;
         launch.validate()?;
-        state.commands.insert(key, launch.id.clone());
-        state.events.insert(launch.id.clone(), events);
-        state.launches.insert(launch.id.clone(), launch.clone());
-        let count = state
-            .trigger_launches
-            .entry(launch.trigger_id.clone())
-            .or_default();
-        *count = count
-            .checked_add(1)
-            .ok_or_else(|| corrupt("trigger launch count overflow"))?;
-        Ok(LaunchAdmissionResult::Created(launch))
+        let ready = launch.state == LaunchState::Ready;
+        self.triggers
+            .commit_launch_admission(&admission.trigger, ready, || {
+                state.commands.insert(key, launch.id.clone());
+                state.events.insert(launch.id.clone(), events);
+                state.launches.insert(launch.id.clone(), launch.clone());
+                LaunchAdmissionResult::Created(launch)
+            })
+    }
+
+    async fn launch_by_command(
+        &self,
+        owner: &SubjectId,
+        public_id: &PublicTriggerId,
+        command_key_hash: &str,
+    ) -> Result<Option<Launch>, LaunchStoreError> {
+        let state = self.lock();
+        let key = (
+            owner.clone(),
+            public_id.clone(),
+            command_key_hash.to_string(),
+        );
+        let Some(id) = state.commands.get(&key) else {
+            return Ok(None);
+        };
+        let launch = state
+            .launches
+            .get(id)
+            .cloned()
+            .ok_or_else(|| corrupt("launch command points to no aggregate"))?;
+        if &launch.owner != owner
+            || &launch.public_id != public_id
+            || launch.command_key_hash != command_key_hash
+        {
+            return Err(corrupt("launch command points to a different aggregate"));
+        }
+        launch.validate()?;
+        Ok(Some(launch))
     }
 
     async fn launch(
@@ -117,13 +146,14 @@ impl LaunchStore for InMemoryLaunchStore {
         let mut launch = commit.launch;
         let appended = append_events(&mut launch, commit.events, commit.event_at)?;
         launch.validate()?;
-        state
-            .events
-            .entry(launch.id.clone())
-            .or_default()
-            .extend(appended);
-        state.launches.insert(launch.id.clone(), launch.clone());
-        Ok(launch)
+        let became_ready = current.ready_at.is_none() && launch.ready_at.is_some();
+        if became_ready {
+            let trigger_id = launch.trigger_id.clone();
+            return self.triggers.commit_agent_ready(&trigger_id, || {
+                apply_launch_commit(&mut state, launch, appended)
+            });
+        }
+        Ok(apply_launch_commit(&mut state, launch, appended))
     }
 
     async fn launch_events(
@@ -312,6 +342,7 @@ fn validate_immutable(current: &Launch, changed: &Launch) -> Result<(), LaunchSt
         || current.owner != changed.owner
         || current.placement_id != changed.placement_id
         || current.referrer_origin != changed.referrer_origin
+        || current.trust != changed.trust
         || current.command_key_hash != changed.command_key_hash
         || current.command_fingerprint != changed.command_fingerprint
         || current.created_at != changed.created_at
@@ -341,6 +372,16 @@ fn append_events(
         });
     }
     Ok(appended)
+}
+
+fn apply_launch_commit(state: &mut State, launch: Launch, appended: Vec<LaunchEvent>) -> Launch {
+    state
+        .events
+        .entry(launch.id.clone())
+        .or_default()
+        .extend(appended);
+    state.launches.insert(launch.id.clone(), launch.clone());
+    launch
 }
 
 fn corrupt(detail: &str) -> LaunchStoreError {

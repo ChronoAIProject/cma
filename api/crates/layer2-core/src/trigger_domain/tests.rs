@@ -587,14 +587,18 @@ async fn anonymous_preview_hides_profile_ids_and_full_first_message() {
         Some("Use your personal account.")
     );
     assert_eq!(preview.what_happens.len(), 3);
-    assert!(preview.trust.install_commands_present);
+    assert_eq!(preview.trust.sandbox_install_commands, vec!["install-lean"]);
     let sandbox_revision = seed
         .profiles
         .sandbox_profile_revision(&seed.target.sandbox_profile.id, 1)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(preview.trust.commands_digest, sandbox_revision.digest);
+    assert_eq!(
+        preview.trust.sandbox_environment_variables,
+        sandbox_revision.content.environment_variables
+    );
+    assert_eq!(preview.trust.workspace_setup_commands, vec!["lake update"]);
     assert_eq!(preview.technical.provider, AgentProvider::Codex);
     assert_eq!(preview.technical.model.as_deref(), Some("gpt-5"));
     assert_eq!(preview.technical.effort, ThinkingEffort::High);

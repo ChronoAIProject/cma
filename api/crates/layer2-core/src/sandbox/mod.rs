@@ -101,6 +101,7 @@ pub use service::{
     CreateSandbox, SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxService,
     SandboxServiceError,
 };
+pub(crate) use service_trust::foreign_workspace_setups;
 pub use status::{AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus};
 pub use store::{InMemorySandboxStore, Page, PageRequest, SandboxStoreError};
 pub use title::{

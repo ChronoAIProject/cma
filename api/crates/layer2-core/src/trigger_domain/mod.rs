@@ -4,7 +4,12 @@ mod connections;
 mod content;
 mod launch;
 mod launch_event;
+mod launch_resolution_service;
+mod launch_service;
+mod launch_service_operations;
+mod launch_service_support;
 mod launch_store;
+mod launch_trust;
 mod placement;
 mod preview;
 mod reference;
@@ -32,10 +37,15 @@ pub use launch::{
     LaunchSeed, LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus,
 };
 pub use launch_event::{LaunchEvent, LaunchEventKind};
+pub use launch_service::{
+    CreateOrResumeLaunch, LaunchCreateResult, LaunchPolicy, LaunchPolicySource, LaunchService,
+    LaunchServiceError, StartLaunch,
+};
 pub use launch_store::{
     InMemoryLaunchStore, LaunchAdmission, LaunchAdmissionResult, LaunchCommit, LaunchStore,
     LaunchStoreError, ServiceConnectionStore, DEFAULT_LAUNCH_EVENT_LIMIT, MAX_LAUNCH_EVENT_LIMIT,
 };
+pub use launch_trust::{LaunchTrustDisclosure, LaunchTrustManifest, LaunchTrustResource};
 pub use placement::{Placement, PlacementUpdate, MAX_LIVE_PLACEMENTS};
 pub use preview::{
     TriggerPreview, TriggerSizePreview, TriggerTechnicalPreview, TriggerTrustPreview,
@@ -45,7 +55,10 @@ pub use requirements::{
     RequirementsSnapshot, ReviewNeed, ReviewRequirements, ServiceRequirement,
     ServiceRequirementState,
 };
-pub use resolution::{ExistingAgentChoice, LaunchResolution, RepeatChoice, ResolvedResource};
+pub use resolution::{
+    ExistingAgentChoice, LaunchContextReader, LaunchResolution, LaunchResolutionError,
+    RepeatChoice, ResolvedResource,
+};
 pub use revision::{trigger_content_digest, TriggerRevision};
 pub use store::{
     InMemoryTriggerStore, PublicTrigger, TriggerPage, TriggerPageRequest, TriggerStore,
@@ -391,3 +404,6 @@ mod launch_tests;
 
 #[cfg(test)]
 mod launch_store_tests;
+
+#[cfg(test)]
+mod launch_service_tests;
