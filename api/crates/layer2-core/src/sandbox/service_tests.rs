@@ -26,7 +26,6 @@ use tokio::sync::Notify;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
-const LEASE_END: &str = "2026-09-05T00:02:00Z";
 
 struct MutablePolicy(Mutex<SandboxPolicy>);
 
@@ -1271,6 +1270,10 @@ async fn concurrent_delete_returns_the_winning_retirement_state() {
 
 #[tokio::test]
 async fn lease_takeover_fences_a_stale_worker_commit() {
+    const CLAIM_AT: &str = "2099-01-01T00:00:00Z";
+    const TAKEOVER_AT: &str = "2099-01-01T00:01:00Z";
+    const TAKEOVER_END: &str = "2099-01-01T00:02:00Z";
+
     let profiles = Arc::new(InMemoryProfileStore::default());
     let store = Arc::new(InMemorySandboxStore::default());
     let reference = publish(
@@ -1289,17 +1292,22 @@ async fn lease_takeover_fences_a_stale_worker_commit() {
     let sandbox = service.create(&owner, request(reference)).await.unwrap();
 
     let mut first = store
-        .claim_sandbox_work(&sandbox.id, "worker-a", NOW.into(), LATER.into())
+        .claim_sandbox_work(&sandbox.id, "worker-a", CLAIM_AT.into(), TAKEOVER_AT.into())
         .await
         .unwrap()
         .unwrap();
     assert!(store
-        .claim_sandbox_work(&sandbox.id, "worker-b", NOW.into(), LATER.into())
+        .claim_sandbox_work(&sandbox.id, "worker-b", CLAIM_AT.into(), TAKEOVER_AT.into(),)
         .await
         .unwrap()
         .is_none());
     let second = store
-        .claim_sandbox_work(&sandbox.id, "worker-b", LATER.into(), LEASE_END.into())
+        .claim_sandbox_work(
+            &sandbox.id,
+            "worker-b",
+            TAKEOVER_AT.into(),
+            TAKEOVER_END.into(),
+        )
         .await
         .unwrap()
         .unwrap();
