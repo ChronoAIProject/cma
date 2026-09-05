@@ -45,7 +45,10 @@ mod lifecycle_execution;
 pub use lifecycle_execution::*;
 #[cfg(test)]
 mod agent_work_validation_tests;
+mod lifecycle_agent_validation;
+mod lifecycle_event_validation;
 mod lifecycle_execution_validation;
+mod lifecycle_queue_recovery_validation;
 
 pub const MAX_PAGE_SIZE: u16 = 200;
 pub const MAX_AGENT_LOG_BATCH_SIZE: usize = 64;

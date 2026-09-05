@@ -10,7 +10,8 @@ use layer3_adapter::{
 use crate::profiles::{AgentProfileContent, AgentProfileSnapshot, PermissionLevel, ThinkingEffort};
 use crate::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, AgentStore, Page, PageRequest,
-    SandboxStoreError,
+    SandboxCheckpointMutation, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
+    SandboxStore, SandboxStoreError,
 };
 use crate::{
     AgentId, AgentProfileId, Authorization, Caller, Capability, RuntimeCapabilities,
@@ -104,6 +105,14 @@ pub(super) fn test_agent(status: AgentStatus, first_message: Option<&str>) -> Ag
         origin: AgentOrigin::Manual,
         revision: 1,
     }
+}
+
+pub(super) async fn seed_active_parent(store: &InMemorySandboxStore) -> Sandbox {
+    let mut sandbox = crate::sandbox::lifecycle_test_support::sandbox();
+    sandbox.id = SandboxId("sbx_operations".into());
+    sandbox.revision = 1;
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+    sandbox
 }
 
 pub(super) fn authorize_first_message_work(agent: &mut Agent, fence: u64) {
@@ -342,6 +351,58 @@ impl AgentStore for RejectingConversationStore {
         page: &PageRequest,
     ) -> Result<Page<Agent>, SandboxStoreError> {
         self.inner.list_agents(owner, page).await
+    }
+}
+
+#[async_trait]
+impl SandboxStore for RejectingConversationStore {
+    async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        self.inner.create_sandbox(sandbox).await
+    }
+
+    async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError> {
+        self.inner.get_sandbox(id).await
+    }
+
+    async fn save_sandbox(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+    ) -> Result<(), SandboxStoreError> {
+        self.inner.save_sandbox(expected_revision, sandbox).await
+    }
+
+    async fn list_sandboxes(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<Sandbox>, SandboxStoreError> {
+        self.inner.list_sandboxes(owner, page).await
+    }
+}
+
+#[async_trait]
+impl SandboxLifecycleExecutionStore for RejectingConversationStore {
+    async fn sandbox_agents(
+        &self,
+        sandbox_id: &SandboxId,
+        page: &PageRequest,
+    ) -> Result<Page<Agent>, SandboxStoreError> {
+        self.inner.sandbox_agents(sandbox_id, page).await
+    }
+
+    async fn publish_sandbox_checkpoint(
+        &self,
+        mutation: SandboxCheckpointMutation,
+    ) -> Result<(), SandboxStoreError> {
+        self.inner.publish_sandbox_checkpoint(mutation).await
+    }
+
+    async fn commit_sandbox_lifecycle(
+        &self,
+        mutation: SandboxLifecycleMutation,
+    ) -> Result<(), SandboxStoreError> {
+        self.inner.commit_sandbox_lifecycle(mutation).await
     }
 }
 

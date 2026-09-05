@@ -17,9 +17,9 @@ use layer2_core::sandbox::store::{
     SandboxWorkerStore as _,
 };
 use layer2_core::sandbox::{
-    CreateSandbox, DurableAgentUpdateRecorder, InMemorySandboxStore, Sandbox, SandboxEventKind,
-    SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxReviveCause, SandboxRotationIdentity,
-    SandboxService, SandboxStatus, SandboxWorkStep,
+    AgentOperationService, CreateSandbox, DurableAgentUpdateRecorder, InMemorySandboxStore,
+    Sandbox, SandboxEventKind, SandboxOrigin, SandboxPolicy, SandboxPolicySource,
+    SandboxReviveCause, SandboxRotationIdentity, SandboxService, SandboxStatus, SandboxWorkStep,
 };
 use layer2_core::{
     rfc3339_at, seconds_from_rfc3339, Authorization, Caller, Capability, SandboxId,
@@ -40,6 +40,8 @@ use super::worker::{
     SandboxWorker, SandboxWorkerConfig, SandboxWorkerDependencies, CREDENTIAL_EXPIRY_MARGIN,
     CREDENTIAL_ROTATION_AGE,
 };
+
+mod lifecycle_queue_tests;
 
 const PROFILE_TIME: &str = "2026-09-05T00:00:00Z";
 
@@ -402,6 +404,7 @@ impl Harness {
             }),
             registry: registry.clone(),
             updates: DurableAgentUpdateRecorder::new(store.clone()),
+            operations: AgentOperationService::new(store.clone(), registry.clone()),
         };
         let mut config = SandboxWorkerConfig::new("worker-a", "test", "runtime-v2", policy.clone());
         config.lease_duration = Duration::from_secs(60);
@@ -497,6 +500,7 @@ impl Harness {
             }),
             registry: self.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
+            operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
         };
         let mut config =
             SandboxWorkerConfig::with_policy_source(holder, "test", "runtime-v2", policy);
@@ -525,6 +529,7 @@ impl Harness {
             }),
             registry: self.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
+            operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
         };
         let mut config =
             SandboxWorkerConfig::new(holder, "test", "runtime-v2", self.policy.clone());

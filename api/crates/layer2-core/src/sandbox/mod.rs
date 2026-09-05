@@ -4,6 +4,7 @@ mod admin;
 mod agent;
 mod agent_operation;
 mod agent_operation_dispatch;
+mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
@@ -119,6 +120,7 @@ pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
 pub use queued_message::{
     QueuedAgentMessage, QueuedMessageState, MAX_AGENT_MESSAGE_BYTES, MAX_QUEUED_AGENT_MESSAGES,
+    QUEUED_MESSAGE_DISPATCH_GRACE_SECONDS,
 };
 pub use revive::{
     SandboxReviveCause, SandboxReviveFailureClass, SandboxRevivePhase, SANDBOX_REVIVE_PHASE_ORDER,

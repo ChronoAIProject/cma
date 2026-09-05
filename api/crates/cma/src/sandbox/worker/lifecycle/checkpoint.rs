@@ -250,7 +250,11 @@ impl SandboxWorker {
 
 pub(super) fn require_quiet_agent(agent: &Agent) -> Result<(), WorkerFailure> {
     if agent.conversation.active_turn.is_some()
-        || agent.conversation.operation.is_some()
+        || agent
+            .conversation
+            .operation
+            .as_ref()
+            .is_some_and(|operation| operation.blocks_dispatch())
         || agent.work.step.is_pending()
         || agent.work.lease.is_some()
         || agent.requested_stop_reason.is_some()

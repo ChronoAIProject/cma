@@ -2,17 +2,27 @@ use std::sync::Arc;
 
 use crate::{AgentId, Caller, Capability, RuntimeCapability};
 
-use super::store::{AgentConversationStore, AgentStore, SandboxStoreError};
+use super::store::{
+    AgentConversationStore, AgentStore, SandboxLifecycleExecutionStore, SandboxStore,
+    SandboxStoreError,
+};
 use super::{
     Agent, AgentApprovalDecision, AgentOperationDelivery, AgentRuntimeRegistry, AgentStatus,
-    FirstMessageDelivery,
+    FirstMessageDelivery, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxRevivePhase,
+    SandboxStatus,
 };
 
 pub(super) const MAX_OPERATION_COMMIT_RETRIES: usize = 8;
 
-pub trait AgentOperationStore: AgentStore + AgentConversationStore {}
+pub trait AgentOperationStore:
+    AgentStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
+{
+}
 
-impl<T> AgentOperationStore for T where T: AgentStore + AgentConversationStore {}
+impl<T> AgentOperationStore for T where
+    T: AgentStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
+{
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentOperationReceipt {
@@ -127,6 +137,13 @@ impl AgentOperationService {
             self.require_first_message_settled(&current)?;
             self.require_dispatch_available(&current)?;
             match current.status {
+                AgentStatus::Ready if self.parent_lifecycle_queues(&current).await? => {
+                    match self.queue_message(current, text.clone()).await {
+                        Ok(outcome) => return Ok(outcome),
+                        Err(AgentOperationError::Conflict) => continue,
+                        Err(error) => return Err(error),
+                    }
+                }
                 AgentStatus::Ready => match self.fence_message(current, text.clone()).await {
                     Ok(prepared) => {
                         return self
@@ -137,8 +154,7 @@ impl AgentOperationService {
                     Err(AgentOperationError::Conflict) => continue,
                     Err(error) => return Err(error),
                 },
-                AgentStatus::Paused => match self.queue_paused_message(current, text.clone()).await
-                {
+                AgentStatus::Paused => match self.queue_message(current, text.clone()).await {
                     Ok(outcome) => return Ok(outcome),
                     Err(AgentOperationError::Conflict) => continue,
                     Err(error) => return Err(error),
@@ -147,6 +163,41 @@ impl AgentOperationService {
             }
         }
         Err(AgentOperationError::Conflict)
+    }
+
+    async fn parent_lifecycle_queues(&self, agent: &Agent) -> Result<bool, AgentOperationError> {
+        let sandbox = SandboxStore::get_sandbox(self.store.as_ref(), &agent.sandbox_id)
+            .await
+            .map_err(operation_store_error)?
+            .ok_or_else(|| AgentOperationError::Corrupt("agent parent sandbox is absent".into()))?;
+        if sandbox.owner != agent.owner {
+            return Err(AgentOperationError::Corrupt(
+                "agent parent sandbox ownership is inconsistent".into(),
+            ));
+        }
+        match sandbox.status {
+            SandboxStatus::Pausing | SandboxStatus::Paused => Ok(true),
+            SandboxStatus::Reviving => match sandbox.lifecycle.operation.as_ref() {
+                Some(SandboxLifecycleOperation::Revive { phase, .. }) => {
+                    Ok(*phase != SandboxRevivePhase::PublishActive)
+                }
+                _ => Err(AgentOperationError::Corrupt(
+                    "reviving sandbox lifecycle operation is inconsistent".into(),
+                )),
+            },
+            SandboxStatus::Rotating => match sandbox.lifecycle.operation.as_ref() {
+                Some(SandboxLifecycleOperation::ImageRotation { phase, .. }) => {
+                    Ok(*phase != SandboxImageRotationPhase::PublishActive)
+                }
+                _ => Err(AgentOperationError::Corrupt(
+                    "rotating sandbox lifecycle operation is inconsistent".into(),
+                )),
+            },
+            SandboxStatus::Active | SandboxStatus::CredentialRotating => Ok(false),
+            _ => Err(AgentOperationError::StatusConflict {
+                status: agent.status,
+            }),
+        }
     }
 
     pub async fn steer(

@@ -12,7 +12,7 @@ pub(super) fn observe_operation(
     at: &str,
     logs: &mut Vec<AgentLogKind>,
 ) -> Result<(), AgentConversationError> {
-    let Some(record) = agent.conversation.operation.as_mut() else {
+    let Some(record) = agent.conversation.operation.as_ref() else {
         return Ok(());
     };
     let evidence_matches = match &record.intent {
@@ -29,6 +29,12 @@ pub(super) fn observe_operation(
     {
         return Ok(());
     }
+    let queue_index = matching_queued_dispatch(agent)?;
+    let record = agent
+        .conversation
+        .operation
+        .as_mut()
+        .expect("the observed operation was checked");
     record
         .mark_execution_observed(at.to_owned())
         .map_err(|_| AgentConversationError::InvalidState("operation evidence was refused"))?;
@@ -37,7 +43,46 @@ pub(super) fn observe_operation(
         operation: record.intent.kind(),
         state: record.state,
     });
+    if let Some(index) = queue_index {
+        agent.conversation.queued_messages[index]
+            .mark_execution_observed()
+            .map_err(|_| {
+                AgentConversationError::InvalidState("queued-message evidence was refused")
+            })?;
+    }
     Ok(())
+}
+
+fn matching_queued_dispatch(agent: &Agent) -> Result<Option<usize>, AgentConversationError> {
+    let Some(operation) = agent.conversation.operation.as_ref() else {
+        return Ok(None);
+    };
+    let AgentOperationIntent::SendMessage { payload_sha256 } = &operation.intent else {
+        return Ok(None);
+    };
+    let matches = agent
+        .conversation
+        .queued_messages
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| {
+            matches!(
+                message.state,
+                super::QueuedMessageState::DispatchFenced
+                    | super::QueuedMessageState::RecoveryRequired
+            ) && message.payload_sha256 == *payload_sha256
+                && message.dispatch_fenced_at.as_deref()
+                    == Some(operation.dispatch_fenced_at.as_str())
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [index] => Ok(Some(*index)),
+        _ => Err(AgentConversationError::Corrupt(
+            "multiple queue items match one operation fence".into(),
+        )),
+    }
 }
 
 pub(super) fn observe_first_message(

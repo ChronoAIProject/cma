@@ -13,6 +13,7 @@ use crate::{
     WorktreeId,
 };
 
+use super::queued_message::queued_message_origin;
 use super::store::{
     AgentLogStore, AgentStore, InMemorySandboxStore, PageRequest, SandboxStore, WorkspaceStore,
     WorktreeStore,
@@ -714,6 +715,158 @@ async fn transcript_reconstructs_completed_and_active_turns() {
     assert!(matches!(
         transcript.turns[1].outcome,
         AgentTurnOutcome::Active
+    ));
+}
+
+#[tokio::test]
+async fn transcript_keeps_admitted_queue_input_outside_a_turn() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let agent = insert_hierarchy(
+        &store,
+        "agt_queued_transcript",
+        "wtr_queued_transcript",
+        "wks_queued_transcript",
+        "sbx_queued_transcript",
+        "owner",
+        AgentStatus::Starting,
+    )
+    .await;
+    let mut agent = replace_history(
+        &store,
+        agent,
+        vec![
+            AgentLogKind::ConversationOpened {
+                conversation_id: "conversation-queued".into(),
+                runtime_generation: 1,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "deliver after restore".into(),
+            },
+        ],
+        Some("conversation-queued"),
+        Some(1),
+        None,
+    )
+    .await;
+    agent.conversation.queued_messages =
+        vec![QueuedAgentMessage::new(3, "deliver after restore".into(), NOW.into()).unwrap()];
+    agent.revision += 1;
+    store.save_agent(2, agent.clone()).await.unwrap();
+
+    let transcript = service(store.clone())
+        .transcript(&caller("owner", true), &agent.id)
+        .await
+        .unwrap();
+    assert!(transcript.turns.is_empty());
+
+    agent.conversation.queued_messages =
+        vec![QueuedAgentMessage::new(3, "different input".into(), NOW.into()).unwrap()];
+    agent.revision += 1;
+    store.save_agent(3, agent.clone()).await.unwrap();
+    assert!(matches!(
+        service(store)
+            .transcript(&caller("owner", true), &agent.id)
+            .await,
+        Err(AgentReadError::Corrupt(_))
+    ));
+}
+
+#[tokio::test]
+async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let agent = insert_hierarchy(
+        &store,
+        "agt_queue_retry_transcript",
+        "wtr_queue_retry_transcript",
+        "wks_queue_retry_transcript",
+        "sbx_queue_retry_transcript",
+        "owner",
+        AgentStatus::Starting,
+    )
+    .await;
+    let agent = replace_history(
+        &store,
+        agent,
+        vec![
+            AgentLogKind::ConversationOpened {
+                conversation_id: "conversation-queue-retry".into(),
+                runtime_generation: 1,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "retry this input".into(),
+            },
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence: 4,
+                operation: AgentOperationKind::SendMessage,
+                state: AgentOperationDelivery::DispatchFenced,
+            },
+            AgentLogKind::TurnStarted {
+                turn_sequence: 5,
+                origin_key: Some(queued_message_origin(3)),
+            },
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Ready,
+                to: AgentStatus::Working,
+            },
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence: 4,
+                operation: AgentOperationKind::SendMessage,
+                state: AgentOperationDelivery::PreWriteFailed,
+            },
+            AgentLogKind::TurnFailed {
+                turn_sequence: 5,
+                failure: TypedFailure {
+                    class: "input_not_written".into(),
+                    detail: "runtime writer unavailable".into(),
+                },
+            },
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Working,
+                to: AgentStatus::Ready,
+            },
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence: 10,
+                operation: AgentOperationKind::SendMessage,
+                state: AgentOperationDelivery::DispatchFenced,
+            },
+            AgentLogKind::TurnStarted {
+                turn_sequence: 11,
+                origin_key: Some(queued_message_origin(3)),
+            },
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Ready,
+                to: AgentStatus::Working,
+            },
+            AgentLogKind::AgentMessage {
+                content: "delivered once".into(),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 11 },
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Working,
+                to: AgentStatus::Ready,
+            },
+        ],
+        Some("conversation-queue-retry"),
+        Some(1),
+        None,
+    )
+    .await;
+
+    let transcript = service(store)
+        .transcript(&caller("owner", true), &agent.id)
+        .await
+        .unwrap();
+    assert_eq!(transcript.turns.len(), 2);
+    assert_eq!(transcript.turns[0].owner_message, "retry this input");
+    assert!(matches!(
+        transcript.turns[0].outcome,
+        AgentTurnOutcome::Failed { .. }
+    ));
+    assert_eq!(transcript.turns[1].owner_message, "retry this input");
+    assert_eq!(transcript.turns[1].agent_messages, ["delivered once"]);
+    assert!(matches!(
+        transcript.turns[1].outcome,
+        AgentTurnOutcome::Completed { .. }
     ));
 }
 

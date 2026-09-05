@@ -9,6 +9,7 @@ use crate::sandbox::{
 };
 use crate::seconds_from_rfc3339;
 
+use super::lifecycle_agent_validation::validate_lifecycle_agent_phase;
 use super::lifecycle_execution_validation::{
     checkpoint_sandbox_advanced, lifecycle_sandbox_advanced,
 };
@@ -240,6 +241,7 @@ pub fn validate_lifecycle_mutation(
             return Err(SandboxStoreError::Conflict);
         }
     }
+    validate_lifecycle_agent_phase(current, agents, mutation, &touched)?;
     Ok(())
 }
 
@@ -302,7 +304,11 @@ fn validate_checkpoint_agents(
         .filter(|agent| agent.status.is_live())
         .map(|agent| {
             if agent.conversation.active_turn.is_some()
-                || agent.conversation.operation.is_some()
+                || agent
+                    .conversation
+                    .operation
+                    .as_ref()
+                    .is_some_and(|operation| operation.blocks_dispatch())
                 || agent.work.step.is_pending()
                 || agent.work.lease.is_some()
                 || agent.requested_stop_reason.is_some()
@@ -366,59 +372,26 @@ fn validate_agent_change(
         || current.work != next.work
         || current.work.step.is_pending()
         || current.work.lease.is_some()
-        || current.conversation.active_turn.is_some()
-        || current.conversation.operation.is_some()
         || current.requested_stop_reason.is_some()
         || next.updated_at != appended_at
-        || !agent_non_lifecycle_fields_match(current, next)
+        || !agent_identity_fields_match(current, next)
     {
         return Err(SandboxStoreError::Conflict);
     }
     next.validate_conversation()
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
 
-    if current.status != next.status {
-        let log = AgentLogKind::StatusChanged {
-            from: current.status,
-            to: next.status,
-        };
-        let event = SandboxEventKind::AgentStatusChanged {
-            agent_id: next.id.clone(),
-            from: current.status,
-            to: next.status,
-        };
-        if !change.logs.contains(&log) || !events.contains(&event) {
-            return Err(invalid("agent status change is missing durable evidence"));
-        }
-    }
-    if current.conversation.runtime_generation != next.conversation.runtime_generation {
-        let Some(conversation_id) = next.conversation.conversation_id.as_ref() else {
-            return Err(SandboxStoreError::Conflict);
-        };
-        let Some(runtime_generation) = next.conversation.runtime_generation else {
-            return Err(SandboxStoreError::Conflict);
-        };
-        if !change.logs.contains(&AgentLogKind::ConversationOpened {
-            conversation_id: conversation_id.clone(),
-            runtime_generation,
-        }) {
-            return Err(invalid("conversation reopen is missing durable evidence"));
-        }
-    }
+    let _ = events;
     Ok(())
 }
 
-fn agent_non_lifecycle_fields_match(current: &Agent, next: &Agent) -> bool {
+fn agent_identity_fields_match(current: &Agent, next: &Agent) -> bool {
     current.id == next.id
         && current.worktree_id == next.worktree_id
         && current.workspace_id == next.workspace_id
         && current.creation_key == next.creation_key
         && current.creation_fingerprint == next.creation_fingerprint
         && current.profile == next.profile
-        && current.conversation.conversation_id == next.conversation.conversation_id
-        && current.conversation.first_message == next.conversation.first_message
-        && current.conversation.active_turn == next.conversation.active_turn
-        && current.conversation.operation == next.conversation.operation
         && current.failure == next.failure
         && current.title == next.title
         && current.created_at == next.created_at
