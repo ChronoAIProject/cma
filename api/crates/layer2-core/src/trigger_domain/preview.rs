@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::ServiceId;
-use crate::profiles::{AgentProvider, EnvironmentVariable, ThinkingEffort};
+use crate::profiles::{
+    content_digest, AgentProvider, EnvironmentVariable, ThinkingEffort, WorkspaceProfileRevision,
+};
 
 use super::{ButtonLabel, Theme};
 use super::{
@@ -14,11 +16,25 @@ const MAX_FIRST_MESSAGE_PREVIEW_CHARS: usize = 140;
 #[serde(deny_unknown_fields)]
 pub struct TriggerTrustPreview {
     #[serde(default)]
-    pub sandbox_install_commands: Vec<String>,
-    #[serde(default)]
-    pub sandbox_environment_variables: Vec<EnvironmentVariable>,
-    #[serde(default)]
-    pub workspace_setup_commands: Vec<String>,
+    pub disclosures: Vec<TriggerTrustPreviewDisclosure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "resource", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TriggerTrustPreviewDisclosure {
+    Sandbox {
+        commands_digest: String,
+        #[serde(default)]
+        commands: Vec<String>,
+        #[serde(default)]
+        environment_variables: Vec<EnvironmentVariable>,
+    },
+    Workspace {
+        name: String,
+        commands_digest: String,
+        #[serde(default)]
+        commands: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,19 +100,7 @@ impl TriggerPreview {
             publisher_display_name,
             what_happens: content.reuse.what_happens(),
             availability,
-            trust: TriggerTrustPreview {
-                sandbox_install_commands: profiles
-                    .sandbox
-                    .content
-                    .software_install_commands
-                    .clone(),
-                sandbox_environment_variables: profiles
-                    .sandbox
-                    .content
-                    .environment_variables
-                    .clone(),
-                workspace_setup_commands: profiles.workspace.content.setup_commands.clone(),
-            },
+            trust: project_trust(profiles)?,
             technical: TriggerTechnicalPreview {
                 provider: profiles.sandbox.content.agent_provider,
                 model: profiles.agent.content.model.clone(),
@@ -123,6 +127,7 @@ fn require_matching_profiles(
     let target = &content.target;
     if profiles.sandbox.profile_id != target.sandbox_profile.id
         || profiles.sandbox.revision != target.sandbox_profile.revision
+        || !digest_matches(&profiles.sandbox.content, &profiles.sandbox.digest)
     {
         return Err(TriggerError::new(
             "trigger_reference_mismatch",
@@ -131,6 +136,7 @@ fn require_matching_profiles(
     }
     if profiles.workspace.profile_id != target.workspace_profile.id
         || profiles.workspace.revision != target.workspace_profile.revision
+        || !digest_matches(&profiles.workspace.content, &profiles.workspace.digest)
     {
         return Err(TriggerError::new(
             "trigger_reference_mismatch",
@@ -139,11 +145,92 @@ fn require_matching_profiles(
     }
     if profiles.agent.profile_id != target.agent_profile.id
         || profiles.agent.revision != target.agent_profile.revision
+        || !digest_matches(&profiles.agent.content, &profiles.agent.digest)
     {
         return Err(TriggerError::new(
             "trigger_reference_mismatch",
             "target.agent_profile",
         ));
     }
+    if profiles.sandbox.content.workspace_profiles.len() != profiles.sandbox_workspaces.len()
+        || profiles
+            .sandbox
+            .content
+            .workspace_profiles
+            .iter()
+            .zip(&profiles.sandbox_workspaces)
+            .any(|(reference, revision)| {
+                revision.profile_id != reference.id
+                    || revision.revision != reference.revision
+                    || !digest_matches(&revision.content, &revision.digest)
+            })
+    {
+        return Err(TriggerError::new(
+            "trigger_reference_mismatch",
+            "target.sandbox_profile.workspace_profiles",
+        ));
+    }
     Ok(())
 }
+
+fn project_trust(profiles: &ResolvedTriggerProfiles) -> Result<TriggerTrustPreview, TriggerError> {
+    let mut disclosures = Vec::new();
+    let sandbox = &profiles.sandbox;
+    if !sandbox.content.software_install_commands.is_empty()
+        || !sandbox.content.environment_variables.is_empty()
+    {
+        disclosures.push(TriggerTrustPreviewDisclosure::Sandbox {
+            commands_digest: sandbox.digest.clone(),
+            commands: sandbox.content.software_install_commands.clone(),
+            environment_variables: sandbox.content.environment_variables.clone(),
+        });
+    }
+    for workspace in &profiles.sandbox_workspaces {
+        push_workspace_disclosure(
+            &mut disclosures,
+            workspace,
+            "target.sandbox_profile.workspace_profiles",
+        )?;
+    }
+    let target_is_nested = sandbox
+        .content
+        .workspace_profiles
+        .iter()
+        .any(|reference| reference.id == profiles.workspace.profile_id);
+    if !target_is_nested {
+        push_workspace_disclosure(
+            &mut disclosures,
+            &profiles.workspace,
+            "target.workspace_profile",
+        )?;
+    }
+    Ok(TriggerTrustPreview { disclosures })
+}
+
+fn push_workspace_disclosure(
+    disclosures: &mut Vec<TriggerTrustPreviewDisclosure>,
+    revision: &WorkspaceProfileRevision,
+    field: &'static str,
+) -> Result<(), TriggerError> {
+    if revision.content.setup_commands.is_empty() {
+        return Ok(());
+    }
+    let name = revision
+        .content
+        .workspace_name()
+        .map_err(|_| TriggerError::new("trigger_reference_mismatch", field))?;
+    disclosures.push(TriggerTrustPreviewDisclosure::Workspace {
+        name,
+        commands_digest: revision.digest.clone(),
+        commands: revision.content.setup_commands.clone(),
+    });
+    Ok(())
+}
+
+fn digest_matches<T: Serialize>(content: &T, digest: &str) -> bool {
+    content_digest(content).is_ok_and(|expected| expected == digest)
+}
+
+#[cfg(test)]
+#[path = "preview_tests.rs"]
+mod tests;
