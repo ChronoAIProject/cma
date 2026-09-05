@@ -19,6 +19,10 @@ const MAX_AGENT_SLOTS: usize = 16;
 
 #[path = "supervisor_agent.rs"]
 mod agent;
+#[path = "supervisor_agent_recovery.rs"]
+mod agent_recovery;
+#[path = "supervisor_mutations.rs"]
+mod mutations;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -145,28 +149,8 @@ impl Supervisor {
             RequestFrame::PrepareWorkspace(_)
             | RequestFrame::WorkspaceSetup(_)
             | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
-            RequestFrame::AddWorktree(request) => Ok(ResponseFrame::AddWorktree(
-                crate::worktree::add(&self.config.home, self.config.allow_local_git, &request)
-                    .await?,
-            )),
-            RequestFrame::RemoveWorktree(reference) => {
-                let path = crate::worktree::expected_path(
-                    &self.config.home,
-                    &reference.workspace,
-                    &reference.name,
-                );
-                self.ensure_worktree_idle(&path).await?;
-                crate::worktree::remove(&self.config.home, self.config.allow_local_git, &reference)
-                    .await?;
-                Ok(ResponseFrame::RemoveWorktree(
-                    layer3_adapter::WorktreeRemoveReceipt {
-                        operation_id: reference.operation_id,
-                        request_sha256: reference.request_sha256,
-                        workspace: reference.workspace,
-                        name: reference.name,
-                    },
-                ))
-            }
+            RequestFrame::AddWorktree(request) => self.add_worktree(request).await,
+            RequestFrame::RemoveWorktree(reference) => self.remove_worktree(reference).await,
             RequestFrame::MaterializeAgentHome(plan) => self.materialize_agent_home(plan).await,
             RequestFrame::RemoveAgentHome(request) => self.remove_agent_home(request).await,
             RequestFrame::OpenAgent(launch) => self.open_agent(launch).await,
@@ -212,7 +196,8 @@ impl Supervisor {
             }
         }
         drop(phase);
-        crate::workspace_runtime::recover_locked(&self.config).await
+        crate::workspace_runtime::recover_locked(&self.config).await?;
+        self.recover_mutations_locked().await
     }
 
     async fn install(&self, request: InstallRequest) -> Result<ResponseFrame> {
@@ -308,6 +293,15 @@ impl Supervisor {
                 "workspace still has an open agent",
             ));
         }
+        if crate::mutation_journal::active_agents(&self.config)?
+            .iter()
+            .any(|agent| Path::new(&agent.cwd).starts_with(&root))
+        {
+            return Err(RuntimeError::rejected(
+                "workspace_agent_open",
+                "workspace has a durable agent open without a completed close",
+            ));
+        }
         Ok(())
     }
 
@@ -322,6 +316,15 @@ impl Supervisor {
             return Err(RuntimeError::rejected(
                 "worktree_agent_open",
                 "worktree still has an open agent",
+            ));
+        }
+        if crate::mutation_journal::active_agents(&self.config)?
+            .iter()
+            .any(|agent| Path::new(&agent.cwd) == worktree)
+        {
+            return Err(RuntimeError::rejected(
+                "worktree_agent_open",
+                "worktree has a durable agent open without a completed close",
             ));
         }
         Ok(())
