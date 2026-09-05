@@ -280,7 +280,7 @@ fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
             max_workspaces: 1,
             max_agents_per_workspace: 8,
         },
-        checkpoint: None,
+        lifecycle: Default::default(),
         last_activity_at: stamp.into(),
         created_at: stamp.into(),
         updated_at: stamp.into(),

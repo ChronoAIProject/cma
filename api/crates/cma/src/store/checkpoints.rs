@@ -92,13 +92,9 @@ impl MongoSandboxStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
-        let checkpoint =
-            sandbox
-                .checkpoint
-                .as_ref()
-                .ok_or(SandboxStoreError::InvalidTransaction(
-                    "sealed sandbox has no checkpoint reference",
-                ))?;
+        let checkpoint = sandbox.lifecycle.checkpoints.latest.as_ref().ok_or(
+            SandboxStoreError::InvalidTransaction("sealed sandbox has no checkpoint reference"),
+        )?;
         let checkpoint_document = checkpoint_document(&sandbox.id, sandbox.revision, checkpoint)?;
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -214,9 +210,9 @@ impl MongoSandboxStore {
             .map(read_checkpoint)
             .transpose()?;
         Ok(stored_sandbox.as_ref() == Some(sandbox)
-            && stored_checkpoint
-                .as_ref()
-                .is_some_and(|stored| sandbox.checkpoint.as_ref() == Some(&stored.record)))
+            && stored_checkpoint.as_ref().is_some_and(|stored| {
+                sandbox.lifecycle.checkpoints.latest.as_ref() == Some(&stored.record)
+            }))
     }
 }
 

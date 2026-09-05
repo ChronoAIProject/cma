@@ -1,0 +1,300 @@
+//! Atomic admission for owner and system sandbox lifecycle requests.
+
+use async_trait::async_trait;
+
+use crate::ids::{SandboxId, SubjectId};
+use crate::seconds_from_rfc3339;
+
+use super::{SandboxStore, SandboxStoreError, SandboxTransaction, SandboxTransactionStore};
+use crate::sandbox::{
+    Sandbox, SandboxEventKind, SandboxLifecycleOperation, SandboxReviveCause, SandboxStatus,
+};
+
+const COMMAND_CAS_ATTEMPTS: usize = 16;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxLifecycleCommandKind {
+    Pause { notice: Option<String> },
+    Revive { cause: SandboxReviveCause },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxLifecycleCommand {
+    pub sandbox_id: SandboxId,
+    pub owner: SubjectId,
+    pub requested_at: String,
+    pub kind: SandboxLifecycleCommandKind,
+}
+
+impl SandboxLifecycleCommand {
+    pub fn pause(
+        sandbox_id: SandboxId,
+        owner: SubjectId,
+        requested_at: String,
+        notice: Option<String>,
+    ) -> Self {
+        Self {
+            sandbox_id,
+            owner,
+            requested_at,
+            kind: SandboxLifecycleCommandKind::Pause { notice },
+        }
+    }
+
+    pub fn revive(
+        sandbox_id: SandboxId,
+        owner: SubjectId,
+        requested_at: String,
+        cause: SandboxReviveCause,
+    ) -> Self {
+        Self {
+            sandbox_id,
+            owner,
+            requested_at,
+            kind: SandboxLifecycleCommandKind::Revive { cause },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxLifecycleCommandDisposition {
+    Scheduled,
+    AlreadyScheduled,
+    AlreadySatisfied,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxLifecycleCommandOutcome {
+    pub sandbox: Sandbox,
+    pub disposition: SandboxLifecycleCommandDisposition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxLifecycleCommandResult {
+    Accepted(SandboxLifecycleCommandOutcome),
+    NotEligible(Sandbox),
+}
+
+/// The command is one revision-CAS plus its gap-free status event.
+#[async_trait]
+pub trait SandboxLifecycleCommandStore: Send + Sync {
+    async fn schedule_sandbox_lifecycle(
+        &self,
+        command: SandboxLifecycleCommand,
+    ) -> Result<SandboxLifecycleCommandResult, SandboxStoreError>;
+}
+
+#[async_trait]
+impl<T> SandboxLifecycleCommandStore for T
+where
+    T: SandboxStore + SandboxTransactionStore + Send + Sync,
+{
+    async fn schedule_sandbox_lifecycle(
+        &self,
+        command: SandboxLifecycleCommand,
+    ) -> Result<SandboxLifecycleCommandResult, SandboxStoreError> {
+        validate_command(&command)?;
+        for _ in 0..COMMAND_CAS_ATTEMPTS {
+            let current = self
+                .get_sandbox(&command.sandbox_id)
+                .await?
+                .filter(|sandbox| sandbox.owner == command.owner)
+                .ok_or(SandboxStoreError::NotFound)?;
+            current.validate().map_err(|error| {
+                SandboxStoreError::Corrupt(format!("stored sandbox is invalid: {error}"))
+            })?;
+            let application = apply_command(current, &command)?;
+            let PendingApplication::Commit {
+                expected_revision,
+                sandbox,
+                event,
+            } = application
+            else {
+                return Ok(application.result());
+            };
+            match self
+                .commit(SandboxTransaction::SaveSandboxAndAppend {
+                    expected_revision,
+                    sandbox: Box::new(sandbox.clone()),
+                    event_at: command.requested_at.clone(),
+                    event,
+                })
+                .await
+            {
+                Ok(()) => {
+                    return Ok(SandboxLifecycleCommandResult::Accepted(
+                        SandboxLifecycleCommandOutcome {
+                            sandbox,
+                            disposition: SandboxLifecycleCommandDisposition::Scheduled,
+                        },
+                    ));
+                }
+                Err(SandboxStoreError::Conflict | SandboxStoreError::SequenceConflict) => {
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(SandboxStoreError::Conflict)
+    }
+}
+
+enum PendingApplication {
+    Commit {
+        expected_revision: u64,
+        sandbox: Sandbox,
+        event: SandboxEventKind,
+    },
+    Accepted(SandboxLifecycleCommandOutcome),
+    NotEligible(Sandbox),
+}
+
+impl PendingApplication {
+    fn result(self) -> SandboxLifecycleCommandResult {
+        match self {
+            Self::Accepted(outcome) => SandboxLifecycleCommandResult::Accepted(outcome),
+            Self::NotEligible(sandbox) => SandboxLifecycleCommandResult::NotEligible(sandbox),
+            Self::Commit { .. } => unreachable!("commits are handled before result projection"),
+        }
+    }
+}
+
+fn apply_command(
+    current: Sandbox,
+    command: &SandboxLifecycleCommand,
+) -> Result<PendingApplication, SandboxStoreError> {
+    match &command.kind {
+        SandboxLifecycleCommandKind::Pause { notice } => apply_pause(current, command, notice),
+        SandboxLifecycleCommandKind::Revive { cause } => apply_revive(current, command, *cause),
+    }
+}
+
+fn apply_pause(
+    current: Sandbox,
+    command: &SandboxLifecycleCommand,
+    notice: &Option<String>,
+) -> Result<PendingApplication, SandboxStoreError> {
+    if current.status == SandboxStatus::Pausing
+        && matches!(
+            current.lifecycle.operation,
+            Some(SandboxLifecycleOperation::Pause { .. })
+        )
+    {
+        return Ok(accepted(
+            current,
+            SandboxLifecycleCommandDisposition::AlreadyScheduled,
+        ));
+    }
+    if current.status == SandboxStatus::Paused {
+        return Ok(accepted(
+            current,
+            SandboxLifecycleCommandDisposition::AlreadySatisfied,
+        ));
+    }
+    if current.status != SandboxStatus::Active {
+        return Ok(PendingApplication::NotEligible(current));
+    }
+    let expected_revision = current.revision;
+    let previous = current.status;
+    let mut sandbox = current.clone();
+    if sandbox
+        .begin_pause(command.requested_at.clone(), notice.clone())
+        .is_err()
+    {
+        return Ok(PendingApplication::NotEligible(current));
+    }
+    validate_candidate(&sandbox)?;
+    Ok(PendingApplication::Commit {
+        expected_revision,
+        event: SandboxEventKind::StatusChanged {
+            from: previous,
+            to: SandboxStatus::Pausing,
+        },
+        sandbox,
+    })
+}
+
+fn apply_revive(
+    current: Sandbox,
+    command: &SandboxLifecycleCommand,
+    cause: SandboxReviveCause,
+) -> Result<PendingApplication, SandboxStoreError> {
+    if current.status == SandboxStatus::Reviving
+        && matches!(
+            current.lifecycle.operation,
+            Some(SandboxLifecycleOperation::Revive { .. })
+        )
+    {
+        return Ok(accepted(
+            current,
+            SandboxLifecycleCommandDisposition::AlreadyScheduled,
+        ));
+    }
+    if current.status == SandboxStatus::Active {
+        return Ok(accepted(
+            current,
+            SandboxLifecycleCommandDisposition::AlreadySatisfied,
+        ));
+    }
+    if matches!(
+        current.status,
+        SandboxStatus::Provisioning
+            | SandboxStatus::Installing
+            | SandboxStatus::CredentialRotating
+            | SandboxStatus::Rotating
+    ) {
+        return Ok(accepted(
+            current,
+            SandboxLifecycleCommandDisposition::AlreadyScheduled,
+        ));
+    }
+    if current.status != SandboxStatus::Paused {
+        return Ok(PendingApplication::NotEligible(current));
+    }
+    let expected_revision = current.revision;
+    let previous = current.status;
+    let mut sandbox = current.clone();
+    if sandbox
+        .begin_revive(cause, command.requested_at.clone())
+        .is_err()
+    {
+        return Ok(PendingApplication::NotEligible(current));
+    }
+    validate_candidate(&sandbox)?;
+    Ok(PendingApplication::Commit {
+        expected_revision,
+        event: SandboxEventKind::StatusChanged {
+            from: previous,
+            to: SandboxStatus::Reviving,
+        },
+        sandbox,
+    })
+}
+
+fn accepted(
+    sandbox: Sandbox,
+    disposition: SandboxLifecycleCommandDisposition,
+) -> PendingApplication {
+    PendingApplication::Accepted(SandboxLifecycleCommandOutcome {
+        sandbox,
+        disposition,
+    })
+}
+
+fn validate_command(command: &SandboxLifecycleCommand) -> Result<(), SandboxStoreError> {
+    if command.sandbox_id.as_str().trim().is_empty()
+        || command.owner.as_str().trim().is_empty()
+        || seconds_from_rfc3339(&command.requested_at).is_none()
+    {
+        return Err(SandboxStoreError::InvalidTransaction(
+            "sandbox lifecycle command is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_candidate(sandbox: &Sandbox) -> Result<(), SandboxStoreError> {
+    sandbox.validate().map_err(|error| {
+        SandboxStoreError::Corrupt(format!("scheduled sandbox is invalid: {error}"))
+    })
+}

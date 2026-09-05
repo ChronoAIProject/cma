@@ -86,6 +86,7 @@ async fn any_nonterminal_sandbox_can_enter_retirement() {
         SandboxStatus::Pausing,
         SandboxStatus::Paused,
         SandboxStatus::Reviving,
+        SandboxStatus::CredentialRotating,
         SandboxStatus::Rotating,
         SandboxStatus::Failed,
     ] {

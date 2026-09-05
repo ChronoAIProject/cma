@@ -65,7 +65,7 @@ pub(super) fn sandbox() -> Sandbox {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
         },
-        checkpoint: None,
+        lifecycle: Default::default(),
         last_activity_at: IDLE_AT.into(),
         created_at: "2026-09-05T00:00:00Z".into(),
         updated_at: IDLE_AT.into(),

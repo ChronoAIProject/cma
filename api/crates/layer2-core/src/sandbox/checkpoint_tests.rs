@@ -172,7 +172,7 @@ fn checkpoint_cadence_is_immediate_then_at_least_five_minutes() {
     let mut sandbox = sandbox();
     assert!(sandbox_checkpoint_due(&sandbox, "2026-09-05T00:00:00Z"));
 
-    sandbox.checkpoint = Some(checkpoint(1, "2026-09-05T00:05:00Z"));
+    sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1, "2026-09-05T00:05:00Z"));
     assert!(!sandbox_checkpoint_due(&sandbox, "2026-09-05T00:09:59Z"));
     assert!(sandbox_checkpoint_due(&sandbox, "2026-09-05T00:10:00Z"));
     assert!(!sandbox_checkpoint_due(&sandbox, "not-a-time"));
@@ -184,8 +184,14 @@ fn checkpoint_cadence_is_immediate_then_at_least_five_minutes() {
 #[test]
 fn sandbox_validation_rejects_a_tampered_checkpoint() {
     let mut sandbox = sandbox();
-    sandbox.checkpoint = Some(checkpoint(1, "2026-09-05T00:05:00Z"));
+    sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1, "2026-09-05T00:05:00Z"));
     sandbox.validate().unwrap();
-    sandbox.checkpoint.as_mut().unwrap().manifest_sha256 = "0".repeat(64);
+    sandbox
+        .lifecycle
+        .checkpoints
+        .latest
+        .as_mut()
+        .unwrap()
+        .manifest_sha256 = "0".repeat(64);
     assert!(sandbox.validate().is_err());
 }

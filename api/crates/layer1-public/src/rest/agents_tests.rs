@@ -320,7 +320,7 @@ fn sandbox(id: &str, owner: &str) -> Sandbox {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
         },
-        checkpoint: None,
+        lifecycle: Default::default(),
         last_activity_at: NOW.into(),
         created_at: NOW.into(),
         updated_at: NOW.into(),
