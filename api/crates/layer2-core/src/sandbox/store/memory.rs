@@ -58,6 +58,9 @@ mod lifecycle_execution;
 mod lifecycle_execution_tests;
 #[cfg(test)]
 mod lifecycle_validation_tests;
+mod maintenance;
+#[cfg(test)]
+mod maintenance_tests;
 mod workspace_lifecycle;
 
 #[async_trait]

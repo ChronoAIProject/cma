@@ -45,6 +45,8 @@ mod launch_command;
 pub use launch_command::*;
 mod lifecycle_execution;
 pub use lifecycle_execution::*;
+mod maintenance;
+pub use maintenance::*;
 #[cfg(test)]
 mod agent_work_validation_tests;
 mod lifecycle_agent_validation;
