@@ -16,14 +16,14 @@ use layer2_core::profiles::{
 };
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentLogStore, AgentStore,
-    AgentWorkerStore, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore,
-    SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
-    SandboxTransactionStore, SandboxWorkerStore, WorkspaceAdmission, WorkspaceAdmissionKind,
-    WorkspaceAdmissionResult, WorkspaceAdmissionStore, WorkspaceStore, WorkspaceWorkerStore,
-    WorktreeStore, MAX_PAGE_SIZE,
+    AgentWorkMutation, AgentWorkerStore, SandboxAdmission, SandboxAdmissionName,
+    SandboxAdmissionStore, SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
+    SandboxTransactionStore, SandboxWorkerStore, VersionedWorktree, WorkspaceAdmission,
+    WorkspaceAdmissionKind, WorkspaceAdmissionResult, WorkspaceAdmissionStore, WorkspaceStore,
+    WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogKind, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep,
+    Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep,
     ConversationState, CreateWorkspace, Sandbox, SandboxCredentialAuthority,
     SandboxCredentialState, SandboxEvent, SandboxEventKind, SandboxLimits, SandboxOrigin,
     SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, TypedFailure, Workspace,
@@ -39,6 +39,7 @@ use crate::sandbox::{
     CredentialCustodyError, CredentialMaterial, CredentialRevocation, SandboxCredentialCustody,
 };
 
+use super::agent_log::log_document;
 use super::encryption::AuthEncryptionKey;
 use super::sandbox_credentials::{
     MongoSandboxCredentialStore, SANDBOX_CREDENTIALS, SANDBOX_CREDENTIAL_REVOCATIONS,
@@ -53,6 +54,8 @@ use super::sandbox_mongo::{
 use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
+const MINUTE: &str = "2026-09-05T00:01:00Z";
+const TWO_MINUTES: &str = "2026-09-05T00:02:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 async fn database(prefix: &str) -> (Client, String) {
@@ -357,11 +360,46 @@ fn agent_for_worker(id: &str, ready_at: &str) -> Agent {
     agent
 }
 
+async fn claimed_agent_work_fixture(
+    store: &MongoSandboxStore,
+    suffix: &str,
+) -> (Sandbox, Worktree, Agent) {
+    let parent = sandbox(&format!("sbx_agent_work_{suffix}"));
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let (mut worktree, mut agent) = worktree_and_agent(&parent.id);
+    let agent_id = AgentId(format!("agt_agent_work_{suffix}"));
+    worktree.id = WorktreeId(format!("wkt_agent_work_{suffix}"));
+    worktree.workspace_id = WorkspaceId(format!("wks_agent_work_{suffix}"));
+    worktree.agent_id = Some(agent_id.clone());
+    worktree.status = WorktreeStatus::Creating;
+    agent.id = agent_id;
+    agent.worktree_id = worktree.id.clone();
+    agent.workspace_id = worktree.workspace_id.clone();
+    agent.creation_key = format!("create-agent-work-{suffix}");
+    store.create_worktree(worktree.clone()).await.unwrap();
+    store.create_agent(agent.clone()).await.unwrap();
+    let claimed = store
+        .claim_agent_work(&agent.id, "worker", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    (parent, worktree, claimed)
+}
+
+fn advance_claimed_agent(claimed: &Agent) -> Agent {
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let mut next = claimed.clone();
+    next.work
+        .advance("worker", fence, AgentWorkStep::MaterializeHome, NOW.into())
+        .unwrap();
+    next.revision += 1;
+    next
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn agent_work_due_query_is_bounded_sorted_and_supports_lease_takeover() {
     const BEFORE: &str = "2026-09-04T23:59:00Z";
-    const MINUTE: &str = "2026-09-05T00:01:00Z";
 
     let (client, name) = database("agent_work_due").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
@@ -421,6 +459,347 @@ async fn agent_work_due_query_is_bounded_sorted_and_supports_lease_takeover() {
         store.due_agent_work(NOW, 5).await.unwrap(),
         vec![first.id, last.id]
     );
+    store
+        .agents
+        .update_one(
+            doc! { "_id": held.id.as_str() },
+            doc! { "$set": { "work_next_fence": 99_i64 } },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.get_agent(&held.id).await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_stale_holder_is_rejected_after_lease_takeover() {
+    let (client, name) = database("agent_work_stale_holder").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let agent = agent_for_worker("agt_stale_holder", NOW);
+    store.create_agent(agent.clone()).await.unwrap();
+    let stale = store
+        .claim_agent_work(&agent.id, "worker-a", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let current = store
+        .claim_agent_work(&agent.id, "worker-b", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let stale_fence = stale.work.lease.as_ref().unwrap().fence;
+    let mut next = stale.clone();
+    next.work
+        .advance(
+            "worker-a",
+            stale_fence,
+            AgentWorkStep::MaterializeHome,
+            MINUTE.into(),
+        )
+        .unwrap();
+    next.revision += 1;
+
+    assert_eq!(
+        store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: stale.revision,
+                holder: "worker-a".into(),
+                fence: stale_fence,
+                agent: next,
+                worktree: None,
+                appended_at: MINUTE.into(),
+                sandbox_event: None,
+                agent_logs: vec![],
+            })
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(current));
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event() {
+    let (client, name) = database("agent_work_publication").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (parent, mut worktree, claimed) = claimed_agent_work_fixture(&store, "publish").await;
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let mut next = claimed.clone();
+    next.conversation.conversation_id = Some("conversation-1".into());
+    next.conversation.runtime_generation = Some(1);
+    next.work
+        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .unwrap();
+    next.transition(AgentStatus::Ready, NOW.into(), None)
+        .unwrap();
+    let expected_worktree_revision = worktree.revision;
+    worktree.transition(WorktreeStatus::Ready).unwrap();
+    let log_kinds = vec![
+        AgentLogKind::ConversationOpened {
+            conversation_id: "conversation-1".into(),
+            runtime_generation: 1,
+        },
+        AgentLogKind::StatusChanged {
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        },
+    ];
+
+    store
+        .commit_agent_work(AgentWorkMutation {
+            expected_agent_revision: claimed.revision,
+            holder: "worker".into(),
+            fence,
+            agent: next.clone(),
+            worktree: Some(VersionedWorktree {
+                expected_revision: expected_worktree_revision,
+                worktree: worktree.clone(),
+            }),
+            appended_at: NOW.into(),
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: next.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            }),
+            agent_logs: log_kinds.clone(),
+        })
+        .await
+        .unwrap();
+
+    next.conversation.last_seq = 2;
+    assert_eq!(store.get_agent(&next.id).await.unwrap(), Some(next.clone()));
+    assert_eq!(
+        store.get_worktree(&worktree.id).await.unwrap(),
+        Some(worktree)
+    );
+    let logs = store.agent_log(&next.id, 0, 10).await.unwrap();
+    assert_eq!(logs.len(), 2);
+    assert_eq!(
+        logs.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(
+        logs.iter()
+            .map(|entry| entry.kind.clone())
+            .collect::<Vec<_>>(),
+        log_kinds
+    );
+    let events = store.sandbox_events(&parent.id, 0, 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].kind,
+        SandboxEventKind::AgentStatusChanged {
+            agent_id: next.id,
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        }
+    );
+    let agent_row = store
+        .agents
+        .find_one(doc! { "_id": logs[0].agent_id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(agent_row.get_i64("last_seq").unwrap(), 2);
+    assert!(!agent_row.get_bool("work_pending").unwrap());
+    assert_eq!(
+        agent_row.get("work_lease_holder"),
+        Some(&mongodb::bson::Bson::Null)
+    );
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_invalid_worktree_rolls_back_every_artifact() {
+    let (client, name) = database("agent_work_worktree_rollback").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (parent, worktree, claimed) = claimed_agent_work_fixture(&store, "worktree_rollback").await;
+    let next = advance_claimed_agent(&claimed);
+    let mut invalid_worktree = worktree.clone();
+    invalid_worktree.status = WorktreeStatus::Ready;
+    invalid_worktree.revision += 2;
+
+    assert_eq!(
+        store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: claimed.revision,
+                holder: "worker".into(),
+                fence: claimed.work.lease.as_ref().unwrap().fence,
+                agent: next,
+                worktree: Some(VersionedWorktree {
+                    expected_revision: worktree.revision,
+                    worktree: invalid_worktree,
+                }),
+                appended_at: NOW.into(),
+                sandbox_event: Some(SandboxEventKind::Created),
+                agent_logs: vec![AgentLogKind::Deleted],
+            })
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
+    assert_eq!(
+        store.get_worktree(&worktree.id).await.unwrap(),
+        Some(worktree)
+    );
+    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 0);
+    assert_eq!(
+        store.sandbox_events.count_documents(doc! {}).await.unwrap(),
+        0
+    );
+    let sandbox_row = store
+        .sandboxes
+        .find_one(doc! { "_id": parent.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sandbox_row.get_i64("last_seq").unwrap(), 0);
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_late_log_conflict_rolls_back_agent_worktree_and_earlier_log() {
+    let (client, name) = database("agent_work_log_rollback").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (parent, mut worktree, claimed) = claimed_agent_work_fixture(&store, "log_rollback").await;
+    let conflicting = AgentLogEntry {
+        agent_id: claimed.id.clone(),
+        seq: 2,
+        appended_at: NOW.into(),
+        kind: AgentLogKind::Stopped {
+            reason: "conflict".into(),
+        },
+    };
+    store
+        .agent_log
+        .insert_one(log_document(&conflicting).unwrap())
+        .await
+        .unwrap();
+    let next = advance_claimed_agent(&claimed);
+    let expected_worktree_revision = worktree.revision;
+    worktree.transition(WorktreeStatus::Ready).unwrap();
+
+    assert_eq!(
+        store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: claimed.revision,
+                holder: "worker".into(),
+                fence: claimed.work.lease.as_ref().unwrap().fence,
+                agent: next,
+                worktree: Some(VersionedWorktree {
+                    expected_revision: expected_worktree_revision,
+                    worktree: worktree.clone(),
+                }),
+                appended_at: NOW.into(),
+                sandbox_event: Some(SandboxEventKind::Created),
+                agent_logs: vec![AgentLogKind::Deleted, AgentLogKind::Deleted],
+            })
+            .await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
+    let mut original_worktree = worktree;
+    original_worktree.status = WorktreeStatus::Creating;
+    original_worktree.revision = expected_worktree_revision;
+    assert_eq!(
+        store.get_worktree(&original_worktree.id).await.unwrap(),
+        Some(original_worktree)
+    );
+    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 1);
+    assert!(store
+        .agent_log
+        .find_one(doc! { "agent_id": conflicting.agent_id.as_str(), "seq": 1_i64 })
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store.sandbox_events.count_documents(doc! {}).await.unwrap(),
+        0
+    );
+    let sandbox_row = store
+        .sandboxes
+        .find_one(doc! { "_id": parent.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sandbox_row.get_i64("last_seq").unwrap(), 0);
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_work_late_event_conflict_rolls_back_agent_worktree_and_logs() {
+    let (client, name) = database("agent_work_event_rollback").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (parent, mut worktree, claimed) =
+        claimed_agent_work_fixture(&store, "event_rollback").await;
+    let conflicting = SandboxEvent {
+        sandbox_id: parent.id.clone(),
+        seq: 1,
+        appended_at: NOW.into(),
+        kind: SandboxEventKind::Created,
+    };
+    store
+        .sandbox_events
+        .insert_one(event_document(&conflicting).unwrap())
+        .await
+        .unwrap();
+    let next = advance_claimed_agent(&claimed);
+    let expected_worktree_revision = worktree.revision;
+    worktree.transition(WorktreeStatus::Ready).unwrap();
+
+    assert_eq!(
+        store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: claimed.revision,
+                holder: "worker".into(),
+                fence: claimed.work.lease.as_ref().unwrap().fence,
+                agent: next,
+                worktree: Some(VersionedWorktree {
+                    expected_revision: expected_worktree_revision,
+                    worktree: worktree.clone(),
+                }),
+                appended_at: NOW.into(),
+                sandbox_event: Some(SandboxEventKind::AgentDeleted {
+                    agent_id: claimed.id.clone(),
+                }),
+                agent_logs: vec![AgentLogKind::Deleted, AgentLogKind::Deleted],
+            })
+            .await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
+    let mut original_worktree = worktree;
+    original_worktree.status = WorktreeStatus::Creating;
+    original_worktree.revision = expected_worktree_revision;
+    assert_eq!(
+        store.get_worktree(&original_worktree.id).await.unwrap(),
+        Some(original_worktree)
+    );
+    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 0);
+    assert_eq!(
+        store.sandbox_events.count_documents(doc! {}).await.unwrap(),
+        1
+    );
+    let sandbox_row = store
+        .sandboxes
+        .find_one(doc! { "_id": parent.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sandbox_row.get_i64("last_seq").unwrap(), 0);
 
     client.database(&name).drop().await.unwrap();
 }

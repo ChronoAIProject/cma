@@ -82,10 +82,8 @@ impl AgentWorkerStore for MongoSandboxStore {
 
     async fn commit_agent_work(
         &self,
-        _mutation: AgentWorkMutation,
+        mutation: AgentWorkMutation,
     ) -> Result<(), SandboxStoreError> {
-        Err(SandboxStoreError::Unavailable(
-            "Mongo agent work publication is not implemented".into(),
-        ))
+        super::agent_worker_transaction::commit_agent_work(self, mutation).await
     }
 }

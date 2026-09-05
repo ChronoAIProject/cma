@@ -72,7 +72,9 @@ pub(super) fn read_worktree(document: &Document) -> Result<Worktree, SandboxStor
     Ok(worktree)
 }
 
-fn replacement_fields(worktree: &Worktree) -> Result<Document, SandboxStoreError> {
+pub(super) fn worktree_replacement_fields(
+    worktree: &Worktree,
+) -> Result<Document, SandboxStoreError> {
     let mut document = worktree_document(worktree)?;
     document.remove("_id");
     Ok(document)
@@ -146,7 +148,7 @@ impl WorktreeStore for MongoSandboxStore {
                     "revision": signed(expected_revision, "expected worktree revision")
                         .map_err(|_| SandboxStoreError::Conflict)?,
                 },
-                doc! { "$set": replacement_fields(&worktree)? },
+                doc! { "$set": worktree_replacement_fields(&worktree)? },
             )
             .await
             .map_err(|error| {
