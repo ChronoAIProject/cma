@@ -2,7 +2,9 @@ use crate::sandbox::store::{
     AgentAdmissionStore, AgentLogStore, AgentStore, AgentWorkMutation, AgentWorkerStore,
     SandboxEventStore, VersionedWorktree, WorktreeStore,
 };
-use crate::sandbox::{AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus};
+use crate::sandbox::{
+    AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, SandboxEventKind, WorktreeStatus,
+};
 
 use super::agent_admission_tests::{admission, created, ready_store, NOW};
 
@@ -109,18 +111,50 @@ async fn ready_publication_updates_every_artifact_atomically() {
             .await
             .unwrap(),
     );
-    let claimed = store
+    let mut claimed = store
         .claim_agent_work(&creation.agent.id, "worker", NOW.into(), MINUTE.into())
         .await
         .unwrap()
         .unwrap();
+    claimed.work.step = AgentWorkStep::PublishReady;
+    claimed.conversation.conversation_id = Some("conversation-1".into());
+    claimed.conversation.runtime_generation = Some(1);
+    claimed.work.receipts = [
+        (
+            AgentWorkStep::AddWorktree,
+            "worktree:project:ready-publication:add:v1".into(),
+        ),
+        (
+            AgentWorkStep::MaterializeHome,
+            format!("agent:{}:home:create:v1", claimed.id),
+        ),
+        (
+            AgentWorkStep::OpenConversation,
+            format!("agent:{}:open:v1", claimed.id),
+        ),
+    ]
+    .into_iter()
+    .map(|(step, operation_id)| AgentWorkReceipt {
+        step,
+        operation_id,
+        request_sha256: "a".repeat(64),
+        completed_at: NOW.into(),
+    })
+    .collect();
+    store
+        .lock()
+        .agents
+        .insert(claimed.id.clone(), claimed.clone());
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut agent = claimed.clone();
-    agent.conversation.conversation_id = Some("conversation-1".into());
-    agent.conversation.runtime_generation = Some(1);
     agent
         .work
-        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
         .unwrap();
     agent
         .transition(AgentStatus::Ready, NOW.into(), None)

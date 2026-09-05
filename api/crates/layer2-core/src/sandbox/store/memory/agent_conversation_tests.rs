@@ -12,8 +12,9 @@ use crate::sandbox::store::{
 };
 use crate::sandbox::{
     AgentConversationError, AgentLogEntry, AgentLogKind, AgentMessageAssembly, AgentStatus,
-    AgentStopReason, AgentUpdateRecorder, AgentWorkStep, DurableAgentUpdateRecorder,
-    FirstMessageDelivery, FirstMessageRecord, WorktreeStatus,
+    AgentStopReason, AgentUpdateRecorder, AgentWorkReceipt, AgentWorkStep,
+    DurableAgentUpdateRecorder, FirstMessageDelivery, FirstMessageRecord, SandboxEventKind,
+    WorktreeStatus,
 };
 
 use super::agent_admission_tests::*;
@@ -27,7 +28,7 @@ async fn ready_agent(
         FirstMessageRecord::new("conversation", text, NOW).expect("valid first message")
     });
     let creation = created(store.admit_agent(request).await.unwrap());
-    let claimed = store
+    let mut claimed = store
         .claim_agent_work(
             &creation.agent.id,
             "worker",
@@ -37,14 +38,46 @@ async fn ready_agent(
         .await
         .unwrap()
         .unwrap();
+    claimed.work.step = AgentWorkStep::PublishReady;
+    claimed.conversation.conversation_id = Some("conversation-1".into());
+    claimed.conversation.runtime_generation = Some(1);
+    claimed.work.receipts = [
+        (
+            AgentWorkStep::AddWorktree,
+            "worktree:project:conversation:add:v1".into(),
+        ),
+        (
+            AgentWorkStep::MaterializeHome,
+            format!("agent:{}:home:create:v1", claimed.id),
+        ),
+        (
+            AgentWorkStep::OpenConversation,
+            format!("agent:{}:open:v1", claimed.id),
+        ),
+    ]
+    .into_iter()
+    .map(|(step, operation_id)| AgentWorkReceipt {
+        step,
+        operation_id,
+        request_sha256: "a".repeat(64),
+        completed_at: NOW.into(),
+    })
+    .collect();
+    store
+        .lock()
+        .agents
+        .insert(claimed.id.clone(), claimed.clone());
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut agent = claimed.clone();
-    agent.conversation.conversation_id = Some("conversation-1".into());
-    agent.conversation.runtime_generation = Some(1);
     agent.conversation.last_seq = 3;
     agent
         .work
-        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
         .unwrap();
     agent
         .transition(AgentStatus::Ready, NOW.into(), None)
@@ -63,7 +96,11 @@ async fn ready_agent(
                 worktree,
             }),
             appended_at: NOW.into(),
-            sandbox_event: None,
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: agent.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            }),
             agent_logs: vec![
                 AgentLogKind::ConversationOpened {
                     conversation_id: "conversation-1".into(),

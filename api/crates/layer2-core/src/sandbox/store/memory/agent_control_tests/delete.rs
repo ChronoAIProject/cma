@@ -153,7 +153,7 @@ async fn agent_control_failed_agent_can_publish_deleted_without_a_conversation()
         .await
         .unwrap()
         .into_agent();
-    let claimed = store
+    let mut claimed = store
         .claim_agent_work(
             &scheduled.id,
             "delete-worker",
@@ -163,6 +163,9 @@ async fn agent_control_failed_agent_can_publish_deleted_without_a_conversation()
         .await
         .unwrap()
         .unwrap();
+    claimed.work.step = AgentWorkStep::PublishDeleted;
+    replace_worktree_status(&store, &claimed, WorktreeStatus::Removed);
+    replace_agent(&store, claimed.clone());
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut deleted = claimed.clone();
     deleted
@@ -177,6 +180,7 @@ async fn agent_control_failed_agent_can_publish_deleted_without_a_conversation()
     deleted
         .transition(AgentStatus::Deleted, TWO_MINUTES.into(), None)
         .unwrap();
+    deleted.conversation.last_seq += 1;
     store
         .commit_agent_work(AgentWorkMutation {
             expected_agent_revision: claimed.revision,
@@ -185,8 +189,10 @@ async fn agent_control_failed_agent_can_publish_deleted_without_a_conversation()
             agent: deleted.clone(),
             worktree: None,
             appended_at: TWO_MINUTES.into(),
-            sandbox_event: None,
-            agent_logs: vec![],
+            sandbox_event: Some(SandboxEventKind::AgentDeleted {
+                agent_id: deleted.id.clone(),
+            }),
+            agent_logs: vec![AgentLogKind::Deleted],
         })
         .await
         .unwrap();
@@ -210,7 +216,7 @@ async fn agent_control_delete_keeps_logs_through_scheduling_and_terminal_publica
         1
     );
 
-    let claimed = store
+    let mut claimed = store
         .claim_agent_work(
             &scheduled.id,
             "delete-worker",
@@ -220,6 +226,9 @@ async fn agent_control_delete_keeps_logs_through_scheduling_and_terminal_publica
         .await
         .unwrap()
         .unwrap();
+    claimed.work.step = AgentWorkStep::PublishDeleted;
+    replace_worktree_status(&store, &claimed, WorktreeStatus::Removed);
+    replace_agent(&store, claimed.clone());
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut deleted = claimed.clone();
     deleted

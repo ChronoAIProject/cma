@@ -204,7 +204,7 @@ async fn agent_control_starting_agent_can_publish_stopped_without_a_conversation
         .await
         .unwrap()
         .into_agent();
-    let claimed = store
+    let mut claimed = store
         .claim_agent_work(
             &scheduled.id,
             "stop-worker",
@@ -214,6 +214,8 @@ async fn agent_control_starting_agent_can_publish_stopped_without_a_conversation
         .await
         .unwrap()
         .unwrap();
+    claimed.work.step = AgentWorkStep::PublishStopped;
+    replace_agent(&store, claimed.clone());
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut stopped = claimed.clone();
     stopped
@@ -232,16 +234,29 @@ async fn agent_control_starting_agent_can_publish_stopped_without_a_conversation
             Some(AgentStopReason::Owner),
         )
         .unwrap();
+    stopped.conversation.last_seq += 1;
+    let mut failed_worktree = creation.worktree;
+    let expected_worktree_revision = failed_worktree.revision;
+    failed_worktree.transition(WorktreeStatus::Failed).unwrap();
     store
         .commit_agent_work(AgentWorkMutation {
             expected_agent_revision: claimed.revision,
             holder: "stop-worker".into(),
             fence,
             agent: stopped.clone(),
-            worktree: None,
+            worktree: Some(VersionedWorktree {
+                expected_revision: expected_worktree_revision,
+                worktree: failed_worktree,
+            }),
             appended_at: TWO_MINUTES.into(),
-            sandbox_event: None,
-            agent_logs: vec![],
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: stopped.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Stopped,
+            }),
+            agent_logs: vec![AgentLogKind::Stopped {
+                reason: AgentStopReason::Owner.as_str().into(),
+            }],
         })
         .await
         .unwrap();
@@ -262,14 +277,16 @@ async fn agent_control_worker_must_publish_the_exact_requested_stop_reason() {
     ready.status = AgentStatus::Ready;
     ready.conversation.conversation_id = Some("conversation-control".into());
     ready.conversation.runtime_generation = Some(1);
+    ready.ready_at = Some(NOW.into());
     ready.work.schedule(AgentWorkStep::None, NOW.into());
+    replace_worktree_status(&store, &ready, WorktreeStatus::Ready);
     replace_agent(&store, ready.clone());
     let scheduled = store
         .schedule_agent_stop(stop_request(&ready, AgentStopReason::Owner))
         .await
         .unwrap()
         .into_agent();
-    let claimed = store
+    let mut claimed = store
         .claim_agent_work(
             &scheduled.id,
             "stop-worker",
@@ -279,6 +296,8 @@ async fn agent_control_worker_must_publish_the_exact_requested_stop_reason() {
         .await
         .unwrap()
         .unwrap();
+    claimed.work.step = AgentWorkStep::PublishStopped;
+    replace_agent(&store, claimed.clone());
     let fence = claimed.work.lease.as_ref().unwrap().fence;
 
     let mut wrong = claimed.clone();
@@ -330,6 +349,7 @@ async fn agent_control_worker_must_publish_the_exact_requested_stop_reason() {
             Some(AgentStopReason::Owner),
         )
         .unwrap();
+    published.conversation.last_seq += 1;
     store
         .commit_agent_work(AgentWorkMutation {
             expected_agent_revision: claimed.revision,
@@ -338,8 +358,14 @@ async fn agent_control_worker_must_publish_the_exact_requested_stop_reason() {
             agent: published.clone(),
             worktree: None,
             appended_at: TWO_MINUTES.into(),
-            sandbox_event: None,
-            agent_logs: vec![],
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: published.id.clone(),
+                from: AgentStatus::Ready,
+                to: AgentStatus::Stopped,
+            }),
+            agent_logs: vec![AgentLogKind::Stopped {
+                reason: AgentStopReason::Owner.as_str().into(),
+            }],
         })
         .await
         .unwrap();

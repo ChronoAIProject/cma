@@ -1,13 +1,11 @@
 use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
-use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError};
+use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, MAX_AGENT_CLEANUP_DEBT};
 use layer2_core::sandbox::{Agent, AgentCleanupDebt, AgentWorkStep};
 
 use super::{claimed_fence, RequestEvidence};
 use crate::sandbox::agent_worker::AgentWorker;
-
-const MAX_CLEANUP_DEBT: usize = 8;
 
 impl AgentWorker {
     pub(in crate::sandbox::agent_worker) async fn prepare_side_effect(
@@ -37,7 +35,7 @@ impl AgentWorker {
                 ))
             };
         }
-        if agent.work.cleanup_debt.len() >= MAX_CLEANUP_DEBT {
+        if agent.work.cleanup_debt.len() >= MAX_AGENT_CLEANUP_DEBT {
             return Err(SandboxStoreError::Corrupt(
                 "agent side-effect intent capacity exceeded".into(),
             ));

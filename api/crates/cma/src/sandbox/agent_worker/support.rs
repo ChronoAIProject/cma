@@ -1,7 +1,9 @@
 use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
-use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
+use layer2_core::sandbox::store::{
+    AgentWorkMutation, SandboxStoreError, VersionedWorktree, MAX_AGENT_WORK_RECEIPTS,
+};
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, Sandbox, SandboxEventKind,
     SandboxStatus, TypedFailure, Workspace, WorkspaceStatus, Worktree, WorktreeStatus,
@@ -15,8 +17,6 @@ mod effects;
 mod mapping;
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
 pub(super) use mapping::{runtime_capabilities, runtime_options, sandbox_spec, validate_skills};
-
-const MAX_WORK_RECEIPTS: usize = 16;
 
 pub(super) struct AgentContext {
     pub(super) sandbox: Sandbox,
@@ -389,7 +389,7 @@ fn record_receipt(
         || evidence.operation_id.trim().is_empty()
         || evidence.operation_id.len() > 256
         || !valid_sha256(&evidence.request_sha256)
-        || agent.work.receipts.len() >= MAX_WORK_RECEIPTS
+        || agent.work.receipts.len() >= MAX_AGENT_WORK_RECEIPTS
         || agent
             .work
             .receipts

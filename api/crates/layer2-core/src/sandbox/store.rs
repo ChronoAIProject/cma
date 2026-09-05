@@ -25,6 +25,12 @@ mod agent_conversation;
 pub use agent_conversation::{AgentConversationMutation, AgentConversationStore};
 mod agent_lifecycle;
 pub use agent_lifecycle::{AgentWorkMutation, AgentWorkerStore, VersionedWorktree};
+mod agent_work_evidence_validation;
+mod agent_work_validation;
+pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
+pub use agent_work_validation::validate_agent_work_mutation;
+#[cfg(test)]
+mod agent_work_validation_tests;
 
 pub const MAX_PAGE_SIZE: u16 = 200;
 pub const MAX_AGENT_LOG_BATCH_SIZE: usize = 64;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::sandbox::store::{AgentWorkMutation, AgentWorkerStore};
+use crate::sandbox::store::{validate_agent_work_mutation, AgentWorkMutation, AgentWorkerStore};
 
 #[async_trait]
 impl AgentWorkerStore for InMemorySandboxStore {
@@ -101,116 +101,16 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         .agents
         .get(&mutation.agent.id)
         .ok_or(SandboxStoreError::NotFound)?;
+    let current_worktree = state
+        .worktrees
+        .get(&current.worktree_id)
+        .ok_or(SandboxStoreError::NotFound)?;
     let actual_last_seq = state
         .agent_logs
         .get(&mutation.agent.id)
         .and_then(|entries| entries.last())
         .map_or(0, |entry| entry.seq);
-    let log_count = u64::try_from(mutation.agent_logs.len())
-        .map_err(|_| SandboxStoreError::SequenceConflict)?;
-    let next_last_seq = current
-        .conversation
-        .last_seq
-        .checked_add(log_count)
-        .ok_or(SandboxStoreError::SequenceConflict)?;
-    let next_revision = mutation
-        .expected_agent_revision
-        .checked_add(1)
-        .ok_or(SandboxStoreError::Conflict)?;
-    if current.revision != mutation.expected_agent_revision
-        || mutation.agent.revision != next_revision
-        || !current.work.owns(&mutation.holder, mutation.fence)
-        || mutation.holder.trim().is_empty()
-        || mutation.fence == 0
-        || current.conversation.last_seq != actual_last_seq
-        || mutation.agent.conversation.last_seq != next_last_seq
-        || immutable_agent_fields_changed(current, &mutation.agent)
-        || mutation.agent.work.next_fence != current.work.next_fence
-        || mutation
-            .agent
-            .work
-            .lease
-            .as_ref()
-            .is_some_and(|lease| current.work.lease.as_ref() != Some(lease))
-        || mutation.agent.validate_conversation().is_err()
-        || !stop_intent_change_is_valid(current, &mutation.agent)
-    {
-        return Err(SandboxStoreError::Conflict);
-    }
-
-    if let Some(versioned) = mutation.worktree.as_ref() {
-        validate_worktree(state, current, versioned)?;
-    }
-    Ok(())
-}
-
-fn stop_intent_change_is_valid(current: &Agent, next: &Agent) -> bool {
-    if current.stop_reason.is_some() && next.stop_reason != current.stop_reason {
-        return false;
-    }
-    match current.requested_stop_reason.as_ref() {
-        Some(requested) => {
-            (current.stop_reason.is_none()
-                && next.status == current.status
-                && next.requested_stop_reason.as_ref() == Some(requested)
-                && next.stop_reason == current.stop_reason)
-                || (current.status.is_live()
-                    && next.status == crate::sandbox::AgentStatus::Stopped
-                    && next.requested_stop_reason.is_none()
-                    && next.stop_reason.as_ref() == Some(requested))
-        }
-        None => {
-            next.requested_stop_reason.is_none()
-                && (next.stop_reason == current.stop_reason
-                    || (current.stop_reason.is_none()
-                        && current.status.is_live()
-                        && next.status == crate::sandbox::AgentStatus::Stopped
-                        && next.stop_reason.is_some()))
-        }
-    }
-}
-
-fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> bool {
-    current.id != next.id
-        || current.worktree_id != next.worktree_id
-        || current.workspace_id != next.workspace_id
-        || current.sandbox_id != next.sandbox_id
-        || current.owner != next.owner
-        || current.creation_key != next.creation_key
-        || current.creation_fingerprint != next.creation_fingerprint
-        || current.profile != next.profile
-        || current.created_at != next.created_at
-        || current.origin != next.origin
-}
-
-fn validate_worktree(
-    state: &State,
-    agent: &Agent,
-    versioned: &crate::sandbox::store::VersionedWorktree,
-) -> Result<(), SandboxStoreError> {
-    let current = state
-        .worktrees
-        .get(&versioned.worktree.id)
-        .ok_or(SandboxStoreError::NotFound)?;
-    let next = &versioned.worktree;
-    if current.id != agent.worktree_id
-        || current.revision != versioned.expected_revision
-        || next.revision != versioned.expected_revision.checked_add(1).unwrap_or(0)
-        || current.id != next.id
-        || current.workspace_id != next.workspace_id
-        || current.sandbox_id != next.sandbox_id
-        || current.owner != next.owner
-        || current.name != next.name
-        || current.path != next.path
-        || current.branch != next.branch
-        || current.base_commit != next.base_commit
-        || current.agent_id != next.agent_id
-        || current.status == next.status
-        || current.status.transition(next.status).is_err()
-    {
-        return Err(SandboxStoreError::Conflict);
-    }
-    Ok(())
+    validate_agent_work_mutation(current, current_worktree, actual_last_seq, mutation)
 }
 
 fn append_agent_log(

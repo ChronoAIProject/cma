@@ -25,12 +25,13 @@ use layer2_core::sandbox::store::{
     WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkState,
-    AgentWorkStep, ConversationState, CreateWorkspace, Sandbox, SandboxCredentialAuthority,
-    SandboxCredentialState, SandboxEvent, SandboxEventKind, SandboxLimits, SandboxOrigin,
-    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, TypedFailure, Workspace,
-    WorkspaceOrigin, WorkspaceService, WorkspaceServiceError, WorkspaceSource, WorkspaceStatus,
-    WorkspaceWorkState, WorkspaceWorkStep, Worktree, WorktreeStatus,
+    Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason,
+    AgentWorkReceipt, AgentWorkState, AgentWorkStep, ConversationState, CreateWorkspace, Sandbox,
+    SandboxCredentialAuthority, SandboxCredentialState, SandboxEvent, SandboxEventKind,
+    SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState,
+    SandboxWorkStep, TypedFailure, Workspace, WorkspaceOrigin, WorkspaceService,
+    WorkspaceServiceError, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
+    Worktree, WorktreeStatus,
 };
 use layer2_core::{Authorization, Caller, Capability};
 use mongodb::bson::{doc, Bson, Document};
@@ -60,9 +61,7 @@ use super::agent_log::log_document;
 use super::agent_log_integrity::AppendCapacity;
 use super::agent_worker_capacity::publication_capacity;
 use super::agent_worker_reconcile::reconcile_publication;
-use super::agent_worker_transaction::{
-    agent_status_change_is_valid, stop_intent_change_is_valid, PublicationReceipt,
-};
+use super::agent_worker_transaction::PublicationReceipt;
 use super::agents::agent_replacement_fields;
 use super::encryption::AuthEncryptionKey;
 use super::sandbox_credentials::{
@@ -75,6 +74,7 @@ use super::sandbox_mongo::{
     SANDBOX_ADMISSIONS, SANDBOX_EVENTS, SANDBOX_PROFILES, SANDBOX_PROFILE_REVISIONS, WORKSPACES,
     WORKSPACE_PROFILES, WORKSPACE_PROFILE_REVISIONS, WORKTREES,
 };
+use super::worktrees::worktree_replacement_fields;
 use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
@@ -433,6 +433,59 @@ async fn claimed_agent_work_fixture(
     (parent, worktree, claimed)
 }
 
+fn ready_publication_claim(mut agent: Agent, conversation_id: &str) -> Agent {
+    agent.work.step = AgentWorkStep::PublishReady;
+    agent.conversation.conversation_id = Some(conversation_id.into());
+    agent.conversation.runtime_generation = Some(1);
+    agent.work.receipts = [
+        (
+            AgentWorkStep::AddWorktree,
+            format!("worktree:{}:add:v1", agent.worktree_id),
+        ),
+        (
+            AgentWorkStep::MaterializeHome,
+            format!("agent:{}:home:create:v1", agent.id),
+        ),
+        (
+            AgentWorkStep::OpenConversation,
+            format!("agent:{}:open:v1", agent.id),
+        ),
+    ]
+    .into_iter()
+    .map(|(step, operation_id)| AgentWorkReceipt {
+        step,
+        operation_id,
+        request_sha256: "a".repeat(64),
+        completed_at: NOW.into(),
+    })
+    .collect();
+    agent
+}
+
+async fn replace_agent_fixture(store: &MongoSandboxStore, agent: &Agent) {
+    let result = store
+        .agents
+        .update_one(
+            doc! { "_id": agent.id.as_str() },
+            doc! { "$set": agent_replacement_fields(agent).unwrap() },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.matched_count, 1);
+}
+
+async fn replace_worktree_fixture(store: &MongoSandboxStore, worktree: &Worktree) {
+    let result = store
+        .worktrees
+        .update_one(
+            doc! { "_id": worktree.id.as_str() },
+            doc! { "$set": worktree_replacement_fields(worktree).unwrap() },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.matched_count, 1);
+}
+
 fn conversation_agent_for_rules(id: &str) -> Agent {
     let mut agent = agent_for_worker(id, NOW);
     agent.status = AgentStatus::Ready;
@@ -474,20 +527,26 @@ fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMutation {
 
 async fn ready_conversation_fixture(store: &MongoSandboxStore, suffix: &str) -> Agent {
     let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
+    let conversation_id = format!("conversation-{suffix}");
+    let claimed = ready_publication_claim(claimed, &conversation_id);
+    replace_agent_fixture(store, &claimed).await;
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut ready = claimed.clone();
-    ready.conversation.conversation_id = Some(format!("conversation-{suffix}"));
-    ready.conversation.runtime_generation = Some(1);
     ready
         .work
-        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
         .unwrap();
     ready
         .transition(AgentStatus::Ready, NOW.into(), None)
         .unwrap();
     let log_kinds = vec![
         AgentLogKind::ConversationOpened {
-            conversation_id: format!("conversation-{suffix}"),
+            conversation_id,
             runtime_generation: 1,
         },
         AgentLogKind::StatusChanged {
@@ -509,7 +568,11 @@ async fn ready_conversation_fixture(store: &MongoSandboxStore, suffix: &str) -> 
                 worktree,
             }),
             appended_at: NOW.into(),
-            sandbox_event: None,
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: ready.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            }),
             agent_logs: log_kinds,
         })
         .await
