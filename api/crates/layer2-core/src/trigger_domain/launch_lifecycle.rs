@@ -88,7 +88,7 @@ impl Launch {
             step.started_at.get_or_insert_with(|| at.clone());
             step.completed_at.get_or_insert_with(|| at.clone());
         }
-        self.work = LaunchWorkState::new(LaunchWorkStep::None, at);
+        self.work.schedule(LaunchWorkStep::Finish, at);
         self.bump_revision()?;
         self.validate()
     }
@@ -120,13 +120,24 @@ impl Launch {
         self.bump_revision()?;
         if next == LaunchState::Ready {
             self.ready_at = Some(at);
-            self.work = LaunchWorkState::new(LaunchWorkStep::None, self.updated_at.clone());
+            self.work
+                .schedule(LaunchWorkStep::Finish, self.updated_at.clone());
         } else if next == LaunchState::Cancelled {
             self.work.stop_preserving_effect(self.updated_at.clone());
         } else if next.is_terminal() {
-            self.work = LaunchWorkState::new(LaunchWorkStep::None, self.updated_at.clone());
+            self.work
+                .schedule(LaunchWorkStep::None, self.updated_at.clone());
         }
         Ok(())
+    }
+
+    pub fn is_worker_due(&self, now: &str) -> bool {
+        !self.state.is_terminal()
+            && self
+                .blocked_reason
+                .as_ref()
+                .is_none_or(LaunchBlockedReason::is_wakeable)
+            && self.work.is_due(now)
     }
 
     pub fn block(&mut self, reason: LaunchBlockedReason, at: String) -> Result<(), TriggerError> {

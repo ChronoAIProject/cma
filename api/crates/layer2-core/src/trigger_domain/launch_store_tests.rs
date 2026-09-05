@@ -368,6 +368,273 @@ async fn due_work_claims_are_atomic_and_expired_leases_can_be_taken_over() {
 }
 
 #[tokio::test]
+async fn wakeable_blocks_are_due_and_fenced_while_recovery_stays_out_of_band() {
+    let (_, store, trigger) = store_fixture();
+    let service = ServiceId::new("github");
+    let reasons = [
+        ('c', 'd', LaunchBlockedReason::OrchestrationPaused),
+        ('e', 'f', LaunchBlockedReason::SandboxPausedReviving),
+        (
+            '1',
+            '2',
+            LaunchBlockedReason::ConnectionRequired {
+                service: service.clone(),
+            },
+        ),
+    ];
+    let mut wakeable = Vec::new();
+
+    for (key, fingerprint, reason) in reasons {
+        let mut candidate = launch(&trigger, key, fingerprint);
+        if matches!(reason, LaunchBlockedReason::ConnectionRequired { .. }) {
+            candidate.requirements.services.push(ServiceRequirement {
+                service: service.clone(),
+                state: ServiceRequirementState::Satisfied,
+            });
+            candidate.validate().unwrap();
+        }
+        let mut current = store
+            .admit_launch(LaunchAdmission {
+                launch: candidate,
+                trigger: trigger.clone(),
+                events: vec![LaunchEventKind::Created],
+            })
+            .await
+            .unwrap()
+            .launch()
+            .clone();
+        let expected = current.revision;
+        current
+            .start(LaunchConfirmation {
+                surface: LaunchConsentSurface::Landing,
+                trust_confirmed_digest: None,
+                acknowledgements: vec![],
+                confirmed_at: NOW.into(),
+            })
+            .unwrap();
+        current = store
+            .commit_launch(LaunchCommit {
+                expected_revision: expected,
+                launch: current,
+                event_at: NOW.into(),
+                events: vec![
+                    LaunchEventKind::ConfirmationRecorded,
+                    LaunchEventKind::StateChanged {
+                        from: LaunchState::Draft,
+                        to: LaunchState::Resolving,
+                    },
+                ],
+            })
+            .await
+            .unwrap();
+        let claimed = store
+            .claim_launch(&current.id, "worker-a", NOW.into(), LATER.into())
+            .await
+            .unwrap()
+            .unwrap();
+        let first_fence = claimed.work.lease.as_ref().unwrap().fence;
+        let mut blocked = claimed.clone();
+        let refresh = matches!(reason, LaunchBlockedReason::ConnectionRequired { .. }).then(|| {
+            LaunchRequirementRefresh {
+                service: service.clone(),
+                state: ServiceRequirementState::Missing,
+                checked_at: NOW.into(),
+            }
+        });
+        let events = blocked
+            .block_worker_launch(
+                "worker-a",
+                first_fence,
+                reason.clone(),
+                refresh,
+                LATER.into(),
+                NOW.into(),
+            )
+            .unwrap();
+        let blocked = store
+            .commit_launch(LaunchCommit {
+                expected_revision: claimed.revision,
+                launch: blocked,
+                event_at: NOW.into(),
+                events,
+            })
+            .await
+            .unwrap();
+        assert_eq!(blocked.blocked_reason, Some(reason));
+        assert!(blocked.work.lease.is_none());
+        wakeable.push((blocked.id, first_fence));
+    }
+
+    assert!(store.due_launches(NOW, 10).await.unwrap().is_empty());
+    let due = store.due_launches(LATER, 10).await.unwrap();
+    assert_eq!(due.len(), wakeable.len());
+    assert!(wakeable.iter().all(|(id, _)| due.contains(id)));
+
+    let (reblocked_id, first_fence) = &wakeable[0];
+    let mut claimed = store
+        .claim_launch(reblocked_id, "worker-b", LATER.into(), LATEST.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let second_fence = claimed.work.lease.as_ref().unwrap().fence;
+    assert!(second_fence > *first_fence);
+    let before = claimed.clone();
+    assert!(claimed
+        .block_worker_launch(
+            "worker-a",
+            *first_fence,
+            LaunchBlockedReason::OrchestrationPaused,
+            None,
+            LATEST.into(),
+            LATER.into(),
+        )
+        .is_err());
+    assert_eq!(claimed, before);
+    let events = claimed
+        .block_worker_launch(
+            "worker-b",
+            second_fence,
+            LaunchBlockedReason::SandboxPausedReviving,
+            None,
+            LATEST.into(),
+            LATER.into(),
+        )
+        .unwrap();
+    store
+        .commit_launch(LaunchCommit {
+            expected_revision: before.revision,
+            launch: claimed,
+            event_at: LATER.into(),
+            events,
+        })
+        .await
+        .unwrap();
+    assert!(!store
+        .due_launches(LATER, 10)
+        .await
+        .unwrap()
+        .contains(reblocked_id));
+    assert!(store
+        .due_launches(LATEST, 10)
+        .await
+        .unwrap()
+        .contains(reblocked_id));
+
+    let mut recovery = store
+        .admit_launch(LaunchAdmission {
+            launch: launch(&trigger, '3', '4'),
+            trigger: trigger.clone(),
+            events: vec![LaunchEventKind::Created],
+        })
+        .await
+        .unwrap()
+        .launch()
+        .clone();
+    let expected = recovery.revision;
+    recovery
+        .start(LaunchConfirmation {
+            surface: LaunchConsentSurface::Landing,
+            trust_confirmed_digest: None,
+            acknowledgements: vec![],
+            confirmed_at: NOW.into(),
+        })
+        .unwrap();
+    recovery = store
+        .commit_launch(LaunchCommit {
+            expected_revision: expected,
+            launch: recovery,
+            event_at: NOW.into(),
+            events: vec![LaunchEventKind::ConfirmationRecorded],
+        })
+        .await
+        .unwrap();
+    recovery = store
+        .claim_launch(&recovery.id, "recovery-worker", NOW.into(), LATER.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let recovery_fence = recovery.work.lease.as_ref().unwrap().fence;
+    let expected = recovery.revision;
+    let events = recovery
+        .prepare_worker_effect(
+            "recovery-worker",
+            recovery_fence,
+            LaunchEffectKind::CreateSandbox,
+            NOW.into(),
+        )
+        .unwrap();
+    recovery = store
+        .commit_launch(LaunchCommit {
+            expected_revision: expected,
+            launch: recovery,
+            event_at: NOW.into(),
+            events,
+        })
+        .await
+        .unwrap();
+    let expected = recovery.revision;
+    recovery
+        .mark_worker_effect_executing("recovery-worker", recovery_fence, NOW.into())
+        .unwrap();
+    recovery = store
+        .commit_launch(LaunchCommit {
+            expected_revision: expected,
+            launch: recovery,
+            event_at: NOW.into(),
+            events: vec![],
+        })
+        .await
+        .unwrap();
+    let expected = recovery.revision;
+    let events = recovery
+        .block_worker_recovery("recovery-worker", recovery_fence, NOW.into())
+        .unwrap();
+    recovery = store
+        .commit_launch(LaunchCommit {
+            expected_revision: expected,
+            launch: recovery,
+            event_at: NOW.into(),
+            events,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        recovery.blocked_reason,
+        Some(LaunchBlockedReason::RecoveryRequired)
+    );
+    assert!(!store
+        .due_launches(LATEST, 10)
+        .await
+        .unwrap()
+        .contains(&recovery.id));
+    assert!(store
+        .claim_launch(
+            &recovery.id,
+            "normal-worker",
+            LATEST.into(),
+            "2026-09-05T00:03:00Z".into(),
+        )
+        .await
+        .unwrap()
+        .is_none());
+
+    let owner = SubjectId::new("visitor");
+    for id in wakeable
+        .into_iter()
+        .map(|(id, _)| id)
+        .chain(std::iter::once(recovery.id))
+    {
+        let current = store.launch(&id, &owner).await.unwrap().unwrap();
+        let events = store.launch_events(&id, &owner, 0, 100).await.unwrap();
+        assert_eq!(events.len() as u64, current.event_head);
+        assert_eq!(
+            events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+            (1..=current.event_head).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[tokio::test]
 async fn handoffs_are_owner_scoped_and_intent_idempotent() {
     let (_, store, trigger) = store_fixture();
     let launch = admitted(&store, &trigger).await;

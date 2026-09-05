@@ -297,7 +297,7 @@ fn agent_without_a_first_message_becomes_ready_immediately() {
 
     assert_eq!(launch.revision, revision + 1);
     assert_eq!(launch.state, LaunchState::Ready);
-    assert_eq!(launch.work.step, LaunchWorkStep::None);
+    assert_eq!(launch.work.step, LaunchWorkStep::Finish);
     assert_eq!(launch.ready_at.as_deref(), Some(LATER));
     assert_eq!(
         step(&launch, LaunchStepKey::Agent).status,
@@ -414,7 +414,7 @@ fn durable_first_message_evidence_advances_to_ready_in_event_order() {
     assert_eq!(launch.revision, revision + 1);
     assert_eq!(launch.state, LaunchState::Ready);
     assert_eq!(launch.first_message, FirstMessageDelivery::WriteConfirmed);
-    assert_eq!(launch.work.step, LaunchWorkStep::None);
+    assert_eq!(launch.work.step, LaunchWorkStep::Finish);
     launch.validate().unwrap();
 }
 

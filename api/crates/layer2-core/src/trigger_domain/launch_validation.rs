@@ -5,7 +5,8 @@ use super::launch_message_evidence::validate_persisted_message_evidence;
 use super::requirements::valid_digest;
 use super::{
     Launch, LaunchBlockedReason, LaunchEffectState, LaunchFailure, LaunchState, LaunchStep,
-    LaunchStepKey, LaunchStepStatus, TriggerError,
+    LaunchStepKey, LaunchStepStatus, LaunchWorkStep, TriggerError, MAX_LAUNCH_RETRY_DELAY_SECONDS,
+    MAX_LAUNCH_WORK_ATTEMPTS,
 };
 
 const MAX_SAFE_DETAIL_BYTES: usize = 512;
@@ -43,6 +44,14 @@ impl Launch {
         validate_failure(self)?;
         validate_block(self)?;
         self.requirements.validate()?;
+        if seconds_from_rfc3339(&self.requirements.checked_at)
+            .is_none_or(|checked| checked > updated)
+        {
+            return Err(TriggerError::new(
+                "invalid_launch_requirements",
+                "requirements.checked_at",
+            ));
+        }
         self.review
             .validate_for_launch(&self.requirements, self.started_at.is_none())?;
         self.trust.validate()?;
@@ -74,8 +83,12 @@ impl Launch {
                     != self.trust.confirmation_digest.as_deref()
             })
             || (was_ready != self.ready_at.is_some())
+            || self.state == LaunchState::Ready && self.work.step != LaunchWorkStep::Finish
             || self.state.is_terminal() && self.work.step.is_pending()
             || self.blocked_reason.is_some() && self.state.is_terminal()
+            || self.work.attempts >= MAX_LAUNCH_WORK_ATTEMPTS
+            || seconds_from_rfc3339(&self.work.ready_at)
+                .is_none_or(|ready| ready > updated.saturating_add(MAX_LAUNCH_RETRY_DELAY_SECONDS))
         {
             return Err(TriggerError::new("invalid_launch", "state"));
         }
@@ -135,7 +148,7 @@ fn validate_failure(launch: &Launch) -> Result<(), TriggerError> {
 }
 
 impl LaunchFailure {
-    fn validate(&self, created_at: &str, updated_at: &str) -> Result<(), TriggerError> {
+    pub(super) fn validate(&self, created_at: &str, updated_at: &str) -> Result<(), TriggerError> {
         let created = seconds_from_rfc3339(created_at).expect("Launch timestamps were checked");
         let updated = seconds_from_rfc3339(updated_at).expect("Launch timestamps were checked");
         if self.code.trim().is_empty()
@@ -158,18 +171,30 @@ fn validate_block(launch: &Launch) -> Result<(), TriggerError> {
             .effect
             .as_ref()
             .is_some_and(|effect| effect.state == LaunchEffectState::RecoveryRequired);
-    if launch.blocked_reason.is_some() && launch.work.lease.is_some()
-        || matches!(
-            launch.blocked_reason,
-            Some(LaunchBlockedReason::RecoveryRequired)
-        ) && !recovery_evidence
-        || launch.blocked_reason.is_some()
-            && !matches!(
-                launch.blocked_reason,
-                Some(LaunchBlockedReason::RecoveryRequired)
-            )
-            && recovery_evidence
-    {
+    let invalid = match launch.blocked_reason.as_ref() {
+        None => false,
+        Some(LaunchBlockedReason::RecoveryRequired) => {
+            !recovery_evidence || launch.work.lease.is_some()
+        }
+        Some(reason) => {
+            recovery_evidence
+                || !reason.is_wakeable()
+                || !launch.work.step.is_pending()
+                || blocked_step(launch).is_none_or(|step| step.status != LaunchStepStatus::Blocked)
+                || matches!(
+                    reason,
+                    LaunchBlockedReason::ConnectionRequired { service }
+                        if launch
+                            .requirements
+                            .services
+                            .iter()
+                            .filter(|requirement| &requirement.service == service)
+                            .count()
+                            != 1
+                )
+        }
+    };
+    if invalid {
         return Err(TriggerError::new("invalid_launch_block", "blocked_reason"));
     }
     Ok(())
@@ -191,7 +216,9 @@ fn validate_first_message_state(launch: &Launch) -> Result<(), TriggerError> {
                 launch.work.step == super::LaunchWorkStep::DeliverFirstMessage
                     && matches!(
                         step.status,
-                        LaunchStepStatus::Running | LaunchStepStatus::Retryable
+                        LaunchStepStatus::Running
+                            | LaunchStepStatus::Retryable
+                            | LaunchStepStatus::Blocked
                     )
             } else {
                 !matches!(launch.state, LaunchState::Ready | LaunchState::Completed)
@@ -201,7 +228,10 @@ fn validate_first_message_state(launch: &Launch) -> Result<(), TriggerError> {
             launch.state == LaunchState::Cancelled
                 || launch.state == LaunchState::MessagePending
                     && launch.work.step == super::LaunchWorkStep::WaitForFirstMessage
-                    && step.status == LaunchStepStatus::Running
+                    && matches!(
+                        step.status,
+                        LaunchStepStatus::Running | LaunchStepStatus::Blocked
+                    )
         }
         FirstMessageDelivery::WriteConfirmed
         | FirstMessageDelivery::ExecutionObserved
@@ -238,6 +268,22 @@ fn validate_first_message_state(launch: &Launch) -> Result<(), TriggerError> {
     valid
         .then_some(())
         .ok_or_else(|| TriggerError::new("invalid_launch_first_message", "first_message"))
+}
+
+fn blocked_step(launch: &Launch) -> Option<&LaunchStep> {
+    let key = match launch.work.step {
+        LaunchWorkStep::ResolveSandbox | LaunchWorkStep::WaitForSandbox => LaunchStepKey::Sandbox,
+        LaunchWorkStep::ResolveWorkspace | LaunchWorkStep::WaitForWorkspace => {
+            LaunchStepKey::Workspace
+        }
+        LaunchWorkStep::ResolveAgent | LaunchWorkStep::WaitForAgent => LaunchStepKey::Agent,
+        LaunchWorkStep::DeliverFirstMessage | LaunchWorkStep::WaitForFirstMessage => {
+            LaunchStepKey::FirstMessage
+        }
+        LaunchWorkStep::Finish => LaunchStepKey::Ready,
+        LaunchWorkStep::None => return None,
+    };
+    launch.steps.iter().find(|step| step.key == key)
 }
 
 fn validate_optional_time(

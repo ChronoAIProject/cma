@@ -194,7 +194,7 @@ impl LaunchStore for InMemoryLaunchStore {
             .lock()
             .launches
             .values()
-            .filter(|launch| launch.blocked_reason.is_none() && launch.work.is_due(now))
+            .filter(|launch| launch.is_worker_due(now))
             .map(|launch| (launch.work.ready_at.clone(), launch.id.clone()))
             .collect::<Vec<_>>();
         due.sort();
@@ -213,7 +213,7 @@ impl LaunchStore for InMemoryLaunchStore {
         let Some(current) = state.launches.get(id).cloned() else {
             return Ok(None);
         };
-        if current.blocked_reason.is_some() || !current.work.is_due(&now) {
+        if !current.is_worker_due(&now) {
             return Ok(None);
         }
         let mut claimed = current.clone();
