@@ -49,6 +49,8 @@ pub enum WorkspaceServiceError {
     InvalidProfile(String),
     #[error("workspace provisioning origin conflicts with an existing workspace")]
     OriginConflict,
+    #[error("workspace launch origin is invalid")]
+    InvalidOrigin,
     #[error("workspace data is not usable: {0}")]
     Corrupt(String),
     #[error("workspace dependency is unavailable: {0}")]
@@ -68,6 +70,7 @@ impl WorkspaceServiceError {
             Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
             Self::InvalidProfile(_) => "workspace_profile_invalid",
             Self::OriginConflict => "workspace_origin_conflict",
+            Self::InvalidOrigin => "invalid_workspace_origin",
             Self::Corrupt(_) => "stored_workspace_corrupt",
             Self::Unavailable(_) => "workspace_service_unavailable",
         }
@@ -133,6 +136,46 @@ impl WorkspaceService {
             &revision,
             WorkspaceOrigin::Manual,
             WorkspaceAdmissionKind::Manual,
+        )
+        .await
+    }
+
+    /// Launch-authorized admission with a durable origin used to reconcile
+    /// retries after an uncertain storage response.
+    pub async fn create_for_launch(
+        &self,
+        caller: &Caller,
+        sandbox_id: &SandboxId,
+        request: CreateWorkspace,
+        launch_id: String,
+    ) -> Result<Workspace, WorkspaceServiceError> {
+        if launch_id.trim().is_empty()
+            || launch_id.len() > 128
+            || launch_id.chars().any(char::is_control)
+        {
+            return Err(WorkspaceServiceError::InvalidOrigin);
+        }
+        require(caller)?;
+        let sandbox = self.owned_sandbox(caller, sandbox_id).await?;
+        if sandbox.status != super::SandboxStatus::Active {
+            return Err(WorkspaceServiceError::SandboxNotReady);
+        }
+        let (owner, revision) = self
+            .read_visible_revision(&caller.subject, &request.profile)
+            .await?;
+        require_trust_confirmation(
+            &owner,
+            &caller.subject,
+            !revision.content.setup_commands.is_empty(),
+            &revision.digest,
+            request.confirmed_digest.as_deref(),
+        )
+        .map_err(trust_error)?;
+        self.admit(
+            &sandbox,
+            &revision,
+            WorkspaceOrigin::Trigger { launch_id },
+            WorkspaceAdmissionKind::Trigger,
         )
         .await
     }

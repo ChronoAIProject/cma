@@ -64,6 +64,7 @@ impl HierarchyProblem {
             }
             WorkspaceServiceError::InvalidProfile(_) => Self::Invalid("workspace_profile_invalid"),
             WorkspaceServiceError::OriginConflict => Self::Conflict("workspace_origin_conflict"),
+            WorkspaceServiceError::InvalidOrigin => Self::Invalid("invalid_workspace_origin"),
             WorkspaceServiceError::Corrupt(_) | WorkspaceServiceError::Unavailable(_) => {
                 Self::Unavailable
             }

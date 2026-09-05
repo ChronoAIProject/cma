@@ -360,6 +360,88 @@ async fn manual_admission_requires_the_current_digest_and_records_use_once() {
 }
 
 #[tokio::test]
+async fn launch_admission_replays_by_origin_and_rejects_changed_input() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let reference = publish(
+        &profiles,
+        profile(
+            "wkp_launch_origin",
+            "consumer",
+            "launch-origin",
+            ProfileVisibility::Private,
+            Vec::new(),
+        ),
+    )
+    .await;
+    let changed = publish(
+        &profiles,
+        profile(
+            "wkp_launch_origin_changed",
+            "consumer",
+            "changed-origin",
+            ProfileVisibility::Private,
+            Vec::new(),
+        ),
+    )
+    .await;
+    let store = Arc::new(InMemorySandboxStore::default());
+    let parent = sandbox("sbx_launch_origin", SandboxStatus::Active, Vec::new(), 4);
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let service = WorkspaceService::new(store, profiles.clone());
+    let consumer = caller("consumer");
+
+    let first = service
+        .create_for_launch(
+            &consumer,
+            &parent.id,
+            request(reference.clone(), None),
+            "lch_stable_origin".into(),
+        )
+        .await
+        .unwrap();
+    let replay = service
+        .create_for_launch(
+            &consumer,
+            &parent.id,
+            request(reference.clone(), None),
+            "lch_stable_origin".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, first);
+    assert_eq!(
+        first.origin,
+        WorkspaceOrigin::Trigger {
+            launch_id: "lch_stable_origin".into()
+        }
+    );
+    assert_eq!(use_count(&profiles, &reference.id).await, 1);
+
+    assert_eq!(
+        service
+            .create_for_launch(
+                &consumer,
+                &parent.id,
+                request(changed, None),
+                "lch_stable_origin".into(),
+            )
+            .await,
+        Err(WorkspaceServiceError::OriginConflict)
+    );
+    assert_eq!(
+        service
+            .create_for_launch(
+                &consumer,
+                &parent.id,
+                request(reference, None),
+                "invalid\norigin".into(),
+            )
+            .await,
+        Err(WorkspaceServiceError::InvalidOrigin)
+    );
+}
+
+#[tokio::test]
 async fn automatic_admission_never_prompts_and_concurrent_replays_record_once() {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let reference = publish(
