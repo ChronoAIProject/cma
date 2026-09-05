@@ -271,6 +271,32 @@ async fn send_message_accepts_only_ready_or_paused_status() {
 }
 
 #[tokio::test]
+async fn stop_intent_rejects_new_input_before_runtime_resolution() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut stopping = test_agent(AgentStatus::Ready, None);
+    store.create_agent(stopping.clone()).await.unwrap();
+    let expected = stopping.revision;
+    stopping
+        .request_stop(AgentStopReason::Owner, LATER.into())
+        .unwrap();
+    store.save_agent(expected, stopping.clone()).await.unwrap();
+    let (sender, inputs) = recording_sender(Ok(()));
+    let registry = TestRuntimeRegistry::new(full_capabilities(), sender);
+    let service = AgentOperationService::new(store, registry.clone());
+
+    assert_eq!(
+        service
+            .send_message(&owner(), &stopping.id, "too late".into())
+            .await,
+        Err(AgentOperationError::StatusConflict {
+            status: AgentStatus::Ready
+        })
+    );
+    assert_eq!(registry.resolutions(), 0);
+    assert!(inputs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn steer_requires_working_status_an_active_turn_and_capability() {
     for status in ALL_AGENT_STATUSES {
         if status == AgentStatus::Working {

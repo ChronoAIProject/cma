@@ -341,6 +341,18 @@ impl AgentRuntimeRegistry for LiveAgentRegistry {
             input: entry.input.clone(),
         })
     }
+
+    async fn fence(
+        &self,
+        agent_id: &AgentId,
+        authority_fence: u64,
+    ) -> Result<(), AgentRuntimeError> {
+        if authority_fence == 0 {
+            return Err(AgentRuntimeError::StaleGeneration);
+        }
+        LiveAgentRegistry::fence(self, agent_id, None, authority_fence);
+        Ok(())
+    }
 }
 
 fn validate_authority(

@@ -31,4 +31,11 @@ pub trait AgentRuntimeRegistry: Send + Sync {
         &self,
         target: &AgentRuntimeTarget,
     ) -> Result<AgentRuntimeConnection, AgentRuntimeError>;
+
+    /// Idempotently retire every interaction route at or below this authority.
+    async fn fence(
+        &self,
+        agent_id: &AgentId,
+        authority_fence: u64,
+    ) -> Result<(), AgentRuntimeError>;
 }

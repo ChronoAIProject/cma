@@ -15,8 +15,9 @@ use super::store::{
     AgentDeleteRequest, AgentServiceStore, AgentStopRequest, Page, PageRequest, SandboxStoreError,
 };
 use super::{
-    Agent, AgentLogEntry, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkStep,
-    FirstMessageRecord, Sandbox, SandboxStatus, Workspace, WorkspaceStatus,
+    Agent, AgentLogEntry, AgentOrigin, AgentRuntimeError, AgentRuntimeRegistry, AgentStatus,
+    AgentStopReason, AgentWorkStep, FirstMessageRecord, Sandbox, SandboxStatus, Workspace,
+    WorkspaceStatus,
 };
 
 const MAX_TITLE_SCALARS: usize = 64;
@@ -96,31 +97,36 @@ pub struct AgentService {
     store: Arc<dyn AgentServiceStore>,
     profiles: Arc<dyn AgentProfileStore>,
     profile_uses: Arc<dyn ProfileUseRecorder>,
+    runtimes: Arc<dyn AgentRuntimeRegistry>,
 }
 
 impl AgentService {
-    pub fn new<S, P>(store: Arc<S>, profiles: Arc<P>) -> Arc<Self>
+    pub fn new<S, P, R>(store: Arc<S>, profiles: Arc<P>, runtimes: Arc<R>) -> Arc<Self>
     where
         S: AgentServiceStore + 'static,
         P: AgentProfileStore + ProfileUseRecorder + 'static,
+        R: AgentRuntimeRegistry + 'static,
     {
         let agent_profiles: Arc<dyn AgentProfileStore> = profiles.clone();
         let profile_uses: Arc<dyn ProfileUseRecorder> = profiles;
-        Self::with_dependencies(store, agent_profiles, profile_uses)
+        Self::with_dependencies(store, agent_profiles, profile_uses, runtimes)
     }
 
-    pub(crate) fn with_dependencies<S>(
+    pub(crate) fn with_dependencies<S, R>(
         store: Arc<S>,
         profiles: Arc<dyn AgentProfileStore>,
         profile_uses: Arc<dyn ProfileUseRecorder>,
+        runtimes: Arc<R>,
     ) -> Arc<Self>
     where
         S: AgentServiceStore + 'static,
+        R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
             store,
             profiles,
             profile_uses,
+            runtimes,
         })
     }
 
@@ -213,7 +219,8 @@ impl AgentService {
     ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
         let agent = self.owned_agent(caller, id).await?;
-        self.store
+        let scheduled = self
+            .store
             .schedule_agent_stop(AgentStopRequest {
                 target: AgentControlTarget::from(&agent),
                 reason,
@@ -221,7 +228,12 @@ impl AgentService {
             })
             .await
             .map(|result| result.into_agent())
-            .map_err(control_error)
+            .map_err(control_error)?;
+        self.runtimes
+            .fence(&scheduled.id, scheduled.work.next_fence)
+            .await
+            .map_err(runtime_error)?;
+        Ok(scheduled)
     }
 
     pub async fn delete(&self, caller: &Caller, id: &AgentId) -> Result<Agent, AgentServiceError> {
@@ -398,4 +410,8 @@ fn control_error(error: AgentControlStoreError) -> AgentServiceError {
         AgentControlStoreError::Corrupt(detail) => AgentServiceError::Corrupt(detail),
         AgentControlStoreError::Unavailable(detail) => AgentServiceError::Unavailable(detail),
     }
+}
+
+fn runtime_error(error: AgentRuntimeError) -> AgentServiceError {
+    AgentServiceError::Unavailable(error.to_string())
 }
