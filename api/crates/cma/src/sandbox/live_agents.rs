@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use layer2_core::sandbox::AgentUpdateRecorder;
+use layer2_core::sandbox::{
+    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
+    AgentUpdateRecorder,
+};
 use layer2_core::{AgentId, RuntimeCapabilities};
 use layer3_adapter::{ConversationInputSender, ConversationUpdate};
 use tokio::sync::{mpsc, oneshot};
@@ -313,6 +316,30 @@ impl LiveAgentRegistry {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRuntimeRegistry for LiveAgentRegistry {
+    async fn resolve(
+        &self,
+        target: &AgentRuntimeTarget,
+    ) -> Result<AgentRuntimeConnection, AgentRuntimeError> {
+        let state = self.lock();
+        let entry = state
+            .entries
+            .get(&target.agent_id)
+            .ok_or(AgentRuntimeError::NotFound)?;
+        if entry.runtime_generation != target.runtime_generation {
+            return Err(AgentRuntimeError::StaleGeneration);
+        }
+        if !entry.published || entry.conversation_id != target.conversation_id {
+            return Err(AgentRuntimeError::NotFound);
+        }
+        Ok(AgentRuntimeConnection {
+            capabilities: entry.capabilities.clone(),
+            input: entry.input.clone(),
+        })
     }
 }
 
