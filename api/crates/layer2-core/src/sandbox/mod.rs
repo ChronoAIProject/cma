@@ -12,6 +12,7 @@ mod agent_reads_fold;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
+mod checkpoint;
 mod conversation;
 mod conversation_fold;
 mod conversation_fold_support;
@@ -23,9 +24,12 @@ mod first_message;
 mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
+mod inactivity;
 mod limits;
 mod provision;
 mod queued_message;
+mod revive;
+mod rotate;
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;
@@ -70,6 +74,11 @@ pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
 pub use agent_work::{
     AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,
 };
+pub use checkpoint::{
+    sandbox_checkpoint_due, SandboxCheckpointConversation, SandboxCheckpointConversationRef,
+    SandboxCheckpointHistory, SandboxCheckpointPublication, SandboxCheckpointRef,
+    MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES, SANDBOX_CHECKPOINT_INTERVAL_SECONDS,
+};
 pub use conversation::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
     MAX_DURABLE_AGENT_MESSAGE_BYTES,
@@ -93,12 +102,23 @@ pub use hierarchy::{
     SandboxHierarchyView, SandboxInventoryRecord, WorkspaceHierarchyRecord,
     WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchySummary,
 };
+pub use inactivity::{
+    inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
+    SandboxAgentLogActivity,
+};
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
 pub use queued_message::{
     QueuedAgentMessage, QueuedMessageState, MAX_AGENT_MESSAGE_BYTES, MAX_QUEUED_AGENT_MESSAGES,
 };
-pub use sandbox::{RuntimeBinding, Sandbox, SandboxCheckpointRef, SandboxLimits, TypedFailure};
+pub use revive::{
+    SandboxReviveCause, SandboxReviveFailureClass, SandboxRevivePhase, SANDBOX_REVIVE_PHASE_ORDER,
+};
+pub use rotate::{
+    image_rotation_required, SandboxRotationAccounting, SandboxRotationAccountingOutcome,
+    SandboxRotationAgentIdentity, SandboxRotationIdentity,
+};
+pub use sandbox::{RuntimeBinding, Sandbox, SandboxLimits, TypedFailure};
 pub use service::{
     CreateSandbox, SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxService,
     SandboxServiceError,
@@ -132,7 +152,17 @@ mod agent_reads_tests;
 #[cfg(test)]
 mod agent_service_tests;
 #[cfg(test)]
+mod checkpoint_tests;
+#[cfg(test)]
 mod hierarchy_tests;
+#[cfg(test)]
+mod inactivity_tests;
+#[cfg(test)]
+mod lifecycle_test_support;
+#[cfg(test)]
+mod revive_tests;
+#[cfg(test)]
+mod rotate_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

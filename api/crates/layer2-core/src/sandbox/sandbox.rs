@@ -4,8 +4,8 @@ use crate::ids::{SandboxId, SubjectId};
 use crate::profiles::SandboxProfileSnapshot;
 
 use super::{
-    SandboxCredentialState, SandboxModelError, SandboxOrigin, SandboxStatus, SandboxWorkState,
-    SandboxWorkStep,
+    SandboxCheckpointRef, SandboxCredentialState, SandboxModelError, SandboxOrigin, SandboxStatus,
+    SandboxWorkState, SandboxWorkStep,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,14 +21,6 @@ pub struct RuntimeBinding {
 pub struct SandboxLimits {
     pub max_workspaces: u8,
     pub max_agents_per_workspace: u8,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SandboxCheckpointRef {
-    pub object_reference: String,
-    pub sha256: String,
-    pub sealed_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +78,13 @@ impl Sandbox {
             return Err(SandboxModelError::invalid_value(
                 "sandbox.credential_or_work",
             ));
+        }
+        if self
+            .checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.validate().is_err())
+        {
+            return Err(SandboxModelError::invalid_value("sandbox.checkpoint"));
         }
         if (self.status == SandboxStatus::Retired) != self.retired_at.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.retired_at"));
