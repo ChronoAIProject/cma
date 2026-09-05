@@ -26,6 +26,7 @@ pub use agent_conversation::{AgentConversationMutation, AgentConversationStore};
 mod agent_lifecycle;
 pub use agent_lifecycle::{AgentWorkMutation, AgentWorkerStore, VersionedWorktree};
 mod agent_work_evidence_validation;
+mod agent_work_transition_validation;
 mod agent_work_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
 pub use agent_work_validation::validate_agent_work_mutation;

@@ -2,8 +2,8 @@ use crate::ids::{AgentId, AgentProfileId, SandboxId, SubjectId, WorkspaceId, Wor
 use crate::profiles::{AgentProfileContent, AgentProfileSnapshot, PermissionLevel, ThinkingEffort};
 use crate::sandbox::{
     Agent, AgentCleanupDebt, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason,
-    AgentWorkReceipt, AgentWorkState, AgentWorkStep, ConversationState, SandboxEventKind,
-    TypedFailure, Worktree, WorktreeStatus,
+    AgentWorkReceipt, AgentWorkState, AgentWorkStep, ConversationState, FirstMessageRecord,
+    SandboxEventKind, TypedFailure, Worktree, WorktreeStatus,
 };
 
 use super::{
@@ -449,6 +449,30 @@ fn durable_log_high_water_is_part_of_the_shared_contract() {
         ),
         Err(SandboxStoreError::SequenceConflict)
     );
+}
+
+#[test]
+fn first_message_work_can_retire_after_runtime_progresses_the_conversation() {
+    let (mut current, worktree) = claimed(
+        AgentWorkStep::DispatchFirstMessage,
+        AgentStatus::Working,
+        WorktreeStatus::Ready,
+    );
+    let mut first = FirstMessageRecord::new("creation-key", "Start here", NOW).unwrap();
+    first
+        .fence_dispatch_for(2, 1, fence(&current), NOW.into())
+        .unwrap();
+    first.mark_write_confirmed(NOW.into()).unwrap();
+    current.conversation.first_message = Some(first);
+    current.conversation.active_turn = Some(2);
+
+    let mutation = completed_advance(&current, AgentWorkStep::None);
+    assert_valid(&current, &worktree, &mutation);
+
+    let mut invalid = current.clone();
+    invalid.status = AgentStatus::Starting;
+    let mutation = completed_advance(&invalid, AgentWorkStep::None);
+    assert_conflict(&invalid, &worktree, &mutation);
 }
 
 fn claimed(

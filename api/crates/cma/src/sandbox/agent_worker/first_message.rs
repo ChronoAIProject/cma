@@ -1,9 +1,10 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     Agent, AgentOperationError, AgentWorkAuthority, AgentWorkStep, FirstMessageDispatchOutcome,
 };
+use layer2_core::seconds_from_rfc3339;
 
 use super::support::{claimed_fence, WorkerFailure};
 use super::AgentWorker;
@@ -28,6 +29,7 @@ impl AgentWorker {
             | FirstMessageDispatchOutcome::Accepted(_)
             | FirstMessageDispatchOutcome::RecoveryRequired(_) => {
                 let current = self.current_dispatch(&agent, &authority).await?;
+                let now = publication_time(now, &current)?;
                 self.progress(
                     current,
                     AgentWorkStep::None,
@@ -41,6 +43,7 @@ impl AgentWorker {
             }
             FirstMessageDispatchOutcome::Retryable(_) => {
                 let current = self.current_dispatch(&agent, &authority).await?;
+                let now = publication_time(now, &current)?;
                 self.handle_failure(
                     current,
                     WorkerFailure::retryable(
@@ -73,6 +76,13 @@ impl AgentWorker {
         }
         Ok(current)
     }
+}
+
+fn publication_time(now: SystemTime, current: &Agent) -> Result<SystemTime, SandboxStoreError> {
+    let seconds = seconds_from_rfc3339(&current.updated_at)
+        .ok_or_else(|| SandboxStoreError::Corrupt("agent update timestamp is invalid".into()))?;
+    let durable = SystemTime::UNIX_EPOCH + Duration::from_secs(seconds);
+    Ok(std::cmp::max(now, durable))
 }
 
 fn dispatch_error(error: AgentOperationError) -> SandboxStoreError {

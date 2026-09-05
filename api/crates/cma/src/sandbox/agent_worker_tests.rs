@@ -618,9 +618,9 @@ async fn worker_retries_only_a_proven_first_message_pre_write_failure() {
 
     let working = ConversationInputSender::spawn(1, |_| async { Ok(()) });
     let _updates = harness.replace_input(&retrying, retrying.work.next_fence, working);
-    harness
-        .run(&agent.id, harness.now + Duration::from_secs(1))
-        .await;
+    let retry_at = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(layer2_core::seconds_from_rfc3339(&retrying.work.ready_at).unwrap());
+    harness.run(&agent.id, retry_at).await;
     let accepted = harness.stored(&agent.id).await;
     assert_eq!(accepted.work.step, AgentWorkStep::None);
     assert_eq!(
