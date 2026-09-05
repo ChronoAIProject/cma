@@ -48,6 +48,8 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+#[cfg(test)]
+mod launch_command_tests;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_command_tests;

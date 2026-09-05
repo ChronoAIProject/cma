@@ -41,6 +41,8 @@ pub use sandbox_admission::{
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
+mod launch_command;
+pub use launch_command::*;
 mod lifecycle_execution;
 pub use lifecycle_execution::*;
 #[cfg(test)]
@@ -341,6 +343,7 @@ pub trait SandboxServiceStore:
     + SandboxAdmissionStore
     + SandboxTransactionStore
     + SandboxLifecycleCommandStore
+    + SandboxLaunchCommandStore
 {
 }
 
@@ -350,6 +353,7 @@ impl<T> SandboxServiceStore for T where
         + SandboxAdmissionStore
         + SandboxTransactionStore
         + SandboxLifecycleCommandStore
+        + SandboxLaunchCommandStore
 {
 }
 

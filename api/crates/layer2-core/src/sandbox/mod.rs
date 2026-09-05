@@ -26,6 +26,8 @@ mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
 mod inactivity;
+mod launch_recovery;
+mod launch_service;
 mod lifecycle;
 mod lifecycle_execution;
 mod lifecycle_execution_support;
@@ -137,7 +139,8 @@ pub use service::{
 pub(crate) use service_trust::foreign_workspace_setups;
 pub use status::{AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus};
 pub use store::{
-    InMemorySandboxStore, Page, PageRequest, SandboxLifecycleCommandDisposition,
+    InMemorySandboxStore, Page, PageRequest, SandboxLaunchCommandDisposition,
+    SandboxLaunchCommandOutcome, SandboxLifecycleCommandDisposition,
     SandboxLifecycleCommandOutcome, SandboxStoreError,
 };
 pub use title::{
@@ -171,6 +174,8 @@ mod checkpoint_tests;
 mod hierarchy_tests;
 #[cfg(test)]
 mod inactivity_tests;
+#[cfg(test)]
+mod launch_service_tests;
 #[cfg(test)]
 mod lifecycle_execution_tests;
 #[cfg(test)]
