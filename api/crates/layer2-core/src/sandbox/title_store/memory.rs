@@ -123,7 +123,10 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
             .flatten();
         let items = raw
             .into_iter()
-            .filter(|(_, agent)| agent.title.is_none() && first_turn(&agent.logs).is_some())
+            .filter(|(_, agent)| {
+                agent.title.is_none()
+                    && AgentTitleTranscript::from_complete_log(&agent.logs).is_some()
+            })
             .map(|(id, _)| id.clone())
             .collect();
         Ok(Page { items, next })
@@ -135,7 +138,7 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
     ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
         let state = self.lock();
         let agent = state.agents.get(id).ok_or(AgentTitleStoreError::NotFound)?;
-        Ok(first_turn(&agent.logs))
+        Ok(AgentTitleTranscript::from_complete_log(&agent.logs))
     }
 
     async fn acquire_agent_title_claim(
@@ -153,7 +156,7 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
         let Some(agent) = state.agents.get_mut(request.agent_id()) else {
             return Ok(None);
         };
-        if agent.title.is_some() || first_turn(&agent.logs).is_none() {
+        if agent.title.is_some() || AgentTitleTranscript::from_complete_log(&agent.logs).is_none() {
             return Ok(None);
         }
         if agent.work.completed.is_some() {
@@ -317,46 +320,4 @@ fn append_log(
     };
     agent.logs.push(entry.clone());
     Ok(entry)
-}
-
-fn first_turn(logs: &[AgentLogEntry]) -> Option<AgentTitleTranscript> {
-    let mut turn_sequence = None;
-    let mut owner = None;
-    let mut assistant = None;
-
-    for entry in logs {
-        match &entry.kind {
-            AgentLogKind::TurnStarted {
-                turn_sequence: sequence,
-                ..
-            } if turn_sequence.is_none() && *sequence > 0 => turn_sequence = Some(*sequence),
-            AgentLogKind::TurnStarted { .. } => return None,
-            AgentLogKind::OwnerMessage { content }
-                if turn_sequence.is_some() && owner.is_none() && assistant.is_none() =>
-            {
-                owner = Some(content.as_str());
-            }
-            AgentLogKind::AgentMessage { content }
-                if turn_sequence.is_some() && owner.is_some() =>
-            {
-                assistant.get_or_insert(content.as_str());
-            }
-            AgentLogKind::TurnCompleted {
-                turn_sequence: completed,
-            } if Some(*completed) == turn_sequence && owner.is_some() && assistant.is_some() => {
-                return Some(AgentTitleTranscript::completed(
-                    completed.to_owned(),
-                    owner.expect("checked"),
-                    assistant.expect("checked"),
-                ));
-            }
-            AgentLogKind::OwnerMessage { .. }
-            | AgentLogKind::AgentMessage { .. }
-            | AgentLogKind::TurnCompleted { .. }
-            | AgentLogKind::TurnFailed { .. }
-            | AgentLogKind::TurnInterrupted { .. } => return None,
-            _ => {}
-        }
-    }
-    None
 }

@@ -164,6 +164,55 @@ pub struct AgentTitleTranscript {
 }
 
 impl AgentTitleTranscript {
+    /// Fold a complete, gap-free agent log into the exact first completed turn.
+    ///
+    /// Durable adapters call this only after proving log sequence integrity.
+    #[doc(hidden)]
+    pub fn from_complete_log(logs: &[super::AgentLogEntry]) -> Option<Self> {
+        let mut turn_sequence = None;
+        let mut owner = None;
+        let mut assistant = None;
+
+        for entry in logs {
+            match &entry.kind {
+                super::AgentLogKind::TurnStarted {
+                    turn_sequence: sequence,
+                    ..
+                } if turn_sequence.is_none() && *sequence > 0 => turn_sequence = Some(*sequence),
+                super::AgentLogKind::TurnStarted { .. } => return None,
+                super::AgentLogKind::OwnerMessage { content }
+                    if turn_sequence.is_some() && owner.is_none() && assistant.is_none() =>
+                {
+                    owner = Some(content.as_str());
+                }
+                super::AgentLogKind::AgentMessage { content }
+                    if turn_sequence.is_some() && owner.is_some() =>
+                {
+                    assistant.get_or_insert(content.as_str());
+                }
+                super::AgentLogKind::TurnCompleted {
+                    turn_sequence: completed,
+                } if Some(*completed) == turn_sequence
+                    && owner.is_some()
+                    && assistant.is_some() =>
+                {
+                    return Some(Self::completed(
+                        *completed,
+                        owner.expect("checked"),
+                        assistant.expect("checked"),
+                    ));
+                }
+                super::AgentLogKind::OwnerMessage { .. }
+                | super::AgentLogKind::AgentMessage { .. }
+                | super::AgentLogKind::TurnCompleted { .. }
+                | super::AgentLogKind::TurnFailed { .. }
+                | super::AgentLogKind::TurnInterrupted { .. } => return None,
+                _ => {}
+            }
+        }
+        None
+    }
+
     pub(crate) fn completed(
         turn_sequence: u64,
         owner_message: &str,
