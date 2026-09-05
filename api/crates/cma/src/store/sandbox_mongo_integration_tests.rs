@@ -15,12 +15,13 @@ use layer2_core::profiles::{
     WorkspaceProfileRef, WorkspaceProfileSnapshot,
 };
 use layer2_core::sandbox::store::{
-    AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentLogStore, AgentStore,
-    AgentWorkMutation, AgentWorkerStore, SandboxAdmission, SandboxAdmissionName,
-    SandboxAdmissionStore, SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
-    SandboxTransactionStore, SandboxWorkerStore, VersionedWorktree, WorkspaceAdmission,
-    WorkspaceAdmissionKind, WorkspaceAdmissionResult, WorkspaceAdmissionStore, WorkspaceStore,
-    WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
+    AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentControlResult,
+    AgentControlStore, AgentControlStoreError, AgentControlTarget, AgentDeleteRequest,
+    AgentLogStore, AgentStopRequest, AgentStore, AgentWorkMutation, AgentWorkerStore,
+    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore, SandboxEventStore, SandboxStore,
+    SandboxStoreError, SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore,
+    VersionedWorktree, WorkspaceAdmission, WorkspaceAdmissionKind, WorkspaceAdmissionResult,
+    WorkspaceAdmissionStore, WorkspaceStore, WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkState,
@@ -39,6 +40,7 @@ use crate::sandbox::{
     CredentialCustodyError, CredentialMaterial, CredentialRevocation, SandboxCredentialCustody,
 };
 
+use super::agent_control_store::{plan_delete, plan_stop};
 use super::agent_log::log_document;
 use super::agent_worker_reconcile::reconcile_publication;
 use super::agent_worker_transaction::{stop_intent_change_is_valid, PublicationReceipt};
@@ -441,6 +443,116 @@ fn mongo_agent_work_stop_intent_validation_matches_domain_rules() {
     let mut rewritten = stopped.clone();
     rewritten.stop_reason = Some(AgentStopReason::Operator);
     assert!(!stop_intent_change_is_valid(&stopped, &rewritten));
+}
+
+#[test]
+fn mongo_agent_control_plans_exact_replays_and_conflicts() {
+    let current = agent_for_worker("agt_control_rules", NOW);
+    let stop = AgentStopRequest {
+        target: AgentControlTarget::from(&current),
+        reason: AgentStopReason::Owner,
+        requested_at: NOW.into(),
+    };
+    let scheduled = match plan_stop(current, &stop).unwrap() {
+        AgentControlResult::Scheduled(agent) => agent,
+        AgentControlResult::Existing(_) => panic!("new stop must be scheduled"),
+    };
+    assert_eq!(
+        plan_stop(scheduled.clone(), &stop).unwrap(),
+        AgentControlResult::Existing(scheduled.clone())
+    );
+    let mut changed = stop.clone();
+    changed.reason = AgentStopReason::Operator;
+    assert_eq!(
+        plan_stop(scheduled.clone(), &changed),
+        Err(AgentControlStoreError::StopReasonConflict)
+    );
+
+    let mut stopped = scheduled;
+    stopped.work.schedule(AgentWorkStep::None, MINUTE.into());
+    stopped
+        .transition(
+            AgentStatus::Stopped,
+            MINUTE.into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    let stopped_request = AgentStopRequest {
+        target: AgentControlTarget::from(&stopped),
+        reason: AgentStopReason::Owner,
+        requested_at: MINUTE.into(),
+    };
+    assert_eq!(
+        plan_stop(stopped.clone(), &stopped_request),
+        Err(AgentControlStoreError::StatusConflict {
+            status: AgentStatus::Stopped,
+        })
+    );
+
+    let delete = AgentDeleteRequest {
+        target: AgentControlTarget::from(&stopped),
+        requested_at: MINUTE.into(),
+    };
+    let deleting = match plan_delete(stopped, &delete).unwrap() {
+        AgentControlResult::Scheduled(agent) => agent,
+        AgentControlResult::Existing(_) => panic!("new delete must be scheduled"),
+    };
+    assert_eq!(
+        plan_delete(deleting.clone(), &delete).unwrap(),
+        AgentControlResult::Existing(deleting)
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_control_concurrent_stop_schedules_once_and_replays_exactly() {
+    let (client, name) = database("agent_control_stop").await;
+    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let (_, _, claimed) = claimed_agent_work_fixture(&store, "control_stop").await;
+    let request = AgentStopRequest {
+        target: AgentControlTarget::from(&claimed),
+        reason: AgentStopReason::Owner,
+        requested_at: NOW.into(),
+    };
+    let mut tasks = Vec::new();
+    for _ in 0..16 {
+        let store = Arc::clone(&store);
+        let request = request.clone();
+        tasks.push(tokio::spawn(async move {
+            store.schedule_agent_stop(request).await.unwrap()
+        }));
+    }
+    let mut scheduled_count = 0;
+    let mut winner = None;
+    for task in tasks {
+        match task.await.unwrap() {
+            AgentControlResult::Scheduled(agent) => {
+                scheduled_count += 1;
+                winner = Some(agent);
+            }
+            AgentControlResult::Existing(agent) => {
+                winner.get_or_insert(agent);
+            }
+        };
+    }
+    assert_eq!(scheduled_count, 1);
+    let winner = winner.unwrap();
+    assert_eq!(winner.requested_stop_reason, Some(AgentStopReason::Owner));
+    assert_eq!(winner.work.step, AgentWorkStep::FenceInteraction);
+    assert!(winner.work.lease.is_none());
+    assert_eq!(
+        store.schedule_agent_stop(request.clone()).await.unwrap(),
+        AgentControlResult::Existing(winner.clone())
+    );
+    let mut changed = request;
+    changed.reason = AgentStopReason::Operator;
+    assert_eq!(
+        store.schedule_agent_stop(changed).await,
+        Err(AgentControlStoreError::StopReasonConflict)
+    );
+    assert_eq!(store.get_agent(&winner.id).await.unwrap(), Some(winner));
+
+    client.database(&name).drop().await.unwrap();
 }
 
 #[tokio::test]
