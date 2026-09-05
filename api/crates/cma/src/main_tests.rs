@@ -6,7 +6,12 @@ use axum::{
     http::{Request, StatusCode},
 };
 use layer1_public::{
-    rest::{hierarchy_router, profiles_router, HierarchyState, ProfilesState},
+    agui::{launch_companion_router, LaunchCompanionState},
+    rest::{
+        hierarchy_router, profiles_router, trigger_assets_router, trigger_router, HierarchyState,
+        LaunchQuota, LaunchQuotaError, LaunchQuotaPermit, ProfilesState, TriggerAssetsState,
+        TriggerRoutesState,
+    },
     AuthenticatedSubject,
 };
 use layer2_core::{
@@ -14,13 +19,25 @@ use layer2_core::{
     sandbox::{
         HierarchyReadService, InMemorySandboxStore, SandboxPolicy, SandboxService, WorkspaceService,
     },
-    ActivityQuery, ActivityRecord, ActivityService, ActivityStore, Authorization, OperationClaim,
-    OperationReservation, OperationStore, Page, PlatformSettings, PlatformSettingsService,
-    PlatformSettingsStore, StoreError, StoredPlatformSettings, SubjectId,
+    trigger_domain::{
+        BrokerHandoff, BrokerHandoffState, InMemoryLaunchStore, InMemoryTriggerStore, LaunchPolicy,
+        LaunchResolutionError, LaunchService, ServiceConnectionBroker, ServiceConnectionError,
+        ServiceConnectionService, ServiceRequirement, TriggerId, TriggerService,
+    },
+    ActivityQuery, ActivityRecord, ActivityService, ActivityStore, Authorization, DirectoryQuery,
+    OperationClaim, OperationReservation, OperationStore, Page, PlatformSettings,
+    PlatformSettingsService, PlatformSettingsStore, PublicIdentity, RegisteredUser, SandboxId,
+    SandboxProfileId, ServiceId, StoreError, StoredPlatformSettings, SubjectId, UserDirectory,
+    UserDirectoryStore, WorkspaceProfileId,
 };
 use tower::ServiceExt as _;
 
 use super::*;
+use crate::{
+    profile_policy::profile_route_policy,
+    projections::{AgentProjectionServices, UnavailableSandboxResources},
+    sandbox::{runtime_capabilities, LiveAgentRegistry},
+};
 
 #[derive(Default)]
 struct NoopOperationStore;
@@ -47,6 +64,100 @@ impl ActivityStore for NoopActivityStore {
 
     async fn list(&self, _query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
         Ok(Page::new(Vec::new(), None))
+    }
+}
+
+#[derive(Default)]
+struct EmptyDirectory;
+
+#[async_trait]
+impl UserDirectoryStore for EmptyDirectory {
+    async fn observe(&self, _identity: &PublicIdentity) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    async fn user(&self, _subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError> {
+        Ok(None)
+    }
+
+    async fn list(&self, _query: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError> {
+        Ok(Page::new(Vec::new(), None))
+    }
+}
+
+#[derive(Default)]
+struct EmptyLaunchContext;
+
+#[async_trait]
+impl layer2_core::trigger_domain::LaunchContextReader for EmptyLaunchContext {
+    async fn newest_matching_sandbox(
+        &self,
+        _owner: &SubjectId,
+        _profile_id: &SandboxProfileId,
+    ) -> Result<Option<layer2_core::sandbox::Sandbox>, LaunchResolutionError> {
+        Ok(None)
+    }
+
+    async fn matching_workspace(
+        &self,
+        _owner: &SubjectId,
+        _sandbox_id: &SandboxId,
+        _profile_id: &WorkspaceProfileId,
+    ) -> Result<Option<layer2_core::sandbox::Workspace>, LaunchResolutionError> {
+        Ok(None)
+    }
+
+    async fn newest_live_trigger_agent(
+        &self,
+        _owner: &SubjectId,
+        _trigger_id: &TriggerId,
+    ) -> Result<Option<layer2_core::sandbox::Agent>, LaunchResolutionError> {
+        Ok(None)
+    }
+}
+
+#[derive(Default)]
+struct ClosedConnectionBroker;
+
+#[async_trait]
+impl ServiceConnectionBroker for ClosedConnectionBroker {
+    async fn requirements(
+        &self,
+        _owner: &SubjectId,
+        _services: &[ServiceId],
+    ) -> Result<Vec<ServiceRequirement>, ServiceConnectionError> {
+        Ok(Vec::new())
+    }
+
+    async fn create_handoff(
+        &self,
+        _owner: &SubjectId,
+        _service: &ServiceId,
+        _intent_id: &str,
+    ) -> Result<BrokerHandoff, ServiceConnectionError> {
+        Err(ServiceConnectionError::Refused)
+    }
+
+    async fn handoff_state(
+        &self,
+        _owner: &SubjectId,
+        _external_id: &str,
+        _service: &ServiceId,
+    ) -> Result<BrokerHandoffState, ServiceConnectionError> {
+        Err(ServiceConnectionError::Refused)
+    }
+}
+
+#[derive(Default)]
+struct UnlimitedLaunchQuota;
+
+#[async_trait]
+impl LaunchQuota for UnlimitedLaunchQuota {
+    async fn reserve(
+        &self,
+        _caller: &layer2_core::Caller,
+    ) -> Result<LaunchQuotaPermit, LaunchQuotaError> {
+        Ok(LaunchQuotaPermit::unmetered())
     }
 }
 
@@ -110,9 +221,6 @@ fn composed_rest_router() -> Router {
     let projections = AgentProjectionServices::new(
         Arc::clone(&sandbox_store),
         profile_store.clone(),
-        settings,
-        Arc::clone(&sandboxes),
-        Arc::clone(&workspaces),
         Arc::new(LiveAgentRegistry::default()),
         Arc::new(UnavailableSandboxResources),
         runtime_capabilities(layer3_adapter::RuntimeContract::V3.capabilities()),
@@ -123,10 +231,44 @@ fn composed_rest_router() -> Router {
         HierarchyReadService::new(sandbox_store),
         Arc::clone(&operations),
     );
+    let trigger_store = Arc::new(InMemoryTriggerStore::new(profile_store.clone()));
+    let launch_store = Arc::new(InMemoryLaunchStore::new(Arc::clone(&trigger_store)));
+    let broker = Arc::new(ClosedConnectionBroker);
+    let triggers = TriggerService::new(
+        Arc::clone(&trigger_store),
+        Arc::clone(&launch_store),
+        UserDirectory::new(Arc::new(EmptyDirectory)),
+    );
+    let launches = LaunchService::new(
+        Arc::clone(&trigger_store),
+        profile_store,
+        Arc::clone(&launch_store),
+        Arc::new(EmptyLaunchContext),
+        Arc::clone(&broker),
+        Arc::new(LaunchPolicy {
+            enabled: true,
+            orchestration_paused: false,
+        }),
+    );
+    let connections = ServiceConnectionService::new(Arc::clone(&launch_store), Arc::clone(&broker));
+    let trigger_routes = trigger_router(TriggerRoutesState::new(
+        triggers,
+        launches,
+        connections,
+        Arc::clone(&operations),
+        Arc::new(UnlimitedLaunchQuota),
+    ))
+    .merge(trigger_assets_router(
+        TriggerAssetsState::new(trigger_store, "https://cma.example").unwrap(),
+    ))
+    .merge(launch_companion_router(LaunchCompanionState::new(
+        launch_store,
+    )));
     rest_router(
         profiles_router(state)
             .merge(hierarchy_router(hierarchy))
-            .merge(projections.router(operations)),
+            .merge(projections.router(operations))
+            .merge(trigger_routes),
     )
 }
 
@@ -184,27 +326,14 @@ async fn hierarchy_routes_are_composed_before_the_rest_fallback() {
 }
 
 #[tokio::test]
-async fn every_agent_interface_is_composed_before_the_rest_fallback() {
+async fn agent_routes_are_composed_before_the_rest_fallback() {
     let app = composed_rest_router();
     for (method, path, expected) in [
         (Method::GET, "/api/v1/agents", StatusCode::FORBIDDEN),
-        (Method::GET, "/api/v1/agui/capabilities", StatusCode::OK),
         (
             Method::GET,
-            "/api/v1/agents/agt_missing/terminal",
-            StatusCode::NOT_IMPLEMENTED,
-        ),
-        (Method::POST, "/api/v1/mcp", StatusCode::NOT_IMPLEMENTED),
-        (Method::POST, "/api/v1/a2a", StatusCode::NOT_IMPLEMENTED),
-        (
-            Method::GET,
-            "/.well-known/agent-card.json",
-            StatusCode::NOT_IMPLEMENTED,
-        ),
-        (
-            Method::GET,
-            "/api/v1/responses",
-            StatusCode::METHOD_NOT_ALLOWED,
+            "/api/v1/agents/agt_missing",
+            StatusCode::FORBIDDEN,
         ),
     ] {
         let mut request = Request::builder()
@@ -218,6 +347,33 @@ async fn every_agent_interface_is_composed_before_the_rest_fallback() {
         request.extensions_mut().insert(Authorization::none());
         let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), expected, "unexpected status for {path}");
+        assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
+    }
+}
+
+#[tokio::test]
+async fn trigger_route_families_are_composed_before_the_rest_fallback() {
+    let app = composed_rest_router();
+    for (method, path) in [
+        (Method::POST, "/api/v1/triggers"),
+        (Method::GET, "/api/v1/triggers/trg_missing/embed"),
+        (Method::POST, "/api/v1/triggers/public/pub_missing/launches"),
+        (Method::GET, "/api/v1/launches"),
+        (Method::GET, "/api/v1/service-connections/hnd_missing"),
+        (Method::GET, "/api/v1/agui/launches/lnch_missing/events"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
         assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
     }
 }
