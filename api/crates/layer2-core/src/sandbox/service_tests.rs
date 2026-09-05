@@ -20,7 +20,7 @@ use crate::{
     WorkspaceProfileId,
 };
 
-use super::service::DEFAULT_RETENTION_GRACE;
+use super::service::{DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS, DEFAULT_RETENTION_GRACE};
 use super::*;
 use tokio::sync::Notify;
 
@@ -509,6 +509,7 @@ fn policy(owner: u16, visitor: u16) -> SandboxPolicy {
     SandboxPolicy {
         max_sandboxes_per_owner: owner,
         max_sandboxes_per_visitor: visitor,
+        inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: std::time::Duration::from_secs(7 * 24 * 60 * 60),
         baseline_services: vec![
             ServiceId::new("baseline"),
@@ -1386,6 +1387,7 @@ async fn create_reads_current_policy_for_each_admission() {
     let source = Arc::new(MutablePolicy(Mutex::new(SandboxPolicy {
         max_sandboxes_per_owner: 1,
         max_sandboxes_per_visitor: 1,
+        inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: DEFAULT_RETENTION_GRACE,
         baseline_services: vec![ServiceId::new("baseline-one")],
     })));
@@ -1412,6 +1414,7 @@ async fn create_reads_current_policy_for_each_admission() {
     *source.0.lock().expect("policy lock") = SandboxPolicy {
         max_sandboxes_per_owner: 2,
         max_sandboxes_per_visitor: 1,
+        inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: DEFAULT_RETENTION_GRACE,
         baseline_services: vec![ServiceId::new("baseline-two")],
     };
