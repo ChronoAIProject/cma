@@ -26,3 +26,7 @@ mod provision_tests;
 #[cfg(test)]
 #[path = "receipt_tests.rs"]
 mod receipt_tests;
+
+#[cfg(test)]
+#[path = "cleanup_tests.rs"]
+mod cleanup_tests;

@@ -88,13 +88,10 @@ impl Supervisor {
     pub(super) async fn remove_worktree(&self, request: WorktreeRef) -> Result<ResponseFrame> {
         crate::worktree::validate_remove_request(&request)?;
         let operation = Operation::remove_worktree(&request);
+        let path =
+            crate::worktree::expected_path(&self.config.home, &request.workspace, &request.name);
+        self.ensure_worktree_idle(&path).await?;
         if !mutation_journal::admitted(&self.config, &operation)? {
-            let path = crate::worktree::expected_path(
-                &self.config.home,
-                &request.workspace,
-                &request.name,
-            );
-            self.ensure_worktree_idle(&path).await?;
             crate::worktree::preflight_remove(
                 &self.config.home,
                 self.config.allow_local_git,

@@ -114,17 +114,17 @@ impl Supervisor {
             &format!("agent:{}:home:remove:v1", request.agent_id.as_str()),
         )?;
         let operation = Operation::remove_agent_home(&request);
+        if self.agents.read().await.contains_key(&request.agent_id)
+            || mutation_journal::active_agents(&self.config)?
+                .iter()
+                .any(|agent| agent.agent_id == request.agent_id.as_str())
+        {
+            return Err(RuntimeError::rejected(
+                "agent_running",
+                "agent home cannot be removed while its process is logically open",
+            ));
+        }
         if !mutation_journal::admitted(&self.config, &operation)? {
-            if self.agents.read().await.contains_key(&request.agent_id)
-                || mutation_journal::active_agents(&self.config)?
-                    .iter()
-                    .any(|agent| agent.agent_id == request.agent_id.as_str())
-            {
-                return Err(RuntimeError::rejected(
-                    "agent_running",
-                    "agent home cannot be removed while its process is logically open",
-                ));
-            }
             crate::agent_home::preflight_remove(&self.config, request.agent_id.as_str())?;
         }
         match mutation_journal::begin::<AgentHomeRemoveReceipt>(&self.config, &operation)? {
@@ -223,20 +223,6 @@ impl Supervisor {
         }
     }
 
-    async fn reconcile_started_close(
-        &self,
-        request: AgentCloseRequest,
-        ticket: Ticket,
-    ) -> Result<ResponseFrame> {
-        if self.agents.read().await.contains_key(&request.agent_id) {
-            self.execute_close_agent(request, ticket).await
-        } else {
-            Err(ticket.indeterminate(
-                "agent close lost its process handle before the termination outcome became durable",
-            )?)
-        }
-    }
-
     async fn validate_launch(&self, launch: &AgentLaunch) -> Result<()> {
         safe_component(launch.agent_id.as_str(), "agent id")?;
         let agents = self.agents.read().await;
@@ -319,22 +305,12 @@ impl Supervisor {
         )?;
         safe_component(request.agent_id.as_str(), "agent id")?;
         let operation = Operation::close_agent(&request);
-        if !mutation_journal::admitted(&self.config, &operation)? {
-            let logically_open = mutation_journal::active_agents(&self.config)?
-                .iter()
-                .any(|agent| agent.agent_id == request.agent_id.as_str());
-            if !logically_open || !self.agents.read().await.contains_key(&request.agent_id) {
-                return Err(RuntimeError::rejected(
-                    "agent_not_found",
-                    "agent has no matching live and durable open process",
-                ));
-            }
-        }
         match mutation_journal::begin::<AgentCloseReceipt>(&self.config, &operation)? {
             Begin::Completed(receipt) => Ok(ResponseFrame::CloseAgent(receipt)),
             Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
-            Begin::New(ticket) => self.execute_close_agent(request, ticket).await,
-            Begin::Started(ticket) => self.reconcile_started_close(request, ticket).await,
+            Begin::New(ticket) | Begin::Started(ticket) => {
+                self.execute_close_agent(request, ticket).await
+            }
         }
     }
 
@@ -348,15 +324,14 @@ impl Supervisor {
             .read()
             .await
             .get(&request.agent_id)
-            .map(|process| Arc::clone(&process.bridge))
-            .ok_or_else(|| {
-                RuntimeError::rejected("agent_not_found", "agent process was not found")
-            })?;
-        bridge
-            .terminate()
-            .await
-            .map_err(|error| RuntimeError::unavailable("agent_termination_failed", error))?;
-        self.agents.write().await.remove(&request.agent_id);
+            .map(|process| Arc::clone(&process.bridge));
+        if let Some(bridge) = bridge {
+            bridge
+                .terminate()
+                .await
+                .map_err(|error| RuntimeError::unavailable("agent_termination_failed", error))?;
+            self.agents.write().await.remove(&request.agent_id);
+        }
         let receipt = AgentCloseReceipt {
             operation_id: request.operation_id,
             request_sha256: request.request_sha256,

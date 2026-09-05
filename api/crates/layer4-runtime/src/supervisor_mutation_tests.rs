@@ -4,12 +4,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::wire::{
-    AgentCloseReceipt, AgentHomeReceipt, AgentOpenReceipt, RequestFrame, ResponseFrame, WireFailure,
+    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, AgentOpenReceipt, RequestFrame,
+    ResponseFrame, WireFailure,
 };
 use layer3_adapter::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
     CredentialFrame, HomeFile, InstallRequest, RuntimeCredential, WorkspaceReceipt,
-    WorkspaceRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    WorkspaceRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt,
+    WorktreeRequest,
 };
 use sha2::{Digest, Sha256};
 
@@ -143,6 +145,165 @@ fn launch(config: &RuntimeConfig, worktree: &WorktreeReceipt, script: &str) -> A
         args: vec!["-c".into(), script.into()],
         env: Default::default(),
     }
+}
+
+#[tokio::test]
+async fn absent_cleanup_intents_complete_with_exact_durable_receipts() {
+    let config = RuntimeConfig::for_test(root("absent-cleanup"));
+    let supervisor = provision(&config).await;
+    let agent_id = AgentSlot::new("agent-absent");
+
+    let invalid_close = AgentCloseRequest::new("agent:another-agent:close:v1", agent_id.clone());
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::CloseAgent(invalid_close))
+                .await
+        )
+        .code,
+        "agent_operation_invalid"
+    );
+    let invalid_home =
+        AgentHomeRemoveRequest::new("agent:another-agent:home:remove:v1", agent_id.clone());
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::RemoveAgentHome(invalid_home))
+                .await
+        )
+        .code,
+        "agent_operation_invalid"
+    );
+    let invalid_worktree = WorktreeRef::new(
+        "worktree:workspace-absent:another-agent:remove:v1",
+        "workspace-absent",
+        "agent-absent",
+    );
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::RemoveWorktree(invalid_worktree))
+                .await
+        )
+        .code,
+        "worktree_operation_invalid"
+    );
+
+    let close = AgentCloseRequest::new("agent:agent-absent:close:v1", agent_id.clone());
+    let expected_close = ResponseFrame::CloseAgent(AgentCloseReceipt {
+        operation_id: close.operation_id.clone(),
+        request_sha256: close.request_sha256.clone(),
+        agent_id: agent_id.clone(),
+    });
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::CloseAgent(close.clone()))
+            .await,
+        expected_close
+    );
+
+    let remove_home =
+        AgentHomeRemoveRequest::new("agent:agent-absent:home:remove:v1", agent_id.clone());
+    let expected_home = ResponseFrame::RemoveAgentHome(AgentHomeRemoveReceipt {
+        operation_id: remove_home.operation_id.clone(),
+        request_sha256: remove_home.request_sha256.clone(),
+        agent_id,
+    });
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::RemoveAgentHome(remove_home.clone()))
+            .await,
+        expected_home
+    );
+
+    let remove_worktree = WorktreeRef::new(
+        "worktree:workspace-absent:agent-absent:remove:v1",
+        "workspace-absent",
+        "agent-absent",
+    );
+    let expected_worktree = ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
+        operation_id: remove_worktree.operation_id.clone(),
+        request_sha256: remove_worktree.request_sha256.clone(),
+        workspace: remove_worktree.workspace.clone(),
+        name: remove_worktree.name.clone(),
+    });
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::RemoveWorktree(remove_worktree.clone()))
+            .await,
+        expected_worktree
+    );
+    drop(supervisor);
+
+    let supervisor = recreate(&config).await;
+    assert_eq!(
+        supervisor.dispatch(RequestFrame::CloseAgent(close)).await,
+        expected_close
+    );
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::RemoveAgentHome(remove_home))
+            .await,
+        expected_home
+    );
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::RemoveWorktree(remove_worktree))
+            .await,
+        expected_worktree
+    );
+    cleanup(&config);
+}
+
+#[tokio::test]
+async fn fresh_worktree_removal_completes_partial_cleanup() {
+    let config = RuntimeConfig::for_test(root("fresh-partial-worktree-removal"));
+    let supervisor = provision(&config).await;
+    let workspace = prepare_workspace(&supervisor).await;
+    let (_, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
+    let repository = config.home.join("project");
+    let git = crate::git::GitRunner::new(true);
+    git.checked(
+        &repository,
+        ["worktree", "remove", "--force", worktree.path.as_str()],
+        "partially remove fixture worktree",
+    )
+    .await
+    .unwrap();
+
+    let request = WorktreeRef::new("worktree:project:agent-1:remove:v1", "project", "agent-1");
+    let expected = ResponseFrame::RemoveWorktree(WorktreeRemoveReceipt {
+        operation_id: request.operation_id.clone(),
+        request_sha256: request.request_sha256.clone(),
+        workspace: request.workspace.clone(),
+        name: request.name.clone(),
+    });
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::RemoveWorktree(request.clone()))
+            .await,
+        expected
+    );
+    let branches = git
+        .checked(
+            &repository,
+            [
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads/cma/agent-1",
+            ],
+            "inspect removed worktree branch",
+        )
+        .await
+        .unwrap();
+    assert!(branches.stdout.trim().is_empty());
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::RemoveWorktree(request))
+            .await,
+        expected
+    );
+    cleanup(&config);
 }
 
 #[tokio::test]
@@ -685,12 +846,27 @@ async fn started_process_mutations_reconcile_without_repeating_side_effects() {
     start_operation::<AgentCloseReceipt>(&config, &Operation::close_agent(&close));
     bridge.terminate().await.unwrap();
     supervisor.agents.write().await.remove(&close.agent_id);
-    let error = supervisor.close_agent(close.clone()).await.unwrap_err();
-    assert_eq!(error.code, "agent_close_outcome_unknown");
+    drop(retained);
+    drop(bridge);
+    drop(supervisor);
+
+    let supervisor = recreate(&config).await;
+    let expected_receipt = AgentCloseReceipt {
+        operation_id: close.operation_id.clone(),
+        request_sha256: close.request_sha256.clone(),
+        agent_id: close.agent_id.clone(),
+    };
+    let expected = ResponseFrame::CloseAgent(expected_receipt.clone());
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::CloseAgent(close.clone()))
+            .await,
+        expected
+    );
     assert!(matches!(
         mutation_journal::begin::<AgentCloseReceipt>(&config, &Operation::close_agent(&close))
             .unwrap(),
-        Begin::Indeterminate(found) if found.code == "agent_close_outcome_unknown"
+        Begin::Completed(found) if found == expected_receipt
     ));
     assert!(config.agent_home("agent-1").is_dir());
     cleanup(&config);

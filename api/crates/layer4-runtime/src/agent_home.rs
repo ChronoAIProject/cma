@@ -145,13 +145,8 @@ pub(crate) fn preflight_remove(config: &RuntimeConfig, agent_id: &str) -> Result
     safe_component(agent_id, "agent id")?;
     let home = config.agent_home(agent_id);
     let parent = home.parent().expect("an agent home has a parent");
-    if !existing_parents_are_directories(&config.home, parent)?
-        || !real_directory_or_absent(&home, "agent home")?
-    {
-        return Err(RuntimeError::rejected(
-            "agent_home_not_found",
-            "agent home was not found",
-        ));
+    if existing_parents_are_directories(&config.home, parent)? {
+        real_directory_or_absent(&home, "agent home")?;
     }
     Ok(())
 }
