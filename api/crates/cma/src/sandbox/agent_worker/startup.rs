@@ -308,22 +308,6 @@ impl AgentWorker {
         }
     }
 
-    pub(super) async fn defer_first_message_dispatch(
-        &self,
-        agent: Agent,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        self.handle_failure(
-            agent,
-            WorkerFailure::retryable(
-                "agent_first_message_dispatch_unavailable",
-                "the durable first-message dispatcher is not composed yet",
-            ),
-            now,
-        )
-        .await
-    }
-
     pub(super) async fn reattach(
         &self,
         agent: &Agent,
