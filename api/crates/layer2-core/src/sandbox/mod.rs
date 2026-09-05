@@ -81,8 +81,6 @@ mod service_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod workspace_service_tests;
-#[cfg(test)]
 mod title_service_tests;
 #[cfg(test)]
 mod title_store_edge_tests;
@@ -90,3 +88,5 @@ mod title_store_edge_tests;
 mod title_store_tests;
 #[cfg(test)]
 mod title_value_tests;
+#[cfg(test)]
+mod workspace_service_tests;
