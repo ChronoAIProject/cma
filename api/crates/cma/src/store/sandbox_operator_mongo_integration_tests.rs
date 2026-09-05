@@ -155,6 +155,9 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
                 system_prompt: String::new(),
             },
         },
+        capabilities: layer2_core::RuntimeCapabilities::new([
+            layer2_core::RuntimeCapability::Conversation,
+        ]),
         status,
         conversation: ConversationState {
             conversation_id: Some(format!("conversation-{id}")),

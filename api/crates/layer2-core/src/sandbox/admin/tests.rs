@@ -185,6 +185,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
             digest: "c".repeat(64),
             content: agent_profile_content(),
         },
+        capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: super::super::ConversationState {
             conversation_id: Some("conversation-a".into()),

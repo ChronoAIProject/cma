@@ -166,6 +166,9 @@ fn admission(workspace: &Workspace, suffix: &str) -> AgentAdmission {
                 system_prompt: String::new(),
             },
         },
+        capabilities: layer2_core::RuntimeCapabilities::new([
+            layer2_core::RuntimeCapability::Conversation,
+        ]),
         title: None,
         first_message: None,
         origin: AgentOrigin::Manual,

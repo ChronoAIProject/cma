@@ -157,6 +157,13 @@ impl Harness {
                 agent_id: AgentId::generate(),
                 worktree_id: WorktreeId::generate(),
                 profile: agent_profile(skills),
+                capabilities: RuntimeCapabilities::new([
+                    RuntimeCapability::Conversation,
+                    RuntimeCapability::Steer,
+                    RuntimeCapability::Interrupt,
+                    RuntimeCapability::Usage,
+                    RuntimeCapability::Resources,
+                ]),
                 title: None,
                 first_message: first_message
                     .map(|text| FirstMessageRecord::new(key, text, stamp.clone()).unwrap()),
@@ -500,9 +507,7 @@ async fn startup_is_isolated_receipted_published_and_records_runtime_updates() {
 
     let target = Harness::target(&first);
     let connection = harness.registry.resolve(&target).expect("published agent");
-    assert!(connection
-        .capabilities
-        .supports(RuntimeCapability::Conversation));
+    assert_eq!(connection.capabilities, first.capabilities);
     assert!(harness
         .registry
         .resolve(&LiveAgentTarget {

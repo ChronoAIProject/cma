@@ -47,6 +47,10 @@ impl AgentOperationService {
                 .map_err(operation_store_error)?
                 .ok_or(AgentOperationError::NotFound)?;
             require_work_authority(&current, &authority)?;
+            current
+                .capabilities
+                .require([RuntimeCapability::Conversation])
+                .map_err(|capability| AgentOperationError::CapabilityUnsupported { capability })?;
             let Some(record) = current.conversation.first_message.as_ref() else {
                 return Ok(FirstMessageDispatchOutcome::NotConfigured);
             };

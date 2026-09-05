@@ -32,6 +32,7 @@ async fn create_snapshots_profile_and_atomically_materializes_initial_records() 
 
     assert_eq!(agent.status, AgentStatus::Starting);
     assert_eq!(agent.profile.id, reference.id);
+    assert_eq!(agent.capabilities, agent_capabilities());
     assert_eq!(agent.conversation.last_seq, 1);
     assert_eq!(
         agent.conversation.first_message.as_ref().unwrap().state,
@@ -57,6 +58,42 @@ async fn create_snapshots_profile_and_atomically_materializes_initial_records() 
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn create_refuses_a_runtime_without_conversation_and_records_nothing() {
+    let (_, store, profiles, reference) = setup(
+        SandboxStatus::Active,
+        WorkspaceStatus::Ready,
+        3,
+        "owner",
+        ProfileVisibility::Private,
+    )
+    .await;
+    let service = AgentService::new(
+        store.clone(),
+        profiles,
+        TestAgentRuntimeRegistry::new(false),
+        crate::RuntimeCapabilities::new([crate::RuntimeCapability::Resources]),
+    );
+    assert_eq!(
+        service
+            .create(
+                &caller("owner", true),
+                &workspace(WorkspaceStatus::Ready).id,
+                request(reference, AgentOrigin::Manual),
+            )
+            .await,
+        Err(AgentServiceError::CapabilityUnsupported {
+            capability: crate::RuntimeCapability::Conversation,
+        })
+    );
+    assert!(store
+        .list_agents(&crate::SubjectId::new("owner"), &Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
 }
 
 #[tokio::test]
@@ -295,6 +332,12 @@ fn service_error_codes_are_stable() {
         (AgentServiceError::NotFound, "agent_not_found"),
         (AgentServiceError::WorkspaceNotReady, "workspace_not_ready"),
         (AgentServiceError::SandboxNotReady, "sandbox_not_ready"),
+        (
+            AgentServiceError::CapabilityUnsupported {
+                capability: crate::RuntimeCapability::Conversation,
+            },
+            "agent_capability_unsupported",
+        ),
         (
             AgentServiceError::LimitReached { limit: 1, live: 1 },
             "agent_limit_reached",

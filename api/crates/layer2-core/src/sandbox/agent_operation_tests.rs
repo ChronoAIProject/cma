@@ -329,6 +329,23 @@ async fn steer_requires_working_status_an_active_turn_and_capability() {
     assert_eq!(registry.resolutions(), 0);
 
     let store = Arc::new(InMemorySandboxStore::default());
+    let mut agent = test_agent(AgentStatus::Working, None);
+    agent.capabilities = RuntimeCapabilities::new([RuntimeCapability::Conversation]);
+    store.create_agent(agent.clone()).await.unwrap();
+    let (sender, inputs) = recording_sender(Ok(()));
+    let registry = TestRuntimeRegistry::new(full_capabilities(), sender);
+    let service = AgentOperationService::new(store.clone(), registry.clone());
+    assert_eq!(
+        service.steer(&owner(), &agent.id, "more".into()).await,
+        Err(AgentOperationError::CapabilityUnsupported {
+            capability: RuntimeCapability::Steer
+        })
+    );
+    assert_eq!(registry.resolutions(), 0);
+    assert!(inputs.lock().unwrap().is_empty());
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+
+    let store = Arc::new(InMemorySandboxStore::default());
     let agent = test_agent(AgentStatus::Working, None);
     store.create_agent(agent.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Ok(()));

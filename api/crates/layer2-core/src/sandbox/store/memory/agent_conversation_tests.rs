@@ -277,6 +277,19 @@ async fn conversation_mutation_cannot_change_requested_stop_intent() {
 }
 
 #[tokio::test]
+async fn conversation_mutation_cannot_change_capability_grants() {
+    let (store, agent) = ready_agent(None).await;
+    let mut mutation = begin_turn(agent.clone());
+    mutation.agent.capabilities = crate::RuntimeCapabilities::default();
+
+    assert_eq!(
+        store.commit_agent_conversation(mutation).await.unwrap_err(),
+        crate::sandbox::store::SandboxStoreError::Conflict
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+}
+
+#[tokio::test]
 async fn chunks_stay_live_until_complete_messages_can_be_committed_in_order() {
     let (store, working, recorder) = working_agent().await;
     let mut assembly = AgentMessageAssembly::default();

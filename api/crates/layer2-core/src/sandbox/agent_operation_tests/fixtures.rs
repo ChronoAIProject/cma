@@ -77,6 +77,7 @@ pub(super) fn test_agent(status: AgentStatus, first_message: Option<&str>) -> Ag
                 system_prompt: String::new(),
             },
         },
+        capabilities: full_capabilities(),
         status,
         conversation: ConversationState {
             conversation_id: Some("conversation-operations".into()),

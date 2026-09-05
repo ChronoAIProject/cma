@@ -8,8 +8,9 @@ use crate::profiles::{
     WorkspaceProfileContent, WorkspaceProfileSnapshot,
 };
 use crate::{
-    AgentId, AgentProfileId, Authorization, Caller, Capability, SandboxId, SandboxProfileId,
-    SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId,
+    AgentId, AgentProfileId, Authorization, Caller, Capability, RuntimeCapabilities,
+    RuntimeCapability, SandboxId, SandboxProfileId, SubjectId, WorkspaceId, WorkspaceProfileId,
+    WorktreeId,
 };
 
 use super::store::{
@@ -159,6 +160,11 @@ fn agent(
                 system_prompt: String::new(),
             },
         },
+        capabilities: RuntimeCapabilities::new([
+            RuntimeCapability::Conversation,
+            RuntimeCapability::Usage,
+            RuntimeCapability::Resources,
+        ]),
         status,
         conversation: ConversationState {
             conversation_id: None,
@@ -278,6 +284,63 @@ fn service(store: Arc<InMemorySandboxStore>) -> Arc<AgentReadService> {
         store,
         Arc::new(StubResources::reporting(SandboxResourceReading::default())),
     )
+}
+
+#[tokio::test]
+async fn projections_refuse_absent_frozen_grants_before_reading_runtime_state() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    store
+        .create_sandbox(sandbox("sbx_ungranted", "owner"))
+        .await
+        .unwrap();
+    store
+        .create_workspace(workspace("wks_ungranted", "sbx_ungranted", "owner"))
+        .await
+        .unwrap();
+    let mut ungranted = agent(
+        "agt_ungranted",
+        "wtr_ungranted",
+        "wks_ungranted",
+        "sbx_ungranted",
+        "owner",
+        AgentStatus::Starting,
+    );
+    ungranted.capabilities = RuntimeCapabilities::default();
+    insert_agent(
+        &store,
+        ungranted.clone(),
+        worktree(
+            "wtr_ungranted",
+            "wks_ungranted",
+            "sbx_ungranted",
+            "agt_ungranted",
+            "owner",
+        ),
+    )
+    .await;
+    let resources = Arc::new(StubResources::reporting(SandboxResourceReading::default()));
+    let reads = AgentReadService::new(store, resources.clone());
+
+    for error in [
+        reads
+            .transcript(&caller("owner", true), &ungranted.id)
+            .await
+            .unwrap_err(),
+        reads
+            .usage(&caller("owner", true), &ungranted.id)
+            .await
+            .unwrap_err(),
+        reads
+            .resources(&caller("owner", true), &ungranted.id)
+            .await
+            .unwrap_err(),
+    ] {
+        assert!(matches!(
+            error,
+            AgentReadError::CapabilityUnsupported { .. }
+        ));
+    }
+    assert!(resources.seen.lock().unwrap().is_empty());
 }
 
 async fn replace_history(
@@ -1085,6 +1148,13 @@ fn read_errors_have_stable_codes() {
     assert_eq!(AgentReadError::Forbidden.code(), "forbidden");
     assert_eq!(AgentReadError::NotFound.code(), "agent_not_found");
     assert_eq!(AgentReadError::InvalidPage.code(), "invalid_page");
+    assert_eq!(
+        AgentReadError::CapabilityUnsupported {
+            capability: RuntimeCapability::Usage,
+        }
+        .code(),
+        "agent_capability_unsupported"
+    );
     assert_eq!(
         AgentReadError::ResourcesUnsupported(String::new()).code(),
         "agent_resources_unsupported"

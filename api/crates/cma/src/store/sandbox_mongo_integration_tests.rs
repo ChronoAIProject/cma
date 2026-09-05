@@ -290,6 +290,9 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
             digest: "b".repeat(64),
             content: agent_profile("agp_test").draft,
         },
+        capabilities: layer2_core::RuntimeCapabilities::new([
+            layer2_core::RuntimeCapability::Conversation,
+        ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
             conversation_id: None,
@@ -377,6 +380,9 @@ fn agent_admission(workspace: &Workspace, key: &str, id: &str) -> AgentAdmission
             digest: "c".repeat(64),
             content: agent_profile("agp_agent_admission").draft,
         },
+        capabilities: layer2_core::RuntimeCapabilities::new([
+            layer2_core::RuntimeCapability::Conversation,
+        ]),
         title: None,
         first_message: None,
         origin: AgentOrigin::Manual,

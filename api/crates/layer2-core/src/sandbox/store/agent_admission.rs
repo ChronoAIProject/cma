@@ -3,6 +3,7 @@ use serde::Serialize;
 
 use crate::ids::{AgentId, SubjectId, WorkspaceId, WorktreeId};
 use crate::profiles::{content_digest, AgentProfileSnapshot};
+use crate::RuntimeCapabilities;
 
 use super::SandboxStoreError;
 use crate::sandbox::{
@@ -17,6 +18,7 @@ pub struct AgentAdmission {
     pub agent_id: AgentId,
     pub worktree_id: WorktreeId,
     pub profile: AgentProfileSnapshot,
+    pub capabilities: RuntimeCapabilities,
     pub title: Option<String>,
     pub first_message: Option<FirstMessageRecord>,
     pub origin: AgentOrigin,
@@ -63,6 +65,7 @@ impl AgentAdmission {
             creation_key: self.creation_key.clone(),
             creation_fingerprint: self.fingerprint()?,
             profile: self.profile.clone(),
+            capabilities: self.capabilities.clone(),
             status: AgentStatus::Starting,
             conversation: ConversationState {
                 conversation_id: None,
@@ -124,6 +127,7 @@ impl AgentAdmission {
         content_digest(&AdmissionIdentity {
             workspace_id: &self.workspace_id,
             profile: &self.profile,
+            capabilities: &self.capabilities,
             title: self.title.as_deref(),
             first_message,
             origin: &self.origin,
@@ -136,6 +140,7 @@ impl AgentAdmission {
 struct AdmissionIdentity<'a> {
     workspace_id: &'a WorkspaceId,
     profile: &'a AgentProfileSnapshot,
+    capabilities: &'a RuntimeCapabilities,
     title: Option<&'a str>,
     first_message: Option<FirstMessageIdentity<'a>>,
     origin: &'a AgentOrigin,

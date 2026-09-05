@@ -157,6 +157,7 @@ fn agent() -> Agent {
         creation_key: "create-test-agent".into(),
         creation_fingerprint: "d".repeat(64),
         profile: agent_snapshot(),
+        capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
             conversation_id: None,
@@ -180,6 +181,14 @@ fn agent() -> Agent {
         origin: AgentOrigin::Manual,
         revision: 1,
     }
+}
+
+#[test]
+fn legacy_agent_without_grants_deserializes_fail_closed() {
+    let mut value = serde_json::to_value(agent()).unwrap();
+    value.as_object_mut().unwrap().remove("capabilities");
+    let restored: Agent = serde_json::from_value(value).unwrap();
+    assert_eq!(restored.capabilities, crate::RuntimeCapabilities::default());
 }
 
 #[test]

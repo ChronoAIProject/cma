@@ -16,7 +16,7 @@ pub enum RuntimeCapability {
     Resources,
 }
 
-/// The closed set of abilities advertised by a runtime implementation.
+/// A closed set of runtime abilities, used for advertisements and frozen grants.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RuntimeCapabilities(BTreeSet<RuntimeCapability>);
@@ -32,7 +32,12 @@ impl RuntimeCapabilities {
         self.0.contains(&capability)
     }
 
-    /// Refuse a request whose required abilities are not advertised.
+    /// Iterate over the frozen grants in stable order.
+    pub fn iter(&self) -> impl Iterator<Item = RuntimeCapability> + '_ {
+        self.0.iter().copied()
+    }
+
+    /// Refuse a request whose required abilities are absent.
     pub fn require(
         &self,
         required: impl IntoIterator<Item = RuntimeCapability>,

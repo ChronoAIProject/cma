@@ -140,7 +140,7 @@ async fn agent_control_service_fences_interaction_before_a_stop_response() {
     )
     .await;
     let runtimes = TestAgentRuntimeRegistry::new(true);
-    let service = AgentService::new(store, profiles, runtimes.clone());
+    let service = AgentService::new(store, profiles, runtimes.clone(), agent_capabilities());
     let agent = service
         .create(
             &caller("owner", true),

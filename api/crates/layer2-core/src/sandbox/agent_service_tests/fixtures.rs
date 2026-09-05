@@ -9,14 +9,24 @@ use crate::profiles::{
 };
 use crate::sandbox::store::{InMemorySandboxStore, SandboxStore, WorkspaceStore};
 use crate::{
-    AgentId, AgentProfileId, Authorization, Caller, Capability, RuntimeCapabilities, SandboxId,
-    SandboxProfileId, SubjectId, WorkspaceId, WorkspaceProfileId,
+    AgentId, AgentProfileId, Authorization, Caller, Capability, RuntimeCapabilities,
+    RuntimeCapability, SandboxId, SandboxProfileId, SubjectId, WorkspaceId, WorkspaceProfileId,
 };
 use layer3_adapter::ConversationInputSender;
 
 use super::super::*;
 
 pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
+
+pub(super) fn agent_capabilities() -> RuntimeCapabilities {
+    RuntimeCapabilities::new([
+        RuntimeCapability::Conversation,
+        RuntimeCapability::Steer,
+        RuntimeCapability::Interrupt,
+        RuntimeCapability::Usage,
+        RuntimeCapability::Resources,
+    ])
+}
 
 #[derive(Default)]
 pub(super) struct TestAgentRuntimeRegistry {
@@ -219,6 +229,7 @@ pub(super) async fn setup(
             store.clone(),
             profiles.clone(),
             TestAgentRuntimeRegistry::new(false),
+            agent_capabilities(),
         ),
         store,
         profiles,

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use crate::profiles::AgentProfileSnapshot;
+use crate::{RuntimeCapabilities, RuntimeCapability};
 
 use super::{
     AgentOperationRecord, AgentStatus, AgentWorkState, FirstMessageRecord, QueuedAgentMessage,
@@ -69,6 +70,10 @@ pub struct Agent {
     pub creation_key: String,
     pub creation_fingerprint: String,
     pub profile: AgentProfileSnapshot,
+    /// Runtime abilities granted when the Agent was admitted. This set is
+    /// durable and never expands when a later runtime advertises more.
+    #[serde(default)]
+    pub capabilities: RuntimeCapabilities,
     pub status: AgentStatus,
     pub conversation: ConversationState,
     pub work: AgentWorkState,
@@ -107,6 +112,7 @@ impl Agent {
                 .creation_fingerprint
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || !self.capabilities.supports(RuntimeCapability::Conversation)
             || self.failure.is_some()
             || self.conversation.conversation_id.is_some()
             || self.conversation.runtime_generation.is_some()
