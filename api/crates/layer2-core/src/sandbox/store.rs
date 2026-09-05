@@ -14,6 +14,8 @@ mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
 };
+mod agent_lifecycle;
+pub use agent_lifecycle::{AgentWorkMutation, AgentWorkerStore, VersionedWorktree};
 
 pub const MAX_PAGE_SIZE: u16 = 200;
 
@@ -354,6 +356,16 @@ pub trait WorkspaceLifecycleStore:
 
 pub trait AgentServiceStore:
     SandboxStore + WorkspaceStore + WorktreeStore + AgentStore + AgentAdmissionStore + AgentLogStore
+{
+}
+
+pub trait AgentLifecycleStore:
+    SandboxStore + WorktreeStore + AgentStore + AgentLogStore + AgentWorkerStore
+{
+}
+
+impl<T> AgentLifecycleStore for T where
+    T: SandboxStore + WorktreeStore + AgentStore + AgentLogStore + AgentWorkerStore
 {
 }
 

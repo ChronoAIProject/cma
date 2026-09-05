@@ -21,7 +21,7 @@ use crate::sandbox::{
 
 use super::InMemorySandboxStore;
 
-const NOW: &str = "2026-09-05T00:00:00Z";
+pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
 
 fn sandbox(limit: u8) -> Sandbox {
     Sandbox {
@@ -122,7 +122,7 @@ fn profile() -> AgentProfileSnapshot {
     }
 }
 
-fn admission(key: &str) -> AgentAdmission {
+pub(super) fn admission(key: &str) -> AgentAdmission {
     AgentAdmission {
         owner: SubjectId::new("owner"),
         workspace_id: WorkspaceId("wks_agent_admission".into()),
@@ -137,14 +137,14 @@ fn admission(key: &str) -> AgentAdmission {
     }
 }
 
-async fn ready_store(limit: u8) -> InMemorySandboxStore {
+pub(super) async fn ready_store(limit: u8) -> InMemorySandboxStore {
     let store = InMemorySandboxStore::default();
     store.create_sandbox(sandbox(limit)).await.unwrap();
     store.create_workspace(workspace()).await.unwrap();
     store
 }
 
-fn created(result: AgentAdmissionResult) -> crate::sandbox::store::AgentCreation {
+pub(super) fn created(result: AgentAdmissionResult) -> crate::sandbox::store::AgentCreation {
     match result {
         AgentAdmissionResult::Created(creation) => creation,
         AgentAdmissionResult::Existing(_) => panic!("expected a fresh admission"),
