@@ -601,6 +601,7 @@ fn advance_claimed_agent(claimed: &Agent) -> Agent {
 mod agent_title_tests;
 mod agent_transaction_tests;
 mod agent_worker_tests;
+mod launch_command_tests;
 mod profile_transaction_tests;
 mod sandbox_lifecycle_tests;
 #[tokio::test]
