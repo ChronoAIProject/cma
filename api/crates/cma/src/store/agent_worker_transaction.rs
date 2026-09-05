@@ -173,6 +173,13 @@ fn validate_agent_mutation(
     current: &Agent,
     mutation: &AgentWorkMutation,
 ) -> Result<(), ApplyError> {
+    let log_count = u64::try_from(mutation.agent_logs.len())
+        .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
+    let next_last_seq = current
+        .conversation
+        .last_seq
+        .checked_add(log_count)
+        .ok_or(ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
     let next_revision = mutation
         .expected_agent_revision
         .checked_add(1)
@@ -190,7 +197,7 @@ fn validate_agent_mutation(
             .lease
             .as_ref()
             .is_some_and(|lease| current.work.lease.as_ref() != Some(lease))
-        || next.conversation.last_seq != current.conversation.last_seq
+        || next.conversation.last_seq != next_last_seq
         || next.validate_conversation().is_err()
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
@@ -241,15 +248,7 @@ fn final_agent_and_logs(
     current: &Agent,
     mutation: &AgentWorkMutation,
 ) -> Result<(Agent, Vec<AgentLogEntry>), ApplyError> {
-    let log_count = u64::try_from(mutation.agent_logs.len())
-        .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
-    let final_seq = current
-        .conversation
-        .last_seq
-        .checked_add(log_count)
-        .ok_or(ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
-    let mut final_agent = mutation.agent.clone();
-    final_agent.conversation.last_seq = final_seq;
+    let final_agent = mutation.agent.clone();
     final_agent
         .validate_conversation()
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;

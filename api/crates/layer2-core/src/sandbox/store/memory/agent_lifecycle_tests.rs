@@ -125,6 +125,7 @@ async fn ready_publication_updates_every_artifact_atomically() {
     agent
         .transition(AgentStatus::Ready, NOW.into(), None)
         .unwrap();
+    agent.conversation.last_seq += 2;
     let mut worktree = creation.worktree.clone();
     let expected_worktree_revision = worktree.revision;
     worktree.transition(WorktreeStatus::Ready).unwrap();
@@ -179,6 +180,56 @@ async fn ready_publication_updates_every_artifact_atomically() {
             .unwrap()
             .len(),
         3
+    );
+}
+
+#[tokio::test]
+async fn publication_rejects_an_incorrect_agent_log_high_water_mark() {
+    let store = ready_store(1).await;
+    let creation = created(
+        store
+            .admit_agent(admission("incorrect-log-high-water"))
+            .await
+            .unwrap(),
+    );
+    let claimed = store
+        .claim_agent_work(&creation.agent.id, "worker", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let mut next = claimed.clone();
+    next.work
+        .advance("worker", fence, AgentWorkStep::MaterializeHome, NOW.into())
+        .unwrap();
+    next.revision += 1;
+
+    assert_eq!(
+        store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: claimed.revision,
+                holder: "worker".into(),
+                fence,
+                agent: next,
+                worktree: None,
+                appended_at: NOW.into(),
+                sandbox_event: None,
+                agent_logs: vec![AgentLogKind::Deleted],
+            })
+            .await,
+        Err(crate::sandbox::store::SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_agent(&creation.agent.id).await.unwrap(),
+        Some(claimed)
+    );
+    assert_eq!(
+        store
+            .agent_log(&creation.agent.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
     );
 }
 

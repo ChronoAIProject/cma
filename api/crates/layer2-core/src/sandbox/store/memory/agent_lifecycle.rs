@@ -98,6 +98,18 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         .agents
         .get(&mutation.agent.id)
         .ok_or(SandboxStoreError::NotFound)?;
+    let actual_last_seq = state
+        .agent_logs
+        .get(&mutation.agent.id)
+        .and_then(|entries| entries.last())
+        .map_or(0, |entry| entry.seq);
+    let log_count = u64::try_from(mutation.agent_logs.len())
+        .map_err(|_| SandboxStoreError::SequenceConflict)?;
+    let next_last_seq = current
+        .conversation
+        .last_seq
+        .checked_add(log_count)
+        .ok_or(SandboxStoreError::SequenceConflict)?;
     let next_revision = mutation
         .expected_agent_revision
         .checked_add(1)
@@ -107,6 +119,8 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         || !current.work.owns(&mutation.holder, mutation.fence)
         || mutation.holder.trim().is_empty()
         || mutation.fence == 0
+        || current.conversation.last_seq != actual_last_seq
+        || mutation.agent.conversation.last_seq != next_last_seq
         || immutable_agent_fields_changed(current, &mutation.agent)
         || mutation.agent.work.next_fence != current.work.next_fence
         || mutation
