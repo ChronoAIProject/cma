@@ -372,6 +372,10 @@ pub trait AgentLifecycleStore:
 {
 }
 
+pub trait AgentConversationUpdateStore: AgentStore + AgentConversationStore {}
+
+impl<T> AgentConversationUpdateStore for T where T: AgentStore + AgentConversationStore {}
+
 impl<T> AgentLifecycleStore for T where
     T: SandboxStore + WorktreeStore + AgentStore + AgentLogStore + AgentWorkerStore
 {
