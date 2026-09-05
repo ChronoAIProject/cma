@@ -16,12 +16,13 @@ use layer2_core::profiles::{
 };
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentControlResult,
-    AgentControlStore, AgentControlStoreError, AgentControlTarget, AgentDeleteRequest,
-    AgentLogStore, AgentStopRequest, AgentStore, AgentWorkMutation, AgentWorkerStore,
-    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore, SandboxEventStore, SandboxStore,
-    SandboxStoreError, SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore,
-    VersionedWorktree, WorkspaceAdmission, WorkspaceAdmissionKind, WorkspaceAdmissionResult,
-    WorkspaceAdmissionStore, WorkspaceStore, WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
+    AgentControlStore, AgentControlStoreError, AgentControlTarget, AgentConversationMutation,
+    AgentConversationStore, AgentDeleteRequest, AgentLogStore, AgentStopRequest, AgentStore,
+    AgentWorkMutation, AgentWorkerStore, SandboxAdmission, SandboxAdmissionName,
+    SandboxAdmissionStore, SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransaction,
+    SandboxTransactionStore, SandboxWorkerStore, VersionedWorktree, WorkspaceAdmission,
+    WorkspaceAdmissionKind, WorkspaceAdmissionResult, WorkspaceAdmissionStore, WorkspaceStore,
+    WorkspaceWorkerStore, WorktreeStore, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentLogKind, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkState,
@@ -41,6 +42,9 @@ use crate::sandbox::{
 };
 
 use super::agent_control_store::{plan_delete, plan_stop};
+use super::agent_conversation_store::{
+    reconcile_conversation, validate_mutation, ConversationReceipt,
+};
 use super::agent_log::log_document;
 use super::agent_worker_reconcile::reconcile_publication;
 use super::agent_worker_transaction::{stop_intent_change_is_valid, PublicationReceipt};
@@ -397,6 +401,90 @@ async fn claimed_agent_work_fixture(
     (parent, worktree, claimed)
 }
 
+fn conversation_agent_for_rules(id: &str) -> Agent {
+    let mut agent = agent_for_worker(id, NOW);
+    agent.status = AgentStatus::Ready;
+    agent.conversation.conversation_id = Some(format!("conversation-{id}"));
+    agent.conversation.runtime_generation = Some(1);
+    agent.conversation.last_seq = 2;
+    agent.work = AgentWorkState::new(AgentWorkStep::None, NOW.into());
+    agent.ready_at = Some(NOW.into());
+    agent.validate_conversation().unwrap();
+    agent
+}
+
+fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMutation {
+    let expected_agent_revision = agent.revision;
+    let expected_last_seq = agent.conversation.last_seq;
+    let turn_sequence = expected_last_seq + 1;
+    agent
+        .transition(AgentStatus::Working, NOW.into(), None)
+        .unwrap();
+    agent.conversation.active_turn = Some(turn_sequence);
+    agent.conversation.last_seq += 2;
+    AgentConversationMutation {
+        expected_agent_revision,
+        expected_last_seq,
+        runtime_generation: 1,
+        agent,
+        appended_at: NOW.into(),
+        agent_logs: vec![
+            AgentLogKind::TurnStarted {
+                turn_sequence,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Inspect the durable state.".into(),
+            },
+        ],
+    }
+}
+
+async fn ready_conversation_fixture(store: &MongoSandboxStore, suffix: &str) -> Agent {
+    let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let mut ready = claimed.clone();
+    ready.conversation.conversation_id = Some(format!("conversation-{suffix}"));
+    ready.conversation.runtime_generation = Some(1);
+    ready
+        .work
+        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .unwrap();
+    ready
+        .transition(AgentStatus::Ready, NOW.into(), None)
+        .unwrap();
+    let log_kinds = vec![
+        AgentLogKind::ConversationOpened {
+            conversation_id: format!("conversation-{suffix}"),
+            runtime_generation: 1,
+        },
+        AgentLogKind::StatusChanged {
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        },
+    ];
+    ready.conversation.last_seq = u64::try_from(log_kinds.len()).unwrap();
+    let expected_worktree_revision = worktree.revision;
+    worktree.transition(WorktreeStatus::Ready).unwrap();
+    store
+        .commit_agent_work(AgentWorkMutation {
+            expected_agent_revision: claimed.revision,
+            holder: "worker".into(),
+            fence,
+            agent: ready.clone(),
+            worktree: Some(VersionedWorktree {
+                expected_revision: expected_worktree_revision,
+                worktree,
+            }),
+            appended_at: NOW.into(),
+            sandbox_event: None,
+            agent_logs: log_kinds,
+        })
+        .await
+        .unwrap();
+    ready
+}
+
 fn advance_claimed_agent(claimed: &Agent) -> Agent {
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut next = claimed.clone();
@@ -449,6 +537,173 @@ fn mongo_agent_work_stop_intent_validation_matches_domain_rules() {
     let mut rewritten = stopped.clone();
     rewritten.stop_reason = Some(AgentStopReason::Operator);
     assert!(!stop_intent_change_is_valid(&stopped, &rewritten));
+}
+
+#[test]
+fn mongo_agent_conversation_validation_fences_every_durable_boundary() {
+    let current = conversation_agent_for_rules("agt_conversation_rules");
+    let mutation = begin_conversation_turn(current.clone());
+    assert!(validate_mutation(&current, 2, &mutation).is_ok());
+
+    let rejected = |mutation: &AgentConversationMutation, actual_last_seq| {
+        assert_eq!(
+            validate_mutation(&current, actual_last_seq, mutation),
+            Err(SandboxStoreError::Conflict)
+        );
+    };
+    let mut invalid = mutation.clone();
+    invalid.appended_at = "not-a-timestamp".into();
+    rejected(&invalid, 2);
+    let mut invalid = mutation.clone();
+    invalid.runtime_generation = 0;
+    rejected(&invalid, 2);
+    let mut invalid = mutation.clone();
+    invalid.expected_agent_revision += 1;
+    rejected(&invalid, 2);
+    let mut invalid = mutation.clone();
+    invalid.expected_last_seq += 1;
+    rejected(&invalid, 2);
+    rejected(&mutation, 1);
+    let mut invalid = mutation.clone();
+    invalid.agent.conversation.last_seq += 1;
+    rejected(&invalid, 2);
+    let mut invalid = mutation.clone();
+    invalid.agent.conversation.conversation_id = Some("different-conversation".into());
+    rejected(&invalid, 2);
+    let mut invalid = mutation.clone();
+    invalid.agent.conversation.runtime_generation = Some(2);
+    rejected(&invalid, 2);
+    let mut invalid = mutation.clone();
+    invalid.agent.requested_stop_reason = Some(AgentStopReason::Owner);
+    rejected(&invalid, 2);
+    let mut invalid = mutation;
+    invalid.agent_logs.clear();
+    rejected(&invalid, 2);
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_conversation_atomically_saves_and_reconciles_aggregate_and_logs() {
+    let (client, name) = database("agent_conversation_atomic").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let ready = ready_conversation_fixture(&store, "conversation_atomic").await;
+    let mutation = begin_conversation_turn(ready);
+    let expected = mutation.agent.clone();
+
+    let appended = store.commit_agent_conversation(mutation).await.unwrap();
+    assert_eq!(
+        appended.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
+        [3, 4]
+    );
+    assert_eq!(
+        store.get_agent(&expected.id).await.unwrap(),
+        Some(expected.clone())
+    );
+    assert_eq!(store.agent_log(&expected.id, 0, 10).await.unwrap().len(), 4);
+    let receipt = ConversationReceipt {
+        agent: expected,
+        logs: appended,
+    };
+    assert!(reconcile_conversation(&store, &receipt).await.unwrap());
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_conversation_rejects_invalid_and_stale_mutations_without_partial_writes() {
+    let (client, name) = database("agent_conversation_rollback").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let ready = ready_conversation_fixture(&store, "conversation_rollback").await;
+    let mutation = begin_conversation_turn(ready.clone());
+    let mut invalid_mutations = Vec::new();
+
+    let mut invalid = mutation.clone();
+    invalid.appended_at = "not-a-timestamp".into();
+    invalid_mutations.push(invalid);
+    let mut invalid = mutation.clone();
+    invalid.runtime_generation = 2;
+    invalid_mutations.push(invalid);
+    let mut invalid = mutation.clone();
+    invalid.expected_agent_revision += 1;
+    invalid_mutations.push(invalid);
+    let mut invalid = mutation.clone();
+    invalid.expected_last_seq += 1;
+    invalid_mutations.push(invalid);
+    let mut invalid = mutation;
+    invalid.agent.requested_stop_reason = Some(AgentStopReason::Owner);
+    invalid_mutations.push(invalid);
+
+    for invalid in invalid_mutations {
+        assert_eq!(
+            store.commit_agent_conversation(invalid).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            store.get_agent(&ready.id).await.unwrap(),
+            Some(ready.clone())
+        );
+        assert_eq!(store.agent_log(&ready.id, 0, 10).await.unwrap().len(), 2);
+    }
+
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn agent_conversation_rebuilds_pending_approvals_after_reopen_and_fails_on_gaps() {
+    let (client, name) = database("agent_conversation_approvals").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let ready = ready_conversation_fixture(&store, "conversation_approvals").await;
+    let turn = begin_conversation_turn(ready);
+    let mut working = turn.agent.clone();
+    store.commit_agent_conversation(turn).await.unwrap();
+
+    let expected_agent_revision = working.revision;
+    let expected_last_seq = working.conversation.last_seq;
+    working
+        .transition(AgentStatus::WaitingApproval, MINUTE.into(), None)
+        .unwrap();
+    working.conversation.last_seq += 1;
+    store
+        .commit_agent_conversation(AgentConversationMutation {
+            expected_agent_revision,
+            expected_last_seq,
+            runtime_generation: 1,
+            agent: working.clone(),
+            appended_at: MINUTE.into(),
+            agent_logs: vec![AgentLogKind::ApprovalRequested {
+                approval_id: "approval-1".into(),
+                action: Some("Run checks".into()),
+                detail: None,
+                runtime_locator: Some("runtime-route-1".into()),
+            }],
+        })
+        .await
+        .unwrap();
+
+    drop(store);
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let pending = reopened.pending_agent_approvals(&working.id).await.unwrap();
+    assert!(matches!(
+        pending.as_slice(),
+        [AgentLogEntry {
+            kind: AgentLogKind::ApprovalRequested { approval_id, .. },
+            ..
+        }] if approval_id == "approval-1"
+    ));
+
+    reopened
+        .agent_log
+        .delete_one(doc! { "agent_id": working.id.as_str(), "seq": 4_i64 })
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.pending_agent_approvals(&working.id).await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+
+    client.database(&name).drop().await.unwrap();
 }
 
 #[test]
