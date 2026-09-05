@@ -343,3 +343,7 @@ pub struct WorktreeRemoveReceipt {
     pub workspace: String,
     pub name: String,
 }
+
+#[cfg(test)]
+#[path = "workspace_digest_tests.rs"]
+mod digest_tests;

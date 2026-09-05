@@ -222,6 +222,189 @@ async fn recreated_adapter_uses_the_reattached_runtime_lifecycle() {
 }
 
 #[tokio::test]
+async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
+    let backend = crate::hosted::InMemoryHostedBackend::default();
+    let spec = SandboxSpec {
+        sandbox_id: "sandbox-correlated-replay".into(),
+        ..sandbox_spec(false)
+    };
+    let adapter_a = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
+    let handle = adapter_a.provision(&spec).await.unwrap();
+    adapter_a
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:correlated-replay", Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter_a
+        .deliver_credential(&handle, credential())
+        .await
+        .unwrap();
+    let workspace = adapter_a
+        .prepare_workspace(
+            &handle,
+            &WorkspaceRequest::new(
+                "workspace:wks-replay:prepare:v1",
+                "wks-replay",
+                "replay",
+                WorkspaceSource::Init,
+            ),
+        )
+        .await
+        .unwrap();
+
+    let add = WorktreeRequest::new(
+        "worktree:replay:agent-replay:add:v1",
+        "replay",
+        "agent-replay",
+        workspace.resolved_commit,
+    );
+    let worktree = adapter_a.add_worktree(&handle, &add).await.unwrap();
+    let mut changed_add = add.clone();
+    changed_add.base = "f".repeat(64);
+    changed_add.request_sha256 = changed_add.computed_sha256();
+    assert!(matches!(
+        adapter_a.add_worktree(&handle, &changed_add).await,
+        Err(AdapterError::Rejected(_))
+    ));
+
+    let agent_options = options("agent-replay", worktree.path.clone(), false);
+    let home = AgentHomeRequest::new(
+        "agent:agent-replay:home:create:v1",
+        agent_options.clone(),
+        "original prompt",
+        Vec::new(),
+    );
+    adapter_a
+        .materialize_agent_home(&handle, &home)
+        .await
+        .unwrap();
+    let mut changed_home = home.clone();
+    changed_home.system_prompt.push_str(" changed");
+    changed_home.request_sha256 = changed_home.computed_sha256();
+    assert!(matches!(
+        adapter_a
+            .materialize_agent_home(&handle, &changed_home)
+            .await,
+        Err(AdapterError::Rejected(_))
+    ));
+
+    let open = AgentOpenRequest::new(
+        "agent:agent-replay:open:v1",
+        agent_options.clone(),
+        Some("conversation-replay".into()),
+    );
+    let (updates, _updates_rx) = tokio::sync::mpsc::channel(1);
+    let channel = adapter_a.open_agent(&handle, &open, updates).await.unwrap();
+    assert_eq!(
+        channel.conversation_id.as_deref(),
+        Some("conversation-replay")
+    );
+    let mut changed_open = open.clone();
+    changed_open.resume_conversation = Some("conversation-other".into());
+    changed_open.request_sha256 = changed_open.computed_sha256();
+    let (updates, _updates_rx) = tokio::sync::mpsc::channel(1);
+    assert!(matches!(
+        adapter_a.open_agent(&handle, &changed_open, updates).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    drop(adapter_a);
+
+    let adapter_b = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
+    assert_eq!(adapter_b.provision(&spec).await.unwrap(), handle);
+    assert_eq!(
+        adapter_b.add_worktree(&handle, &add).await.unwrap(),
+        worktree
+    );
+    adapter_b
+        .materialize_agent_home(&handle, &home)
+        .await
+        .expect("completed home creation replays after adapter recreation");
+    let (updates, _updates_rx) = tokio::sync::mpsc::channel(1);
+    let replayed_channel = adapter_b
+        .open_agent(&handle, &open, updates)
+        .await
+        .expect("a retained live process can replay its open receipt");
+    assert_eq!(replayed_channel.conversation_id, channel.conversation_id);
+
+    let close = AgentCloseRequest::new("agent:agent-replay:close:v1", agent_options.slot.clone());
+    adapter_b.close_agent(&handle, &close).await.unwrap();
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert!(snapshot.homes.contains_key(&agent_options.slot));
+    assert!(snapshot.agents.contains_key(&agent_options.slot));
+    let changed_close =
+        AgentCloseRequest::new("agent:agent-replay:close:v1", AgentSlot::new("agent-other"));
+    assert!(matches!(
+        adapter_b.close_agent(&handle, &changed_close).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    drop(adapter_b);
+
+    let adapter_c = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
+    assert_eq!(adapter_c.provision(&spec).await.unwrap(), handle);
+    adapter_c
+        .close_agent(&handle, &close)
+        .await
+        .expect("completed close replays after adapter recreation");
+
+    let remove_home = AgentHomeRemoveRequest::new(
+        "agent:agent-replay:home:remove:v1",
+        agent_options.slot.clone(),
+    );
+    adapter_c
+        .remove_agent_home(&handle, &remove_home)
+        .await
+        .unwrap();
+    let changed_remove_home = AgentHomeRemoveRequest::new(
+        "agent:agent-replay:home:remove:v1",
+        AgentSlot::new("agent-other"),
+    );
+    assert!(matches!(
+        adapter_c
+            .remove_agent_home(&handle, &changed_remove_home)
+            .await,
+        Err(AdapterError::Rejected(_))
+    ));
+
+    let remove_worktree = WorktreeRef::new(
+        "worktree:replay:agent-replay:remove:v1",
+        "replay",
+        "agent-replay",
+    );
+    adapter_c
+        .remove_worktree(&handle, &remove_worktree)
+        .await
+        .unwrap();
+    let changed_remove_worktree = WorktreeRef::new(
+        "worktree:replay:agent-replay:remove:v1",
+        "replay",
+        "agent-other",
+    );
+    assert!(matches!(
+        adapter_c
+            .remove_worktree(&handle, &changed_remove_worktree)
+            .await,
+        Err(AdapterError::Rejected(_))
+    ));
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert!(!snapshot.homes.contains_key(&agent_options.slot));
+    assert!(snapshot.worktrees.is_empty());
+    drop(adapter_c);
+
+    let adapter_d = CodexAdapter::with_backend(backend, CodexSandboxSpec::default());
+    assert_eq!(adapter_d.provision(&spec).await.unwrap(), handle);
+    adapter_d
+        .remove_agent_home(&handle, &remove_home)
+        .await
+        .expect("completed home removal replays after adapter recreation");
+    adapter_d
+        .remove_worktree(&handle, &remove_worktree)
+        .await
+        .expect("completed worktree removal replays after adapter recreation");
+}
+
+#[tokio::test]
 async fn a_failed_credential_rotation_keeps_the_installed_generation_usable() {
     let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
     let handle = adapter

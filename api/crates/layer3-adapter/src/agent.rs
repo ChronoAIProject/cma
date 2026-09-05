@@ -385,3 +385,7 @@ pub struct ConversationSnapshot {
     pub archive_sha256: String,
     pub archive: Vec<u8>,
 }
+
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;
