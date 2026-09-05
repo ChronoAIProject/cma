@@ -19,6 +19,7 @@ impl MemoryRuntime {
                 .map(|(slot, agent)| (slot.clone(), agent.launch.clone()))
                 .collect(),
             writer_fence_captures: self.writer_fence_captures,
+            writers_held: self.held_checkpoint.is_some(),
             restored_object: self.restored_object.clone(),
         }
     }

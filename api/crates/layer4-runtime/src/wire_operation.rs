@@ -14,6 +14,8 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "close_agent" => WireOperation::CloseAgent,
         "capture_agent" => WireOperation::CaptureAgent,
         "checkpoint" => WireOperation::Checkpoint,
+        "checkpoint_for_teardown" => WireOperation::CheckpointForTeardown,
+        "resume_checkpoint_writers" => WireOperation::ResumeCheckpointWriters,
         "restore" => WireOperation::Restore,
         "credential" => WireOperation::Credential,
         "resources" => WireOperation::Resources,

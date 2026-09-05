@@ -12,7 +12,8 @@ use crate::wire::{
     RequestFrame, ResponseFrame, WireFailure, WireOperation,
 };
 use crate::{
-    AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointReceipt, CommandReceipt,
+    AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointHoldReceipt,
+    CheckpointHoldRequest, CheckpointReceipt, CheckpointWriterResumeReceipt, CommandReceipt,
     ConversationChannel, ConversationInputSender, ConversationSnapshot, ConversationUpdate,
     InstallReceipt, ResourceReading, RuntimeHandle, WorkspaceReceipt, WorktreeReceipt, WriterState,
 };
@@ -38,6 +39,7 @@ pub struct InMemoryRuntimeSnapshot {
     pub homes: BTreeMap<AgentSlot, AgentHomePlan>,
     pub agents: BTreeMap<AgentSlot, AgentLaunch>,
     pub writer_fence_captures: u64,
+    pub writers_held: bool,
     pub restored_object: Option<String>,
 }
 
@@ -62,6 +64,7 @@ struct MemoryRuntime {
     homes: BTreeMap<AgentSlot, AgentHomePlan>,
     agents: BTreeMap<AgentSlot, MemoryAgent>,
     writer_fence_captures: u64,
+    held_checkpoint: Option<(CheckpointHoldRequest, CheckpointHoldReceipt)>,
     restored_object: Option<String>,
 }
 
@@ -189,6 +192,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 homes: BTreeMap::new(),
                 agents: BTreeMap::new(),
                 writer_fence_captures: 0,
+                held_checkpoint: None,
                 restored_object: None,
             },
         );
@@ -213,6 +217,17 @@ impl HostedBackend for InMemoryHostedBackend {
         let runtime = runtimes
             .get_mut(handle)
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
+        if runtime.held_checkpoint.is_some()
+            && !matches!(
+                &request,
+                RequestFrame::CheckpointForTeardown(_)
+                    | RequestFrame::ResumeCheckpointWriters(_)
+                    | RequestFrame::CaptureAgent(_)
+                    | RequestFrame::Resources
+            )
+        {
+            return refused(operation, "checkpoint_writers_held");
+        }
         let response = match request {
             RequestFrame::Install(request) => {
                 if request.operation_id.trim().is_empty() || !request.has_valid_sha256() {
@@ -320,6 +335,62 @@ impl HostedBackend for InMemoryHostedBackend {
                     writers: WriterState::Resumed,
                 }))
             }
+            RequestFrame::CheckpointForTeardown(request) => {
+                require_credential(runtime, operation)?;
+                if !request.has_valid_writer_resume_token() {
+                    return refused(operation, "writer_resume_token_invalid");
+                }
+                if let Some((held_request, held_receipt)) = &runtime.held_checkpoint {
+                    if held_request == &request {
+                        Ok(ResponseFrame::CheckpointForTeardown(held_receipt.clone()))
+                    } else {
+                        refused(operation, "checkpoint_hold_conflict")
+                    }
+                } else {
+                    runtime.writer_fence_captures += 1;
+                    let marker = format!(
+                        "{}:{}:{}",
+                        handle.0, request.checkpoint.epoch, runtime.writer_fence_captures
+                    );
+                    let sha256 = digest(marker.as_bytes());
+                    let receipt = CheckpointHoldReceipt {
+                        checkpoint: CheckpointReceipt {
+                            epoch: request.checkpoint.epoch,
+                            object_reference: format!("home-{sha256}.cma"),
+                            sha256,
+                            writers: WriterState::Held,
+                        },
+                        writer_resume_token: request.writer_resume_token.clone(),
+                    };
+                    runtime.held_checkpoint = Some((request, receipt.clone()));
+                    Ok(ResponseFrame::CheckpointForTeardown(receipt))
+                }
+            }
+            RequestFrame::ResumeCheckpointWriters(request) => {
+                if !request.has_valid_writer_resume_token() {
+                    return refused(operation, "writer_resume_token_invalid");
+                }
+                if runtime
+                    .held_checkpoint
+                    .as_ref()
+                    .is_some_and(|(held_request, _)| {
+                        !crate::writer_resume_tokens_match(
+                            &held_request.writer_resume_token,
+                            &request.writer_resume_token,
+                        )
+                    })
+                {
+                    refused(operation, "checkpoint_hold_conflict")
+                } else {
+                    runtime.held_checkpoint = None;
+                    Ok(ResponseFrame::ResumeCheckpointWriters(
+                        CheckpointWriterResumeReceipt {
+                            writer_resume_token: request.writer_resume_token,
+                            writers_resumed: true,
+                        },
+                    ))
+                }
+            }
             RequestFrame::Restore(request) => {
                 require_credential(runtime, operation)?;
                 runtime.restored_object = Some(request.object_reference);
@@ -369,6 +440,9 @@ impl HostedBackend for InMemoryHostedBackend {
         let runtime = runtimes
             .get_mut(handle)
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
+        if runtime.held_checkpoint.is_some() {
+            return refused(WireOperation::OpenAgent, "checkpoint_writers_held");
+        }
         require_credential(runtime, WireOperation::OpenAgent)?;
         let authority_fence = launch.authority_fence;
         let launch = launch.request;

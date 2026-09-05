@@ -29,7 +29,9 @@ pub use capabilities::{
     AdapterCapabilities, RuntimeContract, RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION,
 };
 pub use checkpoint::{
-    CheckpointReceipt, CheckpointRequest, ResourceReading, RestoreRequest, WriterState,
+    valid_writer_resume_token, writer_resume_tokens_match, CheckpointHoldReceipt,
+    CheckpointHoldRequest, CheckpointReceipt, CheckpointRequest, CheckpointWriterResumeReceipt,
+    CheckpointWriterResumeRequest, ResourceReading, RestoreRequest, WriterState,
 };
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,

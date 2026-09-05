@@ -4,11 +4,12 @@ use tokio::sync::mpsc;
 
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
-    AgentOpenRequest, AgentSlot, CheckpointReceipt, CheckpointRequest, ConversationChannel,
-    ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt, InstallRequest,
-    ResourceReading, RestoreRequest, Result, RuntimeHandle, SandboxSpec, SetupReceipt,
-    WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
-    WorktreeReceipt, WorktreeRef, WorktreeRequest,
+    AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
+    CheckpointRequest, CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest,
+    ConversationChannel, ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt,
+    InstallRequest, ResourceReading, RestoreRequest, Result, RuntimeHandle, SandboxSpec,
+    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
+    WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
@@ -104,6 +105,28 @@ pub trait SandboxAdapter: Send + Sync {
         handle: &RuntimeHandle,
         request: &CheckpointRequest,
     ) -> Result<CheckpointReceipt>;
+
+    /// Capture a checkpoint while retaining the runtime's writer fence.
+    async fn checkpoint_for_teardown(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &CheckpointHoldRequest,
+    ) -> Result<CheckpointHoldReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "checkpoint writer hold is not supported".into(),
+        ))
+    }
+
+    /// Release a retained checkpoint writer fence after an aborted teardown.
+    async fn resume_checkpoint_writers(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &CheckpointWriterResumeRequest,
+    ) -> Result<CheckpointWriterResumeReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "checkpoint writer resume is not supported".into(),
+        ))
+    }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> Result<()>;
 

@@ -115,6 +115,16 @@ fn every_contract_3_request_round_trips_with_its_exact_tag() {
             epoch: 9,
             exclusions: vec![".cache".into()],
         }),
+        RequestFrame::CheckpointForTeardown(CheckpointHoldRequest {
+            checkpoint: CheckpointRequest {
+                epoch: 10,
+                exclusions: vec![".cache".into()],
+            },
+            writer_resume_token: sha(),
+        }),
+        RequestFrame::ResumeCheckpointWriters(CheckpointWriterResumeRequest {
+            writer_resume_token: sha(),
+        }),
         RequestFrame::Restore(RestoreRequest {
             object_reference: "object://checkpoint".into(),
             sha256: sha(),
@@ -139,6 +149,8 @@ fn every_contract_3_request_round_trips_with_its_exact_tag() {
         "close_agent",
         "capture_agent",
         "checkpoint",
+        "checkpoint_for_teardown",
+        "resume_checkpoint_writers",
         "restore",
         "credential",
         "resources",
@@ -247,6 +259,19 @@ fn every_contract_3_reply_round_trips_and_failures_stay_typed() {
             object_reference: "object://checkpoint".into(),
             sha256: sha(),
             writers: WriterState::Resumed,
+        }),
+        ResponseFrame::CheckpointForTeardown(CheckpointHoldReceipt {
+            checkpoint: CheckpointReceipt {
+                epoch: 10,
+                object_reference: "object://held-checkpoint".into(),
+                sha256: sha(),
+                writers: WriterState::Held,
+            },
+            writer_resume_token: sha(),
+        }),
+        ResponseFrame::ResumeCheckpointWriters(CheckpointWriterResumeReceipt {
+            writer_resume_token: sha(),
+            writers_resumed: true,
         }),
         ResponseFrame::Restore(Acknowledgement::default()),
         ResponseFrame::Credential(CredentialReceipt {
