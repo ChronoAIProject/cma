@@ -2,6 +2,7 @@
 
 mod activity;
 mod auth;
+mod composition;
 mod config;
 mod health;
 mod permissions;
@@ -9,30 +10,22 @@ mod profile_policy;
 mod projections;
 mod rate_limit;
 mod sandbox;
+mod shutdown;
 mod store;
 mod trigger;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, Request, State},
+    extract::{Request, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, Method},
     middleware::Next,
     response::Response,
     routing::any,
     Router,
 };
-use layer1_public::rest::{
-    hierarchy_router, profiles_router, HierarchyState, HttpProblem, ProfilesState,
-};
-use layer2_core::{
-    sandbox::{
-        HierarchyReadService, SandboxOperatorService, SandboxService, StoredSandboxRetirement,
-        WorkspaceService,
-    },
-    ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
-};
+use layer1_public::rest::HttpProblem;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -40,16 +33,9 @@ use tower_http::{
 use tracing::Level;
 
 use crate::{
-    activity::ActivityRecorder,
-    auth::{keys::KeyIssuer, AuthMode, AuthState, SignInRecords},
+    composition::ControlPlaneComposition,
     config::Config,
-    profile_policy::profile_route_policy,
-    projections::{AgentProjectionServices, UnavailableSandboxResources},
-    rate_limit::RateLimiters,
-    sandbox::{
-        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, ManagedSandboxCredentials,
-    },
-    store::{DefaultProfileSpec, MongoStores},
+    shutdown::{signalled, ShutdownCoordinator},
 };
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
@@ -58,6 +44,7 @@ pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
 );
 
 const DEFAULT_LOG_FILTER: &str = "info";
+const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 #[tokio::main]
@@ -78,147 +65,9 @@ async fn main() {
 async fn serve() -> Result<(), String> {
     let config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
-    let stores = Arc::new(
-        MongoStores::connect(
-            &config.mongodb_uri,
-            &config.mongodb_database,
-            &config.deployment_id,
-            &config.auth_encryption_key,
-            config.activity_retention,
-        )
-        .await
-        .map_err(|error| format!("durable stores are not usable: {error}"))?,
-    );
-    let activity = ActivityService::new(stores.activity.clone());
-    let users = UserDirectory::new(stores.users.clone());
-    let profile_policy = profile_route_policy();
-    stores
-        .sandbox_profiles
-        .seed_default_profiles(
-            &DefaultProfileSpec {
-                cpu_millis: config.default_profiles.cpu_millis,
-                memory_mib: config.default_profiles.memory_mib,
-                agent_model: config.default_profiles.agent_model.clone(),
-                agent_effort: config.default_profiles.agent_effort,
-            },
-            profile_policy.capacity_bounds,
-            &profile_policy.secret_patterns,
-        )
-        .await
-        .map_err(|error| format!("default profiles are not usable: {error}"))?;
-    // #809 composes the owner-facing Sandbox services. Opening the stores here
-    // already enforces indexes and schema compatibility before serving.
-    let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
-    let sandbox_operators = Arc::new(SandboxOperatorService::new(
-        stores.sandbox_model.clone(),
-        stores.sandbox_profiles.clone(),
-        retirement,
-        Arc::clone(&activity),
-    ));
-    let settings = Arc::new(PlatformSettingsService::new(
-        stores.settings.clone(),
-        Arc::clone(&activity),
-    ));
-    let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
-        Arc::clone(&settings),
-        config.baseline_services.clone(),
-    ));
-    let sandbox_service = SandboxService::with_policy_source(
-        stores.sandbox_model.clone(),
-        stores.sandbox_profiles.clone(),
-        sandbox_policy,
-    );
-    let workspace_service = WorkspaceService::new(
-        stores.sandbox_model.clone(),
-        stores.sandbox_profiles.clone(),
-    );
-    let projections = AgentProjectionServices::new(
-        stores.sandbox_model.clone(),
-        stores.sandbox_profiles.clone(),
-        Arc::clone(&settings),
-        Arc::clone(&sandbox_service),
-        Arc::clone(&workspace_service),
-        Arc::new(LiveAgentRegistry::default()),
-        Arc::new(UnavailableSandboxResources),
-        runtime_capabilities(layer3_adapter::RuntimeContract::V3.capabilities()),
-    );
-    let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone());
-    let admin = layer1_public::rest::admin::AdminState::new(
-        Arc::clone(&settings),
-        sandbox_operators,
-        Arc::clone(&activity),
-    );
-    let operations: Arc<dyn OperationStore> = stores.operations.clone();
-    let profiles = ProfilesState::new(
-        stores.sandbox_profiles.clone(),
-        Arc::clone(&operations),
-        Arc::clone(&settings),
-        profile_policy,
-    );
-    let hierarchy = HierarchyState::new(
-        sandbox_service,
-        workspace_service,
-        hierarchy,
-        Arc::clone(&operations),
-    );
-    let recorder = ActivityRecorder::new(Arc::clone(&activity));
-    let auth = AuthState::with_store_and_nyxid_public_url(
-        config.auth_mode.clone(),
-        Some(SignInRecords { users, activity }),
-        stores.auth.clone(),
-        config.nyxid_public_url.clone(),
-    );
-    let _sandbox_credentials = match &config.auth_mode {
-        AuthMode::Provider { base_url, .. } => Some(ManagedSandboxCredentials::new(
-            Arc::new(KeyIssuer::new(
-                reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(15))
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-                    .expect("the rustls HTTP client builds"),
-                base_url,
-                &config.deployment_id,
-            )),
-            Arc::clone(&auth),
-            Arc::clone(&stores.sandbox_credentials),
-        )),
-        AuthMode::Trusted { .. } => None,
-    };
-    if !auth.requires_credential() {
-        tracing::warn!(
-            "running with a trusted fixed subject; this mode is for local development only"
-        );
-    }
-
-    let limits = RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
-    let resource_routes = profiles_router(profiles)
-        .merge(hierarchy_router(hierarchy))
-        .merge(projections.router(Arc::clone(&operations)))
-        .merge(layer1_public::rest::admin::router(admin));
-    let public = rest_router(resource_routes)
-        .merge(auth::router(Arc::clone(&auth)))
-        .layer(axum::middleware::from_fn_with_state(
-            recorder,
-            activity::record,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&limits),
-            rate_limit::enforce,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            auth,
-            auth::attach_subject,
-        ));
-    let app = Router::new()
-        .merge(public)
-        .merge(health::router(stores.clone()))
-        .layer(axum::middleware::from_fn_with_state(
-            limits,
-            rate_limit::admit,
-        ))
-        .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
+    let composition = ControlPlaneComposition::build(&config).await?;
     let auth_mode = config.auth_mode_name();
-    let app = with_request_context(with_cors(app, config.cors_origins));
+    let app = with_request_context(with_cors(composition.router, config.cors_origins));
 
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -229,13 +78,37 @@ async fn serve() -> Result<(), String> {
         auth_mode,
         "CMA listening"
     );
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .map_err(|error| format!("HTTP server failed: {error}"))
+    let mut shutdown = ShutdownCoordinator::new();
+    let worker_signal = shutdown.subscribe();
+    shutdown.push(composition.launch_scheduler.spawn(worker_signal));
+    let http_signal = shutdown.subscribe();
+    let server_result = {
+        let server = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(signalled(http_signal))
+        .into_future();
+        tokio::pin!(server);
+        tokio::select! {
+            result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),
+            () = shutdown_signal() => {
+                shutdown.signal();
+                match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
+                    Ok(result) => result.map_err(|error| format!("HTTP server failed: {error}")),
+                    Err(_) => Err("HTTP server exceeded its shutdown drain deadline".into()),
+                }
+            }
+        }
+    };
+    let aborted = shutdown.drain().await;
+    match (server_result, aborted) {
+        (Err(error), _) => Err(error),
+        (Ok(()), 0) => Ok(()),
+        (Ok(()), count) => Err(format!(
+            "{count} background workers exceeded shutdown drain"
+        )),
+    }
 }
 
 fn rest_router(resource_routes: Router) -> Router {
