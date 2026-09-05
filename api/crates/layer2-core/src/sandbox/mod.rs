@@ -3,6 +3,9 @@
 mod admin;
 mod agent;
 mod agent_operation;
+mod agent_operation_dispatch;
+mod agent_operation_service;
+mod agent_operation_settlement;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
@@ -14,6 +17,8 @@ mod credential;
 mod error;
 mod event;
 mod first_message;
+mod first_message_dispatch;
+mod first_message_service;
 mod limits;
 mod provision;
 mod queued_message;
@@ -41,6 +46,10 @@ pub use agent_operation::{
     AgentApprovalDecision, AgentOperationDelivery, AgentOperationFailure, AgentOperationIntent,
     AgentOperationKind, AgentOperationRecord,
 };
+pub use agent_operation_service::{
+    AgentMessageOutcome, AgentOperationError, AgentOperationReceipt, AgentOperationService,
+    AgentOperationStore,
+};
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
 };
@@ -64,6 +73,7 @@ pub use event::{
 pub use first_message::{
     FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
 };
+pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
 pub use queued_message::{
