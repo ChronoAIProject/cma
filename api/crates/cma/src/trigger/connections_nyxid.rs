@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures_util::StreamExt as _;
 use layer2_core::trigger_domain::{
     BrokerHandoff, BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError,
     ServiceRequirement, ServiceRequirementState,
 };
-use layer2_core::{seconds_from_rfc3339, ServiceId, StoreError, SubjectId};
+use layer2_core::{rfc3339_at, seconds_from_rfc3339, ServiceId, StoreError, SubjectId};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -15,7 +16,10 @@ use crate::auth::{persistence::SecretValue, AuthState};
 
 const CONNECT_LINKS_PATH: &str = "/api/v1/connect-links";
 const USER_SERVICES_PATH: &str = "/api/v1/user-services";
+const CONNECT_LINK_TOKEN_PREFIX: &str = "nyx_clk_";
 const CONNECT_LINK_TTL_SECONDS: u64 = 15 * 60;
+const PROVIDER_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
+const USER_SERVICES_MAX_ROWS: usize = 1_000;
 const PROVIDER_UNAVAILABLE: &str = "NyxID request failed";
 const PROVIDER_MALFORMED: &str = "NyxID response was not usable";
 const CREDENTIAL_UNAVAILABLE: &str = "visitor credential lookup failed";
@@ -35,19 +39,26 @@ impl VisitorCredentialSource for AuthState {
 pub(crate) struct NyxidServiceConnectionBroker {
     http: Client,
     base_url: String,
+    browser_origin: Url,
     credentials: Arc<dyn VisitorCredentialSource>,
 }
 
 impl NyxidServiceConnectionBroker {
-    pub(crate) fn new<T>(http: Client, base_url: impl Into<String>, credentials: Arc<T>) -> Self
+    pub(crate) fn new<T>(
+        http: Client,
+        base_url: impl Into<String>,
+        browser_origin: impl AsRef<str>,
+        credentials: Arc<T>,
+    ) -> Result<Self, ServiceConnectionError>
     where
         T: VisitorCredentialSource + 'static,
     {
-        Self {
+        Ok(Self {
             http,
             base_url: base_url.into().trim_end_matches('/').to_owned(),
+            browser_origin: canonical_browser_origin(browser_origin.as_ref())?,
             credentials,
-        }
+        })
     }
 
     async fn credential(&self, owner: &SubjectId) -> Result<SecretValue, ServiceConnectionError> {
@@ -71,7 +82,11 @@ impl NyxidServiceConnectionBroker {
             )
             .await?;
         let listing = decode(response).await?;
-        Ok(UserServiceListing::into_rows(listing))
+        let rows = UserServiceListing::into_rows(listing);
+        if rows.len() > USER_SERVICES_MAX_ROWS {
+            return Err(malformed());
+        }
+        Ok(rows)
     }
 
     async fn send(
@@ -128,12 +143,34 @@ impl NyxidServiceConnectionBroker {
         let active = matches
             .next()
             .filter(|row| row.slug == connected.slug)
-            .is_some_and(|row| row.is_active == Some(true));
+            .is_some_and(UserServiceRow::is_usable);
         if active && matches.next().is_none() {
             Ok(BrokerHandoffState::Satisfied)
         } else {
             Ok(BrokerHandoffState::Failed)
         }
+    }
+
+    fn created_handoff(
+        &self,
+        response: CreateConnectLinkResponse,
+    ) -> Result<BrokerHandoff, ServiceConnectionError> {
+        let hosted_url = Url::parse(&response.connect_url).map_err(|_| malformed())?;
+        if !valid_provider_id(&response.id)
+            || hosted_url.origin() != self.browser_origin.origin()
+            || !hosted_url.username().is_empty()
+            || hosted_url.password().is_some()
+            || hosted_url.query().is_some()
+            || hosted_url.fragment().is_some()
+            || !valid_connect_path(&hosted_url)
+        {
+            return Err(malformed());
+        }
+        Ok(BrokerHandoff {
+            external_id: response.id,
+            hosted_url: hosted_url.to_string(),
+            expires_at: canonical_provider_timestamp(&response.expires_at)?,
+        })
     }
 }
 
@@ -180,7 +217,7 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
                 false,
             )
             .await?;
-        created_handoff(decode(response).await?)
+        self.created_handoff(decode(response).await?)
     }
 
     async fn handoff_state(
@@ -198,12 +235,10 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
             )
             .await?;
         let link: ConnectLinkResponse = decode(response).await?;
-        if link.id != external_id
-            || link.service_slug != service.as_str()
-            || seconds_from_rfc3339(&link.expires_at).is_none()
-        {
+        if link.id != external_id || link.service_slug != service.as_str() {
             return Err(malformed());
         }
+        canonical_provider_timestamp(&link.expires_at)?;
         match link.status {
             ConnectLinkStatus::Pending => Ok(BrokerHandoffState::Pending),
             ConnectLinkStatus::Expired => Ok(BrokerHandoffState::Expired),
@@ -266,6 +301,28 @@ struct UserServiceRow {
     slug: String,
     #[serde(default)]
     is_active: Option<bool>,
+    #[serde(default)]
+    credential_source: Option<UserServiceCredentialSource>,
+}
+
+impl UserServiceRow {
+    fn is_allowed(&self) -> bool {
+        !matches!(
+            &self.credential_source,
+            Some(UserServiceCredentialSource::Org { allowed: false })
+        )
+    }
+
+    fn is_usable(&self) -> bool {
+        self.is_active == Some(true) && self.is_allowed()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum UserServiceCredentialSource {
+    Personal,
+    Org { allowed: bool },
 }
 
 #[derive(Deserialize)]
@@ -288,27 +345,32 @@ impl UserServiceListing {
 }
 
 async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ServiceConnectionError> {
-    response.json().await.map_err(|_| malformed())
-}
-
-fn created_handoff(
-    response: CreateConnectLinkResponse,
-) -> Result<BrokerHandoff, ServiceConnectionError> {
-    let hosted_url = Url::parse(&response.connect_url).map_err(|_| malformed())?;
-    if !valid_provider_id(&response.id)
-        || !matches!(hosted_url.scheme(), "http" | "https")
-        || hosted_url.host_str().is_none()
-        || !hosted_url.username().is_empty()
-        || hosted_url.password().is_some()
-        || seconds_from_rfc3339(&response.expires_at).is_none()
+    if response
+        .content_length()
+        .is_some_and(|length| length > PROVIDER_RESPONSE_MAX_BYTES as u64)
     {
         return Err(malformed());
     }
-    Ok(BrokerHandoff {
-        external_id: response.id,
-        hosted_url: response.connect_url,
-        expires_at: response.expires_at,
-    })
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or_default()
+            .min(PROVIDER_RESPONSE_MAX_BYTES),
+    );
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?;
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > PROVIDER_RESPONSE_MAX_BYTES)
+        {
+            return Err(malformed());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|_| malformed())
 }
 
 fn requirement_state(service: &ServiceId, rows: &[UserServiceRow]) -> ServiceRequirementState {
@@ -325,6 +387,7 @@ fn requirement_state(service: &ServiceId, rows: &[UserServiceRow]) -> ServiceReq
     };
     match matches.as_slice() {
         [] => ServiceRequirementState::Missing,
+        [row] if !row.is_allowed() => ServiceRequirementState::Unknown,
         [row] => match row.is_active {
             Some(true) => ServiceRequirementState::Satisfied,
             Some(false) => ServiceRequirementState::Inactive,
@@ -332,6 +395,51 @@ fn requirement_state(service: &ServiceId, rows: &[UserServiceRow]) -> ServiceReq
         },
         _ => ServiceRequirementState::Unknown,
     }
+}
+
+fn canonical_browser_origin(value: &str) -> Result<Url, ServiceConnectionError> {
+    let origin = Url::parse(value).map_err(|_| malformed())?;
+    if origin.scheme() != "https"
+        || origin.host_str().is_none()
+        || !origin.username().is_empty()
+        || origin.password().is_some()
+        || origin.path() != "/"
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+        || origin.origin().ascii_serialization() != value
+    {
+        return Err(malformed());
+    }
+    Ok(origin)
+}
+
+fn canonical_provider_timestamp(value: &str) -> Result<String, ServiceConnectionError> {
+    let timestamp = mongodb::bson::DateTime::parse_rfc3339_str(value).map_err(|_| malformed())?;
+    if timestamp.timestamp_millis() < 0 {
+        return Err(malformed());
+    }
+    let canonical = rfc3339_at(timestamp.to_system_time());
+    if seconds_from_rfc3339(&canonical).is_none() {
+        return Err(malformed());
+    }
+    Ok(canonical)
+}
+
+fn valid_connect_path(url: &Url) -> bool {
+    let Some(mut segments) = url.path_segments() else {
+        return false;
+    };
+    segments.next() == Some("connect")
+        && segments.next().is_some_and(valid_connect_token)
+        && segments.next().is_none()
+}
+
+fn valid_connect_token(value: &str) -> bool {
+    value
+        .strip_prefix(CONNECT_LINK_TOKEN_PREFIX)
+        .is_some_and(|secret| {
+            secret.len() == 64 && secret.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
 }
 
 fn valid_provider_id(value: &str) -> bool {
