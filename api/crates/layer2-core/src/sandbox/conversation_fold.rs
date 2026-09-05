@@ -2,8 +2,8 @@ use layer3_adapter::{ConversationUpdate, SessionUpdate};
 
 use super::conversation_fold_support::{
     active_turn, append_bounded, approval_detail, bounded, complete_first_message,
-    fail_first_message, flush_message, observe_first_message, plain_text, prompt_evidence,
-    wire_name,
+    fail_first_message, flush_message, observe_first_message, observe_operation, plain_text,
+    prompt_evidence, wire_name,
 };
 use super::{
     Agent, AgentAvailableCommand, AgentConfigOption, AgentConversationError, AgentLogKind,
@@ -55,6 +55,7 @@ pub(super) fn fold_update(
             let mut agent = current.clone();
             let mut logs = flush_message(assembly);
             observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
+            observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
             logs.push(AgentLogKind::ApprovalRequested {
                 approval_id: request.id,
                 action: request.request.tool_call.fields.title,
@@ -79,6 +80,14 @@ pub(super) fn fold_update(
             let turn = active_turn(current)?;
             let mut agent = current.clone();
             let mut logs = flush_message(assembly);
+            let interrupted = completed.stop_reason == layer3_adapter::TurnStopReason::Cancelled;
+            observe_operation(
+                &mut agent,
+                prompt_evidence,
+                interrupted,
+                appended_at,
+                &mut logs,
+            )?;
             if let Some(usage) = completed.usage {
                 logs.push(AgentLogKind::Usage {
                     input_tokens: usage.input_tokens,
@@ -87,10 +96,22 @@ pub(super) fn fold_update(
                     context_window: None,
                 });
             }
-            complete_first_message(&mut agent, appended_at, &mut logs)?;
-            logs.push(AgentLogKind::TurnCompleted {
-                turn_sequence: turn,
-            });
+            if interrupted {
+                fail_first_message(
+                    &mut agent,
+                    "the first-message turn was interrupted",
+                    appended_at,
+                    &mut logs,
+                )?;
+                logs.push(AgentLogKind::TurnInterrupted {
+                    turn_sequence: turn,
+                });
+            } else {
+                complete_first_message(&mut agent, appended_at, &mut logs)?;
+                logs.push(AgentLogKind::TurnCompleted {
+                    turn_sequence: turn,
+                });
+            }
             logs.push(AgentLogKind::StatusChanged {
                 from: current.status,
                 to: AgentStatus::Ready,
@@ -112,6 +133,7 @@ pub(super) fn fold_update(
             let turn = active_turn(current)?;
             let mut agent = current.clone();
             let mut logs = flush_message(assembly);
+            observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
             fail_first_message(&mut agent, &message, appended_at, &mut logs)?;
             logs.push(AgentLogKind::TurnFailed {
                 turn_sequence: turn,
@@ -188,6 +210,7 @@ fn fold_message_chunk(
         MAX_DURABLE_AGENT_MESSAGE_BYTES,
     );
     observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
+    observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
     if logs.is_empty() {
         return Ok(FoldedConversationUpdate::Quiet(next_assembly));
     }
@@ -212,6 +235,7 @@ fn fold_semantic_update(
     let mut agent = current.clone();
     let mut logs = flush_message(assembly);
     observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
+    observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
     let kind = match update {
         SessionUpdate::ToolCall(call) => AgentLogKind::ToolCallStarted {
             call_id: call.tool_call_id.0.to_string(),

@@ -4,8 +4,8 @@ use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use crate::profiles::AgentProfileSnapshot;
 
 use super::{
-    AgentStatus, AgentWorkState, FirstMessageRecord, QueuedAgentMessage, SandboxModelError,
-    TypedFailure, Worktree, WorktreeStatus, MAX_QUEUED_AGENT_MESSAGES,
+    AgentOperationRecord, AgentStatus, AgentWorkState, FirstMessageRecord, QueuedAgentMessage,
+    SandboxModelError, TypedFailure, Worktree, WorktreeStatus, MAX_QUEUED_AGENT_MESSAGES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +20,8 @@ pub struct ConversationState {
     pub first_message: Option<FirstMessageRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<AgentOperationRecord>,
     #[serde(default)]
     pub queued_messages: Vec<QueuedAgentMessage>,
 }
@@ -110,6 +112,7 @@ impl Agent {
             || self.conversation.runtime_generation.is_some()
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
+            || self.conversation.operation.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0
         {
@@ -186,6 +189,9 @@ impl Agent {
                 .first_message
                 .as_ref()
                 .is_some_and(|record| record.validate().is_err())
+            || self.conversation.operation.as_ref().is_some_and(|record| {
+                record.validate().is_err() || record.sequence > self.conversation.last_seq
+            })
         {
             return Err(SandboxModelError::invalid_value("agent.conversation"));
         }

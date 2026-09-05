@@ -297,6 +297,7 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
             last_seq: 0,
             first_message: None,
             active_turn: None,
+            operation: None,
             queued_messages: vec![],
         },
         work: AgentWorkState::new(AgentWorkStep::AddWorktree, NOW.into()),

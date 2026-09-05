@@ -2,6 +2,8 @@
 
 mod admin;
 mod agent;
+mod agent_operation;
+mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod conversation;
@@ -35,6 +37,13 @@ pub use admin::{
     StoredSandboxRetirement, WorkspaceAdminSummary,
 };
 pub use agent::{Agent, AgentOrigin, AgentStopReason, ConversationState};
+pub use agent_operation::{
+    AgentApprovalDecision, AgentOperationDelivery, AgentOperationFailure, AgentOperationIntent,
+    AgentOperationKind, AgentOperationRecord,
+};
+pub use agent_runtime::{
+    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
+};
 pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
 pub use agent_work::{
     AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,

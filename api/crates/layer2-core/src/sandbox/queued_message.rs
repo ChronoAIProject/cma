@@ -75,4 +75,46 @@ impl QueuedAgentMessage {
         }
         Ok(())
     }
+
+    pub fn fence_dispatch(&mut self, at: String) -> Result<(), SandboxModelError> {
+        if self.state != QueuedMessageState::Queued {
+            return Err(SandboxModelError::invalid_value(
+                "agent.conversation.queued_messages.state",
+            ));
+        }
+        self.state = QueuedMessageState::DispatchFenced;
+        self.dispatch_fenced_at = Some(at);
+        self.validate()
+    }
+
+    pub fn mark_delivered(&mut self) -> Result<(), SandboxModelError> {
+        if self.state != QueuedMessageState::DispatchFenced {
+            return Err(SandboxModelError::invalid_value(
+                "agent.conversation.queued_messages.state",
+            ));
+        }
+        self.state = QueuedMessageState::Delivered;
+        self.validate()
+    }
+
+    pub fn require_recovery(&mut self) -> Result<(), SandboxModelError> {
+        if self.state != QueuedMessageState::DispatchFenced {
+            return Err(SandboxModelError::invalid_value(
+                "agent.conversation.queued_messages.state",
+            ));
+        }
+        self.state = QueuedMessageState::RecoveryRequired;
+        self.validate()
+    }
+
+    pub fn retry_after_pre_write_failure(&mut self) -> Result<(), SandboxModelError> {
+        if self.state != QueuedMessageState::DispatchFenced {
+            return Err(SandboxModelError::invalid_value(
+                "agent.conversation.queued_messages.state",
+            ));
+        }
+        self.state = QueuedMessageState::Queued;
+        self.dispatch_fenced_at = None;
+        self.validate()
+    }
 }
