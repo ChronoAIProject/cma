@@ -13,7 +13,8 @@ use layer2_core::sandbox::{
 use mongodb::bson::doc;
 use mongodb::Client;
 
-use super::sandbox_mongo::MongoSandboxStore;
+use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore};
+use super::sandboxes::admitted_sandbox_document;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
@@ -189,6 +190,75 @@ async fn trigger_replay_survives_lifecycle_changes_and_precedes_zero_quota() {
     assert_eq!(
         store.admit_sandbox(changed).await.unwrap_err(),
         SandboxStoreError::SandboxOriginConflict
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn replay_discovery_rejects_hidden_query_field_drift_and_duplicate_identity() {
+    let (client, database) = database("corrupt_replay_query").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let first = admission("sbx_corrupt_origin", "launch-corrupt-origin", 3);
+    let created = match store.admit_sandbox(first).await.unwrap() {
+        SandboxAdmissionResult::Created(sandbox) => sandbox,
+        SandboxAdmissionResult::Existing(_) => panic!("fresh trigger admission replayed"),
+    };
+    store
+        .sandboxes
+        .update_one(
+            doc! { "_id": created.id.as_str() },
+            doc! { "$set": { "origin_launch_id": "launch-hidden-origin" } },
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        store
+            .sandbox_admission_replay(&SubjectId::new("owner"), "launch-corrupt-origin")
+            .await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+    assert!(matches!(
+        store
+            .admit_sandbox(admission("sbx_corrupt_retry", "launch-corrupt-origin", 3))
+            .await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+
+    let mut duplicate = sandbox("sbx_corrupt_duplicate", "launch-corrupt-origin");
+    duplicate.name = "different-live-name".into();
+    let duplicate = SandboxAdmission::new(
+        duplicate,
+        SandboxAdmissionName::Exact("different-live-name".into()),
+        3,
+        NOW.into(),
+    )
+    .unwrap();
+    let duplicate_document = admitted_sandbox_document(
+        &duplicate.sandbox,
+        1,
+        &duplicate.name,
+        &duplicate.admission_fingerprint,
+    )
+    .unwrap();
+    let error = store
+        .sandboxes
+        .insert_one(duplicate_document)
+        .await
+        .unwrap_err();
+    assert!(is_duplicate_key(&error));
+    assert_eq!(
+        store
+            .sandboxes
+            .count_documents(doc! {
+                "record.owner": "owner",
+                "record.origin.type": "trigger",
+                "record.origin.launch_id": "launch-corrupt-origin",
+            })
+            .await
+            .unwrap(),
+        1
     );
     client.database(&database).drop().await.unwrap();
 }

@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::sandbox::store::{
     allocated_sandbox_name, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay,
@@ -19,6 +20,7 @@ use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_adm
 
 const ADMISSION_TRANSACTION_ATTEMPTS: usize = 16;
 const ADMISSION_RETRY_MAX_DELAY_MILLIS: u64 = 32;
+const REPLAY_CANDIDATE_LIMIT: i64 = 2;
 
 enum AdmissionError {
     Domain(SandboxStoreError),
@@ -216,14 +218,21 @@ async fn replay_in_transaction(
     let Some(filter) = trigger_filter(admission) else {
         return Ok(None);
     };
-    store
+    let mut cursor = store
         .sandboxes
-        .find_one(filter)
-        .session(session)
+        .find(filter)
+        .limit(REPLAY_CANDIDATE_LIMIT)
+        .session(&mut *session)
         .await
-        .map_err(AdmissionError::Driver)?
-        .as_ref()
-        .map(|document| classify_replay(admission, document).map_err(AdmissionError::Domain))
+        .map_err(AdmissionError::Driver)?;
+    let documents = cursor
+        .stream(&mut *session)
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(AdmissionError::Driver)?;
+    unique_origin_replay(documents)
+        .map_err(AdmissionError::Domain)?
+        .map(|replay| classify_replay_record(admission, replay).map_err(AdmissionError::Domain))
         .transpose()
 }
 
@@ -245,14 +254,21 @@ async fn durable_origin_replay(
     owner: &SubjectId,
     launch_id: &str,
 ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
-    store
+    let mut cursor = store
         .sandboxes
-        .find_one(origin_filter(owner.as_str(), launch_id))
+        .find(origin_filter(owner.as_str(), launch_id))
+        .limit(REPLAY_CANDIDATE_LIMIT)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    let mut documents = Vec::new();
+    while let Some(document) = cursor
+        .try_next()
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox_admission_replay)
-        .transpose()
+    {
+        documents.push(document);
+    }
+    unique_origin_replay(documents)
 }
 
 fn trigger_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Document> {
@@ -263,17 +279,34 @@ fn trigger_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Documen
 
 fn origin_filter(owner: &str, launch_id: &str) -> mongodb::bson::Document {
     doc! {
-        "owner": owner,
-        "origin_type": "trigger",
-        "origin_launch_id": launch_id,
+        "$or": [
+            {
+                "owner": owner,
+                "origin_type": "trigger",
+                "origin_launch_id": launch_id,
+            },
+            {
+                "record.owner": owner,
+                "record.origin.type": "trigger",
+                "record.origin.launch_id": launch_id,
+            },
+        ],
     }
 }
 
-fn classify_replay(
-    admission: &SandboxAdmission,
-    document: &mongodb::bson::Document,
-) -> Result<Sandbox, SandboxStoreError> {
-    classify_replay_record(admission, read_sandbox_admission_replay(document)?)
+fn unique_origin_replay(
+    mut documents: Vec<mongodb::bson::Document>,
+) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
+    if documents.len() > 1 {
+        return Err(SandboxStoreError::Corrupt(
+            "multiple sandboxes claim one trigger launch origin".into(),
+        ));
+    }
+    documents
+        .pop()
+        .as_ref()
+        .map(read_sandbox_admission_replay)
+        .transpose()
 }
 
 fn classify_replay_record(
@@ -394,7 +427,10 @@ async fn reconcile(
 mod tests {
     use std::time::Duration;
 
-    use super::{admission_retry_delay, suffixed};
+    use layer2_core::sandbox::store::SandboxStoreError;
+    use mongodb::bson::doc;
+
+    use super::{admission_retry_delay, origin_filter, suffixed, unique_origin_replay};
 
     #[test]
     fn retry_delay_is_exponential_and_bounded() {
@@ -413,5 +449,34 @@ mod tests {
         let value = suffixed(&"é".repeat(32), 12);
         assert!(value.len() <= 64);
         assert!(value.ends_with("-12"));
+    }
+
+    #[test]
+    fn replay_discovery_covers_query_and_embedded_origin_fields() {
+        assert_eq!(
+            origin_filter("owner", "launch-one"),
+            doc! {
+                "$or": [
+                    {
+                        "owner": "owner",
+                        "origin_type": "trigger",
+                        "origin_launch_id": "launch-one",
+                    },
+                    {
+                        "record.owner": "owner",
+                        "record.origin.type": "trigger",
+                        "record.origin.launch_id": "launch-one",
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn replay_discovery_rejects_multiple_candidates_before_decoding() {
+        assert!(matches!(
+            unique_origin_replay(vec![doc! {}, doc! {}]),
+            Err(SandboxStoreError::Corrupt(_))
+        ));
     }
 }

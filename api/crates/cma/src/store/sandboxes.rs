@@ -39,6 +39,16 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
             )
             .build(),
         IndexModel::builder()
+            .keys(doc! { "record.owner": 1, "record.origin.launch_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_record_owner_trigger_launch".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "record.origin.type": "trigger" })
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
             .keys(doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 })
             .options(
                 IndexOptions::builder()
