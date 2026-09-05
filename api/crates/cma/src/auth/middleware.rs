@@ -18,9 +18,7 @@ pub async fn attach_subject(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
-    // Registration discovery is anonymous and must not depend on an ambient
-    // cookie or the durable authentication store.
-    if request.uri().path() == "/auth/signup-options" {
+    if bypasses_ambient_auth(request.uri().path()) {
         return next.run(request).await;
     }
     let resolved = match auth.resolve_request(request.headers()).await {
@@ -55,14 +53,86 @@ pub async fn attach_subject(
     next.run(request).await
 }
 
+fn bypasses_ambient_auth(path: &str) -> bool {
+    if path == "/auth/signup-options" {
+        return true;
+    }
+    let Some(path) = path.strip_prefix('/') else {
+        return false;
+    };
+    let mut segments = path.split('/');
+    matches!(
+        (
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+        ),
+        (
+            Some("api"),
+            Some("v1"),
+            Some("triggers"),
+            Some("public"),
+            Some(public_id),
+            None,
+            None,
+        ) | (
+            Some("api"),
+            Some("v1"),
+            Some("triggers"),
+            Some("public"),
+            Some(public_id),
+            Some("badge.svg"),
+            None,
+        ) if !public_id.is_empty()
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use axum::{body::Body, extract::Extension, http::Request, routing::get, Router};
+    use axum::{
+        body::Body,
+        extract::Extension,
+        http::{header, Request},
+        routing::get,
+        Router,
+    };
     use layer2_core::Authorization;
     use tower::ServiceExt as _;
 
     use super::*;
-    use crate::auth::AuthMode;
+    use crate::auth::{persistence::MemoryAuthStore, AuthMode};
+
+    #[test]
+    fn only_explicit_routes_bypass_ambient_auth() {
+        for path in [
+            "/auth/signup-options",
+            "/api/v1/triggers/public/pub_example",
+            "/api/v1/triggers/public/pub_example/badge.svg",
+        ] {
+            assert!(bypasses_ambient_auth(path), "expected bypass for {path}");
+        }
+
+        for path in [
+            "auth/signup-options",
+            "/auth/signup-options/",
+            "/auth//signup-options",
+            "/auth/signup-options/extra",
+            "/api/v1/triggers/public",
+            "/api/v1/triggers/public/",
+            "/api/v1/triggers/public/pub_example/",
+            "/api/v1/triggers/public//badge.svg",
+            "/api//v1/triggers/public/pub_example",
+            "/api/v1/triggers/public/pub_example/extra",
+            "/api/v1/triggers/public/pub_example/badge.svg/extra",
+            "/api/v1/triggers/public/pub_example/launches",
+        ] {
+            assert!(!bypasses_ambient_auth(path), "unexpected bypass for {path}");
+        }
+    }
 
     #[tokio::test]
     async fn trusted_identity_is_attached_with_its_authority() {
@@ -86,5 +156,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn public_preview_routes_ignore_ambient_credentials() {
+        let app = public_trigger_app_with_unavailable_auth();
+
+        for path in [
+            "/api/v1/triggers/public/pub_example",
+            "/api/v1/triggers/public/pub_example/badge.svg",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(stale_credentials_request(path))
+                .await
+                .expect("router answers");
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn public_launch_route_still_resolves_authentication() {
+        let response = public_trigger_app_with_unavailable_auth()
+            .oneshot(stale_credentials_request(
+                "/api/v1/triggers/public/pub_example/launches",
+            ))
+            .await
+            .expect("router answers");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    fn public_trigger_app_with_unavailable_auth() -> Router {
+        let store = Arc::new(MemoryAuthStore::default());
+        store.set_unavailable(true);
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: "http://identity.invalid".into(),
+                client_id: "client".into(),
+                client_secret: "secret".into(),
+                public_url: "http://cma.invalid".into(),
+            },
+            None,
+            store,
+        );
+        Router::new()
+            .route(
+                "/api/v1/triggers/public/{public_id}",
+                get(public_trigger_handler),
+            )
+            .route(
+                "/api/v1/triggers/public/{public_id}/badge.svg",
+                get(public_trigger_handler),
+            )
+            .route(
+                "/api/v1/triggers/public/{public_id}/launches",
+                get(public_trigger_handler),
+            )
+            .layer(axum::middleware::from_fn_with_state(auth, attach_subject))
+    }
+
+    async fn public_trigger_handler() -> StatusCode {
+        StatusCode::OK
+    }
+
+    fn stale_credentials_request(path: &str) -> Request<Body> {
+        Request::get(path)
+            .header(header::COOKIE, "cma_session=stale")
+            .header(header::AUTHORIZATION, "Bearer stale")
+            .body(Body::empty())
+            .expect("request builds")
     }
 }
