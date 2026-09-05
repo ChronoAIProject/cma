@@ -173,6 +173,7 @@ fn agent() -> Agent {
         updated_at: NOW.into(),
         ready_at: None,
         stopped_at: None,
+        requested_stop_reason: None,
         stop_reason: None,
         deleted_at: None,
         origin: AgentOrigin::Manual,
@@ -373,6 +374,85 @@ fn revision_overflow_leaves_aggregates_unchanged() {
         .transition(AgentStatus::Ready, "later".into(), None)
         .is_err());
     assert_eq!(agent, original);
+}
+
+#[test]
+fn agent_control_model_schedules_stop_intent_before_terminal_publication() {
+    let mut agent = agent();
+    let fence = agent
+        .work
+        .claim("old-worker".into(), NOW, "2026-09-05T00:01:00Z".into())
+        .unwrap();
+    assert!(agent.work.owns("old-worker", fence));
+    agent
+        .request_stop(AgentStopReason::Owner, "2026-09-05T00:00:30Z".into())
+        .unwrap();
+    assert_eq!(agent.status, AgentStatus::Starting);
+    assert_eq!(agent.requested_stop_reason, Some(AgentStopReason::Owner));
+    assert_eq!(agent.stop_reason, None);
+    assert_eq!(agent.stopped_at, None);
+    assert_eq!(agent.work.step, AgentWorkStep::FenceInteraction);
+    assert!(agent.work.lease.is_none());
+
+    let scheduled = agent.clone();
+    assert!(agent
+        .transition(
+            AgentStatus::Stopped,
+            "2026-09-05T00:01:00Z".into(),
+            Some(AgentStopReason::Operator),
+        )
+        .is_err());
+    assert_eq!(agent, scheduled);
+    agent
+        .transition(
+            AgentStatus::Stopped,
+            "2026-09-05T00:01:00Z".into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    assert_eq!(agent.requested_stop_reason, None);
+    assert_eq!(agent.stop_reason, Some(AgentStopReason::Owner));
+    assert_eq!(agent.stopped_at.as_deref(), Some("2026-09-05T00:01:00Z"));
+}
+
+#[test]
+fn agent_control_model_schedules_delete_without_publishing_deleted() {
+    let mut stopped = agent();
+    stopped.status = AgentStatus::Stopped;
+    stopped.stopped_at = Some(NOW.into());
+    stopped.stop_reason = Some(AgentStopReason::Owner);
+    stopped.work.schedule(AgentWorkStep::None, NOW.into());
+    let original_revision = stopped.revision;
+    stopped
+        .request_delete("2026-09-05T00:01:00Z".into())
+        .unwrap();
+    assert_eq!(stopped.status, AgentStatus::Stopped);
+    assert_eq!(stopped.deleted_at, None);
+    assert_eq!(stopped.work.step, AgentWorkStep::EnsureProcessClosed);
+    assert_eq!(stopped.revision, original_revision + 1);
+
+    let mut live = agent();
+    let original = live.clone();
+    assert!(live.request_delete(NOW.into()).is_err());
+    assert_eq!(live, original);
+}
+
+#[test]
+fn agent_control_model_revision_overflow_is_atomic() {
+    let mut stopping = agent();
+    stopping.revision = u64::MAX;
+    let original = stopping.clone();
+    assert!(stopping
+        .request_stop(AgentStopReason::Owner, NOW.into())
+        .is_err());
+    assert_eq!(stopping, original);
+
+    let mut deleting = agent();
+    deleting.status = AgentStatus::Failed;
+    deleting.revision = u64::MAX;
+    let original = deleting.clone();
+    assert!(deleting.request_delete(NOW.into()).is_err());
+    assert_eq!(deleting, original);
 }
 
 #[test]

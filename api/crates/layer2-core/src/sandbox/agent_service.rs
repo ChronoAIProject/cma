@@ -11,11 +11,12 @@ use crate::{now_rfc3339, AgentId, Caller, Capability, SubjectId, WorkspaceId, Wo
 
 use super::service_trust::{validate_agent_profile, validate_agent_revision};
 use super::store::{
-    AgentAdmission, AgentAdmissionResult, AgentServiceStore, Page, PageRequest, SandboxStoreError,
+    AgentAdmission, AgentAdmissionResult, AgentControlStoreError, AgentControlTarget,
+    AgentDeleteRequest, AgentServiceStore, AgentStopRequest, Page, PageRequest, SandboxStoreError,
 };
 use super::{
-    Agent, AgentLogEntry, AgentOrigin, FirstMessageRecord, Sandbox, SandboxStatus, Workspace,
-    WorkspaceStatus,
+    Agent, AgentLogEntry, AgentOrigin, AgentStatus, AgentStopReason, AgentWorkStep,
+    FirstMessageRecord, Sandbox, SandboxStatus, Workspace, WorkspaceStatus,
 };
 
 const MAX_TITLE_SCALARS: usize = 64;
@@ -50,6 +51,14 @@ pub enum AgentServiceError {
     LimitReached { limit: u8, live: u8 },
     #[error("agent creation key is already bound to another request")]
     CreationConflict,
+    #[error("agent status does not permit this operation: {status:?}")]
+    StatusConflict { status: AgentStatus },
+    #[error("agent lifecycle work conflicts with this operation: {step:?}")]
+    WorkConflict { step: AgentWorkStep },
+    #[error("agent stop reason conflicts with the durable request")]
+    StopReasonConflict,
+    #[error("agent changed while the operation was requested")]
+    ControlConflict,
     #[error("invalid agent request: {0}")]
     InvalidRequest(String),
     #[error("agent data is not usable: {0}")]
@@ -69,6 +78,10 @@ impl AgentServiceError {
             Self::SandboxNotReady => "sandbox_not_ready",
             Self::LimitReached { .. } => "agent_limit_reached",
             Self::CreationConflict => "agent_creation_conflict",
+            Self::StatusConflict { .. } => "agent_status_conflict",
+            Self::WorkConflict { .. } => "agent_work_conflict",
+            Self::StopReasonConflict => "agent_stop_reason_conflict",
+            Self::ControlConflict => "agent_control_conflict",
             Self::InvalidRequest(_) => "invalid_agent_request",
             Self::Corrupt(_) => "stored_agent_corrupt",
             Self::Unavailable(_) => "agent_service_unavailable",
@@ -187,6 +200,38 @@ impl AgentService {
             .agent_log(id, after, limit)
             .await
             .map_err(store_error)
+    }
+
+    pub async fn stop(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        reason: AgentStopReason,
+    ) -> Result<Agent, AgentServiceError> {
+        require(caller)?;
+        let agent = self.owned_agent(caller, id).await?;
+        self.store
+            .schedule_agent_stop(AgentStopRequest {
+                target: AgentControlTarget::from(&agent),
+                reason,
+                requested_at: now_rfc3339(),
+            })
+            .await
+            .map(|result| result.into_agent())
+            .map_err(control_error)
+    }
+
+    pub async fn delete(&self, caller: &Caller, id: &AgentId) -> Result<Agent, AgentServiceError> {
+        require(caller)?;
+        let agent = self.owned_agent(caller, id).await?;
+        self.store
+            .schedule_agent_delete(AgentDeleteRequest {
+                target: AgentControlTarget::from(&agent),
+                requested_at: now_rfc3339(),
+            })
+            .await
+            .map(|result| result.into_agent())
+            .map_err(control_error)
     }
 
     async fn read_visible_revision(
@@ -334,5 +379,19 @@ fn store_error(error: SandboxStoreError) -> AgentServiceError {
         SandboxStoreError::Corrupt(detail) => AgentServiceError::Corrupt(detail),
         SandboxStoreError::InvalidTransaction(detail) => AgentServiceError::Corrupt(detail.into()),
         other => AgentServiceError::Unavailable(other.to_string()),
+    }
+}
+
+fn control_error(error: AgentControlStoreError) -> AgentServiceError {
+    match error {
+        AgentControlStoreError::NotFound => AgentServiceError::NotFound,
+        AgentControlStoreError::StatusConflict { status } => {
+            AgentServiceError::StatusConflict { status }
+        }
+        AgentControlStoreError::WorkConflict { step } => AgentServiceError::WorkConflict { step },
+        AgentControlStoreError::StopReasonConflict => AgentServiceError::StopReasonConflict,
+        AgentControlStoreError::Conflict => AgentServiceError::ControlConflict,
+        AgentControlStoreError::Corrupt(detail) => AgentServiceError::Corrupt(detail),
+        AgentControlStoreError::Unavailable(detail) => AgentServiceError::Unavailable(detail),
     }
 }

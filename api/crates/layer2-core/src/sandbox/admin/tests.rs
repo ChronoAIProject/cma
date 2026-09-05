@@ -201,6 +201,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
         updated_at: NOW.into(),
         ready_at: Some(NOW.into()),
         stopped_at: None,
+        requested_stop_reason: None,
         stop_reason: None,
         deleted_at: None,
         origin: super::super::AgentOrigin::Manual,

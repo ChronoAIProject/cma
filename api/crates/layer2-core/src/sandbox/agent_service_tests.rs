@@ -1,3 +1,4 @@
+mod control;
 mod fixtures;
 
 use crate::profiles::{content_digest, AgentProfileRef, AgentProfileRevision, ProfileVisibility};
@@ -302,6 +303,23 @@ fn service_error_codes_are_stable() {
             AgentServiceError::CreationConflict,
             "agent_creation_conflict",
         ),
+        (
+            AgentServiceError::StatusConflict {
+                status: AgentStatus::Stopped,
+            },
+            "agent_status_conflict",
+        ),
+        (
+            AgentServiceError::WorkConflict {
+                step: AgentWorkStep::PublishStopped,
+            },
+            "agent_work_conflict",
+        ),
+        (
+            AgentServiceError::StopReasonConflict,
+            "agent_stop_reason_conflict",
+        ),
+        (AgentServiceError::ControlConflict, "agent_control_conflict"),
         (
             AgentServiceError::InvalidRequest("bad".into()),
             "invalid_agent_request",

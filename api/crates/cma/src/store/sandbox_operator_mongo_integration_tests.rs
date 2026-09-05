@@ -174,6 +174,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         updated_at: NOW.into(),
         ready_at: None,
         stopped_at: None,
+        requested_stop_reason: None,
         stop_reason: None,
         deleted_at: (status == AgentStatus::Deleted).then(|| NOW.into()),
         origin: AgentOrigin::Manual,

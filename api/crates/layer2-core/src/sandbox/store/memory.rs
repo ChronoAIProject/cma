@@ -39,6 +39,9 @@ mod agent_admission_tests;
 mod agent_conversation;
 #[cfg(test)]
 mod agent_conversation_tests;
+mod agent_control;
+#[cfg(test)]
+mod agent_control_tests;
 mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
