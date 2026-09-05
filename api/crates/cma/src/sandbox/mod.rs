@@ -9,6 +9,11 @@ mod policy;
 mod scheduler;
 #[allow(
     dead_code,
+    reason = "composed when the production agent-title worker resolves sandbox proxy endpoints"
+)]
+mod titles;
+#[allow(
+    dead_code,
     reason = "composed when the production hosted-control transport supplies an adapter"
 )]
 mod worker;
