@@ -1,4 +1,4 @@
-use std::io::{Cursor, Write as _};
+use std::io::Cursor;
 use std::net::IpAddr;
 use std::path::Path;
 
@@ -133,7 +133,7 @@ fn proxied_url(base: &str, source: &str) -> Result<url::Url> {
 }
 
 fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
-    std::fs::create_dir(destination).map_err(extract_io("create skill directory"))?;
+    crate::fs_durability::create_dir(destination).map_err(extract_io("create skill directory"))?;
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| {
         RuntimeError::rejected("skill_archive_invalid", format!("open skill ZIP: {error}"))
     })?;
@@ -175,7 +175,8 @@ fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
         }
         let path = destination.join(relative);
         if entry.is_dir() {
-            std::fs::create_dir_all(&path).map_err(extract_io("create skill subdirectory"))?;
+            crate::fs_durability::create_dir_all(&path)
+                .map_err(extract_io("create skill subdirectory"))?;
             continue;
         }
         expanded = expanded
@@ -185,15 +186,18 @@ fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
             return Err(expanded_error());
         }
         let parent = path.parent().expect("a skill file has a parent");
-        std::fs::create_dir_all(parent).map_err(extract_io("create skill file parent"))?;
+        crate::fs_durability::create_dir_all(parent)
+            .map_err(extract_io("create skill file parent"))?;
         let mut output = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
             .map_err(extract_io("create skill file"))?;
         std::io::copy(&mut entry, &mut output).map_err(extract_io("extract skill file"))?;
-        output.flush().map_err(extract_io("flush skill file"))?;
-        set_mode(&path, entry.unix_mode().unwrap_or(0o644) & 0o777)?;
+        set_mode(&output, entry.unix_mode().unwrap_or(0o644) & 0o777)?;
+        output.sync_all().map_err(extract_io("sync skill file"))?;
+        drop(output);
+        crate::fs_durability::sync_parent(&path).map_err(extract_io("sync skill file parent"))?;
     }
     Ok(())
 }
@@ -210,14 +214,14 @@ fn require_sha256(value: &str) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> Result<()> {
+fn set_mode(file: &std::fs::File, mode: u32) -> Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
         .map_err(extract_io("set skill file mode"))
 }
 
 #[cfg(not(unix))]
-fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
+fn set_mode(_file: &std::fs::File, _mode: u32) -> Result<()> {
     Ok(())
 }
 

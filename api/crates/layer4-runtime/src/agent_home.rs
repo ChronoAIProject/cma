@@ -42,7 +42,7 @@ pub(crate) async fn materialize(
         unique_stamp()
     ));
     let mut cleanup = Cleanup::new(staging.clone());
-    std::fs::create_dir(&staging).map_err(home_io("create staged agent home"))?;
+    crate::fs_durability::create_dir(&staging).map_err(home_io("create staged agent home"))?;
 
     for file in &plan.files {
         write_file(&staging, file)?;
@@ -56,7 +56,7 @@ pub(crate) async fn materialize(
         write_symlink(&staging, &target, &config.home, link)?;
     }
     verify_materialized(&staging, &planned)?;
-    std::fs::rename(&staging, &target).map_err(home_io("publish agent home"))?;
+    crate::fs_durability::rename(&staging, &target).map_err(home_io("publish agent home"))?;
     cleanup.disarm();
     Ok(target)
 }
@@ -79,9 +79,9 @@ pub(crate) fn remove(config: &RuntimeConfig, agent_id: &str) -> Result<bool> {
         }
         Err(error) => return Err(home_io("inspect agent home")(error)),
     }
-    std::fs::remove_dir_all(&home).map_err(home_io("remove agent home"))?;
+    crate::fs_durability::remove_dir_all(&home).map_err(home_io("remove agent home"))?;
     if let Some(parent) = home.parent() {
-        let _ = std::fs::remove_dir(parent);
+        let _ = crate::fs_durability::remove_dir(parent);
     }
     Ok(true)
 }
@@ -197,12 +197,13 @@ fn write_file(root: &Path, file: &HomeFile) -> Result<()> {
     let mut output = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(path)
+        .open(&path)
         .map_err(home_io("create agent home file"))?;
     output
         .write_all(&file.bytes)
         .map_err(home_io("write agent home file"))?;
-    output.flush().map_err(home_io("flush agent home file"))
+    output.sync_all().map_err(home_io("sync agent home file"))?;
+    crate::fs_durability::sync_parent(&path).map_err(home_io("sync agent home file parent"))
 }
 
 fn write_symlink(root: &Path, final_root: &Path, sandbox: &Path, link: &HomeSymlink) -> Result<()> {
@@ -217,7 +218,8 @@ fn write_symlink(root: &Path, final_root: &Path, sandbox: &Path, link: &HomeSyml
         ));
     }
     ensure_parents(root, staged_path.parent().unwrap())?;
-    create_symlink(target, &staged_path).map_err(home_io("create agent home symlink"))
+    crate::fs_durability::symlink(target, &staged_path)
+        .map_err(home_io("create agent home symlink"))
 }
 
 fn ensure_parents(root: &Path, parent: &Path) -> Result<()> {
@@ -242,7 +244,8 @@ fn ensure_parents(root: &Path, parent: &Path) -> Result<()> {
                 ))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&current).map_err(home_io("create agent home directory"))?;
+                crate::fs_durability::create_dir(&current)
+                    .map_err(home_io("create agent home directory"))?;
             }
             Err(error) => return Err(home_io("inspect agent home directory")(error)),
         }
@@ -295,16 +298,6 @@ fn verify_materialized(root: &Path, planned: &BTreeMap<PathBuf, PlannedKind>) ->
         }
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn create_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, link)
-}
-
-#[cfg(not(unix))]
-fn create_symlink(_target: &Path, _link: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::other("agent home symlinks require Unix"))
 }
 
 fn unique_stamp() -> u128 {
