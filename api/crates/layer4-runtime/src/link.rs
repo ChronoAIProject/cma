@@ -166,12 +166,12 @@ async fn relay_conversation(mut socket: WebSocket, bridge: Arc<Bridge>, agent_id
             }
             incoming = source.next() => match incoming {
                 Some(Ok(Message::Binary(bytes))) => match lanes::unframe(&bytes) {
-                    Some((lanes::CONVERSATION, payload)) => {
-                        if !bridge.send(payload.to_vec()).await {
-                            tracing::warn!("conversation bridge stopped accepting input");
-                            output.abort();
-                            return;
-                        }
+                    Some((lanes::CONVERSATION, payload))
+                        if bridge.send(payload.to_vec()).await => {}
+                    Some((lanes::CONVERSATION, _)) => {
+                        tracing::warn!("conversation bridge stopped accepting input");
+                        output.abort();
+                        return;
                     }
                     Some((lane, _)) => {
                         tracing::warn!(lane, "frame arrived on an unsupported conversation lane");
