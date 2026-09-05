@@ -60,7 +60,9 @@ fn rotation_identity_refuses_partial_or_cross_sandbox_agent_sets() {
     let mut foreign = agent("agt_a", "conversation-a", 4);
     foreign.sandbox_id.0 = "sbx_other".into();
     assert!(SandboxRotationIdentity::capture(&sandbox, &[foreign]).is_err());
-    assert!(SandboxRotationIdentity::capture(&sandbox, &[]).is_err());
+    let empty = SandboxRotationIdentity::capture(&sandbox, &[]).unwrap();
+    assert!(empty.agents.is_empty());
+    assert!(empty.preserved_by(&sandbox, &[]));
 }
 
 #[test]

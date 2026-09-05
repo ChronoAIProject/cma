@@ -76,8 +76,10 @@ fn capture_is_bound_to_the_expected_conversation_and_actual_bytes() {
 }
 
 #[test]
-fn sealing_refuses_incomplete_or_ambiguous_conversation_sets() {
-    assert!(SandboxCheckpointRef::seal(&receipt(1), &[], "2026-09-05T00:10:00Z").is_err());
+fn sealing_accepts_an_exact_empty_set_and_refuses_ambiguous_conversations() {
+    let empty = SandboxCheckpointRef::seal(&receipt(1), &[], "2026-09-05T00:10:00Z").unwrap();
+    assert!(empty.conversations.is_empty());
+    empty.validate().unwrap();
 
     let duplicate_agent = vec![
         capture("agt_a", "conversation-a", b"one"),

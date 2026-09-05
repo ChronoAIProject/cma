@@ -4,13 +4,14 @@ use async_trait::async_trait;
 
 use crate::ids::{SandboxId, SubjectId};
 use crate::sandbox::{
-    Agent, AgentLogKind, RuntimeBinding, Sandbox, SandboxCheckpointPublication,
-    SandboxCheckpointRef, SandboxEventKind, SandboxLifecycleOperation, SandboxStatus,
-    SandboxWorkLease, SandboxWorkStep,
+    Agent, AgentLogKind, RuntimeBinding, Sandbox, SandboxCheckpointRef, SandboxEventKind,
+    SandboxLifecycleOperation, SandboxStatus, SandboxWorkLease, SandboxWorkStep,
 };
 use crate::seconds_from_rfc3339;
 
-use super::lifecycle_execution_validation::{checkpoint_operation_advanced, operation_advanced};
+use super::lifecycle_execution_validation::{
+    checkpoint_sandbox_advanced, lifecycle_sandbox_advanced,
+};
 use super::{
     Page, PageRequest, SandboxEventStore, SandboxStore, SandboxStoreError, SandboxTransactionStore,
     SandboxWorkerStore, MAX_AGENT_LOG_BATCH_SIZE,
@@ -161,23 +162,12 @@ pub fn validate_checkpoint_mutation(
         .map_err(|_| invalid("checkpoint reference is invalid"))?;
     validate_checkpoint_agents(current, agents, &mutation.checkpoint)?;
 
-    let mut expected_history = current.lifecycle.checkpoints.clone();
-    if !matches!(
-        expected_history
-            .publish(mutation.checkpoint.clone())
-            .map_err(|_| invalid("checkpoint history is invalid"))?,
-        SandboxCheckpointPublication::Published { .. }
-    ) || mutation.sandbox.lifecycle.checkpoints != expected_history
-    {
-        return Err(invalid("checkpoint history does not publish exactly once"));
-    }
-    if !checkpoint_sandbox_fields_match(current, &mutation.sandbox)
-        || !checkpoint_operation_advanced(
-            current.lifecycle.operation.as_ref(),
-            mutation.sandbox.lifecycle.operation.as_ref(),
-            mutation.checkpoint.epoch,
-        )
-    {
+    if !checkpoint_sandbox_advanced(
+        current,
+        &mutation.sandbox,
+        &mutation.checkpoint,
+        &mutation.appended_at,
+    ) {
         return Err(invalid(
             "checkpoint publication changed unrelated sandbox state",
         ));
@@ -193,16 +183,10 @@ pub fn validate_lifecycle_mutation(
 ) -> Result<(), SandboxStoreError> {
     validate_guard(current, &mutation.guard)?;
     validate_next_sandbox(current, &mutation.sandbox, &mutation.appended_at)?;
-    let operation_is_ordered = operation_advanced(
-        current.lifecycle.operation.as_ref(),
-        mutation.sandbox.lifecycle.operation.as_ref(),
-    ) || (current.lifecycle.operation.is_some()
-        && mutation.sandbox.status == SandboxStatus::Failed
-        && mutation.sandbox.lifecycle.operation.is_none());
     if mutation.agents.len() > MAX_SANDBOX_LIFECYCLE_AGENTS
         || mutation.events.is_empty()
         || mutation.events.len() > MAX_SANDBOX_LIFECYCLE_EVENTS
-        || !operation_is_ordered
+        || !lifecycle_sandbox_advanced(current, &mutation.sandbox, &mutation.appended_at)
     {
         return Err(invalid(
             "sandbox lifecycle mutation is not bounded or ordered",
@@ -339,7 +323,7 @@ fn validate_checkpoint_agents(
             )
         })
         .collect::<BTreeSet<_>>();
-    if live.is_empty() || live != captured {
+    if live != captured {
         return Err(SandboxStoreError::Conflict);
     }
     Ok(())
@@ -440,26 +424,6 @@ fn agent_non_lifecycle_fields_match(current: &Agent, next: &Agent) -> bool {
         && current.stop_reason == next.stop_reason
         && current.deleted_at == next.deleted_at
         && current.origin == next.origin
-}
-
-fn checkpoint_sandbox_fields_match(current: &Sandbox, next: &Sandbox) -> bool {
-    current.status == next.status
-        && current.failure == next.failure
-        && current.runtime == next.runtime
-        && current.credential == next.credential
-        && current.lifecycle.paused_notice == next.lifecycle.paused_notice
-        && current.lifecycle.rotation == next.lifecycle.rotation
-        && current.last_activity_at == next.last_activity_at
-        && current.retired_at == next.retired_at
-        && current.purge_after == next.purge_after
-        && match current.lifecycle.operation.as_ref() {
-            None => current.work == next.work,
-            Some(_) => {
-                next.work.step == SandboxWorkStep::RunLifecycleOperation
-                    && next.work.lease.is_none()
-                    && next.work.next_fence == current.work.next_fence
-            }
-        }
 }
 
 const fn invalid(detail: &'static str) -> SandboxStoreError {

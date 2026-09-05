@@ -26,6 +26,8 @@ mod first_message_service;
 mod hierarchy;
 mod inactivity;
 mod lifecycle;
+mod lifecycle_execution;
+mod lifecycle_execution_support;
 mod lifecycle_service;
 mod limits;
 mod provision;
@@ -167,6 +169,8 @@ mod checkpoint_tests;
 mod hierarchy_tests;
 #[cfg(test)]
 mod inactivity_tests;
+#[cfg(test)]
+mod lifecycle_execution_tests;
 #[cfg(test)]
 mod lifecycle_service_tests;
 #[cfg(test)]
