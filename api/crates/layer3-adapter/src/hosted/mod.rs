@@ -1,19 +1,35 @@
 //! Hosted sandbox implementation shared by agent providers.
 
+mod acp;
+mod acp_handshake;
+mod acp_inbound;
+mod acp_turn;
 mod adapter;
 mod backend;
+mod checkpoint_store;
+mod checkpoint_transport;
+mod control_correlation;
 mod deployment;
 mod memory;
 mod provider_backend;
+mod provider_endpoint;
+mod provider_http;
+mod provider_transport;
 mod reply;
+mod update_relay;
 
 pub use adapter::HostedAdapter;
-pub use backend::{HostedAgentRuntime, HostedBackend};
+pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
+pub use checkpoint_store::{
+    CheckpointArchiveDownload, CheckpointArchiveReceipt, CheckpointArchiveStore,
+    CheckpointArchiveStoreFactory, CheckpointArchiveUpload, MAX_CHECKPOINT_ARCHIVE_BYTES,
+};
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
+pub use provider_transport::ProviderHostedControlTransport;
 
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]

@@ -7,10 +7,24 @@ use crate::{
     ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
 
+/// Kernel-specific settings used while opening its ACP conversation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostedAgentOpenSettings {
+    pub permission_mode: Option<String>,
+    pub own_credential: bool,
+}
+
 /// Provider-specific rendering needed by the otherwise shared hosted adapter.
 pub trait HostedAgentRuntime: Send + Sync {
     fn home_plan(&self, request: &AgentHomeRequest) -> Result<AgentHomePlan>;
     fn launch(&self, request: &AgentOpenRequest) -> Result<AgentLaunch>;
+
+    fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
+        Ok(HostedAgentOpenSettings {
+            permission_mode: None,
+            own_credential: request.options.own_credential,
+        })
+    }
 }
 
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
@@ -47,6 +61,7 @@ pub trait HostedBackend: Send + Sync {
         handle: &RuntimeHandle,
         launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
+        settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)>;
 

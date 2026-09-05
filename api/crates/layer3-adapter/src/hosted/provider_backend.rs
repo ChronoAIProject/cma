@@ -7,7 +7,10 @@ use tokio::sync::mpsc;
 use super::deployment::{
     provider_metadata_identity, provider_request_identity, ProviderIdentity, SANDBOX_METADATA,
 };
-use super::HostedBackend;
+use super::{
+    CheckpointArchiveStoreFactory, HostedAgentOpenSettings, HostedBackend,
+    ProviderHostedControlTransport,
+};
 use crate::provider::{
     ProviderDeleteTarget, ProviderSandbox, ProviderSandboxRequest, SandboxClient,
 };
@@ -23,6 +26,10 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    async fn bind_runtime(&self, _handle: &RuntimeHandle, _sandbox_id: &str) -> crate::Result<()> {
+        Ok(())
+    }
+
     async fn exchange(
         &self,
         handle: &RuntimeHandle,
@@ -34,6 +41,7 @@ pub trait HostedControlTransport: Send + Sync {
         handle: &RuntimeHandle,
         launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
+        settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)>;
 
@@ -56,6 +64,14 @@ impl ProviderHostedBackend {
             ready_timeout: DEFAULT_READY_TIMEOUT,
             ready_poll: DEFAULT_READY_POLL,
         }
+    }
+
+    pub fn production(
+        client: SandboxClient,
+        archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
+    ) -> crate::Result<Self> {
+        let transport = ProviderHostedControlTransport::new(client.clone(), archive_factory)?;
+        Ok(Self::new(client, Arc::new(transport)))
     }
 
     #[must_use]
@@ -107,6 +123,7 @@ impl ProviderHostedBackend {
 #[async_trait::async_trait]
 impl HostedBackend for ProviderHostedBackend {
     async fn provision(&self, request: ProviderSandboxRequest) -> crate::Result<RuntimeHandle> {
+        let sandbox_id = provider_request_identity(&request)?.sandbox_id;
         let sandbox = match self.reconcile(&request).await? {
             Some(sandbox) => sandbox,
             None => match self.client.create(&request).await {
@@ -124,7 +141,9 @@ impl HostedBackend for ProviderHostedBackend {
                 },
             },
         };
-        self.await_running(&request, sandbox).await
+        let handle = self.await_running(&request, sandbox).await?;
+        self.transport.bind_runtime(&handle, &sandbox_id).await?;
+        Ok(handle)
     }
 
     async fn inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
@@ -137,11 +156,17 @@ impl HostedBackend for ProviderHostedBackend {
         request: &ProviderSandboxRequest,
     ) -> crate::Result<Option<RuntimeObservation>> {
         let expected = provider_request_identity(request)?;
-        select_adoption(
+        let observation = select_adoption(
             handle,
             &expected,
             provider_inventory(self.client.list().await?)?,
-        )
+        )?;
+        if observation.is_some() {
+            self.transport
+                .bind_runtime(handle, &expected.sandbox_id)
+                .await?;
+        }
+        Ok(observation)
     }
 
     async fn exchange(
@@ -157,10 +182,11 @@ impl HostedBackend for ProviderHostedBackend {
         handle: &RuntimeHandle,
         launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
+        settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         self.transport
-            .open_agent(handle, launch, resume_conversation, updates)
+            .open_agent(handle, launch, resume_conversation, settings, updates)
             .await
     }
 

@@ -8,6 +8,7 @@ publish = false
 agent-client-protocol-schema = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
+futures-util = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 reqwest = { workspace = true }
@@ -16,3 +17,6 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
+tracing = { workspace = true }
+url = { workspace = true }

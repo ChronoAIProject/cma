@@ -180,3 +180,27 @@ fn own_credentials_never_receive_the_managed_placeholder() {
     .expect("own-credential launch");
     assert!(!launch.env.contains_key("CHRONO_UPSTREAM_PLACEHOLDER_KEY"));
 }
+
+#[test]
+fn acp_open_settings_map_permissions_and_preserve_credential_ownership() {
+    let runtime = CodexRuntime {
+        config: CodexConfig::default(),
+    };
+    for (permission, expected_mode) in [
+        (PermissionLevel::Guarded, "read-only"),
+        (PermissionLevel::Autonomous, "agent"),
+    ] {
+        for own_credential in [false, true] {
+            let request = AgentOpenRequest::new(
+                "agent:agent-7:open:v1",
+                options(own_credential, permission, ReasoningEffort::High),
+                None,
+            );
+            let settings = runtime
+                .open_settings(&request)
+                .expect("Codex ACP settings render");
+            assert_eq!(settings.permission_mode.as_deref(), Some(expected_mode));
+            assert_eq!(settings.own_credential, own_credential);
+        }
+    }
+}

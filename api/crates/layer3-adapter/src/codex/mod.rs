@@ -13,7 +13,8 @@ pub use home::{
 };
 
 use crate::hosted::{
-    HostedAdapter, HostedAgentRuntime, HostedBackend, HostedDeployment, InMemoryHostedBackend,
+    HostedAdapter, HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend, HostedDeployment,
+    InMemoryHostedBackend,
 };
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest,
@@ -45,6 +46,17 @@ impl HostedAgentRuntime for CodexRuntime {
 
     fn launch(&self, request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
         render_launch(request)
+    }
+
+    fn open_settings(&self, request: &AgentOpenRequest) -> crate::Result<HostedAgentOpenSettings> {
+        let permission_mode = match request.options.permission {
+            crate::PermissionLevel::Guarded => "read-only",
+            crate::PermissionLevel::Autonomous => "agent",
+        };
+        Ok(HostedAgentOpenSettings {
+            permission_mode: Some(permission_mode.into()),
+            own_credential: request.options.own_credential,
+        })
     }
 }
 

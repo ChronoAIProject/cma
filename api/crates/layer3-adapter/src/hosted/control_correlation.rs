@@ -1,0 +1,185 @@
+use sha2::{Digest as _, Sha256};
+
+use crate::wire::{RequestFrame, ResponseFrame};
+use crate::{AdapterError, CommandReceipt, WriterState};
+
+pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crate::Result<()> {
+    let correlated = match (request, response) {
+        (RequestFrame::Install(request), ResponseFrame::Install(receipt)) => {
+            receipt.operation_id == request.operation_id
+                && receipt.request_sha256 == request.request_sha256
+                && valid_commands(&receipt.commands, request.commands.len())
+        }
+        (RequestFrame::BootstrapRestore(request), ResponseFrame::BootstrapRestore(receipt)) => {
+            receipt.operation_id == request.operation_id
+                && receipt.request_sha256 == request.request_sha256
+                && receipt.restore_request_sha256 == request.checkpoint.computed_sha256()
+                && receipt.installation_inherited
+        }
+        (RequestFrame::PrepareWorkspace(request), ResponseFrame::PrepareWorkspace(receipt)) => {
+            receipt.operation_id == request.operation_id
+                && receipt.request_sha256 == request.request_sha256
+                && receipt.workspace_id == request.workspace_id
+                && receipt.name == request.name
+                && !receipt.path.is_empty()
+                && valid_git_commit(&receipt.resolved_commit)
+        }
+        (RequestFrame::WorkspaceSetup(request), ResponseFrame::WorkspaceSetup(receipt)) => {
+            receipt.operation_id == request.operation_id
+                && receipt.request_sha256 == request.request_sha256
+                && receipt.workspace_id == request.workspace_id
+                && valid_commands(&receipt.commands, request.commands.len())
+        }
+        (RequestFrame::RemoveWorkspace(request), ResponseFrame::RemoveWorkspace(receipt)) => {
+            receipt.operation_id == request.operation_id
+                && receipt.request_sha256 == request.request_sha256
+                && receipt.workspace_id == request.workspace_id
+        }
+        (RequestFrame::AddWorktree(request), ResponseFrame::AddWorktree(receipt)) => {
+            receipt.authority_fence == request.authority_fence
+                && receipt.receipt.operation_id == request.request.operation_id
+                && receipt.receipt.request_sha256 == request.request.request_sha256
+                && receipt.receipt.workspace == request.request.workspace
+                && receipt.receipt.name == request.request.name
+                && !receipt.receipt.path.is_empty()
+                && !receipt.receipt.branch.is_empty()
+                && valid_git_commit(&receipt.receipt.base_commit)
+        }
+        (RequestFrame::RemoveWorktree(request), ResponseFrame::RemoveWorktree(receipt)) => {
+            receipt.authority_fence == request.authority_fence
+                && receipt.receipt.operation_id == request.request.operation_id
+                && receipt.receipt.request_sha256 == request.request.request_sha256
+                && receipt.receipt.workspace == request.request.workspace
+                && receipt.receipt.name == request.request.name
+        }
+        (
+            RequestFrame::MaterializeAgentHome(request),
+            ResponseFrame::MaterializeAgentHome(receipt),
+        ) => {
+            receipt.authority_fence == request.authority_fence
+                && receipt.receipt.operation_id == request.request.operation_id
+                && receipt.receipt.request_sha256 == request.request.request_sha256
+                && receipt.receipt.agent_id == request.request.agent_id
+                && !receipt.receipt.path.is_empty()
+        }
+        (RequestFrame::RemoveAgentHome(request), ResponseFrame::RemoveAgentHome(receipt)) => {
+            receipt.authority_fence == request.authority_fence
+                && receipt.receipt.operation_id == request.request.operation_id
+                && receipt.receipt.request_sha256 == request.request.request_sha256
+                && receipt.receipt.agent_id == request.request.agent_id
+        }
+        (RequestFrame::OpenAgent(request), ResponseFrame::OpenAgent(receipt)) => {
+            receipt.authority_fence == request.authority_fence
+                && receipt.receipt.operation_id == request.request.operation_id
+                && receipt.receipt.request_sha256 == request.request.request_sha256
+                && receipt.receipt.agent_id == request.request.agent_id
+                && receipt.receipt.cwd == request.request.cwd
+                && receipt.receipt.home == request.request.home
+                && receipt.receipt.conversation_id.is_none()
+        }
+        (RequestFrame::CloseAgent(request), ResponseFrame::CloseAgent(receipt)) => {
+            receipt.authority_fence == request.authority_fence
+                && receipt.receipt.operation_id == request.request.operation_id
+                && receipt.receipt.request_sha256 == request.request.request_sha256
+                && receipt.receipt.agent_id == request.request.agent_id
+        }
+        (RequestFrame::CaptureAgent(_), ResponseFrame::CaptureAgent(snapshot)) => {
+            !snapshot.conversation_id.is_empty()
+                && valid_sha256(&snapshot.archive_sha256)
+                && hex(&Sha256::digest(&snapshot.archive)) == snapshot.archive_sha256
+        }
+        (RequestFrame::Checkpoint(request), ResponseFrame::Checkpoint(receipt)) => {
+            receipt.epoch == request.epoch
+                && valid_checkpoint(&receipt.object_reference, &receipt.sha256)
+                && receipt.writers == WriterState::Resumed
+        }
+        (
+            RequestFrame::CheckpointForTeardown(request),
+            ResponseFrame::CheckpointForTeardown(receipt),
+        ) => {
+            receipt.checkpoint.epoch == request.checkpoint.epoch
+                && valid_checkpoint(
+                    &receipt.checkpoint.object_reference,
+                    &receipt.checkpoint.sha256,
+                )
+                && receipt.checkpoint.writers == WriterState::Held
+                && crate::writer_resume_tokens_match(
+                    &receipt.writer_resume_token,
+                    &request.writer_resume_token,
+                )
+        }
+        (
+            RequestFrame::ResumeCheckpointWriters(request),
+            ResponseFrame::ResumeCheckpointWriters(receipt),
+        ) => {
+            receipt.writers_resumed
+                && crate::writer_resume_tokens_match(
+                    &receipt.writer_resume_token,
+                    &request.writer_resume_token,
+                )
+        }
+        (RequestFrame::Restore(_), ResponseFrame::Restore(receipt)) => receipt.accepted,
+        (RequestFrame::Credential(request), ResponseFrame::Credential(receipt)) => {
+            receipt.operation_id == request.operation_id && receipt.installed
+        }
+        (RequestFrame::Resources, ResponseFrame::Resources(reading)) => reading
+            .stall_permille
+            .is_none_or(|permille| permille <= 1_000),
+        (_, ResponseFrame::Failure(failure)) => failure.operation == request.operation(),
+        _ => false,
+    };
+    if correlated {
+        Ok(())
+    } else {
+        Err(AdapterError::Rejected(format!(
+            "runtime returned an uncorrelated {:?} response",
+            request.operation()
+        )))
+    }
+}
+
+fn valid_commands(receipts: &[CommandReceipt], expected: usize) -> bool {
+    receipts.len() == expected
+        && receipts.iter().enumerate().all(|(index, receipt)| {
+            receipt.index == u32::try_from(index).unwrap_or(u32::MAX)
+                && receipt.exit_code == 0
+                && valid_sha256(&receipt.stdout_sha256)
+                && valid_sha256(&receipt.stderr_sha256)
+        })
+}
+
+fn valid_checkpoint(reference: &str, sha256: &str) -> bool {
+    valid_sha256(sha256)
+        && reference
+            .strip_prefix("home-")
+            .and_then(|value| value.strip_suffix(".cma"))
+            == Some(sha256)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_git_commit(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+#[cfg(test)]
+#[path = "control_correlation_tests.rs"]
+mod tests;

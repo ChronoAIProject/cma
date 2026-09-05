@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use super::HostedBackend;
+use super::{HostedAgentOpenSettings, HostedBackend};
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
@@ -30,6 +30,7 @@ impl HostedBackend for ReusedHandleBackend {
         _handle: &RuntimeHandle,
         _launch: FencedRequest<AgentLaunch>,
         _resume_conversation: Option<String>,
+        _settings: HostedAgentOpenSettings,
         _updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         Err(AdapterError::Unavailable("not used by this test".into()))

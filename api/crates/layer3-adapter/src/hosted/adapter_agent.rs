@@ -181,6 +181,12 @@ pub(super) async fn open_agent(
     )?;
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
+    let settings = adapter.runtime.open_settings(request)?;
+    if settings.own_credential != request.options.own_credential {
+        return Err(AdapterError::Rejected(
+            "agent runtime changed the requested credential ownership mode".into(),
+        ));
+    }
     if launch.operation_id != request.operation_id
         || launch.request_sha256 != request.request_sha256
         || launch.agent_id != request.options.slot
@@ -197,6 +203,7 @@ pub(super) async fn open_agent(
             handle,
             FencedRequest::new(authority_fence, launch),
             request.resume_conversation.clone(),
+            settings,
             updates,
         )
         .await?;
