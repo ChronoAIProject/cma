@@ -2,11 +2,13 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::SandboxStoreError;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::agent_worker::AgentWorker;
 use super::worker::SandboxWorker;
+use super::workspace_worker::WorkspaceWorker;
 
 const DEFAULT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -35,6 +37,13 @@ impl SandboxSweep for AgentWorker {
     }
 }
 
+#[async_trait::async_trait]
+impl SandboxSweep for WorkspaceWorker {
+    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        WorkspaceWorker::run_due(self, now).await
+    }
+}
+
 impl SandboxScheduler {
     pub(crate) fn new(worker: Arc<SandboxWorker>) -> Self {
         Self {
@@ -44,6 +53,13 @@ impl SandboxScheduler {
     }
 
     pub(crate) fn for_agents(worker: Arc<AgentWorker>) -> Self {
+        Self {
+            worker,
+            sweep_interval: DEFAULT_SWEEP_INTERVAL,
+        }
+    }
+
+    pub(crate) fn for_workspaces(worker: Arc<WorkspaceWorker>) -> Self {
         Self {
             worker,
             sweep_interval: DEFAULT_SWEEP_INTERVAL,
@@ -62,19 +78,30 @@ impl SandboxScheduler {
         }
     }
 
-    pub(crate) fn spawn(self) -> JoinHandle<()> {
+    pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(self.sweep_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
-                ticker.tick().await;
-                match self.worker.run_due(SystemTime::now()).await {
-                    Ok(completed) if completed > 0 => {
-                        tracing::debug!(completed, "sandbox lifecycle work completed");
+                if *shutdown.borrow() {
+                    break;
+                }
+                tokio::select! {
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            break;
+                        }
                     }
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::error!(error = %error, "sandbox lifecycle sweep failed");
+                    _ = ticker.tick() => {
+                        match self.worker.run_due(SystemTime::now()).await {
+                            Ok(completed) if completed > 0 => {
+                                tracing::debug!(completed, "sandbox lifecycle work completed");
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                tracing::error!(error = %error, "sandbox lifecycle sweep failed");
+                            }
+                        }
                     }
                 }
             }
@@ -115,8 +142,9 @@ mod tests {
     async fn scheduler_keeps_offering_periodic_work_after_a_failed_sweep() {
         let probe = Arc::new(SweepProbe::default());
         let first = probe.called.notified();
-        let scheduler =
-            SandboxScheduler::with_interval(Arc::clone(&probe), Duration::from_secs(1)).spawn();
+        let (_shutdown, receiver) = watch::channel(false);
+        let scheduler = SandboxScheduler::with_interval(Arc::clone(&probe), Duration::from_secs(1))
+            .spawn(receiver);
         first.await;
         assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
 
@@ -126,5 +154,18 @@ mod tests {
         assert!(probe.calls.load(Ordering::SeqCst) >= 2);
         assert!(!scheduler.is_finished());
         scheduler.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scheduler_exits_after_shutdown_between_sweeps() {
+        let probe = Arc::new(SweepProbe::default());
+        let first = probe.called.notified();
+        let (shutdown, receiver) = watch::channel(false);
+        let scheduler = SandboxScheduler::with_interval(Arc::clone(&probe), Duration::from_secs(1))
+            .spawn(receiver);
+        first.await;
+
+        shutdown.send(true).unwrap();
+        scheduler.await.unwrap();
     }
 }
