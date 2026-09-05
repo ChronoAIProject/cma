@@ -5,7 +5,9 @@ mod agent_admission;
 mod agent_admission_records;
 mod agent_log;
 mod agent_profiles;
+mod agent_worker_reconcile;
 mod agent_worker_store;
+mod agent_worker_transaction;
 mod agents;
 pub mod auth;
 #[allow(dead_code)] // Layer 2 has not exposed the checkpoint port yet.
