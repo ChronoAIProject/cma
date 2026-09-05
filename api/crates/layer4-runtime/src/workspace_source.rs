@@ -52,6 +52,8 @@ pub(crate) async fn prepare(
         resolve_commit(&path, &git, "HEAD").await
     }
     .await?;
+    crate::fs_durability::sync_tree(&path)
+        .map_err(|error| io_error("sync prepared workspace", error))?;
     Ok(WorkspaceReceipt {
         operation_id: request.operation_id.clone(),
         request_sha256: request.request_sha256.clone(),
@@ -83,6 +85,8 @@ pub(crate) async fn inspect_prepared(
     }
     require_workspace_identity(&path, &request.workspace_id)?;
     let resolved_commit = resolve_commit(&path, &GitRunner::new(allow_local_git), "HEAD").await?;
+    crate::fs_durability::sync_tree(&path)
+        .map_err(|error| io_error("sync recovered workspace", error))?;
     Ok(Some(WorkspaceReceipt {
         operation_id: request.operation_id.clone(),
         request_sha256: request.request_sha256.clone(),

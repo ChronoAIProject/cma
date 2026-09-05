@@ -57,7 +57,7 @@ impl Supervisor {
         config: RuntimeConfig,
         writer_boundary: SupervisorBoundary,
     ) -> Result<Arc<Self>> {
-        std::fs::create_dir_all(&config.home).map_err(|error| {
+        crate::fs_durability::create_dir_all(&config.home).map_err(|error| {
             RuntimeError::unavailable("home_unavailable", format!("create sandbox home: {error}"))
         })?;
         if !path_is_directory(&config.home) {

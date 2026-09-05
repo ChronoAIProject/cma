@@ -49,6 +49,10 @@ pub(crate) async fn add(
         cleanup_failed_add(&git, &repository, &path, &branch).await;
         return Err(error);
     }
+    crate::fs_durability::sync_tree(&repository.join(".git")).map_err(worktree_io(
+        "sync repository metadata after adding worktree",
+    ))?;
+    crate::fs_durability::sync_tree(&path).map_err(worktree_io("sync added worktree"))?;
     Ok(WorktreeReceipt {
         workspace: request.workspace.clone(),
         name: request.name.clone(),
@@ -83,7 +87,7 @@ async fn cleanup_failed_add(git: &GitRunner, repository: &Path, path: &Path, bra
             "clean failed worktree",
         )
         .await;
-    let _ = std::fs::remove_dir_all(path);
+    let _ = crate::fs_durability::remove_dir_all(path);
     let _ = git
         .checked(
             repository,
@@ -135,6 +139,11 @@ pub(crate) async fn remove(
         "delete worktree branch",
     )
     .await?;
+    crate::fs_durability::sync_directory(&repository.join(".worktrees"))
+        .map_err(worktree_io("sync worktree removal"))?;
+    crate::fs_durability::sync_tree(&repository.join(".git")).map_err(worktree_io(
+        "sync repository metadata after removing worktree",
+    ))?;
     Ok(())
 }
 
@@ -176,18 +185,23 @@ fn ensure_worktree_parent(parent: &Path) -> Result<()> {
             "worktree_parent_invalid",
             "workspace .worktrees path is not a directory",
         )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(parent)
-            .map_err(|error| {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            crate::fs_durability::create_dir(parent).map_err(|error| {
                 RuntimeError::unavailable(
                     "worktree_io_failed",
                     format!("create .worktrees directory: {error}"),
                 )
-            }),
+            })
+        }
         Err(error) => Err(RuntimeError::unavailable(
             "worktree_io_failed",
             format!("inspect .worktrees directory: {error}"),
         )),
     }
+}
+
+fn worktree_io(operation: &'static str) -> impl FnOnce(std::io::Error) -> RuntimeError + Copy {
+    move |error| RuntimeError::unavailable("worktree_io_failed", format!("{operation}: {error}"))
 }
 
 #[cfg(test)]
