@@ -39,6 +39,9 @@ impl InstanceProblem {
             AgentServiceError::WorkspaceNotReady | AgentServiceError::SandboxNotReady => {
                 Self::WorkspaceNotReady
             }
+            AgentServiceError::CapabilityUnsupported { capability } => {
+                Self::CapabilityUnsupported { capability }
+            }
             AgentServiceError::LimitReached { limit, live } => {
                 Self::AgentLimitReached { limit, live }
             }
@@ -85,6 +88,9 @@ impl From<AgentReadError> for InstanceProblem {
             AgentReadError::Forbidden => Self::Forbidden,
             AgentReadError::NotFound => Self::AgentNotFound,
             AgentReadError::InvalidPage => Self::InvalidQuery,
+            AgentReadError::CapabilityUnsupported { capability } => {
+                Self::CapabilityUnsupported { capability }
+            }
             AgentReadError::ResourcesUnsupported(_) => Self::ResourcesUnsupported,
             AgentReadError::Corrupt(_) | AgentReadError::Unavailable(_) => Self::Unavailable,
         }

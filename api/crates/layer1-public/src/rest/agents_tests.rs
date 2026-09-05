@@ -30,8 +30,8 @@ use layer2_core::sandbox::{
 };
 use layer2_core::{
     AgentId, AgentProfileId, Authorization, Capability, OperationClaim, OperationReservation,
-    OperationStore, SandboxId, SandboxProfileId, ServiceId, StoreError, SubjectId, WorkspaceId,
-    WorkspaceProfileId, WorktreeId,
+    OperationStore, RuntimeCapabilities, RuntimeCapability, SandboxId, SandboxProfileId, ServiceId,
+    StoreError, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId,
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -44,6 +44,17 @@ use crate::AuthenticatedSubject;
 const OWNER: &str = "owner-a";
 const OTHER: &str = "owner-b";
 const NOW: &str = "2026-09-05T00:00:00Z";
+
+fn agent_capabilities() -> RuntimeCapabilities {
+    RuntimeCapabilities::new([
+        RuntimeCapability::Conversation,
+        RuntimeCapability::Snapshot,
+        RuntimeCapability::Steer,
+        RuntimeCapability::Interrupt,
+        RuntimeCapability::Usage,
+        RuntimeCapability::Resources,
+    ])
+}
 
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
@@ -210,7 +221,12 @@ async fn fixture() -> Fixture {
     store.create_workspace(workspace.clone()).await.unwrap();
     publish_profile(&profiles).await;
 
-    let agents = AgentService::new(store.clone(), profiles, registry.clone());
+    let agents = AgentService::new(
+        store.clone(),
+        profiles,
+        registry.clone(),
+        agent_capabilities(),
+    );
     let reads = AgentReadService::new(store.clone(), Arc::new(TestResources));
     let agent_operations = AgentOperationService::new(store.clone(), registry.clone());
     let operation_records: Arc<dyn OperationStore> = Arc::new(MemoryOperationStore::default());
@@ -363,6 +379,7 @@ fn seeded_agent(id: &str, status: AgentStatus, last_seq: u64, active_turn: Optio
             digest: "e".repeat(64),
             content: agent_profile_content(),
         },
+        capabilities: agent_capabilities(),
         status,
         conversation: ConversationState {
             conversation_id: Some(format!("conversation-{id}")),
@@ -556,7 +573,19 @@ async fn create_replays_exactly_and_exposes_only_public_state() {
     assert_eq!(value["sandbox"]["id"], fixture.sandbox_id.as_str());
     assert_eq!(value["reach"], json!(["api-github"]));
     assert_eq!(value["first_message"]["state"], "queued");
-    assert!(value["conforms_to"].as_array().unwrap().len() >= 6);
+    assert_eq!(
+        value["conforms_to"],
+        json!([
+            "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/conversation",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/steering",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/usage",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/resources"
+        ])
+    );
     for absent in [
         "paused_notice",
         "failure",
@@ -598,6 +627,49 @@ async fn create_replays_exactly_and_exposes_only_public_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(page["items"].as_array().unwrap().len(), 1);
     assert!(page.get("next").is_none());
+}
+
+#[tokio::test]
+async fn detail_and_read_refusals_use_the_frozen_capability_grants() {
+    let fixture = fixture().await;
+    let mut agent = seeded_agent("agt_grants", AgentStatus::Ready, 2, None);
+    agent.capabilities =
+        RuntimeCapabilities::new([RuntimeCapability::Conversation, RuntimeCapability::Snapshot]);
+    insert_agent(&fixture.store, agent.clone(), vec![]).await;
+    let base = format!("/api/v1/agents/{}", agent.id);
+
+    let (status, detail) = json_response(
+        &fixture.router,
+        request(Method::GET, &base, OWNER, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        detail["conforms_to"],
+        json!([
+            "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/conversation"
+        ])
+    );
+
+    for (operation, capability) in [("usage", "usage"), ("resources", "resources")] {
+        let (status, problem) = json_response(
+            &fixture.router,
+            request(
+                Method::GET,
+                &format!("{base}/{operation}"),
+                OWNER,
+                None,
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(problem["code"], "agent_capability_unsupported");
+        assert_eq!(problem["capability"], capability);
+    }
 }
 
 #[tokio::test]

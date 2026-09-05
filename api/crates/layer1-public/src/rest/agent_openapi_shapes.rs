@@ -5,6 +5,7 @@ use layer2_core::sandbox::{
     Agent, AgentLineage, AgentStatus, FirstMessageDelivery, SandboxStatus, WorkspaceStatus,
     WorktreeStatus,
 };
+use layer2_core::{RuntimeCapabilities, RuntimeCapability};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -296,7 +297,7 @@ impl AgentView {
                     digest: sandbox.profile.digest,
                 },
             },
-            conforms_to: agent_conformance(),
+            conforms_to: agent_conformance(&agent.capabilities),
             reach: sandbox
                 .credential
                 .reaches
@@ -320,29 +321,39 @@ impl AgentView {
     }
 }
 
-fn agent_conformance() -> Vec<&'static str> {
-    const BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/conf";
-    [
-        "core",
-        "conversation",
-        "approvals",
-        "steering",
-        "interrupt",
-        "usage",
-        "resources",
-    ]
-    .into_iter()
-    .map(|class| match class {
-        "core" => concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/core"),
-        "conversation" => concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/conversation"),
-        "approvals" => concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/approvals"),
-        "steering" => concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/steering"),
-        "interrupt" => concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/interrupt"),
-        "usage" => concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/usage"),
-        "resources" => concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/resources"),
-        _ => BASE,
-    })
-    .collect()
+fn agent_conformance(capabilities: &RuntimeCapabilities) -> Vec<&'static str> {
+    let mut classes = vec![
+        concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/core"),
+        concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/approvals"),
+        concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/events-replay"),
+    ];
+    for (capability, class) in [
+        (
+            RuntimeCapability::Conversation,
+            concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/conversation"),
+        ),
+        (
+            RuntimeCapability::Steer,
+            concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/steering"),
+        ),
+        (
+            RuntimeCapability::Interrupt,
+            concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/interrupt"),
+        ),
+        (
+            RuntimeCapability::Usage,
+            concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/usage"),
+        ),
+        (
+            RuntimeCapability::Resources,
+            concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/resources"),
+        ),
+    ] {
+        if capabilities.supports(capability) {
+            classes.push(class);
+        }
+    }
+    classes
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -381,6 +381,9 @@ fn stored_agent(parent: &Workspace, tree: &Worktree, id: &str) -> Agent {
                 system_prompt: String::new(),
             },
         },
+        capabilities: layer2_core::RuntimeCapabilities::new([
+            layer2_core::RuntimeCapability::Conversation,
+        ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
             conversation_id: None,
