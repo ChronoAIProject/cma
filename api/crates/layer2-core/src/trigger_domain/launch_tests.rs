@@ -350,7 +350,7 @@ fn work_leases_fence_stale_effect_publication() {
         "worker-a",
         first,
         LaunchEffectKind::CreateSandbox,
-        "launch:lch_one:sandbox".into(),
+        LaunchEffectKind::CreateSandbox.intent_key(&LaunchId("lch_one".into())),
         NOW.into(),
     )
     .unwrap();
@@ -360,10 +360,132 @@ fn work_leases_fence_stale_effect_publication() {
     let second = work.claim("worker-b".into(), LATER, LATEST.into()).unwrap();
     assert!(second > first);
     assert_eq!(
+        work.effect.as_ref().unwrap().state,
+        LaunchEffectState::RecoveryRequired
+    );
+    assert_eq!(
         work.mark_effect_applied("worker-a", first, "sbx_one".into(), LATEST.into())
             .unwrap_err()
             .code,
         "stale_launch_fence"
+    );
+}
+
+#[test]
+fn safe_effect_evidence_rebinds_after_a_worker_crash() {
+    let id = LaunchId("lch_rebind".into());
+    let mut prepared = LaunchWorkState::new(LaunchWorkStep::ResolveSandbox, NOW.into());
+    let first = prepared
+        .claim("worker-a".into(), NOW, LATER.into())
+        .unwrap();
+    prepared
+        .prepare_effect(
+            "worker-a",
+            first,
+            LaunchEffectKind::CreateSandbox,
+            LaunchEffectKind::CreateSandbox.intent_key(&id),
+            NOW.into(),
+        )
+        .unwrap();
+    let second = prepared
+        .claim("worker-b".into(), LATER, LATEST.into())
+        .unwrap();
+    assert_eq!(prepared.effect.as_ref().unwrap().fence, second);
+    prepared
+        .mark_effect_executing("worker-b", second, LATER.into())
+        .unwrap();
+
+    let mut applied = LaunchWorkState::new(LaunchWorkStep::ResolveWorkspace, NOW.into());
+    let first = applied.claim("worker-a".into(), NOW, LATER.into()).unwrap();
+    applied
+        .prepare_effect(
+            "worker-a",
+            first,
+            LaunchEffectKind::CreateWorkspace,
+            LaunchEffectKind::CreateWorkspace.intent_key(&id),
+            NOW.into(),
+        )
+        .unwrap();
+    applied
+        .mark_effect_executing("worker-a", first, NOW.into())
+        .unwrap();
+    applied
+        .mark_effect_applied("worker-a", first, "wks_one".into(), NOW.into())
+        .unwrap();
+    let second = applied
+        .claim("worker-b".into(), LATER, LATEST.into())
+        .unwrap();
+    let effect = applied.effect.as_ref().unwrap();
+    assert_eq!(effect.fence, second);
+    assert_eq!(effect.state, LaunchEffectState::Applied);
+    assert_eq!(effect.result_id.as_deref(), Some("wks_one"));
+}
+
+#[test]
+fn cancellation_preserves_ambiguous_effect_evidence() {
+    let review = ReviewRequirements::build(&requirements(&[]), None, false, false).unwrap();
+    let mut launch = Launch::new(seed(review)).unwrap();
+    launch
+        .start(confirmation(LaunchConsentSurface::Landing))
+        .unwrap();
+    let fence = launch
+        .work
+        .claim("worker-a".into(), LATER, LATEST.into())
+        .unwrap();
+    launch
+        .work
+        .prepare_effect(
+            "worker-a",
+            fence,
+            LaunchEffectKind::CreateSandbox,
+            LaunchEffectKind::CreateSandbox.intent_key(&launch.id),
+            LATER.into(),
+        )
+        .unwrap();
+    launch
+        .work
+        .mark_effect_executing("worker-a", fence, LATER.into())
+        .unwrap();
+
+    launch.cancel(LATEST.into()).unwrap();
+
+    assert_eq!(launch.work.step, LaunchWorkStep::None);
+    assert!(launch.work.lease.is_none());
+    assert_eq!(
+        launch.work.effect.as_ref().unwrap().state,
+        LaunchEffectState::RecoveryRequired
+    );
+    launch.validate().unwrap();
+}
+
+#[test]
+fn effect_kind_and_intent_are_bound_to_the_work_step() {
+    let id = LaunchId("lch_effect_identity".into());
+    let mut work = LaunchWorkState::new(LaunchWorkStep::ResolveAgent, NOW.into());
+    let fence = work.claim("worker".into(), NOW, LATER.into()).unwrap();
+    assert_eq!(
+        work.prepare_effect(
+            "worker",
+            fence,
+            LaunchEffectKind::CreateWorkspace,
+            LaunchEffectKind::CreateWorkspace.intent_key(&id),
+            NOW.into(),
+        )
+        .unwrap_err()
+        .code,
+        "invalid_launch_effect"
+    );
+    work.prepare_effect(
+        "worker",
+        fence,
+        LaunchEffectKind::CreateAgent,
+        "launch:lch_other:create-agent:v1".into(),
+        NOW.into(),
+    )
+    .unwrap();
+    assert_eq!(
+        work.validate(&id, false).unwrap_err().code,
+        "invalid_launch_work"
     );
 }
 

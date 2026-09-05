@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ids::LaunchId;
+use crate::seconds_from_rfc3339;
+
 use super::TriggerError;
+
+const MAX_WORKER_HOLDER_BYTES: usize = 128;
+const MAX_EFFECT_VALUE_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,6 +27,21 @@ impl LaunchWorkStep {
     pub const fn is_pending(self) -> bool {
         !matches!(self, Self::None)
     }
+
+    const fn accepts(self, kind: LaunchEffectKind) -> bool {
+        matches!(
+            (self, kind),
+            (
+                Self::ResolveSandbox,
+                LaunchEffectKind::CreateSandbox | LaunchEffectKind::ReviveSandbox
+            ) | (Self::ResolveWorkspace, LaunchEffectKind::CreateWorkspace)
+                | (Self::ResolveAgent, LaunchEffectKind::CreateAgent)
+                | (
+                    Self::DeliverFirstMessage,
+                    LaunchEffectKind::DeliverFirstMessage
+                )
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +60,19 @@ pub enum LaunchEffectKind {
     CreateWorkspace,
     CreateAgent,
     DeliverFirstMessage,
+}
+
+impl LaunchEffectKind {
+    pub fn intent_key(self, launch_id: &LaunchId) -> String {
+        let operation = match self {
+            Self::CreateSandbox => "create-sandbox",
+            Self::ReviveSandbox => "revive-sandbox",
+            Self::CreateWorkspace => "create-workspace",
+            Self::CreateAgent => "create-agent",
+            Self::DeliverFirstMessage => "deliver-first-message",
+        };
+        format!("launch:{launch_id}:{operation}:v1")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,7 +137,12 @@ impl LaunchWorkState {
         now: &str,
         expires_at: String,
     ) -> Result<u64, TriggerError> {
-        if holder.trim().is_empty() || expires_at.as_str() <= now || !self.is_due(now) {
+        if !valid_text(&holder, MAX_WORKER_HOLDER_BYTES)
+            || seconds_from_rfc3339(now).is_none()
+            || seconds_from_rfc3339(&expires_at).is_none()
+            || expires_at.as_str() <= now
+            || !self.is_due(now)
+        {
             return Err(TriggerError::new("launch_lease_unavailable", "work.lease"));
         }
         let fence = self.next_fence;
@@ -115,6 +154,19 @@ impl LaunchWorkState {
             fence,
             expires_at,
         });
+        if let Some(effect) = &mut self.effect {
+            match effect.state {
+                LaunchEffectState::Prepared | LaunchEffectState::Applied => {
+                    effect.fence = fence;
+                    effect.updated_at = now.to_string();
+                }
+                LaunchEffectState::Executing => {
+                    effect.state = LaunchEffectState::RecoveryRequired;
+                    effect.updated_at = now.to_string();
+                }
+                LaunchEffectState::RecoveryRequired => {}
+            }
+        }
         Ok(fence)
     }
 
@@ -147,6 +199,13 @@ impl LaunchWorkState {
         ready_at: String,
     ) -> Result<(), TriggerError> {
         self.require_owner(holder, fence)?;
+        if self
+            .effect
+            .as_ref()
+            .is_some_and(|effect| !matches!(effect.state, LaunchEffectState::Prepared))
+        {
+            return Err(TriggerError::new("invalid_launch_retry", "work.effect"));
+        }
         self.attempts = self
             .attempts
             .checked_add(1)
@@ -165,7 +224,10 @@ impl LaunchWorkState {
         at: String,
     ) -> Result<(), TriggerError> {
         self.require_owner(holder, fence)?;
-        if intent_key.trim().is_empty() || self.effect.is_some() {
+        if !self.step.accepts(kind)
+            || !valid_text(&intent_key, MAX_EFFECT_VALUE_BYTES)
+            || self.effect.is_some()
+        {
             return Err(TriggerError::new("invalid_launch_effect", "work.effect"));
         }
         self.effect = Some(LaunchEffectRecord {
@@ -194,6 +256,93 @@ impl LaunchWorkState {
             .ok_or_else(|| TriggerError::new("invalid_launch_effect", "work.effect.state"))?;
         effect.state = LaunchEffectState::Executing;
         effect.updated_at = at;
+        Ok(())
+    }
+
+    pub fn mark_effect_recovery_required(
+        &mut self,
+        holder: &str,
+        fence: u64,
+        at: String,
+    ) -> Result<(), TriggerError> {
+        self.require_owner(holder, fence)?;
+        let effect = self
+            .effect
+            .as_mut()
+            .filter(|effect| effect.fence == fence && effect.state == LaunchEffectState::Executing)
+            .ok_or_else(|| TriggerError::new("invalid_launch_effect", "work.effect.state"))?;
+        effect.state = LaunchEffectState::RecoveryRequired;
+        effect.updated_at = at;
+        Ok(())
+    }
+
+    pub fn stop_preserving_effect(&mut self, at: String) {
+        self.step = LaunchWorkStep::None;
+        self.ready_at = at.clone();
+        self.lease = None;
+        if let Some(effect) = &mut self.effect {
+            if effect.state == LaunchEffectState::Executing {
+                effect.state = LaunchEffectState::RecoveryRequired;
+                effect.updated_at = at;
+            }
+        }
+    }
+
+    pub fn release_lease(&mut self) {
+        self.lease = None;
+    }
+
+    pub fn validate(
+        &self,
+        launch_id: &LaunchId,
+        preserve_stopped_effect: bool,
+    ) -> Result<(), TriggerError> {
+        if self.next_fence == 0 || seconds_from_rfc3339(&self.ready_at).is_none() {
+            return Err(invalid_work());
+        }
+        if let Some(lease) = &self.lease {
+            if !valid_text(&lease.holder, MAX_WORKER_HOLDER_BYTES)
+                || lease.fence == 0
+                || lease.fence >= self.next_fence
+                || seconds_from_rfc3339(&lease.expires_at).is_none()
+            {
+                return Err(invalid_work());
+            }
+        }
+        let Some(effect) = &self.effect else {
+            return Ok(());
+        };
+        let result_matches_state = match effect.state {
+            LaunchEffectState::Prepared
+            | LaunchEffectState::Executing
+            | LaunchEffectState::RecoveryRequired => effect.result_id.is_none(),
+            LaunchEffectState::Applied => effect
+                .result_id
+                .as_deref()
+                .is_some_and(|value| valid_text(value, MAX_EFFECT_VALUE_BYTES)),
+        };
+        if effect.attempt == 0
+            || effect.fence == 0
+            || effect.fence >= self.next_fence
+            || !valid_text(&effect.intent_key, MAX_EFFECT_VALUE_BYTES)
+            || effect.intent_key != effect.kind.intent_key(launch_id)
+            || seconds_from_rfc3339(&effect.updated_at).is_none()
+            || !result_matches_state
+            || !(self.step.accepts(effect.kind)
+                || preserve_stopped_effect && self.step == LaunchWorkStep::None)
+            || matches!(
+                effect.state,
+                LaunchEffectState::Prepared
+                    | LaunchEffectState::Executing
+                    | LaunchEffectState::Applied
+            ) && self
+                .lease
+                .as_ref()
+                .is_some_and(|lease| lease.fence != effect.fence)
+            || effect.state == LaunchEffectState::Executing && self.lease.is_none()
+        {
+            return Err(invalid_work());
+        }
         Ok(())
     }
 
@@ -227,4 +376,12 @@ impl LaunchWorkState {
             .then_some(())
             .ok_or_else(|| TriggerError::new("stale_launch_fence", "work.lease"))
     }
+}
+
+fn valid_text(value: &str, maximum: usize) -> bool {
+    !value.trim().is_empty() && value.len() <= maximum && !value.chars().any(char::is_control)
+}
+
+fn invalid_work() -> TriggerError {
+    TriggerError::new("invalid_launch_work", "work")
 }
