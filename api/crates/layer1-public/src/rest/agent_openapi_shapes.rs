@@ -398,26 +398,15 @@ pub(crate) struct AgentResourcesView {
     pub(crate) agent_id: String,
     pub(crate) sandbox_id: String,
     pub(crate) uptime_ms: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cpu_usage_usec: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cpu_millis_limit: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) memory_bytes_used: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) memory_bytes_limit: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) memory_bytes_peak: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stall_permille: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) ceiling_hits: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) allocation_failures: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) kills: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) received_bytes: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sent_bytes: Option<u64>,
 }

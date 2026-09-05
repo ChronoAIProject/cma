@@ -36,6 +36,7 @@ use layer2_core::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
+use super::agent_openapi_shapes::{AgentResourcesView, AgentUsageView};
 use super::agents::{agent_router, AgentRoutesState};
 use super::instance_problem::InstanceProblem;
 use crate::AuthenticatedSubject;
@@ -121,6 +122,53 @@ impl AgentRuntimeRegistry for TestRegistry {
 }
 
 struct TestResources;
+
+#[test]
+fn optional_reading_shapes_distinguish_absent_context_from_unreported_resources() {
+    let usage = serde_json::to_value(AgentUsageView {
+        agent_id: "agt_shape".into(),
+        through_seq: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        context_used: 0,
+        context_window: None,
+    })
+    .unwrap();
+    assert!(usage.get("context_window").is_none());
+
+    let resources = serde_json::to_value(AgentResourcesView {
+        agent_id: "agt_shape".into(),
+        sandbox_id: "sbx_shape".into(),
+        uptime_ms: 0,
+        cpu_usage_usec: None,
+        cpu_millis_limit: None,
+        memory_bytes_used: None,
+        memory_bytes_limit: None,
+        memory_bytes_peak: None,
+        stall_permille: None,
+        ceiling_hits: None,
+        allocation_failures: None,
+        kills: None,
+        received_bytes: None,
+        sent_bytes: None,
+    })
+    .unwrap();
+    for optional in [
+        "cpu_usage_usec",
+        "cpu_millis_limit",
+        "memory_bytes_used",
+        "memory_bytes_limit",
+        "memory_bytes_peak",
+        "stall_permille",
+        "ceiling_hits",
+        "allocation_failures",
+        "kills",
+        "received_bytes",
+        "sent_bytes",
+    ] {
+        assert_eq!(resources.get(optional), Some(&Value::Null));
+    }
+}
 
 #[async_trait]
 impl SandboxResourceReader for TestResources {
@@ -715,6 +763,7 @@ async fn approval_events_transcript_usage_and_resources_are_public_safe() {
     .await;
     assert_eq!(resources["uptime_ms"], 8_000);
     assert_eq!(resources["sandbox_id"], fixture.sandbox_id.as_str());
+    assert_eq!(resources["cpu_usage_usec"], 3_200);
 
     let unavailable = json_response(
         &fixture.router,
