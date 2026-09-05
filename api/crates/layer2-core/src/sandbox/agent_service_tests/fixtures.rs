@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::profiles::store::{AgentProfileStore, InMemoryProfileStore};
 use crate::profiles::{
@@ -8,13 +9,62 @@ use crate::profiles::{
 };
 use crate::sandbox::store::{InMemorySandboxStore, SandboxStore, WorkspaceStore};
 use crate::{
-    AgentProfileId, Authorization, Caller, Capability, SandboxId, SandboxProfileId, SubjectId,
-    WorkspaceId, WorkspaceProfileId,
+    AgentId, AgentProfileId, Authorization, Caller, Capability, RuntimeCapabilities, SandboxId,
+    SandboxProfileId, SubjectId, WorkspaceId, WorkspaceProfileId,
 };
+use layer3_adapter::ConversationInputSender;
 
 use super::super::*;
 
 pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
+
+#[derive(Default)]
+pub(super) struct TestAgentRuntimeRegistry {
+    active: AtomicBool,
+    fences: Mutex<Vec<(AgentId, u64)>>,
+}
+
+impl TestAgentRuntimeRegistry {
+    pub(super) fn new(active: bool) -> Arc<Self> {
+        Arc::new(Self {
+            active: AtomicBool::new(active),
+            fences: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub(super) fn fences(&self) -> Vec<(AgentId, u64)> {
+        self.fences.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRuntimeRegistry for TestAgentRuntimeRegistry {
+    async fn resolve(
+        &self,
+        _target: &AgentRuntimeTarget,
+    ) -> Result<AgentRuntimeConnection, AgentRuntimeError> {
+        if !self.active.load(Ordering::SeqCst) {
+            return Err(AgentRuntimeError::NotFound);
+        }
+        Ok(AgentRuntimeConnection {
+            capabilities: RuntimeCapabilities::default(),
+            input: ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+        })
+    }
+
+    async fn fence(
+        &self,
+        agent_id: &AgentId,
+        authority_fence: u64,
+    ) -> Result<(), AgentRuntimeError> {
+        self.active.store(false, Ordering::SeqCst);
+        self.fences
+            .lock()
+            .unwrap()
+            .push((agent_id.clone(), authority_fence));
+        Ok(())
+    }
+}
 
 pub(super) fn caller(subject: &str, allowed: bool) -> Caller {
     Caller::new(
@@ -165,7 +215,11 @@ pub(super) async fn setup(
         .await
         .unwrap();
     (
-        AgentService::new(store.clone(), profiles.clone()),
+        AgentService::new(
+            store.clone(),
+            profiles.clone(),
+            TestAgentRuntimeRegistry::new(false),
+        ),
         store,
         profiles,
         reference,

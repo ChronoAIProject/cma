@@ -300,6 +300,14 @@ impl AgentRuntimeRegistry for TestRuntimeRegistry {
             input: self.sender.clone(),
         })
     }
+
+    async fn fence(
+        &self,
+        _agent_id: &AgentId,
+        _authority_fence: u64,
+    ) -> Result<(), AgentRuntimeError> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]

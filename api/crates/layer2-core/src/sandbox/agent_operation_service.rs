@@ -232,11 +232,17 @@ impl AgentOperationService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<Agent, AgentOperationError> {
-        AgentStore::get_agent(self.store.as_ref(), id)
+        let agent = AgentStore::get_agent(self.store.as_ref(), id)
             .await
             .map_err(operation_store_error)?
             .filter(|agent| agent.id == *id && agent.owner == caller.subject)
-            .ok_or(AgentOperationError::NotFound)
+            .ok_or(AgentOperationError::NotFound)?;
+        if agent.requested_stop_reason.is_some() {
+            return Err(AgentOperationError::StatusConflict {
+                status: agent.status,
+            });
+        }
+        Ok(agent)
     }
 
     fn require_active_status(

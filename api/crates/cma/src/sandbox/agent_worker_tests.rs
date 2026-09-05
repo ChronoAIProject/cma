@@ -1202,7 +1202,7 @@ async fn registry_rejects_stale_generations_fences_and_attachment_tokens() {
     assert_eq!(
         registry
             .attach(
-                id,
+                id.clone(),
                 "conversation-1".into(),
                 1,
                 13,
@@ -1214,13 +1214,41 @@ async fn registry_rejects_stale_generations_fences_and_attachment_tokens() {
             .unwrap_err(),
         LiveAgentRegistryError::StaleGeneration
     );
-    assert!(registry
-        .resolve(&LiveAgentTarget {
-            agent_id: first_target.agent_id,
-            conversation_id: "conversation-2".into(),
-            runtime_generation: 2,
-        })
-        .is_some());
+    let final_target = AgentRuntimeTarget {
+        agent_id: id.clone(),
+        conversation_id: "conversation-2".into(),
+        runtime_generation: 2,
+    };
+    assert!(
+        AgentRuntimeRegistry::resolve(registry.as_ref(), &final_target)
+            .await
+            .is_ok()
+    );
+    AgentRuntimeRegistry::fence(registry.as_ref(), &id, 13)
+        .await
+        .unwrap();
+    assert_eq!(
+        AgentRuntimeRegistry::resolve(registry.as_ref(), &final_target)
+            .await
+            .unwrap_err(),
+        AgentRuntimeError::NotFound
+    );
+    let (late_input, late_updates, _late_sender) = channels();
+    assert_eq!(
+        registry
+            .attach(
+                id,
+                "conversation-2".into(),
+                2,
+                13,
+                RuntimeCapabilities::default(),
+                late_input,
+                late_updates,
+                Arc::new(NoopRecorder),
+            )
+            .unwrap_err(),
+        LiveAgentRegistryError::StaleGeneration
+    );
 }
 
 struct NoopRecorder;

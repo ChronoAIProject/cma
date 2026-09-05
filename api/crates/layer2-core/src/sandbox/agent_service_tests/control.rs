@@ -130,6 +130,53 @@ async fn agent_control_service_stop_replays_only_until_stopped_and_does_not_over
 }
 
 #[tokio::test]
+async fn agent_control_service_fences_interaction_before_a_stop_response() {
+    let (_, store, profiles, reference) = setup(
+        SandboxStatus::Active,
+        WorkspaceStatus::Ready,
+        1,
+        "owner",
+        ProfileVisibility::Private,
+    )
+    .await;
+    let runtimes = TestAgentRuntimeRegistry::new(true);
+    let service = AgentService::new(store, profiles, runtimes.clone());
+    let agent = service
+        .create(
+            &caller("owner", true),
+            &workspace(WorkspaceStatus::Ready).id,
+            request(reference, AgentOrigin::Manual),
+        )
+        .await
+        .unwrap();
+    let target = AgentRuntimeTarget {
+        agent_id: agent.id.clone(),
+        conversation_id: "conversation-before-stop".into(),
+        runtime_generation: 1,
+    };
+    assert!(runtimes.resolve(&target).await.is_ok());
+
+    let stopped = service
+        .stop(&caller("owner", true), &agent.id, AgentStopReason::Owner)
+        .await
+        .unwrap();
+    assert!(matches!(
+        runtimes.resolve(&target).await,
+        Err(AgentRuntimeError::NotFound)
+    ));
+    assert_eq!(
+        runtimes.fences(),
+        [(agent.id.clone(), stopped.work.next_fence)]
+    );
+
+    service
+        .stop(&caller("owner", true), &agent.id, AgentStopReason::Owner)
+        .await
+        .unwrap();
+    assert_eq!(runtimes.fences().len(), 2);
+}
+
+#[tokio::test]
 async fn agent_control_service_delete_requires_terminal_status_and_compatible_work() {
     let (service, store, starting) = create_starting_agent().await;
     let owner = caller("owner", true);
