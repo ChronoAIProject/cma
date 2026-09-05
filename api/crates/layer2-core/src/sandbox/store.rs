@@ -15,6 +15,8 @@ pub use agent_control::{
     AgentControlResult, AgentControlStore, AgentControlStoreError, AgentControlTarget,
     AgentDeleteRequest, AgentStopRequest,
 };
+mod agent_reads;
+pub use agent_reads::AgentReadQueryStore;
 mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
@@ -381,6 +383,11 @@ pub trait AgentLifecycleStore:
 {
 }
 
+pub trait AgentReadStore:
+    SandboxStore + WorkspaceStore + WorktreeStore + AgentStore + AgentLogStore + AgentReadQueryStore
+{
+}
+
 pub trait AgentConversationUpdateStore: AgentStore + AgentConversationStore {}
 
 impl<T> AgentConversationUpdateStore for T where T: AgentStore + AgentConversationStore {}
@@ -392,6 +399,16 @@ impl<T> AgentLifecycleStore for T where
         + AgentStore
         + AgentLogStore
         + AgentWorkerStore
+{
+}
+
+impl<T> AgentReadStore for T where
+    T: SandboxStore
+        + WorkspaceStore
+        + WorktreeStore
+        + AgentStore
+        + AgentLogStore
+        + AgentReadQueryStore
 {
 }
 

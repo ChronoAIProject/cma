@@ -1,0 +1,310 @@
+use crate::seconds_from_rfc3339;
+
+use super::{
+    Agent, AgentLogEntry, AgentLogKind, AgentTranscript, AgentTranscriptTurn, AgentTurnOutcome,
+    AgentUsage, AgentUsageReading,
+};
+
+pub(super) struct AgentLogProjection {
+    pub(super) transcript: AgentTranscript,
+    pub(super) usage: AgentUsageReading,
+}
+
+pub(super) fn fold_agent_log(
+    agent: &Agent,
+    entries: &[AgentLogEntry],
+) -> Result<AgentLogProjection, String> {
+    let Some(first) = entries.first() else {
+        return Err("agent log has no creation record".into());
+    };
+    match &first.kind {
+        AgentLogKind::Created {
+            workspace_id,
+            worktree_id,
+        } if workspace_id == &agent.workspace_id && worktree_id == &agent.worktree_id => {}
+        AgentLogKind::Created { .. } => {
+            return Err("agent creation log lineage does not match".into());
+        }
+        _ => return Err("agent log does not begin with creation".into()),
+    }
+
+    let mut transcript = TranscriptFold::default();
+    let mut usage = UsageFold::default();
+    let mut latest_conversation = None;
+    for entry in entries {
+        if entry.agent_id != agent.id || entry.seq == 0 {
+            return Err("agent log identity or sequence is invalid".into());
+        }
+        if seconds_from_rfc3339(&entry.appended_at).is_none() {
+            return Err("agent log timestamp is invalid".into());
+        }
+        match &entry.kind {
+            AgentLogKind::Created { .. } if entry.seq != 1 => {
+                return Err("agent log contains duplicate creation".into());
+            }
+            AgentLogKind::ConversationOpened {
+                conversation_id,
+                runtime_generation,
+            } => {
+                if transcript.active.is_some()
+                    || conversation_id.trim().is_empty()
+                    || conversation_id.len() > 512
+                    || *runtime_generation == 0
+                    || latest_conversation
+                        .as_ref()
+                        .is_some_and(|(_, previous)| runtime_generation <= previous)
+                {
+                    return Err("agent conversation boundary is invalid".into());
+                }
+                latest_conversation = Some((conversation_id.clone(), *runtime_generation));
+                usage.open_generation(*runtime_generation)?;
+            }
+            AgentLogKind::TurnStarted {
+                turn_sequence,
+                origin_key,
+            } => {
+                if latest_conversation.is_none() || *turn_sequence != entry.seq {
+                    return Err("agent turn start is invalid".into());
+                }
+                transcript.start(*turn_sequence, origin_key.clone(), &entry.appended_at)?;
+            }
+            AgentLogKind::OwnerMessage { content } => transcript.owner_message(content)?,
+            AgentLogKind::AgentMessage { content } => transcript.agent_message(content)?,
+            AgentLogKind::TurnCompleted { turn_sequence } => transcript.finish(
+                *turn_sequence,
+                AgentTurnOutcome::Completed {
+                    at: entry.appended_at.clone(),
+                },
+            )?,
+            AgentLogKind::TurnFailed {
+                turn_sequence,
+                failure,
+            } => transcript.finish(
+                *turn_sequence,
+                AgentTurnOutcome::Failed {
+                    at: entry.appended_at.clone(),
+                    failure: failure.clone(),
+                },
+            )?,
+            AgentLogKind::TurnInterrupted { turn_sequence } => transcript.finish(
+                *turn_sequence,
+                AgentTurnOutcome::Interrupted {
+                    at: entry.appended_at.clone(),
+                },
+            )?,
+            AgentLogKind::Usage {
+                input_tokens,
+                output_tokens,
+                context_used,
+                context_window,
+            } => usage.observe(
+                *input_tokens,
+                *output_tokens,
+                *context_used,
+                *context_window,
+            )?,
+            AgentLogKind::ConversationGap { .. } => {
+                return Err("agent log records a conversation gap".into());
+            }
+            _ => {}
+        }
+    }
+
+    validate_conversation_identity(agent, latest_conversation.as_ref())?;
+    let active_turn = transcript.active.as_ref().map(|turn| turn.turn_sequence);
+    if active_turn != agent.conversation.active_turn {
+        return Err("agent active turn disagrees with its log".into());
+    }
+    transcript.finish_active()?;
+
+    Ok(AgentLogProjection {
+        transcript: AgentTranscript {
+            agent_id: agent.id.clone(),
+            through_seq: agent.conversation.last_seq,
+            turns: transcript.turns,
+        },
+        usage: AgentUsageReading {
+            agent_id: agent.id.clone(),
+            through_seq: agent.conversation.last_seq,
+            usage: usage.reading(),
+        },
+    })
+}
+
+fn validate_conversation_identity(
+    agent: &Agent,
+    latest: Option<&(String, u64)>,
+) -> Result<(), String> {
+    match (
+        agent.conversation.conversation_id.as_deref(),
+        agent.conversation.runtime_generation,
+        latest,
+    ) {
+        (None, None, None) => Ok(()),
+        (Some(id), Some(generation), Some((logged_id, logged_generation)))
+            if id == logged_id && generation == *logged_generation =>
+        {
+            Ok(())
+        }
+        _ => Err("agent conversation identity disagrees with its log".into()),
+    }
+}
+
+#[derive(Default)]
+struct TranscriptFold {
+    turns: Vec<AgentTranscriptTurn>,
+    active: Option<ActiveTurn>,
+}
+
+impl TranscriptFold {
+    fn start(
+        &mut self,
+        turn_sequence: u64,
+        origin_key: Option<String>,
+        started_at: &str,
+    ) -> Result<(), String> {
+        if self.active.is_some()
+            || turn_sequence == 0
+            || self
+                .turns
+                .last()
+                .is_some_and(|turn| turn.turn_sequence >= turn_sequence)
+        {
+            return Err("agent turns are nested or out of order".into());
+        }
+        self.active = Some(ActiveTurn {
+            turn_sequence,
+            started_at: started_at.into(),
+            origin_key,
+            owner_message: None,
+            agent_messages: Vec::new(),
+        });
+        Ok(())
+    }
+
+    fn owner_message(&mut self, content: &str) -> Result<(), String> {
+        let turn = self
+            .active
+            .as_mut()
+            .ok_or_else(|| "owner message is outside a turn".to_string())?;
+        if turn.owner_message.is_some() || !turn.agent_messages.is_empty() {
+            return Err("agent turn has an invalid owner message".into());
+        }
+        turn.owner_message = Some(content.into());
+        Ok(())
+    }
+
+    fn agent_message(&mut self, content: &str) -> Result<(), String> {
+        let turn = self
+            .active
+            .as_mut()
+            .ok_or_else(|| "agent message is outside a turn".to_string())?;
+        if turn.owner_message.is_none() {
+            return Err("agent message precedes its owner message".into());
+        }
+        turn.agent_messages.push(content.into());
+        Ok(())
+    }
+
+    fn finish(&mut self, turn_sequence: u64, outcome: AgentTurnOutcome) -> Result<(), String> {
+        let turn = self
+            .active
+            .take()
+            .ok_or_else(|| "agent turn outcome is outside a turn".to_string())?;
+        if turn.turn_sequence != turn_sequence {
+            return Err("agent turn outcome sequence does not match".into());
+        }
+        self.turns.push(turn.into_transcript(outcome)?);
+        Ok(())
+    }
+
+    fn finish_active(&mut self) -> Result<(), String> {
+        if let Some(turn) = self.active.take() {
+            self.turns
+                .push(turn.into_transcript(AgentTurnOutcome::Active)?);
+        }
+        Ok(())
+    }
+}
+
+struct ActiveTurn {
+    turn_sequence: u64,
+    started_at: String,
+    origin_key: Option<String>,
+    owner_message: Option<String>,
+    agent_messages: Vec<String>,
+}
+
+impl ActiveTurn {
+    fn into_transcript(self, outcome: AgentTurnOutcome) -> Result<AgentTranscriptTurn, String> {
+        Ok(AgentTranscriptTurn {
+            turn_sequence: self.turn_sequence,
+            started_at: self.started_at,
+            origin_key: self.origin_key,
+            owner_message: self
+                .owner_message
+                .ok_or_else(|| "agent turn has no owner message".to_string())?,
+            agent_messages: self.agent_messages,
+            outcome,
+        })
+    }
+}
+
+#[derive(Default)]
+struct UsageFold {
+    closed_input: u64,
+    closed_output: u64,
+    generation: Option<u64>,
+    input_peak: u64,
+    output_peak: u64,
+    context_used: u64,
+    context_window: Option<u64>,
+}
+
+impl UsageFold {
+    fn open_generation(&mut self, generation: u64) -> Result<(), String> {
+        if self.generation.is_some_and(|current| generation <= current) {
+            return Err("agent usage generation is not increasing".into());
+        }
+        if self.generation.is_some() {
+            self.closed_input = self.closed_input.saturating_add(self.input_peak);
+            self.closed_output = self.closed_output.saturating_add(self.output_peak);
+        }
+        self.generation = Some(generation);
+        self.input_peak = 0;
+        self.output_peak = 0;
+        self.context_used = 0;
+        self.context_window = None;
+        Ok(())
+    }
+
+    fn observe(
+        &mut self,
+        input_tokens: u64,
+        output_tokens: u64,
+        context_used: u64,
+        context_window: Option<u64>,
+    ) -> Result<(), String> {
+        if self.generation.is_none() {
+            return Err("agent usage precedes its conversation".into());
+        }
+        self.input_peak = self.input_peak.max(input_tokens);
+        self.output_peak = self.output_peak.max(output_tokens);
+        if context_used > 0 {
+            self.context_used = context_used;
+        }
+        if let Some(context_window) = context_window {
+            self.context_window = Some(context_window);
+        }
+        Ok(())
+    }
+
+    fn reading(&self) -> AgentUsage {
+        AgentUsage {
+            input_tokens: self.closed_input.saturating_add(self.input_peak),
+            output_tokens: self.closed_output.saturating_add(self.output_peak),
+            context_used: self.context_used,
+            context_window: self.context_window,
+        }
+    }
+}

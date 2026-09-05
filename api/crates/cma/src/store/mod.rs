@@ -11,6 +11,7 @@ mod agent_conversation_store;
 mod agent_log;
 mod agent_log_integrity;
 mod agent_profiles;
+mod agent_reads;
 mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
