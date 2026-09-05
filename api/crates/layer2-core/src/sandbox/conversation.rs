@@ -45,6 +45,8 @@ pub enum AgentConversationError {
     InvalidState(&'static str),
     #[error("agent conversation data is not usable: {0}")]
     Corrupt(String),
+    #[error("agent conversation log capacity exceeded")]
+    CapacityExceeded,
     #[error("agent conversation store is unavailable: {0}")]
     Unavailable(String),
 }

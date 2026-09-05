@@ -1,6 +1,6 @@
 use super::{
-    AgentWorkState, AgentWorkStep, FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord,
-    QueuedAgentMessage,
+    AgentStopReason, AgentWorkState, AgentWorkStep, FirstMessageDelivery, FirstMessageFailure,
+    FirstMessageRecord, QueuedAgentMessage,
 };
 
 const NOW: &str = "2026-09-05T00:00:00Z";
@@ -14,6 +14,15 @@ fn failure(retryable: bool) -> FirstMessageFailure {
         LATER,
     )
     .unwrap()
+}
+
+#[test]
+fn stop_reasons_have_stable_log_names() {
+    assert_eq!(AgentStopReason::Owner.as_str(), "owner");
+    assert_eq!(AgentStopReason::Operator.as_str(), "operator");
+    assert_eq!(AgentStopReason::RuntimeLost.as_str(), "runtime_lost");
+    assert_eq!(AgentStopReason::SandboxRetired.as_str(), "sandbox_retired");
+    assert_eq!(AgentStopReason::Failed.as_str(), "failed");
 }
 
 #[test]

@@ -60,3 +60,30 @@ creation path so concurrent launches cannot both pass the one-sandbox limit.
 The current shared limiter is process-local and production is pinned to one API
 replica. Do not scale the API horizontally until visitor counters use a durable
 atomic ledger; otherwise each replica grants an independent daily allowance.
+
+## Agent log capacity
+
+CMA validates an agent's complete durable log before accepting a mutation. To
+keep that validation within a bounded MongoDB snapshot, normal log writes stop
+at either 10,000 entries or 64 MiB of exact encoded BSON, whichever is reached
+first. The permanent store error is `agent_log_capacity_exceeded`. Existing log
+pages remain readable, and the owner can still stop and delete the agent; start
+a new agent for further conversation.
+
+Lifecycle publication has two internal reserves that normal conversation and
+title writes cannot consume. A stop or startup-failure transition may use at
+most another 64 entries or 512 KiB, and deletion may use a final 64 entries or
+512 KiB. These staged ceilings ensure a full stop reserve cannot strand the
+required deletion record. Each atomic append is separately limited to 64 log
+entries so one transaction cannot materialise an unbounded command batch.
+
+`retention.agent_log_days` is the maximum time logs are retained after their
+agent becomes terminal; it does not increase these per-agent capacity limits.
+Never delete individual `agent_log` rows to reclaim capacity. A missing row or
+an entry above the aggregate high-water mark is treated as durable corruption.
+
+After an ambiguous Mongo commit, CMA reconciles the complete authority snapshot
+at the commit session's operation time. The request fails closed as unavailable
+if reconciliation has not completed within 30 seconds. Because cancelling an
+in-flight Mongo driver future is unsafe, that read-only check finishes in the
+background; at most 16 such checks may remain pending per API process.

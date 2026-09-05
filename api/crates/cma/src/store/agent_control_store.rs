@@ -2,18 +2,12 @@
 
 use layer2_core::sandbox::store::{
     AgentControlResult, AgentControlStore, AgentControlStoreError, AgentControlTarget,
-    AgentDeleteRequest, AgentStopRequest, SandboxStoreError,
+    AgentDeleteRequest, AgentStopRequest,
 };
 use layer2_core::sandbox::{Agent, AgentStatus, AgentWorkStep};
-use mongodb::bson::doc;
 
-use super::agents::{agent_replacement_fields, read_agent};
-use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
-use super::sandboxes::read_sandbox;
-use super::workspaces::read_workspace;
-use super::worktrees::read_worktree;
-
-const CONTROL_ATTEMPTS: usize = 8;
+use super::agent_control_transaction::{schedule_delete, schedule_stop};
+use super::sandbox_mongo::MongoSandboxStore;
 
 #[async_trait::async_trait]
 impl AgentControlStore for MongoSandboxStore {
@@ -21,128 +15,15 @@ impl AgentControlStore for MongoSandboxStore {
         &self,
         request: AgentStopRequest,
     ) -> Result<AgentControlResult, AgentControlStoreError> {
-        for _ in 0..CONTROL_ATTEMPTS {
-            let current = control_agent(self, &request.target).await?;
-            match plan_stop(current.clone(), &request)? {
-                existing @ AgentControlResult::Existing(_) => return Ok(existing),
-                AgentControlResult::Scheduled(next) => {
-                    if replace_agent(self, &current, &next).await? {
-                        return Ok(AgentControlResult::Scheduled(next));
-                    }
-                }
-            }
-            tokio::task::yield_now().await;
-        }
-        Err(AgentControlStoreError::Conflict)
+        schedule_stop(self, request).await
     }
 
     async fn schedule_agent_delete(
         &self,
         request: AgentDeleteRequest,
     ) -> Result<AgentControlResult, AgentControlStoreError> {
-        for _ in 0..CONTROL_ATTEMPTS {
-            let current = control_agent(self, &request.target).await?;
-            match plan_delete(current.clone(), &request)? {
-                existing @ AgentControlResult::Existing(_) => return Ok(existing),
-                AgentControlResult::Scheduled(next) => {
-                    if replace_agent(self, &current, &next).await? {
-                        return Ok(AgentControlResult::Scheduled(next));
-                    }
-                }
-            }
-            tokio::task::yield_now().await;
-        }
-        Err(AgentControlStoreError::Conflict)
+        schedule_delete(self, request).await
     }
-}
-
-async fn control_agent(
-    store: &MongoSandboxStore,
-    target: &AgentControlTarget,
-) -> Result<Agent, AgentControlStoreError> {
-    let agent = store
-        .agents
-        .find_one(doc! { "_id": target.agent_id.as_str() })
-        .await
-        .map_err(unavailable)?
-        .as_ref()
-        .map(read_agent)
-        .transpose()
-        .map_err(store_error)?
-        .ok_or(AgentControlStoreError::NotFound)?;
-    if agent.id != target.agent_id {
-        return Err(AgentControlStoreError::Corrupt(
-            "agent storage identity does not match its key".into(),
-        ));
-    }
-    if agent.owner != target.owner {
-        return Err(AgentControlStoreError::NotFound);
-    }
-    if agent.revision == 0 || agent.work.next_fence == 0 {
-        return Err(AgentControlStoreError::Corrupt(
-            "agent revision or work fence is invalid".into(),
-        ));
-    }
-    if agent.worktree_id != target.worktree_id
-        || agent.workspace_id != target.workspace_id
-        || agent.sandbox_id != target.sandbox_id
-    {
-        return Err(AgentControlStoreError::Conflict);
-    }
-    validate_stored_lineage(store, &agent).await?;
-    Ok(agent)
-}
-
-async fn validate_stored_lineage(
-    store: &MongoSandboxStore,
-    agent: &Agent,
-) -> Result<(), AgentControlStoreError> {
-    let worktree = store
-        .worktrees
-        .find_one(doc! { "_id": agent.worktree_id.as_str() })
-        .await
-        .map_err(unavailable)?
-        .as_ref()
-        .map(read_worktree)
-        .transpose()
-        .map_err(store_error)?
-        .ok_or_else(|| AgentControlStoreError::Corrupt("agent worktree is missing".into()))?;
-    let workspace = store
-        .workspaces
-        .find_one(doc! { "_id": agent.workspace_id.as_str() })
-        .await
-        .map_err(unavailable)?
-        .as_ref()
-        .map(read_workspace)
-        .transpose()
-        .map_err(store_error)?
-        .ok_or_else(|| AgentControlStoreError::Corrupt("agent workspace is missing".into()))?;
-    let sandbox = store
-        .sandboxes
-        .find_one(doc! { "_id": agent.sandbox_id.as_str() })
-        .await
-        .map_err(unavailable)?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()
-        .map_err(store_error)?
-        .ok_or_else(|| AgentControlStoreError::Corrupt("agent sandbox is missing".into()))?;
-    if worktree.id != agent.worktree_id
-        || worktree.agent_id.as_ref() != Some(&agent.id)
-        || worktree.workspace_id != agent.workspace_id
-        || worktree.sandbox_id != agent.sandbox_id
-        || worktree.owner != agent.owner
-        || workspace.id != agent.workspace_id
-        || workspace.sandbox_id != agent.sandbox_id
-        || workspace.owner != agent.owner
-        || sandbox.id != agent.sandbox_id
-        || sandbox.owner != agent.owner
-    {
-        return Err(AgentControlStoreError::Corrupt(
-            "agent lineage does not match its parents".into(),
-        ));
-    }
-    Ok(())
 }
 
 pub(super) fn plan_stop(
@@ -227,32 +108,6 @@ pub(super) fn plan_delete(
     Ok(AgentControlResult::Scheduled(next))
 }
 
-async fn replace_agent(
-    store: &MongoSandboxStore,
-    current: &Agent,
-    next: &Agent,
-) -> Result<bool, AgentControlStoreError> {
-    let revision =
-        signed(current.revision, "agent revision").map_err(|_| AgentControlStoreError::Conflict)?;
-    let last_seq = signed(current.conversation.last_seq, "agent log sequence")
-        .map_err(AgentControlStoreError::Corrupt)?;
-    let result = store
-        .agents
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": revision,
-                "last_seq": last_seq,
-                "record.conversation.last_seq": last_seq,
-            },
-            doc! { "$set": agent_replacement_fields(next).map_err(store_error)? },
-        )
-        .await
-        .map_err(unavailable)?;
-    Ok(result.matched_count == 1)
-}
-
 fn require_exact_target(
     agent: &Agent,
     target: &AgentControlTarget,
@@ -275,7 +130,7 @@ fn can_supersede_with_stop(step: AgentWorkStep) -> bool {
     )
 }
 
-fn is_stop_work(step: AgentWorkStep) -> bool {
+pub(super) fn is_stop_work(step: AgentWorkStep) -> bool {
     matches!(
         step,
         AgentWorkStep::FenceInteraction
@@ -284,7 +139,7 @@ fn is_stop_work(step: AgentWorkStep) -> bool {
     )
 }
 
-fn is_delete_work(step: AgentWorkStep) -> bool {
+pub(super) fn is_delete_work(step: AgentWorkStep) -> bool {
     matches!(
         step,
         AgentWorkStep::EnsureProcessClosed
@@ -292,16 +147,4 @@ fn is_delete_work(step: AgentWorkStep) -> bool {
             | AgentWorkStep::RemoveWorktree
             | AgentWorkStep::PublishDeleted
     )
-}
-
-fn store_error(error: SandboxStoreError) -> AgentControlStoreError {
-    match error {
-        SandboxStoreError::NotFound => AgentControlStoreError::NotFound,
-        SandboxStoreError::Corrupt(detail) => AgentControlStoreError::Corrupt(detail),
-        other => AgentControlStoreError::Unavailable(other.to_string()),
-    }
-}
-
-fn unavailable(error: mongodb::error::Error) -> AgentControlStoreError {
-    AgentControlStoreError::Unavailable(error.to_string())
 }

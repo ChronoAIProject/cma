@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use layer2_core::ids::{
     AgentId, AgentProfileId, SandboxId, SandboxProfileId, SubjectId, WorkspaceId,
@@ -33,7 +33,10 @@ use layer2_core::sandbox::{
     WorkspaceWorkState, WorkspaceWorkStep, Worktree, WorktreeStatus,
 };
 use layer2_core::{Authorization, Caller, Capability};
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{doc, Bson, Document};
+use mongodb::event::command::CommandEvent;
+use mongodb::event::EventHandler;
+use mongodb::options::{ClientOptions, ReadConcern};
 use mongodb::Client;
 
 use crate::auth::persistence::SecretValue;
@@ -41,23 +44,36 @@ use crate::sandbox::{
     CredentialCustodyError, CredentialMaterial, CredentialRevocation, SandboxCredentialCustody,
 };
 
+use super::agent_control_lineage::{fence_control_lineage, load_control_snapshot, LineageError};
+use super::agent_control_receipt::{
+    read_control_receipts, ControlOperation, ControlRequest, DELETE_RECEIPT_FIELD,
+    STOP_RECEIPT_FIELD,
+};
 use super::agent_control_store::{plan_delete, plan_stop};
+use super::agent_control_transaction::{
+    control_snapshot_matches, reconciliation_error, same_agent_incarnation,
+};
 use super::agent_conversation_store::{
-    reconcile_conversation, validate_mutation, ConversationReceipt,
+    reconcile_conversation, reconcile_conversation_snapshot, validate_mutation, ConversationReceipt,
 };
 use super::agent_log::log_document;
+use super::agent_log_integrity::AppendCapacity;
+use super::agent_worker_capacity::publication_capacity;
 use super::agent_worker_reconcile::reconcile_publication;
-use super::agent_worker_transaction::{stop_intent_change_is_valid, PublicationReceipt};
+use super::agent_worker_transaction::{
+    agent_status_change_is_valid, stop_intent_change_is_valid, PublicationReceipt,
+};
+use super::agents::agent_replacement_fields;
 use super::encryption::AuthEncryptionKey;
 use super::sandbox_credentials::{
     MongoSandboxCredentialStore, SANDBOX_CREDENTIALS, SANDBOX_CREDENTIAL_REVOCATIONS,
 };
 use super::sandbox_events::event_document;
 use super::sandbox_mongo::{
-    MongoProfileStore, MongoSandboxStore, AGENTS, AGENT_LOG, AGENT_PROFILES,
-    AGENT_PROFILE_REVISIONS, CHECKPOINTS, SANDBOXES, SANDBOX_ADMISSIONS, SANDBOX_EVENTS,
-    SANDBOX_PROFILES, SANDBOX_PROFILE_REVISIONS, WORKSPACES, WORKSPACE_PROFILES,
-    WORKSPACE_PROFILE_REVISIONS, WORKTREES,
+    is_transient, start_transaction, MongoProfileStore, MongoSandboxStore, AGENTS, AGENT_LOG,
+    AGENT_PROFILES, AGENT_PROFILE_REVISIONS, CHECKPOINTS, DOCUMENT_SCHEMA_VERSION, SANDBOXES,
+    SANDBOX_ADMISSIONS, SANDBOX_EVENTS, SANDBOX_PROFILES, SANDBOX_PROFILE_REVISIONS, WORKSPACES,
+    WORKSPACE_PROFILES, WORKSPACE_PROFILE_REVISIONS, WORKTREES,
 };
 use super::DefaultProfileSpec;
 
@@ -65,6 +81,13 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 const MINUTE: &str = "2026-09-05T00:01:00Z";
 const TWO_MINUTES: &str = "2026-09-05T00:02:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Default)]
+struct CommandTrace {
+    started: Vec<(String, Document)>,
+    failed_commits: usize,
+    commit_replies: Vec<Document>,
+}
 
 async fn database(prefix: &str) -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
@@ -75,6 +98,14 @@ async fn database(prefix: &str) -> (Client, String) {
     let sequence = DATABASE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let name = format!("cma_804_{prefix}_{}_{sequence}", std::process::id());
     (client, name)
+}
+
+fn command_uses_snapshot_read(command: &Document) -> bool {
+    command
+        .get_document("readConcern")
+        .ok()
+        .and_then(|concern| concern.get_str("level").ok())
+        == Some("snapshot")
 }
 
 fn sandbox(id: &str) -> Sandbox {
@@ -495,935 +526,8 @@ fn advance_claimed_agent(claimed: &Agent) -> Agent {
     next
 }
 
-#[test]
-fn mongo_agent_work_stop_intent_validation_matches_domain_rules() {
-    let current = agent_for_worker("agt_stop_intent_rules", NOW);
-    assert!(stop_intent_change_is_valid(&current, &current));
-
-    let mut invented = current.clone();
-    invented.requested_stop_reason = Some(AgentStopReason::Owner);
-    assert!(!stop_intent_change_is_valid(&current, &invented));
-
-    let mut requested = current.clone();
-    requested
-        .request_stop(AgentStopReason::Owner, NOW.into())
-        .unwrap();
-    assert!(stop_intent_change_is_valid(&requested, &requested));
-
-    let mut changed = requested.clone();
-    changed.requested_stop_reason = Some(AgentStopReason::Operator);
-    assert!(!stop_intent_change_is_valid(&requested, &changed));
-
-    let mut cleared = requested.clone();
-    cleared.requested_stop_reason = None;
-    assert!(!stop_intent_change_is_valid(&requested, &cleared));
-
-    let mut wrong_stop = requested.clone();
-    wrong_stop.requested_stop_reason = None;
-    wrong_stop.stop_reason = Some(AgentStopReason::Operator);
-    wrong_stop.status = AgentStatus::Stopped;
-    assert!(!stop_intent_change_is_valid(&requested, &wrong_stop));
-
-    let mut stopped = requested.clone();
-    stopped
-        .transition(
-            AgentStatus::Stopped,
-            MINUTE.into(),
-            Some(AgentStopReason::Owner),
-        )
-        .unwrap();
-    assert!(stop_intent_change_is_valid(&requested, &stopped));
-
-    let mut rewritten = stopped.clone();
-    rewritten.stop_reason = Some(AgentStopReason::Operator);
-    assert!(!stop_intent_change_is_valid(&stopped, &rewritten));
-}
-
-#[test]
-fn mongo_agent_conversation_validation_fences_every_durable_boundary() {
-    let current = conversation_agent_for_rules("agt_conversation_rules");
-    let mutation = begin_conversation_turn(current.clone());
-    assert!(validate_mutation(&current, 2, &mutation).is_ok());
-
-    let rejected = |mutation: &AgentConversationMutation, actual_last_seq| {
-        assert_eq!(
-            validate_mutation(&current, actual_last_seq, mutation),
-            Err(SandboxStoreError::Conflict)
-        );
-    };
-    let mut invalid = mutation.clone();
-    invalid.appended_at = "not-a-timestamp".into();
-    rejected(&invalid, 2);
-    let mut invalid = mutation.clone();
-    invalid.runtime_generation = 0;
-    rejected(&invalid, 2);
-    let mut invalid = mutation.clone();
-    invalid.expected_agent_revision += 1;
-    rejected(&invalid, 2);
-    let mut invalid = mutation.clone();
-    invalid.expected_last_seq += 1;
-    rejected(&invalid, 2);
-    rejected(&mutation, 1);
-    let mut invalid = mutation.clone();
-    invalid.agent.conversation.last_seq += 1;
-    rejected(&invalid, 2);
-    let mut invalid = mutation.clone();
-    invalid.agent.conversation.conversation_id = Some("different-conversation".into());
-    rejected(&invalid, 2);
-    let mut invalid = mutation.clone();
-    invalid.agent.conversation.runtime_generation = Some(2);
-    rejected(&invalid, 2);
-    let mut invalid = mutation.clone();
-    invalid.agent.requested_stop_reason = Some(AgentStopReason::Owner);
-    rejected(&invalid, 2);
-    let mut invalid = mutation;
-    invalid.agent_logs.clear();
-    rejected(&invalid, 2);
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_conversation_atomically_saves_and_reconciles_aggregate_and_logs() {
-    let (client, name) = database("agent_conversation_atomic").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let ready = ready_conversation_fixture(&store, "conversation_atomic").await;
-    let mutation = begin_conversation_turn(ready);
-    let expected = mutation.agent.clone();
-
-    let appended = store.commit_agent_conversation(mutation).await.unwrap();
-    assert_eq!(
-        appended.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
-        [3, 4]
-    );
-    assert_eq!(
-        store.get_agent(&expected.id).await.unwrap(),
-        Some(expected.clone())
-    );
-    assert_eq!(store.agent_log(&expected.id, 0, 10).await.unwrap().len(), 4);
-    let receipt = ConversationReceipt {
-        agent: expected,
-        logs: appended,
-    };
-    assert!(reconcile_conversation(&store, &receipt).await.unwrap());
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_conversation_rejects_invalid_and_stale_mutations_without_partial_writes() {
-    let (client, name) = database("agent_conversation_rollback").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let ready = ready_conversation_fixture(&store, "conversation_rollback").await;
-    let mutation = begin_conversation_turn(ready.clone());
-    let mut invalid_mutations = Vec::new();
-
-    let mut invalid = mutation.clone();
-    invalid.appended_at = "not-a-timestamp".into();
-    invalid_mutations.push(invalid);
-    let mut invalid = mutation.clone();
-    invalid.runtime_generation = 2;
-    invalid_mutations.push(invalid);
-    let mut invalid = mutation.clone();
-    invalid.expected_agent_revision += 1;
-    invalid_mutations.push(invalid);
-    let mut invalid = mutation.clone();
-    invalid.expected_last_seq += 1;
-    invalid_mutations.push(invalid);
-    let mut invalid = mutation;
-    invalid.agent.requested_stop_reason = Some(AgentStopReason::Owner);
-    invalid_mutations.push(invalid);
-
-    for invalid in invalid_mutations {
-        assert_eq!(
-            store.commit_agent_conversation(invalid).await,
-            Err(SandboxStoreError::Conflict)
-        );
-        assert_eq!(
-            store.get_agent(&ready.id).await.unwrap(),
-            Some(ready.clone())
-        );
-        assert_eq!(store.agent_log(&ready.id, 0, 10).await.unwrap().len(), 2);
-    }
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_conversation_rebuilds_pending_approvals_after_reopen_and_fails_on_gaps() {
-    let (client, name) = database("agent_conversation_approvals").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let ready = ready_conversation_fixture(&store, "conversation_approvals").await;
-    let turn = begin_conversation_turn(ready);
-    let mut working = turn.agent.clone();
-    store.commit_agent_conversation(turn).await.unwrap();
-
-    let expected_agent_revision = working.revision;
-    let expected_last_seq = working.conversation.last_seq;
-    working
-        .transition(AgentStatus::WaitingApproval, MINUTE.into(), None)
-        .unwrap();
-    working.conversation.last_seq += 1;
-    store
-        .commit_agent_conversation(AgentConversationMutation {
-            expected_agent_revision,
-            expected_last_seq,
-            runtime_generation: 1,
-            agent: working.clone(),
-            appended_at: MINUTE.into(),
-            agent_logs: vec![AgentLogKind::ApprovalRequested {
-                approval_id: "approval-1".into(),
-                action: Some("Run checks".into()),
-                detail: None,
-                runtime_locator: Some("runtime-route-1".into()),
-            }],
-        })
-        .await
-        .unwrap();
-
-    drop(store);
-    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let pending = reopened.pending_agent_approvals(&working.id).await.unwrap();
-    assert!(matches!(
-        pending.as_slice(),
-        [AgentLogEntry {
-            kind: AgentLogKind::ApprovalRequested { approval_id, .. },
-            ..
-        }] if approval_id == "approval-1"
-    ));
-
-    reopened
-        .agent_log
-        .delete_one(doc! { "agent_id": working.id.as_str(), "seq": 4_i64 })
-        .await
-        .unwrap();
-    assert_eq!(
-        reopened.pending_agent_approvals(&working.id).await,
-        Err(SandboxStoreError::SequenceConflict)
-    );
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[test]
-fn mongo_agent_control_plans_exact_replays_and_conflicts() {
-    let current = agent_for_worker("agt_control_rules", NOW);
-    let stop = AgentStopRequest {
-        target: AgentControlTarget::from(&current),
-        reason: AgentStopReason::Owner,
-        requested_at: NOW.into(),
-    };
-    let scheduled = match plan_stop(current, &stop).unwrap() {
-        AgentControlResult::Scheduled(agent) => agent,
-        AgentControlResult::Existing(_) => panic!("new stop must be scheduled"),
-    };
-    assert_eq!(
-        plan_stop(scheduled.clone(), &stop).unwrap(),
-        AgentControlResult::Existing(scheduled.clone())
-    );
-    let mut changed = stop.clone();
-    changed.reason = AgentStopReason::Operator;
-    assert_eq!(
-        plan_stop(scheduled.clone(), &changed),
-        Err(AgentControlStoreError::StopReasonConflict)
-    );
-
-    let mut stopped = scheduled;
-    stopped.work.schedule(AgentWorkStep::None, MINUTE.into());
-    stopped
-        .transition(
-            AgentStatus::Stopped,
-            MINUTE.into(),
-            Some(AgentStopReason::Owner),
-        )
-        .unwrap();
-    let stopped_request = AgentStopRequest {
-        target: AgentControlTarget::from(&stopped),
-        reason: AgentStopReason::Owner,
-        requested_at: MINUTE.into(),
-    };
-    assert_eq!(
-        plan_stop(stopped.clone(), &stopped_request),
-        Err(AgentControlStoreError::StatusConflict {
-            status: AgentStatus::Stopped,
-        })
-    );
-
-    let delete = AgentDeleteRequest {
-        target: AgentControlTarget::from(&stopped),
-        requested_at: MINUTE.into(),
-    };
-    let deleting = match plan_delete(stopped, &delete).unwrap() {
-        AgentControlResult::Scheduled(agent) => agent,
-        AgentControlResult::Existing(_) => panic!("new delete must be scheduled"),
-    };
-    assert_eq!(
-        plan_delete(deleting.clone(), &delete).unwrap(),
-        AgentControlResult::Existing(deleting)
-    );
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_control_concurrent_stop_schedules_once_and_replays_exactly() {
-    let (client, name) = database("agent_control_stop").await;
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
-    let (_, _, claimed) = claimed_agent_work_fixture(&store, "control_stop").await;
-    let request = AgentStopRequest {
-        target: AgentControlTarget::from(&claimed),
-        reason: AgentStopReason::Owner,
-        requested_at: NOW.into(),
-    };
-    let mut tasks = Vec::new();
-    for _ in 0..16 {
-        let store = Arc::clone(&store);
-        let request = request.clone();
-        tasks.push(tokio::spawn(async move {
-            store.schedule_agent_stop(request).await.unwrap()
-        }));
-    }
-    let mut scheduled_count = 0;
-    let mut winner = None;
-    for task in tasks {
-        match task.await.unwrap() {
-            AgentControlResult::Scheduled(agent) => {
-                scheduled_count += 1;
-                winner = Some(agent);
-            }
-            AgentControlResult::Existing(agent) => {
-                winner.get_or_insert(agent);
-            }
-        };
-    }
-    assert_eq!(scheduled_count, 1);
-    let winner = winner.unwrap();
-    assert_eq!(winner.requested_stop_reason, Some(AgentStopReason::Owner));
-    assert_eq!(winner.work.step, AgentWorkStep::FenceInteraction);
-    assert!(winner.work.lease.is_none());
-    assert_eq!(
-        store.schedule_agent_stop(request.clone()).await.unwrap(),
-        AgentControlResult::Existing(winner.clone())
-    );
-    let mut changed = request;
-    changed.reason = AgentStopReason::Operator;
-    assert_eq!(
-        store.schedule_agent_stop(changed).await,
-        Err(AgentControlStoreError::StopReasonConflict)
-    );
-    assert_eq!(store.get_agent(&winner.id).await.unwrap(), Some(winner));
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_due_query_is_bounded_sorted_and_supports_lease_takeover() {
-    const BEFORE: &str = "2026-09-04T23:59:00Z";
-
-    let (client, name) = database("agent_work_due").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let first = agent_for_worker("agt_a_due", NOW);
-    let mut held = agent_for_worker("agt_b_held", BEFORE);
-    held.work
-        .claim("worker-a".into(), BEFORE, MINUTE.into())
-        .unwrap();
-    let future = agent_for_worker("agt_c_future", MINUTE);
-    let mut expired = agent_for_worker("agt_m_expired", BEFORE);
-    expired
-        .work
-        .claim("worker-a".into(), BEFORE, NOW.into())
-        .unwrap();
-    let last = agent_for_worker("agt_z_due", BEFORE);
-    for agent in [&last, &expired, &future, &held, &first] {
-        store.create_agent(agent.clone()).await.unwrap();
-    }
-
-    assert_eq!(
-        store.due_agent_work(NOW, 0).await,
-        Err(SandboxStoreError::InvalidPage)
-    );
-    assert_eq!(
-        store.due_agent_work(NOW, MAX_PAGE_SIZE + 1).await,
-        Err(SandboxStoreError::InvalidPage)
-    );
-    assert_eq!(
-        store.due_agent_work(NOW, 2).await.unwrap(),
-        vec![first.id.clone(), expired.id.clone()]
-    );
-    assert!(store
-        .claim_agent_work(
-            &AgentId("agt_missing".into()),
-            "worker-b",
-            NOW.into(),
-            MINUTE.into(),
-        )
-        .await
-        .unwrap()
-        .is_none());
-    assert!(store
-        .claim_agent_work(&future.id, "worker-b", NOW.into(), MINUTE.into())
-        .await
-        .unwrap()
-        .is_none());
-
-    let takeover = store
-        .claim_agent_work(&expired.id, "worker-b", NOW.into(), MINUTE.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(takeover.work.owns("worker-b", 2));
-    assert_eq!(takeover.work.next_fence, 3);
-    assert_eq!(takeover.revision, expired.revision + 1);
-    assert_eq!(
-        store.due_agent_work(NOW, 5).await.unwrap(),
-        vec![first.id, last.id]
-    );
-    store
-        .agents
-        .update_one(
-            doc! { "_id": held.id.as_str() },
-            doc! { "$set": { "work_next_fence": 99_i64 } },
-        )
-        .await
-        .unwrap();
-    assert!(matches!(
-        store.get_agent(&held.id).await,
-        Err(SandboxStoreError::Corrupt(_))
-    ));
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_stale_holder_is_rejected_after_lease_takeover() {
-    let (client, name) = database("agent_work_stale_holder").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let agent = agent_for_worker("agt_stale_holder", NOW);
-    store.create_agent(agent.clone()).await.unwrap();
-    let stale = store
-        .claim_agent_work(&agent.id, "worker-a", NOW.into(), MINUTE.into())
-        .await
-        .unwrap()
-        .unwrap();
-    let current = store
-        .claim_agent_work(&agent.id, "worker-b", MINUTE.into(), TWO_MINUTES.into())
-        .await
-        .unwrap()
-        .unwrap();
-    let stale_fence = stale.work.lease.as_ref().unwrap().fence;
-    let mut next = stale.clone();
-    next.work
-        .advance(
-            "worker-a",
-            stale_fence,
-            AgentWorkStep::MaterializeHome,
-            MINUTE.into(),
-        )
-        .unwrap();
-    next.revision += 1;
-
-    assert_eq!(
-        store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: stale.revision,
-                holder: "worker-a".into(),
-                fence: stale_fence,
-                agent: next,
-                worktree: None,
-                appended_at: MINUTE.into(),
-                sandbox_event: None,
-                agent_logs: vec![],
-            })
-            .await,
-        Err(SandboxStoreError::Conflict)
-    );
-    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(current));
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event() {
-    let (client, name) = database("agent_work_publication").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let (parent, mut worktree, claimed) = claimed_agent_work_fixture(&store, "publish").await;
-    let fence = claimed.work.lease.as_ref().unwrap().fence;
-    let mut next = claimed.clone();
-    next.conversation.conversation_id = Some("conversation-1".into());
-    next.conversation.runtime_generation = Some(1);
-    next.work
-        .advance("worker", fence, AgentWorkStep::None, NOW.into())
-        .unwrap();
-    next.transition(AgentStatus::Ready, NOW.into(), None)
-        .unwrap();
-    let expected_worktree_revision = worktree.revision;
-    worktree.transition(WorktreeStatus::Ready).unwrap();
-    let log_kinds = vec![
-        AgentLogKind::ConversationOpened {
-            conversation_id: "conversation-1".into(),
-            runtime_generation: 1,
-        },
-        AgentLogKind::StatusChanged {
-            from: AgentStatus::Starting,
-            to: AgentStatus::Ready,
-        },
-    ];
-    next.conversation.last_seq += u64::try_from(log_kinds.len()).unwrap();
-
-    store
-        .commit_agent_work(AgentWorkMutation {
-            expected_agent_revision: claimed.revision,
-            holder: "worker".into(),
-            fence,
-            agent: next.clone(),
-            worktree: Some(VersionedWorktree {
-                expected_revision: expected_worktree_revision,
-                worktree: worktree.clone(),
-            }),
-            appended_at: NOW.into(),
-            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
-                agent_id: next.id.clone(),
-                from: AgentStatus::Starting,
-                to: AgentStatus::Ready,
-            }),
-            agent_logs: log_kinds.clone(),
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(store.get_agent(&next.id).await.unwrap(), Some(next.clone()));
-    assert_eq!(
-        store.get_worktree(&worktree.id).await.unwrap(),
-        Some(worktree)
-    );
-    let logs = store.agent_log(&next.id, 0, 10).await.unwrap();
-    assert_eq!(logs.len(), 2);
-    assert_eq!(
-        logs.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
-        [1, 2]
-    );
-    assert_eq!(
-        logs.iter()
-            .map(|entry| entry.kind.clone())
-            .collect::<Vec<_>>(),
-        log_kinds
-    );
-    let events = store.sandbox_events(&parent.id, 0, 10).await.unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(
-        events[0].kind,
-        SandboxEventKind::AgentStatusChanged {
-            agent_id: next.id,
-            from: AgentStatus::Starting,
-            to: AgentStatus::Ready,
-        }
-    );
-    let agent_row = store
-        .agents
-        .find_one(doc! { "_id": logs[0].agent_id.as_str() })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(agent_row.get_i64("last_seq").unwrap(), 2);
-    assert!(!agent_row.get_bool("work_pending").unwrap());
-    assert_eq!(
-        agent_row.get("work_lease_holder"),
-        Some(&mongodb::bson::Bson::Null)
-    );
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_rejects_an_incorrect_agent_log_high_water_mark() {
-    let (client, name) = database("agent_work_incorrect_log_high_water").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let (_, _, claimed) = claimed_agent_work_fixture(&store, "incorrect_log_high_water").await;
-    let next = advance_claimed_agent(&claimed);
-
-    assert_eq!(
-        store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: claimed.revision,
-                holder: "worker".into(),
-                fence: claimed.work.lease.as_ref().unwrap().fence,
-                agent: next,
-                worktree: None,
-                appended_at: NOW.into(),
-                sandbox_event: None,
-                agent_logs: vec![AgentLogKind::Deleted],
-            })
-            .await,
-        Err(SandboxStoreError::Conflict)
-    );
-    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
-    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 0);
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
-    let (client, name) = database("agent_work_stop_intent").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let agent = agent_for_worker("agt_stop_intent", NOW);
-    store.create_agent(agent.clone()).await.unwrap();
-    let mut scheduled = agent.clone();
-    scheduled
-        .request_stop(AgentStopReason::Owner, NOW.into())
-        .unwrap();
-    store
-        .save_agent(agent.revision, scheduled.clone())
-        .await
-        .unwrap();
-    let claimed = store
-        .claim_agent_work(&scheduled.id, "worker", NOW.into(), MINUTE.into())
-        .await
-        .unwrap()
-        .unwrap();
-    let fence = claimed.work.lease.as_ref().unwrap().fence;
-
-    let mut cleared = claimed.clone();
-    cleared
-        .work
-        .advance("worker", fence, AgentWorkStep::CloseProcess, NOW.into())
-        .unwrap();
-    cleared.requested_stop_reason = None;
-    cleared.revision += 1;
-    assert_eq!(
-        store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: claimed.revision,
-                holder: "worker".into(),
-                fence,
-                agent: cleared,
-                worktree: None,
-                appended_at: NOW.into(),
-                sandbox_event: None,
-                agent_logs: vec![],
-            })
-            .await,
-        Err(SandboxStoreError::Conflict)
-    );
-    assert_eq!(
-        store.get_agent(&claimed.id).await.unwrap(),
-        Some(claimed.clone())
-    );
-
-    let mut stopped = claimed.clone();
-    stopped
-        .work
-        .advance("worker", fence, AgentWorkStep::None, MINUTE.into())
-        .unwrap();
-    stopped
-        .transition(
-            AgentStatus::Stopped,
-            MINUTE.into(),
-            Some(AgentStopReason::Owner),
-        )
-        .unwrap();
-    store
-        .commit_agent_work(AgentWorkMutation {
-            expected_agent_revision: claimed.revision,
-            holder: "worker".into(),
-            fence,
-            agent: stopped.clone(),
-            worktree: None,
-            appended_at: MINUTE.into(),
-            sandbox_event: None,
-            agent_logs: vec![],
-        })
-        .await
-        .unwrap();
-    assert_eq!(store.get_agent(&stopped.id).await.unwrap(), Some(stopped));
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_invalid_worktree_rolls_back_every_artifact() {
-    let (client, name) = database("agent_work_worktree_rollback").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let (parent, worktree, claimed) = claimed_agent_work_fixture(&store, "worktree_rollback").await;
-    let mut next = advance_claimed_agent(&claimed);
-    next.conversation.last_seq += 1;
-    let mut invalid_worktree = worktree.clone();
-    invalid_worktree.status = WorktreeStatus::Ready;
-    invalid_worktree.revision += 2;
-
-    assert_eq!(
-        store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: claimed.revision,
-                holder: "worker".into(),
-                fence: claimed.work.lease.as_ref().unwrap().fence,
-                agent: next,
-                worktree: Some(VersionedWorktree {
-                    expected_revision: worktree.revision,
-                    worktree: invalid_worktree,
-                }),
-                appended_at: NOW.into(),
-                sandbox_event: Some(SandboxEventKind::Created),
-                agent_logs: vec![AgentLogKind::Deleted],
-            })
-            .await,
-        Err(SandboxStoreError::Conflict)
-    );
-    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
-    assert_eq!(
-        store.get_worktree(&worktree.id).await.unwrap(),
-        Some(worktree)
-    );
-    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 0);
-    assert_eq!(
-        store.sandbox_events.count_documents(doc! {}).await.unwrap(),
-        0
-    );
-    let sandbox_row = store
-        .sandboxes
-        .find_one(doc! { "_id": parent.id.as_str() })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(sandbox_row.get_i64("last_seq").unwrap(), 0);
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_late_log_conflict_rolls_back_agent_worktree_and_earlier_log() {
-    let (client, name) = database("agent_work_log_rollback").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let (parent, mut worktree, claimed) = claimed_agent_work_fixture(&store, "log_rollback").await;
-    let conflicting = AgentLogEntry {
-        agent_id: claimed.id.clone(),
-        seq: 2,
-        appended_at: NOW.into(),
-        kind: AgentLogKind::Stopped {
-            reason: "conflict".into(),
-        },
-    };
-    store
-        .agent_log
-        .insert_one(log_document(&conflicting).unwrap())
-        .await
-        .unwrap();
-    let mut next = advance_claimed_agent(&claimed);
-    next.conversation.last_seq += 2;
-    let expected_worktree_revision = worktree.revision;
-    worktree.transition(WorktreeStatus::Ready).unwrap();
-
-    assert_eq!(
-        store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: claimed.revision,
-                holder: "worker".into(),
-                fence: claimed.work.lease.as_ref().unwrap().fence,
-                agent: next,
-                worktree: Some(VersionedWorktree {
-                    expected_revision: expected_worktree_revision,
-                    worktree: worktree.clone(),
-                }),
-                appended_at: NOW.into(),
-                sandbox_event: Some(SandboxEventKind::Created),
-                agent_logs: vec![AgentLogKind::Deleted, AgentLogKind::Deleted],
-            })
-            .await,
-        Err(SandboxStoreError::SequenceConflict)
-    );
-    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
-    let mut original_worktree = worktree;
-    original_worktree.status = WorktreeStatus::Creating;
-    original_worktree.revision = expected_worktree_revision;
-    assert_eq!(
-        store.get_worktree(&original_worktree.id).await.unwrap(),
-        Some(original_worktree)
-    );
-    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 1);
-    assert!(store
-        .agent_log
-        .find_one(doc! { "agent_id": conflicting.agent_id.as_str(), "seq": 1_i64 })
-        .await
-        .unwrap()
-        .is_none());
-    assert_eq!(
-        store.sandbox_events.count_documents(doc! {}).await.unwrap(),
-        0
-    );
-    let sandbox_row = store
-        .sandboxes
-        .find_one(doc! { "_id": parent.id.as_str() })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(sandbox_row.get_i64("last_seq").unwrap(), 0);
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_late_event_conflict_rolls_back_agent_worktree_and_logs() {
-    let (client, name) = database("agent_work_event_rollback").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let (parent, mut worktree, claimed) =
-        claimed_agent_work_fixture(&store, "event_rollback").await;
-    let conflicting = SandboxEvent {
-        sandbox_id: parent.id.clone(),
-        seq: 1,
-        appended_at: NOW.into(),
-        kind: SandboxEventKind::Created,
-    };
-    store
-        .sandbox_events
-        .insert_one(event_document(&conflicting).unwrap())
-        .await
-        .unwrap();
-    let mut next = advance_claimed_agent(&claimed);
-    next.conversation.last_seq += 2;
-    let expected_worktree_revision = worktree.revision;
-    worktree.transition(WorktreeStatus::Ready).unwrap();
-
-    assert_eq!(
-        store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: claimed.revision,
-                holder: "worker".into(),
-                fence: claimed.work.lease.as_ref().unwrap().fence,
-                agent: next,
-                worktree: Some(VersionedWorktree {
-                    expected_revision: expected_worktree_revision,
-                    worktree: worktree.clone(),
-                }),
-                appended_at: NOW.into(),
-                sandbox_event: Some(SandboxEventKind::AgentDeleted {
-                    agent_id: claimed.id.clone(),
-                }),
-                agent_logs: vec![AgentLogKind::Deleted, AgentLogKind::Deleted],
-            })
-            .await,
-        Err(SandboxStoreError::SequenceConflict)
-    );
-    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
-    let mut original_worktree = worktree;
-    original_worktree.status = WorktreeStatus::Creating;
-    original_worktree.revision = expected_worktree_revision;
-    assert_eq!(
-        store.get_worktree(&original_worktree.id).await.unwrap(),
-        Some(original_worktree)
-    );
-    assert_eq!(store.agent_log.count_documents(doc! {}).await.unwrap(), 0);
-    assert_eq!(
-        store.sandbox_events.count_documents(doc! {}).await.unwrap(),
-        1
-    );
-    let sandbox_row = store
-        .sandboxes
-        .find_one(doc! { "_id": parent.id.as_str() })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(sandbox_row.get_i64("last_seq").unwrap(), 0);
-
-    client.database(&name).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn agent_work_reopen_reconciliation_requires_every_exact_artifact() {
-    let (client, name) = database("agent_work_reconcile").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let (parent, mut worktree, claimed) = claimed_agent_work_fixture(&store, "reconcile").await;
-    let fence = claimed.work.lease.as_ref().unwrap().fence;
-    let mut next = advance_claimed_agent(&claimed);
-    let expected_worktree_revision = worktree.revision;
-    worktree.transition(WorktreeStatus::Ready).unwrap();
-    let log_kinds = vec![AgentLogKind::Deleted, AgentLogKind::Deleted];
-    next.conversation.last_seq += u64::try_from(log_kinds.len()).unwrap();
-    let event_kind = SandboxEventKind::AgentDeleted {
-        agent_id: next.id.clone(),
-    };
-    store
-        .commit_agent_work(AgentWorkMutation {
-            expected_agent_revision: claimed.revision,
-            holder: "worker".into(),
-            fence,
-            agent: next.clone(),
-            worktree: Some(VersionedWorktree {
-                expected_revision: expected_worktree_revision,
-                worktree: worktree.clone(),
-            }),
-            appended_at: NOW.into(),
-            sandbox_event: Some(event_kind.clone()),
-            agent_logs: log_kinds.clone(),
-        })
-        .await
-        .unwrap();
-    let logs = log_kinds
-        .into_iter()
-        .enumerate()
-        .map(|(offset, kind)| AgentLogEntry {
-            agent_id: next.id.clone(),
-            seq: offset as u64 + 1,
-            appended_at: NOW.into(),
-            kind,
-        })
-        .collect::<Vec<_>>();
-    let receipt = PublicationReceipt {
-        agent: next,
-        worktree: Some(worktree),
-        logs,
-        event: Some(SandboxEvent {
-            sandbox_id: parent.id.clone(),
-            seq: 1,
-            appended_at: NOW.into(),
-            kind: event_kind,
-        }),
-    };
-    drop(store);
-    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
-
-    assert!(reconcile_publication(&reopened, &receipt).await.unwrap());
-    let mut wrong_agent = receipt.clone();
-    wrong_agent.agent.title = Some("wrong".into());
-    assert!(!reconcile_publication(&reopened, &wrong_agent)
-        .await
-        .unwrap());
-    let mut wrong_worktree = receipt.clone();
-    wrong_worktree.worktree.as_mut().unwrap().branch = "wrong".into();
-    assert!(!reconcile_publication(&reopened, &wrong_worktree)
-        .await
-        .unwrap());
-    let mut wrong_log = receipt.clone();
-    wrong_log.logs[1].kind = AgentLogKind::Deleted;
-    wrong_log.logs[1].appended_at = MINUTE.into();
-    assert_eq!(
-        reconcile_publication(&reopened, &wrong_log).await,
-        Err(SandboxStoreError::SequenceConflict)
-    );
-    let mut wrong_event = receipt.clone();
-    wrong_event.event.as_mut().unwrap().kind = SandboxEventKind::Created;
-    assert_eq!(
-        reconcile_publication(&reopened, &wrong_event).await,
-        Err(SandboxStoreError::SequenceConflict)
-    );
-    reopened
-        .agent_log
-        .delete_one(doc! { "agent_id": receipt.agent.id.as_str(), "seq": 2_i64 })
-        .await
-        .unwrap();
-    assert!(!reconcile_publication(&reopened, &receipt).await.unwrap());
-
-    client.database(&name).drop().await.unwrap();
-}
-
+mod agent_transaction_tests;
+mod agent_worker_tests;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn fresh_database_initializes_every_schema_v1_collection_and_index() {
@@ -2736,6 +1840,30 @@ async fn missing_agent_log_entry_in_the_durable_range_fails_closed() {
             .last_seq,
         2
     );
+    let orphan = AgentLogEntry {
+        agent_id: agent.id.clone(),
+        seq: 3,
+        appended_at: NOW.into(),
+        kind: AgentLogKind::Deleted,
+    };
+    store
+        .agent_log
+        .insert_one(log_document(&orphan).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.agent_log(&agent.id, 0, 10).await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(
+        store.agent_log(&agent.id, 2, 10).await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    store
+        .agent_log
+        .delete_one(doc! { "agent_id": agent.id.as_str(), "seq": 3_i64 })
+        .await
+        .unwrap();
     store
         .agent_log
         .delete_one(doc! { "agent_id": agent.id.as_str(), "seq": 1_i64 })
@@ -2743,6 +1871,10 @@ async fn missing_agent_log_entry_in_the_durable_range_fails_closed() {
         .unwrap();
     assert_eq!(
         store.agent_log(&agent.id, 0, 10).await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(
+        store.agent_log(&agent.id, 1, 10).await,
         Err(SandboxStoreError::SequenceConflict)
     );
     client.database(&name).drop().await.unwrap();

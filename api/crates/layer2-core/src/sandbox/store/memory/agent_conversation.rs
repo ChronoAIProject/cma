@@ -10,6 +10,9 @@ impl AgentConversationStore for InMemorySandboxStore {
         &self,
         mutation: AgentConversationMutation,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
+            return Err(SandboxStoreError::AgentLogCapacityExceeded);
+        }
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation)?;
@@ -71,6 +74,9 @@ fn validate_mutation(
         .get(&mutation.agent.id)
         .and_then(|entries| entries.last())
         .map_or(0, |entry| entry.seq);
+    if actual_last_seq != current.conversation.last_seq {
+        return Err(SandboxStoreError::SequenceConflict);
+    }
     let count = u64::try_from(mutation.agent_logs.len())
         .map_err(|_| SandboxStoreError::SequenceConflict)?;
     let next_revision = mutation
@@ -88,7 +94,6 @@ fn validate_mutation(
         || current.revision != mutation.expected_agent_revision
         || mutation.agent.revision != next_revision
         || current.conversation.last_seq != mutation.expected_last_seq
-        || actual_last_seq != mutation.expected_last_seq
         || mutation.agent.conversation.last_seq != next_last_seq
         || current.conversation.conversation_id != mutation.agent.conversation.conversation_id
         || current.conversation.runtime_generation != Some(mutation.runtime_generation)

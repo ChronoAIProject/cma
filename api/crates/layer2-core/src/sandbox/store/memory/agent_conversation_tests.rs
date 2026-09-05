@@ -505,7 +505,7 @@ async fn failed_atomic_commits_preserve_the_aggregate_and_live_assembly() {
                 NOW.into(),
             )
             .await,
-        Err(AgentConversationError::Unavailable(_))
+        Err(AgentConversationError::Corrupt(_))
     ));
     assert_eq!(assembly, assembly_before);
     assert_eq!(

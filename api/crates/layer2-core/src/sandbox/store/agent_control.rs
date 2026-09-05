@@ -1,10 +1,12 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use crate::sandbox::{Agent, AgentStatus, AgentStopReason, AgentWorkStep};
 
 /// The exact aggregate snapshot an owner-authorized control request observed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentControlTarget {
     pub agent_id: AgentId,
     pub worktree_id: WorktreeId,
@@ -29,14 +31,16 @@ impl From<&Agent> for AgentControlTarget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentStopRequest {
     pub target: AgentControlTarget,
     pub reason: AgentStopReason,
     pub requested_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentDeleteRequest {
     pub target: AgentControlTarget,
     pub requested_at: String,

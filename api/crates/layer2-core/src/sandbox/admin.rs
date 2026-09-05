@@ -248,6 +248,7 @@ impl OperatorError {
             | SandboxStoreError::WorkspaceNotReady
             | SandboxStoreError::AgentLimitReached { .. }
             | SandboxStoreError::AgentCreationConflict
+            | SandboxStoreError::AgentLogCapacityExceeded
             | SandboxStoreError::InvalidTransaction(_) => Self::InvalidState(error.to_string()),
             SandboxStoreError::Unavailable(_) | SandboxStoreError::Corrupt(_) => {
                 Self::Unavailable(error.to_string())
@@ -353,7 +354,8 @@ impl SandboxOperatorService {
             .read_admin_sandbox_events(id, after, limit)
             .await
             .map_err(OperatorError::from_sandbox_store)?;
-        let mut record = activity(caller, ActivityAction::Read, &sandbox_events_target(id));
+        let target = format!("sandbox:{id}:events");
+        let mut record = activity(caller, ActivityAction::Read, &target);
         record.detail.record(DetailKey::Cursor, after.to_string());
         record.detail.record(DetailKey::Limit, limit.to_string());
         self.append(record).await?;
@@ -486,10 +488,6 @@ fn record_optional_filters(
 
 fn sandbox_target(id: &SandboxId) -> String {
     format!("sandbox:{id}")
-}
-
-fn sandbox_events_target(id: &SandboxId) -> String {
-    format!("sandbox:{id}:events")
 }
 
 fn profile_target(locator: &ProfileLocator) -> String {

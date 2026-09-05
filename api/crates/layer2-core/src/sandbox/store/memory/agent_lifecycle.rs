@@ -54,6 +54,9 @@ impl AgentWorkerStore for InMemorySandboxStore {
         &self,
         mutation: AgentWorkMutation,
     ) -> Result<(), SandboxStoreError> {
+        if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
+            return Err(SandboxStoreError::AgentLogCapacityExceeded);
+        }
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation)?;

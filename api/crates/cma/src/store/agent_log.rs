@@ -1,17 +1,21 @@
 //! Gap-free Mongo log for agent conversation and tool events.
 
-use futures_util::TryStreamExt;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{AgentLogStore, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
 use mongodb::bson::{doc, Document};
-use mongodb::options::IndexOptions;
+use mongodb::options::{IndexOptions, ReadConcern};
 use mongodb::{Collection, IndexModel};
 
+use super::agent_log_integrity::{
+    ensure_append_capacity, scan_complete_log, AppendCapacity, LogSummary, TransactionLogError,
+};
+use super::agents::read_agent;
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, read_record,
     record_bson, require_version, signed, start_transaction, string_field_matches, unsigned,
-    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    TRANSACTION_ATTEMPTS,
 };
 
 pub(super) fn agent_log_indexes() -> Vec<IndexModel> {
@@ -66,9 +70,49 @@ pub(super) fn read_entry(document: &Document) -> Result<AgentLogEntry, SandboxSt
     Ok(entry)
 }
 
-enum TransactionLogError {
-    Domain(SandboxStoreError),
-    Driver(mongodb::error::Error),
+pub(super) async fn scan_complete_log_with_session<F>(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    scan_complete_log(store, agent_id, last_seq, session, false, visit).await
+}
+
+pub(super) async fn scan_complete_log_with_snapshot_session<F>(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    scan_complete_log(store, agent_id, last_seq, session, true, visit).await
+}
+
+#[cfg(test)]
+pub(super) fn verify_complete_log(
+    agent_id: &AgentId,
+    last_seq: u64,
+    logs: &[AgentLogEntry],
+) -> Result<(), SandboxStoreError> {
+    let expected_len =
+        usize::try_from(last_seq).map_err(|_| SandboxStoreError::SequenceConflict)?;
+    if logs.len() != expected_len
+        || logs
+            .iter()
+            .enumerate()
+            .any(|(offset, entry)| entry.agent_id != *agent_id || entry.seq != offset as u64 + 1)
+    {
+        return Err(SandboxStoreError::SequenceConflict);
+    }
+    Ok(())
 }
 
 async fn append_in_transaction(
@@ -111,9 +155,23 @@ async fn append_in_transaction(
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
         .and_then(|seq| unsigned(seq, "agent log sequence").map_err(SandboxStoreError::Corrupt))
         .map_err(TransactionLogError::Domain)?;
+    let complete =
+        scan_complete_log_with_session(store, agent_id, previous, session, |_| Ok(())).await?;
     let seq = previous.checked_add(1).ok_or(TransactionLogError::Domain(
         SandboxStoreError::SequenceConflict,
     ))?;
+    let entry = AgentLogEntry {
+        agent_id: agent_id.clone(),
+        seq,
+        appended_at,
+        kind,
+    };
+    ensure_append_capacity(
+        &complete,
+        std::slice::from_ref(&entry),
+        AppendCapacity::Normal,
+    )
+    .map_err(TransactionLogError::Domain)?;
     let previous = signed(previous, "agent log sequence")
         .map_err(SandboxStoreError::Corrupt)
         .map_err(TransactionLogError::Domain)?;
@@ -144,12 +202,6 @@ async fn append_in_transaction(
             SandboxStoreError::SequenceConflict,
         ));
     }
-    let entry = AgentLogEntry {
-        agent_id: agent_id.clone(),
-        seq,
-        appended_at,
-        kind,
-    };
     store
         .agent_log
         .insert_one(log_document(&entry).map_err(TransactionLogError::Domain)?)
@@ -165,26 +217,56 @@ async fn append_in_transaction(
     Ok(entry)
 }
 
-pub(super) async fn reconcile_entry(
+async fn reconcile_append_after_unknown(
     store: &MongoSandboxStore,
     expected: &AgentLogEntry,
+    snapshot_time: mongodb::bson::Timestamp,
 ) -> Result<Option<AgentLogEntry>, SandboxStoreError> {
-    let found = store
-        .agent_log
-        .find_one(doc! { "_id": log_id(&expected.agent_id, expected.seq) })
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .snapshot_time(snapshot_time)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    match found {
-        Some(document) => {
-            let actual = read_entry(&document)?;
-            if &actual == expected {
-                Ok(Some(actual))
-            } else {
-                Err(SandboxStoreError::SequenceConflict)
-            }
-        }
-        None => Ok(None),
+    let agent = store
+        .agents
+        .find_one(doc! { "_id": expected.agent_id.as_str() })
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .as_ref()
+        .map(read_agent)
+        .transpose()?;
+    let Some(agent) = agent else {
+        return Ok(None);
+    };
+    if agent.conversation.last_seq != expected.seq {
+        return Ok(None);
     }
+    let mut found = None;
+    scan_complete_log_with_snapshot_session(
+        store,
+        &expected.agent_id,
+        agent.conversation.last_seq,
+        &mut session,
+        |entry| {
+            if entry.seq == expected.seq {
+                if &entry != expected {
+                    return Err(SandboxStoreError::SequenceConflict);
+                }
+                found = Some(entry);
+            }
+            Ok(())
+        },
+    )
+    .await
+    .map_err(|error| match error {
+        TransactionLogError::Domain(error) => error,
+        TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
+    })?;
+    Ok(found)
 }
 
 #[async_trait::async_trait]
@@ -243,11 +325,29 @@ impl AgentLogStore for MongoSandboxStore {
                 CommitOutcome::Committed => return Ok(entry),
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
-                    return reconcile_entry(self, &entry).await?.ok_or_else(|| {
+                    let snapshot_time = session.operation_time().ok_or_else(|| {
                         SandboxStoreError::Unavailable(format!(
-                            "agent log commit remained unknown: {error}"
+                            "agent log commit remained unknown without an operation time: {error}"
                         ))
-                    });
+                    })?;
+                    let commit_error = error.to_string();
+                    let unresolved_error = commit_error.clone();
+                    let store = self.clone();
+                    return wait_for_reconciliation("agent log commit", async move {
+                        reconcile_append_after_unknown(&store, &entry, snapshot_time)
+                            .await?
+                            .ok_or_else(|| {
+                                SandboxStoreError::Unavailable(format!(
+                                    "agent log commit remained unknown: {unresolved_error}"
+                                ))
+                            })
+                    })
+                    .await
+                    .map_err(|deadline| {
+                        SandboxStoreError::Unavailable(format!(
+                            "{deadline}; ambiguous commit: {commit_error}"
+                        ))
+                    })?;
                 }
                 CommitOutcome::Failed(error) => {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
@@ -269,10 +369,18 @@ impl AgentLogStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        let mut session = self
+            .client
+            .start_session()
+            .snapshot(true)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let Some(aggregate) = self
             .agents
             .find_one(doc! { "_id": agent_id.as_str() })
             .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut session)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         else {
@@ -285,36 +393,27 @@ impl AgentLogStore for MongoSandboxStore {
             .and_then(|value| {
                 unsigned(value, "agent log sequence").map_err(SandboxStoreError::Corrupt)
             })?;
-        if after >= last_seq {
-            return Ok(Vec::new());
-        }
-        let after_signed =
-            signed(after, "agent log cursor").map_err(|_| SandboxStoreError::InvalidPage)?;
-        let high_water =
-            signed(last_seq, "agent log high water").map_err(SandboxStoreError::Corrupt)?;
-        let mut cursor = self
-            .agent_log
-            .find(doc! {
-                "agent_id": agent_id.as_str(),
-                "seq": { "$gt": after_signed, "$lte": high_water },
-            })
-            .sort(doc! { "seq": 1 })
-            .limit(i64::from(limit))
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        let mut entries = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        {
-            entries.push(read_entry(&document)?);
-        }
-        verify_contiguous(after, last_seq, limit, &entries)?;
-        Ok(entries)
+        let mut page = Vec::with_capacity(usize::from(limit));
+        scan_complete_log_with_snapshot_session(self, agent_id, last_seq, &mut session, |entry| {
+            if entry.seq > after && page.len() < usize::from(limit) {
+                page.push(entry);
+            }
+            Ok(())
+        })
+        .await
+        .map_err(transaction_error)?;
+        Ok(page)
     }
 }
 
+fn transaction_error(error: TransactionLogError) -> SandboxStoreError {
+    match error {
+        TransactionLogError::Domain(error) => error,
+        TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
+    }
+}
+
+#[cfg(test)]
 fn verify_contiguous(
     after: u64,
     last_seq: u64,
@@ -354,6 +453,21 @@ mod tests {
         assert!(verify_contiguous(1, 3, 2, &[entry(2), entry(3)]).is_ok());
         assert_eq!(
             verify_contiguous(1, 3, 2, &[entry(3)]),
+            Err(SandboxStoreError::SequenceConflict)
+        );
+        assert!(verify_complete_log(&id, 3, &[entry(1), entry(2), entry(3)]).is_ok());
+        assert_eq!(
+            verify_complete_log(&id, 3, &[entry(1), entry(3)]),
+            Err(SandboxStoreError::SequenceConflict)
+        );
+        assert_eq!(
+            verify_complete_log(&id, 3, &[entry(1), entry(2), entry(3), entry(4)]),
+            Err(SandboxStoreError::SequenceConflict)
+        );
+        let mut foreign = entry(2);
+        foreign.agent_id = AgentId("agt_foreign".into());
+        assert_eq!(
+            verify_complete_log(&id, 3, &[entry(1), foreign, entry(3)]),
             Err(SandboxStoreError::SequenceConflict)
         );
     }
