@@ -13,14 +13,15 @@ use layer2_core::ServiceId;
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod profiles;
+mod runtime;
 
 pub(crate) use profiles::DefaultProfileConfig;
+pub(crate) use runtime::RuntimeConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
-const DEFAULT_DEPLOYMENT_ID: &str = "cma";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
 const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
@@ -134,6 +135,7 @@ pub struct Config {
     pub mongodb_uri: String,
     pub mongodb_database: String,
     pub deployment_id: String,
+    pub runtime: RuntimeConfig,
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
@@ -154,6 +156,7 @@ impl std::fmt::Debug for Config {
             .field("mongodb_uri", &"<redacted>")
             .field("mongodb_database", &self.mongodb_database)
             .field("deployment_id", &self.deployment_id)
+            .field("runtime", &self.runtime)
             .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
@@ -210,18 +213,8 @@ impl Config {
             return Err("CHRONO_MONGODB_DATABASE is not a valid MongoDB database name".into());
         }
 
-        let deployment_id = value_or(&mut lookup, "CHRONO_DEPLOYMENT_ID", DEFAULT_DEPLOYMENT_ID)?;
-        if deployment_id.is_empty()
-            || deployment_id.len() > 64
-            || !deployment_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        {
-            return Err(
-                "CHRONO_DEPLOYMENT_ID must contain 1 to 64 ASCII letters, digits, '.', '_' or '-'"
-                    .into(),
-            );
-        }
+        let deployment_id = runtime::deployment_id_from_lookup(&mut lookup)?;
+        let runtime = RuntimeConfig::from_lookup(&mut lookup)?;
         let baseline_services = parse_service_ids(
             "CHRONO_BASELINE_SERVICES",
             &value_or(
@@ -293,6 +286,7 @@ impl Config {
             mongodb_uri,
             mongodb_database,
             deployment_id,
+            runtime,
             baseline_services,
             auth_encryption_key,
             activity_retention,

@@ -1,25 +1,138 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use uuid::Uuid;
 
 use super::*;
 
+const TEST_API_KEY: &str = "sandbox-secret-never-print";
+const TEST_IMAGE: &str = concat!(
+    "registry.example/cma-runtime:v1@sha256:",
+    "aaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaa"
+);
+const REQUIRED_RUNTIME_KEYS: [&str; 8] = [
+    "CHRONO_SANDBOX_BASE_URL",
+    "CHRONO_SANDBOX_API_KEY_FILE",
+    "CHRONO_SANDBOX_IMAGE",
+    "CHRONO_SANDBOX_NAMESPACE",
+    "CHRONO_UPSTREAM_BASE_URL",
+    "CHRONO_UPSTREAM_WIRE_API",
+    "CHRONO_PLATFORM_BASE_URL",
+    "CHRONO_DEPLOYMENT_ID",
+];
+
+struct TemporaryEntry {
+    path: PathBuf,
+}
+
+impl TemporaryEntry {
+    fn file(contents: &[u8]) -> Self {
+        let entry = Self::missing();
+        fs::write(&entry.path, contents).expect("write temporary configuration secret");
+        entry
+    }
+
+    fn directory() -> Self {
+        let entry = Self::missing();
+        fs::create_dir(&entry.path).expect("create temporary configuration directory");
+        entry
+    }
+
+    fn missing() -> Self {
+        Self {
+            path: std::env::temp_dir().join(format!("cma-config-{}", Uuid::new_v4())),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn path_str(&self) -> &str {
+        self.path.to_str().expect("temporary path is Unicode")
+    }
+}
+
+impl Drop for TemporaryEntry {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
 fn configured(overrides: &[(&str, &str)]) -> Result<Config, String> {
+    configured_with_removed_key(overrides, None)
+}
+
+fn configured_without(key: &str) -> Result<Config, String> {
+    configured_with_removed_key(&[], Some(key))
+}
+
+fn configured_with_removed_key(
+    overrides: &[(&str, &str)],
+    removed_key: Option<&str>,
+) -> Result<Config, String> {
+    let secret = TemporaryEntry::file(format!("\n  {TEST_API_KEY}\t\n").as_bytes());
     let mut values = HashMap::from([
-        ("CHRONO_AUTH_MODE", "trusted"),
-        ("CHRONO_MONGODB_URI", "mongodb://localhost/cma"),
+        ("CHRONO_AUTH_MODE".to_owned(), "trusted".to_owned()),
         (
-            "CHRONO_AUTH_ENCRYPTION_KEY",
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "CHRONO_MONGODB_URI".to_owned(),
+            "mongodb://localhost/cma".to_owned(),
         ),
+        (
+            "CHRONO_AUTH_ENCRYPTION_KEY".to_owned(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned(),
+        ),
+        (
+            "CHRONO_SANDBOX_BASE_URL".to_owned(),
+            "http://sandbox.example".to_owned(),
+        ),
+        (
+            "CHRONO_SANDBOX_API_KEY_FILE".to_owned(),
+            secret.path().to_string_lossy().into_owned(),
+        ),
+        ("CHRONO_SANDBOX_IMAGE".to_owned(), TEST_IMAGE.to_owned()),
+        (
+            "CHRONO_SANDBOX_NAMESPACE".to_owned(),
+            "chrono-bot".to_owned(),
+        ),
+        (
+            "CHRONO_UPSTREAM_BASE_URL".to_owned(),
+            "https://models.example/api/v1/proxy/s/model".to_owned(),
+        ),
+        (
+            "CHRONO_UPSTREAM_WIRE_API".to_owned(),
+            "responses".to_owned(),
+        ),
+        (
+            "CHRONO_PLATFORM_BASE_URL".to_owned(),
+            "https://platform.example".to_owned(),
+        ),
+        ("CHRONO_DEPLOYMENT_ID".to_owned(), "cma-test".to_owned()),
     ]);
-    values.extend(overrides.iter().copied());
-    Config::from_lookup(|key| Ok(values.get(key).map(ToString::to_string)))
+    values.extend(
+        overrides
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
+    );
+    if let Some(key) = removed_key {
+        values.remove(key);
+    }
+    Config::from_lookup(|key| Ok(values.get(key).cloned()))
 }
 
 #[test]
-fn retained_defaults_form_a_complete_configuration() {
+fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
     let config = configured(&[]).unwrap();
     assert_eq!(config.bind, "0.0.0.0:8080".parse().unwrap());
     assert_eq!(config.mongodb_database, DEFAULT_DATABASE);
+    assert_eq!(config.deployment_id, "cma-test");
     assert_eq!(config.activity_retention, Duration::from_secs(90 * 86_400));
     assert_eq!(config.default_profiles.cpu_millis, 1_000);
     assert_eq!(config.default_profiles.memory_mib, 1_024);
@@ -32,7 +145,157 @@ fn retained_defaults_form_a_complete_configuration() {
         ["chrono-llm", "ornn", "ornn-api"]
     );
     assert_eq!(config.auth_mode_name(), "trusted");
-    assert!(!format!("{config:?}").contains("mongodb://localhost"));
+    assert_eq!(config.runtime.sandbox_base_url, "http://sandbox.example");
+    assert_eq!(config.runtime.sandbox_api_key, TEST_API_KEY);
+    assert_eq!(config.runtime.sandbox_image, TEST_IMAGE);
+    assert_eq!(config.runtime.sandbox_namespace, "chrono-bot");
+    assert_eq!(
+        config.runtime.upstream_base_url,
+        "https://models.example/api/v1/proxy/s/model"
+    );
+    assert_eq!(config.runtime.upstream_wire_api, "responses");
+    assert_eq!(config.runtime.platform_base_url, "https://platform.example");
+
+    let debug = format!("{config:?}");
+    assert!(!debug.contains("mongodb://localhost"));
+    assert!(!debug.contains(TEST_API_KEY));
+    assert!(!format!("{:?}", config.runtime).contains(TEST_API_KEY));
+}
+
+#[test]
+fn runtime_values_are_required_and_nonblank() {
+    for key in REQUIRED_RUNTIME_KEYS {
+        let missing = configured_without(key).unwrap_err();
+        assert!(
+            missing.contains(key),
+            "unexpected error for {key}: {missing}"
+        );
+
+        let blank = configured(&[(key, " \t")]).unwrap_err();
+        assert!(blank.contains(key), "unexpected error for {key}: {blank}");
+    }
+}
+
+#[test]
+fn runtime_urls_are_canonical_and_restrict_transport() {
+    for value in [
+        "sandbox.example",
+        "ftp://sandbox.example",
+        "http://Sandbox.example",
+        "http://user@sandbox.example",
+        "http://sandbox.example/path",
+        "http://sandbox.example?query",
+        "http://sandbox.example/",
+    ] {
+        assert!(configured(&[("CHRONO_SANDBOX_BASE_URL", value)]).is_err());
+    }
+    for value in [
+        "http://models.example/v1",
+        "https://Models.example/v1",
+        "https://user@models.example/v1",
+        "https://models.example/v1?query",
+        "https://models.example/v1/",
+    ] {
+        assert!(configured(&[("CHRONO_UPSTREAM_BASE_URL", value)]).is_err());
+    }
+    for value in [
+        "http://platform.example",
+        "https://Platform.example",
+        "https://platform.example/",
+        "https://platform.example/path",
+        "https://platform.example#fragment",
+    ] {
+        assert!(configured(&[("CHRONO_PLATFORM_BASE_URL", value)]).is_err());
+    }
+}
+
+#[test]
+fn runtime_wire_api_is_the_demonstrated_contract() {
+    let error = configured(&[("CHRONO_UPSTREAM_WIRE_API", "chat_completions")]).unwrap_err();
+    assert!(error.contains("CHRONO_UPSTREAM_WIRE_API"));
+    assert!(error.contains("responses"));
+}
+
+#[test]
+fn runtime_image_is_an_exact_sha256_pinned_reference() {
+    for value in [
+        "registry.example/cma-runtime:latest",
+        concat!(
+            "@sha256:",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ),
+        concat!(
+            "https://registry.example/runtime@sha256:",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ),
+        concat!(
+            "registry.example/runtime@sha256:",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ),
+        concat!(
+            "registry.example/runtime@sha256:",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ),
+    ] {
+        let error = configured(&[("CHRONO_SANDBOX_IMAGE", value)]).unwrap_err();
+        assert!(error.contains("CHRONO_SANDBOX_IMAGE"));
+    }
+}
+
+#[test]
+fn sandbox_namespace_is_one_dns_1123_label() {
+    for value in [
+        "Chrono-bot",
+        "chrono.bot",
+        "-chrono-bot",
+        "chrono-bot-",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
+        let error = configured(&[("CHRONO_SANDBOX_NAMESPACE", value)]).unwrap_err();
+        assert!(error.contains("CHRONO_SANDBOX_NAMESPACE"));
+    }
+}
+
+#[test]
+fn deployment_id_is_a_nonempty_kubernetes_label_value() {
+    assert!(configured(&[("CHRONO_DEPLOYMENT_ID", "CMA.prod_1")]).is_ok());
+    for value in [
+        "-cma",
+        "cma_",
+        "cma/control-plane",
+        "cma control plane",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
+        let error = configured(&[("CHRONO_DEPLOYMENT_ID", value)]).unwrap_err();
+        assert!(error.contains("CHRONO_DEPLOYMENT_ID"));
+    }
+}
+
+#[test]
+fn sandbox_api_key_file_fails_closed_without_disclosing_contents() {
+    let missing = TemporaryEntry::missing();
+    let error = configured(&[("CHRONO_SANDBOX_API_KEY_FILE", missing.path_str())]).unwrap_err();
+    assert!(error.contains("CHRONO_SANDBOX_API_KEY_FILE"));
+
+    let directory = TemporaryEntry::directory();
+    let error = configured(&[("CHRONO_SANDBOX_API_KEY_FILE", directory.path_str())]).unwrap_err();
+    assert!(error.contains("CHRONO_SANDBOX_API_KEY_FILE"));
+
+    let invalid_utf8 = TemporaryEntry::file(b"do-not-print-this\xff");
+    let error =
+        configured(&[("CHRONO_SANDBOX_API_KEY_FILE", invalid_utf8.path_str())]).unwrap_err();
+    assert!(error.contains("valid UTF-8"));
+    assert!(!error.contains("do-not-print-this"));
+
+    let empty = TemporaryEntry::file(b" \n\t ");
+    let error = configured(&[("CHRONO_SANDBOX_API_KEY_FILE", empty.path_str())]).unwrap_err();
+    assert!(error.contains("nonempty API key"));
+
+    let invalid_header = TemporaryEntry::file(b"secret-do-not-print\ninjected-header");
+    let error =
+        configured(&[("CHRONO_SANDBOX_API_KEY_FILE", invalid_header.path_str())]).unwrap_err();
+    assert!(error.contains("valid HTTP header value"));
+    assert!(!error.contains("secret-do-not-print"));
 }
 
 #[test]

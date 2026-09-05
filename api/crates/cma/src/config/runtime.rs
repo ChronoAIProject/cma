@@ -1,0 +1,214 @@
+use std::{fmt, fs};
+
+use axum::http::HeaderValue;
+
+use super::{parse_canonical_https_origin, required};
+
+const MAX_URL_LENGTH: usize = 2_048;
+const MAX_IMAGE_REFERENCE_LENGTH: usize = 2_048;
+const SHA256_SEPARATOR: &str = "@sha256:";
+
+/// Deployment-owned endpoints and runtime identity validated at startup.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct RuntimeConfig {
+    pub sandbox_base_url: String,
+    pub sandbox_api_key: String,
+    pub sandbox_image: String,
+    pub sandbox_namespace: String,
+    pub upstream_base_url: String,
+    pub upstream_wire_api: String,
+    pub platform_base_url: String,
+}
+
+impl fmt::Debug for RuntimeConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RuntimeConfig")
+            .field("sandbox_base_url", &self.sandbox_base_url)
+            .field("sandbox_api_key", &"<redacted>")
+            .field("sandbox_image", &self.sandbox_image)
+            .field("sandbox_namespace", &self.sandbox_namespace)
+            .field("upstream_base_url", &self.upstream_base_url)
+            .field("upstream_wire_api", &self.upstream_wire_api)
+            .field("platform_base_url", &self.platform_base_url)
+            .finish()
+    }
+}
+
+impl RuntimeConfig {
+    pub(super) fn from_lookup(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<Self, String> {
+        let sandbox_base_url = parse_canonical_http_origin(
+            "CHRONO_SANDBOX_BASE_URL",
+            &required(lookup, "CHRONO_SANDBOX_BASE_URL")?,
+        )?;
+        let sandbox_api_key_file = required(lookup, "CHRONO_SANDBOX_API_KEY_FILE")?;
+        let sandbox_image = parse_pinned_image(
+            "CHRONO_SANDBOX_IMAGE",
+            &required(lookup, "CHRONO_SANDBOX_IMAGE")?,
+        )?;
+        let sandbox_namespace = parse_sandbox_namespace(
+            "CHRONO_SANDBOX_NAMESPACE",
+            &required(lookup, "CHRONO_SANDBOX_NAMESPACE")?,
+        )?;
+        let upstream_base_url = parse_canonical_https_base_url(
+            "CHRONO_UPSTREAM_BASE_URL",
+            &required(lookup, "CHRONO_UPSTREAM_BASE_URL")?,
+        )?;
+        let upstream_wire_api = required(lookup, "CHRONO_UPSTREAM_WIRE_API")?;
+        if upstream_wire_api != "responses" {
+            return Err("CHRONO_UPSTREAM_WIRE_API must be \"responses\"".into());
+        }
+        let platform_base_url = parse_canonical_https_origin(
+            "CHRONO_PLATFORM_BASE_URL",
+            &required(lookup, "CHRONO_PLATFORM_BASE_URL")?,
+        )?;
+        let sandbox_api_key = read_api_key(&sandbox_api_key_file)?;
+
+        Ok(Self {
+            sandbox_base_url,
+            sandbox_api_key,
+            sandbox_image,
+            sandbox_namespace,
+            upstream_base_url,
+            upstream_wire_api,
+            platform_base_url,
+        })
+    }
+}
+
+pub(super) fn deployment_id_from_lookup(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<String, String> {
+    let value = required(lookup, "CHRONO_DEPLOYMENT_ID")?;
+    let bytes = value.as_bytes();
+    if !(1..=63).contains(&bytes.len())
+        || !bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        || !bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(concat!(
+            "CHRONO_DEPLOYMENT_ID must be a Kubernetes label value: 1 to 63 ASCII ",
+            "letters, digits, '.', '_' or '-', with an alphanumeric first and last character"
+        )
+        .into());
+    }
+    Ok(value)
+}
+
+fn parse_canonical_http_origin(key: &str, raw: &str) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(raw)
+        .map_err(|_| format!("{key} must be one canonical absolute HTTP(S) origin"))?;
+    let canonical = parsed.origin().ascii_serialization();
+    if raw.len() > MAX_URL_LENGTH
+        || !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || parsed.username() != ""
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || raw != canonical
+    {
+        return Err(format!(
+            "{key} must be one canonical absolute HTTP(S) origin"
+        ));
+    }
+    Ok(canonical)
+}
+
+fn parse_canonical_https_base_url(key: &str, raw: &str) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(raw)
+        .map_err(|_| format!("{key} must be one canonical absolute HTTPS base URL"))?;
+    let origin = parsed.origin().ascii_serialization();
+    let canonical = if parsed.path() == "/" {
+        origin
+    } else {
+        format!("{origin}{}", parsed.path())
+    };
+    if raw.len() > MAX_URL_LENGTH
+        || parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || parsed.username() != ""
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || raw.ends_with('/')
+        || raw != canonical
+    {
+        return Err(format!(
+            "{key} must be one canonical absolute HTTPS base URL without a trailing slash"
+        ));
+    }
+    Ok(canonical)
+}
+
+fn parse_pinned_image(key: &str, raw: &str) -> Result<String, String> {
+    let valid = raw
+        .rsplit_once(SHA256_SEPARATOR)
+        .is_some_and(|(image, digest)| {
+            raw.len() <= MAX_IMAGE_REFERENCE_LENGTH
+                && !image.is_empty()
+                && !image.contains('@')
+                && !image.contains("://")
+                && !image.starts_with(['.', '-', '_', '/', ':'])
+                && !image.ends_with(['.', '-', '_', '/', ':'])
+                && !image.contains("//")
+                && image.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/' | b':')
+                })
+                && digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        });
+    if !valid {
+        return Err(format!(
+            "{key} must be an immutable OCI image reference ending in @sha256: and 64 lowercase hexadecimal digits"
+        ));
+    }
+    Ok(raw.to_owned())
+}
+
+fn parse_sandbox_namespace(key: &str, raw: &str) -> Result<String, String> {
+    let bytes = raw.as_bytes();
+    if !(1..=63).contains(&bytes.len())
+        || !bytes
+            .first()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        || !bytes
+            .last()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
+    {
+        return Err(format!(
+            "{key} must be one lowercase DNS-1123 label of at most 63 bytes"
+        ));
+    }
+    Ok(raw.to_owned())
+}
+
+fn read_api_key(path: &str) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|error| {
+        format!("CHRONO_SANDBOX_API_KEY_FILE {path:?} is not readable: {error}")
+    })?;
+    let contents = std::str::from_utf8(&bytes)
+        .map_err(|_| format!("CHRONO_SANDBOX_API_KEY_FILE {path:?} must contain valid UTF-8"))?;
+    let api_key = contents.trim();
+    if api_key.is_empty() {
+        return Err(format!(
+            "CHRONO_SANDBOX_API_KEY_FILE {path:?} must contain a nonempty API key"
+        ));
+    }
+    if HeaderValue::try_from(api_key).is_err() {
+        return Err(format!(
+            "CHRONO_SANDBOX_API_KEY_FILE {path:?} must contain one valid HTTP header value"
+        ));
+    }
+    Ok(api_key.to_owned())
+}
