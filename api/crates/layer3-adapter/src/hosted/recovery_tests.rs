@@ -127,6 +127,52 @@ async fn reclamation_deletes_only_the_exact_observed_runtime_and_replays_absence
 }
 
 #[tokio::test]
+async fn new_deployment_adopts_the_exact_persisted_old_image_before_rotation() {
+    let backend = InMemoryHostedBackend::default();
+    let old = adapter(backend.clone(), "runtime:old");
+    let handle = old
+        .provision_runtime(&RuntimeProvisionRequest::new(1, spec()))
+        .await
+        .unwrap();
+    let recreated = adapter(backend, "runtime:new");
+    assert!(recreated
+        .adopt_runtime(&RuntimeAdoptionRequest::new(1, handle.clone(), spec()))
+        .await
+        .is_err());
+
+    let adopted = recreated
+        .adopt_runtime(
+            &RuntimeAdoptionRequest::new(1, handle.clone(), spec())
+                .with_expected_image("runtime:old"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(adopted.handle, handle);
+    recreated.resources(&handle).await.unwrap();
+    let mut changed_spec = spec();
+    changed_spec.capacity.cpu_millis += 1;
+    assert!(recreated
+        .adopt_runtime(
+            &RuntimeAdoptionRequest::new(1, handle, changed_spec)
+                .with_expected_image("runtime:old"),
+        )
+        .await
+        .is_err());
+
+    let replacement = recreated
+        .provision_runtime(&RuntimeProvisionRequest::new(2, spec()))
+        .await
+        .unwrap();
+    let inventory = recreated.runtime_inventory().await.unwrap();
+    let new = inventory
+        .iter()
+        .find(|item| item.handle == replacement)
+        .unwrap();
+    assert_ne!(new.image_sha256, adopted.image_sha256);
+}
+
+#[tokio::test]
 async fn restore_bootstrap_replays_exactly_and_fences_work_until_exact_restore() {
     let backend = InMemoryHostedBackend::default();
     let adapter = adapter(backend.clone(), "runtime:new");
