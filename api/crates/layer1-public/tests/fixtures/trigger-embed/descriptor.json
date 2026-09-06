@@ -3,6 +3,10 @@
   "badge_url": "https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme",
   "label_text": "Open in CMA",
   "javascript_sri": "sha384-hyi+n+8axKIAw/N4+9hJAAoaeKrVpTkh2N9SWJ6vo8nIrP+K29nRGqzJ2VseOkJn",
+  "content_security_policy": {
+    "img_src": "img-src https://cma.example",
+    "script_src": "script-src https://cma.example"
+  },
   "snippets": {
     "markdown": "[![Open in CMA](https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme)](https://cma.example/t/pub_example/plc_readme)",
     "html": "<a href=\"https://cma.example/t/pub_example/plc_readme\"><img src=\"https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&amp;theme=auto&amp;placement=plc_readme\" alt=\"Open in CMA\"></a>",

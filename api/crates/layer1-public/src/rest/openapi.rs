@@ -4,7 +4,9 @@ use utoipa::{openapi, OpenApi};
 
 mod projections;
 
-use self::projections::{EmbedDescriptor, EmbedSnippets, SignupOptions};
+use self::projections::{
+    EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, SignupOptions,
+};
 use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
 use super::admin::sandboxes::{
     AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
@@ -138,6 +140,7 @@ use super::trigger_openapi_shapes::*;
         ProblemDocument,
         SignupOptions,
         EmbedDescriptor,
+        EmbedContentSecurityPolicy,
         EmbedSnippets,
         TriggerButtonLabelValue,
         TriggerThemeValue,

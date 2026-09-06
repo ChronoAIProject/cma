@@ -64,7 +64,7 @@ mod workspaces;
 mod worktrees;
 
 pub use agents::{agent_router, AgentRoutesState};
-pub use embed::{EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
+pub use embed::{EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
 pub use instances::{hierarchy_router, HierarchyState};
 pub use launch_events::{
     FirstMessageStateValue, LaunchBlockedReasonView, LaunchEffectKindValue, LaunchEventKindView,

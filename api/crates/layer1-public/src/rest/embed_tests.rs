@@ -85,6 +85,14 @@ fn canonical_snippets_match_the_javascript_dom_and_preserve_url_semantics() {
     assert_eq!(descriptor.label_text, "Open in CMA");
     assert_eq!(descriptor.javascript_sri, EMBED_V1_JAVASCRIPT_SRI);
     assert_eq!(
+        descriptor.content_security_policy.img_src,
+        format!("img-src {ORIGIN}")
+    );
+    assert_eq!(
+        descriptor.content_security_policy.script_src,
+        format!("script-src {ORIGIN}")
+    );
+    assert_eq!(
         descriptor.snippets.markdown,
         format!("[![Open in CMA]({badge_url})]({public_url})")
     );
@@ -121,6 +129,25 @@ fn canonical_snippets_match_the_javascript_dom_and_preserve_url_semantics() {
     assert!(!serde_json::to_string(&descriptor)
         .unwrap()
         .contains(OWNER_SECRET));
+}
+
+#[test]
+fn csp_directives_use_only_the_configured_public_origin() {
+    let fixture = Fixture::published();
+    let descriptor = build_descriptor(
+        &url::Url::parse("https://cma.example:8443").unwrap(),
+        fixture.trigger.public_id.as_ref().unwrap(),
+        fixture.trigger.latest_revision().unwrap(),
+        &fixture.placement.id,
+    );
+    assert_eq!(
+        descriptor.content_security_policy.img_src,
+        "img-src https://cma.example:8443"
+    );
+    assert_eq!(
+        descriptor.content_security_policy.script_src,
+        "script-src https://cma.example:8443"
+    );
 }
 
 #[test]
