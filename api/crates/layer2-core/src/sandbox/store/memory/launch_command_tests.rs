@@ -268,9 +268,10 @@ async fn admit_failed(store: &InMemorySandboxStore, suffix: &str, launch_id: &st
     failed.runtime = Some(RuntimeBinding {
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
-        provision_generation: None,
+        provision_generation: Some(1),
         bound_at: BOUND_AT.into(),
     });
+    failed.lifecycle.runtime_generation_high_water = 1;
     failed.work = SandboxWorkState::new(SandboxWorkStep::None, COMMAND_AT.into());
     failed.updated_at = COMMAND_AT.into();
     failed.revision = 2;

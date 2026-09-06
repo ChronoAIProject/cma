@@ -69,6 +69,30 @@ async fn launch_authorities_repair_only_the_exact_post_install_failure() {
 }
 
 #[tokio::test]
+async fn launch_repair_preserves_legacy_unknown_runtime_generation() {
+    let (service, store) = fixture();
+    let failed = admit_failed(&store, "legacy", "launch-legacy", |value| {
+        value.runtime.as_mut().unwrap().provision_generation = None;
+        value.lifecycle.runtime_generation_high_water = 0;
+    })
+    .await;
+    let repaired = service
+        .repair_service_grant_for_launch(
+            &caller("owner", [Capability::LaunchTriggers]),
+            &failed.id,
+            "launch-legacy",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        repaired.disposition,
+        SandboxLaunchCommandDisposition::Scheduled
+    );
+    assert_eq!(repaired.sandbox.runtime, failed.runtime);
+    assert_eq!(repaired.sandbox.lifecycle.runtime_generation_high_water, 0);
+}
+
+#[tokio::test]
 async fn launch_repair_authorizes_first_and_hides_foreign_sandboxes() {
     let (service, store) = fixture();
     let failed = admit_failed(&store, "authority", "launch-authority", |_| {}).await;
@@ -120,7 +144,7 @@ async fn launch_repair_authorizes_first_and_hides_foreign_sandboxes() {
 #[tokio::test]
 async fn launch_repair_rejects_every_non_worker_failure_shape() {
     let (service, store) = fixture();
-    let corruptions: [(&str, SandboxCorruption); 6] = [
+    let corruptions: [(&str, SandboxCorruption); 8] = [
         ("class", |value| {
             value.failure.as_mut().unwrap().class = "terminal_security".into();
         }),
@@ -135,6 +159,13 @@ async fn launch_repair_rejects_every_non_worker_failure_shape() {
             value.work.step = SandboxWorkStep::RunInstall;
         }),
         ("lifecycle", |value| value.lifecycle.next_authority = 2),
+        ("replacement", |value| {
+            value.runtime.as_mut().unwrap().provision_generation = Some(2);
+            value.lifecycle.runtime_generation_high_water = 2;
+        }),
+        ("highwater", |value| {
+            value.lifecycle.runtime_generation_high_water = 2
+        }),
     ];
     for (suffix, corrupt) in corruptions {
         let launch_id = format!("launch-invalid-{suffix}");
@@ -324,9 +355,10 @@ async fn admit_failed(
     failed.runtime = Some(RuntimeBinding {
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
-        provision_generation: None,
+        provision_generation: Some(1),
         bound_at: BOUND_AT.into(),
     });
+    failed.lifecycle.runtime_generation_high_water = 1;
     failed.work = SandboxWorkState::new(SandboxWorkStep::None, FAILED_AT.into());
     failed.updated_at = FAILED_AT.into();
     failed.revision = 2;
