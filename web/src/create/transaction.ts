@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { CommandKeys, type CommandOptions } from '../api/client';
-import type { ProfileFailure } from '../profiles/failure';
-import { creationFailure } from './failure';
+import { creationFailure, type CreationFailure } from './failure';
 
 /** The retained closure owns both the immutable body and the command key. */
 export function useCreationCommand<Result>(onCreated: (result: Result) => void) {
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<ProfileFailure>();
+  const [failure, setFailure] = useState<CreationFailure>();
   const active = useRef<AbortController | undefined>(undefined);
   const retained = useRef<((options: CommandOptions) => Promise<Result>) | undefined>(undefined);
   const keys = useRef(new CommandKeys());

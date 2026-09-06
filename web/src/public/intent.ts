@@ -12,6 +12,7 @@ export interface BrowserIntent {
   readonly body: CreateLaunchRequest;
   readonly submitted: boolean;
   readonly owner?: string;
+  readonly credentialRecovery?: 'refused' | 'retry';
 }
 
 export function writeIntent(intent: BrowserIntent): void {
@@ -66,6 +67,9 @@ export function readIntent(path: string): BrowserIntent | undefined {
       return undefined;
     if (
       (intent.owner !== undefined && typeof intent.owner !== 'string') ||
+      (intent.credentialRecovery !== undefined &&
+        (typeof intent.owner !== 'string' ||
+          (intent.credentialRecovery !== 'refused' && intent.credentialRecovery !== 'retry'))) ||
       (intent.body.placement_id !== undefined && typeof intent.body.placement_id !== 'string') ||
       (intent.body.choice !== undefined &&
         intent.body.choice !== 'resume' &&
@@ -95,6 +99,7 @@ export function readIntent(path: string): BrowserIntent | undefined {
       expiresAt: intent.expiresAt,
       submitted: intent.submitted,
       owner: intent.owner,
+      credentialRecovery: intent.credentialRecovery,
       body: {
         start_if_ready: true,
         placement_id: intent.body.placement_id,

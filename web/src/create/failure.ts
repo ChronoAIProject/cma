@@ -1,4 +1,13 @@
 import { profileFailure, type ProfileFailure } from '../profiles/failure';
+import {
+  CredentialAccountError,
+  credentialSetupMessage,
+  needsSandboxCredentialSetup,
+} from '../auth/credentialSetup';
+
+export interface CreationFailure extends ProfileFailure {
+  readonly credentialSetupRequired: boolean;
+}
 
 const messages: Readonly<Record<string, string>> = {
   forbidden: 'You do not have permission to create this resource.',
@@ -26,7 +35,7 @@ const messages: Readonly<Record<string, string>> = {
     'Choose the profile again and review its commands before confirming trust.',
 };
 
-export function creationFailure(error: unknown): ProfileFailure {
+export function creationFailure(error: unknown): CreationFailure {
   const failure = profileFailure(error);
   const code =
     typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
@@ -34,8 +43,14 @@ export function creationFailure(error: unknown): ProfileFailure {
       : '';
   return {
     ...failure,
+    credentialSetupRequired:
+      needsSandboxCredentialSetup(error) || error instanceof CredentialAccountError,
     message:
-      messages[code] ??
+      (error instanceof CredentialAccountError
+        ? error.message
+        : needsSandboxCredentialSetup(error)
+          ? credentialSetupMessage
+          : messages[code]) ??
       (failure.uncertain
         ? failure.message
         : 'Creation was refused. Review the selected profile and location before trying again.'),

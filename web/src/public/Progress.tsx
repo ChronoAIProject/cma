@@ -21,10 +21,12 @@ import { createIntent } from './intent';
 export function Progress({
   client,
   id,
+  owner,
   onNavigate,
 }: {
   readonly client: PublicClient;
   readonly id: string;
+  readonly owner?: string;
   readonly onNavigate: AppRouter['navigate'];
 }) {
   const progress = useRecordedProgress(client, id);
@@ -208,6 +210,7 @@ export function Progress({
           key={record.trust.confirmation_digest ?? record.id}
           client={client}
           record={record}
+          expectedSubject={owner}
           preview={preview}
           onChanged={progress.changed}
           onClose={() => back(record)}

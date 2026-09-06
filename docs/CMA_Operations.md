@@ -478,6 +478,31 @@ sign-in destination is an inert example. No provider login, remote creation,
 actual repository resolution, runtime revival or remote failure is executed by
 these checks. They do not advance any remote gate or journey in the tables below.
 
+The local credential-setup browser checks also passed 3/3 on 2026-09-07 via
+`npx playwright test --config e2e/credential-setup.config.ts` from `web/`.
+`CMA_CREDENTIAL_PREVIEW_URL` selects the loopback preview, with the same default
+and browser-executable option as the suites above. All three surfaces (Sandbox
+creation, Trigger landing, and draft continuation) preserve the current tab and
+choices after a typed `sandbox_credential_setup_required` refusal. They open the
+existing CMA sign-in URL in a separate window, handle a blocked window, reject
+a different account on recheck, and require an explicit fresh-key retry after a
+same-account check. Each later dispatch rechecks the live session against the
+original account, including ambiguous same-key retries; account changes block
+the mutation without discarding its key/body. This check does not atomically
+bind a later HTTP request to that session. A later lost response keeps that new
+command's original key/body. Trigger recovery retains the original repeat
+choice, placement and referrer through reload. Pending connection completion
+cannot replace the explicit Continue required after Draft recovery. Reload
+restores that per-Launch retry requirement, its original account, and any
+unresolved Start key/body; it does not admit another command. Eighteen screenshots cover
+both themes at 1440, 390 and 320 pixels in a fresh
+`cma-credential-setup-browser-*` OS temporary directory.
+
+This suite intercepts sign-in navigation and identity reads locally. A matching
+session confirms only account identity, not renewable credential readiness;
+the next public admission may refuse again. It executes no NyxID login,
+credential minting, remote Sandbox provisioning or remote credential mutation.
+
 The official Node/Python Responses client checks use the real loopback CMA
 composition with scripted runtime input and in-memory persistence. Their pinned
 client versions and exact verification boundary are recorded in

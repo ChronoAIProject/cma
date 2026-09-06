@@ -3,10 +3,17 @@ import {
   ApiError,
   type Launch,
   type ServiceConnectionMetadata,
-  type StartLaunchRequest,
   type TriggerPreview,
 } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
+import {
+  checkCredentialRecoveryOwner,
+  CredentialAccountError,
+  credentialSetupMessage,
+  needsSandboxCredentialSetup,
+} from '../auth/credentialSetup';
+import { SandboxCredentialSetup } from '../auth/SandboxCredentialSetup';
+import { routePath } from '../routing/routes';
 import { Modal } from '../ui/Modal';
 import { needNames, needOrder, publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
@@ -14,28 +21,50 @@ import type { PublicClient } from './client';
 import { isUnsettledCommand } from './admission';
 import { ConnectAssistant } from './ConnectAssistant';
 import { Details, SoftwareDetails } from './Details';
+import {
+  clearDraftRecovery,
+  readDraftRecovery,
+  writeDraftRecovery,
+  type DraftCredentialRecovery,
+  type DraftStartCommand,
+} from './draftRecovery';
 
 export function ReviewCard({
   client,
   record,
   preview,
+  expectedSubject,
   onChanged,
   onClose,
 }: {
   readonly client: PublicClient;
   readonly record: Launch;
   readonly preview?: TriggerPreview;
+  readonly expectedSubject?: string;
   readonly onChanged: (value: Launch) => void;
   readonly onClose: () => void;
 }) {
-  const [confirmed, setConfirmed] = useState(false);
+  const [recovery, setRecovery] = useState(() => readDraftRecovery(record.id));
+  const [confirmed, setConfirmed] = useState(
+    recovery?.confirmedDigest !== undefined &&
+      record.review.needs.some(
+        (need) =>
+          need.type === 'trust_confirmation' && need.commands_digest === recovery.confirmedDigest,
+      ),
+  );
   const [connected, setConnected] = useState<readonly string[]>([]);
   const [metadata, setMetadata] = useState<readonly ServiceConnectionMetadata[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<string | undefined>(
+    recovery === undefined ? undefined : credentialSetupMessage,
+  );
   const active = useRef(false);
-  const command = useRef<{ key: string; body: StartLaunchRequest } | undefined>(undefined);
-  const [uncertain, setUncertain] = useState(false);
+  const command = useRef<DraftStartCommand | undefined>(recovery?.command);
+  const [uncertain, setUncertain] = useState(recovery?.command !== undefined);
+  const [needsSignIn, setNeedsSignIn] = useState(recovery !== undefined);
+  const [credentialOwner, setCredentialOwner] = useState(recovery?.owner ?? expectedSubject);
+  const explicitRetryRequired = useRef(recovery !== undefined);
+  const credentialReturnTo = routePath({ kind: 'public_trigger', publicId: record.public_id });
   const needs = [...record.review.needs].sort((a, b) => needOrder[a.type] - needOrder[b.type]);
   const trust = needs.find((need) => need.type === 'trust_confirmation');
   const ownerReview = needs.some((need) => need.type === 'owner_requires_review');
@@ -54,8 +83,9 @@ export function ReviewCard({
     return () => controller.abort();
   }, [client, record.id, record.revision]);
 
-  const start = async () => {
-    if (active.current) return;
+  const start = async (explicit = false) => {
+    if (active.current || needsSignIn || (!explicit && explicitRetryRequired.current)) return;
+    if (explicit) explicitRetryRequired.current = false;
     active.current = true;
     command.current ??= {
       key: crypto.randomUUID(),
@@ -67,17 +97,38 @@ export function ReviewCard({
     setBusy(true);
     setError(undefined);
     try {
+      if (recovery !== undefined)
+        writeDraftRecovery(record.id, { ...recovery, command: command.current });
+      await checkCredentialRecoveryOwner(recovery?.owner);
       const result = await client.requests.start(record.id, command.current.body, {
         idempotencyKey: command.current.key,
       });
       command.current = undefined;
+      clearDraftRecovery(record.id);
       setUncertain(false);
       onChanged(result);
     } catch (cause) {
       const unknown = isUnsettledCommand(cause);
       setUncertain(unknown);
+      const required =
+        needsSandboxCredentialSetup(cause) || cause instanceof CredentialAccountError;
+      setNeedsSignIn(required);
+      if (required || recovery !== undefined) explicitRetryRequired.current = true;
       if (!unknown) command.current = undefined;
       setError(refusalSentence(cause));
+      if ((required || recovery !== undefined) && credentialOwner !== undefined) {
+        const retained: DraftCredentialRecovery = {
+          owner: recovery?.owner ?? credentialOwner,
+          confirmedDigest: confirmed ? trust?.commands_digest : undefined,
+          command: command.current,
+        };
+        setRecovery(retained);
+        try {
+          writeDraftRecovery(record.id, retained);
+        } catch {
+          setError(publicCopy.storageUnavailable);
+        }
+      }
       if (
         cause instanceof ApiError &&
         [
@@ -119,8 +170,8 @@ export function ReviewCard({
       footer={
         <Button
           variant="primary"
-          disabled={busy || (!uncertain && !canStart)}
-          onClick={() => void start()}
+          disabled={busy || needsSignIn || (!uncertain && !canStart)}
+          onClick={() => void start(true)}
         >
           {uncertain ? publicCopy.retry : publicCopy.continue}
         </Button>
@@ -190,6 +241,17 @@ export function ReviewCard({
             {error}
           </p>
         )}
+        {needsSignIn ? (
+          <SandboxCredentialSetup
+            returnTo={credentialReturnTo}
+            expectedSubject={credentialOwner}
+            onChecked={(subject) => {
+              setCredentialOwner((original) => original ?? subject);
+              setNeedsSignIn(false);
+              setError(undefined);
+            }}
+          />
+        ) : null}
       </div>
     </Modal>
   );

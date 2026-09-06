@@ -6,6 +6,13 @@ import {
   type TriggerPreview,
 } from '@chronoai/cma-sdk';
 import { useAuth } from '../auth/context';
+import {
+  checkCredentialRecoveryOwner,
+  CredentialAccountError,
+  credentialSetupMessage,
+  needsSandboxCredentialSetup,
+} from '../auth/credentialSetup';
+import { SandboxCredentialSetup } from '../auth/SandboxCredentialSetup';
 import type { SignInOptions } from '../auth/types';
 import lockup from '../assets/brand/cma-lockup-horizontal.svg';
 import { routePath, type AppRoute, type AppRouter } from '../routing/routes';
@@ -14,7 +21,7 @@ import { publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
 import type { PublicClient } from './client';
 import { admit, isUnsettledCommand } from './admission';
-import { createIntent, forgetIntent, readIntent, type BrowserIntent } from './intent';
+import { createIntent, forgetIntent, readIntent, writeIntent, type BrowserIntent } from './intent';
 import { Landing } from './Landing';
 import { Progress } from './Progress';
 import { RepeatChoice } from './RepeatChoice';
@@ -46,6 +53,7 @@ export function PublicJourney({
               key={route.launchId}
               client={client}
               id={route.launchId}
+              owner={auth.state.user.id}
               onNavigate={onNavigate}
             />
           ) : auth.state.status === 'anonymous' ? (
@@ -72,14 +80,18 @@ function Entry({
 }) {
   const { state, signIn } = useAuth();
   const [preview, setPreview] = useState<TriggerPreview>();
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  const [existing, setExisting] = useState<ExistingLaunchAgent>();
   const [intent, setIntent] = useState<BrowserIntent | undefined>(() =>
     readIntent(routePath(route)),
   );
+  const [error, setError] = useState<string | undefined>(
+    intent?.credentialRecovery === undefined ? undefined : credentialSetupMessage,
+  );
+  const [busy, setBusy] = useState(false);
+  const [needsSignIn, setNeedsSignIn] = useState(intent?.credentialRecovery !== undefined);
+  const [existing, setExisting] = useState<ExistingLaunchAgent>();
   const [revision, setRevision] = useState(0);
   const owner = state.status === 'authenticated' ? state.user.id : undefined;
+  const credentialReturnTo = routePath({ kind: 'public_trigger', publicId: route.publicId });
   const allowed =
     state.status === 'authenticated' && state.user.capabilities.includes('launch_triggers');
   const attempted = useRef(new Set<string>());
@@ -92,7 +104,11 @@ function Entry({
       setBusy(true);
       setError(undefined);
       try {
-        const result = await admit(client, selected, owner);
+        const subject = selected.owner ?? owner;
+        await checkCredentialRecoveryOwner(
+          selected.credentialRecovery === undefined ? undefined : subject,
+        );
+        const result = await admit(client, selected, subject);
         forgetIntent(selected.id);
         onNavigate({ kind: 'launch', launchId: result.id }, { replace: true });
       } catch (cause) {
@@ -107,7 +123,21 @@ function Entry({
           setExisting(repeat);
         } else {
           setError(refusalSentence(cause));
-          if (!isUnsettledCommand(cause)) forgetIntent(selected.id);
+          const refused = needsSandboxCredentialSetup(cause);
+          setNeedsSignIn(refused || cause instanceof CredentialAccountError);
+          if (refused) {
+            const retained: BrowserIntent = {
+              ...selected,
+              owner: selected.owner ?? owner,
+              credentialRecovery: 'refused',
+            };
+            setIntent(retained);
+            try {
+              writeIntent(retained);
+            } catch {
+              setError(publicCopy.storageUnavailable);
+            }
+          } else if (!isUnsettledCommand(cause)) forgetIntent(selected.id);
         }
       } finally {
         setBusy(false);
@@ -131,9 +161,11 @@ function Entry({
     if (
       preview?.availability !== 'published' ||
       intent === undefined ||
+      intent.credentialRecovery !== undefined ||
       owner === undefined ||
       (intent.owner !== undefined && intent.owner !== owner) ||
-      !allowed
+      !allowed ||
+      needsSignIn
     )
       return;
     let live = true;
@@ -146,21 +178,27 @@ function Entry({
     return () => {
       live = false;
     };
-  }, [allowed, intent, owner, preview?.availability, submit]);
+  }, [allowed, intent, needsSignIn, owner, preview?.availability, submit]);
   const start = (options?: SignInOptions, choice?: LaunchRepeatChoice) => {
-    if (busy || state.status === 'checking') return;
+    if (busy || needsSignIn || state.status === 'checking') return;
     if (state.status === 'authenticated' && !allowed) {
       setError(publicCopy.readOnly);
       return;
     }
     let selected: BrowserIntent;
     try {
-      const saved = readIntent(routePath(route));
+      const saved =
+        intent?.credentialRecovery === undefined ? readIntent(routePath(route)) : intent;
       selected =
-        choice === undefined
-          ? ((saved?.owner === undefined || saved.owner === owner ? saved : undefined) ??
-            createIntent(route))
-          : createIntent(route, choice);
+        saved?.credentialRecovery !== undefined
+          ? saved.credentialRecovery === 'refused'
+            ? { ...saved, key: crypto.randomUUID(), credentialRecovery: 'retry' }
+            : saved
+          : choice === undefined
+            ? ((saved?.owner === undefined || saved.owner === owner ? saved : undefined) ??
+              createIntent(route))
+            : createIntent(route, choice);
+      writeIntent(selected);
     } catch {
       setError(publicCopy.storageUnavailable);
       return;
@@ -186,7 +224,7 @@ function Entry({
         <Landing
           preview={preview}
           anonymous={state.status === 'anonymous'}
-          busy={busy || state.status === 'checking'}
+          busy={busy || needsSignIn || state.status === 'checking'}
           onStart={() => start()}
           onRegister={() => start({ screen: 'register' })}
         />
@@ -196,17 +234,28 @@ function Entry({
           <p className="public-error" role="alert">
             {error}
           </p>
-          <Button
-            disabled={busy}
-            onClick={() => {
-              if (preview === undefined) {
+          {needsSignIn ? (
+            <SandboxCredentialSetup
+              returnTo={credentialReturnTo}
+              expectedSubject={intent?.owner}
+              onChecked={() => {
+                setNeedsSignIn(false);
                 setError(undefined);
-                setRevision((value) => value + 1);
-              } else start();
-            }}
-          >
-            {publicCopy.retry}
-          </Button>
+              }}
+            />
+          ) : (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                if (preview === undefined) {
+                  setError(undefined);
+                  setRevision((value) => value + 1);
+                } else start();
+              }}
+            >
+              {publicCopy.retry}
+            </Button>
+          )}
         </div>
       )}
       {existing === undefined ? null : (

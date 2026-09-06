@@ -7,7 +7,7 @@ import type {
   WorkspaceDetail,
 } from '../../sdk/typescript/src/index';
 
-function recorded<T>(file: string, id: string): T {
+export function recorded<T>(file: string, id: string): T {
   const corpus = JSON.parse(
     readFileSync(
       new URL(
