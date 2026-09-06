@@ -1,5 +1,6 @@
 //! Sandbox lifecycle orchestration below the public API boundary.
 
+mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;
 mod checkpoint_maintenance;
