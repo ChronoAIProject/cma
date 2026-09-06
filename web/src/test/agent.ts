@@ -80,6 +80,20 @@ export const AGENT_TRANSCRIPT: AgentTranscript = {
       startedAt: '2026-09-06T00:01:00Z',
       ownerMessage: 'Inspect this repository.',
       agentMessages: ['The repository is ready.'],
+      messages: [
+        {
+          sequence: 2,
+          role: 'user',
+          content: 'Inspect this repository.',
+          appendedAt: '2026-09-06T00:01:00Z',
+        },
+        {
+          sequence: 3,
+          role: 'assistant',
+          content: 'The repository is ready.',
+          appendedAt: '2026-09-06T00:01:01Z',
+        },
+      ],
       outcome: { type: 'completed' },
     },
   ],

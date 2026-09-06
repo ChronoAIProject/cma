@@ -39,32 +39,35 @@ function messageStatus(outcome: Readonly<Record<string, unknown>>) {
 }
 
 export function conversationFromTranscript(transcript: AgentTranscript): ConversationState {
-  const messages = transcript.turns.flatMap((turn) => {
-    const runId = String(turn.turnSequence);
-    const owner: ConversationMessage = {
-      id: `turn:${runId}:owner`,
-      runId,
-      role: 'user',
-      content: turn.ownerMessage,
-      status: 'complete',
-      at: turn.startedAt,
-    };
-    const assistants: ConversationMessage[] = turn.agentMessages.map((content, index) => ({
-      id: `turn:${runId}:agent:${String(index)}`,
-      runId,
-      role: 'assistant',
-      content,
-      status: messageStatus(turn.outcome),
-      at: turn.startedAt,
-    }));
-    return [owner, ...assistants];
-  });
+  const messages = new Map<string, ConversationMessage>();
+  for (const turn of transcript.turns) {
+    for (const message of turn.messages) {
+      const id = `event:${String(message.sequence)}`;
+      // A queued pre-write retry keeps the admitted event but belongs to the latest turn.
+      messages.set(id, {
+        id,
+        runId: String(turn.turnSequence),
+        role: message.role,
+        content: message.content,
+        status: message.role === 'user' ? 'complete' : messageStatus(turn.outcome),
+        at: message.appendedAt,
+        order: message.sequence,
+        sequence: message.sequence,
+      });
+    }
+  }
+  const activeTurn = transcript.turns.find((turn) => turn.outcome.type === 'active');
   const recovery: RecoveryNotice[] = transcript.turns.flatMap((turn) => {
     const failure = object(turn.outcome.failure);
     if (turn.outcome.type !== 'failed') return [];
     return [
       {
         id: `turn-error:${String(turn.turnSequence)}`,
+        runId: String(turn.turnSequence),
+        afterSequence: Math.max(
+          turn.turnSequence,
+          ...turn.messages.map((message) => message.sequence),
+        ),
         title: 'Agent run failed',
         detail: text(failure?.detail) ?? 'The Agent run did not complete.',
         code: text(failure?.class),
@@ -72,11 +75,12 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     ];
   });
   return {
-    messages,
+    messages: [...messages.values()].sort((left, right) => left.order! - right.order!),
     toolCalls: [],
     reasoning: [],
     approvals: [],
     recovery,
+    activeRunId: activeTurn === undefined ? undefined : String(activeTurn.turnSequence),
     cursor: transcript.throughSeq,
   };
 }
@@ -112,7 +116,7 @@ function durableUsage(state: ConversationState, kind: Readonly<Record<string, un
 }
 
 export function foldAgentEvent(state: ConversationState, event: AgentEvent): ConversationState {
-  return orderEntries(state, foldDurableEvent(state, event));
+  return orderEntries(state, foldDurableEvent(state, event), event.seq);
 }
 
 function foldDurableEvent(state: ConversationState, event: AgentEvent): ConversationState {
@@ -235,6 +239,10 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         { ...next, activeRunId: undefined },
         {
           id: `run-error:${String(event.seq)}`,
+          runId:
+            number(kind.turn_sequence) === undefined
+              ? next.activeRunId
+              : String(kind.turn_sequence),
           title: 'Agent run failed',
           detail: text(failure?.detail) ?? 'The Agent run did not complete.',
         },
@@ -403,7 +411,7 @@ export function foldLiveEvent(
   event: AgentLiveEvent,
   threadId: string,
 ): ConversationState {
-  return orderEntries(state, foldLive(state, event, threadId));
+  return orderEntries(state, foldLive(state, event, threadId), number(event.cursor));
 }
 
 function foldLive(
@@ -438,6 +446,7 @@ function foldLive(
       { ...next, activeRunId: undefined },
       {
         id: `live-error:${event.runId}`,
+        runId: event.runId,
         title: 'Agent run failed',
         detail: text(event.message) ?? 'The Agent run did not complete.',
         code: text(event.code),

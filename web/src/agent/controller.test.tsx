@@ -1,10 +1,13 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentEvent, AgentLiveEvent, AgentTranscript } from '../api/types';
 import { testClient } from '../test/client';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
 import { loadAgent, useAgentController } from './controller';
 import { ApiError } from '@chronoai/cma-sdk';
+
+afterEach(() => vi.useRealTimers());
 
 function readableClient(overrides = {}) {
   return testClient({
@@ -49,7 +52,22 @@ describe('Agent controller loading', () => {
       { type: 'turn_completed', turn_sequence: 1 },
     ].map((kind, index) => ({ seq: index + 1, appendedAt: '2026-09-06T00:00:00Z', kind }));
     const ready = await loadAgent(
-      readableClient({ readAgentEvents: vi.fn().mockResolvedValue({ items: events }) }),
+      readableClient({
+        readAgentEvents: vi.fn().mockResolvedValue({ items: events }),
+        readAgentTranscript: vi.fn().mockResolvedValue({
+          ...AGENT_TRANSCRIPT,
+          throughSeq: 7,
+          turns: [
+            {
+              ...AGENT_TRANSCRIPT.turns[0]!,
+              messages: AGENT_TRANSCRIPT.turns[0]!.messages.map((message) => ({
+                ...message,
+                sequence: message.role === 'assistant' ? 6 : 2,
+              })),
+            },
+          ],
+        }),
+      }),
       'agt_1',
       new AbortController().signal,
     );
@@ -58,6 +76,152 @@ describe('Agent controller loading', () => {
     expect(ready.conversation.approvals[0]?.decision).toBe('allow');
     expect(ready.conversation.activeRunId).toBeUndefined();
   });
+
+  it.each(['empty', 'partial', 'full'] as const)(
+    'restores interleaved steering and active turn from %s event replay',
+    async (replay) => {
+      const turn = AGENT_TRANSCRIPT.turns[0]!;
+      const messages = [
+        { ...turn.messages[0]!, sequence: 2 },
+        { ...turn.messages[1]!, sequence: 4 },
+        {
+          sequence: 6,
+          role: 'user' as const,
+          content: 'Check the tests.',
+          appendedAt: '2026-09-06T00:02:00Z',
+        },
+      ];
+      const events: AgentEvent[] = [
+        { seq: 1, appendedAt: turn.startedAt, kind: { type: 'turn_started', turn_sequence: 1 } },
+        ...messages.map((message) => ({
+          seq: message.sequence,
+          appendedAt: message.appendedAt,
+          kind: {
+            type: message.role === 'user' ? 'owner_message' : 'agent_message',
+            content: message.content,
+          },
+        })),
+        {
+          seq: 5,
+          appendedAt: turn.startedAt,
+          kind: { type: 'tool_call_started', call_id: 'tool', title: 'Inspect tests' },
+        },
+      ].sort((left, right) => left.seq - right.seq);
+      const selected =
+        replay === 'empty'
+          ? []
+          : replay === 'partial'
+            ? events.filter((event) => [1, 2, 5].includes(event.seq))
+            : events;
+      const ready = await loadAgent(
+        readableClient({
+          readAgentTranscript: vi.fn().mockResolvedValue({
+            ...AGENT_TRANSCRIPT,
+            throughSeq: 6,
+            turns: [{ ...turn, messages, outcome: { type: 'active' } }],
+          }),
+          readAgentEvents: vi.fn().mockResolvedValue({ items: selected }),
+        }),
+        'agt_1',
+        new AbortController().signal,
+      );
+      expect(
+        ready.conversation.messages.map(({ id, runId, role, content, at, sequence }) => ({
+          id,
+          runId,
+          role,
+          content,
+          at,
+          sequence,
+        })),
+      ).toEqual(
+        messages.map((message) => ({
+          id: `event:${String(message.sequence)}`,
+          runId: '1',
+          role: message.role,
+          content: message.content,
+          at: message.appendedAt,
+          sequence: message.sequence,
+        })),
+      );
+      expect(ready.conversation.activeRunId).toBe('1');
+      expect(ready.conversation.cursor).toBe(6);
+      if (replay !== 'empty') {
+        const chronology = [...ready.conversation.messages, ...ready.conversation.toolCalls]
+          .sort((left, right) => left.order! - right.order!)
+          .map((item) => item.id);
+        expect(chronology).toEqual(['event:2', 'event:4', 'tool', 'event:6']);
+      }
+    },
+  );
+
+  it('keeps a newer replayed completion over an active transcript snapshot', async () => {
+    const ready = await loadAgent(
+      readableClient({
+        readAgentTranscript: vi.fn().mockResolvedValue({
+          ...AGENT_TRANSCRIPT,
+          turns: [{ ...AGENT_TRANSCRIPT.turns[0]!, outcome: { type: 'active' } }],
+        }),
+        readAgentEvents: vi.fn().mockResolvedValue({
+          items: [
+            {
+              seq: 5,
+              appendedAt: AGENT_DETAIL.updatedAt,
+              kind: { type: 'turn_completed', turn_sequence: 1 },
+            },
+          ],
+        }),
+      }),
+      'agt_1',
+      new AbortController().signal,
+    );
+    expect(ready.conversation.messages).toHaveLength(2);
+    expect(ready.conversation.activeRunId).toBeUndefined();
+    expect(ready.conversation.cursor).toBe(5);
+  });
+
+  it.each(['empty', 'partial', 'full'] as const)(
+    'retains failed-turn recovery from %s event replay without duplicating the failure',
+    async (replay) => {
+      const turn = AGENT_TRANSCRIPT.turns[0]!;
+      const failure = { class: 'provider_lost', detail: 'Provider disconnected.' };
+      const events: AgentEvent[] = [
+        { seq: 1, appendedAt: turn.startedAt, kind: { type: 'turn_started', turn_sequence: 1 } },
+        ...turn.messages.map((message) => ({
+          seq: message.sequence,
+          appendedAt: message.appendedAt,
+          kind: {
+            type: message.role === 'user' ? 'owner_message' : 'agent_message',
+            content: message.content,
+          },
+        })),
+        {
+          seq: 4,
+          appendedAt: AGENT_DETAIL.updatedAt,
+          kind: { type: 'turn_failed', turn_sequence: 1, failure },
+        },
+      ];
+      const ready = await loadAgent(
+        readableClient({
+          readAgentTranscript: vi.fn().mockResolvedValue({
+            ...AGENT_TRANSCRIPT,
+            turns: [{ ...turn, outcome: { type: 'failed', failure } }],
+          }),
+          readAgentEvents: vi.fn().mockResolvedValue({
+            items: replay === 'empty' ? [] : replay === 'partial' ? events.slice(0, 2) : events,
+          }),
+        }),
+        'agt_1',
+        new AbortController().signal,
+      );
+      expect(ready.conversation.recovery).toHaveLength(1);
+      expect(ready.conversation.recovery[0]).toMatchObject({ runId: '1', detail: failure.detail });
+      expect(ready.conversation.recovery[0]!.order).toBeGreaterThan(
+        ready.conversation.messages.at(-1)!.order!,
+      );
+      expect(ready.conversation.activeRunId).toBeUndefined();
+    },
+  );
   it('pages durable events from the start including facts absent from the transcript', async () => {
     const readAgentEvents = vi
       .fn()
@@ -112,6 +276,110 @@ describe('Agent controller loading', () => {
 });
 
 describe('Agent controller operations', () => {
+  it.each(['live-fragment', 'committed-stream'] as const)(
+    'reconciles a %s on snapshot-only progress without duplicating messages or regressing live state',
+    async (messageMode) => {
+      vi.useFakeTimers();
+      const turn = AGENT_TRANSCRIPT.turns[0]!;
+      let transcript: AgentTranscript = {
+        ...AGENT_TRANSCRIPT,
+        throughSeq: 2,
+        turns: [{ ...turn, messages: [turn.messages[0]!], outcome: { type: 'active' } }],
+      };
+      let onEvent: ((event: AgentLiveEvent) => void) | undefined;
+      const client = readableClient({
+        readAgent: vi.fn().mockResolvedValue({
+          ...AGENT_DETAIL,
+          firstMessage: { state: 'execution_observed', queuedAt: AGENT_DETAIL.createdAt },
+        }),
+        readAgentTranscript: async () => transcript,
+        readSandboxEvents: async () => [],
+        replayAgent: async (_id: string, options: { onEvent: (event: AgentLiveEvent) => void }) => {
+          onEvent = options.onEvent;
+        },
+      });
+      const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      act(() => {
+        if (messageMode === 'live-fragment') {
+          onEvent?.({
+            type: 'TEXT_MESSAGE_CONTENT',
+            threadId: 'agt_1',
+            runId: '1',
+            messageId: 'live-1',
+            delta: 'Inspecting',
+            'cma:live': true,
+          });
+        } else {
+          onEvent?.({
+            type: 'TEXT_MESSAGE_START',
+            threadId: 'agt_1',
+            runId: '1',
+            messageId: 'msg_3',
+            role: 'assistant',
+          });
+          onEvent?.({
+            type: 'TEXT_MESSAGE_CONTENT',
+            threadId: 'agt_1',
+            runId: '1',
+            messageId: 'msg_3',
+            delta: 'The repository is ready.',
+          });
+          onEvent?.({
+            type: 'TEXT_MESSAGE_END',
+            threadId: 'agt_1',
+            runId: '1',
+            messageId: 'msg_3',
+            cursor: 3,
+          });
+        }
+        onEvent?.({
+          type: 'REASONING_MESSAGE_CONTENT',
+          threadId: 'agt_1',
+          runId: '1',
+          messageId: 'reason-1',
+          delta: 'Checking tests.',
+        });
+      });
+      transcript = {
+        ...transcript,
+        throughSeq: 4,
+        turns: [
+          {
+            ...turn,
+            messages: [
+              ...turn.messages,
+              {
+                sequence: 4,
+                role: 'user',
+                content: 'Check the tests.',
+                appendedAt: AGENT_DETAIL.updatedAt,
+              },
+            ],
+            outcome: { type: 'active' },
+          },
+        ],
+      };
+      await act(() => vi.advanceTimersByTimeAsync(1500));
+      if (result.current.state.status !== 'ready') throw new Error('Agent did not load');
+      expect(result.current.state.conversation.messages.map((message) => message.id)).toEqual([
+        'event:2',
+        'event:3',
+        'event:4',
+      ]);
+      expect(result.current.state.conversation.messages[1]?.content).toBe(
+        'The repository is ready.',
+      );
+      expect(result.current.state.conversation.reasoning[0]?.content).toBe('Checking tests.');
+      expect(result.current.state.conversation.activeRunId).toBe('1');
+      act(() => onEvent?.({ type: 'RUN_STARTED', threadId: 'agt_1', runId: '6', cursor: 6 }));
+      await act(() => vi.advanceTimersByTimeAsync(1500));
+      if (result.current.state.status !== 'ready') throw new Error('Agent did not load');
+      expect(result.current.state.conversation.activeRunId).toBe('6');
+      expect(result.current.state.conversation.cursor).toBe(6);
+      unmount();
+    },
+  );
   it('reports replay transport loss without inventing a failed Agent run', async () => {
     const replayAgent = vi.fn().mockRejectedValue(new Error('The stream disconnected.'));
     const client = readableClient({ replayAgent });

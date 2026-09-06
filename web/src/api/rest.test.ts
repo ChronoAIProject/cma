@@ -63,26 +63,46 @@ describe('public REST web binding', () => {
     expect(test.fetch.mock.calls.at(-1)?.[0]).toBe('/api/v1/agents/agent-1/events?after=0');
     test.reply({
       agent_id: 'agent-1',
-      through_seq: 1,
+      through_seq: 4,
       turns: [
         {
           turn_sequence: 1,
           started_at: NOW,
           owner_message: 'Review',
           agent_messages: ['Reviewed'],
+          messages: [
+            { sequence: 2, role: 'user', content: 'Review', appended_at: NOW },
+            { sequence: 3, role: 'assistant', content: 'Reviewed', appended_at: NOW },
+            {
+              sequence: 4,
+              role: 'user',
+              content: 'Check tests',
+              appended_at: '2026-09-06T00:02:00Z',
+            },
+          ],
           outcome: { type: 'completed', at: NOW },
         },
       ],
     });
     expect(await client.readAgentTranscript('agent-1')).toEqual({
       agentId: 'agent-1',
-      throughSeq: 1,
+      throughSeq: 4,
       turns: [
         {
           turnSequence: 1,
           startedAt: NOW,
           ownerMessage: 'Review',
           agentMessages: ['Reviewed'],
+          messages: [
+            { sequence: 2, role: 'user', content: 'Review', appendedAt: NOW },
+            { sequence: 3, role: 'assistant', content: 'Reviewed', appendedAt: NOW },
+            {
+              sequence: 4,
+              role: 'user',
+              content: 'Check tests',
+              appendedAt: '2026-09-06T00:02:00Z',
+            },
+          ],
           outcome: { type: 'completed', at: NOW },
         },
       ],
