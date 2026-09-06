@@ -86,7 +86,9 @@ pub use agent_read_types::{
 };
 pub use agent_reads::AgentReadService;
 pub use agent_runtime::{
-    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
+    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInputError, AgentRuntimeInputSender,
+    AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,
+    AgentRuntimeTurnStopReason, AgentRuntimeUpdate,
 };
 pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
 pub use agent_work::{

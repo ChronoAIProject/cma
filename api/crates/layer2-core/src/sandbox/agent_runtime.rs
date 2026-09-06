@@ -1,4 +1,8 @@
-use layer3_adapter::ConversationInputSender;
+pub use layer3_adapter::{
+    AdapterError as AgentRuntimeInputError, ConversationInputSender as AgentRuntimeInputSender,
+    ConversationUpdate as AgentRuntimeUpdate, PromptResponse as AgentRuntimePromptResponse,
+    TurnStopReason as AgentRuntimeTurnStopReason,
+};
 
 use crate::{AgentId, RuntimeCapabilities};
 
@@ -12,7 +16,7 @@ pub struct AgentRuntimeTarget {
 #[derive(Debug, Clone)]
 pub struct AgentRuntimeConnection {
     pub capabilities: RuntimeCapabilities,
-    pub input: ConversationInputSender,
+    pub input: AgentRuntimeInputSender,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
