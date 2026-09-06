@@ -1826,7 +1826,7 @@ async fn publish_sandbox(
             cpu_millis: 1_000,
             memory_mib: 2_048,
             nyxid_services: services,
-            agent_provider: AgentProvider::Codex,
+            agent_provider: AgentProvider::default(),
             model_access: ModelAccess::ChronoaiManaged,
             max_workspaces: 4,
             max_agents_per_workspace: 4,

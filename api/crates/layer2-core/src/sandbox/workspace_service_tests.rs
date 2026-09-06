@@ -259,7 +259,7 @@ fn sandbox(
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: Vec::new(),
-                agent_provider: AgentProvider::Codex,
+                agent_provider: AgentProvider::default(),
                 model_access: ModelAccess::ChronoaiManaged,
                 max_workspaces,
                 max_agents_per_workspace: 4,

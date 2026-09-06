@@ -127,7 +127,7 @@ pub(super) async fn seed_profiles(
             cpu_millis: 2_000,
             memory_mib: 4_096,
             nyxid_services: vec![ServiceId::new("github")],
-            agent_provider: AgentProvider::Codex,
+            agent_provider: AgentProvider::default(),
             model_access: ModelAccess::ChronoaiManaged,
             max_workspaces: 4,
             max_agents_per_workspace: 4,
@@ -694,7 +694,7 @@ async fn anonymous_preview_hides_profile_ids_and_full_first_message() {
             },
         ]
     );
-    assert_eq!(preview.technical.provider, AgentProvider::Codex);
+    assert_eq!(preview.technical.provider, AgentProvider::default());
     assert_eq!(preview.technical.model.as_deref(), Some("gpt-5"));
     assert_eq!(preview.technical.effort, ThinkingEffort::High);
     assert_eq!(preview.technical.size.memory_mib, 4_096);

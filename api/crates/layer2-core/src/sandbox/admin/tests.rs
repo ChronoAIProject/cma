@@ -124,7 +124,7 @@ fn sandbox_profile_content() -> SandboxProfileContent {
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![],
-        agent_provider: AgentProvider::Codex,
+        agent_provider: AgentProvider::default(),
         model_access: ModelAccess::ChronoaiManaged,
         max_workspaces: 4,
         max_agents_per_workspace: 4,

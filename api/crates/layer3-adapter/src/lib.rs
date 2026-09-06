@@ -6,6 +6,7 @@
 
 mod adapter;
 mod agent;
+mod agent_provider;
 mod capabilities;
 mod checkpoint;
 mod conversation;
@@ -25,6 +26,7 @@ pub use agent::{
     AgentOpenRequest, AgentSkill, AgentSlot, ConversationSnapshot, HomeFile, HomeSymlink,
     PermissionLevel, ReasoningEffort, RuntimeOptions, ThinkingEffort,
 };
+pub use agent_provider::AgentProvider;
 pub use capabilities::{
     AdapterCapabilities, RuntimeContract, RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION,
 };
