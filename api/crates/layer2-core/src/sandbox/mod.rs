@@ -2,6 +2,7 @@
 
 mod admin;
 mod agent;
+mod agent_context;
 mod agent_operation;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
@@ -65,6 +66,10 @@ pub use admin::{
     StoredSandboxRetirement, WorkspaceAdminSummary,
 };
 pub use agent::{Agent, AgentOrigin, AgentStopReason, ConversationState};
+pub use agent_context::{
+    AgentContextDefaults, AgentContextError, AgentContextOverrides, AgentContextService,
+    AGENT_CONTEXT_ADMISSION_BOUND,
+};
 pub use agent_operation::{
     AgentApprovalDecision, AgentOperationDelivery, AgentOperationFailure, AgentOperationIntent,
     AgentOperationKind, AgentOperationRecord,
