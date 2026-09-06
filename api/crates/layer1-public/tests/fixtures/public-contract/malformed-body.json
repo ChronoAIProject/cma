@@ -1,0 +1,669 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "malformed-post-api-v1-agent-profiles",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-agent-profiles"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-put-api-v1-agent-profiles-id",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/contract-target",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-put-api-v1-agent-profiles-id"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-put-api-v1-agent-profiles-id-visibility",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/contract-target/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-put-api-v1-agent-profiles-id-visibility"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-agent-profiles-id-revisions",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/contract-target/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-agent-profiles-id-revisions"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-marketplace-kind-id-fork",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/contract-target/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-marketplace-kind-id-fork"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-workspace-profiles",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-workspace-profiles"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-put-api-v1-workspace-profiles-id",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/contract-target",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-put-api-v1-workspace-profiles-id"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-put-api-v1-workspace-profiles-id-visibility",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/contract-target/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-put-api-v1-workspace-profiles-id-visibility"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-workspace-profiles-id-revisions",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/contract-target/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-workspace-profiles-id-revisions"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-sandbox-profiles",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-sandbox-profiles"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-put-api-v1-sandbox-profiles-id",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/contract-target",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-put-api-v1-sandbox-profiles-id"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-put-api-v1-sandbox-profiles-id-visibility",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/contract-target/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-put-api-v1-sandbox-profiles-id-visibility"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-sandbox-profiles-id-revisions",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/contract-target/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-sandbox-profiles-id-revisions"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-sandboxes",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-sandboxes"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-sandboxes-id-workspaces",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-sandboxes-id-workspaces"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-workspaces-id-agents",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-workspaces-id-agents"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-agents-id-steer",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-agents-id-steer"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-agents-id-approvals-request-id",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-agents-id-approvals-request-id"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-agents-id-input",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-agents-id-input"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-agents-id-stop",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-agents-id-stop"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-patch-api-v1-admin-settings",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/malformed-json",
+          "title": "malformed json",
+          "status": 400,
+          "detail": "The request body is not valid JSON.",
+          "code": "malformed_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-put-api-v1-admin-settings",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/malformed-json",
+          "title": "malformed json",
+          "status": 400,
+          "detail": "The request body is not valid JSON.",
+          "code": "malformed_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "malformed-post-api-v1-admin-settings-reset",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/malformed-json",
+          "title": "malformed json",
+          "status": 400,
+          "detail": "The request body is not valid JSON.",
+          "code": "malformed_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

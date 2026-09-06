@@ -1,0 +1,5049 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-profile-create-error-seed",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-create-error-seed"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_created": "/created_at",
+        "agent_profile_id": "/id",
+        "agent_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "workspace-profile-create-error-seed",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-create-error-seed"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_created": "/created_at",
+        "workspace_profile_id": "/id",
+        "workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "sandbox-profile-create-error-seed",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-create-error-seed"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_created": "/created_at",
+        "sandbox_profile_id": "/id",
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "agent-profile-create-anonymous",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-create-anonymous"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-create-denied",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-create-denied"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-create-missing-key",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-create-invalid-key",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-create-invalid-body",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-create-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct CreateAgentProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-create-missing-media-type",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "idempotency-key": "agent-profile-create-missing-media-type"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-list-anonymous",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-list-denied",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-list-invalid-page",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-read-anonymous",
+      "operation": "GET /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-read-denied",
+      "operation": "GET /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-anonymous",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-update-anonymous"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-denied",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-update-denied"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-missing-key",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-invalid-key",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-invalid-body",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-update-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct UpdateAgentProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-missing-media-type",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "idempotency-key": "agent-profile-update-missing-media-type"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-anonymous",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-unpublished-public-anonymous"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-denied",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-unpublished-public-denied"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-missing-key",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-invalid-key",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-invalid-body",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-unpublished-public-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct SetProfileVisibilityRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-missing-media-type",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/visibility",
+        "headers": {
+          "idempotency-key": "agent-profile-unpublished-public-missing-media-type"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-anonymous",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-publish-anonymous"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-denied",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-publish-denied"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-missing-key",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-invalid-key",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-invalid-body",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-publish-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct PublishProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-missing-media-type",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "idempotency-key": "agent-profile-publish-missing-media-type"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-revisions-anonymous",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-revisions-denied",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-revisions-invalid-page",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-exact-revision-anonymous",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-exact-revision-denied",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-list-anonymous",
+      "operation": "GET /api/v1/marketplace/{kind}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-list-invalid-page",
+      "operation": "GET /api/v1/marketplace/{kind}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-read-anonymous",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-anonymous",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/agp_11111111111111111111111111111111/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-marketplace-fork-anonymous"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-denied",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/agp_11111111111111111111111111111111/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-marketplace-fork-denied"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-missing-key",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/$agent_profile_id/fork",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-invalid-key",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/$agent_profile_id/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-invalid-body",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/$agent_profile_id/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-marketplace-fork-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct ForkProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-missing-media-type",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/$agent_profile_id/fork",
+        "headers": {
+          "idempotency-key": "agent-marketplace-fork-missing-media-type"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-retire-anonymous",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "agent-profile-retire-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-retire-denied",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "agent-profile-retire-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-retire-missing-key",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-retire-invalid-key",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/retire",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-anonymous",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-create-anonymous"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-denied",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-create-denied"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-missing-key",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-invalid-key",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-invalid-body",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-create-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct CreateWorkspaceProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-missing-media-type",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "idempotency-key": "workspace-profile-create-missing-media-type"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-list-anonymous",
+      "operation": "GET /api/v1/workspace-profiles",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-list-denied",
+      "operation": "GET /api/v1/workspace-profiles",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-list-invalid-page",
+      "operation": "GET /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-read-anonymous",
+      "operation": "GET /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-read-denied",
+      "operation": "GET /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-anonymous",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-update-anonymous"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-denied",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-update-denied"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-missing-key",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-invalid-key",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-invalid-body",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-update-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct UpdateWorkspaceProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-missing-media-type",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "idempotency-key": "workspace-profile-update-missing-media-type"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-anonymous",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-unpublished-public-anonymous"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-denied",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-unpublished-public-denied"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-missing-key",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-invalid-key",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-invalid-body",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-unpublished-public-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct SetProfileVisibilityRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-missing-media-type",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/visibility",
+        "headers": {
+          "idempotency-key": "workspace-profile-unpublished-public-missing-media-type"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-anonymous",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-publish-anonymous"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-denied",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-publish-denied"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-missing-key",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-invalid-key",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-invalid-body",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-publish-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct PublishProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-missing-media-type",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "idempotency-key": "workspace-profile-publish-missing-media-type"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-revisions-anonymous",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-revisions-denied",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-revisions-invalid-page",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-exact-revision-anonymous",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-exact-revision-denied",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-retire-anonymous",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "workspace-profile-retire-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-retire-denied",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "workspace-profile-retire-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-retire-missing-key",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-retire-invalid-key",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/retire",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-anonymous",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-create-anonymous"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-denied",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-create-denied"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-missing-key",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-invalid-key",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-invalid-body",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-create-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct CreateSandboxProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-missing-media-type",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "idempotency-key": "sandbox-profile-create-missing-media-type"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-list-anonymous",
+      "operation": "GET /api/v1/sandbox-profiles",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-list-denied",
+      "operation": "GET /api/v1/sandbox-profiles",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-list-invalid-page",
+      "operation": "GET /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-read-anonymous",
+      "operation": "GET /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-read-denied",
+      "operation": "GET /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-anonymous",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-update-anonymous"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-denied",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-update-denied"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-missing-key",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-invalid-key",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-invalid-body",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-update-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct UpdateSandboxProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-missing-media-type",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "idempotency-key": "sandbox-profile-update-missing-media-type"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-anonymous",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-unpublished-public-anonymous"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-denied",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-unpublished-public-denied"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-missing-key",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-invalid-key",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-invalid-body",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-unpublished-public-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct SetProfileVisibilityRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-missing-media-type",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "idempotency-key": "sandbox-profile-unpublished-public-missing-media-type"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-anonymous",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-publish-anonymous"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-denied",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-publish-denied"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-missing-key",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-invalid-key",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-invalid-body",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-publish-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct PublishProfileRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-missing-media-type",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "idempotency-key": "sandbox-profile-publish-missing-media-type"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-revisions-anonymous",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-revisions-denied",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-revisions-invalid-page",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-exact-revision-anonymous",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-exact-revision-denied",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-retire-anonymous",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/retire",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "sandbox-profile-retire-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-retire-denied",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/retire",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "sandbox-profile-retire-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-retire-missing-key",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-retire-invalid-key",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/retire",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-create-invalid-body-reused-key",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-create-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-invalid-body-reused-key",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-update-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-invalid-body-reused-key",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-unpublished-public-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-invalid-body-reused-key",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-publish-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-invalid-body-reused-key",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/$agent_profile_id/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-marketplace-fork-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-invalid-body-reused-key",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-create-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-invalid-body-reused-key",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-update-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-invalid-body-reused-key",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-unpublished-public-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-invalid-body-reused-key",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-publish-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-invalid-body-reused-key",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-create-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-invalid-body-reused-key",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-update-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-invalid-body-reused-key",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-unpublished-public-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-invalid-body-reused-key",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-publish-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-read-target-missing",
+      "operation": "GET /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agt_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-target-missing",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agt_missing",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-update-target-missing"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-target-missing",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agt_missing/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-unpublished-public-target-missing"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-target-missing",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agt_missing/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-publish-target-missing"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-revisions-target-missing",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agt_missing/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-exact-revision-target-missing",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agt_missing/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-read-target-missing",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles/missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-target-missing",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/missing/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-marketplace-fork-target-missing"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-retire-target-missing",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agt_missing/retire",
+        "headers": {
+          "idempotency-key": "agent-profile-retire-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-read-target-missing",
+      "operation": "GET /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wks_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-target-missing",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wks_missing",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-update-target-missing"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-target-missing",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wks_missing/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-unpublished-public-target-missing"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-target-missing",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wks_missing/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-publish-target-missing"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-revisions-target-missing",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wks_missing/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-exact-revision-target-missing",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wks_missing/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-retire-target-missing",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wks_missing/retire",
+        "headers": {
+          "idempotency-key": "workspace-profile-retire-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-read-target-missing",
+      "operation": "GET /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbx_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-target-missing",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbx_missing",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-update-target-missing"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-target-missing",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbx_missing/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-unpublished-public-target-missing"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-target-missing",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbx_missing/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-publish-target-missing"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-revisions-target-missing",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbx_missing/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-exact-revision-target-missing",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbx_missing/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-retire-target-missing",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbx_missing/retire",
+        "headers": {
+          "idempotency-key": "sandbox-profile-retire-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

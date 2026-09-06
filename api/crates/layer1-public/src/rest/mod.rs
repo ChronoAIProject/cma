@@ -38,6 +38,8 @@ mod profiles_sandbox;
 #[cfg(test)]
 mod profiles_tests;
 mod profiles_workspace;
+#[cfg(test)]
+mod public_contract_tests;
 mod remediation;
 #[cfg(test)]
 mod trigger_assets_test_support;
@@ -64,7 +66,9 @@ mod workspaces;
 mod worktrees;
 
 pub use agents::{agent_router, AgentRoutesState};
-pub use embed::{EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI};
+pub use embed::{
+    EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI,
+};
 pub use instances::{hierarchy_router, HierarchyState};
 pub use launch_events::{
     FirstMessageStateValue, LaunchBlockedReasonView, LaunchEffectKindValue, LaunchEventKindView,

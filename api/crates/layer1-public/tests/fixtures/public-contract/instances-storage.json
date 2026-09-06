@@ -1,0 +1,536 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "workspace-live-agent-conflict-operation-pending",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {
+          "idempotency-key": "workspace-live-agent-conflict-operation-pending"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-live-agent-conflict-operation-recovery",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {
+          "idempotency-key": "workspace-live-agent-conflict-operation-recovery"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-live-agent-conflict-operation-unavailable",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {
+          "idempotency-key": "workspace-live-agent-conflict-operation-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-operation-pending",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-create-operation-pending"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-operation-recovery",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-create-operation-recovery"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-operation-unavailable",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-create-operation-unavailable"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-operation-pending",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-operation-pending"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-operation-recovery",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-operation-recovery"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-operation-unavailable",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-operation-unavailable"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-operation-pending",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_11111111111111111111111111111111",
+        "headers": {
+          "idempotency-key": "sandbox-delete-operation-pending"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-operation-recovery",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_11111111111111111111111111111111",
+        "headers": {
+          "idempotency-key": "sandbox-delete-operation-recovery"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-operation-unavailable",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_11111111111111111111111111111111",
+        "headers": {
+          "idempotency-key": "sandbox-delete-operation-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-operation-pending",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "sandbox-pause-operation-pending"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-operation-recovery",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "sandbox-pause-operation-recovery"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-operation-unavailable",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "sandbox-pause-operation-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-operation-pending",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-not-paused-operation-pending"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-operation-recovery",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-not-paused-operation-recovery"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-operation-unavailable",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-not-paused-operation-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

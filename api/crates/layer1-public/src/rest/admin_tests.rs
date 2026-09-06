@@ -125,14 +125,14 @@ impl RuntimeInventory for FixedInventory {
     }
 }
 
-struct Fixture {
-    app: Router,
-    sandboxes: Arc<InMemorySandboxStore>,
-    profiles: Arc<InMemoryProfileStore>,
+pub(crate) struct Fixture {
+    pub(crate) app: Router,
+    pub(crate) sandboxes: Arc<InMemorySandboxStore>,
+    pub(crate) profiles: Arc<InMemoryProfileStore>,
     activity: Arc<MemoryActivity>,
 }
 
-fn fixture(inventory: bool) -> Fixture {
+pub(crate) fn fixture(inventory: bool) -> Fixture {
     let activity = Arc::new(MemoryActivity::default());
     let activity_service = ActivityService::new(activity.clone());
     let settings = Arc::new(PlatformSettingsService::new(
@@ -217,7 +217,7 @@ async fn response_json(response: Response) -> Value {
     serde_json::from_slice(&body_bytes(response).await).unwrap()
 }
 
-fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
+pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
     Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId::new(owner),
@@ -275,7 +275,7 @@ fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
     }
 }
 
-fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
+pub(crate) fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
         id: layer2_core::AgentProfileId(id.into()),
         owner: SubjectId::new(owner),

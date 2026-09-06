@@ -1,0 +1,1015 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agui-capabilities",
+      "operation": "GET /api/v1/agui/capabilities",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/capabilities",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "protocol": "ag-ui",
+          "transports": [
+            "sse"
+          ],
+          "events": {
+            "RUN_STARTED": true,
+            "RUN_FINISHED": true,
+            "RUN_ERROR": true,
+            "TEXT_MESSAGE_START": true,
+            "TEXT_MESSAGE_CONTENT": true,
+            "TEXT_MESSAGE_END": true,
+            "TOOL_CALL_START": true,
+            "TOOL_CALL_ARGS": false,
+            "TOOL_CALL_END": true,
+            "TOOL_CALL_RESULT": false,
+            "REASONING_MESSAGE_CONTENT": false,
+            "REASONING_START": false,
+            "REASONING_END": false,
+            "REASONING_MESSAGE_START": false,
+            "REASONING_MESSAGE_END": false,
+            "REASONING_MESSAGE_CHUNK": false,
+            "REASONING_ENCRYPTED_VALUE": false,
+            "THINKING_START": false,
+            "THINKING_END": false,
+            "THINKING_TEXT_MESSAGE_START": false,
+            "THINKING_TEXT_MESSAGE_CONTENT": false,
+            "THINKING_TEXT_MESSAGE_END": false,
+            "STATE_SNAPSHOT": false,
+            "STATE_DELTA": true
+          },
+          "features": {
+            "transport": {
+              "streaming": true,
+              "resumable": true,
+              "websocket": false,
+              "pushNotifications": false
+            },
+            "state": {
+              "snapshots": false,
+              "deltas": true,
+              "persistentState": true
+            },
+            "humanInTheLoop": {
+              "supported": true,
+              "approvals": true,
+              "interrupts": true,
+              "approveWithEdits": false,
+              "interventions": false
+            },
+            "execution": {
+              "codeExecution": true,
+              "sandboxed": true
+            },
+            "custom": {
+              "cma:terminal": false,
+              "cma:usage": true,
+              "cma:liveFrames": false,
+              "cma:sandbox": {
+                "snapshot": true,
+                "status": true,
+                "workspace": true,
+                "worktree": true,
+                "pausedNotice": true,
+                "firstMessageDelivery": true,
+                "mutations": false
+              }
+            }
+          },
+          "conformsTo": [
+            "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-sandbox-context",
+      "operation": "GET /api/v1/agui/agents/{id}/sandbox",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/agents/agt_contract/sandbox",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "sandbox": {
+            "id": "sbx_route",
+            "name": "research",
+            "status": "active",
+            "paused": false,
+            "pausedNotice": null,
+            "rotation": {
+              "rotations": 0
+            }
+          },
+          "workspace": {
+            "id": "wks_route",
+            "name": "project",
+            "path": "/home/cma/project",
+            "status": "ready"
+          },
+          "worktree": {
+            "id": "wkt_agt_contract",
+            "name": "wt-agt_contract",
+            "path": "/home/cma/project/.worktrees/agt_contract",
+            "status": "ready"
+          },
+          "firstMessage": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-events-replay",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "3",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_4",
+              "role": "user",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_4",
+              "delta": "Question",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "4",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_4",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_6",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_6",
+              "delta": "First answer",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_6",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "TOOL_CALL_START",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "toolCallId": "call-proof",
+              "toolCallName": "Read proof",
+              "cma:toolKind": "read",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_8",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_8",
+              "delta": "Second answer",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "8",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_8",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 10
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 7
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 17
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": 200000
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "10",
+            "data": {
+              "type": "RUN_FINISHED",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "outcome": {
+                "type": "complete"
+              },
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-events-cursor",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=6&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "7",
+            "data": {
+              "type": "TOOL_CALL_START",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "toolCallId": "call-proof",
+              "toolCallName": "Read proof",
+              "cma:toolKind": "read",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_8",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_8",
+              "delta": "Second answer",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "8",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "messageId": "msg_8",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 10
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 7
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 17
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": 200000
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "10",
+            "data": {
+              "type": "RUN_FINISHED",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "outcome": {
+                "type": "complete"
+              },
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-cursor-beyond-head",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=11&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/cursor-beyond-end",
+          "title": "cursor beyond end",
+          "status": 400,
+          "detail": "The replay cursor exceeds this Agent's durable log head.",
+          "code": "cursor_beyond_end",
+          "head": 10
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-invalid-replay-query",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&unexpected=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-replay-query",
+          "title": "invalid replay query",
+          "status": 400,
+          "detail": "The replay query is invalid.",
+          "code": "invalid_replay_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-invalid-run",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "runId": "",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-run-request",
+          "title": "invalid run request",
+          "status": 422,
+          "detail": "This run must use an existing Agent and its frozen profile.",
+          "code": "invalid_run_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-empty-run",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": []
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-run-request",
+          "title": "invalid run request",
+          "status": 422,
+          "detail": "A run requires a user message or one approval answer.",
+          "code": "invalid_run_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-profile-override-refused",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ],
+          "forwardedProps": {
+            "model": "override"
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-run-request",
+          "title": "invalid run request",
+          "status": 422,
+          "detail": "This run must use an existing Agent and its frozen profile.",
+          "code": "invalid_run_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-invalid-body",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": []
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid length 0, expected struct RunRequest with 5 elements at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-missing-content-type",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {}
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 415,
+          "detail": "Expected request with `Content-Type: application/json`",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-runtime-unavailable",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-context-missing",
+      "operation": "GET /api/v1/agui/agents/{id}/sandbox",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/agents/agt_missing/sandbox",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-events-missing",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_missing&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-missing",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_missing",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-context-foreign",
+      "operation": "GET /api/v1/agui/agents/{id}/sandbox",
+      "scenario": "experience_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/agents/agt_contract/sandbox",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-events-foreign",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-foreign",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-context-anonymous",
+      "operation": "GET /api/v1/agui/agents/{id}/sandbox",
+      "scenario": "experience_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/agents/agt_contract/sandbox",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-events-anonymous",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-anonymous",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-context-forbidden",
+      "operation": "GET /api/v1/agui/agents/{id}/sandbox",
+      "scenario": "experience_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/agents/agt_contract/sandbox",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-events-forbidden",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-forbidden",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

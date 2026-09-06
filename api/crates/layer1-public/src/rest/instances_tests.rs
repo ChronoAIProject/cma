@@ -46,7 +46,7 @@ type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
 #[derive(Default)]
-struct MemoryOperationStore {
+pub(super) struct MemoryOperationStore {
     records: Mutex<HashMap<OperationKey, OperationRecord>>,
 }
 
@@ -87,14 +87,21 @@ impl OperationStore for MemoryOperationStore {
     }
 }
 
-struct Fixture {
-    router: Router,
-    store: Arc<InMemorySandboxStore>,
-    profiles: Arc<InMemoryProfileStore>,
+pub(super) struct Fixture {
+    pub(super) router: Router,
+    pub(super) store: Arc<InMemorySandboxStore>,
+    pub(super) profiles: Arc<InMemoryProfileStore>,
     operations: Arc<MemoryOperationStore>,
 }
 
-fn fixture(sandbox_limit: u16) -> Fixture {
+pub(super) fn fixture(sandbox_limit: u16) -> Fixture {
+    fixture_with_operations(sandbox_limit, None)
+}
+
+pub(super) fn fixture_with_operations(
+    sandbox_limit: u16,
+    injected: Option<Arc<dyn OperationStore>>,
+) -> Fixture {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let sandboxes = SandboxService::new(
@@ -108,7 +115,7 @@ fn fixture(sandbox_limit: u16) -> Fixture {
     let workspaces = WorkspaceService::new(store.clone(), profiles.clone());
     let hierarchy = HierarchyReadService::new(store.clone());
     let operations = Arc::new(MemoryOperationStore::default());
-    let operation_store: Arc<dyn OperationStore> = operations.clone();
+    let operation_store: Arc<dyn OperationStore> = injected.unwrap_or_else(|| operations.clone());
     let router = hierarchy_router(HierarchyState::new(
         sandboxes,
         workspaces,
@@ -190,7 +197,7 @@ fn bounds() -> ProfileCapacityBounds {
     }
 }
 
-async fn publish_sandbox_profile(
+pub(super) async fn publish_sandbox_profile(
     profiles: &InMemoryProfileStore,
     id: &str,
     owner: &str,
@@ -226,7 +233,7 @@ async fn publish_sandbox_profile(
     (id, revision.digest)
 }
 
-async fn publish_workspace_profile(
+pub(super) async fn publish_workspace_profile(
     profiles: &InMemoryProfileStore,
     id: &str,
     owner: &str,
@@ -460,7 +467,7 @@ fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
     }
 }
 
-fn paused_sandbox(id: &str, owner: &str) -> Sandbox {
+pub(super) fn paused_sandbox(id: &str, owner: &str) -> Sandbox {
     let mut sandbox = stored_sandbox(id, owner, SandboxStatus::Paused, 4);
     sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1));
     sandbox

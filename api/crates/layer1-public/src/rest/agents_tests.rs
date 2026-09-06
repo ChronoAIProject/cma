@@ -4,7 +4,7 @@ use std::{
 };
 
 mod conversation_fixtures;
-pub(crate) use conversation_fixtures::conversation_fixture;
+pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;
 use axum::{
@@ -48,7 +48,7 @@ const OWNER: &str = "owner-a";
 const OTHER: &str = "owner-b";
 const NOW: &str = "2026-09-05T00:00:00Z";
 
-fn agent_capabilities() -> RuntimeCapabilities {
+pub(super) fn agent_capabilities() -> RuntimeCapabilities {
     RuntimeCapabilities::new([
         RuntimeCapability::Conversation,
         RuntimeCapability::Snapshot,
@@ -109,7 +109,7 @@ impl OperationStore for MemoryOperationStore {
     }
 }
 
-struct TestRegistry;
+pub(super) struct TestRegistry;
 
 impl TestRegistry {
     fn new() -> Arc<Self> {
@@ -135,7 +135,7 @@ impl AgentRuntimeRegistry for TestRegistry {
     }
 }
 
-struct TestResources;
+pub(super) struct TestResources;
 
 #[test]
 fn optional_reading_shapes_distinguish_absent_context_from_unreported_resources() {
@@ -207,17 +207,33 @@ impl SandboxResourceReader for TestResources {
     }
 }
 
-struct Fixture {
-    router: Router,
-    store: Arc<InMemorySandboxStore>,
+pub(super) struct Fixture {
+    pub(super) router: Router,
+    pub(super) store: Arc<InMemorySandboxStore>,
     sandbox_id: SandboxId,
     workspace_id: WorkspaceId,
 }
 
-async fn fixture() -> Fixture {
+pub(super) async fn fixture() -> Fixture {
+    fixture_with_registry(TestRegistry::new()).await
+}
+
+pub(super) async fn fixture_with_registry<R: AgentRuntimeRegistry + 'static>(
+    registry: Arc<R>,
+) -> Fixture {
+    fixture_with_ports(registry, None).await
+}
+
+pub(super) async fn fixture_with_operations(operations: Arc<dyn OperationStore>) -> Fixture {
+    fixture_with_ports(TestRegistry::new(), Some(operations)).await
+}
+
+async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
+    registry: Arc<R>,
+    operations: Option<Arc<dyn OperationStore>>,
+) -> Fixture {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
-    let registry = TestRegistry::new();
     let sandbox = sandbox("sbx_route", OWNER);
     let workspace = workspace("wks_route", sandbox.id.as_str(), OWNER);
     store.create_sandbox(sandbox.clone()).await.unwrap();
@@ -232,7 +248,8 @@ async fn fixture() -> Fixture {
     );
     let reads = AgentReadService::new(store.clone(), Arc::new(TestResources));
     let agent_operations = AgentOperationService::new(store.clone(), registry.clone());
-    let operation_records: Arc<dyn OperationStore> = Arc::new(MemoryOperationStore::default());
+    let operation_records: Arc<dyn OperationStore> =
+        operations.unwrap_or_else(|| Arc::new(MemoryOperationStore::default()));
     let router = agent_router(AgentRoutesState::new(
         agents,
         reads,
@@ -247,7 +264,7 @@ async fn fixture() -> Fixture {
     }
 }
 
-async fn publish_profile(store: &InMemoryProfileStore) {
+pub(super) async fn publish_profile(store: &InMemoryProfileStore) {
     let profile = AgentProfile {
         id: AgentProfileId("agp_route".into()),
         owner: SubjectId::new(OWNER),
@@ -279,7 +296,7 @@ fn agent_profile_content() -> AgentProfileContent {
     }
 }
 
-fn sandbox(id: &str, owner: &str) -> Sandbox {
+pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
     Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId::new(owner),
@@ -337,7 +354,7 @@ fn sandbox(id: &str, owner: &str) -> Sandbox {
     }
 }
 
-fn workspace(id: &str, sandbox_id: &str, owner: &str) -> Workspace {
+pub(super) fn workspace(id: &str, sandbox_id: &str, owner: &str) -> Workspace {
     Workspace {
         id: WorkspaceId(id.into()),
         sandbox_id: SandboxId(sandbox_id.into()),
@@ -417,7 +434,7 @@ pub(crate) fn seeded_agent(
     }
 }
 
-fn seeded_worktree(agent: &Agent) -> Worktree {
+pub(super) fn seeded_worktree(agent: &Agent) -> Worktree {
     Worktree {
         id: agent.worktree_id.clone(),
         workspace_id: agent.workspace_id.clone(),

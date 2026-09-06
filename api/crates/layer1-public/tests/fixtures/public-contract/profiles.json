@@ -1,0 +1,2117 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-profile-create",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-create"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_created": "/created_at",
+        "agent_profile_id": "/id",
+        "agent_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "agent-profile-list",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "agp_11111111111111111111111111111111",
+              "owner": "contract-owner",
+              "name": "Contract agent",
+              "description": "Shared contract",
+              "visibility": "private",
+              "uses_count": 0,
+              "draft": {
+                "model": "gpt-contract",
+                "thinking_effort": "high",
+                "permission_level": "guarded",
+                "skills": [],
+                "system_prompt": "Return a precise result."
+              },
+              "draft_version": 1,
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-read",
+      "operation": "GET /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-update"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised agent",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "agent-profile-stale-draft",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-stale-draft"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-version-conflict",
+          "title": "profile version conflict",
+          "status": 409,
+          "detail": "The profile draft changed before this operation completed.",
+          "code": "profile_version_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-unpublished-public"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-public-refused",
+          "title": "profile public refused",
+          "status": 422,
+          "detail": "This profile cannot be made public.",
+          "code": "profile_public_refused",
+          "reason": "profile_unpublished"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "agp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_published": "/published_at"
+      }
+    },
+    {
+      "id": "agent-profile-revisions",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "profile_id": "agp_11111111111111111111111111111111",
+              "revision": 1,
+              "content": {
+                "model": "gpt-contract",
+                "thinking_effort": "high",
+                "permission_level": "guarded",
+                "skills": [],
+                "system_prompt": "Return a precise result."
+              },
+              "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+              "published_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-exact-revision",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "agp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-public",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-public"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised agent",
+          "description": "Shared contract",
+          "visibility": "public",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "agent-marketplace-list",
+      "operation": "GET /api/v1/marketplace/{kind}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "kind": "agent",
+              "id": "agp_11111111111111111111111111111111",
+              "name": "Revised agent",
+              "description": "Shared contract",
+              "owner_display": "contract-owner",
+              "latest_revision": 1,
+              "published_at": "2026-09-05T00:00:00Z",
+              "uses_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-read",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles/$agent_profile_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "summary": {
+            "kind": "agent",
+            "id": "agp_11111111111111111111111111111111",
+            "name": "Revised agent",
+            "description": "Shared contract",
+            "owner_display": "contract-owner",
+            "latest_revision": 1,
+            "published_at": "2026-09-05T00:00:00Z",
+            "uses_count": 0
+          },
+          "revision": {
+            "profile_id": "agp_11111111111111111111111111111111",
+            "revision": 1,
+            "content": {
+              "model": "gpt-contract",
+              "thinking_effort": "high",
+              "permission_level": "guarded",
+              "skills": [],
+              "system_prompt": "Return a precise result."
+            },
+            "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+            "published_at": "2026-09-05T00:00:00Z"
+          },
+          "resolved_profiles": [],
+          "resolved_revisions": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/$agent_profile_id/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-marketplace-fork"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_22222222222222222222222222222222",
+          "owner": "contract-owner",
+          "name": "Revised agent copy",
+          "description": "Shared contract",
+          "visibility": "private",
+          "forked_from": {
+            "id": "agp_11111111111111111111111111111111",
+            "revision": 1
+          },
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_fork_created": "/created_at",
+        "agent_fork_id": "/id",
+        "agent_fork_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "agent-profile-retire",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/retire",
+        "headers": {
+          "idempotency-key": "agent-profile-retire"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised agent",
+          "description": "Shared contract",
+          "visibility": "public",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "retired_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_retired": "/retired_at",
+        "agent_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "agent-profile-invalid-page",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-not-found",
+      "operation": "GET /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_ffffffffffffffffffffffffffffffff",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-create"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_created": "/created_at",
+        "workspace_profile_id": "/id",
+        "workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "workspace-profile-list",
+      "operation": "GET /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "wkp_11111111111111111111111111111111",
+              "owner": "contract-owner",
+              "name": "Contract workspace",
+              "description": "Shared contract",
+              "visibility": "private",
+              "uses_count": 0,
+              "draft": {
+                "location": {
+                  "type": "directory",
+                  "name": "contract"
+                },
+                "name": "contract",
+                "setup_commands": [],
+                "agent_profiles": []
+              },
+              "draft_version": 1,
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-read",
+      "operation": "GET /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-update"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised workspace",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "workspace-profile-stale-draft",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-stale-draft"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-version-conflict",
+          "title": "profile version conflict",
+          "status": 409,
+          "detail": "The profile draft changed before this operation completed.",
+          "code": "profile_version_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-unpublished-public"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-public-refused",
+          "title": "profile public refused",
+          "status": 422,
+          "detail": "This profile cannot be made public.",
+          "code": "profile_public_refused",
+          "reason": "profile_unpublished"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "wkp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "digest": "3fecb89118000a96db847b1994a95d4533e469470a5fd35930737343fe82c922",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_published": "/published_at"
+      }
+    },
+    {
+      "id": "workspace-profile-revisions",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "profile_id": "wkp_11111111111111111111111111111111",
+              "revision": 1,
+              "content": {
+                "location": {
+                  "type": "directory",
+                  "name": "contract"
+                },
+                "name": "contract",
+                "setup_commands": [],
+                "agent_profiles": []
+              },
+              "digest": "3fecb89118000a96db847b1994a95d4533e469470a5fd35930737343fe82c922",
+              "published_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-exact-revision",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "wkp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "digest": "3fecb89118000a96db847b1994a95d4533e469470a5fd35930737343fe82c922",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-public",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-public"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised workspace",
+          "description": "Shared contract",
+          "visibility": "public",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "3fecb89118000a96db847b1994a95d4533e469470a5fd35930737343fe82c922",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "workspace-marketplace-list",
+      "operation": "GET /api/v1/marketplace/{kind}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/workspace-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "kind": "workspace",
+              "id": "wkp_11111111111111111111111111111111",
+              "name": "Revised workspace",
+              "description": "Shared contract",
+              "owner_display": "contract-owner",
+              "latest_revision": 1,
+              "published_at": "2026-09-05T00:00:00Z",
+              "uses_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-marketplace-read",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/workspace-profiles/$workspace_profile_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "summary": {
+            "kind": "workspace",
+            "id": "wkp_11111111111111111111111111111111",
+            "name": "Revised workspace",
+            "description": "Shared contract",
+            "owner_display": "contract-owner",
+            "latest_revision": 1,
+            "published_at": "2026-09-05T00:00:00Z",
+            "uses_count": 0
+          },
+          "revision": {
+            "profile_id": "wkp_11111111111111111111111111111111",
+            "revision": 1,
+            "content": {
+              "location": {
+                "type": "directory",
+                "name": "contract"
+              },
+              "name": "contract",
+              "setup_commands": [],
+              "agent_profiles": []
+            },
+            "digest": "3fecb89118000a96db847b1994a95d4533e469470a5fd35930737343fe82c922",
+            "published_at": "2026-09-05T00:00:00Z"
+          },
+          "resolved_profiles": [],
+          "resolved_revisions": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-marketplace-fork",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/workspace-profiles/$workspace_profile_id/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-marketplace-fork"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_22222222222222222222222222222222",
+          "owner": "contract-owner",
+          "name": "Revised workspace copy",
+          "description": "Shared contract",
+          "visibility": "private",
+          "forked_from": {
+            "id": "wkp_11111111111111111111111111111111",
+            "revision": 1
+          },
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_fork_created": "/created_at",
+        "workspace_fork_id": "/id",
+        "workspace_fork_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "workspace-profile-retire",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/retire",
+        "headers": {
+          "idempotency-key": "workspace-profile-retire"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised workspace",
+          "description": "Shared contract",
+          "visibility": "public",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "retired_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "3fecb89118000a96db847b1994a95d4533e469470a5fd35930737343fe82c922",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_retired": "/retired_at",
+        "workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "workspace-profile-invalid-page",
+      "operation": "GET /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-not-found",
+      "operation": "GET /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_ffffffffffffffffffffffffffffffff",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-create"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_created": "/created_at",
+        "sandbox_profile_id": "/id",
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "sandbox-profile-list",
+      "operation": "GET /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "sbp_11111111111111111111111111111111",
+              "owner": "contract-owner",
+              "name": "Contract sandbox",
+              "description": "Shared contract",
+              "visibility": "private",
+              "uses_count": 0,
+              "draft": {
+                "cpu_millis": 1000,
+                "memory_mib": 1024,
+                "nyxid_services": [],
+                "agent_provider": "codex",
+                "model_access": "chronoai_managed",
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4,
+                "workspace_profiles": [],
+                "software_install_commands": [],
+                "environment_variables": []
+              },
+              "draft_version": 1,
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-read",
+      "operation": "GET /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-update"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "sandbox-profile-stale-draft",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-stale-draft"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-version-conflict",
+          "title": "profile version conflict",
+          "status": 409,
+          "detail": "The profile draft changed before this operation completed.",
+          "code": "profile_version_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-unpublished-public"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-public-refused",
+          "title": "profile public refused",
+          "status": 422,
+          "detail": "This profile cannot be made public.",
+          "code": "profile_public_refused",
+          "reason": "profile_unpublished"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "sbp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_published": "/published_at"
+      }
+    },
+    {
+      "id": "sandbox-profile-revisions",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "profile_id": "sbp_11111111111111111111111111111111",
+              "revision": 1,
+              "content": {
+                "cpu_millis": 1000,
+                "memory_mib": 1024,
+                "nyxid_services": [],
+                "agent_provider": "codex",
+                "model_access": "chronoai_managed",
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4,
+                "workspace_profiles": [],
+                "software_install_commands": [],
+                "environment_variables": []
+              },
+              "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+              "published_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-exact-revision",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "sbp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-public",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-public"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised sandbox",
+          "description": "Shared contract",
+          "visibility": "public",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "sandbox-marketplace-list",
+      "operation": "GET /api/v1/marketplace/{kind}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/sandbox-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "kind": "sandbox",
+              "id": "sbp_11111111111111111111111111111111",
+              "name": "Revised sandbox",
+              "description": "Shared contract",
+              "owner_display": "contract-owner",
+              "latest_revision": 1,
+              "published_at": "2026-09-05T00:00:00Z",
+              "uses_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-marketplace-read",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/sandbox-profiles/$sandbox_profile_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "summary": {
+            "kind": "sandbox",
+            "id": "sbp_11111111111111111111111111111111",
+            "name": "Revised sandbox",
+            "description": "Shared contract",
+            "owner_display": "contract-owner",
+            "latest_revision": 1,
+            "published_at": "2026-09-05T00:00:00Z",
+            "uses_count": 0
+          },
+          "revision": {
+            "profile_id": "sbp_11111111111111111111111111111111",
+            "revision": 1,
+            "content": {
+              "cpu_millis": 1000,
+              "memory_mib": 1024,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 4,
+              "max_agents_per_workspace": 4,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            },
+            "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+            "published_at": "2026-09-05T00:00:00Z"
+          },
+          "resolved_profiles": [],
+          "resolved_revisions": [],
+          "trust": {
+            "requires_confirmation": false,
+            "commands_digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-marketplace-fork",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/sandbox-profiles/$sandbox_profile_id/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-marketplace-fork"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_22222222222222222222222222222222",
+          "owner": "contract-owner",
+          "name": "Revised sandbox copy",
+          "description": "Shared contract",
+          "visibility": "private",
+          "forked_from": {
+            "id": "sbp_11111111111111111111111111111111",
+            "revision": 1
+          },
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_fork_created": "/created_at",
+        "sandbox_fork_id": "/id",
+        "sandbox_fork_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "sandbox-profile-retire",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/retire",
+        "headers": {
+          "idempotency-key": "sandbox-profile-retire"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Revised sandbox",
+          "description": "Shared contract",
+          "visibility": "public",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 2,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "retired_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_retired": "/retired_at",
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "sandbox-profile-invalid-page",
+      "operation": "GET /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-page",
+          "title": "invalid profile page",
+          "status": 400,
+          "detail": "The profile page parameters are not valid.",
+          "code": "invalid_profile_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-not-found",
+      "operation": "GET /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_ffffffffffffffffffffffffffffffff",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "profile-anonymous",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "profile-forbidden",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "marketplace-disabled",
+      "operation": "GET /api/v1/marketplace/{kind}",
+      "scenario": "marketplace_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/marketplace-disabled",
+          "title": "marketplace disabled",
+          "status": 503,
+          "detail": "The profile marketplace is disabled by the operator.",
+          "code": "marketplace_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "profile-invalid-content",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profile-invalid-content"
+        },
+        "body": {
+          "name": "Invalid capacity",
+          "content": {
+            "cpu_millis": 0,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-invalid",
+          "title": "profile invalid",
+          "status": 422,
+          "detail": "The profile does not satisfy its validation contract.",
+          "code": "profile_invalid",
+          "field": "cpu_millis",
+          "reason": "cpu_out_of_bounds"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
