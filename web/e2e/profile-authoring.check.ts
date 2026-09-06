@@ -207,6 +207,13 @@ for (const viewport of [
     await page.screenshot({ path: info.outputPath('repository-error.png'), fullPage: true });
     await page.getByRole('button', { name: 'Verify repository', exact: true }).click();
     await expect(page.getByText('Repository verified', { exact: true })).toBeVisible();
+    await expect(
+      page.getByText('Verify the repository and reference before saving.', { exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByLabel('Repository URL', { exact: true })).not.toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
     await expect(page.getByLabel('Repository URL', { exact: true })).toHaveValue(
       'https://github.com/local-fixture/research',
     );
