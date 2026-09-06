@@ -11,7 +11,7 @@ use layer2_core::trigger_domain::{PlacementId, TriggerId};
 
 use crate::AuthenticatedCaller;
 
-use super::idempotency::{IdempotencyKey, RequestBody};
+use super::idempotency::{operation_scope, IdempotencyKey, RequestBody};
 use super::trigger_openapi_shapes::{CreatePlacementRequest, PlacementQuery, PlacementView};
 use super::trigger_problem::TriggerProblem;
 use super::triggers::{
@@ -89,7 +89,7 @@ pub(super) async fn retire(
     }
     let command_state = state.clone();
     let command_caller = caller.clone();
-    let operation = format!("trigger:placement:retire:{id}:{placement_id}");
+    let operation = operation_scope("trigger:placement:retire", &[&id, &placement_id]);
     execute_empty_command(&state, &caller, key, operation, move || async move {
         command_state
             .triggers
