@@ -45,8 +45,13 @@ mod checkpoint_consistency_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod reconciliation_tests;
+mod runtime_attachment_tests;
 
 const PROFILE_TIME: &str = "2026-09-05T00:00:00Z";
+
+fn runtime_image() -> String {
+    CodexSandboxSpec::default().deployment.image.uri
+}
 
 #[derive(Clone, Default)]
 struct ActionLog(Arc<Mutex<Vec<String>>>);
@@ -410,7 +415,8 @@ impl Harness {
             updates: DurableAgentUpdateRecorder::new(store.clone()),
             operations: AgentOperationService::new(store.clone(), registry.clone()),
         };
-        let mut config = SandboxWorkerConfig::new("worker-a", "test", "runtime-v2", policy.clone());
+        let mut config =
+            SandboxWorkerConfig::new("worker-a", "test", runtime_image(), policy.clone());
         config.lease_duration = Duration::from_secs(60);
         config.retry_delay = Duration::from_secs(5);
         let worker = SandboxWorker::new(dependencies, config);
@@ -507,7 +513,7 @@ impl Harness {
             operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
         };
         let mut config =
-            SandboxWorkerConfig::with_policy_source(holder, "test", "runtime-v2", policy);
+            SandboxWorkerConfig::with_policy_source(holder, "test", runtime_image(), policy);
         config.lease_duration = lease_duration;
         config.retry_delay = Duration::from_secs(5);
         SandboxWorker::new(dependencies, config)
@@ -536,7 +542,7 @@ impl Harness {
             operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
         };
         let mut config =
-            SandboxWorkerConfig::new(holder, "test", "runtime-v2", self.policy.clone());
+            SandboxWorkerConfig::new(holder, "test", runtime_image(), self.policy.clone());
         config.lease_duration = Duration::from_secs(60);
         config.retry_delay = Duration::from_secs(5);
         SandboxWorker::new(dependencies, config)
@@ -806,7 +812,7 @@ async fn worker_pauses_and_revives_a_sandbox_from_its_held_checkpoint() {
     assert_ne!(revived.runtime.as_ref().unwrap().runtime_id, old_runtime.0);
     assert_eq!(
         revived.runtime.as_ref().unwrap().runtime_version,
-        "runtime-v2"
+        runtime_image()
     );
     assert!(harness
         .credentials
@@ -850,8 +856,14 @@ async fn worker_rotates_an_image_through_checkpoint_restore_without_installing_a
         .await
         .unwrap();
 
+    let mut spec = CodexSandboxSpec::default();
+    spec.deployment.image.uri = "runtime-v3".into();
+    let worker = harness.worker_with_adapter(
+        "rotation-worker",
+        Arc::new(CodexAdapter::with_backend(harness.backend.clone(), spec)),
+    );
     for _ in 0..11 {
-        harness.run(&active.id, rotation_at).await;
+        assert!(worker.run_one(&active.id, rotation_at).await.unwrap());
     }
     let rotated = harness.stored(&active.id).await;
     assert_eq!(rotated.status, SandboxStatus::Active);

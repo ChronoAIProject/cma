@@ -128,6 +128,32 @@ impl SandboxWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         if let Some(binding) = &sandbox.runtime {
+            if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+                self.dependencies.adapter.as_ref(),
+                &sandbox,
+                &self.config.deployment_id,
+            )
+            .await
+            {
+                let absent = self
+                    .dependencies
+                    .adapter
+                    .runtime_inventory()
+                    .await
+                    .is_ok_and(|inventory| {
+                        inventory
+                            .iter()
+                            .all(|item| item.handle.0 != binding.runtime_id)
+                    });
+                if !absent {
+                    return self
+                        .retry_failure(sandbox, adapter_failure(error), now)
+                        .await;
+                }
+                sandbox.runtime = None;
+            }
+        }
+        if let Some(binding) = &sandbox.runtime {
             if let Err(error) = self
                 .dependencies
                 .adapter

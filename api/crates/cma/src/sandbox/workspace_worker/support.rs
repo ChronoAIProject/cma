@@ -1,38 +1,8 @@
-use std::collections::BTreeMap;
-
-use layer2_core::profiles::ModelAccess;
 use layer2_core::sandbox::store::SandboxStoreError;
-use layer2_core::sandbox::{Sandbox, TypedFailure, Workspace};
+use layer2_core::sandbox::{TypedFailure, Workspace};
 use layer3_adapter::{
-    AdapterError, SandboxCapacity, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRequest,
-    WorkspaceSetupRequest,
+    AdapterError, SetupReceipt, WorkspaceReceipt, WorkspaceRequest, WorkspaceSetupRequest,
 };
-
-pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpec {
-    SandboxSpec {
-        sandbox_id: sandbox.id.to_string(),
-        capacity: SandboxCapacity {
-            cpu_millis: sandbox.profile.content.cpu_millis,
-            memory_mib: sandbox.profile.content.memory_mib,
-        },
-        environment: sandbox
-            .profile
-            .content
-            .environment_variables
-            .iter()
-            .map(|variable| (variable.name.clone(), variable.value.clone()))
-            .collect::<BTreeMap<_, _>>(),
-        reaches: sandbox
-            .credential
-            .reaches
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
-        own_credential: sandbox.profile.content.model_access == ModelAccess::OwnCredentials,
-        created_by: Some(deployment_id.into()),
-        ..SandboxSpec::default()
-    }
-}
 
 pub(super) fn claimed_fence(workspace: &Workspace, holder: &str) -> Result<u64, SandboxStoreError> {
     workspace

@@ -21,6 +21,19 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.runtime.is_some() {
+            if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+                self.dependencies.adapter.as_ref(),
+                &sandbox,
+                &self.config.deployment_id,
+            )
+            .await
+            {
+                return self
+                    .handle_lifecycle_failure(sandbox, super::support::adapter_failure(error), now)
+                    .await;
+            }
+        }
         let operation =
             sandbox.lifecycle.operation.clone().ok_or_else(|| {
                 SandboxStoreError::Corrupt("lifecycle operation is absent".into())

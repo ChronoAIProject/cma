@@ -46,6 +46,8 @@ use super::live_agents::{
 
 const DEPLOYMENT_ID: &str = "lifecycle-test";
 
+mod runtime_attachment_tests;
+
 struct Harness {
     store: Arc<InMemorySandboxStore>,
     worker: Arc<AgentWorker>,
@@ -58,6 +60,10 @@ struct Harness {
 
 impl Harness {
     async fn new(skills: Arc<dyn AgentSkillResolver>) -> Self {
+        Self::with_generation(skills, 1).await
+    }
+
+    async fn with_generation(skills: Arc<dyn AgentSkillResolver>, generation: u64) -> Self {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_788_537_600);
         let stamp = rfc3339_at(now);
         let store = Arc::new(InMemorySandboxStore::default());
@@ -66,7 +72,13 @@ impl Harness {
         let mut sandbox = sandbox(&sandbox_id, owner.clone(), &stamp);
         let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
         let adapter = Arc::new(adapter);
-        let runtime = adapter.provision(&sandbox_spec(&sandbox)).await.unwrap();
+        let runtime = adapter
+            .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
+                generation,
+                sandbox_spec(&sandbox),
+            ))
+            .await
+            .unwrap();
         adapter
             .run_install(
                 &runtime,
@@ -86,12 +98,12 @@ impl Harness {
             .await
             .unwrap();
         sandbox.runtime = Some(RuntimeBinding {
-            provision_generation: Some(1),
+            provision_generation: Some(generation),
             runtime_id: runtime.0.clone(),
-            runtime_version: "runtime-v2".into(),
+            runtime_version: CodexSandboxSpec::default().deployment.image.uri,
             bound_at: stamp.clone(),
         });
-        sandbox.lifecycle.runtime_generation_high_water = 1;
+        sandbox.lifecycle.runtime_generation_high_water = generation;
         store.create_sandbox(sandbox).await.unwrap();
 
         let workspace_id = WorkspaceId::generate();
