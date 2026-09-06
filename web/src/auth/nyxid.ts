@@ -11,8 +11,9 @@
  * a single line in main.tsx, which is what the seam was for.
  */
 
-import type { AuthProvider, AuthState, Capability } from './types';
+import type { AuthProvider, AuthState, Capability, SignInOptions } from './types';
 import { isCapability } from './types';
+import { parseRoute, routePath } from '../routing/routes';
 
 /** Where the control plane answers questions about the current browser identity. */
 const IDENTITY_ENDPOINT = '/auth/session';
@@ -73,6 +74,18 @@ export function handleFor(subject: string, displayName?: string, email?: string)
     return at > 0 ? address.slice(0, at) : address;
   }
   return subject;
+}
+
+export function signInPath(returnTo?: string, options?: SignInOptions): string {
+  const target = new URL(LOGIN_ENDPOINT, window.location.origin);
+  if (returnTo !== undefined) {
+    const route = parseRoute(returnTo);
+    if (route.kind === 'not_found' || routePath(route) !== returnTo)
+      throw new Error('The sign-in destination is not a CMA page.');
+    target.searchParams.set('return_to', returnTo);
+  }
+  if (options?.screen === 'register') target.searchParams.set('screen', 'register');
+  return `${target.pathname}${target.search}`;
 }
 
 /** Read a claim the provider may have omitted. */
@@ -138,14 +151,10 @@ export function createNyxidAuthProvider(): AuthProvider {
       };
     },
 
-    async signIn(returnTo?: string): Promise<void> {
+    async signIn(returnTo, options): Promise<void> {
       // A navigation, not a fetch: the provider needs to run its own redirects
       // and may show a login page, neither of which survives XHR.
-      const target = new URL(LOGIN_ENDPOINT, window.location.origin);
-      if (returnTo !== undefined) {
-        target.searchParams.set('return_to', returnTo);
-      }
-      window.location.assign(`${target.pathname}${target.search}`);
+      window.location.assign(signInPath(returnTo, options));
     },
 
     async signOut(): Promise<void> {
