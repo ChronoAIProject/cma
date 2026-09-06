@@ -109,7 +109,20 @@ impl Sandbox {
     }
 
     fn has_unchanged_initial_lifecycle(&self) -> bool {
-        self.lifecycle == SandboxLifecycleState::default()
+        let runtime_generation_high_water = match self
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.provision_generation)
+        {
+            None => 0,
+            Some(1) => 1,
+            Some(_) => return false,
+        };
+        self.lifecycle
+            == SandboxLifecycleState {
+                runtime_generation_high_water,
+                ..SandboxLifecycleState::default()
+            }
             && self.retired_at.is_none()
             && self.purge_after.is_none()
     }
