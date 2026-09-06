@@ -9,9 +9,11 @@ use axum::Router;
 use serde_json::json;
 
 use super::*;
-use crate::auth::persistence::SecretValue;
+#[path = "agent_skills_tests/authority_tests.rs"]
+mod authority_tests;
+use authority_tests::{sandbox, CredentialReply, TestCredentials};
 
-const TOKEN: &str = "owner-token-secret";
+const TOKEN: &str = "admitted-sandbox-key";
 const LOCATOR_ORIGIN: &str = "https://platform.example";
 
 #[derive(Clone)]
@@ -125,46 +127,10 @@ async fn registry_reply(
         .unwrap()
 }
 
-enum TokenReply {
-    Present(String),
-    Missing,
-    Failed(String),
-}
-
-struct TestTokens {
-    reply: TokenReply,
-    calls: AtomicUsize,
-}
-
-impl TestTokens {
-    fn present() -> Arc<Self> {
-        Arc::new(Self {
-            reply: TokenReply::Present(TOKEN.into()),
-            calls: AtomicUsize::new(0),
-        })
-    }
-
-    fn with(reply: TokenReply) -> Arc<Self> {
-        Arc::new(Self {
-            reply,
-            calls: AtomicUsize::new(0),
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl OwnerTokenSource for TestTokens {
-    async fn token_for(&self, _owner: &SubjectId) -> Result<Option<SecretValue>, String> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        match &self.reply {
-            TokenReply::Present(value) => Ok(Some(SecretValue::new(value.clone()))),
-            TokenReply::Missing => Ok(None),
-            TokenReply::Failed(error) => Err(error.clone()),
-        }
-    }
-}
-
-fn resolver(registry: &Registry, tokens: Option<Arc<TestTokens>>) -> OrnnAgentSkillResolver {
+fn resolver(
+    registry: &Registry,
+    credentials: Option<Arc<TestCredentials>>,
+) -> OrnnAgentSkillResolver {
     OrnnAgentSkillResolver {
         http: reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
@@ -173,12 +139,8 @@ fn resolver(registry: &Registry, tokens: Option<Arc<TestTokens>>) -> OrnnAgentSk
             .unwrap(),
         request_origin: reqwest::Url::parse(&registry.origin).unwrap(),
         locator_origin: reqwest::Url::parse(LOCATOR_ORIGIN).unwrap(),
-        tokens: tokens.map(|value| value as Arc<dyn OwnerTokenSource>),
+        credentials: credentials.map(|value| value as Arc<dyn SandboxCredentialController>),
     }
-}
-
-fn owner() -> SubjectId {
-    SubjectId("owner-a".into())
 }
 
 fn reference(id: &str, version: Option<&str>) -> SkillRef {
@@ -214,14 +176,14 @@ fn detail_target(id: &str, version: &str) -> String {
 #[tokio::test]
 async fn empty_resolution_needs_neither_owner_token_nor_network() {
     let registry = Registry::start().await;
-    let tokens = TestTokens::with(TokenReply::Failed("must not be called".into()));
-    let resolved = resolver(&registry, Some(Arc::clone(&tokens)))
-        .resolve(&owner(), &[])
+    let credentials = TestCredentials::with(CredentialReply::Failed("must not be called".into()));
+    let resolved = resolver(&registry, Some(Arc::clone(&credentials)))
+        .resolve(&sandbox(), &[])
         .await
         .unwrap();
 
     assert!(resolved.is_empty());
-    assert_eq!(tokens.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(credentials.calls.load(Ordering::Relaxed), 0);
     assert!(registry.requests().is_empty());
 }
 
@@ -238,14 +200,14 @@ async fn exact_pinned_material_is_authenticated_and_keeps_reference_order() {
         "3.4",
         Reply::json(material("skl_beta", "3.4", &"b".repeat(64))),
     );
-    let tokens = TestTokens::present();
+    let credentials = TestCredentials::present();
     let references = [
         reference("skl_beta", Some("3.4")),
         reference("skl_alpha", Some("1.2")),
     ];
 
-    let resolved = resolver(&registry, Some(Arc::clone(&tokens)))
-        .resolve(&owner(), &references)
+    let resolved = resolver(&registry, Some(Arc::clone(&credentials)))
+        .resolve(&sandbox(), &references)
         .await
         .unwrap();
 
@@ -265,37 +227,37 @@ async fn exact_pinned_material_is_authenticated_and_keeps_reference_order() {
             "skl_beta/versions/3.4/download"
         )
     );
-    assert_eq!(tokens.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(credentials.calls.load(Ordering::Relaxed), 1);
     let requests = registry.requests();
     assert_eq!(requests.len(), 2);
     assert!(requests
         .iter()
-        .all(|request| request.authorization.as_deref() == Some("Bearer owner-token-secret")));
+        .all(|request| request.authorization.as_deref() == Some("Bearer admitted-sandbox-key")));
 }
 
 #[tokio::test]
 async fn duplicate_references_fail_before_authority_is_read() {
     let registry = Registry::start().await;
-    let tokens = TestTokens::present();
+    let credentials = TestCredentials::present();
     let references = [
         reference("skl_repeat", Some("2.0")),
         reference("skl_repeat", Some("2.0")),
     ];
 
-    let error = resolver(&registry, Some(Arc::clone(&tokens)))
-        .resolve(&owner(), &references)
+    let error = resolver(&registry, Some(Arc::clone(&credentials)))
+        .resolve(&sandbox(), &references)
         .await
         .unwrap_err();
 
     assert!(matches!(error, AgentSkillResolutionError::Invalid(_)));
-    assert_eq!(tokens.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(credentials.calls.load(Ordering::Relaxed), 0);
     assert!(registry.requests().is_empty());
 }
 
 #[tokio::test]
 async fn invalid_version_grammar_fails_before_authority_is_read() {
     let registry = Registry::start().await;
-    let tokens = TestTokens::present();
+    let credentials = TestCredentials::present();
     for version in [
         Some("latest"),
         Some("1.2.3"),
@@ -305,13 +267,13 @@ async fn invalid_version_grammar_fails_before_authority_is_read() {
         Some("@with.dot"),
         Some("@1stable"),
     ] {
-        let error = resolver(&registry, Some(Arc::clone(&tokens)))
-            .resolve(&owner(), &[reference("skl_a", version)])
+        let error = resolver(&registry, Some(Arc::clone(&credentials)))
+            .resolve(&sandbox(), &[reference("skl_a", version)])
             .await
             .unwrap_err();
         assert!(matches!(error, AgentSkillResolutionError::Invalid(_)));
     }
-    assert_eq!(tokens.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(credentials.calls.load(Ordering::Relaxed), 0);
     assert!(registry.requests().is_empty());
 }
 
@@ -330,10 +292,10 @@ async fn omitted_and_real_dist_tags_resolve_once_to_literal_material() {
             version.unwrap_or(""),
             Reply::json(material("skl_alias", "3.4", &"a".repeat(64))),
         );
-        let tokens = TestTokens::present();
-        let resolver = resolver(&registry, Some(Arc::clone(&tokens)));
+        let credentials = TestCredentials::present();
+        let resolver = resolver(&registry, Some(Arc::clone(&credentials)));
         let references = [reference("skl_alias", version)];
-        let resolved = resolver.resolve(&owner(), &references).await.unwrap();
+        let resolved = resolver.resolve(&sandbox(), &references).await.unwrap();
         assert_eq!(resolved[0].version, "3.4");
         assert_eq!(references[0].version.as_deref(), version);
         validate_skill_selection(&references, &resolved).unwrap();
@@ -342,7 +304,7 @@ async fn omitted_and_real_dist_tags_resolve_once_to_literal_material() {
         assert_eq!(first, second);
         assert_eq!(first[0].version.as_deref(), Some("3.4"));
         assert!(first[0].source_url.ends_with("/versions/3.4/download"));
-        assert_eq!(tokens.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(credentials.calls.load(Ordering::Relaxed), 1);
         assert_eq!(registry.requests().len(), 1);
     }
 }
@@ -350,8 +312,8 @@ async fn omitted_and_real_dist_tags_resolve_once_to_literal_material() {
 #[tokio::test]
 async fn persisted_material_rebuilds_current_locators_without_metadata_or_tokens() {
     let registry = Registry::start().await;
-    let tokens = TestTokens::with(TokenReply::Failed("must not be called".into()));
-    let mut resolver = resolver(&registry, Some(Arc::clone(&tokens)));
+    let credentials = TestCredentials::with(CredentialReply::Failed("must not be called".into()));
+    let mut resolver = resolver(&registry, Some(Arc::clone(&credentials)));
     let material = vec![ResolvedAgentSkill {
         source: SkillSource::Ornn,
         id: layer2_core::SkillId::new("skl_persisted"),
@@ -365,7 +327,7 @@ async fn persisted_material_rebuilds_current_locators_without_metadata_or_tokens
     assert_eq!(first[0].id, second[0].id);
     assert_eq!(first[0].version, second[0].version);
     assert_eq!(first[0].archive_sha256, second[0].archive_sha256);
-    assert_eq!(tokens.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(credentials.calls.load(Ordering::Relaxed), 0);
     assert!(registry.requests().is_empty());
     for invalid in ["2.10.0", "@latest", "02.10"] {
         let mut changed = material.clone();
@@ -382,8 +344,8 @@ async fn inaccessible_or_absent_exact_reference_is_not_found() {
     for status in [StatusCode::FORBIDDEN, StatusCode::NOT_FOUND] {
         let registry = Registry::start().await;
         registry.reply("skl_missing", "1.0", Reply::status(status));
-        let error = resolver(&registry, Some(TestTokens::present()))
-            .resolve(&owner(), &[reference("skl_missing", Some("1.0"))])
+        let error = resolver(&registry, Some(TestCredentials::present()))
+            .resolve(&sandbox(), &[reference("skl_missing", Some("1.0"))])
             .await
             .unwrap_err();
         assert!(matches!(error, AgentSkillResolutionError::NotFound(_)));
@@ -400,8 +362,8 @@ async fn transient_http_failures_are_retryable() {
     ] {
         let registry = Registry::start().await;
         registry.reply("skl_busy", "1.0", Reply::status(status));
-        let error = resolver(&registry, Some(TestTokens::present()))
-            .resolve(&owner(), &[reference("skl_busy", Some("1.0"))])
+        let error = resolver(&registry, Some(TestCredentials::present()))
+            .resolve(&sandbox(), &[reference("skl_busy", Some("1.0"))])
             .await
             .unwrap_err();
         assert!(matches!(error, AgentSkillResolutionError::Unavailable(_)));
@@ -428,8 +390,8 @@ async fn identity_version_and_digest_mismatches_are_invalid() {
     for response in cases {
         let registry = Registry::start().await;
         registry.reply("skl_exact", "1.0", Reply::json(response));
-        let error = resolver(&registry, Some(TestTokens::present()))
-            .resolve(&owner(), &[reference("skl_exact", Some("1.0"))])
+        let error = resolver(&registry, Some(TestCredentials::present()))
+            .resolve(&sandbox(), &[reference("skl_exact", Some("1.0"))])
             .await
             .unwrap_err();
         assert!(matches!(error, AgentSkillResolutionError::Invalid(_)));
@@ -457,8 +419,8 @@ async fn malformed_and_oversized_bodies_are_invalid_without_body_leakage() {
     );
 
     for id in ["skl_bad_json", "skl_large"] {
-        let error = resolver(&registry, Some(TestTokens::present()))
-            .resolve(&owner(), &[reference(id, Some("1.0"))])
+        let error = resolver(&registry, Some(TestCredentials::present()))
+            .resolve(&sandbox(), &[reference(id, Some("1.0"))])
             .await
             .unwrap_err();
         let display = error.to_string();
@@ -472,11 +434,11 @@ async fn malformed_and_oversized_bodies_are_invalid_without_body_leakage() {
 async fn credential_failures_do_not_reveal_token_diagnostics() {
     let registry = Registry::start().await;
     for reply in [
-        TokenReply::Missing,
-        TokenReply::Failed("credential lookup echoed SUPER_SECRET_TOKEN".into()),
+        CredentialReply::Missing,
+        CredentialReply::Failed("credential lookup echoed SUPER_SECRET_TOKEN".into()),
     ] {
-        let error = resolver(&registry, Some(TestTokens::with(reply)))
-            .resolve(&owner(), &[reference("skl_private", Some("1.0"))])
+        let error = resolver(&registry, Some(TestCredentials::with(reply)))
+            .resolve(&sandbox(), &[reference("skl_private", Some("1.0"))])
             .await
             .unwrap_err();
         let display = error.to_string();
@@ -501,8 +463,8 @@ async fn one_failed_reference_returns_no_partial_collection() {
         reference("skl_missing", Some("1.0")),
     ];
 
-    let result = resolver(&registry, Some(TestTokens::present()))
-        .resolve(&owner(), &references)
+    let result = resolver(&registry, Some(TestCredentials::present()))
+        .resolve(&sandbox(), &references)
         .await;
 
     assert!(matches!(
@@ -521,7 +483,7 @@ async fn anonymous_mode_resolves_public_material_without_authorization() {
     );
 
     let resolved = resolver(&registry, None)
-        .resolve(&owner(), &[reference("skl_public", Some("1.0"))])
+        .resolve(&sandbox(), &[reference("skl_public", Some("1.0"))])
         .await
         .unwrap();
 
@@ -532,7 +494,7 @@ async fn anonymous_mode_resolves_public_material_without_authorization() {
 #[tokio::test]
 async fn malformed_runtime_ids_fail_before_authority_is_read() {
     let registry = Registry::start().await;
-    let tokens = TestTokens::present();
+    let credentials = TestCredentials::present();
     let too_long = "x".repeat(65);
     for id in [
         "../escape",
@@ -544,13 +506,13 @@ async fn malformed_runtime_ids_fail_before_authority_is_read() {
         "ornn-agent-manual-cli",
         too_long.as_str(),
     ] {
-        let error = resolver(&registry, Some(Arc::clone(&tokens)))
-            .resolve(&owner(), &[reference(id, Some("1.0"))])
+        let error = resolver(&registry, Some(Arc::clone(&credentials)))
+            .resolve(&sandbox(), &[reference(id, Some("1.0"))])
             .await
             .unwrap_err();
         assert!(matches!(error, AgentSkillResolutionError::Invalid(_)));
     }
-    assert_eq!(tokens.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(credentials.calls.load(Ordering::Relaxed), 0);
     assert!(registry.requests().is_empty());
 }
 

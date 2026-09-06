@@ -166,9 +166,9 @@ impl ControlPlaneComposition {
             );
         }
         let agent_skills = match &config.auth_mode {
-            AuthMode::Provider { .. } => OrnnAgentSkillResolver::authenticated(
+            AuthMode::Provider { .. } => OrnnAgentSkillResolver::scoped(
                 &config.runtime.platform_base_url,
-                Arc::clone(&auth),
+                Arc::clone(&sandbox_credentials),
             )?,
             AuthMode::Trusted { .. } => {
                 OrnnAgentSkillResolver::anonymous(&config.runtime.platform_base_url)?
