@@ -38,6 +38,7 @@ mod profiles_sandbox;
 #[cfg(test)]
 mod profiles_tests;
 mod profiles_workspace;
+mod remediation;
 #[cfg(test)]
 mod trigger_assets_test_support;
 

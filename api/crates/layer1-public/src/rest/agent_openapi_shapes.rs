@@ -242,6 +242,7 @@ pub(crate) struct AgentView {
 pub(crate) struct AgentFailureView {
     class: String,
     detail: String,
+    remediation: String,
 }
 
 impl AgentView {
@@ -308,6 +309,7 @@ impl AgentView {
             paused_notice,
             first_message,
             failure: agent.failure.map(|failure| AgentFailureView {
+                remediation: super::remediation::guidance(&failure.class).into(),
                 class: failure.class,
                 detail: failure.detail,
             }),
