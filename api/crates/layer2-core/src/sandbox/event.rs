@@ -56,6 +56,10 @@ pub enum AgentLogKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin_key: Option<String>,
     },
+    TurnMetadataSet {
+        turn_sequence: u64,
+        metadata: std::collections::BTreeMap<String, String>,
+    },
     OwnerMessage {
         content: String,
     },

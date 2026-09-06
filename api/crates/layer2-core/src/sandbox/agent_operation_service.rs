@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{AgentId, Caller, Capability, RuntimeCapability};
 
 use super::store::{
-    AgentConversationStore, AgentStore, SandboxLifecycleExecutionStore, SandboxMutationGuard,
-    SandboxStore, SandboxStoreError,
+    AgentConversationStore, AgentLogStore, AgentStore, SandboxLifecycleExecutionStore,
+    SandboxMutationGuard, SandboxStore, SandboxStoreError,
 };
 use super::{
     Agent, AgentApprovalDecision, AgentOperationDelivery, AgentRuntimeRegistry, AgentStatus,
@@ -14,13 +14,20 @@ use super::{
 
 pub(super) const MAX_OPERATION_COMMIT_RETRIES: usize = 8;
 
+#[path = "agent_linear_input.rs"]
+mod linear_input;
+
 pub trait AgentOperationStore:
-    AgentStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
+    AgentStore + AgentLogStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
 {
 }
 
 impl<T> AgentOperationStore for T where
-    T: AgentStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
+    T: AgentStore
+        + AgentLogStore
+        + AgentConversationStore
+        + SandboxStore
+        + SandboxLifecycleExecutionStore
 {
 }
 
@@ -66,6 +73,8 @@ pub enum AgentOperationError {
     InvalidRequest(String),
     #[error("agent changed while the operation was being fenced")]
     Conflict,
+    #[error("the previous turn does not match the conversation's latest turn")]
+    PreviousTurnConflict,
     #[error("agent log capacity exceeded")]
     LogCapacityExceeded,
     #[error("agent data is not usable: {0}")]
@@ -99,6 +108,7 @@ impl AgentOperationError {
             Self::StaleWorkAuthority => "agent_work_authority_stale",
             Self::InvalidRequest(_) => "invalid_agent_operation",
             Self::Conflict => "agent_operation_conflict",
+            Self::PreviousTurnConflict => "agent_previous_turn_conflict",
             Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
             Self::Corrupt(_) => "stored_agent_corrupt",
             Self::RuntimeUnavailable(_) => "agent_runtime_unavailable",
@@ -150,7 +160,9 @@ impl AgentOperationService {
                         Err(error) => return Err(error),
                     }
                 }
-                AgentStatus::Ready => match self.fence_message(current, text.clone(), parent).await
+                AgentStatus::Ready => match self
+                    .fence_message(current, text.clone(), parent, Default::default())
+                    .await
                 {
                     Ok(prepared) => {
                         return self
@@ -186,6 +198,9 @@ impl AgentOperationService {
             return Err(AgentOperationError::Corrupt(
                 "agent parent sandbox ownership is inconsistent".into(),
             ));
+        }
+        if sandbox.lifecycle.checkpoint_capture.is_some() {
+            return Err(AgentOperationError::Conflict);
         }
         let queues = match sandbox.status {
             SandboxStatus::Pausing | SandboxStatus::Paused => Ok(true),

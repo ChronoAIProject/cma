@@ -36,6 +36,8 @@ pub struct AgentTranscriptTurn {
     pub origin_key: Option<String>,
     pub owner_message: String,
     pub agent_messages: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub metadata: std::collections::BTreeMap<String, String>,
     pub outcome: AgentTurnOutcome,
 }
 

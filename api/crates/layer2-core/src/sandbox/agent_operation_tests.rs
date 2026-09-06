@@ -1,6 +1,7 @@
 mod admission_fence_tests;
 mod first_message_tests;
 mod fixtures;
+mod linear_input_tests;
 mod queued_message_tests;
 
 use std::sync::atomic::Ordering;

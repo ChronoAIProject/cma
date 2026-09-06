@@ -87,6 +87,27 @@ pub(super) fn fold_agent_log(
                 }
                 transcript.start(*turn_sequence, origin_key.clone(), &entry.appended_at)?;
             }
+            AgentLogKind::TurnMetadataSet {
+                turn_sequence,
+                metadata,
+            } => {
+                let turn = transcript
+                    .active
+                    .as_mut()
+                    .filter(|turn| turn.turn_sequence == *turn_sequence && turn.metadata.is_none())
+                    .ok_or_else(|| {
+                        "agent turn metadata has no unassigned active turn".to_string()
+                    })?;
+                if metadata.is_empty()
+                    || metadata.len() > 16
+                    || metadata
+                        .iter()
+                        .any(|(key, value)| key.chars().count() > 64 || value.chars().count() > 512)
+                {
+                    return Err("agent turn metadata is invalid".into());
+                }
+                turn.metadata = Some(metadata.clone());
+            }
             AgentLogKind::OwnerMessage { content } => {
                 transcript.owner_message(entry.seq, content)?
             }
@@ -222,6 +243,7 @@ impl TranscriptFold {
             origin_key,
             owner_message,
             agent_messages: Vec::new(),
+            metadata: None,
         });
         Ok(())
     }
@@ -310,6 +332,7 @@ struct ActiveTurn {
     origin_key: Option<String>,
     owner_message: Option<String>,
     agent_messages: Vec<String>,
+    metadata: Option<BTreeMap<String, String>>,
 }
 
 impl ActiveTurn {
@@ -322,6 +345,7 @@ impl ActiveTurn {
                 .owner_message
                 .ok_or_else(|| "agent turn has no owner message".to_string())?,
             agent_messages: self.agent_messages,
+            metadata: self.metadata.unwrap_or_default(),
             outcome,
         })
     }
