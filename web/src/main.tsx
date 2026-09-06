@@ -8,6 +8,7 @@ import { createClient } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from './api/context';
 import { createRestWebClient } from './api/rest';
 import { createProfileViewsClient } from './api/profiles';
+import { createCreationClient } from './api/creation';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -29,11 +30,12 @@ const authProvider = createNyxidAuthProvider();
 const sdk = createClient();
 const client = createRestWebClient(sdk);
 const profiles = createProfileViewsClient(sdk);
+const creation = createCreationClient(sdk);
 
 createRoot(container).render(
   <StrictMode>
     <AuthContextProvider provider={authProvider}>
-      <CmaClientProvider client={client} profiles={profiles}>
+      <CmaClientProvider client={client} profiles={profiles} creation={creation}>
         <App />
       </CmaClientProvider>
     </AuthContextProvider>

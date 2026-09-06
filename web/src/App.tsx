@@ -11,10 +11,24 @@ import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
+import { lazy, Suspense, useState } from 'react';
+import { useCmaClient, useCreationClient } from './api/context';
+import type { CreationRequest } from './create/CreationFlow';
+
+const CreationFlow = lazy(() =>
+  import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
+);
 
 export function App() {
   const { state, signIn, signOut } = useAuth();
   const router = useAppRouter();
+  const client = useCmaClient();
+  const creation = useCreationClient();
+  const [request, setRequest] = useState<{
+    readonly owner: string;
+    readonly value: CreationRequest;
+  }>();
+  const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
   if (state.status === 'checking') {
     return <div className="app-checking" aria-busy="true" />;
@@ -38,13 +52,51 @@ export function App() {
     );
   }
   return (
-    <Console
-      user={state.user}
-      route={router.route}
-      onNavigate={router.navigate}
-      onSignOut={() => {
-        void signOut();
-      }}
-    />
+    <>
+      <Console
+        key={state.user.id}
+        user={state.user}
+        route={router.route}
+        onNavigate={router.navigate}
+        hierarchyRevision={hierarchyRevision}
+        onCreate={
+          creation === undefined
+            ? undefined
+            : (value) => setRequest({ owner: state.user.id, value })
+        }
+        onUseProfile={
+          creation === undefined
+            ? undefined
+            : (selection) =>
+                setRequest({ owner: state.user.id, value: { kind: 'profile_use', selection } })
+        }
+        onSignOut={() => {
+          setRequest(undefined);
+          void signOut();
+        }}
+      />
+      {request === undefined ||
+      request.owner !== state.user.id ||
+      creation === undefined ||
+      state.user.visitor ||
+      !state.user.capabilities.includes('use_own_sandboxes') ? null : (
+        <Suspense fallback={null}>
+          <CreationFlow
+            key={state.user.id}
+            request={request.value}
+            client={client}
+            catalog={creation}
+            canCreateSandbox={state.user.capabilities.includes('create_sandbox')}
+            onClose={() => setRequest(undefined)}
+            onChanged={() => setHierarchyRevision((value) => value + 1)}
+            onCreated={(route) => {
+              setRequest(undefined);
+              setHierarchyRevision((value) => value + 1);
+              router.navigate(route);
+            }}
+          />
+        </Suspense>
+      )}
+    </>
   );
 }

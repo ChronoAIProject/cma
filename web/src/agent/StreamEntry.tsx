@@ -14,6 +14,7 @@ import {
   IconWarningOutline16,
 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
+import { SignInCard } from './SignInCard';
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -75,6 +76,8 @@ export function StreamEntry({
   }
   if (entry.kind === 'recovery') {
     const notice = entry.item;
+    if (notice.id.startsWith('sign-in:') || notice.id === 'live-sign-in')
+      return <SignInCard notice={notice} />;
     const url =
       notice.url !== undefined && /^https?:\/\//i.test(notice.url) ? notice.url : undefined;
     return (

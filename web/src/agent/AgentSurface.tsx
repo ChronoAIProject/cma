@@ -9,6 +9,9 @@ import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
+import { statusLabel } from '../vocabulary/status';
+import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
+import { agentProgress } from '../sandbox/progress';
 
 interface AgentSurfaceProps {
   readonly agentId: string;
@@ -16,10 +19,6 @@ interface AgentSurfaceProps {
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
-}
-
-function statusLabel(status: AgentStatus): string {
-  return status.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function statusDot(status: AgentStatus): StateDotState {
@@ -172,6 +171,15 @@ export function AgentSurface({
       )}
 
       <div className="agent-surface__conversation">
+        {status === 'starting' ||
+        detail.failure !== undefined ||
+        state.sandboxEvents !== undefined ? (
+          <ProvisioningProgress
+            title="Agent preparation"
+            steps={agentProgress(detail, state.sandboxEvents ?? [])}
+            failure={detail.failure}
+          />
+        ) : null}
         <MessageStream
           conversation={conversation}
           approvalBusy={approvalBusy}

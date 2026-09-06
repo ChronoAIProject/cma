@@ -17,6 +17,7 @@ import {
 import type { NavigationSandbox } from './navigation';
 import { TreeRow, type TreeRowAction } from './TreeRow';
 import './Tree.css';
+import { statusLabel } from '../vocabulary/status';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -64,10 +65,6 @@ function restored(viewerId: string): Set<string> {
   }
 }
 
-function statusLabel(status: string): string {
-  return status.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
-}
-
 function dotFor(status: string): StateDotState {
   if (status === 'failed' || status === 'deleted' || status === 'retired') return 'error';
   if (status === 'paused' || status === 'waiting_approval') return 'warning';
@@ -89,7 +86,7 @@ function dotFor(status: string): StateDotState {
   return 'done';
 }
 
-function stateMeta(status: string, extra?: ReactNode) {
+function stateMeta(status: SandboxStatus | AgentStatus, extra?: ReactNode) {
   return (
     <>
       <span className="tree-row__state">

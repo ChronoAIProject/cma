@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useCmaClient, useProfileViewsClient } from './api/context';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentDetails } from './agent/Details';
@@ -15,6 +15,7 @@ import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
 import { IconNewChatOutline16 } from './ui/icons';
 import './Console.css';
+import type { ProfileUse } from './profiles/marketplace/client';
 
 const ProfileViews = lazy(() =>
   import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
@@ -26,9 +27,19 @@ interface ConsoleProps {
   readonly onSignOut: () => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onCreate?: (action: CreateAction) => void;
+  readonly onUseProfile?: (selection: ProfileUse) => void;
+  readonly hierarchyRevision?: number;
 }
 
-export function Console({ user, route, onSignOut, onNavigate, onCreate }: ConsoleProps) {
+export function Console({
+  user,
+  route,
+  onSignOut,
+  onNavigate,
+  onCreate,
+  onUseProfile,
+  hierarchyRevision = 0,
+}: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -36,6 +47,9 @@ export function Console({ user, route, onSignOut, onNavigate, onCreate }: Consol
   const profiles = useProfileViewsClient();
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
+  useEffect(() => {
+    refreshNavigation();
+  }, [hierarchyRevision, refreshNavigation]);
   const refresh = useCallback(() => {
     refreshNavigation();
     setRevision((value) => value + 1);
@@ -54,6 +68,7 @@ export function Console({ user, route, onSignOut, onNavigate, onCreate }: Consol
   );
   const canUse = user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
+  const canCreateSandbox = canCreate && user.capabilities.includes('create_sandbox');
   const permissions: TreePermissions = {
     createAgent: canCreate,
     createWorkspace: canCreate,
@@ -107,6 +122,14 @@ export function Console({ user, route, onSignOut, onNavigate, onCreate }: Consol
             client={profiles}
             onNavigate={onNavigate}
             canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}
+            onUse={
+              canCreate &&
+              (route.kind !== 'marketplace_profile' ||
+                route.profileKind !== 'sandbox' ||
+                canCreateSandbox)
+                ? onUseProfile
+                : undefined
+            }
           />
         </Suspense>
       )
@@ -127,13 +150,18 @@ export function Console({ user, route, onSignOut, onNavigate, onCreate }: Consol
             : route.kind.replaceAll('_', ' ')}
         </h1>
         {route.kind === 'home' && canCreate ? (
-          <Button
-            variant="primary"
-            icon={<IconNewChatOutline16 />}
-            onClick={() => onCreate?.({ kind: 'new_agent' })}
-          >
-            New agent
-          </Button>
+          <div className="console__empty-actions">
+            <Button
+              variant="primary"
+              icon={<IconNewChatOutline16 />}
+              onClick={() => onCreate?.({ kind: 'new_agent' })}
+            >
+              New agent
+            </Button>
+            {canCreateSandbox ? (
+              <Button onClick={() => onCreate?.({ kind: 'new_sandbox' })}>New sandbox</Button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     );

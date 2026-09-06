@@ -76,6 +76,12 @@
   overflow-y: auto;
 }
 
+.agent-surface__conversation > section {
+  width: min(100%, 748px);
+  padding: 24px;
+  margin: 0 auto;
+}
+
 .message-stream {
   width: 100%;
   max-width: var(--read-column);

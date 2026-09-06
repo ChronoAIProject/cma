@@ -32,6 +32,7 @@ export interface ProfileReference {
 export interface Failure {
   readonly class: string;
   readonly detail: string;
+  readonly remediation?: string;
 }
 
 export interface ResourcePage<T, Cursor = string> {

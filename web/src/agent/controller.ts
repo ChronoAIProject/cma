@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
-import type { AgentDetail, AgentLiveEvent, AgentUsage, WorkspaceDetail } from '../api/types';
+import type {
+  AgentDetail,
+  AgentEvent,
+  AgentLiveEvent,
+  AgentUsage,
+  SandboxEvent,
+  WorkspaceDetail,
+} from '../api/types';
+import { readSandboxHistory } from '../sandbox/eventHistory';
 import {
   conversationFromTranscript,
   foldAgentEvent,
@@ -13,6 +21,7 @@ export interface ReadyAgent {
   readonly detail: AgentDetail;
   readonly workspace: WorkspaceDetail;
   readonly conversation: ConversationState;
+  readonly sandboxEvents?: readonly SandboxEvent[];
 }
 
 export type AgentResourceState =
@@ -54,7 +63,7 @@ export async function loadAgent(
   client: CmaWebClient,
   agentId: string,
   signal: AbortSignal,
-): Promise<ReadyAgent> {
+): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
   const [detail, transcript, usage] = await Promise.all([
     client.readAgent(agentId, { signal }),
     client.readAgentTranscript(agentId, { signal }),
@@ -69,10 +78,12 @@ export async function loadAgent(
     throw new Error('Agent projections referred to different resources.');
   }
   let conversation = conversationFromTranscript({ ...transcript, turns: [], throughSeq: 0 });
+  const durableEvents: AgentEvent[] = [];
   let cursor: number | undefined = 0;
   const seen = new Set<number>([0]);
   do {
     const page = await client.readAgentEvents(agentId, { cursor, signal });
+    durableEvents.push(...page.items);
     conversation = page.items.reduce(foldAgentEvent, conversation);
     const nextCursor = page.next;
     if (nextCursor !== undefined && (nextCursor <= (cursor ?? 0) || seen.has(nextCursor))) {
@@ -95,7 +106,26 @@ export async function loadAgent(
   };
   if (usage.throughSeq >= (conversation.usage?.throughSeq ?? 0))
     conversation = withUsage(conversation, usage);
-  return { detail, workspace, conversation };
+  return { detail, workspace, conversation, durableEvents };
+}
+
+function refreshConversation(
+  current: ConversationState,
+  next: Awaited<ReturnType<typeof loadAgent>>,
+): ConversationState {
+  if (current.cursor >= next.conversation.cursor) return current;
+  const folded = next.durableEvents.reduce(foldAgentEvent, current);
+  const recordedRuns = new Set(folded.messages.map((message) => message.runId));
+  const missing = next.conversation.messages.filter((message) => !recordedRuns.has(message.runId));
+  return {
+    ...folded,
+    messages: [...folded.messages, ...missing],
+    cursor: next.conversation.cursor,
+    usage:
+      (next.conversation.usage?.throughSeq ?? 0) >= (folded.usage?.throughSeq ?? 0)
+        ? next.conversation.usage
+        : folded.usage,
+  };
 }
 
 function runId(): string {
@@ -121,6 +151,10 @@ export function useAgentController(
   const actionKind = useRef<AgentCommand | undefined>(undefined);
   const replayAbort = useRef<AbortController | undefined>(undefined);
   const liveCursor = useRef(0);
+  const hierarchyChanged = useRef(options.onHierarchyChange);
+  useEffect(() => {
+    hierarchyChanged.current = options.onHierarchyChange;
+  }, [options.onHierarchyChange]);
 
   const applyLive = useCallback(
     (event: AgentLiveEvent) => {
@@ -168,6 +202,52 @@ export function useAgentController(
     state.detail.id === agentId &&
     pending !== 'send' &&
     pending !== 'approval';
+
+  const provisioning =
+    state.status === 'ready' &&
+    state.detail.id === agentId &&
+    (state.detail.status === 'starting' ||
+      (state.detail.firstMessage !== undefined &&
+        !['completed', 'failed', 'recovery_required'].includes(state.detail.firstMessage.state)));
+  useEffect(() => {
+    if (!provisioning || agentId === undefined || pending !== undefined) return;
+    const request = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let events: readonly SandboxEvent[] = [];
+    let observedStatus: string | undefined;
+    const poll = async () => {
+      try {
+        const next = await loadAgent(client, agentId, request.signal);
+        events = await readSandboxHistory(client, next.detail.sandbox.id, request.signal, events);
+        if (request.signal.aborted) return;
+        setState((current) => {
+          if (current.status !== 'ready' || current.detail.id !== agentId) return current;
+          const conversation = refreshConversation(current.conversation, next);
+          liveCursor.current = conversation.cursor;
+          return { status: 'ready', ...next, conversation, sandboxEvents: events };
+        });
+        setActionError((current) =>
+          current === 'Preparation progress could not be refreshed. Reconnecting.'
+            ? undefined
+            : current,
+        );
+        if (next.detail.status !== 'starting' && observedStatus !== next.detail.status)
+          hierarchyChanged.current?.();
+        observedStatus = next.detail.status;
+        timer = setTimeout(() => void poll(), 1500);
+      } catch {
+        if (!request.signal.aborted) {
+          setActionError('Preparation progress could not be refreshed. Reconnecting.');
+          timer = setTimeout(() => void poll(), 5000);
+        }
+      }
+    };
+    timer = setTimeout(() => void poll(), 1500);
+    return () => {
+      request.abort();
+      clearTimeout(timer);
+    };
+  }, [agentId, client, pending, provisioning]);
 
   useEffect(() => {
     if (!replayEnabled || agentId === undefined) return;
