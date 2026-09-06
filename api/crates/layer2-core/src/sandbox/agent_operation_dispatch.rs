@@ -88,6 +88,7 @@ impl AgentOperationService {
         current: Agent,
         text: String,
         parent: SandboxMutationGuard,
+        metadata: std::collections::BTreeMap<String, String>,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
         if current.conversation.active_turn.is_some() {
             return Err(AgentOperationError::Corrupt(
@@ -114,7 +115,7 @@ impl AgentOperationService {
         next.conversation.active_turn = Some(turn_sequence);
         next.transition(AgentStatus::Working, at.clone(), None)
             .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
-        let logs = vec![
+        let mut logs = vec![
             operation_log(&next, operation_sequence)?,
             AgentLogKind::TurnStarted {
                 turn_sequence,
@@ -128,6 +129,12 @@ impl AgentOperationService {
                 to: AgentStatus::Working,
             },
         ];
+        if !metadata.is_empty() {
+            logs.push(AgentLogKind::TurnMetadataSet {
+                turn_sequence,
+                metadata,
+            });
+        }
         self.commit_admission(&current, next, logs, at, parent)
             .await?;
         Ok(PreparedAgentOperation {

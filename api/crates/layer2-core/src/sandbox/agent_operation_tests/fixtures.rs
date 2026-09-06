@@ -9,9 +9,9 @@ use layer3_adapter::{
 
 use crate::profiles::{AgentProfileContent, AgentProfileSnapshot, PermissionLevel, ThinkingEffort};
 use crate::sandbox::store::{
-    AgentConversationMutation, AgentConversationStore, AgentStore, Page, PageRequest,
-    SandboxCheckpointMutation, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
-    SandboxStore, SandboxStoreError,
+    AgentConversationMutation, AgentConversationStore, AgentLogStore, AgentStore, Page,
+    PageRequest, SandboxCheckpointMutation, SandboxLifecycleExecutionStore,
+    SandboxLifecycleMutation, SandboxStore, SandboxStoreError,
 };
 use crate::{
     AgentId, AgentProfileId, Authorization, Caller, Capability, RuntimeCapabilities,
@@ -327,6 +327,29 @@ pub(super) struct RejectingConversationStore {
     pub(super) inner: InMemorySandboxStore,
     pub(super) reject_commits: AtomicBool,
     pub(super) commit_attempts: AtomicUsize,
+}
+
+#[async_trait]
+impl AgentLogStore for RejectingConversationStore {
+    async fn append_agent_log(
+        &self,
+        agent_id: &AgentId,
+        appended_at: String,
+        kind: AgentLogKind,
+    ) -> Result<AgentLogEntry, SandboxStoreError> {
+        self.inner
+            .append_agent_log(agent_id, appended_at, kind)
+            .await
+    }
+
+    async fn agent_log(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        limit: u16,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        self.inner.agent_log(agent_id, after, limit).await
+    }
 }
 
 #[async_trait]

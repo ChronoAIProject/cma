@@ -118,6 +118,7 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::InvalidRequest(_) => Self::InvalidRequest,
             AgentOperationError::DispatchInProgress { .. }
             | AgentOperationError::DispatchRecoveryRequired { .. }
+            | AgentOperationError::PreviousTurnConflict
             | AgentOperationError::Conflict => Self::OperationInFlight,
             AgentOperationError::DeliveryAmbiguous { .. } => Self::DeliveryAmbiguous,
             AgentOperationError::LogCapacityExceeded
