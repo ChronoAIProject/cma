@@ -1,25 +1,46 @@
-//! What a caller is entitled to, and where that answer comes from.
-//!
-//! Split from the flow so that file is about the browser dance and this one
-//! about the claim it ends with. Two sources, in order of preference: the token
-//! itself, and — when it carries none — the provider's introspection endpoint.
-//!
-//! Worth reading on its own because it is the input to every authorization
-//! decision this service makes. A permission read wrongly here is not a failed
-//! request; it is a caller quietly holding more than they were granted.
+//! Complete provider permission evidence, preferring advertised introspection.
 
 use super::{AuthMode, AuthState, ProviderMetadata};
 
-/// The permissions a userinfo response carries, if it carries any.
-pub(super) fn permissions_claim(body: &serde_json::Value) -> Vec<String> {
-    body.get("permissions")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PermissionEvidence {
+    Active(Vec<String>),
+    Inactive,
+}
+
+pub(super) fn permissions_claim(body: &serde_json::Value) -> Result<Vec<String>, String> {
+    let permissions = body
+        .get("permissions")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "provider response has no complete permissions array".to_string())?;
+    permissions
+        .iter()
+        .map(|permission| {
+            permission
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "provider permissions array contains a non-string value".to_string())
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+fn introspection_claim(
+    body: &serde_json::Value,
+    expected_subject: &str,
+) -> Result<PermissionEvidence, String> {
+    let active = body
+        .get("active")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| "introspection response has no boolean active disposition".to_string())?;
+    if let Some(subject) = body.get("sub") {
+        if subject.as_str() != Some(expected_subject) {
+            return Err("introspection subject does not match userinfo".into());
+        }
+    }
+    if !active {
+        return Ok(PermissionEvidence::Inactive);
+    }
+    permissions_claim(body).map(PermissionEvidence::Active)
 }
 
 /// What the provider says this token may do, asked as this service.
@@ -27,16 +48,14 @@ pub(super) fn permissions_claim(body: &serde_json::Value) -> Vec<String> {
 /// `None` when the provider advertises no introspection endpoint, which is the
 /// signal to fall back to the userinfo claim rather than to deny.
 ///
-/// The credentials travel in the form body rather than as basic auth: both are
-/// advertised, and this is the one the provider actually accepts here. An
-/// inactive token yields no permissions rather than an error — it is an answer,
-/// not a failure, and the subject it was resolved for is refused by the same
-/// deny-by-default path as any caller holding nothing.
+/// Inactive evidence is distinct from an active token with no permissions: only
+/// the latter may remain a delegated credential.
 pub(super) async fn introspect_permissions(
     auth: &AuthState,
     meta: &ProviderMetadata,
     access_token: &str,
-) -> Result<Option<Vec<String>>, String> {
+    expected_subject: &str,
+) -> Result<Option<PermissionEvidence>, String> {
     let Some(endpoint) = meta.introspection_endpoint.as_ref() else {
         return Ok(None);
     };
@@ -46,7 +65,7 @@ pub(super) async fn introspect_permissions(
         ..
     } = &auth.mode
     else {
-        return Ok(None);
+        return Err("introspection requires provider client credentials".into());
     };
 
     let form = [
@@ -70,12 +89,9 @@ pub(super) async fn introspect_permissions(
         .json()
         .await
         .map_err(|e| format!("introspection body not usable: {e}"))?;
-    if !body
-        .get("active")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return Ok(Some(Vec::new()));
-    }
-    Ok(Some(permissions_claim(&body)))
+    introspection_claim(&body, expected_subject).map(Some)
 }
+
+#[cfg(test)]
+#[path = "permissions_tests.rs"]
+mod tests;

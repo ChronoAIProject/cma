@@ -25,17 +25,7 @@ pub async fn attach_subject(
         Ok(resolved) => resolved,
         Err(error) => {
             tracing::error!(error = %error, "authentication store lookup failed");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
-                    "title": "store failed",
-                    "status": 503,
-                    "detail": "Authentication authority is temporarily unavailable.",
-                    "code": "store_failed",
-                })),
-            )
-                .into_response();
+            return store_failure();
         }
     };
     if let Some(resolved) = resolved {
@@ -53,8 +43,26 @@ pub async fn attach_subject(
     next.run(request).await
 }
 
+pub(super) fn store_failure() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+            "title": "store failed",
+            "status": 503,
+            "detail": "Authentication authority is temporarily unavailable.",
+            "code": "store_failed",
+        })),
+    )
+        .into_response()
+}
+
 fn bypasses_ambient_auth(path: &str) -> bool {
-    if path == "/auth/signup-options" {
+    // Recovery routes validate their own authority without requiring an old login.
+    if matches!(
+        path,
+        "/auth/signup-options" | "/auth/login" | "/auth/callback" | "/auth/logout"
+    ) {
         return true;
     }
     let Some(path) = path.strip_prefix('/') else {
@@ -110,6 +118,9 @@ mod tests {
     fn only_explicit_routes_bypass_ambient_auth() {
         for path in [
             "/auth/signup-options",
+            "/auth/login",
+            "/auth/callback",
+            "/auth/logout",
             "/api/v1/triggers/public/pub_example",
             "/api/v1/triggers/public/pub_example/badge.svg",
         ] {
@@ -117,6 +128,10 @@ mod tests {
         }
 
         for path in [
+            "/auth/session",
+            "/auth/login/",
+            "/auth/callback/extra",
+            "/auth/logout/extra",
             "auth/signup-options",
             "/auth/signup-options/",
             "/auth//signup-options",
@@ -185,6 +200,86 @@ mod tests {
             .expect("router answers");
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn stale_provider_access_cannot_block_sign_in_callback_or_logout() {
+        use std::time::{Duration, SystemTime};
+
+        use crate::auth::persistence::{
+            AuthStore as _, BrowserLogin, DurableSubjectTokens, SecretDigest, SecretValue,
+            SubjectAuthState,
+        };
+        use crate::auth::{profile::Profile, ProviderMetadata};
+        use layer2_core::SubjectId;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let upstream = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/userinfo", get(|| async { StatusCode::UNAUTHORIZED })),
+            )
+            .await
+            .unwrap();
+        });
+        let store = Arc::new(MemoryAuthStore::default());
+        let owner = SubjectId::new("recovery-owner");
+        let cookie_id = SecretDigest::identify("browser-login", "stale");
+        store
+            .put_browser_login(BrowserLogin {
+                id: cookie_id.clone(),
+                subject: owner.clone(),
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+            })
+            .await
+            .unwrap();
+        store
+            .put_subject(SubjectAuthState::new(
+                owner,
+                Authorization::none(),
+                Profile::default(),
+                Some(DurableSubjectTokens {
+                    access_token: SecretValue::new("revoked-fixture-access".into()),
+                    refresh_token: None,
+                    expires_at: SystemTime::now() + Duration::from_secs(3600),
+                }),
+            ))
+            .await
+            .unwrap();
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: base.clone(),
+                client_id: "fixture-client".into(),
+                client_secret: "fixture-value".into(),
+                public_url: "https://cma.example".into(),
+            },
+            None,
+            store.clone(),
+        );
+        *auth.metadata.write().await = Some(ProviderMetadata {
+            authorization_endpoint: format!("{base}/authorize"),
+            token_endpoint: format!("{base}/token"),
+            userinfo_endpoint: Some(format!("{base}/userinfo")),
+            introspection_endpoint: None,
+        });
+        let app = crate::auth::router(auth.clone())
+            .layer(axum::middleware::from_fn_with_state(auth, attach_subject));
+        for (path, expected) in [
+            ("/auth/session", StatusCode::SERVICE_UNAVAILABLE),
+            ("/auth/login", StatusCode::SEE_OTHER),
+            ("/auth/callback", StatusCode::BAD_REQUEST),
+            ("/auth/logout", StatusCode::SEE_OTHER),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(stale_credentials_request(path))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+        }
+        assert!(store.browser_login(&cookie_id).await.unwrap().is_none());
+        upstream.abort();
     }
 
     fn public_trigger_app_with_unavailable_auth() -> Router {

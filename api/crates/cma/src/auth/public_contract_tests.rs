@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use super::persistence::{
-    AuthStore, BrowserLogin, LoginAttempt, MemoryAuthStore, SecretDigest, SecretValue,
-    SubjectAuthState,
+    AuthStore, BrowserLogin, DurableSubjectTokens, LoginAttempt, MemoryAuthStore, SecretDigest,
+    SecretValue, SubjectAuthState,
 };
 use super::{AuthMode, AuthState};
 
@@ -116,7 +116,12 @@ async fn scenario(name: &str) -> Scenario {
             }),
         ),
     };
-    let upstream_router = Router::new().route(
+    let upstream_router = Router::new().route("/userinfo", get(|| async {
+        Json(json!({
+            "sub": "contract-visitor", "name": "Contract Visitor", "email": "visitor@example.test",
+            "permissions": ["cma:sandbox:use", "cma:sandbox:delete", "cma:trigger:launch"],
+        }))
+    })).route(
         "/api/v1/public/config",
         get(move || {
             let observed = observed.clone();
@@ -151,20 +156,24 @@ async fn scenario(name: &str) -> Scenario {
             .unwrap();
         if name != "auth_missing_authority" {
             store
-                .put_subject(SubjectAuthState {
+                .put_subject(SubjectAuthState::new(
                     subject,
-                    authorization: Authorization::new([
+                    Authorization::new([
                         Capability::UseOwnSandboxes,
                         Capability::DeleteOwnSandbox,
                         Capability::LaunchTriggers,
                     ]),
-                    profile: super::profile::Profile {
+                    super::profile::Profile {
                         display_name: Some("Contract Visitor".into()),
                         email: Some("visitor@example.test".into()),
                         avatar_url: None,
                     },
-                    tokens: None,
-                })
+                    Some(DurableSubjectTokens {
+                        access_token: SecretValue::new("contract-durable-access".into()),
+                        refresh_token: Some(SecretValue::new("contract-durable-refresh".into())),
+                        expires_at: SystemTime::now() + Duration::from_secs(3600),
+                    }),
+                ))
                 .await
                 .unwrap();
         }
@@ -198,7 +207,7 @@ async fn scenario(name: &str) -> Scenario {
         }
     } else {
         AuthMode::Provider {
-            base_url,
+            base_url: base_url.clone(),
             client_id: "contract-client".into(),
             client_secret: "contract-value".into(),
             public_url: "https://cma.example.test".into(),
@@ -210,6 +219,14 @@ async fn scenario(name: &str) -> Scenario {
         store,
         Some("https://identity.example.test".into()),
     );
+    if matches!(name, "auth_visitor" | "auth_store_unavailable") {
+        *auth.metadata.write().await = Some(super::ProviderMetadata {
+            authorization_endpoint: format!("{base_url}/authorize"),
+            token_endpoint: format!("{base_url}/token"),
+            userinfo_endpoint: Some(format!("{base_url}/userinfo")),
+            introspection_endpoint: None,
+        });
+    }
     Scenario {
         router: super::flow::router(auth.clone()).layer(axum::middleware::from_fn_with_state(
             auth,

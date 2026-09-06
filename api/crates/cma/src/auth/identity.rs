@@ -4,6 +4,12 @@ use layer2_core::StoreError;
 
 use super::{permissions, profile::Profile, AuthState, ProviderMetadata, RequestAuth};
 
+pub(super) struct VerifiedSubject {
+    pub subject: layer2_core::SubjectId,
+    pub permissions: permissions::PermissionEvidence,
+    pub profile: Profile,
+}
+
 pub(super) async fn request_for_bearer(
     auth: &AuthState,
     token: String,
@@ -34,6 +40,22 @@ pub(super) async fn resolve_subject(
     metadata: &ProviderMetadata,
     access_token: &str,
 ) -> Result<(layer2_core::SubjectId, Vec<String>, Profile), String> {
+    let verified = verify_subject(auth, metadata, access_token).await?;
+    match verified.permissions {
+        permissions::PermissionEvidence::Active(permissions) => {
+            Ok((verified.subject, permissions, verified.profile))
+        }
+        permissions::PermissionEvidence::Inactive => {
+            Err("provider reports the access token is inactive".into())
+        }
+    }
+}
+
+pub(super) async fn verify_subject(
+    auth: &AuthState,
+    metadata: &ProviderMetadata,
+    access_token: &str,
+) -> Result<VerifiedSubject, String> {
     let endpoint = metadata
         .userinfo_endpoint
         .as_ref()
@@ -58,15 +80,16 @@ pub(super) async fn resolve_subject(
     let subject = body
         .get("sub")
         .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|subject| !subject.is_empty())
+        .filter(|subject| !subject.trim().is_empty())
         .ok_or_else(|| "userinfo response has no subject".to_string())?;
-    let permissions = permissions::introspect_permissions(auth, metadata, access_token)
-        .await?
-        .unwrap_or_else(|| permissions::permissions_claim(&body));
-    Ok((
-        layer2_core::SubjectId::new(subject),
+    let permissions =
+        match permissions::introspect_permissions(auth, metadata, access_token, subject).await? {
+            Some(evidence) => evidence,
+            None => permissions::PermissionEvidence::Active(permissions::permissions_claim(&body)?),
+        };
+    Ok(VerifiedSubject {
+        subject: layer2_core::SubjectId::new(subject),
         permissions,
-        Profile::from_userinfo(&body),
-    ))
+        profile: Profile::from_userinfo(&body),
+    })
 }

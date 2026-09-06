@@ -18,6 +18,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::{
     identity,
+    middleware::store_failure,
     persistence::{DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue},
     session_routes::{issued_cookie, logout, read, request_cookie, urlencode},
     signup_options::signup_options,
@@ -384,18 +385,6 @@ fn provider_failure(code: &'static str, detail: impl ToString) -> Response {
             "title": "Identity provider unavailable",
             "detail": "The identity provider could not complete this request.",
             "code": code,
-        })),
-    )
-        .into_response()
-}
-
-fn store_failure() -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({
-            "title": "Authentication store unavailable",
-            "detail": "Authentication state could not be persisted.",
-            "code": "store_failed",
         })),
     )
         .into_response()

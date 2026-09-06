@@ -103,6 +103,61 @@ trust a role slug. Hosted OAuth/API-key/device-code connection pages are also
 NyxID-owned. CMA creates short-lived links as the visitor and polls their result,
 without registering another callback or handling a service secret in its UI.
 
+## Browser Authority And Recovery
+
+A valid CMA browser cookie identifies the account; it does not by itself grant
+resource permissions or prove renewable credentials are available. In provider
+mode, requests with usable durable access tokens verify live userinfo and,
+when advertised, introspection. Stored permission snapshots are not request
+authority. Discovery, userinfo and introspection share a 15-second verification
+deadline; a durable reread then requires the same owner, login incarnation,
+token generation and exact still-usable access token. This is a request-time
+check, not an atomic binding of a later browser request or resource mutation.
+
+Permission evidence must contain a complete string array. Introspection must
+contain a boolean `active`; an optional `sub` must exactly match userinfo.
+Malformed evidence or provider failure fails closed without using old grants.
+Missing, expired or blank durable access, or explicit inactive evidence, leaves
+browser identity only: no capabilities and no delegated credential. An active
+token with `permissions: []` grants no capabilities but remains a verified
+delegated credential. Bearer and login verification reject inactive evidence.
+
+On-demand renewal is coordinated in MongoDB, not a process-local mutex. Each
+subject has a login `incarnation`, monotonic `revision` and `token_generation`,
+and a nullable `refresh_lease`. The lease lasts 45 seconds; another caller waits
+at most 20 seconds, polling every 50 milliseconds. A cancelled worker leaves a
+bounded lease for takeover. Completion checks the exact incarnation, generation,
+holder and unexpired lease, then replaces by revision without upsert. New login
+invalidates old claims; stale success, rejection or abandonment cannot overwrite
+it or release another worker's claim. Completion preserves the latest profile
+and grants; terminal token loss clears stored grants in the same replacement.
+
+Only a refresh response with HTTP `400` and `error: "invalid_grant"` discards
+renewable custody. HTTP `401`, `429`, provider outages, malformed responses and
+transport errors retain it and release only the caller's claim. Nonrenewable
+access remains usable until actual expiry, when tokens and stored grants are
+cleared. Browser-cookie expiry and logout remain separate from token custody.
+
+The exact `/auth/login`, `/auth/callback` and `/auth/logout` routes do not resolve
+ambient credentials before running. A stale cookie therefore cannot prevent
+explicit sign-in or logout. Callback state, expiry, one-time consumption, PKCE
+and initiating-browser binding still apply; navigation or callback never starts
+a Sandbox or Launch. Other authenticated routes still verify current authority.
+
+Successful explicit login can repair an exact current-schema `auth_subjects`
+row only when **all four** fencing fields are absent. It installs new verified
+tokens and a fresh incarnation. Existing cookies and background refresh cannot
+infer missing generations or repair such a row. Partial or malformed fencing,
+unknown document schemas and counter exhaustion fail closed, including during
+login. Do not add fields by hand or erase authentication collections as a
+recovery shortcut; those cases require a separately reviewed data repair.
+
+New Sandbox admission additionally requires the owner's renewable credential
+prerequisite. A typed `409 sandbox_credential_setup_required` requires explicit
+same-account sign-in and continuation. Retain an ambiguous command's original
+key and body; use a fresh key only after a definitive refusal. A successful
+`GET /auth/session` alone does not prove that the next admission will succeed.
+
 ## Configuration Inventory
 
 Every quoted `CHRONO_*` key read by `cma/src/config.rs` and its modules is listed

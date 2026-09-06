@@ -8,7 +8,7 @@ use super::*;
 const ACCESS_SECRET: &str = "access-secret";
 const REFRESH_SECRET: &str = "refresh-secret";
 
-async fn store() -> MongoAuthStore {
+pub(super) async fn store() -> MongoAuthStore {
     let client = Client::with_uri_str("mongodb://127.0.0.1:27017")
         .await
         .unwrap();
@@ -23,19 +23,16 @@ async fn store() -> MongoAuthStore {
 }
 
 fn subject_state(tokens: Option<DurableSubjectTokens>) -> SubjectAuthState {
-    SubjectAuthState {
-        subject: SubjectId::new("subject-a"),
-        authorization: Authorization::new([
-            Capability::UseOwnSandboxes,
-            Capability::ReadActivityLog,
-        ]),
-        profile: Profile {
+    SubjectAuthState::new(
+        SubjectId::new("subject-a"),
+        Authorization::new([Capability::UseOwnSandboxes, Capability::ReadActivityLog]),
+        Profile {
             display_name: Some("Example Person".into()),
             email: Some("person@example.test".into()),
             avatar_url: Some("https://example.test/avatar.png".into()),
         },
         tokens,
-    }
+    )
 }
 
 fn subject_tokens() -> DurableSubjectTokens {
@@ -88,6 +85,10 @@ async fn subject_secrets_and_metadata_round_trip() {
 
     let restored = store.subject_from_doc(document).unwrap();
     assert_eq!(restored.subject, original.subject);
+    assert_eq!(restored.incarnation, original.incarnation);
+    assert_eq!(restored.revision, original.revision);
+    assert_eq!(restored.token_generation, original.token_generation);
+    assert_eq!(restored.refresh_lease, original.refresh_lease);
     assert_eq!(restored.authorization, original.authorization);
     assert_eq!(restored.profile, original.profile);
     let restored_tokens = restored.tokens.unwrap();

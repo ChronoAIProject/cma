@@ -10,6 +10,7 @@ use layer2_core::{Authorization, Capability, StoreError, SubjectId};
 use tokio::sync::RwLock;
 
 pub mod bearer;
+mod cookie_authorization;
 pub mod entitlements;
 pub mod flow;
 mod identity;
@@ -216,17 +217,19 @@ impl AuthState {
                                 delegated_credential: None,
                             }));
                         };
+                        if state.subject != login.subject {
+                            return Err(StoreError::Malformed(
+                                "browser authority crossed its identity boundary".into(),
+                            ));
+                        }
                         refresh::refresh_if_needed(self, &mut state).await?;
-                        let delegated_credential = state.tokens.as_ref().and_then(|tokens| {
-                            (tokens.expires_at > SystemTime::now())
-                                .then(|| tokens.access_token.expose().to_owned())
-                        });
-                        return Ok(Some(RequestAuth {
-                            subject: state.subject,
-                            authorization: state.authorization,
-                            profile: state.profile,
-                            delegated_credential,
-                        }));
+                        return cookie_authorization::request_for_cookie(
+                            self,
+                            &login.subject,
+                            state,
+                        )
+                        .await
+                        .map(Some);
                     }
                 }
                 let Some(token) = bearer::bearer_token(headers) else {
@@ -265,14 +268,38 @@ impl AuthState {
         authorization: Authorization,
         profile: Profile,
     ) -> Result<(), StoreError> {
-        self.store
-            .put_subject(SubjectAuthState {
-                subject,
-                authorization,
-                profile,
-                tokens: Some(tokens),
-            })
-            .await
+        for _ in 0..32 {
+            let mut next = SubjectAuthState::new(
+                subject.clone(),
+                authorization.clone(),
+                profile.clone(),
+                Some(tokens.clone()),
+            );
+            let current = match self.store.subject(&subject).await {
+                Ok(current) => current,
+                Err(error) => {
+                    if self.store.replace_unfenced_subject(next).await? {
+                        return Ok(());
+                    }
+                    return Err(error);
+                }
+            };
+            let stored = if let Some(current) = current {
+                next.revision = persistence::next_auth_counter(current.revision)?;
+                next.token_generation = persistence::next_auth_counter(current.token_generation)?;
+                self.store
+                    .replace_subject(&current.incarnation, current.revision, next)
+                    .await?
+            } else {
+                self.store.insert_subject(next).await?
+            };
+            if stored {
+                return Ok(());
+            }
+        }
+        Err(StoreError::Unavailable(
+            "subject sign-in remained contended".into(),
+        ))
     }
 
     pub(super) async fn metadata(&self) -> Result<ProviderMetadata, String> {

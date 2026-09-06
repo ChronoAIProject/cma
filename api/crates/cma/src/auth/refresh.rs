@@ -13,6 +13,9 @@ use super::{
 const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 const DEFAULT_TOKEN_LIFETIME: Duration = Duration::from_secs(15 * 60);
 
+#[path = "refresh_lease.rs"]
+mod lease;
+
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -31,20 +34,78 @@ pub(super) async fn refresh_if_needed(
     auth: &AuthState,
     state: &mut SubjectAuthState,
 ) -> Result<(), StoreError> {
-    let Some(tokens) = state.tokens.as_ref() else {
-        return Ok(());
-    };
-    let refresh_at = tokens
-        .expires_at
-        .checked_sub(REFRESH_MARGIN)
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-    if SystemTime::now() < refresh_at {
+    if !due(state) || !auth.requires_credential() {
         return Ok(());
     }
-    let Some(refresh_token) = tokens.refresh_token.as_ref() else {
-        state.tokens = None;
-        auth.store.put_subject(state.clone()).await?;
-        return Ok(());
+    let (claim, observed) = match lease::acquire(auth, state).await? {
+        lease::Acquisition::Current(current) => {
+            *state = current;
+            return Ok(());
+        }
+        lease::Acquisition::Owned(claim, observed) => (claim, observed),
+    };
+    let result = exchange(auth, &observed).await;
+    match result {
+        Ok(tokens) => {
+            if let Some(current) = claim.finish(auth, tokens).await? {
+                *state = current;
+                return Ok(());
+            }
+            let current = lease::read(auth, &state.subject).await?;
+            let changed = lease::changed(&observed, &current);
+            *state = current;
+            if changed {
+                Ok(())
+            } else {
+                Err(StoreError::Unavailable(
+                    "subject refresh lease expired or was lost".into(),
+                ))
+            }
+        }
+        Err(error) => {
+            claim.abandon(auth).await?;
+            let current = lease::read(auth, &state.subject).await?;
+            let changed = lease::changed(&observed, &current);
+            *state = current;
+            if changed {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn due(state: &SubjectAuthState) -> bool {
+    let Some(tokens) = state.tokens.as_ref() else {
+        return false;
+    };
+    let renewable = tokens
+        .refresh_token
+        .as_ref()
+        .is_some_and(|token| !token.expose().trim().is_empty());
+    let refresh_at = if renewable {
+        tokens
+            .expires_at
+            .checked_sub(REFRESH_MARGIN)
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    } else {
+        tokens.expires_at
+    };
+    SystemTime::now() >= refresh_at
+}
+
+async fn exchange(
+    auth: &AuthState,
+    state: &SubjectAuthState,
+) -> Result<Option<DurableSubjectTokens>, StoreError> {
+    let Some(refresh_token) = state
+        .tokens
+        .as_ref()
+        .and_then(|tokens| tokens.refresh_token.as_ref())
+        .filter(|token| !token.expose().trim().is_empty())
+    else {
+        return Ok(None);
     };
     let AuthMode::Provider {
         client_id,
@@ -52,7 +113,9 @@ pub(super) async fn refresh_if_needed(
         ..
     } = &auth.mode
     else {
-        return Ok(());
+        return Err(StoreError::Unavailable(
+            "no refresh provider configured".into(),
+        ));
     };
     let metadata = auth.metadata().await.map_err(StoreError::Unavailable)?;
     let response = auth
@@ -71,15 +134,13 @@ pub(super) async fn refresh_if_needed(
         let status = response.status();
         // Only an explicit rejected grant revokes local custody; provider outages
         // and client configuration failures must not destroy renewable authority.
-        if matches!(status.as_u16(), 400 | 401)
+        if status.as_u16() == 400
             && response
                 .json::<TokenError>()
                 .await
                 .is_ok_and(|body| body.error == "invalid_grant")
         {
-            state.tokens = None;
-            auth.store.put_subject(state.clone()).await?;
-            return Ok(());
+            return Ok(None);
         }
         return Err(StoreError::Unavailable(
             "provider token refresh was not accepted".into(),
@@ -112,20 +173,13 @@ pub(super) async fn refresh_if_needed(
             body.expires_in.unwrap_or(DEFAULT_TOKEN_LIFETIME.as_secs()),
         ))
         .ok_or_else(|| StoreError::Malformed("provider refresh lifetime is out of range".into()))?;
-    state.tokens = Some(DurableSubjectTokens {
+    Ok(Some(DurableSubjectTokens {
         access_token: SecretValue::new(body.access_token),
         refresh_token: retained_refresh,
         expires_at,
-    });
-    auth.store.put_subject(state.clone()).await
+    }))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn refresh_margin_is_smaller_than_the_default_lifetime() {
-        assert!(REFRESH_MARGIN < DEFAULT_TOKEN_LIFETIME);
-    }
-}
+#[path = "refresh_tests.rs"]
+mod tests;
