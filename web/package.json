@@ -12,6 +12,9 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "e2e": "playwright test --config e2e/playwright.config.ts",
+    "e2e:mechanics": "playwright test --config e2e/mechanics.config.ts",
+    "e2e:typecheck": "tsc --project e2e/tsconfig.json",
     "check:styles": "node scripts/computed-styles.mjs",
     "check:css": "node scripts/css-collisions.mjs"
   },
@@ -23,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
+    "@playwright/test": "1.58.2",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
