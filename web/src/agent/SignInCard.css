@@ -33,6 +33,9 @@
   min-width: 0;
   font-family: var(--ds-font-family-code);
 }
+.agent-sign-in > a {
+  color: var(--dsw-alias-state-business-primary);
+}
 .agent-sign-in__code button,
 .agent-sign-in > a svg {
   flex: none;
