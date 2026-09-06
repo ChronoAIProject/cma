@@ -15,10 +15,10 @@ use super::profiles_problem::ProfileProblem;
 use super::BodyProblem;
 
 /// Deployment policy needed while validating profile drafts and publication.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ProfileRoutePolicy {
     pub capacity_bounds: ProfileCapacityBounds,
-    pub secret_patterns: Vec<String>,
+    pub public_value_scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
 }
 
 /// Provider-neutral ports used by the profile and marketplace routes.

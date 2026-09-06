@@ -383,7 +383,7 @@ pub(super) async fn set_visibility(
                     body.visibility.into(),
                     layer2_core::now_rfc3339(),
                     command_state.policy.capacity_bounds,
-                    &command_state.policy.secret_patterns,
+                    command_state.policy.public_value_scanner.as_ref(),
                 )
                 .await
                 .map_err(|error| ProfileProblem::from_marketplace(error, true))?;

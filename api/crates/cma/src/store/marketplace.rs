@@ -32,16 +32,10 @@ impl MarketplaceStore for MongoProfileStore {
         visibility: ProfileVisibility,
         updated_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn layer2_core::profiles::PublicValueScanner,
     ) -> Result<(), MarketplaceError> {
         super::marketplace_visibility::set_profile_visibility(
-            self,
-            owner,
-            locator,
-            visibility,
-            updated_at,
-            bounds,
-            secret_patterns,
+            self, owner, locator, visibility, updated_at, bounds, scanner,
         )
         .await
     }

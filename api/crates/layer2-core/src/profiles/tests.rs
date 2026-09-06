@@ -137,8 +137,8 @@ fn workspace_git_urls_reject_an_explicit_default_port() {
     );
 }
 
-#[test]
-fn validation_refuses_reserved_environment_names_and_secret_like_values() {
+#[tokio::test]
+async fn validation_refuses_reserved_environment_names_and_secret_like_values() {
     let mut profile = sandbox_profile(
         "sbp_one",
         "owner",
@@ -157,6 +157,7 @@ fn validation_refuses_reserved_environment_names_and_secret_like_values() {
     let error = profile
         .draft
         .validate_public_values(&["private-marker".into()])
+        .await
         .unwrap_err();
     assert_eq!(error.code, "secret_like_environment_value");
 }
@@ -199,8 +200,8 @@ fn all_profile_content_refuses_unknown_fields() {
     );
 }
 
-#[test]
-fn every_profile_aggregate_round_trips_and_refuses_unknown_fields() {
+#[tokio::test]
+async fn every_profile_aggregate_round_trips_and_refuses_unknown_fields() {
     fn round_trip<T>(value: &T)
     where
         T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
@@ -233,7 +234,7 @@ fn every_profile_aggregate_round_trips_and_refuses_unknown_fields() {
         "owner",
         WorkspaceProfileRef::new(workspace.id, 1),
     );
-    let sandbox_revision = sandbox.publish(1, NOW.into(), bounds(), &[]).unwrap();
+    let sandbox_revision = sandbox.publish(1, NOW.into(), bounds(), &[]).await.unwrap();
     round_trip(&sandbox);
     round_trip(&sandbox_revision);
     round_trip(&SandboxProfileSnapshot::from(&sandbox_revision));
@@ -464,10 +465,7 @@ async fn sandbox_publication_resolves_workspace_and_checks_secrets() {
             )
             .await
             .unwrap_err(),
-        ProfileStoreError::Validation(ProfileError::new(
-            "secret_like_environment_value",
-            "environment_variables"
-        ))
+        ProfileStoreError::Validation(ProfileError::environment_secret("LEAN_VERSION"))
     );
 }
 

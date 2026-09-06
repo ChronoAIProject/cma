@@ -230,12 +230,19 @@ impl MarketplaceStore for InMemoryProfileStore {
         visibility: ProfileVisibility,
         updated_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn crate::profiles::PublicValueScanner,
     ) -> Result<(), MarketplaceError> {
         if owner.as_str() == SYSTEM_OWNER {
             return Err(MarketplaceError::Forbidden);
         }
+        let inspected = super::marketplace_public_values::inspect(
+            self, owner, locator, visibility, bounds, scanner,
+        )
+        .await?;
         let mut state = self.lock();
+        if let Some(inspected) = inspected {
+            inspected.verify(&state)?;
+        }
         match locator {
             MarketplaceLocator::Agent(id) => {
                 let revisions: Vec<_> = state
@@ -281,8 +288,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .map(|(_, revision)| revision.clone())
                     .collect();
                 require_published_and_valid(visibility, &revisions, |revision| {
-                    revision.content.validate(bounds)?;
-                    revision.content.validate_public_values(secret_patterns)
+                    revision.content.validate(bounds)
                 })?;
                 let profile = state
                     .sandboxes

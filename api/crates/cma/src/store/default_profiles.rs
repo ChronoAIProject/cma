@@ -42,10 +42,10 @@ struct DefaultProfileRecords {
 }
 
 impl DefaultProfileSpec {
-    fn records(
+    async fn records(
         &self,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn layer2_core::profiles::PublicValueScanner,
     ) -> Result<DefaultProfileRecords, StoreError> {
         let owner = SubjectId::new(SYSTEM_OWNER);
         let agent = AgentProfile {
@@ -127,12 +127,8 @@ impl DefaultProfileSpec {
             retired_at: None,
         };
         let sandbox_revision = sandbox
-            .publish(
-                DEFAULT_PROFILE_REVISION,
-                SEEDED_AT.into(),
-                bounds,
-                secret_patterns,
-            )
+            .publish(DEFAULT_PROFILE_REVISION, SEEDED_AT.into(), bounds, scanner)
+            .await
             .map_err(profile_invalid)?;
         Ok(DefaultProfileRecords {
             agent,
@@ -150,9 +146,9 @@ impl MongoProfileStore {
         &self,
         spec: &DefaultProfileSpec,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn layer2_core::profiles::PublicValueScanner,
     ) -> Result<(), StoreError> {
-        let records = spec.records(bounds, secret_patterns)?;
+        let records = spec.records(bounds, scanner).await?;
         let documents = [
             (
                 &self.agent_profiles,
@@ -358,16 +354,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn records_are_public_deterministic_and_reference_each_other() {
+    #[tokio::test]
+    async fn records_are_public_deterministic_and_reference_each_other() {
         let spec = DefaultProfileSpec {
             cpu_millis: 1_000,
             memory_mib: 1_024,
             agent_model: "model-a".into(),
             agent_effort: ThinkingEffort::High,
         };
-        let first = spec.records(bounds(), &[]).unwrap();
-        let second = spec.records(bounds(), &[]).unwrap();
+        let first = spec.records(bounds(), &[]).await.unwrap();
+        let second = spec.records(bounds(), &[]).await.unwrap();
         assert_eq!(first.agent, second.agent);
         assert_eq!(first.agent_revision, second.agent_revision);
         assert_eq!(first.workspace_revision, second.workspace_revision);
@@ -390,14 +386,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn deployment_reservation_must_fit_publication_bounds() {
+    #[tokio::test]
+    async fn deployment_reservation_must_fit_publication_bounds() {
         let spec = DefaultProfileSpec {
             cpu_millis: 99,
             memory_mib: 1_024,
             agent_model: "model-a".into(),
             agent_effort: ThinkingEffort::High,
         };
-        assert!(spec.records(bounds(), &[]).is_err());
+        assert!(spec.records(bounds(), &[]).await.is_err());
     }
 }

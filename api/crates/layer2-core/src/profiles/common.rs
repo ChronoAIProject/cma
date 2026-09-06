@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentProfileId, SandboxProfileId, WorkspaceProfileId};
@@ -42,12 +44,22 @@ pub type SandboxProfileRef = ProfileRef<SandboxProfileId>;
 #[error("{code}: {field}")]
 pub struct ProfileError {
     pub code: &'static str,
-    pub field: &'static str,
+    pub field: Cow<'static, str>,
 }
 
 impl ProfileError {
     pub const fn new(code: &'static str, field: &'static str) -> Self {
-        Self { code, field }
+        Self {
+            code,
+            field: Cow::Borrowed(field),
+        }
+    }
+
+    pub fn environment_secret(name: &str) -> Self {
+        Self {
+            code: "secret_like_environment_value",
+            field: Cow::Owned(format!("environment_variables.{name}")),
+        }
     }
 }
 

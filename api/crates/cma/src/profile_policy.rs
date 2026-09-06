@@ -2,6 +2,9 @@
 
 use layer1_public::rest::ProfileRoutePolicy;
 use layer2_core::profiles::ProfileCapacityBounds;
+use std::sync::Arc;
+
+mod secret_scanner;
 
 /// Resource range accepted by this deployment's supported sandbox provider.
 /// The default profile reservation sits within this range, but does not define
@@ -13,36 +16,10 @@ const PROFILE_CAPACITY_BOUNDS: ProfileCapacityBounds = ProfileCapacityBounds {
     max_memory_mib: 16_384,
 };
 
-/// High-confidence credential markers mirrored from the gitleaks default rule
-/// vocabulary. Public environment values are plain configuration, so false
-/// positives are intentionally resolved by changing the value, never by an
-/// allowlist.
-const PUBLIC_PROFILE_SECRET_PATTERNS: &[&str] = &[
-    "-----BEGIN PRIVATE KEY-----",
-    "-----BEGIN RSA PRIVATE KEY-----",
-    "AKIA",
-    "ASIA",
-    "AIza",
-    "github_pat_",
-    "ghp_",
-    "gho_",
-    "ghu_",
-    "ghs_",
-    "ghr_",
-    "glpat-",
-    "sk_live_",
-    "sk-proj-",
-    "xoxb-",
-    "xoxp-",
-];
-
 pub(crate) fn profile_route_policy() -> ProfileRoutePolicy {
     ProfileRoutePolicy {
         capacity_bounds: PROFILE_CAPACITY_BOUNDS,
-        secret_patterns: PUBLIC_PROFILE_SECRET_PATTERNS
-            .iter()
-            .map(|pattern| (*pattern).to_owned())
-            .collect(),
+        public_value_scanner: Arc::new(secret_scanner::GitleaksScanner::production()),
     }
 }
 
@@ -57,10 +34,6 @@ mod tests {
         assert!(policy.capacity_bounds.min_memory_mib > 0);
         assert!(policy.capacity_bounds.min_cpu_millis <= policy.capacity_bounds.max_cpu_millis);
         assert!(policy.capacity_bounds.min_memory_mib <= policy.capacity_bounds.max_memory_mib);
-        assert!(!policy.secret_patterns.is_empty());
-        assert!(policy
-            .secret_patterns
-            .iter()
-            .all(|pattern| !pattern.is_empty()));
+        assert!(format!("{:?}", policy.public_value_scanner).contains("GitleaksScanner"));
     }
 }
