@@ -534,6 +534,18 @@ fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMutation {
     }
 }
 
+async fn begin_stored_conversation_turn(
+    store: &MongoSandboxStore,
+    agent: Agent,
+) -> AgentConversationMutation {
+    let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    let mut mutation = begin_conversation_turn(agent);
+    mutation.admission_guard = Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
+        &parent,
+    ));
+    mutation
+}
+
 async fn ready_conversation_fixture(store: &MongoSandboxStore, suffix: &str) -> Agent {
     let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     let conversation_id = format!("conversation-{suffix}");

@@ -525,7 +525,9 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
     working.conversation.last_seq = 3;
     store
         .commit_agent_conversation(AgentConversationMutation {
-            admission_guard: None,
+            admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
+                &sandbox,
+            )),
             expected_agent_revision: ready.revision,
             expected_last_seq: ready.conversation.last_seq,
             runtime_generation: 1,

@@ -24,6 +24,10 @@ use super::sandbox_mongo::{
     TRANSACTION_ATTEMPTS,
 };
 
+mod admission;
+#[cfg(test)]
+mod admission_tests;
+
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
     pub(super) agent: Agent,
@@ -174,6 +178,7 @@ async fn apply_mutation(
     ensure_append_capacity(&log_summary, &logs, AppendCapacity::Normal)
         .map_err(ApplyError::Domain)?;
 
+    admission::validate_and_fence(store, &current, mutation, session).await?;
     replace_agent(store, &current, mutation, session).await?;
     insert_logs(store, &logs, session).await?;
     Ok(ConversationReceipt {
