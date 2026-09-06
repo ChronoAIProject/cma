@@ -259,7 +259,7 @@ fn spawn_reaper(
             Err(error) => tracing::warn!(%error, "agent bridge wait failed"),
         }
         drop(managed);
-        let _ = ended.send(true);
+        ended.send_replace(true);
     });
 }
 
