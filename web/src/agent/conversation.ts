@@ -6,6 +6,7 @@ import type {
   AgentUsage,
 } from '../api/types';
 import { orderEntries } from './chronology';
+import { consumeLiveMessage, liveMessage } from './liveMessage';
 import type {
   ApprovalRequest,
   ConversationMessage,
@@ -120,20 +121,31 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
   const next = { ...state, cursor: event.seq };
   switch (kind.type) {
     case 'turn_started':
-      return { ...next, activeRunId: String(number(kind.turn_sequence) ?? event.seq) };
+      return {
+        ...next,
+        recovery: next.recovery.filter(
+          (notice) => !notice.id.startsWith('sign-in:') && notice.id !== 'live-sign-in',
+        ),
+        activeRunId: String(number(kind.turn_sequence) ?? event.seq),
+      };
     case 'owner_message':
     case 'agent_message': {
       const content = text(kind.content);
       if (content === undefined) return next;
+      const reconciled =
+        kind.type === 'agent_message'
+          ? consumeLiveMessage(next.messages, next.activeRunId)
+          : { messages: next.messages, order: undefined };
       return {
         ...next,
-        messages: upsert(next.messages, {
+        messages: upsert(reconciled.messages, {
           id: `event:${String(event.seq)}`,
           runId: next.activeRunId,
           role: kind.type === 'owner_message' ? 'user' : 'assistant',
           content,
           status: 'complete',
           at: event.appendedAt,
+          order: reconciled.order,
         }),
       };
     }
@@ -231,37 +243,6 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     default:
       return next;
   }
-}
-
-function liveMessage(state: ConversationState, event: AgentLiveEvent): ConversationState {
-  const id = text(event.messageId);
-  if (id === undefined) return state;
-  const current = state.messages.find((message) => message.id === id);
-  if (event.type === 'TEXT_MESSAGE_START') {
-    const role = event.role === 'user' ? 'user' : 'assistant';
-    return {
-      ...state,
-      messages: upsert(state.messages, {
-        id,
-        runId: event.runId,
-        role,
-        content: '',
-        status: 'streaming',
-        at: event.timestamp,
-      }),
-    };
-  }
-  if (current === undefined) return state;
-  if (event.type === 'TEXT_MESSAGE_CONTENT') {
-    return {
-      ...state,
-      messages: upsert(state.messages, {
-        ...current,
-        content: `${current.content}${text(event.delta) ?? ''}`,
-      }),
-    };
-  }
-  return { ...state, messages: upsert(state.messages, { ...current, status: 'complete' }) };
 }
 
 function liveReasoning(state: ConversationState, event: AgentLiveEvent): ConversationState {
@@ -393,6 +374,13 @@ function patchState(state: ConversationState, patch: unknown): ConversationState
     });
   }
   if (path === '/signIn') {
+    if (item.value === null)
+      return {
+        ...state,
+        recovery: state.recovery.filter(
+          (notice) => !notice.id.startsWith('sign-in:') && notice.id !== 'live-sign-in',
+        ),
+      };
     const signIn = object(item.value);
     return recover(state, {
       id: 'live-sign-in',

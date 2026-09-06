@@ -8,6 +8,7 @@ export interface ConversationMessage {
   readonly content: string;
   readonly status: 'streaming' | 'complete' | 'error';
   readonly at?: string;
+  readonly liveOnly?: boolean;
 }
 
 export interface ToolCall {
