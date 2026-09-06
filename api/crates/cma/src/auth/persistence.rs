@@ -87,19 +87,85 @@ pub struct LoginAttempt {
     pub expires_at: SystemTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DurableSubjectTokens {
     pub access_token: SecretValue,
     pub refresh_token: Option<SecretValue>,
     pub expires_at: SystemTime,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectRefreshLease {
+    pub holder: String,
+    pub expires_at: SystemTime,
+}
+
 #[derive(Debug, Clone)]
 pub struct SubjectAuthState {
     pub subject: SubjectId,
+    pub incarnation: String,
+    pub revision: u64,
+    pub token_generation: u64,
+    pub refresh_lease: Option<SubjectRefreshLease>,
     pub authorization: Authorization,
     pub profile: Profile,
     pub tokens: Option<DurableSubjectTokens>,
+}
+
+impl SubjectAuthState {
+    pub fn new(
+        subject: SubjectId,
+        authorization: Authorization,
+        profile: Profile,
+        tokens: Option<DurableSubjectTokens>,
+    ) -> Self {
+        Self {
+            subject,
+            incarnation: super::token::random_token(),
+            revision: 1,
+            token_generation: 1,
+            refresh_lease: None,
+            authorization,
+            profile,
+            tokens,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), StoreError> {
+        if self.incarnation.trim().is_empty()
+            || self.revision == 0
+            || self.revision > i64::MAX as u64
+            || self.token_generation == 0
+            || self.token_generation > self.revision
+            || self.refresh_lease.as_ref().is_some_and(|lease| {
+                lease.holder.trim().is_empty()
+                    || lease.expires_at <= SystemTime::UNIX_EPOCH
+                    || self.tokens.is_none()
+            })
+        {
+            return Err(StoreError::Malformed(
+                "subject auth fencing is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn validate_replacement(&self, expected_revision: u64) -> Result<(), StoreError> {
+        self.validate()?;
+        if self.revision != next_auth_counter(expected_revision)? {
+            return Err(StoreError::Malformed(
+                "subject auth revision must advance once".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn next_auth_counter(value: u64) -> Result<u64, StoreError> {
+    value
+        .checked_add(1)
+        .filter(|next| *next <= i64::MAX as u64)
+        .ok_or_else(|| StoreError::Malformed("subject auth counter exhausted".into()))
 }
 
 #[async_trait::async_trait]
@@ -113,7 +179,15 @@ pub trait AuthStore: Send + Sync {
     async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError>;
     async fn browser_login(&self, id: &SecretDigest) -> Result<Option<BrowserLogin>, StoreError>;
     async fn delete_browser_login(&self, id: &SecretDigest) -> Result<(), StoreError>;
-    async fn put_subject(&self, state: SubjectAuthState) -> Result<(), StoreError>;
+    async fn insert_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError>;
+    /// Successful login alone may replace an exact unfenced current-schema row.
+    async fn replace_unfenced_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError>;
+    async fn replace_subject(
+        &self,
+        expected_incarnation: &str,
+        expected_revision: u64,
+        state: SubjectAuthState,
+    ) -> Result<bool, StoreError>;
     async fn subject(&self, subject: &SubjectId) -> Result<Option<SubjectAuthState>, StoreError>;
 }
 
@@ -131,6 +205,16 @@ pub struct MemoryAuthStore {
 impl MemoryAuthStore {
     pub fn set_unavailable(&self, unavailable: bool) {
         self.unavailable.store(unavailable, Ordering::SeqCst);
+    }
+
+    pub async fn put_subject(&self, state: SubjectAuthState) -> Result<(), StoreError> {
+        self.available()?;
+        state.validate()?;
+        self.subjects
+            .lock()
+            .await
+            .insert(state.subject.clone(), state);
+        Ok(())
     }
 
     fn available(&self) -> Result<(), StoreError> {
@@ -190,13 +274,38 @@ impl AuthStore for MemoryAuthStore {
         Ok(())
     }
 
-    async fn put_subject(&self, state: SubjectAuthState) -> Result<(), StoreError> {
+    async fn insert_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError> {
         self.available()?;
-        self.subjects
-            .lock()
-            .await
-            .insert(state.subject.clone(), state);
-        Ok(())
+        state.validate()?;
+        let mut subjects = self.subjects.lock().await;
+        if subjects.contains_key(&state.subject) {
+            return Ok(false);
+        }
+        subjects.insert(state.subject.clone(), state);
+        Ok(true)
+    }
+
+    async fn replace_unfenced_subject(&self, _state: SubjectAuthState) -> Result<bool, StoreError> {
+        self.available()?;
+        Ok(false)
+    }
+
+    async fn replace_subject(
+        &self,
+        expected_incarnation: &str,
+        expected_revision: u64,
+        state: SubjectAuthState,
+    ) -> Result<bool, StoreError> {
+        self.available()?;
+        state.validate_replacement(expected_revision)?;
+        let mut subjects = self.subjects.lock().await;
+        if subjects.get(&state.subject).is_none_or(|current| {
+            current.incarnation != expected_incarnation || current.revision != expected_revision
+        }) {
+            return Ok(false);
+        }
+        subjects.insert(state.subject.clone(), state);
+        Ok(true)
     }
 
     async fn subject(&self, subject: &SubjectId) -> Result<Option<SubjectAuthState>, StoreError> {

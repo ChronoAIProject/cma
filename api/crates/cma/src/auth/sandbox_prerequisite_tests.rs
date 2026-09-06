@@ -19,16 +19,16 @@ fn owner() -> SubjectId {
 }
 
 fn authority(refresh: Option<&str>, lifetime: u64) -> SubjectAuthState {
-    SubjectAuthState {
-        subject: owner(),
-        authorization: Authorization::none(),
-        profile: Default::default(),
-        tokens: Some(DurableSubjectTokens {
+    SubjectAuthState::new(
+        owner(),
+        Authorization::none(),
+        Default::default(),
+        Some(DurableSubjectTokens {
             access_token: SecretValue::new("fixture-access".into()),
             refresh_token: refresh.map(|value| SecretValue::new(value.into())),
             expires_at: SystemTime::now() + Duration::from_secs(lifetime),
         }),
-    }
+    )
 }
 
 fn provider(store: Arc<dyn AuthStore>, base_url: &str) -> Arc<AuthState> {
@@ -64,7 +64,7 @@ async fn upstream(
         )
         .route(
             "/userinfo",
-            get(|| async { Json(json!({"sub": owner().as_str()})) }),
+            get(|| async { Json(json!({"sub": owner().as_str(), "permissions": []})) }),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -272,7 +272,18 @@ impl AuthStore for WrongSubjectStore {
         state.subject = SubjectId::new("wrong-stored-owner");
         Ok(Some(state))
     }
-    async fn put_subject(&self, _state: SubjectAuthState) -> Result<(), StoreError> {
+    async fn insert_subject(&self, _state: SubjectAuthState) -> Result<bool, StoreError> {
+        panic!("must not mutate wrong-owner authority")
+    }
+    async fn replace_unfenced_subject(&self, _state: SubjectAuthState) -> Result<bool, StoreError> {
+        panic!("must not mutate wrong-owner authority")
+    }
+    async fn replace_subject(
+        &self,
+        _incarnation: &str,
+        _revision: u64,
+        _state: SubjectAuthState,
+    ) -> Result<bool, StoreError> {
         panic!("must not mutate wrong-owner authority")
     }
     async fn put_login_attempt(&self, _attempt: LoginAttempt) -> Result<(), StoreError> {

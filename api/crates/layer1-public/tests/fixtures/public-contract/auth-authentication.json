@@ -607,9 +607,9 @@
       "scenario": "auth_store_unavailable",
       "request": {
         "method": "GET",
-        "path": "/auth/callback",
+        "path": "/auth/callback?state=contract-state&code=contract-code",
         "headers": {
-          "cookie": "cma_session=contract-browser"
+          "cookie": "cma_session=contract-browser; cma_login_contract-state=contract-binding"
         }
       },
       "response": {

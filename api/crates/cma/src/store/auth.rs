@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::{
     persistence::{
         AuthStore, BrowserLogin, DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue,
-        SubjectAuthState,
+        SubjectAuthState, SubjectRefreshLease,
     },
     profile::Profile,
 };
@@ -58,11 +58,28 @@ struct SubjectDoc {
     #[serde(rename = "_id")]
     subject: String,
     document_schema_version: i64,
+    incarnation: String,
+    revision: u64,
+    token_generation: u64,
+    #[serde(deserialize_with = "required_refresh_lease")]
+    refresh_lease: Option<RefreshLeaseDoc>,
     authorization: Authorization,
     profile: Profile,
     access_token: Option<CipherEnvelope>,
     refresh_token: Option<CipherEnvelope>,
     token_expires_at: Option<DateTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RefreshLeaseDoc {
+    holder: String,
+    expires_at: DateTime,
+}
+
+fn required_refresh_lease<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<RefreshLeaseDoc>, D::Error> {
+    Option::deserialize(deserializer)
 }
 
 /// Durable authentication store. Resource credential custody is intentionally
@@ -153,6 +170,7 @@ impl MongoAuthStore {
     }
 
     fn subject_to_doc(&self, state: SubjectAuthState) -> Result<SubjectDoc, StoreError> {
+        state.validate()?;
         let id = state.subject.as_str().as_bytes();
         let (access_token, refresh_token, token_expires_at) = match state.tokens {
             Some(tokens) => (
@@ -177,6 +195,13 @@ impl MongoAuthStore {
         Ok(SubjectDoc {
             subject: state.subject.0,
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
+            incarnation: state.incarnation,
+            revision: state.revision,
+            token_generation: state.token_generation,
+            refresh_lease: state.refresh_lease.map(|lease| RefreshLeaseDoc {
+                holder: lease.holder,
+                expires_at: DateTime::from_system_time(lease.expires_at),
+            }),
             authorization: state.authorization,
             profile: state.profile,
             access_token,
@@ -213,12 +238,21 @@ impl MongoAuthStore {
                 ))
             }
         };
-        Ok(SubjectAuthState {
+        let state = SubjectAuthState {
             subject: SubjectId::new(document.subject),
+            incarnation: document.incarnation,
+            revision: document.revision,
+            token_generation: document.token_generation,
+            refresh_lease: document.refresh_lease.map(|lease| SubjectRefreshLease {
+                holder: lease.holder,
+                expires_at: lease.expires_at.to_system_time(),
+            }),
             authorization: document.authorization,
             profile: document.profile,
             tokens,
-        })
+        };
+        state.validate()?;
+        Ok(state)
     }
 }
 
@@ -292,28 +326,75 @@ impl AuthStore for MongoAuthStore {
         Ok(())
     }
 
-    async fn put_subject(&self, state: SubjectAuthState) -> Result<(), StoreError> {
+    async fn insert_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError> {
+        match self.subjects.insert_one(self.subject_to_doc(state)?).await {
+            Ok(_) => Ok(true),
+            Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => Ok(false),
+            Err(error) => Err(StoreError::Unavailable(format!(
+                "insert subject auth: {error}"
+            ))),
+        }
+    }
+
+    async fn replace_unfenced_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError> {
+        let document = self.subject_to_doc(state)?;
+        let result = self
+            .subjects
+            .replace_one(
+                doc! {
+                    "_id": &document.subject,
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "incarnation": { "$exists": false },
+                    "revision": { "$exists": false },
+                    "token_generation": { "$exists": false },
+                    "refresh_lease": { "$exists": false },
+                },
+                document,
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("replace unfenced subject auth: {error}"))
+            })?;
+        Ok(result.matched_count == 1)
+    }
+
+    async fn replace_subject(
+        &self,
+        expected_incarnation: &str,
+        expected_revision: u64,
+        state: SubjectAuthState,
+    ) -> Result<bool, StoreError> {
+        state.validate_replacement(expected_revision)?;
         let subject = state.subject.0.clone();
-        self.subjects
+        let result = self.subjects
             .replace_one(
                 doc! {
                     "_id": &subject,
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "incarnation": expected_incarnation,
+                    "revision": i64::try_from(expected_revision)
+                        .map_err(|_| StoreError::Malformed("subject auth revision exceeds BSON".into()))?,
                 },
                 self.subject_to_doc(state)?,
             )
-            .upsert(true)
             .await
-            .map_err(|error| StoreError::Unavailable(format!("store subject auth: {error}")))?;
-        Ok(())
+            .map_err(|error| StoreError::Unavailable(format!("replace subject auth: {error}")))?;
+        Ok(result.matched_count == 1)
     }
 
     async fn subject(&self, subject: &SubjectId) -> Result<Option<SubjectAuthState>, StoreError> {
         self.subjects
+            .clone_with_type::<mongodb::bson::Document>()
             .find_one(doc! { "_id": subject.as_str() })
             .await
             .map_err(|error| StoreError::Unavailable(format!("read subject auth: {error}")))?
-            .map(|document| self.subject_from_doc(document))
+            .map(|document| {
+                let document =
+                    mongodb::bson::deserialize_from_document(document).map_err(|error| {
+                        StoreError::Malformed(format!("subject auth document is invalid: {error}"))
+                    })?;
+                self.subject_from_doc(document)
+            })
             .transpose()
     }
 }
@@ -340,3 +421,7 @@ fn digest(value: &Binary, description: &str) -> Result<SecretDigest, StoreError>
 #[cfg(test)]
 #[path = "auth_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "auth_refresh_tests.rs"]
+mod refresh_tests;

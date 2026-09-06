@@ -21,9 +21,7 @@ use serde_json::json;
 
 use super::*;
 use crate::auth::{
-    persistence::{
-        AuthStore as _, DurableSubjectTokens, MemoryAuthStore, SecretValue, SubjectAuthState,
-    },
+    persistence::{DurableSubjectTokens, MemoryAuthStore, SecretValue, SubjectAuthState},
     profile::Profile,
 };
 
@@ -148,16 +146,16 @@ fn provider_mode(base_url: &str) -> AuthMode {
 async fn provider_auth(mode: AuthMode) -> Arc<AuthState> {
     let store = Arc::new(MemoryAuthStore::default());
     store
-        .put_subject(SubjectAuthState {
-            subject: SubjectId::new(OWNER),
-            authorization: Authorization::none(),
-            profile: Profile::default(),
-            tokens: Some(DurableSubjectTokens {
+        .put_subject(SubjectAuthState::new(
+            SubjectId::new(OWNER),
+            Authorization::none(),
+            Profile::default(),
+            Some(DurableSubjectTokens {
                 access_token: SecretValue::new("visitor-test-value".into()),
                 refresh_token: None,
                 expires_at: std::time::SystemTime::now() + Duration::from_secs(60 * 60),
             }),
-        })
+        ))
         .await
         .expect("subject credential is stored");
     AuthState::with_store_and_nyxid_public_url(

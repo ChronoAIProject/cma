@@ -56,7 +56,7 @@ pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMa
     if let Some(value) = request_cookie(&headers, AUTH_COOKIE) {
         if let Err(error) = auth.revoke_browser_login(value).await {
             tracing::error!(error = %error, "could not revoke browser authentication");
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            return super::middleware::store_failure();
         }
     }
     let mut response = StatusCode::SEE_OTHER.into_response();
