@@ -293,6 +293,8 @@ async fn covered_queued_first_message_reopen_requires_exact_fresh_dispatch_work(
         .unwrap();
     let mut current = store.get_sandbox(&original.id).await.unwrap().unwrap();
     current.runtime = original.runtime;
+    current.runtime.as_mut().unwrap().provision_generation = Some(6);
+    current.lifecycle.runtime_generation_high_water = 6;
     if let Some(SandboxLifecycleOperation::Revive { phase, .. }) =
         current.lifecycle.operation.as_mut()
     {

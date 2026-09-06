@@ -89,6 +89,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
         runtime: Some(RuntimeBinding {
             runtime_id: format!("runtime-{id}"),
             runtime_version: runtime_version.into(),
+            provision_generation: None,
             bound_at: NOW.into(),
         }),
         credential: super::super::SandboxCredentialState {

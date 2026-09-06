@@ -42,6 +42,7 @@ pub(super) fn sandbox() -> Sandbox {
         runtime: Some(RuntimeBinding {
             runtime_id: "runtime-old".into(),
             runtime_version: "image-v1".into(),
+            provision_generation: None,
             bound_at: "2026-09-05T00:00:00Z".into(),
         }),
         credential: SandboxCredentialState {

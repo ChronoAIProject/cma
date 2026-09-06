@@ -66,6 +66,11 @@ fn revive_runs_only_the_restore_phases_and_clears_the_pause_notice() {
         .unwrap();
     assert_revive_phase(&value, SandboxRevivePhase::RuntimeProvisioning);
 
+    claim_and_complete(&mut value, |value, fence| {
+        value
+            .reserve_lifecycle_runtime_generation(2, HOLDER, fence, LATER.into())
+            .map(|_| ())
+    });
     claim(&mut value);
     value
         .bind_lifecycle_runtime(runtime("image-v1"), HOLDER, fence(&value), LATER.into())
@@ -116,6 +121,11 @@ fn image_rotation_requires_the_target_runtime_and_accounts_once_at_publication()
         .unwrap();
     advance_rotation_to_provisioning(&mut value);
 
+    claim_and_complete(&mut value, |value, fence| {
+        value
+            .reserve_lifecycle_runtime_generation(2, HOLDER, fence, LATER.into())
+            .map(|_| ())
+    });
     claim(&mut value);
     let original = value.clone();
     assert!(value
@@ -236,6 +246,7 @@ fn runtime(version: &str) -> RuntimeBinding {
     RuntimeBinding {
         runtime_id: "runtime-replacement".into(),
         runtime_version: version.into(),
+        provision_generation: Some(2),
         bound_at: LATER.into(),
     }
 }

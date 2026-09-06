@@ -7,7 +7,8 @@ use crate::seconds_from_rfc3339;
 
 use super::{
     Sandbox, SandboxCheckpointHistory, SandboxModelError, SandboxReviveCause, SandboxRevivePhase,
-    SandboxRotationAccounting, SandboxRotationIdentity, SandboxStatus,
+    SandboxRotationAccounting, SandboxRotationIdentity, SandboxRuntimeProvisionReservation,
+    SandboxStatus,
 };
 
 const MAX_LIFECYCLE_OPERATION_ID_BYTES: usize = 256;
@@ -147,6 +148,10 @@ impl SandboxLifecycleOperation {
 #[serde(deny_unknown_fields)]
 pub struct SandboxLifecycleState {
     pub next_authority: u64,
+    #[serde(default)]
+    pub runtime_generation_high_water: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_provision: Option<SandboxRuntimeProvisionReservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperation>,
     #[serde(default)]
@@ -161,6 +166,8 @@ impl Default for SandboxLifecycleState {
     fn default() -> Self {
         Self {
             next_authority: 1,
+            runtime_generation_high_water: 0,
+            runtime_provision: None,
             operation: None,
             checkpoints: SandboxCheckpointHistory::default(),
             paused_notice: None,
@@ -268,6 +275,7 @@ impl SandboxLifecycleState {
 
     pub(crate) fn cancel_operation(&mut self) {
         self.operation = None;
+        self.runtime_provision = None;
         self.paused_notice = None;
     }
 
@@ -282,6 +290,7 @@ impl SandboxLifecycleState {
         }
         let generation = self.next_authority;
         self.next_authority = generation.checked_add(1).ok_or_else(invalid_lifecycle)?;
+        self.runtime_provision = None;
         let operation_id = format!("sandbox-lifecycle-v1:{}:{generation}", sandbox_id.as_str());
         let writer_resume_token =
             hold_writers.then(|| format!("{:x}", Sha256::digest(operation_id.as_bytes())));
