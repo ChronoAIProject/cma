@@ -7,6 +7,10 @@ import { Profiles } from './profiles.js';
 import { Sandboxes } from './sandboxes.js';
 import { Workspaces, Worktrees } from './workspaces.js';
 import { readDefaults, type PlatformDefaults } from './defaults.js';
+import { Administration } from './admin/index.js';
+import { TriggerAuthoring } from './trigger-authoring/index.js';
+import { AgentConversations } from './agui/index.js';
+import { Launches } from './launch/index.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
@@ -15,6 +19,10 @@ export class Cma {
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
   readonly worktrees: Worktrees;
+  readonly admin: Administration;
+  readonly triggerAuthoring: TriggerAuthoring;
+  readonly agui: AgentConversations;
+  readonly launches: Launches;
   readonly agentProfiles: Profiles<'agent'>;
   readonly workspaceProfiles: Profiles<'workspace'>;
   readonly sandboxProfiles: Profiles<'sandbox'>;
@@ -30,6 +38,10 @@ export class Cma {
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);
     this.worktrees = new Worktrees(this.#config);
+    this.admin = new Administration(this.#config);
+    this.triggerAuthoring = new TriggerAuthoring(this.#config);
+    this.agui = new AgentConversations(this.#config);
+    this.launches = new Launches(this.#config);
     this.agentProfiles = new Profiles(this.#config, 'agent');
     this.workspaceProfiles = new Profiles(this.#config, 'workspace');
     this.sandboxProfiles = new Profiles(this.#config, 'sandbox');

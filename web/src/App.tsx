@@ -12,11 +12,14 @@ import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
 import { lazy, Suspense, useState } from 'react';
-import { useCmaClient, useCreationClient } from './api/context';
+import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 
 const CreationFlow = lazy(() =>
   import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
+);
+const PublicJourney = lazy(() =>
+  import('./public/PublicJourney').then((module) => ({ default: module.PublicJourney })),
 );
 
 export function App() {
@@ -24,11 +27,24 @@ export function App() {
   const router = useAppRouter();
   const client = useCmaClient();
   const creation = useCreationClient();
+  const publicClient = usePublicClient();
   const [request, setRequest] = useState<{
     readonly owner: string;
     readonly value: CreationRequest;
   }>();
   const [hierarchyRevision, setHierarchyRevision] = useState(0);
+
+  if (
+    (router.route.kind === 'public_trigger' || router.route.kind === 'launch') &&
+    publicClient !== undefined &&
+    state.status !== 'error'
+  ) {
+    return (
+      <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
+        <PublicJourney client={publicClient} route={router.route} onNavigate={router.navigate} />
+      </Suspense>
+    );
+  }
 
   if (state.status === 'checking') {
     return <div className="app-checking" aria-busy="true" />;

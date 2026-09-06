@@ -1,5 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { useCmaClient, useProfileViewsClient } from './api/context';
+import {
+  useCmaClient,
+  useProfileViewsClient,
+  useOperatorClient,
+  usePublisherClient,
+} from './api/context';
+import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentDetails } from './agent/Details';
 import { useAgentController } from './agent/controller';
@@ -19,6 +25,14 @@ import type { ProfileUse } from './profiles/marketplace/client';
 
 const ProfileViews = lazy(() =>
   import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
+);
+const Operations = lazy(() =>
+  import('./operator/Operations').then((module) => ({ default: module.Operations })),
+);
+const TriggerPublisherPage = lazy(() =>
+  import('./trigger-publisher/TriggerPublisherPage').then((module) => ({
+    default: module.TriggerPublisherPage,
+  })),
 );
 
 interface ConsoleProps {
@@ -45,6 +59,8 @@ export function Console({
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
   const profiles = useProfileViewsClient();
+  const operator = useOperatorClient();
+  const publisher = usePublisherClient();
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
   useEffect(() => {
@@ -132,6 +148,44 @@ export function Console({
             }
           />
         </Suspense>
+      )
+    ) : route.kind === 'operations' ? (
+      operator !== undefined && canOpenOperations(user.capabilities) ? (
+        <Suspense
+          fallback={
+            <section className="console__empty" role="status">
+              Loading Operations
+            </section>
+          }
+        >
+          <Operations client={operator} capabilities={user.capabilities} />
+        </Suspense>
+      ) : (
+        <section className="console__empty">
+          <h1>Operations unavailable</h1>
+        </section>
+      )
+    ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
+      publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
+        <Suspense
+          fallback={
+            <section className="console__empty" role="status">
+              Loading CMA Trigger
+            </section>
+          }
+        >
+          <TriggerPublisherPage
+            key={route.kind === 'triggers' ? 'new' : route.triggerId}
+            client={publisher}
+            triggerId={route.kind === 'triggers' ? undefined : route.triggerId}
+            view={route.kind === 'trigger_embed' ? 'embed' : 'wizard'}
+            onNavigate={onNavigate}
+          />
+        </Suspense>
+      ) : (
+        <section className="console__empty">
+          <h1>Publishing unavailable</h1>
+        </section>
       )
     ) : route.kind === 'not_found' ? (
       <section className="console__empty" aria-labelledby="not-found-title">

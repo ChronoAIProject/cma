@@ -80,10 +80,12 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 3) {
     const [resource = '', qualifier = '', id = ''] = path;
-    if ((resource === 'profiles' || resource === 'marketplace') && isProfileKind(qualifier)) {
-      return resource === 'profiles'
-        ? { kind: 'profile', profileKind: qualifier, profileId: id }
-        : { kind: 'marketplace_profile', profileKind: qualifier, profileId: id };
+    if (resource === 'profiles') {
+      const profileKind = PROFILE_KINDS.find((kind) => `${kind}-profiles` === qualifier);
+      if (profileKind !== undefined) return { kind: 'profile', profileKind, profileId: id };
+    }
+    if (resource === 'marketplace' && isProfileKind(qualifier)) {
+      return { kind: 'marketplace_profile', profileKind: qualifier, profileId: id };
     }
     if (resource === 'triggers' && qualifier === 'manage') {
       return { kind: 'trigger', triggerId: id };
@@ -115,7 +117,7 @@ export function routePath(route: AppRoute): string {
     case 'profiles':
       return '/profiles';
     case 'profile':
-      return `/profiles/${route.profileKind}/${segment(route.profileId)}`;
+      return `/profiles/${route.profileKind}-profiles/${segment(route.profileId)}`;
     case 'marketplace':
       return '/marketplace';
     case 'marketplace_profile':
