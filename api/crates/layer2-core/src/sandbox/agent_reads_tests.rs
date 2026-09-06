@@ -1101,7 +1101,10 @@ async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
         content: "retry this input".into(),
         appended_at: NOW.into(),
     };
-    assert_eq!(transcript.turns[0].messages, [admitted_message.clone()]);
+    assert_eq!(
+        transcript.turns[0].messages.as_slice(),
+        std::slice::from_ref(&admitted_message)
+    );
     assert_eq!(
         transcript.turns[1].messages,
         [
