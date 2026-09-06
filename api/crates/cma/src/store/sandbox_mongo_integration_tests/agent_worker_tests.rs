@@ -851,6 +851,7 @@ async fn agent_work_reopen_reconciliation_requires_every_exact_artifact() {
     let receipt = PublicationReceipt {
         agent: next,
         worktree: Some(worktree),
+        sign_in_sandbox: None,
         logs,
         event: Some(SandboxEvent {
             sandbox_id: parent.id.clone(),
@@ -898,3 +899,4 @@ async fn agent_work_reopen_reconciliation_requires_every_exact_artifact() {
 
     client.database(&name).drop().await.unwrap();
 }
+mod sign_in_tests;

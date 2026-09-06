@@ -3,7 +3,7 @@
 use layer2_core::sandbox::store::{
     validate_agent_work_mutation, AgentWorkMutation, SandboxStoreError,
 };
-use layer2_core::sandbox::{Agent, AgentLogEntry, SandboxEvent, Worktree};
+use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent, Worktree};
 use mongodb::bson::{doc, Bson};
 
 use super::agent_log::{log_document, scan_complete_log_with_session};
@@ -20,12 +20,15 @@ use super::sandbox_mongo::{
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
+mod sign_in;
+
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct PublicationReceipt {
     pub(super) agent: Agent,
     pub(super) worktree: Option<Worktree>,
     pub(super) logs: Vec<AgentLogEntry>,
     pub(super) event: Option<SandboxEvent>,
+    pub(super) sign_in_sandbox: Option<Sandbox>,
 }
 
 enum ApplyError {
@@ -180,6 +183,7 @@ async fn apply_publication(
     )
     .map_err(ApplyError::Domain)?;
 
+    let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
     ensure_append_capacity(
         &complete_log,
@@ -213,6 +217,7 @@ async fn apply_publication(
             .map(|versioned| versioned.worktree.clone()),
         logs,
         event,
+        sign_in_sandbox,
     })
 }
 

@@ -204,6 +204,16 @@ values. Renewal is recorded; a stale generation cannot install a newer key or
 expand scope. Provider and model access remain Sandbox-wide, including the
 shared own-account sign-in state.
 
+An own-account Agent records a provider sign-in challenge under its existing
+startup claim while authentication is still pending. This publication preserves
+the open-operation intent, lease and selected skill material and atomically
+marks the Sandbox sign-in state Required. First conversation readiness marks
+it Complete in the same transaction as the Agent's readiness and durable
+conversation-opened event. Reconnects replay those observations without
+inventing a turn. Authentication waits are bounded by both the configured
+startup budget and the remaining worker lease; a timeout preserves the visible
+challenge and cleanup intent for recovery.
+
 The supported per-Agent layout is:
 
 ```text

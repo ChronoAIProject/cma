@@ -215,7 +215,12 @@ impl AgentWorker {
             .prepare_side_effect(agent, &evidence, None, now)
             .await?;
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        let (channel, updates) = match self.open(&context, authority_fence, &request).await {
+        let opening_started = tokio::time::Instant::now();
+        let opened = self
+            .open_starting(&mut agent, &context, authority_fence, &request, now)
+            .await;
+        let now = now + opening_started.elapsed();
+        let (channel, updates) = match opened {
             Ok(opened) => opened,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };

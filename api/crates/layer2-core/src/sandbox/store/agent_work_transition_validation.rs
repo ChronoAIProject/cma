@@ -6,6 +6,7 @@ use super::SandboxStoreError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PublicationKind {
     Intent,
+    StartupNotice,
     Retry,
     Advance,
     Ready,
@@ -118,6 +119,9 @@ pub(super) fn classify_publication(
     let from = current.work.step;
     let to = next.work.step;
     if from == to {
+        if from == AgentWorkStep::OpenConversation && current.work == next.work {
+            return Ok(PublicationKind::StartupNotice);
+        }
         return Ok(
             if next.work.cleanup_debt.len() == current.work.cleanup_debt.len() + 1 {
                 PublicationKind::Intent

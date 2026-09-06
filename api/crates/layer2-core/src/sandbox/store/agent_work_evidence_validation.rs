@@ -225,6 +225,13 @@ pub(super) fn validate_evidence(
     let next = &mutation.agent;
     let logs_match = match kind {
         PublicationKind::Intent => mutation.agent_logs.is_empty(),
+        PublicationKind::StartupNotice => matches!(
+            mutation.agent_logs.as_slice(),
+            [AgentLogKind::SignInRequired { url, code, message }]
+                if !url.is_empty() && valid_notice_text(url, 4096)
+                    && code.as_ref().is_none_or(|value| valid_notice_text(value, 512))
+                    && message.as_ref().is_none_or(|value| valid_notice_text(value, 4096))
+        ),
         PublicationKind::Retry => matches!(
             mutation.agent_logs.as_slice(),
             [AgentLogKind::WorkStepFailed { step, .. }] if *step == current.work.step
@@ -281,4 +288,11 @@ pub(super) fn validate_evidence(
     } else {
         Err(SandboxStoreError::Conflict)
     }
+}
+
+fn valid_notice_text(value: &str, limit: usize) -> bool {
+    value.len() <= limit
+        && !value
+            .chars()
+            .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
 }

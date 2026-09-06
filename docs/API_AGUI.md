@@ -101,6 +101,12 @@ Pointer escaping. Usage values are accumulated readings, not token deltas.
 `/firstMessage` carries `state` and `recoveryGeneration`; Agent readiness alone
 does not prove that an admitted initial message has completed.
 
+During own-account startup, `/signIn` carries the provider challenge before
+authentication completes. The durable `conversation_opened` event replaces
+`/signIn` with `null`; it does not start a turn. Both updates retain their
+durable cursors and replay after reconnect, with `runId` equal to `"0"` before
+the first admitted turn.
+
 The server does not emit a `STATE_SNAPSHOT`. Initialize from REST Agent detail,
 transcript, usage and all durable event pages, then fold subsequent deltas.
 Do not treat provider sign-in URLs or codes as general-purpose navigation or

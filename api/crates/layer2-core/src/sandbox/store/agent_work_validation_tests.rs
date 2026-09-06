@@ -16,6 +16,8 @@ const AT: &str = "2026-09-05T00:00:10Z";
 const RETRY_AT: &str = "2026-09-05T00:00:20Z";
 const LEASE_END: &str = "2026-09-05T00:01:00Z";
 
+mod sign_in_tests;
+
 #[test]
 fn skill_material_is_committed_once_with_the_first_home_intent() {
     let (mut current, worktree) = claimed(

@@ -149,6 +149,7 @@ pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
             "/signIn",
             json!({"url": url, "code": code, "message": message}),
         )],
+        AgentLogKind::ConversationOpened { .. } => vec![delta("/signIn", Value::Null)],
         AgentLogKind::StatusChanged { to, .. } => vec![delta("/status", json!(to))],
         AgentLogKind::FirstMessageChanged {
             state,

@@ -434,7 +434,7 @@ pub(crate) fn seeded_agent(
     }
 }
 
-pub(super) fn seeded_worktree(agent: &Agent) -> Worktree {
+pub(crate) fn seeded_worktree(agent: &Agent) -> Worktree {
     Worktree {
         id: agent.worktree_id.clone(),
         workspace_id: agent.workspace_id.clone(),
