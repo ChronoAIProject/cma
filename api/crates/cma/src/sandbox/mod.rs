@@ -14,10 +14,8 @@ mod reconciliation;
 mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
-#[allow(
-    dead_code,
-    reason = "composed when the production agent-title worker resolves sandbox proxy endpoints"
-)]
+mod title_scheduler;
+mod title_worker;
 mod titles;
 mod unavailable_credentials;
 mod worker;
@@ -35,6 +33,7 @@ pub(crate) use credential::{
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::runtime_capabilities;
+pub(crate) use title_worker::ProviderTitleEndpoint;
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 
 #[cfg(test)]

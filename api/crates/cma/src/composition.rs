@@ -25,9 +25,9 @@ use crate::{
     rate_limit::RateLimiters,
     sandbox::{
         runtime_capabilities, DurableCheckpointObjectPurger, LiveAgentRegistry, LiveSandboxPolicy,
-        ManagedSandboxCredentials, OrnnAgentSkillResolver, SandboxCredentialController,
-        SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
-        UnavailableSandboxCredentials,
+        ManagedSandboxCredentials, OrnnAgentSkillResolver, ProviderTitleEndpoint,
+        SandboxCredentialController, SandboxLifecycleComposition, SandboxLifecycleConfig,
+        SandboxLifecycleDependencies, UnavailableSandboxCredentials,
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
@@ -181,6 +181,14 @@ impl ControlPlaneComposition {
             SandboxLifecycleDependencies {
                 checkpoint_objects: Arc::clone(&stores.checkpoint_objects),
                 store: stores.sandbox_model.clone(),
+                title_runtime: Arc::new(ProviderTitleEndpoint {
+                    adapter: Arc::clone(&adapter),
+                    client: layer3_adapter::provider::SandboxClient::new(
+                        config.runtime.sandbox_base_url.clone(),
+                        config.runtime.sandbox_api_key.clone(),
+                    ),
+                    deployment_id: config.deployment_id.clone(),
+                }),
                 adapter,
                 credentials: sandbox_credentials,
                 checkpoints: Arc::new(DurableCheckpointObjectPurger::new(
@@ -197,6 +205,7 @@ impl ControlPlaneComposition {
                 holder: worker_holder.clone(),
                 deployment_id: config.deployment_id.clone(),
                 runtime_version: config.runtime.sandbox_image.clone(),
+                title_model: config.default_profiles.agent_model.clone(),
             },
         );
         let broker = Arc::new(

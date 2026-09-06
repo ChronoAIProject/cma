@@ -440,3 +440,32 @@ fn proxy_endpoint_is_exact_and_rejects_ambiguous_or_credentialed_urls() {
     )
     .is_none());
 }
+
+#[tokio::test]
+async fn provider_routing_authority_is_sensitive_and_never_becomes_a_title() {
+    async fn reflected(headers: AxumHeaderMap) -> Json<serde_json::Value> {
+        Json(serde_json::json!({"output_text": headers["open-sandbox-api-key"].to_str().unwrap()}))
+    }
+    let (origin, server) = spawn(Router::new().route("/v1/responses", post(reflected))).await;
+    let generator =
+        HttpAgentTitleGenerator::fixture(&origin, DEPLOYMENT_MODEL, Duration::from_secs(2), 128)
+            .with_proxy_authorization("title-proxy-routing-authority")
+            .unwrap();
+    assert!(generator
+        .proxy_authorization
+        .as_ref()
+        .unwrap()
+        .is_sensitive());
+    assert!(!format!("{generator:?}").contains("title-proxy-routing-authority"));
+    let (outcome, stored) = generate_title(
+        &generator,
+        DEPLOYMENT_MODEL,
+        BEARER,
+        "Safe routing fallback",
+        "answer",
+    )
+    .await;
+    assert_eq!(outcome, AgentTitleOutcome::Fallback);
+    assert_eq!(stored.title.as_str(), "Safe routing fallback");
+    server.abort();
+}
