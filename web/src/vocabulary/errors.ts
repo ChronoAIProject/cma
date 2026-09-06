@@ -1,6 +1,8 @@
 import { ApiError } from '@chronoai/cma-sdk';
+import { CredentialAccountError, credentialSetupMessage } from '../auth/credentialSetup';
 
 export const refusalSentences = {
+  sandbox_credential_setup_required: credentialSetupMessage,
   forbidden: 'Your account cannot start this agent. Contact your CMA administrator.',
   triggers_disabled: 'CMA has paused new requests. Try again later.',
   trigger_not_found: 'This page is not available. Ask the publisher for a current link.',
@@ -37,6 +39,7 @@ export const refusalSentences = {
 } as const;
 
 export function refusalSentence(error: unknown): string {
+  if (error instanceof CredentialAccountError) return error.message;
   if (
     error instanceof ApiError &&
     error.code !== undefined &&

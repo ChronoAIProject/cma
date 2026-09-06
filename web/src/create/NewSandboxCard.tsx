@@ -1,4 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { SandboxCredentialSetup } from '../auth/SandboxCredentialSetup';
+import {
+  checkCredentialRecoveryOwner,
+  CredentialAccountError,
+  needsSandboxCredentialSetup,
+} from '../auth/credentialSetup';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail } from '../api/types';
 import { Button } from '../ui/Button';
@@ -28,18 +34,32 @@ export function NewSandboxCard({
   const [confirmed, setConfirmed] = useState(false);
   const [name, setName] = useState('');
   const command = useCreationCommand(onCreated);
+  const credentialOwner = useRef<string | undefined>(undefined);
+  const [expectedSubject, setExpectedSubject] = useState<string>();
+  const [accountChecked, setAccountChecked] = useState(false);
+  const needsSignIn = command.failure?.credentialSetupRequired === true && !accountChecked;
   const nameInvalid = new TextEncoder().encode(name.trim()).length > 64 || /[\r\n\0]/.test(name);
   const ready =
     profile !== undefined && (!profile.requiresConfirmation || confirmed) && !nameInvalid;
   const submit = () => {
-    if (!ready || profile === undefined) return;
+    if (!ready || profile === undefined || needsSignIn) return;
+    setAccountChecked(false);
     const input = {
       sandboxProfile: { id: profile.revision.profileId, revision: profile.revision.revision },
       name: name.trim() || undefined,
       trustConfirmed: profile.requiresConfirmation ? confirmed : undefined,
       commandsDigest: profile.requiresConfirmation ? profile.revision.digest : undefined,
     };
-    void command.submit((options) => client.createSandbox(input, options));
+    void command.submit(async (options) => {
+      try {
+        await checkCredentialRecoveryOwner(credentialOwner.current, options.signal);
+        return await client.createSandbox(input, options);
+      } catch (cause) {
+        if (needsSandboxCredentialSetup(cause) || cause instanceof CredentialAccountError)
+          setAccountChecked(false);
+        throw cause;
+      }
+    });
   };
   return (
     <Modal
@@ -54,7 +74,7 @@ export function NewSandboxCard({
           </Button>
           <Button
             variant="primary"
-            disabled={command.pending || (!command.failure?.uncertain && !ready)}
+            disabled={command.pending || needsSignIn || (!command.failure?.uncertain && !ready)}
             onClick={command.failure?.uncertain ? command.retry : submit}
           >
             {command.pending
@@ -104,11 +124,22 @@ export function NewSandboxCard({
             <p className="create-error">Use one line no longer than 64 bytes.</p>
           ) : null}
         </div>
-        {command.failure === undefined ? null : (
+        {command.failure === undefined ||
+        (command.failure.credentialSetupRequired && accountChecked) ? null : (
           <p className="create-error" role="alert">
             {command.failure.message}
           </p>
         )}
+        {needsSignIn ? (
+          <SandboxCredentialSetup
+            expectedSubject={expectedSubject}
+            onChecked={(subject) => {
+              credentialOwner.current ??= subject;
+              setExpectedSubject(credentialOwner.current);
+              setAccountChecked(true);
+            }}
+          />
+        ) : null}
       </form>
     </Modal>
   );

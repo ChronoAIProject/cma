@@ -65,3 +65,22 @@ it('coalesces concurrent admission and rejects another owner before network I/O'
   await expect(admit(client, readIntent(path)!, 'other')).rejects.toThrow();
   expect(client.requests.createOrResume).toHaveBeenCalledOnce();
 });
+
+it.each(['refused', 'retry'] as const)(
+  'retains owner-bound %s recovery without changing its packet',
+  (credentialRecovery) => {
+    const intent = { ...createIntent(route, 'new'), owner: 'original-owner', credentialRecovery };
+    writeIntent(intent);
+    expect(readIntent(path)).toEqual(intent);
+  },
+);
+
+it.each([
+  { credentialRecovery: 'refused' },
+  { credentialRecovery: 'retry', owner: false },
+  { credentialRecovery: 'unrecognized', owner: 'original-owner' },
+])('rejects a recovery marker without its valid original owner %j', (recovery) => {
+  const intent = createIntent(route);
+  sessionStorage.setItem('cma:public-intent', JSON.stringify({ ...intent, ...recovery }));
+  expect(readIntent(path)).toBeUndefined();
+});
