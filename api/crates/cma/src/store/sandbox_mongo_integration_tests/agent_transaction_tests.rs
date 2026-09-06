@@ -162,7 +162,7 @@ async fn agent_conversation_atomically_saves_and_reconciles_aggregate_and_logs()
     let (client, name) = database("agent_conversation_atomic").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let ready = ready_conversation_fixture(&store, "conversation_atomic").await;
-    let mutation = begin_conversation_turn(ready);
+    let mutation = begin_stored_conversation_turn(&store, ready).await;
     let expected = mutation.agent.clone();
 
     let appended = store.commit_agent_conversation(mutation).await.unwrap();
@@ -190,7 +190,7 @@ async fn agent_conversation_reconciliation_uses_one_complete_snapshot() {
     let (client, name) = database("agent_conversation_reconcile_snapshot").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let ready = ready_conversation_fixture(&store, "conversation_reconcile_snapshot").await;
-    let mutation = begin_conversation_turn(ready);
+    let mutation = begin_stored_conversation_turn(&store, ready).await;
     let expected = mutation.agent.clone();
     let appended = store.commit_agent_conversation(mutation).await.unwrap();
     let receipt = ConversationReceipt {
@@ -310,7 +310,7 @@ async fn agent_conversation_rejects_invalid_and_stale_mutations_without_partial_
     let (client, name) = database("agent_conversation_rollback").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let ready = ready_conversation_fixture(&store, "conversation_rollback").await;
-    let mutation = begin_conversation_turn(ready.clone());
+    let mutation = begin_stored_conversation_turn(&store, ready.clone()).await;
     let mut invalid_mutations = Vec::new();
 
     let mut invalid = mutation.clone();
@@ -411,7 +411,7 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
     let (client, name) = database("agent_conversation_approvals").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let ready = ready_conversation_fixture(&store, "conversation_approvals").await;
-    let turn = begin_conversation_turn(ready);
+    let turn = begin_stored_conversation_turn(&store, ready).await;
     let mut working = turn.agent.clone();
     store.commit_agent_conversation(turn).await.unwrap();
 
