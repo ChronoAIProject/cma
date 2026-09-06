@@ -1,0 +1,46 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Trigger publisher flow > publishes the trureturing setup in five steps with pinned payloads and API README/HTML snippets > exact draft publication 1`] = `
+[
+  "trg_project",
+  {
+    "draft_version": 1,
+  },
+]
+`;
+
+exports[`Trigger publisher flow > publishes the trureturing setup in five steps with pinned payloads and API README/HTML snippets > pinned publication content 1`] = `
+{
+  "content": {
+    "consent": {
+      "always_review": true,
+    },
+    "first_message": "Inspect the project",
+    "presentation": {
+      "button_label": "open_in_cma",
+      "description": "Contribute to trureturing",
+      "theme": "auto",
+      "title": "trureturing",
+    },
+    "reuse": {
+      "agent": "always_new",
+      "sandbox": "reuse_existing",
+      "workspace": "reuse_existing",
+    },
+    "target": {
+      "agent_profile": {
+        "id": "agp_codex",
+        "revision": 4,
+      },
+      "sandbox_profile": {
+        "id": "sbp_standard",
+        "revision": 2,
+      },
+      "workspace_profile": {
+        "id": "wkp_trureturing",
+        "revision": 3,
+      },
+    },
+  },
+}
+`;
