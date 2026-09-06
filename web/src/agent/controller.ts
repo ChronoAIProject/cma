@@ -10,6 +10,7 @@ import type {
   WorkspaceDetail,
 } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
+import { mergeTranscriptSnapshot } from './chronology';
 import {
   conversationFromTranscript,
   foldAgentEvent,
@@ -94,16 +95,7 @@ export async function loadAgent(
   } while (cursor !== undefined);
 
   const snapshot = conversationFromTranscript(transcript);
-  const recordedRuns = new Set(conversation.messages.map((message) => message.runId));
-  const missing = snapshot.messages.filter((message) => !recordedRuns.has(message.runId));
-  conversation = {
-    ...conversation,
-    messages: [
-      ...missing.map((message, index) => ({ ...message, order: index - missing.length })),
-      ...conversation.messages,
-    ],
-    cursor: Math.max(conversation.cursor, transcript.throughSeq),
-  };
+  conversation = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
   if (usage.throughSeq >= (conversation.usage?.throughSeq ?? 0))
     conversation = withUsage(conversation, usage);
   return { detail, workspace, conversation, durableEvents };
@@ -113,14 +105,10 @@ function refreshConversation(
   current: ConversationState,
   next: Awaited<ReturnType<typeof loadAgent>>,
 ): ConversationState {
-  if (current.cursor >= next.conversation.cursor) return current;
+  if (current.cursor > next.conversation.cursor) return current;
   const folded = next.durableEvents.reduce(foldAgentEvent, current);
-  const recordedRuns = new Set(folded.messages.map((message) => message.runId));
-  const missing = next.conversation.messages.filter((message) => !recordedRuns.has(message.runId));
   return {
-    ...folded,
-    messages: [...folded.messages, ...missing],
-    cursor: next.conversation.cursor,
+    ...mergeTranscriptSnapshot(folded, next.conversation, current.cursor),
     usage:
       (next.conversation.usage?.throughSeq ?? 0) >= (folded.usage?.throughSeq ?? 0)
         ? next.conversation.usage

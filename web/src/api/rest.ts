@@ -60,6 +60,12 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
           startedAt: turn.started_at,
           ownerMessage: turn.owner_message,
           agentMessages: turn.agent_messages,
+          messages: turn.messages.map((message) => ({
+            sequence: message.sequence,
+            role: message.role,
+            content: message.content,
+            appendedAt: message.appended_at,
+          })),
           outcome: turn.outcome,
         })),
       };

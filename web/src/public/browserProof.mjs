@@ -190,6 +190,15 @@ try {
             started_at: now,
             owner_message: first,
             agent_messages: ['The repository is ready.'],
+            messages: [
+              { sequence: 3, role: 'user', content: first, appended_at: now },
+              {
+                sequence: 4,
+                role: 'assistant',
+                content: 'The repository is ready.',
+                appended_at: now,
+              },
+            ],
             outcome: { type: 'completed', at: now },
           },
         ],

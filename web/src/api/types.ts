@@ -175,11 +175,19 @@ export interface AgentDetail {
   readonly deletedAt?: string;
 }
 
+export interface AgentTranscriptMessage {
+  readonly sequence: number;
+  readonly role: 'user' | 'assistant';
+  readonly content: string;
+  readonly appendedAt: string;
+}
+
 export interface AgentTranscriptTurn {
   readonly turnSequence: number;
   readonly startedAt: string;
   readonly ownerMessage: string;
   readonly agentMessages: readonly string[];
+  readonly messages: readonly AgentTranscriptMessage[];
   readonly outcome: Readonly<Record<string, unknown>>;
 }
 

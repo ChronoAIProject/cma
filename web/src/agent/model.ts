@@ -2,6 +2,7 @@ import type { AgentStatus, AgentUsage } from '../api/types';
 
 export interface ConversationMessage {
   readonly order?: number;
+  readonly sequence?: number;
   readonly id: string;
   readonly runId?: string;
   readonly role: 'user' | 'assistant';
@@ -13,6 +14,7 @@ export interface ConversationMessage {
 
 export interface ToolCall {
   readonly order?: number;
+  readonly sequence?: number;
   readonly id: string;
   readonly runId?: string;
   readonly title: string;
@@ -23,6 +25,7 @@ export interface ToolCall {
 
 export interface ReasoningBlock {
   readonly order?: number;
+  readonly sequence?: number;
   readonly id: string;
   readonly runId?: string;
   readonly content: string;
@@ -31,6 +34,7 @@ export interface ReasoningBlock {
 
 export interface ApprovalRequest {
   readonly order?: number;
+  readonly sequence?: number;
   readonly id: string;
   readonly reason: string;
   readonly message?: string;
@@ -39,6 +43,9 @@ export interface ApprovalRequest {
 
 export interface RecoveryNotice {
   readonly order?: number;
+  readonly sequence?: number;
+  readonly runId?: string;
+  readonly afterSequence?: number;
   readonly id: string;
   readonly title: string;
   readonly detail: string;
