@@ -3,6 +3,32 @@ use std::collections::{BTreeSet, HashSet};
 use super::*;
 
 #[test]
+fn every_exported_operation_appears_in_the_rest_documentation_inventory() {
+    let markdown = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../docs/API_REST.md"
+    ));
+    let inventory = markdown
+        .split_once("<!-- openapi-operations:start -->")
+        .and_then(|(_, rest)| rest.split_once("<!-- openapi-operations:end -->"))
+        .map(|(inventory, _)| inventory)
+        .expect("REST documentation has a checked operation inventory");
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    let paths = document["paths"].as_object().expect("OpenAPI paths object");
+    assert!(!paths.is_empty());
+    for (path, item) in paths {
+        for method in [
+            "get", "post", "put", "patch", "delete", "head", "options", "trace",
+        ] {
+            if item.get(method).is_some() {
+                let row = format!("| `{} {path}` |", method.to_ascii_uppercase());
+                assert!(inventory.contains(&row), "undocumented operation {row}");
+            }
+        }
+    }
+}
+
+#[test]
 fn every_profile_and_marketplace_route_is_documented_and_authenticated() {
     let document = document();
     let mut operation_ids = HashSet::new();
