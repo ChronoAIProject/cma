@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use layer2_core::sandbox::{
-    AgentOperationService, AgentUpdateRecorder, DurableAgentUpdateRecorder, SandboxPolicySource,
-    WorkspaceService,
+    AgentOperationService, AgentTitleService, AgentUpdateRecorder, DurableAgentUpdateRecorder,
+    SandboxPolicySource, WorkspaceService,
 };
 use layer3_adapter::SandboxAdapter;
 
@@ -17,6 +17,8 @@ use super::{
     live_agent_stopper::DurableLiveAgentStopper,
     reconciliation::SandboxReconciler,
     scheduler::SandboxScheduler,
+    title_scheduler::AgentTitleScheduler,
+    title_worker::{AgentTitleWorker, TitleRuntimeEndpoint},
     worker::{
         CheckpointObjectPurger, SandboxWorker, SandboxWorkerConfig, SandboxWorkerDependencies,
     },
@@ -39,6 +41,7 @@ pub(crate) struct SandboxLifecycleDependencies {
     pub operations: Arc<AgentOperationService>,
     pub policy: Arc<dyn SandboxPolicySource>,
     pub skills: Arc<dyn AgentSkillResolver>,
+    pub title_runtime: Arc<dyn TitleRuntimeEndpoint>,
 }
 
 pub(crate) struct SandboxLifecycleConfig {
@@ -46,6 +49,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub holder: String,
     pub deployment_id: String,
     pub runtime_version: String,
+    pub title_model: String,
 }
 
 pub(crate) struct SandboxLifecycleComposition {
@@ -53,6 +57,7 @@ pub(crate) struct SandboxLifecycleComposition {
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
     agent: AgentScheduler,
+    titles: AgentTitleScheduler,
     checkpoints: SandboxScheduler,
     checkpoint_cleanup: SandboxScheduler,
     updates: Arc<dyn AgentUpdateRecorder>,
@@ -78,6 +83,17 @@ impl SandboxLifecycleComposition {
         ));
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
+        let titles = AgentTitleScheduler::new(AgentTitleWorker::new(
+            AgentTitleService::new(
+                dependencies.store.clone(),
+                format!("{}:title", config.holder),
+            )
+            .expect("the deployment worker holder is bounded and nonempty"),
+            dependencies.store.clone(),
+            Arc::clone(&dependencies.credentials),
+            dependencies.title_runtime,
+            config.title_model,
+        ));
         let workspace_worker = WorkspaceWorker::new(
             WorkspaceWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -140,6 +156,7 @@ impl SandboxLifecycleComposition {
             sandbox: SandboxScheduler::new(sandbox_worker),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             agent: AgentScheduler::new(agent_worker),
+            titles,
         }
     }
 
@@ -158,6 +175,7 @@ impl SandboxLifecycleComposition {
         let signal = shutdown.subscribe();
         shutdown.push(self.reconciliation.spawn(signal));
         shutdown.push(self.agent.spawn(shutdown.subscribe()));
+        shutdown.push(self.titles.spawn(shutdown.subscribe()));
         for scheduler in [
             self.checkpoints,
             self.checkpoint_cleanup,

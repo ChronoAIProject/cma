@@ -29,6 +29,7 @@ pub(crate) struct HttpAgentTitleGenerator {
     deployment_model: String,
     client: reqwest::Client,
     maximum_response_body: usize,
+    proxy_authorization: Option<HeaderValue>,
 }
 
 impl fmt::Debug for HttpAgentTitleGenerator {
@@ -76,7 +77,15 @@ impl HttpAgentTitleGenerator {
             deployment_model,
             client,
             maximum_response_body,
+            proxy_authorization: None,
         })
+    }
+
+    pub(super) fn with_proxy_authorization(mut self, value: &str) -> Option<Self> {
+        let mut value = HeaderValue::from_str(nonempty(value)?).ok()?;
+        value.set_sensitive(true);
+        self.proxy_authorization = Some(value);
+        Some(self)
     }
 
     #[cfg(test)]
@@ -124,10 +133,14 @@ impl HttpAgentTitleGenerator {
             return Err(AgentTitleGenerationError::unavailable());
         }
 
-        let authorization = HeaderValue::from_str(&format!("Bearer {}", request.bearer()))
+        let mut authorization = HeaderValue::from_str(&format!("Bearer {}", request.bearer()))
             .map_err(|_| AgentTitleGenerationError::unavailable())?;
+        authorization.set_sensitive(true);
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, authorization);
+        if let Some(value) = &self.proxy_authorization {
+            headers.insert("open-sandbox-api-key", value.clone());
+        }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
@@ -148,6 +161,10 @@ impl HttpAgentTitleGenerator {
                 .is_none_or(|value| value.as_bytes() != b"application/json")
             || response.headers().contains_key(CONTENT_ENCODING)
             || headers_contain(response.headers(), request.bearer().as_bytes())
+            || self
+                .proxy_authorization
+                .as_ref()
+                .is_some_and(|value| headers_contain(response.headers(), value.as_bytes()))
         {
             return Err(AgentTitleGenerationError::unavailable());
         }
@@ -165,11 +182,21 @@ impl HttpAgentTitleGenerator {
             }
             body.extend_from_slice(&chunk);
         }
-        if contains_bytes(&body, request.bearer().as_bytes()) {
+        if contains_bytes(&body, request.bearer().as_bytes())
+            || self
+                .proxy_authorization
+                .as_ref()
+                .is_some_and(|value| contains_bytes(&body, value.as_bytes()))
+        {
             return Err(AgentTitleGenerationError::unavailable());
         }
         let title = response_title(&body).ok_or_else(AgentTitleGenerationError::unavailable)?;
-        if contains_bytes(title.as_bytes(), request.bearer().as_bytes()) {
+        if contains_bytes(title.as_bytes(), request.bearer().as_bytes())
+            || self
+                .proxy_authorization
+                .as_ref()
+                .is_some_and(|value| contains_bytes(title.as_bytes(), value.as_bytes()))
+        {
             return Err(AgentTitleGenerationError::unavailable());
         }
         Ok(AgentTitleGenerationResponse::new(title))
