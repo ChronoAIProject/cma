@@ -1,0 +1,198 @@
+use super::context::{Context, invalid};
+use cma_sdk::{
+    Result,
+    agents::AgentListOptions,
+    instances::SandboxListOptions,
+    profiles::{
+        AgentProfileContent, MarketplaceListOptions, ProfileContent, Profiles,
+        SandboxProfileContent, WorkspaceProfileContent,
+    },
+};
+use std::fmt::Debug;
+
+pub async fn dispatch(c: &Context<'_>) -> Result<()> {
+    let client = c.client;
+    let op = c.case.operation.as_str();
+    if op.contains("/agent-profiles") {
+        return profiles(c, client.agent_profiles()).await;
+    }
+    if op.contains("/workspace-profiles") {
+        return profiles(c, client.workspace_profiles()).await;
+    }
+    if op.contains("/sandbox-profiles") {
+        return profiles(c, client.sandbox_profiles()).await;
+    }
+    if op.contains("/marketplace/") {
+        return match c.param("kind") {
+            "agent-profiles" => marketplace::<AgentProfileContent>(c).await,
+            "workspace-profiles" => marketplace::<WorkspaceProfileContent>(c).await,
+            "sandbox-profiles" => marketplace::<SandboxProfileContent>(c).await,
+            _ => Err(invalid("unsupported marketplace kind")),
+        };
+    }
+    match op {
+        "GET /api/v1/sandboxes" => c.check(
+            client
+                .sandboxes()
+                .list(&SandboxListOptions {
+                    status: c.tag("status")?,
+                    page: c.page()?,
+                })
+                .await,
+        ),
+        "GET /api/v1/sandboxes/{id}" => c.check(client.sandboxes().read(c.param("id")).await),
+        "GET /api/v1/sandboxes/{id}/events" => {
+            c.check(client.sandboxes().events(c.param("id"), c.events()?).await)
+        }
+        "POST /api/v1/sandboxes" => c.check(client.sandboxes().create(&c.body()?, &c.key()?).await),
+        "DELETE /api/v1/sandboxes/{id}" => {
+            c.check(client.sandboxes().delete(c.param("id"), &c.key()?).await)
+        }
+        "POST /api/v1/sandboxes/{id}/pause" => {
+            c.check(client.sandboxes().pause(c.param("id"), &c.key()?).await)
+        }
+        "POST /api/v1/sandboxes/{id}/revive" => {
+            c.check(client.sandboxes().revive(c.param("id"), &c.key()?).await)
+        }
+        "GET /api/v1/sandboxes/{id}/workspaces" => {
+            c.check(client.workspaces().list(c.param("id")).await)
+        }
+        "POST /api/v1/sandboxes/{id}/workspaces" => c.check(
+            client
+                .workspaces()
+                .create(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/workspaces/{id}" => c.check(client.workspaces().read(c.param("id")).await),
+        "DELETE /api/v1/workspaces/{id}" => {
+            c.check(client.workspaces().delete(c.param("id"), &c.key()?).await)
+        }
+        "GET /api/v1/workspaces/{id}/worktrees" => {
+            c.check(client.worktrees().list(c.param("id")).await)
+        }
+        "GET /api/v1/worktrees/{id}" => c.check(client.worktrees().read(c.param("id")).await),
+        "GET /api/v1/agents" => c.check(
+            client
+                .agents()
+                .list(&AgentListOptions {
+                    status: c.tag("status")?,
+                    sandbox: c.q("sandbox"),
+                    workspace: c.q("workspace"),
+                    page: c.page()?,
+                })
+                .await,
+        ),
+        "POST /api/v1/workspaces/{id}/agents" => c.check(
+            client
+                .agents()
+                .create(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}" => c.check(client.agents().read(c.param("id")).await),
+        "GET /api/v1/agents/{id}/events" => {
+            c.check(client.agents().events(c.param("id"), c.events()?).await)
+        }
+        "GET /api/v1/agents/{id}/transcript" => {
+            c.check(client.agents().transcript(c.param("id")).await)
+        }
+        "GET /api/v1/agents/{id}/usage" => c.check(client.agents().usage(c.param("id")).await),
+        "GET /api/v1/agents/{id}/resources" => {
+            c.check(client.agents().resources(c.param("id")).await)
+        }
+        "POST /api/v1/agents/{id}/input" => c.check(
+            client
+                .agents()
+                .input(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/steer" => c.check(
+            client
+                .agents()
+                .steer(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/interrupt" => {
+            c.check(client.agents().interrupt(c.param("id"), &c.key()?).await)
+        }
+        "POST /api/v1/agents/{id}/approvals/{request_id}" => c.check(
+            client
+                .agents()
+                .answer_approval(c.param("id"), c.param("request_id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/stop" => c.check(
+            client
+                .agents()
+                .stop(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "DELETE /api/v1/agents/{id}" => {
+            c.check(client.agents().delete(c.param("id"), &c.key()?).await)
+        }
+        _ => panic!("unmapped resource operation {op}"),
+    }
+}
+
+async fn profiles<C: ProfileContent + PartialEq + Debug>(
+    c: &Context<'_>,
+    profiles: Profiles<'_, C>,
+) -> Result<()> {
+    let (method, path) = c.case.operation.split_once(' ').unwrap();
+    let tail = path
+        .strip_prefix("/api/v1/")
+        .unwrap()
+        .split_once('/')
+        .map_or("", |(_, tail)| tail);
+    match (method, tail) {
+        ("GET", "") => c.check(profiles.list(&c.page()?).await),
+        ("POST", "") => c.check(profiles.create(&c.body()?, &c.key()?).await),
+        ("GET", "{id}") => c.check(profiles.read(c.param("id")).await),
+        ("PUT", "{id}") => c.check(profiles.save(c.param("id"), &c.body()?, &c.key()?).await),
+        ("PUT", "{id}/visibility") => c.check(
+            profiles
+                .set_visibility(c.param("id"), c.field("visibility")?, &c.key()?)
+                .await,
+        ),
+        ("POST", "{id}/revisions") => c.check(
+            profiles
+                .publish(c.param("id"), c.field("draft_version")?, &c.key()?)
+                .await,
+        ),
+        ("GET", "{id}/revisions") => {
+            c.check(profiles.list_revisions(c.param("id"), &c.page()?).await)
+        }
+        ("GET", "{id}/revisions/{revision}") => c.check(
+            profiles
+                .read_revision(
+                    c.param("id"),
+                    c.param("revision")
+                        .parse()
+                        .map_err(|_| invalid("unrepresentable revision"))?,
+                )
+                .await,
+        ),
+        ("POST", "{id}/retire") => c.check(profiles.retire(c.param("id"), &c.key()?).await),
+        _ => panic!("unmapped profile operation {}", c.case.operation),
+    }
+}
+
+async fn marketplace<C: ProfileContent + PartialEq + Debug>(c: &Context<'_>) -> Result<()> {
+    let marketplace = c.client.marketplace::<C>();
+    match c.case.operation.as_str() {
+        "GET /api/v1/marketplace/{kind}" => c.check(
+            marketplace
+                .list(&MarketplaceListOptions {
+                    q: c.q("q"),
+                    page: c.page()?,
+                })
+                .await,
+        ),
+        "GET /api/v1/marketplace/{kind}/{id}" => c.check(marketplace.read(c.param("id")).await),
+        "POST /api/v1/marketplace/{kind}/{id}/fork" => c.check(
+            marketplace
+                .fork(c.param("id"), c.field("revision")?, &c.key()?)
+                .await,
+        ),
+        _ => panic!("unmapped marketplace operation {}", c.case.operation),
+    }
+}

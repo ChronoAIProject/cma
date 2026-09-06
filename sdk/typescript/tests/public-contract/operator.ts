@@ -1,0 +1,27 @@
+import type { ProfileKind } from '../../src/index.js';
+import type { Dispatch } from './context.js';
+
+export const operatorDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/admin/settings': ({ client }) => client.admin.readSettings(),
+  'PUT /api/v1/admin/settings': ({ client, body }) => client.admin.replaceSettings(body),
+  'PATCH /api/v1/admin/settings': ({ client, body }) => client.admin.patchSettings(body),
+  'POST /api/v1/admin/settings/reset': ({ client, body }) => client.admin.resetSettings(body),
+  'POST /api/v1/admin/triggers/pause': ({ client }) => client.admin.pauseTriggers(),
+  'POST /api/v1/admin/triggers/resume': ({ client }) => client.admin.resumeTriggers(),
+  'GET /api/v1/admin/sandboxes': ({ client, options }) => client.admin.listSandboxes(options),
+  'GET /api/v1/admin/sandboxes/{id}': ({ client, param }) => client.admin.readSandbox(param('id')),
+  'GET /api/v1/admin/sandboxes/{id}/events': ({ client, param, options }) =>
+    client.admin.sandboxEvents(param('id'), options),
+  'POST /api/v1/admin/sandboxes/{id}/retire': ({ client, param }) =>
+    client.admin.retireSandbox(param('id')),
+  'GET /api/v1/admin/profiles': ({ client, options }) => client.admin.listProfiles(options),
+  'POST /api/v1/admin/profiles/{kind}/{id}/retire': ({ client, param }) =>
+    client.admin.retireProfile(param('kind') as ProfileKind, param('id')),
+  'GET /api/v1/admin/runtime-inventory': ({ client }) => client.admin.readRuntimeInventory(),
+  'GET /api/v1/admin/activity': ({ client, options }) => client.admin.listActivity(options),
+  'GET /auth/session': ({ client }) => client.auth.readSession(),
+  'GET /auth/signup-options': ({ client }) => client.auth.readSignupOptions(),
+  'POST /api/v1/mcp': ({ client }) => client.unsupported.mcp(),
+  'POST /api/v1/a2a': ({ client }) => client.unsupported.a2a(),
+  'GET /.well-known/agent-card.json': ({ client }) => client.unsupported.agentCard(),
+};
