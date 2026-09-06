@@ -1,0 +1,265 @@
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, type Launch, type LaunchStreamOptions } from '@chronoai/cma-sdk';
+import { PUBLIC_PREVIEW, PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../test/public';
+import { ReviewCard } from './ReviewCard';
+import { Progress } from './Progress';
+import { readIntent } from './intent';
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
+
+describe('minimal review', () => {
+  it('continues the same Draft through Start once a hosted connection is satisfied', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const client = publicClient();
+    const record: Launch = {
+      ...PUBLIC_RECORD,
+      state: 'draft',
+      review: { can_start_now: false, needs: [{ type: 'connection', service: 'code' }] },
+    };
+    vi.mocked(client.requests.requirements).mockResolvedValue({
+      services: [
+        { service: 'code', state: 'missing', display_name: 'Code host', connection_mode: 'hosted' },
+      ],
+      checked_at: record.created_at,
+    });
+    const changed = vi.fn();
+    render(<ReviewCard client={client} record={record} onChanged={changed} onClose={vi.fn()} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    await act(async () => undefined);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(client.requests.start).toHaveBeenCalledOnce();
+    expect(client.requests.start).toHaveBeenCalledWith(
+      record.id,
+      { trust_confirmed_digest: undefined, acknowledgements: [] },
+      { idempotencyKey: expect.any(String) },
+    );
+    expect(changed).toHaveBeenCalledWith(PUBLIC_RECORD);
+    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+  });
+  it('shows only server needs, preserves commands and env data, and submits matching trust', async () => {
+    const client = publicClient();
+    const changed = vi.fn();
+    const actor = userEvent.setup();
+    render(
+      <ReviewCard
+        client={client}
+        record={PUBLIC_TRUST}
+        preview={PUBLIC_PREVIEW}
+        onChanged={changed}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    expect(
+      screen.queryByRole('heading', { name: 'Review before continuing' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('PROJECT_PATH')).toBeInTheDocument();
+    expect(screen.getByText('/home/cma/project_data')).toBeInTheDocument();
+    expect(document.querySelector('pre code')?.textContent).toBe(
+      PUBLIC_TRUST.trust.disclosures[0]?.commands[0],
+    );
+    await actor.click(screen.getByRole('checkbox'));
+    await actor.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(client.requests.start).toHaveBeenCalledWith(
+      PUBLIC_RECORD.id,
+      { trust_confirmed_digest: 'approved-one', acknowledgements: [] },
+      { idempotencyKey: expect.any(String) },
+    );
+    await waitFor(() => expect(changed).toHaveBeenCalledWith(PUBLIC_RECORD));
+  });
+
+  it('freezes trust body and key while the start outcome is unknown', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.start)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(PUBLIC_RECORD);
+    const actor = userEvent.setup();
+    render(
+      <ReviewCard client={client} record={PUBLIC_TRUST} onChanged={vi.fn()} onClose={vi.fn()} />,
+    );
+    await actor.click(screen.getByRole('checkbox'));
+    await actor.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeEnabled();
+    expect(screen.getByRole('checkbox')).toBeDisabled();
+    await actor.click(screen.getByRole('button', { name: 'Try again' }));
+    const calls = vi.mocked(client.requests.start).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(calls[0]);
+  });
+
+  it('keeps ordered needs and refreshes authoritative requirements after a refusal', async () => {
+    const client = publicClient();
+    const record: Launch = {
+      ...PUBLIC_TRUST,
+      review: {
+        can_start_now: false,
+        needs: [
+          { type: 'owner_requires_review' },
+          { type: 'connection', service: 'code' },
+          ...PUBLIC_TRUST.review.needs,
+        ],
+      },
+    };
+    vi.mocked(client.requests.requirements).mockResolvedValue({
+      services: [
+        {
+          service: 'code',
+          state: 'missing',
+          display_name: 'Code host',
+          connection_mode: 'manual',
+          setup_url: 'https://identity.example.test/services',
+        },
+      ],
+      checked_at: record.created_at,
+    });
+    vi.mocked(client.requests.start).mockRejectedValue(
+      new ApiError(409, 'Missing', 'launch_requirements_not_met'),
+    );
+    vi.mocked(client.requests.read).mockResolvedValue(record);
+    const changed = vi.fn();
+    const actor = userEvent.setup();
+    render(
+      <ReviewCard
+        client={client}
+        record={record}
+        preview={PUBLIC_PREVIEW}
+        onChanged={changed}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole('heading', { name: 'Connect Code host' });
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
+    expect(headings.indexOf('Install software')).toBeLessThan(
+      headings.indexOf('Connect Code host'),
+    );
+    expect(headings.indexOf('Connect Code host')).toBeLessThan(
+      headings.indexOf('Review before continuing'),
+    );
+    await actor.click(screen.getByRole('checkbox'));
+    await actor.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Connect the accounts below to continue.')).toBeInTheDocument();
+    await waitFor(() => expect(changed).toHaveBeenCalledWith(record));
+    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+  });
+});
+
+describe('durable progress', () => {
+  it('does not acknowledge an event before its refreshed durable record is visible', async () => {
+    const client = publicClient();
+    let stream: LaunchStreamOptions | undefined;
+    vi.mocked(client.requests.stream).mockImplementation(async (_id, options) => {
+      stream = options;
+      await new Promise(() => undefined);
+    });
+    render(<Progress client={client} id={PUBLIC_RECORD.id} onNavigate={vi.fn()} />);
+    await screen.findByText('Preparing software');
+    await waitFor(() => expect(stream).toBeDefined());
+    await expect(
+      stream?.onEvent({
+        launch_id: PUBLIC_RECORD.id,
+        seq: 2,
+        appended_at: PUBLIC_RECORD.updated_at,
+        kind: { type: 'state_changed', from: 'resolving', to: 'ready' },
+      }),
+    ).rejects.toThrow('has not reached');
+    expect(screen.getByText('Preparing software')).toBeInTheDocument();
+  });
+  it('follows the acknowledged cursor and replaces the route when the server records ready', async () => {
+    const client = publicClient();
+    let stream: LaunchStreamOptions | undefined;
+    vi.mocked(client.requests.stream).mockImplementation(async (_id, options) => {
+      stream = options;
+      await new Promise(() => undefined);
+    });
+    const navigate = vi.fn();
+    render(<Progress client={client} id={PUBLIC_RECORD.id} onNavigate={navigate} />);
+    await screen.findByText('Preparing software');
+    await waitFor(() => expect(stream).toBeDefined());
+    expect(stream?.after).toBe(PUBLIC_RECORD.event_head);
+    const ready: Launch = {
+      ...PUBLIC_RECORD,
+      state: 'ready',
+      event_head: 2,
+      resolution: { ...PUBLIC_RECORD.resolution, agent: { state: 'created', id: 'agt_ready' } },
+    };
+    vi.mocked(client.requests.read).mockResolvedValue(ready);
+    await act(async () => {
+      await stream?.onEvent({
+        launch_id: PUBLIC_RECORD.id,
+        seq: 2,
+        appended_at: ready.updated_at,
+        kind: { type: 'state_changed', from: 'resolving', to: 'ready' },
+      });
+    });
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        { kind: 'agent', agentId: 'agt_ready' },
+        { replace: true },
+      ),
+    );
+    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.start).not.toHaveBeenCalled();
+  });
+
+  it('retains the last successful view during stream and polling outages', async () => {
+    vi.useFakeTimers();
+    const client = publicClient();
+    vi.mocked(client.requests.stream).mockRejectedValue(new Error('offline'));
+    render(<Progress client={client} id={PUBLIC_RECORD.id} onNavigate={vi.fn()} />);
+    await act(async () => undefined);
+    expect(screen.getByText('Preparing software')).toBeInTheDocument();
+    vi.mocked(client.requests.read).mockRejectedValue(new Error('offline'));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.getByText('Preparing software')).toBeInTheDocument();
+    expect(screen.getByText(/Updates are unavailable. Last checked/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeInTheDocument();
+  });
+
+  it('shows remediation without unsupported retry mutations and starts over as a new intent', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.read).mockResolvedValue({
+      ...PUBLIC_RECORD,
+      state: 'failed_terminal',
+      failure: {
+        code: 'runtime_unavailable',
+        safe_detail: 'Internal Launch checkpoint',
+        retryable: false,
+        occurred_at: PUBLIC_RECORD.updated_at,
+      },
+    });
+    const navigate = vi.fn();
+    const copy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: copy },
+    });
+    render(<Progress client={client} id={PUBLIC_RECORD.id} onNavigate={navigate} />);
+    await screen.findByRole('button', { name: 'Start over' });
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Internal Launch checkpoint')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy support code' }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(PUBLIC_RECORD.id));
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(readIntent('/t/public-example')).toMatchObject({
+      body: { choice: 'new', start_if_ready: true },
+      submitted: false,
+    });
+    expect(navigate).toHaveBeenCalledWith({
+      kind: 'public_trigger',
+      publicId: 'public-example',
+      placementId: undefined,
+    });
+  });
+});
