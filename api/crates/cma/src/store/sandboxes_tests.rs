@@ -169,7 +169,7 @@ fn trigger_query_fields_and_fingerprint_are_independently_validated() {
 #[test]
 fn sandbox_indexes_match_the_schema_contract() {
     let indexes = sandbox_indexes();
-    assert_eq!(indexes.len(), 8);
+    assert_eq!(indexes.len(), 9);
     assert_eq!(indexes[0].keys, doc! { "owner": 1, "name": 1 });
     let options = indexes[0].options.as_ref().unwrap();
     assert_eq!(options.unique, Some(true));
@@ -232,5 +232,10 @@ fn sandbox_indexes_match_the_schema_contract() {
     assert_eq!(
         indexes[7].options.as_ref().unwrap().name.as_deref(),
         Some("sandboxes_owner_status_page")
+    );
+    assert_eq!(indexes[8].keys, doc! { "status": 1, "_id": 1 });
+    assert_eq!(
+        indexes[8].options.as_ref().unwrap().name.as_deref(),
+        Some("sandboxes_maintenance_page")
     );
 }
