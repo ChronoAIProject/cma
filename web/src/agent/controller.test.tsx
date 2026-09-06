@@ -112,6 +112,44 @@ describe('Agent controller loading', () => {
 });
 
 describe('Agent controller operations', () => {
+  it('reports replay transport loss without inventing a failed Agent run', async () => {
+    const replayAgent = vi.fn().mockRejectedValue(new Error('The stream disconnected.'));
+    const client = readableClient({ replayAgent });
+    const expected = await loadAgent(client, 'agt_1', new AbortController().signal);
+    const { result } = renderHook(() => useAgentController(client, 'agt_1'));
+    await waitFor(() =>
+      expect(result.current.actionError).toBe(
+        'Live Agent updates are unavailable. The stream disconnected.',
+      ),
+    );
+    expect(result.current.state.status).toBe('ready');
+    if (result.current.state.status !== 'ready') throw new Error('Agent was not loaded');
+    expect(result.current.state.conversation).toEqual(expected.conversation);
+    act(() => result.current.clearActionError());
+    expect(result.current.actionError).toBeUndefined();
+  });
+
+  it('ignores replay failures after navigation cancels the stream', async () => {
+    let rejectReplay: ((error: Error) => void) | undefined;
+    const client = readableClient({
+      replayAgent: vi.fn(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectReplay = reject;
+          }),
+      ),
+    });
+    const { result, rerender } = renderHook(
+      ({ agentId }: { agentId: string | undefined }) => useAgentController(client, agentId),
+      { initialProps: { agentId: 'agt_1' as string | undefined } },
+    );
+    await waitFor(() => expect(rejectReplay).toBeDefined());
+    rerender({ agentId: undefined });
+    await act(async () => rejectReplay?.(new Error('Cancelled connection')));
+    await waitFor(() => expect(result.current.state.status).toBe('idle'));
+    expect(result.current.actionError).toBeUndefined();
+  });
+
   it('does not accept a draft when admission fails before a run starts', async () => {
     const runAgent = vi.fn().mockRejectedValue(new Error('Agent is unavailable'));
     const client = readableClient({ runAgent });

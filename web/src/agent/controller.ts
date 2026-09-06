@@ -146,6 +146,7 @@ export function useAgentController(
   );
   const [pending, setPending] = useState<AgentCommand>();
   const [actionError, setActionError] = useState<string>();
+  const [replayError, setReplayError] = useState<string>();
   const [keys] = useState(() => new CommandKeys());
   const actionAbort = useRef<AbortController | undefined>(undefined);
   const actionKind = useRef<AgentCommand | undefined>(undefined);
@@ -174,6 +175,7 @@ export function useAgentController(
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
       setActionError(undefined);
+      setReplayError(undefined);
       setPending(undefined);
       if (agentId === undefined) {
         setState({ status: 'idle' });
@@ -253,6 +255,9 @@ export function useAgentController(
     if (!replayEnabled || agentId === undefined) return;
     const controller = new AbortController();
     replayAbort.current = controller;
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) setReplayError(undefined);
+    });
     void client
       .replayAgent(agentId, {
         after: liveCursor.current,
@@ -263,13 +268,7 @@ export function useAgentController(
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        applyLive({
-          type: 'RUN_ERROR',
-          runId: 'replay',
-          threadId: agentId,
-          message: errorMessage(error),
-          code: 'replay_unavailable',
-        });
+        setReplayError(`Live Agent updates are unavailable. ${errorMessage(error)}`);
       });
     return () => {
       controller.abort();
@@ -290,6 +289,7 @@ export function useAgentController(
 
   const reload = useCallback(() => {
     setActionError(undefined);
+    setReplayError(undefined);
     setState(agentId === undefined ? { status: 'idle' } : { status: 'loading' });
     setRevision((value) => value + 1);
   }, [agentId]);
@@ -390,9 +390,12 @@ export function useAgentController(
   return {
     state,
     pending,
-    actionError,
+    actionError: actionError ?? replayError,
     reload,
-    clearActionError: () => setActionError(undefined),
+    clearActionError: () => {
+      setActionError(undefined);
+      setReplayError(undefined);
+    },
     send: (content, onAccepted) => run(content, onAccepted),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
     interrupt: () =>
