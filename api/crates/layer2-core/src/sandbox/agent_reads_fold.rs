@@ -5,8 +5,9 @@ use crate::seconds_from_rfc3339;
 use super::queued_message::queued_message_origin_sequence;
 
 use super::{
-    Agent, AgentLogEntry, AgentLogKind, AgentTranscript, AgentTranscriptTurn, AgentTurnOutcome,
-    AgentUsage, AgentUsageReading,
+    Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationKind,
+    AgentTranscript, AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn,
+    AgentTurnOutcome, AgentUsage, AgentUsageReading,
 };
 
 pub(super) struct AgentLogProjection {
@@ -35,7 +36,7 @@ pub(super) fn fold_agent_log(
     let mut transcript = TranscriptFold::default();
     let mut usage = UsageFold::default();
     let mut latest_conversation = None;
-    for entry in entries {
+    for (index, entry) in entries.iter().enumerate() {
         if entry.agent_id != agent.id || entry.seq == 0 {
             return Err("agent log identity or sequence is invalid".into());
         }
@@ -108,10 +109,41 @@ pub(super) fn fold_agent_log(
                 }
                 turn.metadata = Some(metadata.clone());
             }
-            AgentLogKind::OwnerMessage { content } => {
-                transcript.owner_message(entry.seq, content)?
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence,
+                operation: AgentOperationKind::Steer,
+                state: AgentOperationDelivery::DispatchFenced,
+            } => {
+                if *operation_sequence != entry.seq
+                    || transcript
+                        .active
+                        .as_ref()
+                        .is_none_or(|turn| turn.owner_message.is_none())
+                    || !entries.get(index + 1).is_some_and(|next| {
+                        entry.seq.checked_add(1) == Some(next.seq)
+                            && entry.appended_at == next.appended_at
+                            && matches!(next.kind, AgentLogKind::OwnerMessage { .. })
+                    })
+                {
+                    return Err("agent steering fence has no matching active-turn input".into());
+                }
             }
-            AgentLogKind::AgentMessage { content } => transcript.agent_message(content)?,
+            AgentLogKind::OwnerMessage { .. } => {
+                let steering = index.checked_sub(1).is_some_and(|previous| {
+                    matches!(
+                        entries[previous].kind,
+                        AgentLogKind::OperationDeliveryChanged {
+                            operation: AgentOperationKind::Steer,
+                            state: AgentOperationDelivery::DispatchFenced,
+                            ..
+                        }
+                    )
+                });
+                transcript.owner_message(transcript_message(entry), steering)?
+            }
+            AgentLogKind::AgentMessage { .. } => {
+                transcript.agent_message(transcript_message(entry))?
+            }
             AgentLogKind::TurnCompleted { turn_sequence } => transcript.finish(
                 *turn_sequence,
                 AgentTurnOutcome::Completed {
@@ -201,7 +233,7 @@ struct TranscriptFold {
 }
 
 struct QueuedOwnerMessage {
-    content: String,
+    message: AgentTranscriptMessage,
     used: bool,
 }
 
@@ -233,7 +265,7 @@ impl TranscriptFold {
                         "queued turn has no matching admitted owner message".to_string()
                     })?;
                 queued.used = true;
-                Some(queued.content.clone())
+                Some(queued.message.clone())
             }
             None => None,
         };
@@ -241,26 +273,36 @@ impl TranscriptFold {
             turn_sequence,
             started_at: started_at.into(),
             origin_key,
-            owner_message,
+            owner_message: owner_message
+                .as_ref()
+                .map(|message| message.content.clone()),
+            messages: owner_message.into_iter().collect(),
             agent_messages: Vec::new(),
             metadata: None,
         });
         Ok(())
     }
 
-    fn owner_message(&mut self, sequence: u64, content: &str) -> Result<(), String> {
+    fn owner_message(
+        &mut self,
+        message: AgentTranscriptMessage,
+        steering: bool,
+    ) -> Result<(), String> {
         if let Some(turn) = self.active.as_mut() {
-            if turn.owner_message.is_some() || !turn.agent_messages.is_empty() {
+            if !steering && (turn.owner_message.is_some() || !turn.agent_messages.is_empty()) {
                 return Err("agent turn has an invalid owner message".into());
             }
-            turn.owner_message = Some(content.into());
+            if !steering {
+                turn.owner_message = Some(message.content.clone());
+            }
+            turn.messages.push(message);
             return Ok(());
         }
         self.queued_owner_messages
             .insert(
-                sequence,
+                message.sequence,
                 QueuedOwnerMessage {
-                    content: content.into(),
+                    message,
                     used: false,
                 },
             )
@@ -281,19 +323,19 @@ impl TranscriptFold {
             self.queued_owner_messages
                 .iter()
                 .all(|(sequence, message)| {
-                    message.used || queued.get(sequence) == Some(&message.content.as_str())
+                    message.used || queued.get(sequence) == Some(&message.message.content.as_str())
                 });
         let every_queued_message_was_admitted = queued.iter().all(|(sequence, content)| {
             self.queued_owner_messages
                 .get(sequence)
-                .is_some_and(|message| message.content == *content)
+                .is_some_and(|message| message.message.content == *content)
         });
         (every_unconsumed_is_queued && every_queued_message_was_admitted)
             .then_some(())
             .ok_or_else(|| "queued owner messages disagree with durable queue state".into())
     }
 
-    fn agent_message(&mut self, content: &str) -> Result<(), String> {
+    fn agent_message(&mut self, message: AgentTranscriptMessage) -> Result<(), String> {
         let turn = self
             .active
             .as_mut()
@@ -301,7 +343,8 @@ impl TranscriptFold {
         if turn.owner_message.is_none() {
             return Err("agent message precedes its owner message".into());
         }
-        turn.agent_messages.push(content.into());
+        turn.agent_messages.push(message.content.clone());
+        turn.messages.push(message);
         Ok(())
     }
 
@@ -332,6 +375,7 @@ struct ActiveTurn {
     origin_key: Option<String>,
     owner_message: Option<String>,
     agent_messages: Vec<String>,
+    messages: Vec<AgentTranscriptMessage>,
     metadata: Option<BTreeMap<String, String>>,
 }
 
@@ -345,9 +389,24 @@ impl ActiveTurn {
                 .owner_message
                 .ok_or_else(|| "agent turn has no owner message".to_string())?,
             agent_messages: self.agent_messages,
+            messages: self.messages,
             metadata: self.metadata.unwrap_or_default(),
             outcome,
         })
+    }
+}
+
+fn transcript_message(entry: &AgentLogEntry) -> AgentTranscriptMessage {
+    let (role, content) = match &entry.kind {
+        AgentLogKind::OwnerMessage { content } => (AgentTranscriptRole::Owner, content),
+        AgentLogKind::AgentMessage { content } => (AgentTranscriptRole::Agent, content),
+        _ => unreachable!("only message entries become transcript messages"),
+    };
+    AgentTranscriptMessage {
+        sequence: entry.seq,
+        role,
+        content: content.clone(),
+        appended_at: entry.appended_at.clone(),
     }
 }
 

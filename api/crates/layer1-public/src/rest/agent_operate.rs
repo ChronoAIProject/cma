@@ -9,15 +9,16 @@ use axum::{
 };
 use layer2_core::sandbox::{
     AgentLogKind, AgentMessageOutcome, AgentResourceReading, AgentStopReason, AgentTranscript,
-    AgentUsageReading,
+    AgentTranscriptRole, AgentUsageReading,
 };
 use layer2_core::AgentId;
 use serde::Deserialize;
 
 use super::agent_openapi_shapes::{
     AgentEventPageView, AgentEventView, AgentResourcesView, AgentTextRequest,
-    AgentTranscriptTurnView, AgentTranscriptView, AgentUsageView, ApprovalDecisionRequest,
-    InputAcceptedView, StopAgentRequest,
+    AgentTranscriptMessageView, AgentTranscriptRoleView, AgentTranscriptTurnView,
+    AgentTranscriptView, AgentUsageView, ApprovalDecisionRequest, InputAcceptedView,
+    StopAgentRequest,
 };
 use super::agents::{execute_command, execute_empty_command, AgentRoutesState};
 use super::idempotency::{IdempotencyKey, RequestBody};
@@ -370,6 +371,19 @@ fn public_transcript(value: AgentTranscript) -> Result<AgentTranscriptView, Inst
                 started_at: turn.started_at,
                 owner_message: turn.owner_message,
                 agent_messages: turn.agent_messages,
+                messages: turn
+                    .messages
+                    .into_iter()
+                    .map(|message| AgentTranscriptMessageView {
+                        sequence: message.sequence,
+                        role: match message.role {
+                            AgentTranscriptRole::Owner => AgentTranscriptRoleView::User,
+                            AgentTranscriptRole::Agent => AgentTranscriptRoleView::Assistant,
+                        },
+                        content: message.content,
+                        appended_at: message.appended_at,
+                    })
+                    .collect(),
                 outcome: serde_json::to_value(turn.outcome)
                     .map_err(|_| InstanceProblem::Unavailable)?,
             })
@@ -410,5 +424,45 @@ fn public_resources(value: AgentResourceReading) -> AgentResourcesView {
         kills: reading.kills,
         received_bytes: reading.received_bytes,
         sent_bytes: reading.sent_bytes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn transcript_preserves_ordered_steering_without_private_turn_metadata() {
+        let at = "2026-09-07T00:00:00Z";
+        let messages = json!([
+            {"sequence":4,"role":"owner","content":"Review","appended_at":at},
+            {"sequence":5,"role":"agent","content":"First answer","appended_at":at},
+            {"sequence":7,"role":"owner","content":"Check the boundary","appended_at":at}
+        ]);
+        let transcript = serde_json::from_value(json!({
+            "agent_id":"agt_steering","through_seq":7,"turns":[{
+                "turn_sequence":3,"started_at":at,"origin_key":"private-origin",
+                "metadata":{"private":"internal"},"owner_message":"Review",
+                "agent_messages":["First answer"],"messages":messages,
+                "outcome":{"type":"active"}
+            }]
+        }))
+        .unwrap();
+        let result = serde_json::to_value(
+            public_transcript(transcript).unwrap_or_else(|_| panic!("valid transcript projection")),
+        )
+        .unwrap();
+        let turn = &result["turns"][0];
+        assert_eq!(
+            turn["messages"],
+            json!([
+                {"sequence":4,"role":"user","content":"Review","appended_at":at},
+                {"sequence":5,"role":"assistant","content":"First answer","appended_at":at},
+                {"sequence":7,"role":"user","content":"Check the boundary","appended_at":at}
+            ])
+        );
+        assert!(turn.get("origin_key").is_none());
+        assert!(turn.get("metadata").is_none());
     }
 }
