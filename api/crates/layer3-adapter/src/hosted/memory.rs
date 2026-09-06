@@ -34,6 +34,8 @@ mod checkpoint;
 mod mutations;
 #[path = "memory_probes.rs"]
 mod probes;
+#[path = "memory_workspace.rs"]
+mod workspace;
 
 /// Observable in-memory state used by Layer 2 lifecycle tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,15 +214,15 @@ impl HostedBackend for InMemoryHostedBackend {
             RequestFrame::Credential(frame) => bootstrap::credential(runtime, frame, operation),
             RequestFrame::PrepareWorkspace(request) => {
                 require_credential(runtime, operation)?;
-                mutations::prepare_workspace(runtime, request)
+                workspace::prepare(runtime, request)
             }
             RequestFrame::WorkspaceSetup(request) => {
                 require_credential(runtime, operation)?;
-                mutations::setup_workspace(runtime, request)
+                workspace::setup(runtime, request)
             }
             RequestFrame::RemoveWorkspace(request) => {
                 require_credential(runtime, operation)?;
-                mutations::remove_workspace(runtime, request)
+                workspace::remove(runtime, request)
             }
             RequestFrame::AddWorktree(request) => {
                 require_credential(runtime, operation)?;

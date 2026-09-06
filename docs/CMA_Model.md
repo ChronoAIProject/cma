@@ -41,6 +41,12 @@ event append share a transaction. An expired worker's lease or fence does not
 authorize it to publish into a newer operation. Process-local state cannot
 replace durable admission, progress or recovery records.
 
+The runtime records Workspace removal before filesystem I/O. That durable intent
+permanently rejects preparation and setup for the same Workspace ID, including
+delayed requests, completed-operation replays and recovery after supervisor
+restart. A different Workspace ID may reuse the released directory name;
+replaying the original removal returns its receipt without deleting the successor.
+
 ## Lifecycle States
 
 The source whitelist is `layer2-core/src/sandbox/status.rs`. The following
