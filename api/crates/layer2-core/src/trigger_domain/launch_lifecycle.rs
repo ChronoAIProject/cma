@@ -122,7 +122,7 @@ impl Launch {
             self.ready_at = Some(at);
             self.work
                 .schedule(LaunchWorkStep::Finish, self.updated_at.clone());
-        } else if next == LaunchState::Cancelled {
+        } else if matches!(next, LaunchState::Cancelled | LaunchState::FailedTerminal) {
             self.work.stop_preserving_effect(self.updated_at.clone());
         } else if next.is_terminal() {
             self.work

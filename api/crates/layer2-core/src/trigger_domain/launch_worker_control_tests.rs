@@ -322,6 +322,93 @@ fn transient_executing_effect_retry_preserves_recovery_for_the_next_fence() {
 }
 
 #[test]
+fn terminal_failure_preserves_effect_authority_after_exhaustion_or_direct_failure() {
+    for exhausted in [false, true] {
+        for state in [
+            LaunchEffectState::Prepared,
+            LaunchEffectState::Executing,
+            LaunchEffectState::RecoveryRequired,
+            LaunchEffectState::Applied,
+        ] {
+            let mut launch = pending_launch();
+            if exhausted {
+                launch.work.attempts = MAX_LAUNCH_WORK_ATTEMPTS - 1;
+            }
+            let fence = claim(&mut launch, "worker", NOW, LATER);
+            launch
+                .prepare_worker_effect("worker", fence, LaunchEffectKind::CreateSandbox, NOW.into())
+                .unwrap();
+            if state != LaunchEffectState::Prepared {
+                launch
+                    .mark_worker_effect_executing("worker", fence, NOW.into())
+                    .unwrap();
+            }
+            match state {
+                LaunchEffectState::RecoveryRequired => launch
+                    .work
+                    .mark_effect_recovery_required("worker", fence, NOW.into())
+                    .unwrap(),
+                LaunchEffectState::Applied => launch
+                    .mark_worker_effect_applied(
+                        "worker",
+                        fence,
+                        "sbx_created_but_unresolved".into(),
+                        NOW.into(),
+                    )
+                    .unwrap(),
+                _ => {}
+            }
+            let before = launch.work.effect.clone().unwrap();
+            if exhausted {
+                launch
+                    .retry_worker_launch(
+                        "worker",
+                        fence,
+                        "service_unavailable".into(),
+                        "Resource creation could not be confirmed".into(),
+                        LATER.into(),
+                        NOW.into(),
+                    )
+                    .unwrap();
+            } else {
+                launch
+                    .fail_worker_launch(
+                        "worker",
+                        fence,
+                        "invalid_resource_result".into(),
+                        "Resource creation returned an invalid result".into(),
+                        NOW.into(),
+                    )
+                    .unwrap();
+            }
+            assert_eq!(launch.state, LaunchState::FailedTerminal);
+            assert_eq!(launch.work.step, LaunchWorkStep::None);
+            assert!(launch.work.lease.is_none());
+            assert!(!launch.is_worker_due(LATEST));
+            assert!(launch.resolution.sandbox.is_pending());
+            let mut expected = before;
+            if expected.state == LaunchEffectState::Executing {
+                expected.state = LaunchEffectState::RecoveryRequired;
+            }
+            assert_eq!(
+                launch.work.effect.as_ref(),
+                Some(&expected),
+                "exhausted={exhausted}, state={state:?}"
+            );
+            let restored: Launch =
+                serde_json::from_slice(&serde_json::to_vec(&launch).unwrap()).unwrap();
+            restored.validate().unwrap();
+            assert_eq!(restored, launch);
+            let before = launch.clone();
+            assert!(launch
+                .mark_worker_effect_applied("worker", fence, "sbx_stale".into(), NOW.into())
+                .is_err());
+            assert_eq!(launch, before);
+        }
+    }
+}
+
+#[test]
 fn ready_launch_observes_only_its_resolved_terminal_agent() {
     for status in [AgentStatus::Stopped, AgentStatus::Deleted] {
         let agent_id = AgentId("agt_ready".into());
