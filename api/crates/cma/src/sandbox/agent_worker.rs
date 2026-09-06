@@ -20,7 +20,6 @@ mod support;
 const DEFAULT_LEASE: Duration = Duration::from_secs(15 * 60);
 const DEFAULT_RETRY: Duration = Duration::from_secs(30);
 const DEFAULT_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
-const WORK_BATCH_SIZE: u16 = 50;
 
 pub(crate) struct AgentWorkerDependencies {
     pub store: Arc<dyn AgentLifecycleStore>,
@@ -68,25 +67,15 @@ impl AgentWorker {
         })
     }
 
-    pub async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
-        self.reconcile_connections(now).await?;
-        let due = self
-            .dependencies
+    pub(crate) async fn due_work(
+        &self,
+        now: SystemTime,
+        limit: u16,
+    ) -> Result<Vec<AgentId>, SandboxStoreError> {
+        self.dependencies
             .store
-            .due_agent_work(&rfc3339_at(now), WORK_BATCH_SIZE)
-            .await?;
-        let mut completed = 0;
-        let mut first_error = None;
-        for id in due {
-            match self.run_one(&id, now).await {
-                Ok(true) => completed += 1,
-                Ok(false) => {}
-                Err(error) => {
-                    first_error.get_or_insert(error);
-                }
-            }
-        }
-        first_error.map_or(Ok(completed), Err)
+            .due_agent_work(&rfc3339_at(now), limit)
+            .await
     }
 
     pub async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
