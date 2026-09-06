@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '@chronoai/cma-sdk';
 import { PUBLIC_RECORD, publicClient } from '../test/public';
 import { ConnectAssistant, secureSetupUrl } from './ConnectAssistant';
 
@@ -16,6 +17,33 @@ const service = {
 } as const;
 
 describe('connection assistant', () => {
+  it.each(['transport', 'idempotency_in_flight', 'idempotency_recovery_required'])(
+    'preserves the connection body and key after uncertain creation %s',
+    async (code) => {
+      vi.spyOn(window, 'open').mockReturnValue(null);
+      const client = publicClient();
+      vi.mocked(client.requests.createConnection).mockRejectedValueOnce(
+        code === 'transport' ? new Error('offline') : new ApiError(409, 'Unknown', code),
+      );
+      render(
+        <ConnectAssistant
+          client={client}
+          requestId={PUBLIC_RECORD.id}
+          service={service}
+          onSatisfied={vi.fn()}
+          onRecheck={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+      await screen.findByRole('alert');
+      await act(async () => undefined);
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+      await act(async () => undefined);
+      const calls = vi.mocked(client.requests.createConnection).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(calls[0]);
+    },
+  );
   it('recovers a same-tab handoff without storing the hosted URL or creating another command', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-06T00:00:00Z'));

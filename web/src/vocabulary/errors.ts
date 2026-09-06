@@ -14,6 +14,10 @@ export const refusalSentences = {
   trust_confirmation_mismatch: 'Review the software below and confirm it before continuing.',
   invalid_launch_request: 'This request could not be accepted. Start over from the original page.',
   invalid_idempotency_key: 'This request could not be accepted. Start over from the original page.',
+  idempotency_in_flight:
+    'CMA is still processing this request. Your choices are saved; check again in a moment.',
+  idempotency_recovery_required:
+    'CMA is checking the result of this request. Your choices are saved; check again in a moment.',
   idempotency_key_reused:
     'This request has different saved choices. Start over to use the new choices.',
   invalid_launch_cursor: 'Progress could not be updated. Check again in a moment.',
