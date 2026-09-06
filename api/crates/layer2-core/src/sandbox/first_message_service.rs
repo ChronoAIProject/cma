@@ -115,6 +115,7 @@ impl AgentOperationService {
                 .first_message
                 .as_ref()
                 .and_then(|record| record.turn_sequence);
+            let (parent, _) = self.parent_admission(&current).await?;
             let mut next = current.clone();
             let record = next.conversation.first_message.as_mut().ok_or_else(|| {
                 AgentOperationError::InvalidRequest("agent has no first message to recover".into())
@@ -145,7 +146,10 @@ impl AgentOperationService {
                 AgentStatus::Ready => next.conversation.active_turn = None,
                 status => return Err(AgentOperationError::StatusConflict { status }),
             }
-            match self.commit_change(&current, next, logs, at).await {
+            match self
+                .commit_admission(&current, next, logs, at, parent)
+                .await
+            {
                 Ok(_) => return Ok(recovered),
                 Err(AgentOperationError::Conflict) => continue,
                 Err(error) => return Err(error),
@@ -187,6 +191,7 @@ impl AgentOperationService {
             };
         }
         let target = runtime_target(&current)?;
+        let (parent, _) = self.parent_admission(&current).await?;
         let connection = self
             .runtimes
             .resolve(&target)
@@ -236,7 +241,8 @@ impl AgentOperationService {
             from: AgentStatus::Ready,
             to: AgentStatus::Working,
         });
-        self.commit_change(&current, next, logs, at).await?;
+        self.commit_admission(&current, next, logs, at, parent)
+            .await?;
         Ok(PreparedFirstMessage {
             target,
             authority,

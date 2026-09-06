@@ -4,7 +4,7 @@ use crate::now_rfc3339;
 
 use super::agent_operation_dispatch::{operation_log, PreWriteRollback, PreparedAgentOperation};
 use super::agent_operation_service::{operation_store_error, MAX_OPERATION_COMMIT_RETRIES};
-use super::store::{AgentConversationMutation, AgentStore};
+use super::store::{AgentConversationMutation, AgentStore, SandboxMutationGuard};
 use super::{
     Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationError,
     AgentOperationFailure, AgentOperationReceipt, AgentOperationService, AgentStatus,
@@ -157,9 +157,33 @@ impl AgentOperationService {
     pub(super) async fn commit_change(
         &self,
         current: &Agent,
+        next: Agent,
+        logs: Vec<AgentLogKind>,
+        at: String,
+    ) -> Result<(Agent, Vec<AgentLogEntry>), AgentOperationError> {
+        self.commit_guarded_change(current, next, logs, at, None)
+            .await
+    }
+
+    pub(super) async fn commit_admission(
+        &self,
+        current: &Agent,
+        next: Agent,
+        logs: Vec<AgentLogKind>,
+        at: String,
+        guard: SandboxMutationGuard,
+    ) -> Result<(Agent, Vec<AgentLogEntry>), AgentOperationError> {
+        self.commit_guarded_change(current, next, logs, at, Some(guard))
+            .await
+    }
+
+    async fn commit_guarded_change(
+        &self,
+        current: &Agent,
         mut next: Agent,
         logs: Vec<AgentLogKind>,
         at: String,
+        admission_guard: Option<SandboxMutationGuard>,
     ) -> Result<(Agent, Vec<AgentLogEntry>), AgentOperationError> {
         if next.revision == current.revision {
             next.revision = current
@@ -178,6 +202,7 @@ impl AgentOperationService {
         next.validate_conversation()
             .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
         let mutation = AgentConversationMutation {
+            admission_guard,
             expected_agent_revision: current.revision,
             expected_last_seq: current.conversation.last_seq,
             runtime_generation: current.conversation.runtime_generation.ok_or_else(|| {

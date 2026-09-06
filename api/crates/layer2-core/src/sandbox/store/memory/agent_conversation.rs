@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::sandbox::store::{AgentConversationMutation, AgentConversationStore};
+use crate::sandbox::store::{
+    validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
+};
 use crate::seconds_from_rfc3339;
 
 #[async_trait]
@@ -69,6 +71,11 @@ fn validate_mutation(
         .agents
         .get(&mutation.agent.id)
         .ok_or(SandboxStoreError::NotFound)?;
+    validate_agent_conversation_admission(
+        current,
+        state.sandboxes.get(&current.sandbox_id),
+        mutation,
+    )?;
     let actual_last_seq = state
         .agent_logs
         .get(&mutation.agent.id)

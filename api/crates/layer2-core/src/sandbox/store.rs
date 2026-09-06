@@ -28,7 +28,9 @@ pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
 };
 mod agent_conversation;
-pub use agent_conversation::{AgentConversationMutation, AgentConversationStore};
+pub use agent_conversation::{
+    validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
+};
 mod agent_lifecycle;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,

@@ -1,3 +1,4 @@
+mod admission_fence_tests;
 mod first_message_tests;
 mod fixtures;
 mod queued_message_tests;
@@ -351,6 +352,7 @@ async fn steer_requires_working_status_an_active_turn_and_capability() {
 
     let store = Arc::new(InMemorySandboxStore::default());
     let agent = test_agent(AgentStatus::Working, None);
+    seed_active_parent(&store).await;
     store.create_agent(agent.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Ok(()));
     let registry = TestRuntimeRegistry::new(
@@ -371,6 +373,7 @@ async fn steer_requires_working_status_an_active_turn_and_capability() {
 #[tokio::test]
 async fn steer_and_interrupt_send_the_expected_runtime_inputs() {
     let steer_store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&steer_store).await;
     let working = test_agent(AgentStatus::Working, None);
     steer_store.create_agent(working.clone()).await.unwrap();
     let (sender, steer_inputs) = recording_sender(Ok(()));
@@ -389,6 +392,7 @@ async fn steer_and_interrupt_send_the_expected_runtime_inputs() {
     ));
 
     let interrupt_store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&interrupt_store).await;
     interrupt_store.create_agent(working.clone()).await.unwrap();
     let (sender, interrupt_inputs) = recording_sender(Ok(()));
     let service = AgentOperationService::new(
@@ -618,6 +622,7 @@ async fn approval_answer_accepts_only_an_active_waiting_agent() {
 #[tokio::test]
 async fn paused_messages_are_bounded_without_runtime_side_effects() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let paused = test_agent(AgentStatus::Paused, None);
     store.create_agent(paused.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Ok(()));
@@ -651,6 +656,7 @@ async fn paused_messages_are_bounded_without_runtime_side_effects() {
 #[tokio::test]
 async fn message_byte_bound_is_inclusive_and_checked_before_lookup() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let paused = test_agent(AgentStatus::Paused, None);
     store.create_agent(paused.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Ok(()));

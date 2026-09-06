@@ -223,6 +223,7 @@ pub(super) fn completing_sender(
 }
 
 pub(super) async fn seed_waiting_approval(store: &InMemorySandboxStore) -> Agent {
+    seed_active_parent(store).await;
     let working = test_agent(AgentStatus::Working, None);
     store.create_agent(working.clone()).await.unwrap();
     let mut waiting = working.clone();
@@ -232,6 +233,7 @@ pub(super) async fn seed_waiting_approval(store: &InMemorySandboxStore) -> Agent
     waiting.conversation.last_seq = 2;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            admission_guard: None,
             expected_agent_revision: working.revision,
             expected_last_seq: 0,
             runtime_generation: 3,
