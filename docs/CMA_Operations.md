@@ -213,17 +213,29 @@ a target, and never delete by an unvalidated glob or an entire shared namespace.
 3. Scale only the context-pinned `chrono-bot/cma-api` Deployment to zero and
    verify its pods and in-flight workers are gone. Wait for admitted provider
    effects to settle. The old control plane must not recreate a just-deleted pod.
+   A stopped worker or elapsed client deadline does not prove that an earlier
+   external upload can no longer finish; preserve its exact cleanup authority.
 4. List the provider's complete paginated inventory, resolve only CMA's matching
    deployment/namespace labels, and delete each resolved Sandbox via the provider
    API. Verify each absence; do not use namespace-wide Kubernetes deletion.
 5. Resolve and confirm the exact CMA database name from live configuration.
-   Only then execute its authorized `dropDatabase()` with the operator connection.
+   Preserve `checkpoint_archive_tombstones` and all still-needed exact object
+   deletion intents before resetting historical application collections. Prefer
+   a reviewed collection-by-collection reset that leaves this cleanup authority
+   intact. `dropDatabase()` is permissible only after a protected, verified
+   export of that authority and an explicit restore plan: retain exact opaque
+   physical keys, schema versions and retry state, verify the restored inventory
+   against the export, and restore it before starting any new cleanup worker.
+   A generic backup without a verified restoration procedure is insufficient.
    Never drop the URI's default database, an admin database, NyxID's database or
-   a database whose identity was inferred from a shell default.
+   a database whose identity was inferred from a shell default. Historical-state
+   reset authorization does not authorize losing uncertain-upload ownership.
 6. Clean only exact historical CMA object keys proven orphaned by the retained
    inventory. Do not delete the shared external bucket or apply broad lifecycle
    expiry to active checkpoint metadata/tombstones. Failed/ambiguous cleanup is
-   retained for reconciliation, not reported as completed.
+   retained for reconciliation, not reported as completed. A temporary GET 404
+   after DELETE does not expire authority for an earlier ambiguous upload; absent
+   actual backend evidence bounding its write lifetime, keep its tombstone.
 7. Apply the reviewed ConfigMaps and secret references. Install the new API/web
    immutable digests and pin `CHRONO_SANDBOX_IMAGE` to the final contract-3 runtime.
    Verify the manifests' health endpoints, resources, nonroot security, runtime
@@ -347,6 +359,119 @@ in-flight Mongo driver future is unsafe, that read-only check finishes in the
 background; at most 16 such checks may remain pending per API process.
 
 ## Release Evidence
+
+### Browser Harness Prerequisites
+
+The staging harness lives in `web/e2e/`. Run commands from `web/` after `npm ci`:
+`npm run e2e:typecheck`, `npm run e2e:mechanics` for local browser mechanics, and
+`npm run e2e` for the configured remote target. The default remote run is only
+three read-only smoke cases. Listing cases with `npm run e2e -- --list` executes
+no journey. No staging fixture or credential is supplied by the repository.
+
+Read-only smoke requires `CMA_E2E_BASE_URL` (one exact HTTPS origin),
+`CMA_E2E_PUBLIC_ID` (an existing published Trigger), and `CMA_E2E_OUTPUT_DIR`
+(a fresh absolute evidence directory outside the checkout, under an existing
+parent). Existing leaves and symlinks are refused. Use
+`CMA_E2E_BROWSER_PATH` when selecting an already installed browser. Mutation
+journeys additionally require `CMA_E2E_MODE=mutation`,
+`CMA_E2E_MUTATION_TARGET` exactly equal to the origin, `CMA_E2E_FIXTURE_OWNER`,
+and `CMA_E2E_FIXTURE_FILE`. The manifest must match that origin and owner.
+It and every referenced auth state, hook and credential-sentinel file must be
+private regular files outside the checkout, with mode `0600`; never commit them
+or reference a symlink into the repository.
+
+The manifest contract in `web/e2e/environment.ts` requires separate owner and
+second-owner identities, a distinct visitor identity for each exported visitor
+case, baseline services, exact immutable profile revisions, all required Trigger
+states, OAuth/API-key/device-code connections, controlled fault fixtures, and
+four real embed hosts (Markdown, HTML, JavaScript and React). It also records
+the declared CMA/NyxID commits and immutable API/web/runtime image references.
+The external hooks must actually complete ordinary signup/connection browser
+flows, arm/release the specified owned fault, and observe the required runtime
+state. Placeholder success hooks are not evidence. Missing prerequisites fail
+the campaign; they must not become skipped cases reported as completed.
+
+Preflight reads the supplied identities and capabilities before any mutation.
+Visitors need Launch/use-own/delete-own capabilities without direct Sandbox
+creation, profile management or Trigger publication; owner fixtures need the
+relevant creation/publication capabilities. Provision an explicitly authorized
+disposable campaign with sufficient capacity: J1's two live always-new Sandboxes
+cannot pass under the default visitor one-Sandbox limit. Do not silently loosen
+quotas or substitute an administrator for a fresh visitor. Signup account cleanup
+remains an external operator responsibility; the harness never calls NyxID
+administrative account/role handlers.
+
+The owner-bound append-only `cleanup.ndjson` ledger contains only resources
+actually created by this campaign, including late child resolutions from its
+admitted Launches. Reused resources are not cleanup-owned. Cleanup stops Agents
+before deletion, retires published objects, verifies terminal state/absence, and
+keeps polling a cancelled Launch even after a cancellation conflict. A started
+Launch with unresolved children is not safe to clean merely because it reports
+`cancelled` or `failed_terminal`; retain the ledger for reconciliation and do not
+delete possible parents while creation authority remains ambiguous.
+
+Traces, HAR, video, default screenshots and Playwright raw DOM error contexts
+are disabled. Only guarded canonical CMA-page screenshots and curated reports
+may enter evidence; check DOM, browser storage, password fields and configured
+credential sentinels before capture. Keep temporary raw runner output outside
+the checkout and out of published artifacts. The custom report contains static
+case names, status, duration and safe prerequisite failures, not assertion dumps.
+
+The scheduled workflow is GET-only. Mutation execution is manual-only in the
+protected `staging-e2e-mutation` environment, on the isolated labelled self-hosted
+runner with externally provisioned fixtures and trusted `develop` checkout.
+Adding the harness or enabling a job does not authorize a staging campaign.
+Preflight creates the evidence leaf exclusively with mode `0700` and marks it
+with a fresh run identity only after prerequisite validation succeeds. The
+reporter checks that identity before writing; artifact upload requires the
+current harness step's validated-setup output and lists only curated filenames.
+A failed preflight cannot authorize uploading an old output directory.
+
+### Evidence Classification
+
+Local mechanics checks use intercepted browser HTML and prove harness behavior,
+not staging journeys. Shared backend/SDK corpus replay proves deterministic
+public contract composition, not a live NyxID, kernel or storage deployment.
+TypeScript replay labels each case by its actual boundary: `wire` calls the
+typed operation and checks the emitted request against the recorded request;
+`preflight-validation` proves local rejection without a network call;
+`serializer-protection` proves that typed serialization prevents the malformed
+request; `browser-only` checks navigation URL construction or the server-owned
+callback composition. Protected malformed requests and OAuth callbacks are not
+SDK HTTP round trips. Their recorded problem documents are checked separately.
+`raw-wire-only` body-limit probes use bounded compact byte expansion in the
+backend corpus. They cannot be emitted by the SDK's structured serializer and
+prove only recorded error decoding on the SDK side, not a typed HTTP replay.
+Rust replay makes the same distinction between actual typed HTTP, SDK preflight,
+unrepresentable wire/type shapes and browser-owned navigation. Deserialization
+failure while constructing a typed fixture is not SDK validation. Both kinds of
+local refusal independently check the recorded problem decoder without claiming
+that the protected malformed request was sent over HTTP.
+
+Backend fault scenarios exercise real public handlers and services with selected
+Core ports returning source-backed typed failures. They prove the public error
+projection, not that an external outage or an impractically large model boundary
+was reproduced. For example, a publish revision-overflow port failure does not
+claim construction of billions of retained Trigger revisions. The inventory
+separates HTTP problems from protocol failure outcomes; error-only streams do
+not satisfy successful-stream coverage. A retrieved failed Response is a valid
+resource projection, not an HTTP refusal. Propagated runtime failure classes and
+stop reasons are open strings, so their fixtures are representative protocol
+examples, not an exhaustive catalog of provider errors.
+
+Remote harness reports identify `executionTarget: configured_remote_origin` and
+`mocked: false`, but supplied commit/image pins remain
+`provenanceSource: operator_declared` and `provenanceVerified: false` until
+independent deployment evidence verifies them. Smoke reports supply no pins.
+Do not relabel declared provenance as remotely observed identity. The deliberate
+browser transport-response-loss case is local fault injection; provider failures,
+restart/rotation and runtime observations require their real audited hooks.
+
+No remote campaign has been run by adding this harness. G-A1-G-A5 still require
+independent proof against the final pinned kernel/runtime; no browser pass can
+establish prompt order, skill hot reload or exact conversation restore alone.
+
+### Required Final Gates
 
 Status as of 2026-09-07: local implementation and deterministic/browser checks
 are progressing. **No final production reset, deployment or public-readiness
