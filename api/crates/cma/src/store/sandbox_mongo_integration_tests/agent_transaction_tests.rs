@@ -423,6 +423,7 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
     working.conversation.last_seq += 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            admission_guard: None,
             expected_agent_revision,
             expected_last_seq,
             runtime_generation: 1,
@@ -478,6 +479,7 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
         .unwrap();
     resumed.conversation.last_seq += 1;
     let resume = AgentConversationMutation {
+        admission_guard: None,
         expected_agent_revision,
         expected_last_seq,
         runtime_generation: 1,

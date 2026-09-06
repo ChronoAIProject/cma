@@ -63,6 +63,7 @@ mod sandbox_mongo_integration_tests;
 #[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
+mod sandbox_reconciliation;
 mod sandbox_transactions;
 mod sandbox_worker_store;
 mod sandboxes;

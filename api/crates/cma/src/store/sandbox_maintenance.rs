@@ -18,7 +18,7 @@ use transaction::{apply, reconcile, ApplyError, MaintenanceRequest};
 
 mod evidence;
 #[cfg(test)]
-mod mongo_integration_tests;
+pub(super) mod mongo_integration_tests;
 mod transaction;
 
 #[async_trait::async_trait]

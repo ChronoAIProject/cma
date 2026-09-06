@@ -1,12 +1,9 @@
-use futures_util::TryStreamExt;
-use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, SandboxAgentActivity};
 use mongodb::bson::doc;
 use mongodb::ClientSession;
 
 use super::super::agent_log::scan_complete_log_with_session;
-use super::super::sandbox_events::read_event;
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::transaction::ApplyError;
 
@@ -64,38 +61,6 @@ pub(super) async fn fence_live_agents(
         if locked.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
-    }
-    Ok(())
-}
-
-pub(super) async fn validate_events(
-    store: &MongoSandboxStore,
-    sandbox_id: &SandboxId,
-    last_seq: u64,
-    session: &mut ClientSession,
-) -> Result<(), ApplyError> {
-    let mut cursor = store
-        .sandbox_events
-        .find(doc! { "sandbox_id": sandbox_id.as_str() })
-        .sort(doc! { "seq": 1 })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    let mut sequence = 0_u64;
-    while let Some(document) = cursor
-        .stream(&mut *session)
-        .try_next()
-        .await
-        .map_err(ApplyError::Driver)?
-    {
-        let event = read_event(&document).map_err(ApplyError::Domain)?;
-        if sequence.checked_add(1) != Some(event.seq) || event.seq > last_seq {
-            return Err(ApplyError::Domain(SandboxStoreError::SequenceConflict));
-        }
-        sequence = event.seq;
-    }
-    if sequence != last_seq {
-        return Err(ApplyError::Domain(SandboxStoreError::SequenceConflict));
     }
     Ok(())
 }
