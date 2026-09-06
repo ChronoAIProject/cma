@@ -1,4 +1,4 @@
-/* global process, URL, document, innerWidth, console */
+/* global process, URL, document, innerWidth, console, window */
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -250,9 +250,18 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
       );
   };
   const assertLayout = async () => {
+    await page.waitForFunction(() => {
+      const frame = document.querySelector('.frame');
+      if (!frame) return true;
+      const tracks = window.getComputedStyle(frame).gridTemplateColumns.split(' ').map(parseFloat);
+      return Math.abs(tracks.reduce((sum, width) => sum + width, 0) - frame.clientWidth) < 1;
+    });
     const result = await page.evaluate(() => ({
       width: innerWidth,
       scroll: document.documentElement.scrollWidth,
+      clipped: [...document.querySelectorAll('.frame__center, .console__surface, .operator')]
+        .filter((element) => element.getBoundingClientRect().right > innerWidth + 1)
+        .map((element) => element.className),
       overflow: [
         ...document.querySelectorAll('.operator-record, .operator-field, .operator-settings'),
       ]
@@ -261,6 +270,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     }));
     assert(result.scroll <= result.width + 1, `viewport overflow ${JSON.stringify(result)}`);
     assert.deepEqual(result.overflow, []);
+    assert.deepEqual(result.clipped, []);
   };
   await page.setViewport({ width: 1440, height: 1000 });
   await page.goto(`${base}/operations`, { waitUntil: 'networkidle0' });
@@ -384,7 +394,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   assert.equal(writes[2].body, null);
   await page.setViewport({ width: 320, height: 740 });
   await assertLayout();
-  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  await page.evaluate(async () => {
+    const { setAppearance } = await import('/src/theme/appearance.ts');
+    setAppearance('dark');
+  });
   await page.screenshot({ path: join(output, 'compact-dark-sandboxes.png'), fullPage: true });
   const beforeRevocation = requests.length;
   capabilities = ['read_activity_log'];
