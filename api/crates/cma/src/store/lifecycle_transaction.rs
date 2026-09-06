@@ -150,6 +150,14 @@ async fn apply_lifecycle(
 ) -> Result<LifecycleReceipt, ApplyError> {
     let current = load_sandbox(store, &mutation.guard.sandbox_id, session).await?;
     let agents = load_sandbox_agents(store, &current.id, session).await?;
+    super::checkpoint_capture::validate_and_fence_begin(
+        store,
+        &current,
+        &mutation.sandbox,
+        &agents,
+        session,
+    )
+    .await?;
     let by_id = agents
         .iter()
         .map(|agent| (agent.id.clone(), agent))

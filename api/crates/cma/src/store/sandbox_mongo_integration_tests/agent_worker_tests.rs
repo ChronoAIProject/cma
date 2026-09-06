@@ -145,6 +145,10 @@ async fn agent_work_due_query_is_bounded_sorted_and_supports_lease_takeover() {
 
     let (client, name) = database("agent_work_due").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    store
+        .create_sandbox(sandbox("sbx_agent_worker"))
+        .await
+        .unwrap();
     let first = agent_for_worker("agt_a_due", NOW);
     let mut held = agent_for_worker("agt_b_held", BEFORE);
     held.work
@@ -222,7 +226,15 @@ async fn agent_work_due_query_is_bounded_sorted_and_supports_lease_takeover() {
 async fn agent_work_stale_holder_is_rejected_after_lease_takeover() {
     let (client, name) = database("agent_work_stale_holder").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    store
+        .create_sandbox(sandbox("sbx_agent_worker"))
+        .await
+        .unwrap();
     let agent = agent_for_worker("agt_stale_holder", NOW);
+    let (mut worktree, _) = worktree_and_agent(&agent.sandbox_id);
+    worktree.id = agent.worktree_id.clone();
+    worktree.agent_id = Some(agent.id.clone());
+    store.create_worktree(worktree).await.unwrap();
     store.create_agent(agent.clone()).await.unwrap();
     let stale = store
         .claim_agent_work(&agent.id, "worker-a", NOW.into(), MINUTE.into())

@@ -8,7 +8,8 @@ use mongodb::bson::doc;
 
 use super::agents::read_agent;
 use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
-use super::workspace_admission::ApplyError;
+use super::sandboxes::read_sandbox;
+use super::workspace_admission::{lock_sandbox, ApplyError};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 
 pub(super) async fn apply_removal(
@@ -34,6 +35,21 @@ pub(super) async fn apply_removal(
         WorkspaceStatus::Removing | WorkspaceStatus::Removed
     ) {
         return Ok(workspace);
+    }
+    lock_sandbox(store, workspace.sandbox_id.as_str(), session).await?;
+    let parent = store
+        .sandboxes
+        .find_one(doc! { "_id": workspace.sandbox_id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .as_ref()
+        .map(read_sandbox)
+        .transpose()
+        .map_err(ApplyError::Domain)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::SandboxNotReady))?;
+    if parent.owner != *owner || parent.lifecycle.checkpoint_capture.is_some() {
+        return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
 
     let expected = workspace.revision;

@@ -10,6 +10,7 @@ use layer2_core::sandbox::store::{
 };
 use mongodb::bson::{doc, Bson};
 
+use super::child_writer_claims::{persist, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS};
 
 #[async_trait::async_trait]
@@ -157,8 +158,15 @@ impl AgentWorkerStore for MongoSandboxStore {
                 .claim(holder.to_string(), &now, lease_expires_at.clone())
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-            match self.save_agent(expected, agent.clone()).await {
-                Ok(()) => return Ok(Some(agent)),
+            match persist(
+                self,
+                expected,
+                ChildWriterClaim::Agent(Box::new(agent.clone())),
+            )
+            .await
+            {
+                Ok(true) => return Ok(Some(agent)),
+                Ok(false) => return Ok(None),
                 Err(SandboxStoreError::Conflict) => tokio::task::yield_now().await,
                 Err(error) => return Err(error),
             }

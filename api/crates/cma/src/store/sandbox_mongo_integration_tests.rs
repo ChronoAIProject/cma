@@ -413,7 +413,8 @@ async fn claimed_agent_work_fixture(
     store: &MongoSandboxStore,
     suffix: &str,
 ) -> (Sandbox, Worktree, Agent) {
-    let parent = sandbox(&format!("sbx_agent_work_{suffix}"));
+    let mut parent = sandbox(&format!("sbx_agent_work_{suffix}"));
+    parent.name = suffix.into();
     store.create_sandbox(parent.clone()).await.unwrap();
     let workspace = ready_workspace(
         &parent,
@@ -614,6 +615,7 @@ fn advance_claimed_agent(claimed: &Agent) -> Agent {
 mod agent_title_tests;
 mod agent_transaction_tests;
 mod agent_worker_tests;
+mod checkpoint_capture_tests;
 mod launch_command_tests;
 mod profile_transaction_tests;
 mod sandbox_lifecycle_tests;

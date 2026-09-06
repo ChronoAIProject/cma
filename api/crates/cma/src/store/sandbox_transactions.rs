@@ -168,6 +168,9 @@ async fn apply_transaction(
                 return Err(ApplyError::Domain(SandboxStoreError::Conflict));
             }
             current
+                .validate_checkpoint_capture_successor(sandbox)
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+            current
                 .validate_runtime_generation_successor(sandbox)
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             let previous = aggregate
