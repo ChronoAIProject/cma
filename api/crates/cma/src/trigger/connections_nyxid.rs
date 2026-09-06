@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt as _;
 use layer2_core::trigger_domain::{
     BrokerHandoff, BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError,
-    ServiceRequirement, ServiceRequirementState,
+    ServiceConnectionMetadata, ServiceRequirement, ServiceRequirementState,
 };
 use layer2_core::{rfc3339_at, seconds_from_rfc3339, ServiceId, StoreError, SubjectId};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
@@ -14,6 +14,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::auth::{persistence::SecretValue, AuthState};
 
+mod catalog;
 mod composition;
 
 #[allow(
@@ -184,6 +185,14 @@ impl NyxidServiceConnectionBroker {
 
 #[async_trait]
 impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
+    async fn describe_services(
+        &self,
+        owner: &SubjectId,
+        services: &[ServiceId],
+    ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        self.catalog_metadata(owner, services).await
+    }
+
     async fn requirements(
         &self,
         owner: &SubjectId,

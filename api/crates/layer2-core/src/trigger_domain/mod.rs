@@ -68,8 +68,8 @@ pub use reference::{
     ResolvedTriggerProfiles, TriggerProfileReader, TriggerProfileResolver, TriggerReferenceError,
 };
 pub use requirements::{
-    RequirementsSnapshot, ReviewNeed, ReviewRequirements, ServiceRequirement,
-    ServiceRequirementState,
+    RequirementsSnapshot, ReviewNeed, ReviewRequirements, ServiceConnectionMetadata,
+    ServiceConnectionMode, ServiceRequirement, ServiceRequirementState,
 };
 pub use resolution::{
     ExistingAgentChoice, LaunchContextReader, LaunchResolution, LaunchResolutionError,

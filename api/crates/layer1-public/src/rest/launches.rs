@@ -188,13 +188,15 @@ pub(super) async fn requirements(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<Json<RequirementsSnapshotView>, TriggerProblem> {
-    state
-        .launches
-        .requirements(&caller, &LaunchId(id))
-        .await
-        .map(RequirementsSnapshotView::from)
-        .map(Json)
-        .map_err(Into::into)
+    let id = LaunchId(id);
+    let snapshot = state.launches.requirements(&caller, &id).await?;
+    let metadata = state
+        .connections
+        .describe_launch_services(&caller, &id)
+        .await?;
+    Ok(Json(
+        RequirementsSnapshotView::from(snapshot).with_connection_metadata(metadata),
+    ))
 }
 
 #[utoipa::path(post, path = "/api/v1/launches/{id}/start", tag = "trigger launches", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = StartLaunchRequest, responses((status = 202, body = LaunchView), (status = 409, body = crate::rest::ProblemDocument)))]

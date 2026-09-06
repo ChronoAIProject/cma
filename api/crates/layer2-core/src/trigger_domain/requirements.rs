@@ -22,6 +22,44 @@ pub struct ServiceRequirement {
     pub state: ServiceRequirementState,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceConnectionMode {
+    Hosted,
+    Manual,
+    Unknown,
+}
+
+/// Current owner-visible connection guidance, never part of a durable snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceConnectionMetadata {
+    pub service: ServiceId,
+    pub display_name: Option<String>,
+    pub connection_mode: ServiceConnectionMode,
+    pub setup_url: Option<String>,
+}
+
+impl ServiceConnectionMetadata {
+    pub(crate) fn is_valid(&self) -> bool {
+        if self.display_name.as_ref().is_some_and(|name| {
+            name.trim().is_empty() || name.len() > 256 || name.chars().any(char::is_control)
+        }) {
+            return false;
+        }
+        self.setup_url.as_ref().is_none_or(|value| {
+            self.connection_mode == ServiceConnectionMode::Manual
+                && value.len() <= 2_048
+                && url::Url::parse(value).is_ok_and(|url| {
+                    url.scheme() == "https"
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.query().is_none()
+                        && url.fragment().is_none()
+                })
+        })
+    }
+}
+
 impl ServiceRequirement {
     pub const fn needs_connection(&self) -> bool {
         !matches!(self.state, ServiceRequirementState::Satisfied)

@@ -40,9 +40,33 @@ impl From<domain::LaunchResolution> for LaunchResolutionView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceConnectionModeValue {
+    Hosted,
+    Manual,
+    Unknown,
+}
+
+impl From<domain::ServiceConnectionMode> for ServiceConnectionModeValue {
+    fn from(value: domain::ServiceConnectionMode) -> Self {
+        match value {
+            domain::ServiceConnectionMode::Hosted => Self::Hosted,
+            domain::ServiceConnectionMode::Manual => Self::Manual,
+            domain::ServiceConnectionMode::Unknown => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ServiceRequirementView {
     pub service: String,
     pub state: ServiceRequirementStateValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_mode: Option<ServiceConnectionModeValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_url: Option<String>,
 }
 
 impl From<domain::ServiceRequirement> for ServiceRequirementView {
@@ -50,7 +74,30 @@ impl From<domain::ServiceRequirement> for ServiceRequirementView {
         Self {
             service: value.service.to_string(),
             state: value.state.into(),
+            display_name: None,
+            connection_mode: None,
+            setup_url: None,
         }
+    }
+}
+
+impl RequirementsSnapshotView {
+    pub(crate) fn with_connection_metadata(
+        mut self,
+        metadata: Vec<domain::ServiceConnectionMetadata>,
+    ) -> Self {
+        for description in metadata {
+            if let Some(requirement) = self
+                .services
+                .iter_mut()
+                .find(|item| item.service == description.service.as_str())
+            {
+                requirement.display_name = description.display_name;
+                requirement.connection_mode = Some(description.connection_mode.into());
+                requirement.setup_url = description.setup_url;
+            }
+        }
+        self
     }
 }
 

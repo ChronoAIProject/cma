@@ -29,8 +29,9 @@ use layer2_core::sandbox::{
 use layer2_core::trigger_domain::{
     BrokerHandoff, BrokerHandoffState, InMemoryLaunchStore, InMemoryTriggerStore,
     LaunchContextReader, LaunchPolicy, LaunchResolutionError, LaunchService,
-    ServiceConnectionBroker, ServiceConnectionError, ServiceConnectionService, ServiceRequirement,
-    ServiceRequirementState, TriggerProfileResolver, TriggerService,
+    ServiceConnectionBroker, ServiceConnectionError, ServiceConnectionMetadata,
+    ServiceConnectionService, ServiceRequirement, ServiceRequirementState, TriggerProfileResolver,
+    TriggerService,
 };
 use layer2_core::{
     rfc3339_at, AgentId, AgentProfileId, Authorization, Capability, DirectoryQuery, OperationClaim,
@@ -165,6 +166,8 @@ struct BrokerState {
     requirement: ServiceRequirementState,
     create_calls: usize,
     observed: BrokerHandoffState,
+    metadata: Vec<ServiceConnectionMetadata>,
+    metadata_reads: usize,
 }
 
 impl Default for BrokerState {
@@ -173,6 +176,8 @@ impl Default for BrokerState {
             requirement: ServiceRequirementState::Missing,
             create_calls: 0,
             observed: BrokerHandoffState::Pending,
+            metadata: Vec::new(),
+            metadata_reads: 0,
         }
     }
 }
@@ -183,6 +188,14 @@ pub struct StubBroker {
 }
 
 impl StubBroker {
+    pub fn set_metadata(&self, metadata: Vec<ServiceConnectionMetadata>) {
+        self.state.lock().unwrap().metadata = metadata;
+    }
+
+    pub fn metadata_reads(&self) -> usize {
+        self.state.lock().unwrap().metadata_reads
+    }
+
     pub fn set_requirement(&self, state: ServiceRequirementState) {
         self.state.lock().unwrap().requirement = state;
     }
@@ -198,6 +211,16 @@ impl StubBroker {
 
 #[async_trait]
 impl ServiceConnectionBroker for StubBroker {
+    async fn describe_services(
+        &self,
+        _owner: &SubjectId,
+        _services: &[ServiceId],
+    ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        let mut state = self.state.lock().unwrap();
+        state.metadata_reads += 1;
+        Ok(state.metadata.clone())
+    }
+
     async fn requirements(
         &self,
         _owner: &SubjectId,

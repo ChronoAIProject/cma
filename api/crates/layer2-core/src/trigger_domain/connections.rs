@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{seconds_from_rfc3339, LaunchId, ServiceHandoffId, ServiceId, SubjectId};
 
-use super::{ServiceRequirement, TriggerError};
+use super::{ServiceConnectionMetadata, ServiceRequirement, TriggerError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +78,15 @@ pub enum ServiceConnectionError {
 
 #[async_trait]
 pub trait ServiceConnectionBroker: Send + Sync {
+    /// Optional current catalog guidance. Absence must never imply hosted support.
+    async fn describe_services(
+        &self,
+        _owner: &SubjectId,
+        _services: &[ServiceId],
+    ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        Ok(Vec::new())
+    }
+
     async fn requirements(
         &self,
         owner: &SubjectId,

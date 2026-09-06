@@ -176,6 +176,7 @@ use super::trigger_openapi_shapes::*;
         ResolvedResourceView,
         LaunchResolutionView,
         ServiceRequirementView,
+        ServiceConnectionModeValue,
         RequirementsSnapshotView,
         ReviewNeedView,
         ReviewRequirementsView,

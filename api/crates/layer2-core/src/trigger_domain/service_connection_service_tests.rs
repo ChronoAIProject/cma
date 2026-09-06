@@ -20,6 +20,8 @@ struct BrokerState {
     create_calls: usize,
     state_calls: usize,
     observed: Option<BrokerHandoffState>,
+    descriptions: Vec<ServiceConnectionMetadata>,
+    description_calls: Vec<(SubjectId, Vec<ServiceId>)>,
 }
 
 #[derive(Default)]
@@ -40,6 +42,18 @@ impl StubBroker {
 
 #[async_trait]
 impl ServiceConnectionBroker for StubBroker {
+    async fn describe_services(
+        &self,
+        owner: &SubjectId,
+        services: &[ServiceId],
+    ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        let mut state = self.state.lock().unwrap();
+        state
+            .description_calls
+            .push((owner.clone(), services.to_vec()));
+        Ok(state.descriptions.clone())
+    }
+
     async fn requirements(
         &self,
         _owner: &SubjectId,
@@ -298,4 +312,100 @@ async fn locally_expired_handoffs_do_not_call_the_provider() {
         .unwrap();
     assert_eq!(refreshed.state, BrokerHandoffState::Expired);
     assert_eq!(fixture.broker.calls(), (0, 0));
+}
+
+fn metadata() -> ServiceConnectionMetadata {
+    ServiceConnectionMetadata {
+        service: ServiceId::new("github"),
+        display_name: Some("GitHub".into()),
+        connection_mode: ServiceConnectionMode::Hosted,
+        setup_url: None,
+    }
+}
+
+#[tokio::test]
+async fn metadata_reads_are_owner_scoped_and_never_change_launch_history() {
+    let fixture = fixture().await;
+    fixture.broker.state.lock().unwrap().descriptions = vec![metadata()];
+    let foreign = Caller::new(SubjectId::new("other"), Authorization::none());
+    for (caller, id) in [
+        (&foreign, fixture.launch.id.clone()),
+        (&fixture.caller, crate::LaunchId("lch_absent".into())),
+    ] {
+        assert_eq!(
+            fixture.service.describe_launch_services(caller, &id).await,
+            Err(ServiceConnectionServiceError::NotFound)
+        );
+    }
+    assert!(fixture
+        .broker
+        .state
+        .lock()
+        .unwrap()
+        .description_calls
+        .is_empty());
+    assert_eq!(
+        fixture
+            .service
+            .describe_launch_services(&fixture.caller, &fixture.launch.id)
+            .await
+            .unwrap(),
+        vec![metadata()]
+    );
+    assert_eq!(
+        fixture.broker.state.lock().unwrap().description_calls,
+        vec![(
+            fixture.caller.subject.clone(),
+            vec![ServiceId::new("github")]
+        )]
+    );
+    assert_eq!(
+        fixture
+            .store
+            .launch(&fixture.launch.id, &fixture.caller.subject)
+            .await
+            .unwrap()
+            .unwrap(),
+        fixture.launch
+    );
+}
+
+#[tokio::test]
+async fn metadata_rejects_foreign_duplicate_and_unsafe_broker_rows() {
+    let fixture = fixture().await;
+    let mut foreign = metadata();
+    foreign.service = ServiceId::new("other");
+    let mut unsafe_url = metadata();
+    unsafe_url.connection_mode = ServiceConnectionMode::Manual;
+    unsafe_url.setup_url = Some("https://user:credential@nyx.example/services".into());
+    let mut unexpected_url = metadata();
+    unexpected_url.setup_url = Some("https://nyx.example/services".into());
+    let mut long_name = metadata();
+    long_name.display_name = Some("x".repeat(257));
+    let mut control_name = metadata();
+    control_name.display_name = Some("GitHub\nprivate".into());
+    for rows in [
+        vec![foreign],
+        vec![metadata(), metadata()],
+        vec![unsafe_url],
+        vec![unexpected_url],
+        vec![long_name],
+        vec![control_name],
+    ] {
+        fixture.broker.state.lock().unwrap().descriptions = rows;
+        assert!(matches!(
+            fixture
+                .service
+                .describe_launch_services(&fixture.caller, &fixture.launch.id)
+                .await,
+            Err(ServiceConnectionServiceError::Corrupt(_))
+        ));
+    }
+    fixture.broker.state.lock().unwrap().descriptions.clear();
+    assert!(fixture
+        .service
+        .describe_launch_services(&fixture.caller, &fixture.launch.id)
+        .await
+        .unwrap()
+        .is_empty());
 }
