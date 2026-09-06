@@ -25,7 +25,7 @@ const INITIAL: ProfileDraft<AgentProfileContent> = {
 
 export interface AgentProfileEditorProps {
   readonly client: ProfileEditorClient<AgentProfileContent>;
-  readonly catalog: SkillCatalogClient;
+  readonly catalog?: SkillCatalogClient;
   readonly profileId?: string;
   readonly onSaved?: (profile: ProfileDocument<AgentProfileContent>) => void;
 }

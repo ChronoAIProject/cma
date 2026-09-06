@@ -20,6 +20,61 @@ export interface AgentProfileContent {
   readonly systemPrompt: string;
 }
 
+export type WorkspaceLocation =
+  | { readonly type: 'git_repository'; readonly url: string; readonly reference?: string }
+  | { readonly type: 'directory'; readonly name: string };
+
+export interface WorkspaceProfileContent {
+  readonly location: WorkspaceLocation;
+  readonly name: string;
+  readonly setupCommands: readonly string[];
+  readonly agentProfiles: readonly ProfileReference[];
+}
+
+export interface SandboxProfileContent {
+  readonly cpuMillis: number;
+  readonly memoryMib: number;
+  readonly nyxidServices: readonly string[];
+  readonly agentProvider: 'codex';
+  readonly modelAccess: 'chronoai_managed' | 'own_credentials';
+  readonly maxWorkspaces: number;
+  readonly maxAgentsPerWorkspace: number;
+  readonly workspaceProfiles: readonly ProfileReference[];
+  readonly softwareInstallCommands: readonly string[];
+  readonly environmentVariables: readonly { readonly name: string; readonly value: string }[];
+}
+
+export interface ProfileContents {
+  readonly agent: AgentProfileContent;
+  readonly workspace: WorkspaceProfileContent;
+  readonly sandbox: SandboxProfileContent;
+}
+
+export interface CapacityBounds {
+  readonly minCpuMillis: number;
+  readonly maxCpuMillis: number;
+  readonly minMemoryMib: number;
+  readonly maxMemoryMib: number;
+}
+
+/** Optional public authoring capabilities; no first-party-only transport is implied. */
+export interface RepositoryResolver {
+  resolveRepository(
+    input: Extract<WorkspaceLocation, { type: 'git_repository' }>,
+    options?: ReadOptions,
+  ): Promise<{ readonly url: string; readonly reference?: string }>;
+}
+
+export interface ServiceCatalogClient {
+  listServices(options?: ReadOptions): Promise<readonly ServiceCatalogEntry[]>;
+}
+
+export interface ServiceCatalogEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+}
+
 export interface ProfileRevisionSummary {
   readonly revision: number;
   readonly digest: string;

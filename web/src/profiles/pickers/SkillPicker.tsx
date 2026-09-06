@@ -16,7 +16,7 @@ export function SkillPicker({
   onChange,
   disabled,
 }: {
-  readonly catalog: SkillCatalogClient;
+  readonly catalog?: SkillCatalogClient;
   readonly value: readonly SkillReference[];
   readonly onChange: (skills: readonly SkillReference[]) => void;
   readonly disabled: boolean;
@@ -24,8 +24,9 @@ export function SkillPicker({
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState<string>();
   const [reload, setReload] = useState(0);
-  const [state, setState] = useState<SearchState>({ items: [], loading: true });
+  const [state, setState] = useState<SearchState>({ items: [], loading: catalog !== undefined });
   useEffect(() => {
+    if (catalog === undefined) return;
     const abort = new AbortController();
     const timer = setTimeout(() => {
       void catalog
@@ -74,7 +75,7 @@ export function SkillPicker({
         icon={<IconSearchOutline16 />}
         placeholder="Search Ornn skills"
         value={query}
-        disabled={disabled}
+        disabled={disabled || catalog === undefined}
         onChange={(event) => {
           setQuery(event.target.value);
           setCursor(undefined);
@@ -84,6 +85,7 @@ export function SkillPicker({
       <p id="profile-skill-search-help" className="profile-field__help">
         Search Ornn, then choose the skills and versions this agent should use.
       </p>
+      {catalog === undefined ? <p role="status">The skill catalogue is unavailable.</p> : null}
       {value.length === 0 ? (
         <p className="profile-field__help">No skills selected.</p>
       ) : (
@@ -177,7 +179,7 @@ export function SkillPicker({
             Try again
           </Button>
         </div>
-      ) : !state.loading && state.items.length === 0 ? (
+      ) : catalog !== undefined && !state.loading && state.items.length === 0 ? (
         <p>No matching skills</p>
       ) : null}
       {state.next === undefined ? null : (
