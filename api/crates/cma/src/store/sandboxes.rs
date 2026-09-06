@@ -93,6 +93,14 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        IndexModel::builder()
+            .keys(doc! { "status": 1, "_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_maintenance_page".to_string())
+                    .build(),
+            )
+            .build(),
     ]
 }
 
