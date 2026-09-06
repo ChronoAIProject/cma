@@ -99,6 +99,9 @@ impl SandboxStore for InMemorySandboxStore {
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
+                || current
+                    .validate_checkpoint_capture_successor(&sandbox)
+                    .is_err()
                 || current.origin != sandbox.origin
                 || current
                     .validate_runtime_generation_successor(&sandbox)
@@ -363,6 +366,9 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
                     current.owner != sandbox.owner
+                        || current
+                            .validate_checkpoint_capture_successor(&sandbox)
+                            .is_err()
                         || current.origin != sandbox.origin
                         || current
                             .validate_runtime_generation_successor(&sandbox)

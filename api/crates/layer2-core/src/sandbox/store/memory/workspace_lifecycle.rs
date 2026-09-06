@@ -13,7 +13,9 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
             .sandboxes
             .get(&workspace.sandbox_id)
             .ok_or(SandboxStoreError::SandboxNotReady)?;
-        if sandbox.status != admission.kind.allowed_status() {
+        if sandbox.status != admission.kind.allowed_status()
+            || sandbox.lifecycle.checkpoint_capture.is_some()
+        {
             return Err(SandboxStoreError::SandboxNotReady);
         }
         workspace
@@ -91,6 +93,13 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
         ) {
             return Ok(current);
         }
+        let parent = state
+            .sandboxes
+            .get(&current.sandbox_id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        if parent.lifecycle.checkpoint_capture.is_some() {
+            return Err(SandboxStoreError::Conflict);
+        }
         if state
             .agents
             .values()
@@ -140,7 +149,11 @@ impl WorkspaceWorkerStore for InMemorySandboxStore {
         let Some(current) = state.workspaces.get(id) else {
             return Ok(None);
         };
-        if !current.work.is_due(&now) {
+        let parent = state
+            .sandboxes
+            .get(&current.sandbox_id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        if !current.work.is_due(&now) || parent.lifecycle.checkpoint_capture.is_some() {
             return Ok(None);
         }
         let mut claimed = current.clone();

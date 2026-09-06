@@ -14,6 +14,8 @@ mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod checkpoint;
+mod checkpoint_capture;
+mod checkpoint_writer_recovery;
 mod conversation;
 mod conversation_fold;
 mod conversation_fold_support;
@@ -89,6 +91,7 @@ pub use checkpoint::{
     SandboxCheckpointHistory, SandboxCheckpointPublication, SandboxCheckpointRef,
     MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES, SANDBOX_CHECKPOINT_INTERVAL_SECONDS,
 };
+pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
     MAX_DURABLE_AGENT_MESSAGE_BYTES,

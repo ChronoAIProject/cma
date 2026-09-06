@@ -118,7 +118,7 @@ impl WorkspaceService {
     ) -> Result<Workspace, WorkspaceServiceError> {
         require(caller)?;
         let sandbox = self.owned_sandbox(caller, sandbox_id).await?;
-        if sandbox.status != super::SandboxStatus::Active {
+        if !sandbox.accepts_agent_and_workspace_admission() {
             return Err(WorkspaceServiceError::SandboxNotReady);
         }
         let (owner, revision) = self
@@ -163,7 +163,7 @@ impl WorkspaceService {
         {
             return Ok(existing);
         }
-        if sandbox.status != super::SandboxStatus::Active {
+        if !sandbox.accepts_agent_and_workspace_admission() {
             return Err(WorkspaceServiceError::SandboxNotReady);
         }
         let (owner, revision) = self.read_frozen_revision(&request.profile).await?;

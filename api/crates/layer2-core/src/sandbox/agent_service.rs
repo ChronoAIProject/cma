@@ -199,7 +199,8 @@ impl AgentService {
             return Err(AgentServiceError::WorkspaceNotReady);
         }
         let sandbox = self.parent_sandbox(caller, &workspace).await?;
-        if sandbox.status != SandboxStatus::Active {
+        if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.checkpoint_capture.is_some()
+        {
             return Err(AgentServiceError::SandboxNotReady);
         }
         let revision = if frozen_profile {

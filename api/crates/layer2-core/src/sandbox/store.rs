@@ -51,6 +51,7 @@ mod lifecycle_command;
 pub use lifecycle_command::*;
 mod launch_command;
 pub use launch_command::*;
+pub mod checkpoint_capture;
 mod lifecycle_execution;
 pub use lifecycle_execution::*;
 mod maintenance;

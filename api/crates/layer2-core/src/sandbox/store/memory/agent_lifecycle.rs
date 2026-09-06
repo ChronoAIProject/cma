@@ -71,7 +71,11 @@ impl AgentWorkerStore for InMemorySandboxStore {
         let Some(current) = state.agents.get(id) else {
             return Ok(None);
         };
-        if !current.work.is_due(&now) {
+        let parent = state
+            .sandboxes
+            .get(&current.sandbox_id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        if !current.work.is_due(&now) || parent.lifecycle.checkpoint_capture.is_some() {
             return Ok(None);
         }
         let mut claimed = current.clone();

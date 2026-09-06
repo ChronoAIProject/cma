@@ -83,6 +83,7 @@ impl Sandbox {
         }
         self.lifecycle.validate(self)?;
         self.validate_runtime_generation()?;
+        self.validate_checkpoint_capture()?;
         if self.status == SandboxStatus::Paused && self.runtime.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.runtime"));
         }
@@ -121,6 +122,7 @@ impl Sandbox {
 
     pub fn begin_retirement(&mut self, at: String) -> Result<(), SandboxModelError> {
         let mut next = self.clone();
+        next.preserve_lifecycle_checkpoint_debt(at.clone())?;
         next.lifecycle.cancel_operation();
         next.transition(SandboxStatus::Retiring, at.clone(), None)?;
         next.work.schedule(SandboxWorkStep::StopAgents, at);
@@ -134,6 +136,7 @@ impl Sandbox {
         notice: Option<String>,
     ) -> Result<(), SandboxModelError> {
         if self.status != SandboxStatus::Active
+            || self.lifecycle.checkpoint_capture.is_some()
             || self.work.lease.is_some()
             || !matches!(
                 self.work.step,
@@ -178,6 +181,7 @@ impl Sandbox {
         at: String,
     ) -> Result<(), SandboxModelError> {
         if self.status != SandboxStatus::Active
+            || self.lifecycle.checkpoint_capture.is_some()
             || self.work.lease.is_some()
             || !matches!(
                 self.work.step,

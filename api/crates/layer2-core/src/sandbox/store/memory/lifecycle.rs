@@ -114,7 +114,7 @@ impl SandboxWorkerStore for InMemorySandboxStore {
         let Some(current) = state.sandboxes.get(id) else {
             return Ok(None);
         };
-        if !current.work.is_due(&now) {
+        if !current.work.is_due(&now) || current.lifecycle.checkpoint_capture.is_some() {
             return Ok(None);
         }
         let mut claimed = current.clone();
