@@ -12,36 +12,31 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 
 ## 1. What the frontend is
 
-**Two planes onto one session, and the chrome needed to run several of them.**
+**One Agent conversation inside a visible Sandbox hierarchy.**
 
-| Plane            | What it is                                                                                                               |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **terminal**     | The kernel's own interface, entire and unmediated. The raw seat at the agent.                                            |
-| **conversation** | The structured seat: approvals as buttons, tool calls as structure, usage as a number, history that survives the screen. |
+| View | What it is |
+|---|---|
+| Home | The owner's Sandbox -> Workspace -> Agent tree and creation state appropriate to their capabilities. |
+| Sandbox | Runtime state, pinned profile facts, Workspaces and recorded preparation. |
+| Agent | One conversation in one Worktree, with approvals, tools, usage and durable history. |
+| Profiles | Draft and published Sandbox, Workspace and Agent Profiles. |
+| Marketplace | Public profile discovery, full revision inspection, use and fork. |
+| CMA Trigger | Signed-in authoring, publication, placements and integration snippets. |
+| Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
+| Operations | Capability-gated inventory, Profiles, activity and settings. |
+| Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
 
-| View           | What it is                                                                                |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| **sessions**   | The default, and where the work happens. A list, one surface, and what is known about it. |
-| **trigger**    | A public Trigger preview and, after sign-in, the contributor's immutable launch review.   |
-| **launch**     | One durable Launch: automation progress, repository state, and its contribution review.   |
-| **publisher**  | Authoring and publishing immutable GitHub Trigger revisions. Available after sign-in.     |
-| **operations** | Running the service. Drawn only for a caller holding an operator capability.              |
-| **developer**  | Reading the public SDK guides bundled with this build. Available to every signed-in user. |
+Each view has a canonical route. Refresh and browser history restore it without
+admitting work. The terminal plane, separate Chat model, session list, canvas
+arrangement, pricing and contribution-specific workflow are retired.
 
-Sessions has two **arrangements** of the same list — `list` and `canvas`. A plane is not a view and an
-arrangement is not a view: both change what the middle column draws and nothing else. There are six
-view families and one page frame. Trigger and Launch views are contextual deep links rather than
-permanent sidebar destinations; §13b defines their complete route set and return behavior.
-
-The four binding consequences survive this redesign untouched:
-
-- **The surface owns whatever width is left.** It is the last to give up space: the details drawer
-  closes first, then the rail collapses, then the rail leaves the layout.
-- **One surface, many drivers.** A visual difference between the introduction and a live session that
-  is not a difference in _content_ is a defect.
-- **Fidelity beats decoration inside the viewport.** Agent-emitted output is rendered faithfully;
-  styling applies to the frame.
-- **The conversation surface may call no route a third-party client could not call.**
+- The surface owns the remaining width. Details concede before the tree;
+  narrow layouts keep the primary conversation or task usable.
+- The first-party client uses public REST and AG-UI, never private routes.
+- Agent output and user-authored commands remain intact; styling applies to
+  their reading frame.
+- Progress comes from public records and events, not a local timer. Navigation
+  and an OAuth callback never imply consent to start.
 
 ---
 
@@ -192,6 +187,17 @@ specific name above survives.
 
 ### What the palette means
 
+Publisher badge previews must show both appearances regardless of the active
+application theme. These four aliases therefore have the same values in both
+themes; components still never read static tokens directly:
+
+| Alias | Both themes | Existing source |
+|---|---|---|
+| `--dsw-alias-preview-light-bg` | `#FFFBF2` | `paper 0` |
+| `--dsw-alias-preview-light-label` | `#15283C` | `ink 950` |
+| `--dsw-alias-preview-dark-bg` | `#0C0D0A` | `coal 900` |
+| `--dsw-alias-preview-dark-label` | `#EDF2E2` | `coal 50` |
+
 - **Backgrounds.** Inkwell reverses the old light-theme rule: cards are visibly lighter than the
   cream ground, while grooves are darker. Lumen climbs from near-black through green-shifted coal.
 - **Primary actions use the accent.** `brand-primary` and `button-primary-fill` are ink blue in
@@ -243,7 +249,7 @@ resolves the canonical value before first paint — resolving `system` through
 `data-ds-dark-theme` on `body`. Without it the first paint is the wrong theme and the correction is
 visible.
 
-While the preference is `system`, a `change` listener re-applies it, so a session left open across
+While the preference is `system`, a `change` listener re-applies it, so an Agent conversation left open across
 sunset follows the machine.
 
 ---
@@ -263,10 +269,8 @@ variable release, so weights 400, 500, and 600 are separate static WOFF2 files. 
 is stored under `web/src/assets/fonts/` with its licence beside it, and uses `font-display: swap`.
 There is no font `@import`, Google Fonts link, or third-party request. The exact file list is tested.
 
-The terminal is the exception to theme switching: its JavaScript-side font stack remains the current
-terminal stack in both themes because a canvas cell's metrics must not change when appearance does.
-It is also the only stack permitted a final bare `monospace` fallback. Everywhere else, bare
-`monospace` is forbidden because Windows may resolve it to a CJK serif.
+Bare `monospace` is forbidden because Windows may resolve it to a CJK serif.
+There is no terminal-specific font stack in this release.
 
 The ramp is declared as **composite `font` shorthands** rather than loose size and leading tokens:
 one name carries weight, size and line-height together, so a step cannot be half-applied.
@@ -365,8 +369,8 @@ Syntax colours are first-party and palette-consistent, with nine roles per theme
 | `--shiki-token-link`              | `#0A4C88`       | `#AEE734`    |
 
 These roles remain dormant in conversation rendering. **Agent content still takes no colour.** The
-palette exists for the code primitive, but the chat surface does not syntax-highlight what the agent
-wrote. Code-block and terminal chrome re-colour through aliases; content stays faithful.
+palette exists for the code primitive, but the Agent surface does not syntax-highlight what the Agent
+wrote. Code-block chrome re-colours through aliases; content stays faithful.
 
 Code blocks take a 12px radius on their own ground, a sticky banner carrying the language and a copy
 control, and a body at 13/22 that wraps rather than clipping.
@@ -385,8 +389,8 @@ No icon font, no sprite sheet, no runtime fetch.
 ## 9. The frame
 
 A full-viewport three-column grid — **sidebar, centre, details** — with no app bar, no status band,
-and no footer. A small client-side router owns only the canonical routes in §13b plus the existing
-signed-in utility views. Routing changes which view the centre and details columns project; it never
+and no footer. A small client-side router owns the canonical hierarchy, Profiles,
+Marketplace, publisher, public Trigger, Operations and Developer routes. Routing changes which view the centre and details columns project; it never
 starts work, confirms an action, retries a write, or treats a browser history event as authority.
 
 | Column  | Min | Max | Default        | Collapsed  |
@@ -413,88 +417,56 @@ The grid transitions its tracks, except while dragging, where the transition wou
 
 ## 10. The sidebar
 
-Brand row, then a browser region, then a foot.
+The brand row, browser tree, and account foot retain the established shell
+dimensions. The mark and wordmark are the New agent shortcut when creation is
+available. Collapsing keeps the mark and the existing panel control; the browser
+region alone scrolls.
 
-The brand row carries the mark and the wordmark and **is the new-session shortcut**. Collapsed, the
-mark stays and a panel glyph replaces it on hover. The collapse animates: content fades out at its
-frozen width, rail icons enter from the side; expanding is slower than collapsing, because expanding
-is a decision and collapsing is a dismissal.
+The tree is Sandbox -> Workspace -> Agent. Worktrees are facts of the Agent,
+not another navigable tree level. A Sandbox row shows name, status and pause
+notice; a Workspace row shows name and a repository/folder glyph; an Agent row
+shows title, state and last activity. Rows retain 32px minimum height and 8px
+radius, with consistent status/icon slots. Expansion state is scoped to the
+signed-in viewer and survives route changes.
 
-The browser region is a 36px header — a label and a view-options control at the row's far edge — over
-a list that is **the only thing that scrolls**. Rows are 32px on an 8px radius: a status slot, a
-title, a time on the right that gives way to an actions ellipsis on hover. Selected and hovered share
-one fill; a list where selection and hover differ makes the pointer look like a selection.
+Expansion and navigation are separate keyboard-operable commands, with named
+`aria-expanded` state. A collapsed group retains its count. A paused Sandbox
+dims its Agent rows and names Paused; revive has an explicit moving state that
+becomes a still glyph under reduced motion. Loading and failed child reads never
+masquerade as empty groups.
 
-**The list is grouped by state, not filtered.** Three groups — **Active**, **Paused**, **Terminated**
-— each collapsible, with Active open and the other two closed. A rail carrying forty finished
-sessions buries the two somebody is working in, and the two they are working in are why they opened
-it. There is no filter beside this: choosing "stopped" and collapsing everything but Paused are the
-same gesture done twice, and carrying both let the rail hold two states that disagreed — a group
-expanded inside a filter that excluded it. The order control stays and applies across the whole rail,
-sorted once and then split, so three groups cannot disagree about it.
+Menus expose only public operations: Sandbox New workspace/Pause/Delete,
+Workspace New agent/Remove, Agent Stop/Delete. Destructive operations use §12.4.
+Visitors see their own hierarchy but no creation controls. Capabilities are read
+from the authenticated public snapshot, not inferred from a role label.
 
-A group's header is the control; a separate chevron would be a second target for one action. It
-carries the count, so a closed group still says how much is inside it, and it is **named for a screen
-reader rather than left to its label and count sitting beside each other** — they concatenate, and it
-read as "Paused1". An empty group draws its header with a zero rather than vanishing: a group that
-disappears is one somebody looks for, and the zero is the answer to "where did it go".
+The account row is the only foot content: avatar, name, and email. Long identity
+lines truncate within the fixed seat. Its upward-opening menu contains Profiles,
+Marketplace, CMA Trigger, Developer, capability-gated Operations, appearance,
+and sign out. Profiles, Marketplace, publisher, Operations, and Developer use
+their canonical routes and work with refresh and browser history.
 
-The groups scroll as one column. Three scrollports inside a 280px rail is three thumbs and three
-places to be lost.
-
-When the deployment declares Chat enabled, the create zone begins with a **Chat / Agent surface
-switch** above the primary key. It is a two-column segmented control with a 2px inset; the selected
-segment uses the active sidebar fill and weight 600. Chat is the left segment and Agent the right.
-This is explicitly not the plane switch forbidden by §11: it replaces one collection and creation
-flow with another, and never moves or rotates an existing session. When Chat is not declared, the
-control is absent and the Agent create zone is pixel-identical to the one described above.
-
-The primary key follows the selected surface. Agent retains **New session** and its existing dialog.
-Chat reads **New Chat** with the same create glyph and creates directly, without a profile picker or
-price step; deployment policy already owns every choice. The brand-row create shortcut follows the
-same selected surface.
-
-The Chat browser is a thread rail. It has only **Active** and **Paused** groups; Paused means the
-thread is idle specifically because of `idle_timeout`. Each row's title is `chat.title`, with the
-worktree name standing in until a title has been generated, and the existing last-activity line sits
-under it. Agent rows retain their time labels and Active / Paused / Terminated groups unchanged.
-Switching surfaces replaces the list; a chat thread never appears in Agent and an ordinary session
-never appears in Chat.
-
-**The foot is the account row, and it is the only thing in it.** An avatar, the signed-in name, and
-the address under it — because on a service that spends the owner's own vendor subscription, which
-account is in use is the fact most worth being able to check without opening anything. Both lines
-truncate rather than wrap: the sidebar is resizable and an address is arbitrarily long, and a
-wrapping row would change the height of the column's foot as somebody drags it. Closed, the column
-keeps the face and drops the two lines.
-
-Everything else the foot used to carry is **inside that row's menu**: appearance, environment
-profiles, GitHub Triggers, Developer, operations where the caller holds the capability, and signing out. Each row
-takes a leading glyph. The menu opens **upward** and holds the trigger's own width, so
-its edges are the row's edges — it sits at the foot of a column, so there is nowhere below it to go,
-and a list that is narrower than the control it came from reads as belonging to something else.
-
-Operations is still one of §1's signed-in utility views and still not navigation: **one** entry, which names where
-it goes — _Operations_, or _Back to sessions_ while the panel is showing. It does not mark itself as
-current, because a menu with a current value is a set of alternatives and these rows are actions.
+There is no Chat/Agent switch, session group, pricing control, or terminal plane
+choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
+its facts and Workspace list. Home keeps the tree with nothing selected and
+the creation empty state appropriate to the caller's capability.
 
 ---
 
 ## 11. The centre column
 
-The header is **part of the surface, not chrome above it**: a crumb and a trailing cluster of compact
-controls.
+The header belongs to its surface: a Sandbox -> Workspace -> Agent breadcrumb,
+the Agent title and status, and compact Details and Interrupt controls. Other
+working views use the same restrained heading scale, not an oversized hero.
 
-**It carries no plane strip.** A session is a conversation, and the terminal is somewhere its owner
-deliberately moves it to. A pair of tabs made a rotation look like a view switch — free, instant and
-reversible, which it is none of — so the move lives in the overflow menu with the rest of what acts
-on the session, and confirms before it happens.
+There is no plane strip or terminal transition. Worktrees are Agent facts rather
+than another navigation band. The composer and history own the remaining height.
 
-A lost connection is a fixed strip at the top on the error ground, in 12/18, centred. Not a card, not
-a toast: a condition of the whole surface rather than an event within it.
-
-The boot state is a centred card — a small spinner, the wordmark, a hint — with hardcoded colour
-fallbacks, because it renders before the token sheets are guaranteed to have arrived.
+A lost connection is a persistent status strip in the affected surface. Keep
+loaded history and the draft visible. A read error must not replace successful
+content or report an empty list. Errors and pending commands remain scoped to
+their resource. Boot reserves geometry and never disables sign-in while a
+decorative asset loads.
 
 ---
 
@@ -532,7 +504,7 @@ a claim about right now, so its solid live core sends one expanding ping ring on
 the eight-cell 3×3 chase with the reference libraries' simpler liveness signal.
 
 A state that has ended draws **no dot at all**. Every state the dot has asserts something — succeeding,
-needing you, running, failed — and a finished session asserts none of them; painting it green because
+needing you, running, failed — and a finished Agent asserts none of them; painting it green because
 green was the nearest colour would claim it finished well, which is a different fact.
 
 ### 12.2 Fields
@@ -546,14 +518,11 @@ layout, the control does not grow. Invalidity uses the same edge and the danger 
 This is not the composer. A message box grows with what is typed into it and is a different control
 with different rules; sharing one would make every search box growable.
 
-An environment profile's session resources are one paired choice. A checked **Use deployment
-default** box omits the size while keeping disabled CPU and memory fields visible with a deployment
-default placeholder, so the machine specification remains discoverable. Clearing it enables CPU in
-millicores and memory in MiB as two equal-width §12.2 fields; both are required before the profile
-can be saved. They stack below 30rem. Returning to the deployment default disables and clears both
-visible fields but retains their draft values for the same editor opening, so correcting an
-accidental toggle does not require retyping them. Profile-list summaries name **Session resources**
-before the deployment default or the exact custom pair.
+A Sandbox Profile records explicit CPU and memory. The editor offers
+Standard, Large and Custom in cores and GiB, validates both against deployment
+bounds and converts to wire units at the boundary. Creation may select the
+exact pinned deployment-default profile, never an unrecorded resource default.
+Paired fields stack below 30rem.
 
 ### 12.3 The dropdown
 
@@ -634,9 +603,9 @@ ordinary retries.
 The rules §19 protects are unchanged by any of this: a control that can never work is **absent**; one
 that is currently unavailable is **disabled and says why**.
 
-A deployment-capacity refusal learned while starting a session stays in the dialog's existing alert
-seat. It names both figures the session asked for and both figures the deployment says are free, then
-says that a smaller session may fit. It does not disable a key or add a capacity state to the form:
+A deployment-capacity refusal learned while creating a Sandbox stays in the dialog's existing alert
+seat. It names the resources requested and the resources the deployment reports free, then
+says that a smaller Sandbox may fit. It does not disable a key or add a capacity state to the form:
 the client cannot know shared headroom before asking, and polling or retaining the last refusal would
 draw a stale answer as current.
 
@@ -652,339 +621,163 @@ assumes how long somebody will work and presents a number the service will never
 
 ---
 
-## 13. The conversation surface
+## 13. The Agent conversation surface
 
-A 748px reading axis. The scroller pads to it, rows are neutral flow items, and the composer sits in
-a sticky seat under a short fade mask so text passes beneath it rather than colliding with it.
+An Agent owns one conversation in one Worktree, Workspace, and Sandbox. There is
+no separate Chat surface. The fixed header names the Agent and its Workspace and
+Sandbox ancestry. A 748px reading axis holds the durable history and live turn.
+Rows are neutral flow items; the composer has a stable seat below the scrollport.
 
-**The two roles are told apart by shape.** The owner's turn is a right-aligned bubble on its own
-accent wash, capped at the smaller of 525px and 82% of the column, at a 22px radius. The agent's turn
-is unboxed and runs the full column at 16/28. Shape carrying the distinction is what lets the ink stop
-carrying it — and §1's fidelity rule means no colour is applied to what the agent wrote.
+The owner's message is right-aligned on the existing accent wash, capped at the
+smaller of 525px and 82% of the axis. The Agent message is unboxed at 16/28.
+Use the existing markdown parser and theme tokens. Tables and code scroll within
+their own bounds; long words and links cannot widen the reading axis.
 
-Markdown is rendered properly: headings on the long-form ramp, links in the theme accent underlined on
-hover only, lists with real nesting, blockquotes on a 2px rule, inline code on its own ground, tables
-that scroll inside their own frame rather than widening the column, and images at an 8px radius.
+Reasoning and tool activity use one Thinking disclosure per turn. Reasoning is
+live-only and never presented as recovered history. Durable tool activity survives
+reload, uses kind, target, status, and reported duration, and never invents missing
+arguments or results. Tool bodies are absent unless the public contract explicitly
+records and projects them. Unknown duration is not zero.
 
-**Reasoning is a disclosure row**, not a band: a 24px row whose leading glyph becomes a chevron on
-hover, a title, and a one-line summary — the first line once settled, the latest line while running.
-It is liveness and is never in the record.
+AG-UI identifies the thread by Agent id and the run by durable turn sequence.
+Live content can arrive without a preceding START frame. It must be visible
+immediately and replaced, not duplicated, when the durable message arrives.
+Ephemeral frames never advance the durable replay cursor. Reconnect reconciles
+history without losing an unsubmitted draft or replaying already committed text.
 
-Message actions are 28px round icon buttons, revealed with the turn rather than on hover of each one.
-An action the API does not project is **omitted entirely** — never drawn disabled. A disabled ghost
-for something that will never work is the absence rule broken in a costume.
+The composer uses its existing capsule, send/stop icon seat, focus treatment, and
+bounded growth. Stop interrupts the current turn; it does not delete the Agent.
+Approval decisions are explicit at the point of interruption. Only public API
+operations appear as commands.
 
-The composer is a 22px capsule on its own ground with a 1px border and a shadow, growing to a cap and
-then scrolling inside itself. Its caret and 34px circular send control use the theme accent; while a
-turn runs the control becomes _stop_. The composer keeps its existing focus exception: focus swaps
-the border to accent but adds no outer or soft ring, because the growing message box is already the
-reading column's dominant edge. There is no separate interrupt button — the same seat, two meanings,
-which is the one place in the product where a control changes what it does.
+### Preparation, pause, and recovery
 
-### The Chat reduction
+Preparation has stable step rows from Sandbox events and current instance facts:
+software installation, Workspace preparation, Worktree creation, Agent startup,
+and optional first-message delivery. Never infer successful work from elapsed time
+or from an identifier existing. A failed step shows typed remediation and offers
+only actions the server supports.
 
-Chat uses the same message stream and reading axis, but reaches them through the Responses API rather
-than AG-UI. Durable history comes from the conversation-items listing and a new turn is folded from
-one `ResponsesConnection`; a chat surface never opens an `AguiConnection`. Reloading and watching a
-turn arrive must draw the same committed messages and tool work in the same order.
+A paused Sandbox leaves every Agent's history visible. Render the server's
+`paused_notice` verbatim above the composer. The enabled composer's placeholder
+is **Send a message to continue.** Sending is the ordinary admission operation
+and requests revive; no extra Revive click is required.
 
-Chat is a reduction of the conversation surface, not another agent console:
+While admission is unresolved, retain the exact draft and show Starting without
+inventing token progress. A readiness timeout keeps the draft available. Runtime
+replacement is a quiet status notice, not an automatic failed state. When a
+checkpoint boundary is known, show its recorded time without claiming later work
+was captured. The owner never has to recreate the Agent after a rollout.
 
-| Surface fact                                                | Chat                                                  |
-| ----------------------------------------------------------- | ----------------------------------------------------- |
-| User and assistant messages                                 | Shown with the ordinary turn rendering                |
-| Reasoning and tool activity                                 | Shown together in one **Thinking** fold for that turn |
-| Runtime-loss, recording-gap, and context-summary boundaries | Shown with the existing neutral wording               |
-| An approval, if the wire ever carries one                   | Shown where the turn stopped                          |
-| Empty state                                                 | **Ready when you are.** only                          |
-| Usage, Context, and Resources                               | Absent                                                |
-| CPU and memory pressure notices                             | Absent                                                |
-| Plan, mode, and configurable-option blocks                  | Absent                                                |
-| Top-level tool rows                                         | Absent                                                |
-| The composer's `/` command menu and shortcut hint           | Absent                                                |
+### Details and readings
 
-Each turn has at most one Thinking fold. Its live reasoning is shown only while that Responses stream
-is open and is deliberately absent after reload. Tool activity is durable and is rebuilt from
-`cma_chat.tool_activity` conversation items, so a completed turn's fold survives reload even though
-its reasoning does not. Each tool uses one quiet summary line in the fixed order **kind - target -
-status - duration**; an unavailable duration is stated as **ongoing** while the call runs and **not
-reported** after it settles. Recorded arguments and results sit behind disclosure inside the fold,
-including the record's truncation statement, rather than becoming top-level rows or being discarded.
+The Details drawer contains Sandbox status, pinned profile, size and services;
+Workspace path, source and resolved commit; Worktree path and branch; Agent
+Profile model, effort, permission and skills; first-message state; and the
+separately confirmed Stop/Delete controls. No credential, provider token, private
+runtime authority, or internal checkpoint writer identifier is displayed.
 
-The chat session header carries **Details** and no other action: no lifecycle menu, plane move,
-terminal theme, or overflow key. Its Details drawer has exactly two bands. The state band carries the
-state word, start time, creator, and title line. The **Worktree** band carries **Name** and a mono,
-copyable **Local path**. Agent, Skills, Reaches, Trigger repository, Runtime, and Identifier are
-absent; the path is the one operational identifier the chat reader needs.
+Usage and context sit below the composer with tabular figures. Missing usage is
+not zero. A context ceiling adds a neutral 2px track no wider than 240px, with
+accessible numeric values. Without a reported ceiling, show only the known
+figure. Context-summary boundaries use neutral metadata, not failure colour.
 
-#### A paused Chat
+## 13a. Agent resources
 
-A Chat is paused only while its session is `idle` with an `idle_timeout` stop reason. Its durable
-history stays fully visible. At the head of the reading column, above that history, a persistent quiet
-notice with `role="status"` renders `SessionView.chat.paused_notice` verbatim. The browser never
-constructs or adjusts that sentence: only the server knows the configured inactivity duration. The
-default deployment sentence is **Your current chat session has been idle for 15min and has been
-auto-paused.** The notice disappears when the refreshed session view no longer carries
-`paused_notice`.
+Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
+and network occupy a stable three-column row on the reading axis. CPU uses a
+human unit in the ordinary surface; technical details may show the wire unit.
+Tracks appear only with reported ceilings, and each has accessible numeric values.
 
-The composer stays enabled and changes only its placeholder to **Send a message to continue with your
-previous chat session.** Sending uses the ordinary Responses creation request. While the opened stream
-has reported only `response.created`, the existing provisioning treatment shows its **Starting…**
-stage and the draft remains in the composer. The first subsequent streaming progress accepts the turn
-and clears the draft. A terminal `provisioning_timeout` instead draws the ordinary failure notice with
-its code and leaves the draft byte-for-byte intact so it can be retried.
+A missing grant, a runtime that cannot report, a reading not yet available, and
+an absent individual measurement remain distinct written states. None becomes
+zero. A first CPU rate sample without a predecessor says Measuring. Network
+figures are unbounded and never receive a percentage track.
 
-### A runtime that was lost
-
-A lost runtime is said at the head of the reading column, above any refusal it may explain and above
-the message stream. It uses the quiet notice with `role="status"`, never the failure notice or an
-alert: reconciliation starts a replacement, and §16 is explicit that a session being restored is not
-a failure. The notice is dismissible because it is durable history rather than the session's current
-state.
-
-The time is introduced as **Noticed at**, because it is when the service established the loss rather
-than a claimed time at which the runtime died; where no time was recorded, that sentence is absent
-rather than invented. The notice states plainly that the agent's conversation does not cross a
-runtime it lost and that it begins again from what was captured.
-
-### Context fullness and summaries
-
-Context fullness is a quiet reading below the composer, beside usage in a fixed two-column row:
-centred, tabular, at 12/20 in
-tertiary label ink. Absence is a fact and is never drawn as zero. A session with no `usage` grant
-draws no context reading at all, because the usage line beside it already says reporting is absent. A
-granted session with no reading yet says **Context · waiting**. A reading whose runtime stated no
-ceiling says **42.1K in context**, with no track. A reading with a ceiling says **42.1K / 200K
-context**.
-
-Only the bounded form carries a track: a neutral 2px hairline, no wider than 240px, with the rule as
-its ground and tertiary ink as its fill. A track without a ceiling would invent a limit the runtime
-never stated. The track is a `progressbar` with an accessible label and `aria-valuemin`,
-`aria-valuenow`, and `aria-valuemax`; neither length nor colour is its only account of the figure.
-
-When the agent summarises the conversation to make room, the transcript draws a neutral boundary at
-that point. With a known ceiling it says: **The agent summarised the conversation to make room. It
-was holding 198K; it now holds 42.1K of 200K.** Without one, the sentence ends after **it now holds
-42.1K.** Both readings are always present, and the bare word "compaction" is never the explanation.
-This boundary uses the ordinary rule and metadata ink, never warning, failure, or session-state
-colour: making room is a conversation fact, not a fault.
+Pressure notices require an actual server observation. They preserve the history,
+name the resource and its reported values, and use the existing alert treatment.
+They never flash or imply the Agent's work has already failed.
 
 ---
 
-## 13a. A session's resources
+## 13b. Public Trigger journey
 
-Live resource readings sit at the **foot of the reading column**, in one fixed three-column row below
-the token/context row on the same centred 748px axis as the stream. Memory, CPU, and network retain
-one column each rather than stacking into three full-width lines. An open CPU- or memory-pressure episode is the exception: it
-sits at the **head of the reading column**, above the stream and beside the notices already there. Placement
-does the substantive work. A condition somebody can still act on belongs where they are already
-looking, and neither the reading nor its notice replaces or destroys work that did not fail.
+The visitor routes are `/t/{publicId}`, `/t/{publicId}/{placementId}`, and
+`/launches/{id}`; a ready result hands off to `/agents/{id}`. GET requests and
+OAuth callbacks never start work. The only consent is the explicit CMA button
+gesture, preserved as a bounded 15-minute browser intent across sign-in.
 
-Memory and CPU are bounded readings only when the service supplies their ceilings. The bounded form
-shows the figure pair and a neutral **2px hairline track**; for example, **892 MiB / 1024 MiB**. CPU
-stays in millicores, so a two-core ceiling is shown as **2000m**, matching session sizing. The track
-is a `progressbar` with an accessible label and `aria-valuemin`, `aria-valuemax`, and
-`aria-valuenow`. Its length and colour are never its only account of the figure. A memory or CPU
-reading without a ceiling loses the track and says so in words: **892 MiB, no ceiling reported**.
-Drawing a track in that case would invent a limit the service never stated.
+The public landing uses the reduced frame, publisher attribution, title,
+description, server-authored next-step sentences, and the configured primary
+button. It is a real entry into the user's own Agent, not a marketing page.
+A Technical details disclosure carries provider, model, effort, size, services,
+and the full installation disclosure. A retired target is a complete unavailable
+view with no misleading launch button.
 
-Network is unbounded and therefore always a figure pair with no track, for example
-**↓ 18 KiB · ↑ 8.9 KiB**. The three columns are not made visually alike at the cost of their meaning:
-a track says that a ceiling exists, and a bare figure says that it does not.
+Registration copy comes from signup options and the publisher's optional hint.
+Closed registration, an invitation requirement, and unavailable public
+configuration are distinct. The return destination is a canonical local route;
+no credential, prompt, provider state, or arbitrary URL enters it.
 
-Absence is a fact, not a zero. These are the sentences the surface draws, each from a distinct fact
-the service supplied:
+### Review and connections
 
-| What is true                                                         | What the reader sees                                      |
-| -------------------------------------------------------------------- | --------------------------------------------------------- |
-| The session was not granted `resources`                              | **Resources not reported for this session**               |
-| The point read says `runtime_does_not_report`                        | **This session's runtime cannot report what it is using** |
-| The point read says `no_reading_yet`, or no live reading has arrived | **Resources · waiting**                                   |
-| A figure and its ceiling are present                                 | The figure pair and its track: **892 MiB / 1024 MiB**     |
-| A figure is present and its ceiling is absent                        | **892 MiB, no ceiling reported**, with no track           |
-| One figure is absent from an otherwise present reading               | **not reported** for that row alone                       |
+An authenticated click submits `start_if_ready: true`. Accepted work opens
+progress immediately. A review shows only the server's current needs, in order:
+software trust, missing connection, publisher-required review, and repeat choice.
+Trust exposes the commands and environment values verbatim, with the explicit
+checkbox, and sends the matching digest as protocol data. Do not render that
+protocol name in ordinary visitor copy.
 
-CPU is a rate and has one additional temporary state. Its first reading after a link or rotation has
-no predecessor, so it says **CPU · measuring**, never 0. This resolves within one reporting cadence
-by construction and is therefore a word in the row, not a notice. Missing network figures likewise
-say **not reported**, never `↓ 0 B` or `↑ 0 B`.
+A missing service has one Connect action. Open a blank popup directly from the
+gesture, request the public connection handoff, and navigate only to its validated
+HTTPS hosted URL. Poll every 1.5 seconds with backoff for at most five minutes.
+CMA does not inspect cross-origin window contents. On satisfied, close the popup
+and continue the same intent. Expiry offers another explicit attempt.
 
-An open CPU- or memory-pressure episode uses the existing failure notice at the head of the column.
-Each resource has its own still, dismissible alert so simultaneous episodes remain visible. The
-notice states the resource, used and limit figures, and the time the episode opened. Dismissing one
-episode does not silence the other or a later one: a new opening time re-arms that resource's notice.
-Its track may take the failure ink while pressure is open, but its accessible label and visible figure
-also state the condition; colour never carries it alone. All tracks are neutral when no pressure
-episode is open, so state colour is spent only on a reading that warrants it.
+A blocked popup offers a same-tab destination and **I've connected it**. Services
+requiring manual setup link to NyxID and offer a recheck; never claim they support
+hosted setup. Do not request or display service credentials.
 
-The notice may fade in once at its final position and then holds still. It never flashes, pulses, or
-loops, and nothing in this component starts a keyframe animation. A track changing length uses only
-the shared curve and duration tokens. Urgency comes from placement, words, and failure ink, not from
-motion that competes with the session somebody is reading.
+Repeat choice offers **Continue where you left off**, with title, time and the
+first-message excerpt, or **Start fresh**. The choice is an explicit server
+command and never permission to reuse the publisher's Agent.
 
----
+### Progress and vocabulary
 
-## 13b. Trigger and Launch workflows
+One unframed ordered timeline shows Signing you in, Checking what's needed,
+Preparing your sandbox, Setting up the workspace, Starting your agent, Sending
+your first message, and Ready. Each row has a fixed icon slot, visible state word,
+and safe detail. The state vocabulary is Waiting, In progress, Done, Needs you,
+Paused by CMA, and Didn't work. Colour is never the only account.
 
-A README Trigger enters the product through one of five canonical routes. These are the whole public
-route vocabulary for the workflow; query strings never carry credentials, prompts, repository
-targets, confirmations, or provider state.
+Follow the owner-only Launch companion with bounded polling fallback. Retain the
+last acknowledged durable cursor; live transport failure does not erase progress.
+A ready result replaces the route with the Agent route and focuses its composer.
+A failed result shows safe remediation, Refresh status for supported read
+recovery, Start over as a new intent, and Copy support code. Retryability is not
+a command: show no worker retry unless the public API supplies one.
 
-| Route                            | View and authority                                                                                                                                                 |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/triggers/:publicId`            | Side-effect-free public preview. After sign-in the same route adds the immutable revision, eligible GitHub connection, editable fields, and explicit Start review. |
-| `/launches/:launchId`            | Owner-only durable progress and repository view. Refresh and reconnect read server state and replay from the last acknowledged Launch cursor.                      |
-| `/launches/:launchId/recover`    | Owner-only GitHub authorization recovery for the same Launch. Opening it reads retained state; reconnect and replacement remain explicit authenticated actions.    |
-| `/launches/:launchId/contribute` | Owner-only diff review nested under the same Launch. Opening it is read-only; Publish branch and Open or Update pull request remain separate confirmations.        |
-| `/sessions/:sessionId`           | The existing sessions view with this session selected. A Trigger repository band links back to its owning Launch when one exists.                                  |
+Public sentences belong to the exhaustive vocabulary module. Ordinary visitor
+and creation copy must not expose Launch, revision, digest, idempotency,
+reconcile, retained, capability, ceiling, checkpoint, reach, fence, UserService,
+MiB, millis, or snake_case wire tokens. Sandbox and workspace are allowed nouns.
+Technical disclosures and verbatim user-authored commands remain data, not
+translated or altered prose.
 
-The anonymous Trigger route uses a reduced frame: the brand remains, the centre owns the viewport,
-and signed-in session or account chrome is absent. Sign-in returns only to an allowlisted canonical
-route and consumes no Start action. Once authenticated, the normal frame returns. Browser Back moves
-between these route states without undoing a server action, and a missing, retired, unavailable, or
-wrong-owner resource is a complete typed view rather than a redirect to Sessions.
-
-The Launch view has one compact identity header followed by full-width bands, never cards nested in
-cards:
-
-1. Repository identity: upstream, contributor fork, launch branch, captured base/head revisions,
-   connection account, and current reach status.
-2. Automation progress: one stable row per server step, in server order.
-3. Session handoff: the canonical session link once provisioned.
-4. Contribution: latest checkpoint/diff, commit attribution, publication result, and linked PR.
-
-Every progress row has a fixed icon slot, a visible state word, the step label, timestamp, and safe
-detail. The closed vocabulary is **pending**, **running**, **completed**, **retryable**, **blocked**,
-and **failed**. Completed uses a check glyph and the word; running uses a labelled motion glyph that
-becomes a still glyph under reduced motion; retryable exposes Retry only when the server says the
-effect is repeatable. `auth_required`, `owner_credential_unavailable`, `service_inactive`,
-`feature_paused`, rotating/recovering, and terminal failure retain their distinct server language.
-None is inferred from elapsed time. A feature pause freezes the row and says **Paused by CMA**; it is
-not a failure and does not imply the active session was interrupted.
-
-Offline is a condition of the whole view and uses §11's fixed strip. The retained timeline stays
-visible but is marked **Last updated ...** and no stale response may move a step backward. Reconnect
-first opens replay at the last accepted cursor, then reconciles a fresh Launch snapshot. A cursor gap
-or stale revision discards optimistic local state, never the user's unsubmitted review fields.
-
-Repository, progress, workflow, diff, attribution, and PR data use typed rows with the component
-language already defined in §§12 and 13a:
-
-- A workflow warning is a full-width warning band with the exact baseline paths and a checkbox in
-  the Start review. It never implies GitHub granted Actions permission.
-- A diff is an unframed file list. Each row states path, add/delete counts, change kind, binary state,
-  and mode transition in text. Expanding a text file reveals its bounded patch in the code face.
-- Commit attribution shows author and committer as two labelled facts before Publish is enabled.
-- A PR band shows canonical link and number, base/head revisions, state, checks, and mergeability.
-  Mergeability is exactly **Computing**, **Mergeable**, or **Conflicting**; null never means conflict.
-  **Awaiting maintainer approval** is its own checks state and never a CMA retry failure.
-- An ordinary Update pull request preserves provider title/body. Explicit title/body edits show the
-  previously observed values and fail on concurrent provider change rather than overwriting it.
-- A closed-unmerged or merged PR has no Update control. The former offers the explicit New Launch
-  route, producing a new Launch-owned branch and marker while preserving the old Launch and PR link.
-- An open PR exposes a status refresh and **Finish CMA handoff**. Refresh queues a read-only provider
-  observation. Finish uses the standard confirmation dialog, makes no provider call, preserves the
-  fork, branch, commit, and open PR, and ends further contribution, Update, and refresh actions for
-  that Launch. A provider-observed merge finishes the Launch without this confirmation.
-
-Confirmations use §12.4's one-dialog rule. Review diff, Publish branch, Open pull request, and Update
-pull request are separate controls and separate server snapshots. Cancel closes the dialog without
-changing the Launch. While a command is in flight its one control is disabled with **Submitting**;
-repeated clicks reuse the same client idempotency key until a finite response arrives. An ambiguous
-write changes to **Reconciling** and exposes no second write button.
-
-An initial task in the exact conjunction `Launch failed_retryable`, blocked reason
-`recovery_required`, and delivery `recovery_required` exposes **Recover initial task**. Its §12.4
-dialog states that CMA cannot determine whether the previous task started and that another dispatch
-may execute it twice. The affirmative command remains unavailable until the owner acknowledges that
-consequence. It submits the retained delivery payload hash and Launch revision; an ambiguous response
-keeps the dialog open, disables dismissal, and exposes only **Reconcile recovery** against the same
-idempotency key. No nearby state, empty payload hash, ordinary retry, or inferred elapsed-time failure
-may expose this control.
-
-The interface decision is fixed before implementation:
-
-| Capability                                                              | AG-UI                          | REST/SDK                                            | PTY    | MCP    | A2A    |
-| ----------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------- | ------ | ------ | ------ |
-| Public preview                                                          | Read-only companion projection | Public read                                         | Absent | Absent | Absent |
-| Launch/repository/PR snapshot                                           | Read-only companion projection | Owner read                                          | Absent | Absent | Absent |
-| Launch progress replay                                                  | Read-only companion replay     | Owner cursor replay                                 | Absent | Absent | Absent |
-| Diff review and artifact read                                           | Read-only companion projection | Owner read                                          | Absent | Absent | Absent |
-| Start, cancel, review, publish, PR confirmations/status refresh, finish | Absent                         | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
-
-AG-UI declares this read-only subset under its `cma:trigger` custom capability. Its existing run and
-session event semantics do not change, and a Launch identifier is never presented as a session
-thread. REST remains the superset and the dashboard uses the same TypeScript client contract shipped
-to third parties. PTY cannot honestly draw this workflow; MCP and A2A remain unserved and their 501
-surfaces do not acquire Trigger operations.
-
-Everything here is governed by §15: semantic landmarks and headings precede ARIA, every row and
-dialog is keyboard operable, state is never colour-only, targets are at least 32px and become 44px
-below 30rem, and required text meets AA in both themes. On route load, focus goes to the view heading;
-the existing §15 prompt-focus rule still applies when `/sessions/:sessionId` opens a usable session.
-Progress updates are announced through one polite live summary rather than making every row live.
-Failures and explicit confirmation consequences use an assertive alert exactly once. On a narrow
-viewport the details column closes first, the progress and repository bands become one column, long
-repository names wrap, and no action is available only through hover.
+Use semantic headings and the shared dialogs. One polite live summary announces
+progress; failures are announced once. On narrow viewports disclosures and steps
+become one column, text wraps, and every action is available without hover.
+A network outage preserves the last successful view and names its observation
+time. No elapsed-time heuristic changes a server state.
 
 ---
 
-## 14. The terminal plane
+## 14. Retired terminal plane
 
-The kernel's own screen, unmediated. A hairline frame, the code face, and the palette derived from
-the same alias tokens the rest of the product uses — so a session's colour vocabulary is the same on
-both planes.
-
-The product palettes are persisted as `cma-dark` and `cma-light` under
-`localStorage['cma:terminal-theme']`. A valid historical `chrono-bot:terminal-theme` preference is
-copied forward, with `chronobot-dark` and `chronobot-light` normalised to those canonical ids, so the
-rename does not reset a returning person's terminal.
-
-xterm renders to canvas and cannot resolve CSS variables, so these literals are authoritative and
-are test-pinned to the aliases they duplicate. Every ANSI slot is a six-digit hex; selection is the
-accent at 25% alpha.
-
-| Slot          | Light — Inkwell       | Dark — Lumen           |
-| ------------- | --------------------- | ---------------------- |
-| background    | `#FFFBF2`             | `#0C0D0A`              |
-| foreground    | `#15283C`             | `#EDF2E2`              |
-| cursor        | `#0E61AC`             | `#C3FD43`              |
-| selection     | `rgba(14,97,172,.25)` | `rgba(195,253,67,.25)` |
-| black         | `#15283C`             | `#060606`              |
-| red           | `#BC3B26`             | `#FF5A45`              |
-| green         | `#3E7A22`             | `#C3FD43`              |
-| yellow        | `#A9720B`             | `#FFB020`              |
-| blue          | `#0E61AC`             | `#72B7FF`              |
-| magenta       | `#7B3F93`             | `#E69AF2`              |
-| cyan          | `#0E766E`             | `#69D7C6`              |
-| white         | `#4C5A68`             | `#A9B199`              |
-| brightBlack   | `#8C8474`             | `#6B7361`              |
-| brightRed     | `#982D1C`             | `#FF806F`              |
-| brightGreen   | `#2D6017`             | `#D7FF7D`              |
-| brightYellow  | `#875A08`             | `#FFC45A`              |
-| brightBlue    | `#073A69`             | `#9ACBFF`              |
-| brightMagenta | `#603074`             | `#F0BCF7`              |
-| brightCyan    | `#0A5B55`             | `#9AE8DC`              |
-| brightWhite   | `#15283C`             | `#EDF2E2`              |
-
-`cursorAccent` is the theme background. The semantic slots stay in lockstep with §2: green is
-`state-success-primary`, yellow is `state-warn-primary`, red is `state-error-primary`, white is
-`label-secondary`, and brightBlack is `label-tertiary`. No greyscale slot equals its own ground, and
-the light palette contains no dark cursor value. The terminal card itself uses the code-block ground:
-light `#F5EAD3`, dark `#060606`; the xterm canvas inside it uses the background row above, leaving a
-small intentional code-block ring around the canvas.
-
-**It is reached, never chosen.** A session starts as a conversation and a profile does not ask which
-plane it wants: the question arrives before anybody has seen the session, and the answer costs a
-rotation to change. The overflow menu carries one entry naming the act rather than the destination —
-**Interact directly with terminal**, and **Return to chat mode** while it is there — because
-"Terminal" beside "Conversation" reads as two views to flip between.
-
-It confirms in a card in the middle of the page (§12.4), stating what changes and what it costs
-before it happens: the session restarts on the other plane, it is not interactive while it moves,
-and the turn in flight is lost. None of that is recoverable by pressing the key again, which is why
-it is said rather than reported afterwards. A confirmation here is not ceremony — it is a cost that
-already existed, previously paid by whoever clicked a tab that looked free.
+There is no terminal plane in this release: no terminal renderer, theme picker,
+plane-switch control, terminal resize behavior or xterm dependency. The former
+terminal palette and transition contract are retired. Agent conversations follow
+§13.
 
 ---
 
@@ -1005,29 +798,20 @@ fade; the text inside it does not animate as it is read.
 
 ### What motion is for here
 
-Inside a working surface, two things: saying a surface changed, and saying a surface is working.
-Neither decorates. Brand motion has two bounded seats outside session content, and no others:
+Inside a working surface, motion reports a changed surface or ongoing work.
+The signed-in sidebar's §21 mark is the only brand animation in the shell.
+Its geometry draws once at shell mount and its asset-defined lens highlight
+loops quietly; its wrapper never bobs, turns or scales. Reduced motion shows
+the finished mark at rest. The signed-out authentication gate uses a static
+brand asset and keeps sign-in immediately usable.
 
-- The signed-out surface's §20 character floats, looks toward the pointer, lets its hem trail a turn,
-  catches a lens glint, and makes one spin when pressed. Its contact shadow follows the float. This is
-  one object being the product's presence on a screen with no running session, not a status claim.
-- The signed-in sidebar uses §21's animated mark. Its geometry draws once when the authenticated
-  shell mounts and the quiet lens highlight keeps its asset-defined long loop. The wrapper never
-  bobs, turns or scales; the mark remains fixed chrome while somebody reads and works beside it.
-
-Both seats obey `prefers-reduced-motion: reduce` by showing their finished form at rest. For the 3D
-character that also removes pointer following, cloth movement, glints, floating and press-to-spin;
-for the sidebar mark it removes the draw and highlight animations. Neither seat may animate text,
-move on hover, or introduce another curve into component CSS. No other brand object loops inside the
-product.
-
-**A surface that replaces another fades in.** Switching sessions changes the whole centre column, and
+**A surface that replaces another fades in.** Switching Agents changes the whole centre column, and
 without a handover it reads as a different screen rather than the same screen showing something else.
 One duration, no movement — a slide would imply a direction, and there is no direction between two
-sessions.
+Agents.
 
 **A surface that is waiting says so, and never claims to know more than it does.** A bar is allowed
-**only** where it reflects steps the service actually reported — the session-start bar does, and says
+**only** where it reflects steps the service actually reported — the Sandbox preparation bar does, and says
 in its own file that it never advances on a timer, because a bar that moves while nothing happens
 costs the reader their trust in every other bar. Where there are no steps to report there is no bar:
 the idiom is the wave, or the reasoning row's sweep, which say _live_ without claiming progress.
@@ -1036,7 +820,7 @@ A surface reading something it will draw uses **the shape of what is coming** �
 be — rather than a sentence alone in an empty column. And it never says what it does not yet know: a
 list still loading must not read "nothing here", because that is an answer, and it has not got one.
 
-**Rows arriving fade in.** A session appearing in the rail, a turn arriving in the stream. Nothing
+**Rows arriving fade in.** An Agent appearing in the tree, a turn arriving in the stream. Nothing
 moves position: a row that slides in pushes everything under it, and a list that reflows while
 somebody is reading it is worse than one that appears.
 
@@ -1051,312 +835,200 @@ carries a `reduce` block.
   tertiary and dimmed paint are recorded in §2; neither may carry the sole small-text account of a
   fact.
 - Semantic HTML before ARIA. Landmarks on every page.
-- Every view is fully keyboard operable, including the terminal, which must be escapable by keyboard
-  alone.
+- Every view is fully keyboard operable; dialogs trap and restore focus, and
+  tree expansion has a named action independent of navigation.
 - Never convey state through colour alone.
-- **The animated introduction is never the only route to its information.** The viewport is exposed to
-  assistive technology as a static, complete transcript.
-- Focus on load rests on the prompt.
+- Progress has one polite live summary. Decorative images and animation never
+  carry the only account of state.
+- Focus enters the primary task; entering a ready Agent focuses its composer.
 - Minimum target 32px, 44px below 30rem.
 
 ---
 
-## 16. Session states and what they allow
+## 16. Resource states and actions
 
-Unchanged, and one rule still governs all of it — whether the surface accepts input, whether a control
-is enabled, and whether the session appears in the list. `abilitiesFor()` remains the single source.
+State comes from public Sandbox and Agent records. Pair each state glyph with a
+visible word. An unavailable action names its reason where the user needs it.
 
-| State           | Shown as        | Terminal plane     | Conversation plane                                           | Available                |
-| --------------- | --------------- | ------------------ | ------------------------------------------------------------ | ------------------------ |
-| provisioning    | starting        | progress, no input | progress, composer refuses                                   | pause                    |
-| ready / running | ready / running | live               | live                                                         | reconnect, pause, delete |
-| rotating        | **updating**    | progress, no input | progress, composer refuses, and says why                     | nothing                  |
-| idle            | **paused**      | history, read-only | history, read-only — **unless it is waiting on an approval** | **resume**, delete       |
-| terminated      | ended           | history, read-only | history, read-only                                           | delete                   |
+| Resource/state | Working surface and permitted behavior |
+|---|---|
+| Sandbox provisioning | Recorded preparation and child progress; no invented percentage or success. |
+| Sandbox active | Workspaces and Agents; New workspace within limits, Pause, confirmed Delete. |
+| Sandbox paused | History, pause notice and reported checkpoint time remain visible; admitted message or creation revives it. |
+| Sandbox pausing, reviving or rotating | Durable history and recorded progress; no conflicting command or input that could be lost. |
+| Agent starting | Recorded preparation; retain an unsent draft until readiness. |
+| Agent ready or working | Conversation and composer; Interrupt only during active work; Stop. |
+| Agent waiting approval | The actual approval question and decisions, never an unrelated revive prompt. |
+| Agent paused | History and pause notice; follow the parent Sandbox's recorded revival. |
+| Agent stopped or failed | Readable history and safe details; confirmed Delete when public state permits it. |
 
-**A pause is called a pause.** The control that releases a session's sandbox keeps its history and
-lets its owner pick it up again — it was labelled _End session_ and calls `stopSession`, which said an
-act was final when it is not. _Resume_ is its counterpart, for the same reason: _Revive_ beside
-_Pause_ is two vocabularies for one pair, and suggests something had died. **Delete** is untouched —
-it is the one action that loses something, it keeps its acknowledgement tick, and nothing here should
-make it easier to reach by accident.
+A transient read or transport error is not a resource failure. Unknown and
+unreported remain unknown. Failed commands never destroy successful content.
+Delete removes an Agent and its Worktree and requires the irreversible-action
+safeguard; Stop is a distinct operation.
 
-**A session that cannot be typed into always says why**, in the owner's terms, on the surface showing
-it. `idle`, `recovering` and `unknown` are **not failures** and none of them takes `--fail`.
+## 17. Sandbox and Agent details
 
-**The wording of a refusal belongs to the reason it exists, not to the state's name.** This is the one
-substantive change to this section, and it fixes a live defect: a session parked on `requires_action`
-is `idle`, so the composer told its owner _"This session is stopped. Revive it to carry on."_ while an
-approval it could answer sat directly above. A session waiting on an answer says it is **waiting for
-you**, in the rail, in the header and at the composer, and offers the answer rather than a revive.
+The Sandbox page is an unframed stack of state, pinned profile and runtime facts,
+resource/count limits, Workspaces and recorded lifecycle/preparation history.
+Workspace rows show source, path and state; selecting an Agent opens its
+conversation. A successful create followed by a failed detail read recovers the
+created resource, not another creation.
 
-Ended sessions leave the list, except when they failed. **Revive is the primary action wherever it is
-offered.**
+The Agent drawer uses §9's dimensions and ordered full-width bands: Sandbox,
+Workspace, Worktree, Agent profile, first-message delivery, Agent controls.
+Sandbox and profile links use canonical routes. Worktree path, branch and base
+commit are facts, not editable settings. The pinned model, thinking, permissions
+and per-Agent skills remain inspectable after a profile changes or retires.
 
----
+Use semantic definition lists with labels quieter than values. Long paths and
+names wrap within the drawer. Absent, empty and unreported are distinct.
+First-message delivery is recorded with timestamps, never inferred from a
+visible message or a successful Agent create.
 
-## 17. Sessions — the list arrangement
+Opening Details focuses its heading; closing restores the opener when present.
+Stop has explicit confirmation. Delete has §12.4's acknowledgement and stays
+disabled until allowed. Failure stays beside its controls and preserves history.
 
-Two columns and a drawer: the session list, the session's surface, and — when asked for — what is
-known about it.
+## 18. Profiles and Marketplace
 
-**The rail is 320px** and lists sessions by when they started, in Singapore time, newest first and
-reversible, with the date shown only once a session is no longer from today. A row carries a status
-dot, the start time at `--text-ui` weight 600, the kernel in mono `--text-label`, and **one line
-saying what the session last did**, which never wraps. The selected row takes `--raised`,
-`--edge-selected` and `--lift-rest`.
+Profiles home at `/profiles` has Sandbox, Workspace and Agent tabs. Rows show
+name, latest published revision, visibility and update time, with New profile
+for the active kind. Editors use
+`/profiles/{agent-profiles|workspace-profiles|sandbox-profiles}/{id}`.
+Marketplace uses `/marketplace` and `/marketplace/{kind}/{id}`, with short
+kinds `agent`, `workspace` and `sandbox`.
 
-The rail's second band carries the one full-width primary key — **New session** — and a row of filter
-pills carrying counts (`All 5`, `Live 2`, `Stopped 3`) and the sort control.
+### Editor geometry and controls
 
-**What is known about the session is a right drawer, 360px, closed by default.** It is reference
-material, and the previous revision's 412px bottom sheet took that height from the surface it was
-describing — on a 900px window, a third of the terminal. As a drawer it takes width from a surface
-that has 1000px of it and none of the height.
+An unframed 920px maximum form has 24px page padding, 16px below 30rem. H1 uses
+the existing 24px token, band headings 18px, help/errors 13px. Hairlines and
+24px spacing separate bands. Paired fields use equal `minmax(0, 1fr)` tracks
+and 16px gaps, stacking below 30rem. Fields retain §12.2's focus and validation.
 
-**It carries no lifecycle controls.** Every act on a session is one key in the session header, and
-splitting them across two surfaces is how somebody comes looking for an action where it used to be.
-Reference material that also acts is a panel people are afraid to open.
+Mode/effort choices are labelled radio segments: 40px minimum height, 44px on
+narrow screens, 8px group radius and 6px options. Labels wrap without widening
+the group. Repository/folder location choices are labelled radio surfaces,
+8px radius and 44px minimum height. Checkboxes serve services and binary settings.
 
-### What the drawer holds, and in what order
+Ordered command/profile/skill lists have move-up, move-down and remove icon
+commands with names and visible focus. Search results scroll within 300px.
+References name an exact published revision, never an implicit draft. Skills
+retain registry identity and version.
 
-**The drawer is bands, never one list.** A flat list of eighteen labelled rows is what "a lot of
-text" describes: nothing says which facts belong together, so finding one means reading all of them.
-Each band answers a different question and carries its own title.
+Agent fields are Model, Thinking effort, How freely it acts, Skills and System
+prompt. Prompt content is plain text. Workspace fields are public GitHub URL
+and optional branch/tag or empty directory, directory name, ordered setup
+commands and ordered Agent Profiles. Setup runs as the Sandbox user after clone.
 
-1. **The state band**, at the head — the state word at `--text-title` weight 600, the start time,
-   and who started it. It takes a 3px left edge in the session's own state tone and no other fill.
-2. **Agent** — kernel, model, reasoning effort, permission mode, and whose account the model calls
-   are billed to.
-3. **Skills** — what was installed into the sandbox before the agent started.
-4. **Reaches** — what its credential may touch.
-5. **Runtime** — the version it is on and how many times it has been moved. **Omitted entirely when
-   there is nothing to put in it**; two empty rows under a title read as a section that failed.
-6. **Identifier** — the copyable control.
+Sandbox fields are Standard/Large/Custom size in cores and GiB, service scope,
+fixed Codex provider, model access, count limits, ordered Workspace Profiles,
+one-time install commands and environment name/value rows. Size conversion
+honors deployment bounds. Installs run as the Sandbox user, before credentials,
+under `/home/cma`. Environment values are never secrets.
 
-A band title is 11px, weight 600, tracked, uppercase, and a band holding a list carries **the count
-beside the title** so its size is legible without counting rows.
+### Drafts, publication and trust
 
-**A band whose title names a thing without saying what kind of thing carries one line under it.**
-Reaches is the case: it lists slugs like `api-github-pat`, and the count and the entries answer "how
-many" and "which" while neither answers "of what". The line sits below the title and above the
-content at `--text-meta`, so it reads as a caption on the band rather than as the band's first entry.
-**Most bands do not have one** — a caption on every band is a caption nobody reads.
+Save draft and Publish revision are separate commands; publication confirms
+the specific immutable revision. Visibility and retirement have explicit
+outcomes. Concurrency failure keeps the draft and offers Load current or a
+deliberate retry against the current version. An ambiguous write retains its
+exact key and body; recovery never silently becomes another command.
 
-**Facts are a two-column grid, label beside value** — `minmax(72px, 34%) 1fr`. Labels are 12px
-`--ink-3`; values are 14px `--ink`. That ranking is the substantive part and the previous revision had
-it backwards: labels there sat one colour rank from their values, so a column of labels competed with
-the answers under it.
+Every field associates help and all validation errors through accessible
+descriptions. Ordinary labels use plain language; wire tokens remain technical
+data and user-authored content.
 
-**A value that names a setting carries a sentence under it.** "Guarded" tells somebody the name of
-something they did not choose and cannot look up from the panel; "Asks before anything outside its
-workspace" tells them what it does.
+Marketplace search, kind tabs and pagination preserve the query. Repeated
+profile items may be cards: 8px radius, 16px padding/gap, 280px minimum tracks
+constrained to available width. Show name, description, author, revision and
+uses. The unframed detail discloses all pinned commands, environment values,
+services, limits and nested profile revisions. Code wraps and is never executed.
 
-**A skill is a link to its own page in the registry, opened in a new tab**, labelled `name@version`
-where a version was recorded. `target="_blank"` always carries `rel="noreferrer noopener"`: a session
-is a live thing somebody is working in, so navigating it away costs them the surface they were using,
-and `noopener` denies the opened page the handle back to this one it would otherwise hold. The version
-sits with the name as one label rather than on its own line — "this session has nyxid" is not
-something anybody can act on without knowing which nyxid — and is omitted entirely rather than shown
-as an empty `@` where the registry reported none.
-
-**Absent, empty and unreported are three answers and are drawn as three sentences.** A control plane
-that did not report a field, a grant recorded as empty, and a grant never recorded at all are
-different facts, and one blank row cannot be all three.
-
-### The drawer spends colour once
-
-**Colour appears in the state band and on a value that carries a fact of its own — nowhere else.**
-The exceptional cases today are the session's state and an **unrestricted** permission mode, which is
-marked because the core exposes which mode is exceptional precisely so two surfaces cannot disagree
-about it.
-
-This is a rule and not an aesthetic preference. `--live`, `--wait` and `--fail` already mean something
-under §12.1, and a band tinted for decoration leaves the interface no way to say that the one row
-which genuinely matters is different from the four around it. Bands are told apart by **rule, rank and
-rhythm** — a hairline, a tracked title, and consistent vertical spacing — never by being given a
-colour each.
-
-**A session's lifecycle controls live in the session header**: one primary, one secondary, and the
-overflow menu (§7). The header also carries the subject, the status pill, and the kernel and plane in
-mono — the plane as a fact about the session, never as a control.
-
-**A failed action is reported inside the column, above the surface and never in place of it.** It is a
-`--fail` notice card at the head of the reading column, carrying what failed, what was not changed,
-and the API's own code in identifier style, with a dismiss. Placement is the substantive part: a
-failure belongs to one request about one session, and the surface beneath it may hold a dozen live
-terminals. **Nothing that reports a failure may destroy work that did not fail.** Every action clears
-it as it starts.
-
----
-
-## 18. Sessions — the canvas arrangement
-
-Every listed session is a framed node on one pannable surface. **The canvas replaces the middle column
-and nothing else.** One selection, two arrangements: the session the rail marks active and the node the
-canvas focuses are the same fact.
-
-### Node framing
-
-| Property                | Value                                                                   |
-| ----------------------- | ----------------------------------------------------------------------- |
-| Size                    | `--canvas-node-w` 420px × `--canvas-node-h` 280px                       |
-| Gap and surface padding | `--space-5`                                                             |
-| Background              | `--surface` on a `--sunken` floor                                       |
-| Border                  | 1px `--rule`, `--radius-md`                                             |
-| Header                  | 38px, 1px `--rule` underline: dot, start time, kernel and state in mono |
-
-**Fixed size, deliberately.** A node's size _is_ the geometry its runtime is told to draw at: a
-420×280 node asks for roughly 47 columns, and a node that changed width as siblings came and went
-would re-wrap everything the agent has drawn. Choosing the canvas therefore resizes every attached
-session once, and that does not undo.
-
-### What a node draws
-
-| Plane and state       | The node draws                                                                                   |
-| --------------------- | ------------------------------------------------------------------------------------------------ |
-| terminal, interactive | its terminal, live                                                                               |
-| terminal, read-only   | its terminal, live, and the word `read-only` in its header                                       |
-| **conversation**      | **a recap: the last thing the agent said, what is running, and one key reading `Open to reply`** |
-| rotating              | the sentence, and a bar reflecting reported steps                                                |
-| failed                | what failed, in the kernel's words, and `Start again`                                            |
-| past the budget       | why it is unattached, and `Attach`                                                               |
-
-**The conversation recap is the substantive change here.** The previous revision drew the whole
-conversation surface inside the node — stream, composer, usage band, all of it — inside 420×280,
-where the composer's placeholder clipped mid-word and the send key had 40px of room. A conversation
-needs a reading column (§5) and a canvas node cannot give it one, so the node shows what a glance
-wants and hands the reply to the surface that can hold it.
-
-### Focus, selection, and the cost
-
-| State                             | Treatment                                                                                                 |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Resting                           | 1px `--rule`, `--ink-2` header                                                                            |
-| Selection — pointer over the node | 1px `--rule-2`. Border weight only.                                                                       |
-| Focus — this node takes the keys  | 1px `--accent`, `--focus-node`, `--ink` header, `aria-pressed` on its handle, and the words `typing here` |
-
-**Focus is never a second opinion on §11.** The canvas is one tab stop; arrows move by one and by a
-row, clamped and never wrapping, and are not intercepted inside a terminal. **Unfocused terminals are
-never dimmed, tinted, greyed or covered.**
-
-**At most 12 nodes are attached at once**, and truncation is never silent: the footer band states how
-many are unattached and why. **The surface overflows on purpose and says so** — a fade at the trailing
-edge and a pill reading _"drag or → to pan"_ with the session count. A grid that runs past the
-viewport with nothing marking the cut reads as a clipped layout rather than a canvas.
+Use selects the published profile for creation; foreign commands or environment
+require explicit trust over exact server-provided content. Fork creates an
+independent profile with provenance. Publication never implies trust.
 
 ---
 
 ## 19. Operations
 
-**A page, not a dialog**, and the only surface that shows many rows at once. The view is absent unless
-the control plane says the caller holds a capability it can act on — presentation, never protection.
-Each of its seven views is offered on its own capability, and a view is never drawn empty because of
-entitlement.
+Operations is a page, not a dialog. The account action appears only when the caller
+holds a capability offered by at least one view. The four views are Sandboxes,
+Profiles, Platform settings, and Activity; each is independently capability-gated.
+Presentation is not authorization: every request uses the public admin API.
 
-The page carries a `--text-page` title with a one-line description, then the seven views as an
-underlined tablist at `--text-ui` — selected by weight, `--accent` ink, a 2px `--accent` bottom border
-**and** `aria-selected`.
+The fixed header names Operations at `--text-page`. An underlined tablist at
+`--text-ui` follows it, selected by weight, accent ink, a 2px accent bottom border,
+and `aria-selected`. The strip scrolls when it cannot fit. One scrollport owns the
+page. Do not retain the retired Chat hosts or Chat settings views.
 
-### Record list
+### Record lists and details
 
-Rows inside one `--radius-md` card, not a table.
+Use unframed compact record lists with hairline row separators, no zebra stripes,
+and no decorative section cards. A timestamp uses tabular numbers; the primary
+line uses `--text-body`, and metadata uses `--text-meta`. Identifiers use mono
+text that wraps without widening the viewport. Name and email identify a person
+when available; otherwise show the public subject identifier without guessing.
 
-- A leading tabular-nums timestamp at 190px, a `--text-body` primary line, `--text-meta` mono
-  metadata beneath.
-- Hairline separators, no zebra striping, no hover highlight, no row-level click target. Nothing on
-  this page navigates.
-- **Newest first, always.** Filters narrow without ever changing the order.
-- An empty list says what would have been there, in a sentence.
+Sandboxes rows show owner, name, written status, runtime version, Agent count, and
+last activity. Owner, status, and version filters retain their values during reads.
+A named details command opens a drawer with the Workspace/Agent hierarchy and
+the durable Sandbox event timeline. No row-wide destructive target exists.
+Unknown counts or unavailable runtime observations remain explicitly unknown.
 
-**A person is their name, then their email — never their subject identifier.** Where the directory
-knows nothing, the identifier is shown in identifier style. An action with no established identity
-reads "Not signed in".
+Profiles rows show kind, visibility, owner, name, and update time. The three filters
+are native selectors or bounded inputs. A retired profile is not silently hidden
+from an operator who has selected that state. Deployment defaults carry a
+read-only default marker, not a second interactive control.
 
-**Unknown is not empty.** A provider that could not be asked renders as unknown carrying its reason,
-and the running total is withheld entirely while any provider is unobservable — drawn as a quiet
-notice stating why, not as an absence.
+Retire uses §12.4 confirmation and the server-audited action. Controls require the exact
+cross-owner capability and remain disabled with an adjacent reason when absent.
+The confirmation names the target and the effect; it survives a failed request.
+Success rereads the record. Admin retirement has no invented idempotency-key
+contract. Never automatically repeat an ambiguous destructive request.
 
-### Chat hosts
-
-Chat hosts is offered with the session-inventory capability and never depends on directory access.
-Each compact record-list row carries age, owner identifier, a written lifecycle pill, retained thread
-count, and host identifier. Runtime version may follow as secondary metadata; checkpoint authority,
-settings contents, prompts, and provider identifiers never do. When a host retains a failure, the row
-also names its typed phase and zero-based setup-command index when present. A retained setup-output
-excerpt is drawn directly beneath the metadata as preformatted text in a fixed-height scroll region:
-the complete bounded excerpt remains inspectable without allowing one 32 KiB tail to dominate the
-inventory. The configured command itself is never projected, and no failure excerpt enters activity.
-
-Retire remains visible but disabled with one adjacent reason unless the caller has cross-owner
-control. Only active and paused hosts enable it. Pressing it replaces that row's control with the
-shared inline risk confirmation; this confirmation and its busy state are separate from session stop
-and end controls. Success rereads the inventory rather than guessing at lifecycle state.
-
-The seven-tab strip scrolls horizontally when it cannot fit. At the compact breakpoint each record
-row becomes one column and its actions wrap beneath its metadata, so neither the host identifier nor
-the inline confirmation can force the page wider than the viewport.
+Activity keeps the record-list treatment and public audit fields. It does not
+display credentials, profile contents, arbitrary runtime output, or internal
+checkpoint authority. All lists have loading, unavailable, empty, and pagination
+states. A failed refresh retains the last successful rows.
 
 ### Platform settings
 
-Settings is the one operations view that edits rather than lists. It is an **unframed form**, no
-wider than 920px and centred in the view scrollport. Its settings are full-width sections separated
-by a hairline, tracked section title and consistent vertical rhythm — never cards inside the
-operations page. Fields use §12.2, and the action row uses the shared buttons.
+Settings is an unframed form no wider than 920px, using full-width sections
+separated by hairlines. Sections cover Defaults, Inactivity, Retention, Limits,
+Triggers, and Marketplace. The three defaults use exact published-profile
+revision pickers with kind-specific summaries. A mutable latest revision is never
+silently substituted for a pinned choice.
 
-The standing-instructions document remains assembled on screen. Prose before and after the granted
-services is a repeatable list of textarea blocks with add, remove and order controls; the four pieces
-of prose around the list are individual fields. Between them sits a fixed row naming the generated
-granted-services list. It has no remove, disable or edit control: the operator controls its heading,
-surrounding prose and position, never whether it exists or what grants it contains.
+Time and count settings use bounded numeric inputs with explicit units. Binary
+enablement uses checkboxes or switches; closed policies use native selects.
+Trigger enablement and paused admission are distinct settings. Keep unfamiliar
+or newer server fields in the document during an edit; never erase them by
+reconstructing only the fields rendered by this client.
 
-A quiet notice above the document states both costs the form cannot make visible by shape: only Codex
-currently reads it, and clearing the platform prose removes the guidance that the session is already
-authenticated and that `nyxid login` will fail. Resetting to the shipped briefing is one action
-beside Save. The same reset removes the optional Chat object, returning Chat to its shipped off state;
-the button and notice name that consequence before the write. It preserves capacity, pressure,
-pricing, size bounds and the live-session limit. The previous stored object may be loaded into the
-draft, but is not written until Save, so recovery is inspectable rather than an immediate overwrite.
+Every write names the revision read. A conflict keeps the operator's draft,
+reads the current document, and offers explicit Load current values and
+Review retained draft actions. No automatic last-write-wins retry is allowed.
+Save is separate from any reset operation. Validation appears beside its field;
+the typed server refusal remains authoritative.
 
-Every write names the revision it was read from. A conflict leaves the operator's draft in place,
-reads the current revision, and draws a quiet notice with two explicit paths: load the current values,
-or review the retained draft and repeat the action against the new revision. A conflict is never
-reported as a successful save and never resolved by an automatic last-write-wins retry.
-
-### Chat settings
-
-Chat is a separate operations view under `configure_platform`, using the same public admin route and
-SDK contract available to an external operator console. It is absent with the rest of the Operations
-surface when that capability is absent; the control plane checks the capability again on every read
-and write. Like Platform settings, it is an unframed form no wider than 920px with hairline-separated
-sections rather than cards.
-
-The sections are fixed in this order: **Workspace** (repository URL and branch), **Agent** (model,
-five-value thinking effort, `agent.md` instructions, tool-body recording, and the read-only full-access
-fact), **Messages** (ordered prepended texts), **Setup** (ordered software-installation commands and
-the fixed runtime-user, no-root, idempotence, workspace-local installation guidance and exact Lean
-fixture), **Lifetime** (auto-pause minutes and per-user chat-window cap), **Host resources** (CPU and
-memory with a deployment-default toggle that retains the explicit pair), and **Enabled** (the master
-admission switch, shipped off). Ordered values have add, remove, move-up and move-down controls;
-resource fields remain visible but disabled with a _Deployment default_ placeholder while the default
-is selected. The long fixture wraps within its code treatment and never widens the form.
-
-Client validation mirrors the server's URL, UTF-8 byte, collection, time, thread and positive `u32`
-resource bounds, while the server remains authoritative. Saving replaces only the optional `chat`
-object under the platform document's revision CAS. A conflict follows the same two explicit recovery
-paths as Platform settings and never discards the retained draft or retries automatically.
+At compact widths rows and confirmation actions become one column. Long profile
+names, URLs, audit facts, and failures wrap. Drawers have bounded dimensions
+and their own internal scroll; they trap and restore focus using §12.4.
+No new palette, type scale, radius, or spacing token is introduced here.
 
 ---
 
 ## 19a. Developer
 
-**A reading surface, not a route and not a settings dialog.** Every signed-in user may open it from
-the account menu. The same row reads _Developer_ while another view is showing and _Back to sessions_
-while Developer is showing; it remains an action rather than a selected `menuitemradio`. Reloading
-returns to sessions, and selecting a session does the same. The surface adds no API request: its only
-content is the TypeScript and Rust markdown bundled from `sdk/*/docs/` with the frontend build.
+**A reading surface at `/developer`, not a settings dialog.** Every signed-in
+user may open it from the account menu. Refresh and browser history restore the
+route; selecting an Agent opens its conversation. The surface adds no API
+request: its content is the TypeScript and Rust markdown bundled from
+`sdk/*/docs/` with the frontend build.
 
-The first band has the session header's fixed proportions and names **Developer**. Beneath it, one
+The first band has the Agent header's fixed proportions and names **Developer**. Beneath it, one
 scrollport owns the page. Its contents use `--page-gutter` and centre a two-column document layout:
 a fixed 200px document rail, a 32px gap, and the existing 748px reading axis. The article is unframed;
 the navigation and prose never sit together inside a card. At widths below 48rem the rail becomes a
@@ -1400,149 +1072,98 @@ runtime empty state for a bundle CI was required to reject.
 
 ---
 
-## 19b. GitHub Trigger publisher
+## 19b. CMA Trigger publisher
 
-**An authenticated authoring surface, not a route and not part of Developer.** Every signed-in user
-may open it from an account-menu action named _GitHub Triggers_. The same row reads _Back to sessions_
-while the publisher is showing. Reloading returns to sessions, and selecting a session does the same.
-Opening any transient utility view while a Trigger, Launch, contribution, or session deep link is in
-the address bar first replaces that address with the home route; the requested utility view then
-draws. The address change is only a return to the page frame and never starts, saves, publishes, or
-retires work.
+CMA Trigger is an authenticated, persistent authoring surface opened from the
+account menu when publisher capability is present. Its routes are
+`/triggers/manage`, `/triggers/manage/{id}`, and
+`/triggers/manage/{id}/embed`. Refresh and browser history preserve the route.
+Public `/t/{publicId}` and `/t/{publicId}/{placementId}` visitor pages are separate.
 
-The fixed first band has the session header's proportions, names **GitHub Triggers**, and carries one
-compact _New Trigger_ command. One scrollport beneath it owns the page. At desktop widths its content
-is centred on a 1,100px maximum axis and uses a 240px Trigger rail, a 32px gap and the remaining editor
-width. The rail is unframed and lists each mutable draft by public summary, canonical repository and
-draft version; the active row uses the existing selected-navigation ground, a 2px leading accent rule,
-weight and `aria-current`. At widths below 48rem, the rail becomes a full-width 40px native selector
-above the editor, the gap becomes 16px, and every two-column field row becomes one column. No label,
-repository name, prompt, URL, error or command may widen the viewport.
+The fixed header names CMA Trigger and carries a compact New Trigger command.
+Below it, one scrollport holds an unframed 240px rail, a 32px gap, and the editor
+on a maximum 1,100px axis. Rail rows show title, written state, and short public
+identifier. Selected rows use the existing navigation ground, a leading accent
+rule, weight, and `aria-current`. Below 48rem the rail becomes a full-width
+40px native selector, the gap becomes 16px, and field rows become one column.
+No text or control may widen the viewport.
 
-The empty state is one sentence and the same _New Trigger_ command. Loading uses the existing skeleton
-treatment without claiming percentage progress. A failed initial read occupies the editor axis as an
-alert with an explicit Retry command. An existing draft stays visible if a later connection,
-repository, save, publish, copy or retirement operation fails.
+### Five-step authoring
 
-### Connection and repository
+The wizard uses §12.5's stepped-tool treatment without cards nested inside it.
+Step labels use compact UI type. Back preserves all entered values; an unavailable
+read or failed mutation does not discard the draft.
 
-Every draft names one exact reusable NyxID GitHub UserService. The connection section has a native
-selector whose options show the GitHub login where known and a shortened service identifier, followed
-by its state, granted scope classes and last verified account. The adjacent command is _Connect_ for a
-new service, _Reconnect_ for an inactive selected service, and _Check connection_ when an authorization
-window is outstanding or the browser could not observe it close. The publisher never displays or
-accepts a CMA key, GitHub token, OAuth code, NyxID token, or service credential.
+1. **What it opens** selects exact Sandbox, Workspace, and Agent Profile revisions.
+   Each picker shows a one-line summary. Workspace choices include the selected
+   Sandbox Profile's references and other usable own/public revisions. The
+   resulting environment is summarized with concrete profile names and services.
+2. **When someone clicks again** uses segmented or native option controls.
+   Sandbox and Workspace each choose reuse or new; Agent chooses continue, new,
+   or ask. The summary distinguishes a new Sandbox, a new Workspace in the
+   visitor's Sandbox, and a new Agent in the visitor's Workspace. It never implies
+   access to the publisher's instances.
+3. **What it says** edits title, description, first message, the four closed button
+   labels, theme, review-first checkbox, and optional sign-up hint. Render the
+   actual server badge for preview after publication; unpublished labels use the
+   checked-in server golden badge assets. Publisher content is plain text, not HTML.
+4. **Where it lives** edits labeled source-URL placements with add/remove commands.
+   Every mutation retains one key and exact payload until its outcome is known.
+   A placement is attribution and an allowed source declaration, not authentication.
+5. **Publish** presents a confirmation naming the immutable revision and targets.
+   Publish is explicit, separate from Save, and followed by the embed panel.
+   Private/unusable profile refusals appear beside the corresponding picker.
 
-Connect and Reconnect synchronously open a blank popup from the activating gesture, request the exact
-authorization handoff, validate its HTTPS GitHub destination, and navigate that popup. CMA remains
-open with the draft intact. The original page polls preflight for that exact service on a bounded
-cadence and stops on active success, terminal failure, a five-minute timeout, cancellation, or
-unmount. A blocked popup is a named failure and leaves the manual check command. A failed handoff
-closes the blank popup. Cross-origin popup contents are never inspected; only its `closed` state is
-observed. Successful preflight refreshes the connection list and never silently selects a different
-service.
+Profile content containing commands or environment variables is inspectable before
+publication and before visitor trust confirmation. The publisher accepts no token,
+OAuth code, GitHub credential, or Sandbox key. Reuse policies never grant access to
+another owner's resources. The retired repository-verification/contribution/PR
+workflow is absent.
 
-Repository selection is a GitHub repository URL field and a _Verify repository_ command. Only the
-`https://github.com/{owner}/{name}` repository form is accepted; query, fragment, credentials, extra
-path segments and non-GitHub hosts are rejected before a request. Verification resolves through the
-exact selected UserService and replaces no typed field on failure. Success draws the server's
-canonical owner/name, visibility, default branch, source revision and forkability. Numeric and node
-identities remain protocol state and are never editable controls. Saving and publishing are disabled
-until the selected connection is active and the current URL has a matching successful resolution.
+Draft writes use the public API's version and idempotency contract. Conflicts retain
+the editor and offer explicit current-draft loading or review against the new
+version. Ambiguous outcomes retain the exact command and suppress duplicate writes;
+never claim successful publication before the authoritative reply.
 
-### Draft editor
+### Embed panel and retirement
 
-The editor is unframed. Full-width sections separated by a hairline cover Repository, Task, Session,
-GitHub access, Contribution and Overrides. Section headings use 15/22 semibold type; field labels and
-help/error seats reuse §12.2. Textareas use the established field treatment and resize vertically.
-Numbers use bounded numeric inputs; closed choices use native selects; permission is a two-part
-segmented control; binary choices use checkboxes. Commands use the shared button hierarchy and icons.
+Host tabs are README or Markdown, Web page, Page with JavaScript, React app, and
+Just the link. Use actual tabs with `aria-selected`, not decorative chips. A native
+placement selector and theme controls select the server descriptor. The badge
+preview is shown against the established light and dark grounds.
 
-Task fields are ordered rows with key, kind, required, editable and kind-specific bounds or choices.
-Each row has symbol-only move and remove controls with tooltips and stable 36px targets. Adding a field
-is a text command with a plus glyph. Required fields expose a default control, because a required field
-without a default cannot be published. Setup execution is shown as fixed _Disabled_ with no command or
-steps editor. Contributor-owned credentials, the `cma/` branch prefix, no-reply attribution, public
-projection version and zero-cost policy are fixed facts rather than editable controls. Sponsored
-credentials and sponsored billing are absent, followed by one quiet _Unavailable in this release_
-status. The prompt and pull-request body render as plain text while editing; repository and publisher
-content is never interpreted as markup or HTML.
+Each snippet is read-only code with a symbol-only Copy command, tooltip, and polite
+live feedback that does not change geometry. Render the descriptor verbatim;
+never regenerate Markdown, HTML, JavaScript, React, SRI, or CSP strings in the
+browser. The JavaScript view includes the exact SRI and both CSP directives.
+A compact stats strip names Launch counts per placement and Agents ready, with
+unknown/loading states distinguished from zero.
 
-Save carries the draft version that was read and uses one idempotency key for the unresolved logical
-command. Validation and server failures leave every entered value in place. A version conflict reads
-the current draft but does not overwrite the retained editor; a notice offers _Load current draft_ and
-_Retry with current version_. An ambiguous transport outcome changes the command status to
-_Reconciling_, suppresses duplicate writes, reads the draft, and clears the retained key only after a
-finite server response proves whether that command landed. Save never publishes.
+Retire requires §12.4 confirmation naming the target. Existing Launches remain
+durable; new use follows the server's retired-state refusal. Failure preserves
+the confirmation, and a successful reply refreshes the record.
 
-Publish opens the shared modal and names the next immutable revision number, repository, source mode
-and public summary. Its affirmative command is _Publish immutable revision_. On success the editor
-reads the mutable draft again because publishing advances its version and next revision number, then
-refreshes the revision list. A failed publish leaves both editor and confirmation context intact.
-
-### Immutable revisions
-
-The revision section is a chronological list beneath the draft editor, not cards inside the form.
-Each row names revision number, publication state, short digest, publication time and the authority
-login captured at publication. A published row carries symbol-only copy controls with tooltips for the
-public Trigger URL and README Markdown. Copy feedback is announced in a polite live region and never
-changes row geometry. The Markdown is one ordinary linked-image badge or text link whose destination
-is the same-origin canonical `/triggers/{public_id}` URL; it contains no credential or publisher-only
-identifier.
-
-Retirement requires the shared inline confirmation, names the revision number, and explains that
-existing Launches remain durable while new launches from that revision stop. Only published revisions
-offer it. A successful retirement replaces that row from the server response. A failed or ambiguous
-retirement keeps the confirmation and row visible and follows the same idempotency/reconciliation
-contract as Save.
-
-All editor sections follow document order under Tab. Rail buttons and task-row commands have visible
-focus, confirmations trap and restore focus through the shared primitives, status is announced without
-moving focus, and no pointer-only action exists. At narrow widths controls that would otherwise form a
-crowded row become full-width 44px targets. Reduced motion removes only decorative transitions; OAuth,
-validation, save, publish, reconciliation and retirement states remain equally explicit.
+All actions have visible focus. Dialogs trap and restore focus, status updates
+do not move it, and narrow controls use the established 44px targets. Reduced
+motion changes no validation, publication, copy, or recovery state. Use only
+existing tokens, field primitives, code treatment, and button hierarchy.
 
 ---
 
 ## 20. The signed-out surface
 
-The live character, at a size where its expression is legible, and one thing to do.
+The generic authentication gate is an unframed, centred brand lockup and one
+Sign in command. It uses the existing background and typography tokens, a
+bounded image that fits narrow screens, and no terminal simulation, 3D scene,
+marketing hero or animated prerequisite. Sign-in is available on the first
+interactive frame. Authentication errors preserve their explanation and a
+supported reload action.
 
-| Property                | Value                                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| Character stage         | `clamp(220px, 50vmin, 520px)`, square and transparent                                            |
-| Wordmark                | `clamp(40px, 9vmin, 72px)`, Inkwell 700; Lumen 900 with `--ds-font-variation-display`; `-0.03em` |
-| Expansion               | 12px mono, `0.18em`, uppercase                                                                   |
-| **Time to interactive** | **0ms — nothing here waits on the animation**                                                    |
-
-This is the only surface allowed the references' signature texture. In light, the cream ground takes
-Inkwell ruled paper: a 28px vertical rhythm with a one-pixel blue-ink rule at 7% alpha and the single
-warm red margin rule from the reference. In dark, the near-black ground takes Lumen's 18px dot grid,
-one low-alpha light pixel per cell. Every signed-in working surface, including every empty state,
-stays flat on `bg-base`.
-
-One centred column: the live 3D character, the wordmark, "ChronoAI Managed Agent", a prompt with its
-sign-in key on the same line, and one line of what the service is. No frame — §9's frame is three
-columns of session, and a visitor has no sessions. The character canvas is unframed and transparent;
-its stable square is the scene rather than a preview card, so loading it never shifts the controls.
-
-The character is loaded after the first React frame. The prompt remains a real, focused control while
-the Three.js chunk arrives, and a WebGL failure leaves the still theme-inked mark in the same reserved
-square rather than taking sign-in down with it. Its body reads `--dsw-alias-brand-primary`; its lenses
-read `--dsw-alias-brand-primary-invert`; its studio lights and contact shadow are derived only from
-the existing appearance aliases. The transparent renderer follows a body-theme change while the page
-is open. Rendering pauses when the page or character is not visible and releases its WebGL resources
-when unmounted.
-
-The prompt is a real `<input>`, mounted and focused from the first frame. What a visitor types
-survives the sign-in round trip and becomes the first turn of their first session. That carry is the
-reason a signed-out page is given a field at all rather than a bare button: the question is
-answerable before an account exists, and making somebody retype their answer after signing in is a
-small insult a product only gets to make once.
-
-This replaced a simulated terminal that typed a scripted boot log beside a statement column. It was
-demonstrating the product by pretending to be it, and the pretence was the problem — everything on it
-was fake except the input, so the one real affordance was the least conspicuous thing on the page.
+A public Trigger URL has its own complete read-only landing (§13b), not this
+generic gate. Sign in and Create account preserve the canonical local return
+route and the visitor's bounded intent. No page accepts credentials, and no
+OAuth callback starts work without the explicit consent belonging to that
+intent.
 
 ---
 
@@ -1554,7 +1175,7 @@ animated file adds timing and changes no path, so the two can never drift into b
 
 | File                     | Where it is used                         |
 | ------------------------ | ---------------------------------------- |
-| `cma-mark.svg`           | signed-out WebGL fallback and still uses |
+| `cma-mark.svg`           | signed-out mark and still uses |
 | `cma-mark-animated.svg`  | signed-in sidebar                        |
 | `cma-favicon.svg`        | the browser tab                          |
 | `appicon-*`              | installed application and device chrome  |
@@ -1562,7 +1183,7 @@ animated file adds timing and changes no path, so the two can never drift into b
 
 The animated mark draws its arc, then its base, then its lenses, and afterwards a highlight crosses
 the lenses on a long loop. It lives in the signed-in sidebar and mounts with the authenticated shell,
-not with session or view changes, so its entrance does not replay while somebody navigates their work.
+not with Agent or view changes, so its entrance does not replay while somebody navigates their work.
 The sidebar wrapper stays still: the bob that belonged to the former signed-out treatment does not
 move into chrome. The asset uses CSS rather than SMIL so `prefers-reduced-motion` can show the finished
 mark with no draw or highlight animation.
@@ -1599,17 +1220,17 @@ one size serves both states and the closed rail needs no rule of its own.
 
 ## 22. What does not change
 
-Everything §19 lists, and every behavioural rule §18 bound:
+These rules apply to every view:
 
-- The **equivalence rule** — a turn drawn from history and a turn watched arriving produce the same
-  result.
-- **Absence is a fact, not a zero.**
-- **No colour on agent content**, ever.
-- **A refusal names what is missing.**
-- The session-state table and its meanings.
-- **Never render a credential.**
+- A turn read from durable history and the same turn watched arriving converge
+  on the same content, with live-only observations clearly distinguished.
+- Absence is a fact, not a zero.
+- Agent content is not recoloured for decoration.
+- A refusal names what is missing and a supported next action.
+- Recorded resource states govern input and lifecycle actions.
+- Credentials are never rendered.
 
-A restyle that changed any of those would not be a restyle.
+A style change must not alter ownership, consent, durability or these behaviors.
 
 ---
 
@@ -1689,3 +1310,7 @@ Append-only. Never edit or delete an entry.
 | 2026-09-01 | Amended §13 for the Responses-backed Chat reduction. Kept the ordinary message stream while removing usage, context, resources, pressure notices, agent plans and options, top-level tool rows, and slash commands; placed live reasoning and durable tool activity together in one Thinking fold per turn with quiet kind-target-status-duration lines and disclosed bodies; retained neutral history boundaries and approvals; reduced the empty state to its title; fixed the header to Details alone; and fixed the chat drawer to a state-and-title band plus one Worktree band containing only the name and copyable local path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | 2026-09-01 | Amended §13 for paused Chat. Defined the exact idle-plus-idle-timeout state; kept durable history and the composer available; placed the verbatim server-composed pause sentence in a persistent quiet status notice at the head of the reading column; fixed the paused placeholder; retained ordinary Responses admission; and required the existing Starting treatment to hold the draft until streaming progress or preserve it with the coded provisioning-timeout failure.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-09-01 | Amended §19 for workspace setup guidance and operator-visible host failures. Fixed Setup guidance to uid 10001 without root, idempotent workspace-local installation, and the exact Lean fixture; added the retained typed failure phase and zero-based command index to chat-host rows; and placed the bounded output tail in a fixed-height preformatted scroll region while keeping configured commands and excerpts out of activity. |
+| 2026-09-06 | Replaced retired Chat operator and GitHub contribution publisher contracts in §19 and §19b with capability-gated Sandbox/Profile/Activity inventory, revision-CAS platform settings, persistent CMA Trigger routes, the five-step profile/reuse/presentation/placement wizard, and descriptor-owned embed tabs. Retained existing design tokens and accessibility primitives. |
+| 2026-09-06 | Amended §§1, 9–11, 12.2, 13–14, 16–18 and 19a for the Sandbox tree, Agent conversation and details, durable creation and public visitor journey, resource actions, versioned Profiles and Marketplace, persistent Developer route, and removal of terminal/session/canvas contracts. Public retry controls now require an actual supported operation. Historical rows and established palette tokens are unchanged. |
+| 2026-09-07 | Aligned the remaining typography, motion, accessibility, authentication-gate and invariant wording with the implemented Agent client. Retired terminal fonts, simulated introductions, the removed 3D authentication scene and automatic first-message claims; preserved the static brand gate, durable-history equivalence, explicit visitor consent and historical changelog. |
+| 2026-09-07 | Added four fixed light/dark badge-preview aliases in §2 using the established paper, ink and coal palette, so the publisher can inspect both appearances without switching the application theme or introducing component-level raw colours. |

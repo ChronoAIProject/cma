@@ -1,65 +1,86 @@
 # CMA (ChronoAI Managed Agent)
 
-Managed agent service by ChronoAI. Runs coding-agent kernels (Codex, Claude Code, DeepSeek Harness) on ChronoAI
-infrastructure and exposes them over public interfaces, so end users install nothing locally.
+CMA runs managed Agents on ChronoAI infrastructure. A user's Sandbox contains
+Workspaces; each Workspace contains isolated git Worktrees, each with exactly
+one Agent. Versioned Sandbox, Workspace and Agent Profiles define the environment
+and can be published through the marketplace. Codex is the one supported agent
+provider. End users install nothing locally.
 
-**Read [CLAUDE.md](./CLAUDE.md) before contributing.** It defines the repository layout, the
-four-layer architecture, the branch model, and the CI gates. Those rules are binding.
+Read [CLAUDE.md](./CLAUDE.md) before contributing. Its repository layout,
+four-layer architecture, ownership rules and CI gates are binding.
 
-## Layout
+## Public Interfaces
+
+Resource management, profiles, marketplace, Triggers and Launches use public
+REST. Live conversations use AG-UI (`threadId` is the Agent id) or Responses
+(`conversation` is the Agent id). The first-party web client uses those same
+public interfaces. There is no terminal plane, separate Chat model, billing,
+sponsorship or repository-contribution workflow.
+
+```text
+Control plane pod
+  layer1-public    REST, AG-UI, Responses; explicit MCP/A2A refusal
+  layer2-core      Sandbox -> Workspace -> Worktree -> Agent, profiles, events
+  layer3-adapter   SandboxAdapter, shared hosting, Codex conventions
+Sandbox pod
+  layer4-runtime   provider-neutral supervisor, Workspaces and Agents
+```
+
+The control plane never executes agent code; Sandbox pods never serve public
+traffic. Software installation finishes before credentials are delivered.
+Agent configuration and skills live in per-Agent homes, not globally.
+
+## Repository
 
 | Path | Contents |
 |---|---|
-| `api/` | Backend — a single Rust workspace. Layers 1–4. |
-| `web/` | Frontend — a single React project. Interactive session, Trigger, contribution, publishing, and terminal surfaces. |
-| `infra/` | Dockerfiles and Kubernetes manifests. Fixed file list; must never diverge from the code. |
-| `docs/` | All documentation, markdown only. |
+| `api/` | Rust workspace: four layers and production composition. |
+| `web/` | React client: hierarchy, conversations, Profiles, Marketplace, Trigger journeys and Operations. |
+| `sdk/` | Repository-only TypeScript and Rust SDKs, tests and bundled guides; unpublished. |
+| `infra/` | Fixed Dockerfile and Kubernetes manifest inventory; kept aligned with code. |
+| `docs/` | Public contracts, design authority, operations and evidence. |
 
-## Architecture
+## Local Development
 
-Two pod roles. The control plane never executes agent code; bot pods never serve public traffic.
-
-```
-control plane pod
-  layer1-public    AG-UI · REST · PTY · MCP · A2A
-  layer2-core      the session core: models, events, capabilities
-  layer3-adapter   the Agent Client Protocol, and the kernels behind it
-bot pod
-  layer4-runtime   kernel-neutral supervisor, and the agent it hosts
-```
-
-## Local development
+Backend commands run from `api/`; frontend commands run from `web/`. The
+frontend imports the checked-out TypeScript SDK, so install its runtime
+dependencies too:
 
 ```sh
-# backend
-cd api && cargo build --workspace --locked && cargo test --workspace
-
-# frontend
-cd web && npm ci && npm run dev
+npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
+npm ci --prefix web
+npm run dev --prefix web
 ```
 
-## CMA GitHub Triggers
+The backend requires the documented configuration and a MongoDB replica set for
+transactions. See [CMA Operations](./docs/CMA_Operations.md) before starting a
+production-backed configuration. Tests using local substitutes are not evidence
+that the deployed provider or credentials work.
 
-A repository publisher can create an immutable CMA Trigger and place the
-generated link in a public README:
+## CMA Triggers
+
+A publisher selects exact Sandbox, Workspace and Agent Profile revisions and
+their reuse policies. CMA returns a stable public URL and host-specific
+integration snippets. For example:
 
 ```markdown
-[Open in CMA](https://cma.example.com/triggers/PUBLIC_TRIGGER_ID)
+[Open in CMA](https://cma.example.com/t/PUBLIC_TRIGGER_ID)
 ```
 
-The link contains no API key or GitHub credential. It opens a read-only preview;
-the contributor signs in, selects their own NyxID GitHub connection, reviews or
-adjusts the permitted settings, and explicitly presses Start before CMA creates
-or reuses a fork and opens a managed session. Publishing a branch and opening or
-updating a pull request remain separate contributor confirmations.
+The link contains no credential. It opens a read-only landing; the visitor
+explicitly starts an Agent of their own, completes any trust or connection
+review, and follows recorded preparation. A GET or OAuth callback never starts
+work. Reuse always concerns the visitor's resources, never the publisher's.
 
-See [Publish and use a CMA GitHub Trigger](./docs/CMA_Trigger_Publishing.md) for
-the publisher and contributor flow, scope requirements, revision lifecycle,
-re-click behavior, failure handling, and MVP boundaries. The API contract is in
-[API_REST.md](./docs/API_REST.md), and operational recovery is in
-[CMA_Trigger_Operations.md](./docs/CMA_Trigger_Operations.md).
+See [CMA Model](./docs/CMA_Model.md), [CMA Trigger](./docs/CMA_Trigger.md),
+[API Overview](./docs/API_Overview.md) and [REST API](./docs/API_REST.md).
 
-## Branches
+## Branches And Deployment
 
-`develop` is the default branch and takes daily work. `main` is production — every merge into it
-is a release. Both are protected. See CLAUDE.md for the full gate list.
+`develop` is the protected default development branch. Complete implementation
+and all required gates before merging. The general release policy is in
+[CLAUDE.md](./CLAUDE.md); the milestone-16 deployment is an explicitly authorized
+exception: merge completed work to `develop`, build and deploy directly, and
+verify production without merging to `main` or invoking the release workflow.
+The exact reset/deployment order and safeguards belong to
+[CMA Operations](./docs/CMA_Operations.md).
