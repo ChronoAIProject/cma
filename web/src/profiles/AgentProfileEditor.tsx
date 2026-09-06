@@ -208,7 +208,7 @@ function AgentEditor({ client, catalog, profileId, onSaved }: AgentProfileEditor
           <Field
             id="profile-systemPrompt"
             label="System prompt"
-            help="These plain-text instructions apply whenever an agent uses this profile."
+            help="These plain-text instructions apply alongside repository instructions such as AGENTS.md, not in place of them."
             error={errors.systemPrompt}
           >
             <textarea

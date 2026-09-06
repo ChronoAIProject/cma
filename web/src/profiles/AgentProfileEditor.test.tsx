@@ -21,6 +21,13 @@ class SaveErrorBoundary extends Component<{ children: ReactNode }, { failed: boo
 }
 
 describe('Agent profile editing', () => {
+  it('associates repository-instruction coexistence with the system prompt field', () => {
+    render(<AgentProfileEditor client={profileClient()} catalog={SKILL_CATALOG} />);
+    expect(screen.getByLabelText('System prompt')).toHaveAccessibleDescription(
+      'These plain-text instructions apply alongside repository instructions such as AGENTS.md, not in place of them.',
+    );
+  });
+
   it('creates a private draft and reports its new profile identity', async () => {
     const actor = userEvent.setup();
     const createProfile = vi.fn(profileClient().createProfile);
