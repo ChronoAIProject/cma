@@ -40,6 +40,7 @@ interface AppFrameProps {
   readonly details?: ReactNode;
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
+  readonly compactDetailsOverlay?: boolean;
   /**
    * Whether the owner has asked for the sidebar to be closed.
    *
@@ -59,6 +60,7 @@ export function AppFrame({
   center,
   details,
   detailsOpen,
+  compactDetailsOverlay = false,
   overlay,
   sidebarCollapsed = false,
   onSidebarCollapsedChange,
@@ -183,6 +185,9 @@ export function AppFrame({
       className="frame"
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
+      data-details-overlay={
+        detailsOpen && columns.details === 0 && compactDetailsOverlay ? '' : undefined
+      }
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
       style={{
         gridTemplateColumns: `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
