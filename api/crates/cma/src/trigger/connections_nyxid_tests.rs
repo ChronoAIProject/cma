@@ -9,7 +9,8 @@ use axum::{
     Router,
 };
 use layer2_core::trigger_domain::{
-    BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError, ServiceRequirementState,
+    BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError, ServiceConnectionMode,
+    ServiceRequirementState,
 };
 use layer2_core::{ServiceId, StoreError, SubjectId};
 use serde_json::{json, Value};
@@ -64,9 +65,11 @@ struct ProviderState {
     create_reply: Mutex<Reply>,
     link_reply: Mutex<Reply>,
     services_reply: Mutex<Reply>,
+    catalog_reply: Mutex<Reply>,
     creates: Mutex<Vec<CreateRequest>>,
     link_reads: Mutex<Vec<(String, Option<String>)>>,
     service_reads: Mutex<Vec<Option<String>>>,
+    catalog_reads: Mutex<Vec<Option<String>>>,
 }
 
 impl ProviderState {
@@ -79,9 +82,11 @@ impl ProviderState {
             }))),
             link_reply: Mutex::new(link_reply("pending")),
             services_reply: Mutex::new(Reply::json(json!({ "services": [] }))),
+            catalog_reply: Mutex::new(Reply::json(json!({ "services": [] }))),
             creates: Mutex::new(Vec::new()),
             link_reads: Mutex::new(Vec::new()),
             service_reads: Mutex::new(Vec::new()),
+            catalog_reads: Mutex::new(Vec::new()),
         }
     }
 
@@ -111,6 +116,7 @@ impl Provider {
             .route("/api/v1/connect-links", post(create_link))
             .route("/api/v1/connect-links/{id}", get(read_link))
             .route("/api/v1/user-services", get(read_services))
+            .route("/api/v1/services", get(read_catalog))
             .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -182,6 +188,15 @@ async fn read_services(State(state): State<Arc<ProviderState>>, headers: HeaderM
         .lock()
         .expect("services reply lock")
         .response()
+}
+
+async fn read_catalog(State(state): State<Arc<ProviderState>>, headers: HeaderMap) -> Response {
+    state
+        .catalog_reads
+        .lock()
+        .unwrap()
+        .push(authorization(&headers));
+    state.catalog_reply.lock().unwrap().response()
 }
 
 fn authorization(headers: &HeaderMap) -> Option<String> {
@@ -274,6 +289,108 @@ fn create_reply(connect_url: impl Into<String>) -> Reply {
 
 fn malformed_error() -> ServiceConnectionError {
     ServiceConnectionError::Malformed("NyxID response was not usable".into())
+}
+
+#[tokio::test]
+async fn catalog_metadata_uses_exact_owner_visible_types_and_configured_setup_origin() {
+    let provider = Provider::start().await;
+    *provider.state.catalog_reply.lock().unwrap() = Reply::json(json!({ "services": [
+        {"id":"provider-internal-id","slug":"github","name":"GitHub","service_type":"http","is_active":true,"base_url":"http://internal.example","oauth_client_secret":"not-projected"},
+        {"slug":"workstation","name":"Development host","service_type":"ssh","is_active":true,"homepage_url":"https://untrusted.example/setup"},
+        {"slug":"future","name":"Future service","service_type":"future_protocol","is_active":true},
+        {"slug":"inactive","name":"Inactive service","service_type":"http","is_active":false},
+        {"slug":"unreported","name":"Unreported service"}
+    ] }));
+    let tokens = Tokens::available();
+    let broker = broker(&provider, tokens.clone());
+    let owner = SubjectId::new("visitor-metadata");
+    let services = [
+        "github",
+        "workstation",
+        "future",
+        "inactive",
+        "unreported",
+        "provider-internal-id",
+        "missing",
+    ]
+    .map(ServiceId::new);
+    let metadata = broker.describe_services(&owner, &services).await.unwrap();
+    assert_eq!(metadata.len(), services.len());
+    assert_eq!(metadata[0].display_name.as_deref(), Some("GitHub"));
+    assert_eq!(metadata[0].connection_mode, ServiceConnectionMode::Hosted);
+    assert_eq!(metadata[0].setup_url, None);
+    assert_eq!(metadata[1].connection_mode, ServiceConnectionMode::Manual);
+    assert_eq!(
+        metadata[1].setup_url.as_deref(),
+        Some("https://nyx.example/services")
+    );
+    for item in &metadata[2..] {
+        assert_eq!(item.connection_mode, ServiceConnectionMode::Unknown);
+        assert_eq!(item.setup_url, None);
+    }
+    assert_eq!(metadata[5].display_name, None);
+    assert_eq!(metadata[6].display_name, None);
+    assert_eq!(*tokens.owners.lock().unwrap(), vec![owner]);
+    assert_eq!(
+        *provider.state.catalog_reads.lock().unwrap(),
+        vec![Some(format!("Bearer {VISITOR_TOKEN}"))]
+    );
+    assert!(provider.state.service_reads.lock().unwrap().is_empty());
+    assert!(provider.state.creates.lock().unwrap().is_empty());
+    let printed = format!("{metadata:?}");
+    for secret in [
+        VISITOR_TOKEN,
+        "not-projected",
+        "internal.example",
+        "untrusted.example",
+    ] {
+        assert!(!printed.contains(secret));
+    }
+}
+
+#[tokio::test]
+async fn catalog_metadata_rejects_duplicate_malformed_and_oversized_catalogs() {
+    let provider = Provider::start().await;
+    let broker = broker(&provider, Tokens::available());
+    let row = json!({"slug":"github","name":"GitHub","service_type":"http","is_active":true});
+    for catalog in [
+        json!({"services":[row.clone(),row.clone()]}),
+        json!({"services":[{"slug":"github","name":""}]}),
+        json!({"services":[{"slug":"github","name":"x".repeat(257)}]}),
+        json!({"services":[{"slug":"github\nsecret","name":"GitHub"}]}),
+        json!({"services": vec![row; 1001]}),
+        json!({"services":[], "ignored":"x".repeat(1024 * 1024)}),
+        json!({"items":[]}),
+    ] {
+        *provider.state.catalog_reply.lock().unwrap() = Reply::json(catalog);
+        assert_eq!(
+            broker
+                .describe_services(&SubjectId::new("visitor"), &[ServiceId::new("github")])
+                .await,
+            Err(malformed_error())
+        );
+    }
+}
+
+#[tokio::test]
+async fn catalog_metadata_does_not_read_without_requirements_or_owner_credentials() {
+    let provider = Provider::start().await;
+    let tokens = Tokens::missing();
+    let broker = broker(&provider, tokens.clone());
+    let owner = SubjectId::new("visitor");
+    assert!(broker
+        .describe_services(&owner, &[])
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(tokens.owners.lock().unwrap().is_empty());
+    assert_eq!(
+        broker
+            .describe_services(&owner, &[ServiceId::new("github")])
+            .await,
+        Err(ServiceConnectionError::Refused)
+    );
+    assert!(provider.state.catalog_reads.lock().unwrap().is_empty());
 }
 
 #[test]

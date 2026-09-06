@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use layer2_core::trigger_domain::{
     BrokerHandoff, BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError,
-    ServiceRequirement,
+    ServiceConnectionMetadata, ServiceRequirement,
 };
 use layer2_core::{ServiceId, SubjectId};
 
@@ -53,6 +53,17 @@ impl CmaServiceConnectionBroker {
 
 #[async_trait::async_trait]
 impl ServiceConnectionBroker for CmaServiceConnectionBroker {
+    async fn describe_services(
+        &self,
+        owner: &SubjectId,
+        services: &[ServiceId],
+    ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        match &self.mode {
+            BrokerMode::Provider(broker) => broker.describe_services(owner, services).await,
+            BrokerMode::Trusted => Ok(Vec::new()),
+        }
+    }
+
     async fn requirements(
         &self,
         owner: &SubjectId,

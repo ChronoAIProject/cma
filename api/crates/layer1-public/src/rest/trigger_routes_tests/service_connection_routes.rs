@@ -1,5 +1,7 @@
 use axum::http::{Method, StatusCode};
-use layer2_core::trigger_domain::{BrokerHandoffState, ServiceRequirementState};
+use layer2_core::trigger_domain::{
+    BrokerHandoffState, ServiceConnectionMetadata, ServiceConnectionMode, ServiceRequirementState,
+};
 use serde_json::json;
 
 use super::support_tests::*;
@@ -136,4 +138,82 @@ async fn missing_or_foreign_launch_is_hidden_before_connection_command_reservati
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(problem["code"], "service_connection_not_found");
     assert_eq!(app.operation_reservations(), before);
+}
+
+#[tokio::test]
+async fn requirement_metadata_is_owner_only_and_does_not_rewrite_launch_projection() {
+    let app = TestApp::new().await;
+    let trigger = create_trigger(&app, "always_new", "metadata-create-trigger").await;
+    let published = publish_trigger(
+        &app,
+        trigger["id"].as_str().unwrap(),
+        "metadata-publish-trigger",
+    )
+    .await;
+    let (_, launch) = json_response(
+        &app.router,
+        visitor_request(
+            Method::POST,
+            &format!(
+                "/api/v1/triggers/public/{}/launches",
+                published["public_id"].as_str().unwrap()
+            ),
+            Some(launch_body(false)),
+            Some("metadata-launch"),
+        ),
+    )
+    .await;
+    let id = launch["id"].as_str().unwrap();
+    app.broker.set_metadata(vec![ServiceConnectionMetadata {
+        service: layer2_core::ServiceId::new("github"),
+        display_name: Some("GitHub".into()),
+        connection_mode: ServiceConnectionMode::Manual,
+        setup_url: Some("https://nyx.example/services".into()),
+    }]);
+    let requirement_path = format!("/api/v1/launches/{id}/requirements");
+    for (path, caller) in [
+        (&requirement_path, OTHER),
+        (
+            &"/api/v1/launches/lch_absent/requirements".to_owned(),
+            VISITOR,
+        ),
+    ] {
+        let (status, _) = json_response(
+            &app.router,
+            request(
+                Method::GET,
+                path,
+                None,
+                Some((caller, visitor_authority())),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(app.broker.metadata_reads(), 0);
+    let (status, requirements) = json_response(
+        &app.router,
+        visitor_request(Method::GET, &requirement_path, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{requirements}");
+    assert_eq!(
+        requirements["services"],
+        json!([{"service":"github","state":"missing","display_name":"GitHub","connection_mode":"manual","setup_url":"https://nyx.example/services"}])
+    );
+    assert_eq!(
+        requirements["checked_at"],
+        launch["requirements"]["checked_at"]
+    );
+    let (status, after) = json_response(
+        &app.router,
+        visitor_request(Method::GET, &format!("/api/v1/launches/{id}"), None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after, launch);
+    assert!(after["requirements"]["services"][0]
+        .get("connection_mode")
+        .is_none());
 }

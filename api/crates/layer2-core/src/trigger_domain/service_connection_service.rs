@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +6,8 @@ use crate::{now_rfc3339, seconds_from_rfc3339, Caller, LaunchId, ServiceHandoffI
 
 use super::{
     BrokerHandoffState, LaunchStore, LaunchStoreError, ServiceConnectionBroker,
-    ServiceConnectionError, ServiceConnectionHandoff, ServiceConnectionStore,
+    ServiceConnectionError, ServiceConnectionHandoff, ServiceConnectionMetadata,
+    ServiceConnectionStore,
 };
 
 const MAX_SERVICE_ID_BYTES: usize = 128;
@@ -132,6 +133,45 @@ impl ServiceConnectionService {
             .await
             .map_err(store_error)?;
         replay(stored, &request.service_id)
+    }
+
+    pub async fn describe_launch_services(
+        &self,
+        caller: &Caller,
+        id: &LaunchId,
+    ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionServiceError> {
+        let launch = self
+            .launches
+            .launch(id, &caller.subject)
+            .await
+            .map_err(store_error)?
+            .ok_or(ServiceConnectionServiceError::NotFound)?;
+        let services = launch
+            .requirements
+            .services
+            .iter()
+            .map(|requirement| requirement.service.clone())
+            .collect::<Vec<_>>();
+        if services.is_empty() {
+            return Ok(Vec::new());
+        }
+        let metadata = self
+            .broker
+            .describe_services(&caller.subject, &services)
+            .await
+            .map_err(broker_error)?;
+        let allowed = services.iter().collect::<BTreeSet<_>>();
+        let mut seen = BTreeSet::new();
+        if metadata.len() > services.len()
+            || metadata.iter().any(|item| {
+                !allowed.contains(&item.service) || !seen.insert(&item.service) || !item.is_valid()
+            })
+        {
+            return Err(ServiceConnectionServiceError::Corrupt(
+                "service connection metadata was not usable".into(),
+            ));
+        }
+        Ok(metadata)
     }
 
     pub async fn read_and_refresh(
