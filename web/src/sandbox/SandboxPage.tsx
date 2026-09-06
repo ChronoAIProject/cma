@@ -150,7 +150,7 @@ export function SandboxPage({
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}
-              disabled={busy || sandbox.status !== 'active'}
+              disabled={busy || !['active', 'paused', 'reviving'].includes(sandbox.status)}
               onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
             >
               New workspace
@@ -239,7 +239,11 @@ export function SandboxPage({
               {permissions.createAgent ? (
                 <Button
                   icon={<IconPlusOutline16 />}
-                  disabled={busy || sandbox.status !== 'active' || workspace.status !== 'ready'}
+                  disabled={
+                    busy ||
+                    !['active', 'paused', 'reviving'].includes(sandbox.status) ||
+                    workspace.status !== 'ready'
+                  }
                   onClick={() => onAction({ kind: 'new_agent', workspaceId: workspace.id })}
                 >
                   New agent
