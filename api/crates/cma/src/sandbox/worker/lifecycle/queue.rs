@@ -22,7 +22,7 @@ impl SandboxWorker {
         let agents = self.lifecycle_agents(&sandbox).await?;
         let fenced = agents
             .iter()
-            .filter(|agent| agent.status.is_live())
+            .filter(|agent| sandbox.restores_agent(agent))
             .find_map(|agent| {
                 agent
                     .conversation
@@ -80,7 +80,7 @@ impl SandboxWorker {
         }
         if let Some(agent) = agents
             .iter()
-            .filter(|agent| agent.status.is_live())
+            .filter(|agent| sandbox.restores_agent(agent))
             .find(|agent| !queue_agent_is_quiet(agent))
         {
             tracing::debug!(agent_id = %agent.id, "lifecycle queue is waiting for agent settlement");
@@ -89,7 +89,7 @@ impl SandboxWorker {
 
         let pending = agents
             .iter()
-            .filter(|agent| agent.status.is_live())
+            .filter(|agent| sandbox.restores_agent(agent))
             .find_map(|agent| {
                 agent
                     .conversation
@@ -135,14 +135,14 @@ impl SandboxWorker {
             .map_err(model_error)?;
         let mutations = agents
             .into_iter()
-            .filter(|agent| agent.status.is_live())
+            .filter(|agent| sandbox.restores_agent(agent))
             .map(|current| prune_delivered_queue(current, &stamp))
             .collect::<Result<Vec<_>, _>>()?;
         self.commit_lifecycle_phase(
             &sandbox,
             next,
             mutations,
-            SandboxLifecycleAgentScope::AllLive,
+            SandboxLifecycleAgentScope::RestoreParticipants,
             stamp,
             vec![SandboxEventKind::WorkStepCompleted {
                 step: SandboxWorkStep::RunLifecycleOperation,

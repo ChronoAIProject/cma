@@ -1,6 +1,6 @@
 use super::*;
 use crate::sandbox::store::{AgentAdmission, AgentAdmissionResult, AgentAdmissionStore};
-use crate::sandbox::{SandboxEventKind, SandboxStatus, WorkspaceStatus};
+use crate::sandbox::{AgentOrigin, SandboxEventKind, SandboxReviveCause, WorkspaceStatus};
 
 #[async_trait]
 impl AgentAdmissionStore for InMemorySandboxStore {
@@ -57,8 +57,7 @@ impl AgentAdmissionStore for InMemorySandboxStore {
         {
             return Err(SandboxStoreError::WorkspaceNotReady);
         }
-        if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.checkpoint_capture.is_some()
-        {
+        if !sandbox.accepts_creation_admission() {
             return Err(SandboxStoreError::SandboxNotReady);
         }
         let live = state
@@ -102,14 +101,17 @@ impl AgentAdmissionStore for InMemorySandboxStore {
             .insert(next_workspace.id.clone(), next_workspace);
 
         let mut next_sandbox = sandbox;
-        next_sandbox.revision = next_sandbox
+        next_sandbox
             .revision
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
-        next_sandbox.updated_at.clone_from(&admission.event_at);
-        next_sandbox
-            .last_activity_at
-            .clone_from(&admission.event_at);
+        let cause = match admission.origin {
+            AgentOrigin::Manual => SandboxReviveCause::AgentCreation,
+            AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
+        };
+        let revival = next_sandbox
+            .record_creation_admission(cause, admission.event_at.clone())
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         candidate
             .sandboxes
             .insert(next_sandbox.id.clone(), next_sandbox);
@@ -124,6 +126,14 @@ impl AgentAdmissionStore for InMemorySandboxStore {
             creation.agent.id.clone(),
             vec![creation.initial_log.clone()],
         );
+        if let Some(event) = revival {
+            append_sandbox_event(
+                &mut candidate,
+                &creation.agent.sandbox_id,
+                admission.event_at.clone(),
+                event,
+            )?;
+        }
         append_sandbox_event(
             &mut candidate,
             &creation.agent.sandbox_id,

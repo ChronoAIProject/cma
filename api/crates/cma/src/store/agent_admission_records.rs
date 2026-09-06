@@ -21,6 +21,7 @@ pub(super) struct CreatedReceipt {
     pub(super) creation: AgentCreation,
     pub(super) workspace: Workspace,
     pub(super) sandbox: Sandbox,
+    pub(super) revival_event: Option<SandboxEvent>,
     pub(super) worktree_event: SandboxEvent,
     pub(super) agent_event: SandboxEvent,
 }
@@ -276,6 +277,23 @@ pub(super) async fn reconcile_created(
     let worktree_event_matches =
         exact_artifact_matches(worktree_event.as_ref(), &receipt.worktree_event)?;
     let agent_event_matches = exact_artifact_matches(agent_event.as_ref(), &receipt.agent_event)?;
+    let revival_matches = match receipt.revival_event.as_ref() {
+        Some(expected) => {
+            let actual = find_at_snapshot(
+                &store.sandbox_events,
+                doc! {
+                    "_id": sequence_id(expected.sandbox_id.as_str(), expected.seq),
+                },
+                &mut session,
+            )
+            .await?
+            .as_ref()
+            .map(read_event)
+            .transpose()?;
+            exact_artifact_matches(actual.as_ref(), expected)?
+        }
+        None => true,
+    };
 
     Ok(workspace.as_ref() == Some(&receipt.workspace)
         && sandbox.as_ref() == Some(&receipt.sandbox)
@@ -283,7 +301,8 @@ pub(super) async fn reconcile_created(
         && agent.as_ref() == Some(&receipt.creation.agent)
         && initial_log_matches
         && worktree_event_matches
-        && agent_event_matches)
+        && agent_event_matches
+        && revival_matches)
 }
 
 fn exact_artifact_matches<T: PartialEq>(

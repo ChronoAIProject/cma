@@ -1,5 +1,5 @@
 use super::*;
-use crate::sandbox::{WorkspaceOrigin, WorkspaceStatus, WorkspaceWorkStep};
+use crate::sandbox::{SandboxReviveCause, WorkspaceOrigin, WorkspaceStatus, WorkspaceWorkStep};
 
 #[async_trait]
 impl WorkspaceAdmissionStore for InMemorySandboxStore {
@@ -13,13 +13,11 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
             .sandboxes
             .get(&workspace.sandbox_id)
             .ok_or(SandboxStoreError::SandboxNotReady)?;
-        if sandbox.status != admission.kind.allowed_status()
-            || sandbox.lifecycle.checkpoint_capture.is_some()
-        {
+        if !admission.kind.accepts(sandbox) {
             return Err(SandboxStoreError::SandboxNotReady);
         }
         workspace
-            .validate_for_admission(sandbox, admission.kind.allowed_status())
+            .validate_for_admission(sandbox, sandbox.status)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         validate_fresh(&workspace, admission.kind)?;
         if !workspace.origin_matches_sandbox_profile(sandbox) {
@@ -61,6 +59,27 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
         }
 
         let mut candidate = state.clone();
+        if admission.kind != WorkspaceAdmissionKind::SandboxProfile {
+            let mut next_sandbox = sandbox.clone();
+            let cause = match admission.kind {
+                WorkspaceAdmissionKind::Trigger => SandboxReviveCause::TriggerLaunch,
+                _ => SandboxReviveCause::WorkspaceCreation,
+            };
+            let event = next_sandbox
+                .record_creation_admission(cause, admission.event_at.clone())
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+            candidate
+                .sandboxes
+                .insert(next_sandbox.id.clone(), next_sandbox);
+            if let Some(event) = event {
+                append_sandbox_event(
+                    &mut candidate,
+                    &workspace.sandbox_id,
+                    admission.event_at.clone(),
+                    event,
+                )?;
+            }
+        }
         let id = workspace.id.clone();
         let sandbox_id = workspace.sandbox_id.clone();
         create_record!(candidate, workspaces, id.clone(), workspace.clone())?;

@@ -19,8 +19,7 @@ use super::store::{
 };
 use super::{
     Agent, AgentLogEntry, AgentOrigin, AgentRuntimeError, AgentRuntimeRegistry, AgentStatus,
-    AgentStopReason, AgentWorkStep, FirstMessageRecord, Sandbox, SandboxStatus, Workspace,
-    WorkspaceStatus,
+    AgentStopReason, AgentWorkStep, FirstMessageRecord, Sandbox, Workspace, WorkspaceStatus,
 };
 
 const MAX_TITLE_SCALARS: usize = 64;
@@ -199,8 +198,7 @@ impl AgentService {
             return Err(AgentServiceError::WorkspaceNotReady);
         }
         let sandbox = self.parent_sandbox(caller, &workspace).await?;
-        if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.checkpoint_capture.is_some()
-        {
+        if !sandbox.accepts_creation_admission() {
             return Err(AgentServiceError::SandboxNotReady);
         }
         let revision = if frozen_profile {

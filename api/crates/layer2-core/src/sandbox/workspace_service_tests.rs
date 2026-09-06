@@ -364,6 +364,75 @@ async fn manual_admission_requires_the_current_digest_and_records_use_once() {
 }
 
 #[tokio::test]
+async fn paused_manual_creation_checks_trust_before_durable_revival() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let reference = publish(
+        &profiles,
+        profile(
+            "wkp_paused_create",
+            "publisher",
+            "paused-project",
+            ProfileVisibility::Public,
+            vec!["mkdir -p local".into()],
+        ),
+    )
+    .await;
+    let expected_digest = digest(&profiles, &reference).await;
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut parent = sandbox("sbx_paused_create", SandboxStatus::Paused, Vec::new(), 4);
+    parent.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+    parent.lifecycle.checkpoints.latest = Some(super::lifecycle_test_support::checkpoint(1, NOW));
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let service = WorkspaceService::new(store.clone(), profiles);
+    assert!(matches!(
+        service
+            .create(
+                &caller("consumer"),
+                &parent.id,
+                request(reference.clone(), None)
+            )
+            .await,
+        Err(WorkspaceServiceError::TrustConfirmationRequired { .. })
+    ));
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap(),
+        Some(parent.clone())
+    );
+    assert_eq!(
+        service
+            .create(
+                &caller("other-owner"),
+                &parent.id,
+                request(reference.clone(), Some(expected_digest.clone()))
+            )
+            .await
+            .unwrap_err(),
+        WorkspaceServiceError::NotFound
+    );
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap(),
+        Some(parent.clone())
+    );
+    let workspace = service
+        .create(
+            &caller("consumer"),
+            &parent.id,
+            request(reference, Some(expected_digest)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(workspace.status, WorkspaceStatus::Preparing);
+    let reviving = store.get_sandbox(&parent.id).await.unwrap().unwrap();
+    assert!(matches!(
+        reviving.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Revive {
+            cause: SandboxReviveCause::WorkspaceCreation,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
 async fn launch_admission_replays_by_origin_and_rejects_changed_input() {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let reference = publish(

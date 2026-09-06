@@ -174,6 +174,42 @@ async fn reopen_rejects_nonincreasing_generation_and_changed_conversation_identi
 }
 
 #[tokio::test]
+async fn restore_scope_defers_only_unstarted_reservations_and_preserves_all_live_semantics() {
+    let current = claimed_revive_phase(SandboxRevivePhase::ConversationReopen);
+    let restored = test_agent("agt_restore_existing", AgentStatus::Paused);
+    let mut fresh = test_agent("agt_restore_new", AgentStatus::Starting);
+    fresh.ready_at = None;
+    fresh.conversation.conversation_id = None;
+    fresh.conversation.runtime_generation = None;
+    fresh.work =
+        crate::sandbox::AgentWorkState::new(crate::sandbox::AgentWorkStep::AddWorktree, NOW.into());
+    let fixture = seed_fixture(current.clone(), vec![restored.clone(), fresh.clone()]).await;
+    let mut mutation = reopen_mutation(&current, std::slice::from_ref(&restored));
+    assert_rejected_atomically(&fixture, mutation.clone()).await;
+    mutation.agent_scope = SandboxLifecycleAgentScope::RestoreParticipants;
+    fixture
+        .store
+        .commit_sandbox_lifecycle(mutation.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.store.get_agent(&fresh.id).await.unwrap(),
+        Some(fresh.clone())
+    );
+
+    fresh
+        .work
+        .cleanup_debt
+        .push(crate::sandbox::AgentCleanupDebt {
+            step: crate::sandbox::AgentWorkStep::AddWorktree,
+            operation_id: "worktree-intent".into(),
+            request_sha256: "a".repeat(64),
+        });
+    let admitted_effect = seed_fixture(current, vec![restored, fresh]).await;
+    assert_rejected_atomically(&admitted_effect, mutation).await;
+}
+
+#[tokio::test]
 async fn queue_progress_rejects_non_fifo_selection_and_extra_owner_log() {
     let current = claimed_revive_phase(SandboxRevivePhase::QueuedMessageDelivery);
     let queued = queued_agent("agt_queue", &["first", "second"]);

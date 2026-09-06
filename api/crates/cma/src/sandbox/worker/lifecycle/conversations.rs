@@ -41,7 +41,7 @@ impl SandboxWorker {
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
         };
         let agents = self.lifecycle_agents(&sandbox).await?;
-        let live = match validate_reopen_set(&agents, checkpoint) {
+        let live = match validate_reopen_set(&sandbox, &agents, checkpoint) {
             Ok(live) => live,
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
         };
@@ -191,7 +191,7 @@ impl SandboxWorker {
                 &sandbox,
                 next.clone(),
                 mutations,
-                SandboxLifecycleAgentScope::AllLive,
+                SandboxLifecycleAgentScope::RestoreParticipants,
                 stamp,
                 events,
             )
@@ -255,6 +255,7 @@ impl SandboxWorker {
 }
 
 fn validate_reopen_set<'a>(
+    sandbox: &Sandbox,
     agents: &'a [Agent],
     checkpoint: &layer2_core::sandbox::SandboxCheckpointRef,
 ) -> Result<Vec<&'a Agent>, WorkerFailure> {
@@ -270,7 +271,7 @@ fn validate_reopen_set<'a>(
         .collect::<BTreeMap<_, _>>();
     let live = agents
         .iter()
-        .filter(|agent| agent.status.is_live())
+        .filter(|agent| sandbox.restores_agent(agent))
         .collect::<Vec<_>>();
     let matches = live.iter().all(|agent| {
         agent.status == AgentStatus::Paused
