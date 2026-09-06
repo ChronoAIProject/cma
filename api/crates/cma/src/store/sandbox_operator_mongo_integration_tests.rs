@@ -15,12 +15,13 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{
     Agent, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep, ConversationState,
-    RuntimeBinding, Sandbox, SandboxAdminQuery, SandboxAdminStore, SandboxCredentialState,
-    SandboxEventKind, SandboxLimits, SandboxOrigin, SandboxRetirement, SandboxSignInState,
-    SandboxStatus, SandboxWorkState, SandboxWorkStep, StoredSandboxRetirement, TypedFailure,
-    Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState,
+    RuntimeBinding, Sandbox, SandboxAdminQuery, SandboxAdminStore, SandboxCheckpointRef,
+    SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxOrigin, SandboxRetirement,
+    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, StoredSandboxRetirement,
+    TypedFailure, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState,
     WorkspaceWorkStep,
 };
+use layer3_adapter::{CheckpointReceipt, WriterState};
 use mongodb::Client;
 
 use super::sandbox_mongo::MongoSandboxStore;
@@ -47,7 +48,7 @@ fn sandbox(
     status: SandboxStatus,
     runtime_version: &str,
 ) -> Sandbox {
-    Sandbox {
+    let mut value = Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId(owner.into()),
         name: name.into(),
@@ -74,6 +75,7 @@ fn sandbox(
         runtime: Some(RuntimeBinding {
             runtime_id: format!("runtime-{id}"),
             runtime_version: runtime_version.into(),
+            provision_generation: Some(1),
             bound_at: NOW.into(),
         }),
         credential: SandboxCredentialState {
@@ -90,14 +92,35 @@ fn sandbox(
             max_workspaces: 4,
             max_agents_per_workspace: 4,
         },
-        lifecycle: Default::default(),
+        lifecycle: layer2_core::sandbox::SandboxLifecycleState {
+            runtime_generation_high_water: 1,
+            ..Default::default()
+        },
         last_activity_at: NOW.into(),
         created_at: NOW.into(),
         updated_at: NOW.into(),
         retired_at: None,
         purge_after: None,
         revision: 1,
+    };
+    if status == SandboxStatus::Paused {
+        value.runtime = None;
+        value.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+        value.lifecycle.checkpoints.latest = Some(
+            SandboxCheckpointRef::seal(
+                &CheckpointReceipt {
+                    epoch: 1,
+                    object_reference: format!("checkpoints/{id}/1"),
+                    sha256: "b".repeat(64),
+                    writers: WriterState::Held,
+                },
+                &[],
+                NOW,
+            )
+            .unwrap(),
+        );
     }
+    value
 }
 
 fn workspace(sandbox: &Sandbox) -> Workspace {
@@ -267,7 +290,7 @@ async fn sandbox_operator_inventory_filters_pages_counts_and_reads_details() {
             .unwrap()
             .items
             .len(),
-        2
+        1
     );
 
     let view = store.read_admin_sandbox(&first.id).await.unwrap().unwrap();

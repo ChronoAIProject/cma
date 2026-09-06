@@ -2,10 +2,13 @@ use layer2_core::ids::{SandboxId, SandboxProfileId, ServiceId, SubjectId};
 use layer2_core::profiles::{
     content_digest, AgentProvider, ModelAccess, SandboxProfileContent, SandboxProfileSnapshot,
 };
-use layer2_core::sandbox::store::{SandboxAdmission, SandboxAdmissionName};
+use layer2_core::sandbox::store::{
+    SandboxAdmission, SandboxAdmissionName, SandboxEventStore, SandboxStore, SandboxStoreError,
+    SandboxTransaction, SandboxTransactionStore,
+};
 use layer2_core::sandbox::{
-    Sandbox, SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
-    SandboxStatus, SandboxWorkState, SandboxWorkStep,
+    Sandbox, SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxOrigin,
+    SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
 };
 use mongodb::bson::{doc, Bson};
 
@@ -238,4 +241,111 @@ fn sandbox_indexes_match_the_schema_contract() {
         indexes[8].options.as_ref().unwrap().name.as_deref(),
         Some("sandboxes_maintenance_page")
     );
+}
+
+async fn save_generation_successor(
+    store: &super::sandbox_mongo::MongoSandboxStore,
+    expected_revision: u64,
+    sandbox: Sandbox,
+    transactional: bool,
+) -> Result<(), SandboxStoreError> {
+    if transactional {
+        store
+            .commit(SandboxTransaction::SaveSandboxAndAppend {
+                expected_revision,
+                sandbox: Box::new(sandbox),
+                event_at: NOW.into(),
+                event: SandboxEventKind::Rotated {
+                    runtime_version: "image-v2".into(),
+                },
+            })
+            .await
+    } else {
+        store.save_sandbox(expected_revision, sandbox).await
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn mongo_generic_saves_preserve_runtime_generation_authority() {
+    use super::sandbox_maintenance::mongo_integration_tests::{database, fixture};
+
+    let (client, name, store) = database().await;
+    for transactional in [false, true] {
+        let (sandbox, _) = fixture(&store, &format!("sbx_generation_{transactional}")).await;
+        let binding = sandbox.runtime.as_ref().unwrap();
+        for (runtime_id, generation, high_water) in [
+            (None, None, 0),
+            (Some(binding.runtime_id.as_str()), None, 1),
+            (Some(binding.runtime_id.as_str()), Some(2), 2),
+            (Some("unknown-replacement"), None, 1),
+        ] {
+            let mut next = sandbox.clone();
+            next.revision += 1;
+            next.lifecycle.runtime_generation_high_water = high_water;
+            next.runtime = runtime_id.map(|id| {
+                let mut runtime = binding.clone();
+                runtime.runtime_id = id.into();
+                runtime.provision_generation = generation;
+                runtime
+            });
+            assert_eq!(
+                save_generation_successor(&store, sandbox.revision, next, transactional).await,
+                Err(SandboxStoreError::Conflict),
+                "accepted runtime {runtime_id:?}, generation {generation:?}, high-water {high_water}"
+            );
+            assert_eq!(
+                store.get_sandbox(&sandbox.id).await.unwrap(),
+                Some(sandbox.clone())
+            );
+            assert!(store
+                .sandbox_events(&sandbox.id, 0, 10)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+
+        let mut replacement = sandbox.clone();
+        replacement.revision += 1;
+        replacement.lifecycle.runtime_generation_high_water = 2;
+        let runtime = replacement.runtime.as_mut().unwrap();
+        runtime.runtime_id = "replacement-generation-2".into();
+        runtime.runtime_version = "image-v2".into();
+        runtime.provision_generation = Some(2);
+        save_generation_successor(&store, sandbox.revision, replacement.clone(), transactional)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_sandbox(&sandbox.id).await.unwrap(),
+            Some(replacement.clone())
+        );
+        let events = store.sandbox_events(&sandbox.id, 0, 10).await.unwrap();
+        assert_eq!(events.len(), usize::from(transactional));
+        if transactional {
+            assert_eq!(events[0].seq, 1);
+            assert_eq!(
+                events[0].kind,
+                SandboxEventKind::Rotated {
+                    runtime_version: "image-v2".into()
+                }
+            );
+        }
+
+        let mut stale = replacement.clone();
+        stale.revision += 1;
+        stale.runtime = sandbox.runtime;
+        assert_eq!(
+            save_generation_successor(&store, replacement.revision, stale, transactional).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            store.get_sandbox(&replacement.id).await.unwrap(),
+            Some(replacement.clone())
+        );
+        assert_eq!(
+            store.sandbox_events(&replacement.id, 0, 10).await.unwrap(),
+            events
+        );
+    }
+    client.database(&name).drop().await.unwrap();
 }

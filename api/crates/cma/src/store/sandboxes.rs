@@ -352,6 +352,16 @@ impl SandboxStore for MongoSandboxStore {
         if sandbox.revision != next {
             return Err(SandboxStoreError::Conflict);
         }
+        let current = self
+            .get_sandbox(&sandbox.id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if current.revision != expected_revision {
+            return Err(SandboxStoreError::Conflict);
+        }
+        current
+            .validate_runtime_generation_successor(&sandbox)
+            .map_err(|_| SandboxStoreError::Conflict)?;
         let expected = signed(expected_revision, "expected sandbox revision")
             .map_err(|_| SandboxStoreError::Conflict)?;
         let (origin_type, origin_launch_id) = sandbox_origin_fields(&sandbox)?;

@@ -329,8 +329,10 @@ fn active_sandbox(id: &str) -> Sandbox {
     value.runtime = Some(RuntimeBinding {
         runtime_id: format!("runtime-{id}"),
         runtime_version: "image-v1".into(),
+        provision_generation: Some(1),
         bound_at: "2026-09-05T00:00:00Z".into(),
     });
+    value.lifecycle.runtime_generation_high_water = 1;
     value.work = SandboxWorkState::new(SandboxWorkStep::None, "2026-09-05T00:00:00Z".into());
     value
 }

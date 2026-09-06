@@ -457,8 +457,10 @@ async fn claimed_pause_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sand
     value.runtime = Some(RuntimeBinding {
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
+        provision_generation: Some(1),
         bound_at: NOW.into(),
     });
+    value.lifecycle.runtime_generation_high_water = 1;
     value.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
     store.create_sandbox(value.clone()).await.unwrap();
     let agents = vec![
