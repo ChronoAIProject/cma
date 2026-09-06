@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::checkpoint_objects::{prune_evicted, RetentionError};
 use super::lifecycle_execution::LifecycleLoadError;
-use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
+use super::sandbox_events::{append_in_transaction, TransactionEventError};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -21,6 +21,8 @@ use super::sandbox_mongo::{
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 
 mod agents;
+mod reconciliation;
+use reconciliation::{reconcile_after_unknown, reconcile_publication};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CheckpointDoc {
@@ -178,11 +180,16 @@ pub(super) async fn publish_checkpoint(
             CommitOutcome::Committed => return Ok(()),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
+                let snapshot_time = session.operation_time().ok_or_else(|| {
+                    SandboxStoreError::Unavailable(format!(
+                        "checkpoint publication commit remained unknown without an operation time: {error}"
+                    ))
+                })?;
                 let commit_error = error.to_string();
                 let unresolved = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("checkpoint publication", async move {
-                    if reconcile_receipt(&store, &receipt).await? {
+                    if reconcile_after_unknown(&store, &receipt, snapshot_time).await? {
                         Ok(())
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
@@ -339,64 +346,6 @@ fn classify_write(error: mongodb::error::Error) -> PublishError {
     } else {
         PublishError::Driver(error)
     }
-}
-
-async fn reconcile_publication(
-    store: &MongoSandboxStore,
-    mutation: &SandboxCheckpointMutation,
-) -> Result<bool, SandboxStoreError> {
-    let event = store
-        .sandbox_events
-        .find_one(doc! {
-            "sandbox_id": mutation.sandbox.id.as_str(),
-            "record.kind.type": "checkpoint_sealed",
-            "record.kind.object_reference": &mutation.checkpoint.object_reference,
-        })
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(super::sandbox_events::read_event)
-        .transpose()?;
-    let Some(event) = event else {
-        return Ok(false);
-    };
-    reconcile_receipt(
-        store,
-        &PublicationReceipt {
-            sandbox: mutation.sandbox.clone(),
-            checkpoint: mutation.checkpoint.clone(),
-            event,
-        },
-    )
-    .await
-}
-
-async fn reconcile_receipt(
-    store: &MongoSandboxStore,
-    receipt: &PublicationReceipt,
-) -> Result<bool, SandboxStoreError> {
-    let stored_sandbox = store
-        .sandboxes
-        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()?;
-    let stored_checkpoint = store
-        .checkpoints
-        .find_one(doc! {
-            "_id": checkpoint_id(&receipt.sandbox.id, receipt.sandbox.revision)
-        })
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .map(read_checkpoint)
-        .transpose()?;
-    Ok(stored_sandbox.as_ref() == Some(&receipt.sandbox)
-        && stored_checkpoint
-            .as_ref()
-            .is_some_and(|stored| stored.record == receipt.checkpoint)
-        && reconcile_event(store, &receipt.event).await?.is_some())
 }
 
 #[cfg(test)]
