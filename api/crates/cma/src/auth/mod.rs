@@ -19,6 +19,8 @@ mod middleware;
 mod permissions;
 pub mod persistence;
 pub mod profile;
+#[cfg(test)]
+mod public_contract_tests;
 mod records;
 mod refresh;
 mod session_routes;
