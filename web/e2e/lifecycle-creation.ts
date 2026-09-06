@@ -2,10 +2,29 @@ import type { Page } from '@playwright/test';
 import { expect, type Harness } from './harness';
 import { assertCredentialFree } from './security';
 
-export async function createToRevive(page: Page, h: Harness, sandboxId: string) {
+export interface LifecycleWorkspace {
+  id: string;
+  path: string;
+}
+
+export function workspaceAgentButton(page: Page, workspace: LifecycleWorkspace) {
+  return page
+    .locator('.sandbox-page__workspace')
+    .filter({ has: page.getByText(workspace.path, { exact: true }) })
+    .getByRole('button', { name: 'New agent', exact: true });
+}
+
+export async function createToRevive(
+  page: Page,
+  h: Harness,
+  sandboxId: string,
+  workspace: LifecycleWorkspace,
+) {
   const before = h.commands.length;
+  const createPath = `/api/v1/workspaces/${workspace.id}/agents`;
+  const createURL = `${h.config.baseURL}${createPath}`;
   let lost = false;
-  await page.route('**/api/v1/workspaces/*/agents', async (route) => {
+  await page.route(createURL, async (route) => {
     if (lost || route.request().method() !== 'POST') return route.fallback();
     // Only browser transport is faulted; the real server admission is retained for cleanup.
     const response = await route.fetch();
@@ -25,10 +44,7 @@ export async function createToRevive(page: Page, h: Harness, sandboxId: string) 
   });
   try {
     await page.reload();
-    await page
-      .locator('.sandbox-page__workspace')
-      .getByRole('button', { name: 'New agent', exact: true })
-      .click();
+    await workspaceAgentButton(page, workspace).click();
     const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
     await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
     await dialog.getByRole('radio', { name: 'Public', exact: true }).check();
@@ -52,7 +68,9 @@ export async function createToRevive(page: Page, h: Harness, sandboxId: string) 
     const creates = commands.filter((row) =>
       /^\/api\/v1\/workspaces\/[^/]+\/agents$/.test(row.path),
     );
+    expect(lost).toBe(true);
     expect(creates).toHaveLength(2);
+    expect(creates[0]?.path).toBe(createPath);
     expect(creates[1]).toEqual(creates[0]);
     expect(commands.some((row) => /\/(revive|input|agui\/run|responses)$/.test(row.path))).toBe(
       false,
@@ -74,6 +92,6 @@ export async function createToRevive(page: Page, h: Harness, sandboxId: string) 
       .toBe(1);
     await h.capture(page, 'j6-creation-revival');
   } finally {
-    await page.unroute('**/api/v1/workspaces/*/agents');
+    await page.unroute(createURL);
   }
 }
