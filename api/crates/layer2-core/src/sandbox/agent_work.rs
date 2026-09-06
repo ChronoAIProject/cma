@@ -1,6 +1,41 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ids::SkillId;
+use crate::profiles::{SkillRef, SkillSource};
+
 use super::SandboxModelError;
+
+/// Immutable skill selection admitted with the first home-materialization intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedAgentSkill {
+    pub source: SkillSource,
+    pub id: SkillId,
+    pub version: String,
+    pub archive_sha256: String,
+}
+
+impl ResolvedAgentSkill {
+    pub fn validate(&self) -> Result<(), SandboxModelError> {
+        if self.id.as_str().is_empty()
+            || self.id.as_str().len() > 256
+            || self.version.is_empty()
+            || self.version.len() > 256
+            || self.version.trim() != self.version
+            || self.version.chars().any(char::is_control)
+            || self.archive_sha256.len() != 64
+            || !self
+                .archive_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            return Err(SandboxModelError::invalid_value(
+                "agent.work.resolved_skills",
+            ));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +121,8 @@ pub struct AgentWorkState {
     pub cleanup_debt: Vec<AgentCleanupDebt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_not_before: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_skills: Option<Vec<ResolvedAgentSkill>>,
 }
 
 impl AgentWorkState {
@@ -99,7 +136,30 @@ impl AgentWorkState {
             receipts: Vec::new(),
             cleanup_debt: Vec::new(),
             cleanup_not_before: None,
+            resolved_skills: None,
         }
+    }
+
+    pub fn validate_resolved_skills(
+        &self,
+        references: &[SkillRef],
+    ) -> Result<(), SandboxModelError> {
+        let Some(material) = &self.resolved_skills else {
+            return Ok(());
+        };
+        if material.len() > 32
+            || material.len() != references.len()
+            || !references.iter().zip(material).all(|(reference, skill)| {
+                reference.source == skill.source
+                    && reference.id == skill.id
+                    && skill.validate().is_ok()
+            })
+        {
+            return Err(SandboxModelError::invalid_value(
+                "agent.work.resolved_skills",
+            ));
+        }
+        Ok(())
     }
 
     pub fn is_due(&self, now: &str) -> bool {

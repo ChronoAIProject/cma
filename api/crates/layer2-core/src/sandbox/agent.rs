@@ -121,6 +121,7 @@ impl Agent {
             || self.conversation.operation.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0
+            || self.work.resolved_skills.is_some()
         {
             return Err(SandboxModelError::invalid_value("agent.admission"));
         }

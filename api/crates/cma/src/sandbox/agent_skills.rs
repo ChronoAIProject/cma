@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use futures_util::{StreamExt as _, TryStreamExt as _};
 use layer2_core::profiles::{SkillRef, SkillSource};
+use layer2_core::sandbox::ResolvedAgentSkill;
 use layer2_core::SubjectId;
 use layer3_adapter::AgentSkill;
 use serde::Deserialize;
@@ -36,6 +37,11 @@ pub(crate) trait AgentSkillResolver: Send + Sync {
         &self,
         owner: &SubjectId,
         references: &[SkillRef],
+    ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError>;
+
+    fn runtime_skills(
+        &self,
+        material: &[ResolvedAgentSkill],
     ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError>;
 }
 
@@ -50,7 +56,7 @@ impl AgentSkillResolver for EmptyAgentSkillResolver {
         &self,
         _owner: &SubjectId,
         references: &[SkillRef],
-    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+    ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
         if references.is_empty() {
             Ok(Vec::new())
         } else {
@@ -59,9 +65,20 @@ impl AgentSkillResolver for EmptyAgentSkillResolver {
             ))
         }
     }
+
+    fn runtime_skills(
+        &self,
+        material: &[ResolvedAgentSkill],
+    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+        if material.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(invalid(0, "no runtime skill source is composed"))
+        }
+    }
 }
 
-/// Resolves literal Ornn versions through NyxID's service proxy.
+/// Resolves Ornn references through NyxID's service proxy to immutable material.
 pub(crate) struct OrnnAgentSkillResolver {
     http: reqwest::Client,
     request_origin: reqwest::Url,
@@ -123,8 +140,8 @@ impl OrnnAgentSkillResolver {
         index: usize,
         reference: &SkillRef,
         bearer: Option<&str>,
-    ) -> Result<AgentSkill, AgentSkillResolutionError> {
-        let version = pinned_version(reference, index)?;
+    ) -> Result<ResolvedAgentSkill, AgentSkillResolutionError> {
+        let version = requested_version(reference, index)?;
         let url = skill_detail_url(&self.request_origin, reference.id.as_str(), version)
             .map_err(|_| invalid(index, "reference cannot be represented by the Ornn API"))?;
         let mut request = self.http.get(url);
@@ -148,19 +165,21 @@ impl OrnnAgentSkillResolver {
         if material.guid != reference.id.as_str() {
             return Err(invalid(index, "Ornn response changed the skill identity"));
         }
-        if material.version != version {
+        if !canonical_ornn_version(&material.version)
+            || version.is_some_and(|version| {
+                canonical_ornn_version(version) && material.version != version
+            })
+        {
             return Err(invalid(index, "Ornn response changed the pinned version"));
         }
         if !canonical_sha256(&material.skill_hash) {
             return Err(invalid(index, "Ornn response has an invalid SHA-256"));
         }
-        let source_url = skill_download_url(&self.locator_origin, reference.id.as_str(), version)
-            .map_err(|_| invalid(index, "download locator is not canonical"))?;
-        Ok(AgentSkill {
-            id: reference.id.as_str().to_owned(),
-            version: reference.version.clone(),
+        Ok(ResolvedAgentSkill {
+            source: reference.source,
+            id: reference.id.clone(),
+            version: material.version,
             archive_sha256: material.skill_hash,
-            source_url: source_url.to_string(),
         })
     }
 }
@@ -171,7 +190,7 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
         &self,
         owner: &SubjectId,
         references: &[SkillRef],
-    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+    ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
         if references.len() > MAX_REFERENCES {
             return Err(AgentSkillResolutionError::Invalid(format!(
                 "a profile may reference at most {MAX_REFERENCES} skills"
@@ -182,7 +201,7 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
         }
         let mut ids = std::collections::BTreeSet::from_iter(BASELINE_SKILL_IDS.iter().copied());
         for (index, reference) in references.iter().enumerate() {
-            pinned_version(reference, index)?;
+            requested_version(reference, index)?;
             if !ids.insert(reference.id.as_str()) {
                 return Err(invalid(index, "skill id duplicates another home entry"));
             }
@@ -200,6 +219,28 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
         tokio::time::timeout(RESOLUTION_TIMEOUT, resolution)
             .await
             .map_err(|_| unavailable("Ornn resolution deadline elapsed"))?
+    }
+
+    fn runtime_skills(
+        &self,
+        material: &[ResolvedAgentSkill],
+    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+        validate_material(material)?;
+        material
+            .iter()
+            .enumerate()
+            .map(|(index, skill)| {
+                let source_url =
+                    skill_download_url(&self.locator_origin, skill.id.as_str(), &skill.version)
+                        .map_err(|_| invalid(index, "download locator is not canonical"))?;
+                Ok(AgentSkill {
+                    id: skill.id.as_str().to_owned(),
+                    version: Some(skill.version.clone()),
+                    archive_sha256: skill.archive_sha256.clone(),
+                    source_url: source_url.to_string(),
+                })
+            })
+            .collect()
     }
 }
 
@@ -278,24 +319,80 @@ fn classify_status(
     }
 }
 
-fn pinned_version(reference: &SkillRef, index: usize) -> Result<&str, AgentSkillResolutionError> {
+fn requested_version(
+    reference: &SkillRef,
+    index: usize,
+) -> Result<Option<&str>, AgentSkillResolutionError> {
     if !matches!(reference.source, SkillSource::Ornn) {
         return Err(invalid(index, "skill source is unsupported"));
     }
     if !safe_skill_id(reference.id.as_str()) {
         return Err(invalid(index, "Ornn skill id is not a safe runtime name"));
     }
-    let version = reference
+    let Some(version) = reference
         .version
         .as_deref()
-        .ok_or_else(|| invalid(index, "Ornn skill version must be pinned"))?;
-    if !canonical_ornn_version(version) {
+        .filter(|version| !version.is_empty())
+    else {
+        return Ok(None);
+    };
+    let tag = version.strip_prefix('@').is_some_and(|tag| {
+        !tag.is_empty()
+            && tag.len() <= 50
+            && tag.as_bytes()[0].is_ascii_lowercase()
+            && tag
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    });
+    if !canonical_ornn_version(version) && !tag {
         return Err(invalid(
             index,
-            "Ornn skill version is not a literal release",
+            "Ornn skill version is neither a literal release nor a supported dist-tag",
         ));
     }
-    Ok(version)
+    Ok(Some(version))
+}
+
+pub(crate) fn validate_skill_selection(
+    references: &[SkillRef],
+    material: &[ResolvedAgentSkill],
+) -> Result<(), AgentSkillResolutionError> {
+    validate_material(material)?;
+    if references.len() != material.len() {
+        return Err(invalid(0, "skill selection changed the reference count"));
+    }
+    for (index, (reference, skill)) in references.iter().zip(material).enumerate() {
+        let requested = requested_version(reference, index)?;
+        if reference.source != skill.source
+            || reference.id != skill.id
+            || requested
+                .is_some_and(|version| canonical_ornn_version(version) && version != skill.version)
+        {
+            return Err(invalid(
+                index,
+                "skill selection changed the reference identity or literal pin",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_material(material: &[ResolvedAgentSkill]) -> Result<(), AgentSkillResolutionError> {
+    if material.len() > MAX_REFERENCES {
+        return Err(invalid(0, "skill selection exceeds the reference limit"));
+    }
+    let mut ids = std::collections::BTreeSet::from_iter(BASELINE_SKILL_IDS.iter().copied());
+    for (index, skill) in material.iter().enumerate() {
+        if !matches!(skill.source, SkillSource::Ornn)
+            || !safe_skill_id(skill.id.as_str())
+            || !ids.insert(skill.id.as_str())
+            || !canonical_ornn_version(&skill.version)
+            || !canonical_sha256(&skill.archive_sha256)
+        {
+            return Err(invalid(index, "persisted skill selection is invalid"));
+        }
+    }
+    Ok(())
 }
 
 fn safe_skill_id(id: &str) -> bool {
@@ -327,9 +424,15 @@ fn canonical_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-fn skill_detail_url(origin: &reqwest::Url, id: &str, version: &str) -> Result<reqwest::Url, ()> {
+fn skill_detail_url(
+    origin: &reqwest::Url,
+    id: &str,
+    version: Option<&str>,
+) -> Result<reqwest::Url, ()> {
     let mut url = skill_url(origin, id)?;
-    url.query_pairs_mut().append_pair("version", version);
+    if let Some(version) = version {
+        url.query_pairs_mut().append_pair("version", version);
+    }
     valid_url(&url).then_some(url).ok_or(())
 }
 

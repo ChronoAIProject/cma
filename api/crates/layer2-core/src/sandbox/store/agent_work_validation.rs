@@ -60,6 +60,14 @@ fn validate_common(
         || stamp(&current.updated_at)? > appended
         || stamp(&current.work.ready_at)? > appended
         || immutable_agent_fields_changed(current, next)
+        || current
+            .work
+            .validate_resolved_skills(&current.profile.content.skills)
+            .is_err()
+        || next
+            .work
+            .validate_resolved_skills(&next.profile.content.skills)
+            .is_err()
         || !worktree_matches_agent(worktree, current)
     {
         return Err(SandboxStoreError::Conflict);
@@ -98,6 +106,19 @@ fn validate_work_delta(
     kind: PublicationKind,
 ) -> Result<(), SandboxStoreError> {
     if next.work.next_fence != current.work.next_fence {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if kind == PublicationKind::Intent && current.work.step == AgentWorkStep::MaterializeHome {
+        if current.work.resolved_skills.is_some() || next.work.resolved_skills.is_none() {
+            return Err(SandboxStoreError::Conflict);
+        }
+    } else if next.work.resolved_skills != current.work.resolved_skills {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if kind == PublicationKind::Advance
+        && current.work.step == AgentWorkStep::MaterializeHome
+        && current.work.resolved_skills.is_none()
+    {
         return Err(SandboxStoreError::Conflict);
     }
     match kind {

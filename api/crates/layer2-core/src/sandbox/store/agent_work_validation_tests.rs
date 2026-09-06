@@ -17,6 +17,107 @@ const RETRY_AT: &str = "2026-09-05T00:00:20Z";
 const LEASE_END: &str = "2026-09-05T00:01:00Z";
 
 #[test]
+fn skill_material_is_committed_once_with_the_first_home_intent() {
+    let (mut current, worktree) = claimed(
+        AgentWorkStep::MaterializeHome,
+        AgentStatus::Starting,
+        WorktreeStatus::Creating,
+    );
+    current
+        .work
+        .receipts
+        .push(receipt(&current, AgentWorkStep::AddWorktree));
+    current.profile.content.skills = vec![crate::profiles::SkillRef {
+        source: crate::profiles::SkillSource::Ornn,
+        id: crate::SkillId::new("research"),
+        version: None,
+    }];
+    let material = vec![crate::sandbox::ResolvedAgentSkill {
+        source: crate::profiles::SkillSource::Ornn,
+        id: crate::SkillId::new("research"),
+        version: "2.10".into(),
+        archive_sha256: "a".repeat(64),
+    }];
+    let mut next = current.clone();
+    next.work.resolved_skills = Some(material);
+    next.work
+        .cleanup_debt
+        .push(debt(&current, AgentWorkStep::MaterializeHome));
+    let intent = publication(&current, next, vec![], None, None);
+    assert_valid(&current, &worktree, &intent);
+    let mut missing_material = intent.clone();
+    missing_material.agent.work.resolved_skills = None;
+    assert_conflict(&current, &worktree, &missing_material);
+    let mut missing_debt = intent.clone();
+    missing_debt.agent.work.cleanup_debt.clear();
+    assert_conflict(&current, &worktree, &missing_debt);
+    for mutate in [0, 1, 2, 3] {
+        let mut invalid = intent.clone();
+        let material = invalid.agent.work.resolved_skills.as_mut().unwrap();
+        match mutate {
+            0 => material[0].id = crate::SkillId::new("different"),
+            1 => material[0].version.clear(),
+            2 => material[0].archive_sha256 = "A".repeat(64),
+            _ => material.push(material[0].clone()),
+        }
+        assert_conflict(&current, &worktree, &invalid);
+    }
+    let selected = intent.agent;
+    let retry = retry_publication(&selected);
+    assert_valid(&selected, &worktree, &retry);
+    for material in [None, Some(vec![])] {
+        let mut replacement = retry.clone();
+        replacement.agent.work.resolved_skills = material;
+        assert_conflict(&selected, &worktree, &replacement);
+    }
+    let mut advance = completed_advance(&selected, AgentWorkStep::OpenConversation);
+    advance.agent.work.cleanup_debt.clear();
+    let mut completed = receipt(&selected, AgentWorkStep::MaterializeHome);
+    completed.completed_at = AT.into();
+    advance.agent.work.receipts.push(completed);
+    assert_valid(&selected, &worktree, &advance);
+    let mut replacement = advance.clone();
+    replacement.agent.work.resolved_skills.as_mut().unwrap()[0].archive_sha256 = "b".repeat(64);
+    assert_conflict(&selected, &worktree, &replacement);
+    assert_eq!(selected.profile, current.profile);
+}
+
+#[test]
+fn resolved_empty_is_distinct_from_unresolved_and_survives_roundtrip() {
+    let (mut current, worktree) = claimed(
+        AgentWorkStep::MaterializeHome,
+        AgentStatus::Starting,
+        WorktreeStatus::Creating,
+    );
+    current
+        .work
+        .receipts
+        .push(receipt(&current, AgentWorkStep::AddWorktree));
+    let mut next = current.clone();
+    next.work.resolved_skills = Some(vec![]);
+    next.work
+        .cleanup_debt
+        .push(debt(&current, AgentWorkStep::MaterializeHome));
+    let intent = publication(&current, next, vec![], None, None);
+    assert_valid(&current, &worktree, &intent);
+    let unresolved = serde_json::to_value(&current).unwrap();
+    assert!(unresolved["work"].get("resolved_skills").is_none());
+    let resolved = serde_json::to_value(&intent.agent).unwrap();
+    assert_eq!(resolved["work"]["resolved_skills"], serde_json::json!([]));
+    assert_eq!(
+        serde_json::from_value::<Agent>(resolved).unwrap(),
+        intent.agent
+    );
+    let mut legacy = intent.agent.clone();
+    legacy.work.resolved_skills = None;
+    assert_conflict(
+        &legacy,
+        &worktree,
+        &completed_advance(&legacy, AgentWorkStep::OpenConversation),
+    );
+}
+
+#[test]
 fn intent_retry_and_startup_advance_have_exact_work_deltas() {
     let (current, worktree) = claimed(
         AgentWorkStep::AddWorktree,

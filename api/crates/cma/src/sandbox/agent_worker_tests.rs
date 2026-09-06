@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -17,10 +18,10 @@ use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentOperationService, AgentOrigin, AgentRuntimeError,
     AgentRuntimeRegistry, AgentRuntimeTarget, AgentStatus, AgentStopReason, AgentWorkStep,
     DurableAgentUpdateRecorder, FirstMessageDelivery, FirstMessageRecord, InMemorySandboxStore,
-    RuntimeBinding, Sandbox, SandboxCredentialAuthority, SandboxCredentialState, SandboxLimits,
-    SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep, Workspace,
-    WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
-    WorktreeStatus,
+    ResolvedAgentSkill, RuntimeBinding, Sandbox, SandboxCredentialAuthority,
+    SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState, SandboxStatus,
+    SandboxWorkState, SandboxWorkStep, Workspace, WorkspaceOrigin, WorkspaceSource,
+    WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep, WorktreeStatus,
 };
 use layer2_core::{
     rfc3339_at, AgentId, AgentProfileId, RuntimeCapabilities, RuntimeCapability, SandboxId,
@@ -48,12 +49,14 @@ const DEPLOYMENT_ID: &str = "lifecycle-test";
 
 mod runtime_attachment_tests;
 mod sdk_conformance_tests;
+mod skill_material_tests;
 
 struct Harness {
     store: Arc<InMemorySandboxStore>,
     worker: Arc<AgentWorker>,
     registry: Arc<LiveAgentRegistry>,
     backend: InMemoryHostedBackend,
+    adapter: Arc<dyn SandboxAdapter>,
     runtime: RuntimeHandle,
     workspace: Workspace,
     now: SystemTime,
@@ -136,7 +139,7 @@ impl Harness {
         let updates = DurableAgentUpdateRecorder::new(store.clone());
         let dependencies = AgentWorkerDependencies {
             store: store.clone(),
-            adapter,
+            adapter: adapter.clone(),
             skills,
             registry: registry.clone(),
             updates: updates.clone(),
@@ -152,6 +155,7 @@ impl Harness {
             worker,
             registry,
             backend,
+            adapter,
             runtime,
             workspace,
             now,
@@ -387,14 +391,29 @@ fn agent_profile(skills: Vec<SkillRef>) -> AgentProfileSnapshot {
 #[derive(Default)]
 struct ScriptedSkills {
     results: Mutex<VecDeque<Result<Vec<AgentSkill>, AgentSkillResolutionError>>>,
+    locators: Mutex<VecDeque<Vec<String>>>,
+    calls: AtomicUsize,
 }
 
 impl ScriptedSkills {
     fn new(
         results: impl IntoIterator<Item = Result<Vec<AgentSkill>, AgentSkillResolutionError>>,
     ) -> Arc<Self> {
+        let results: VecDeque<_> = results.into_iter().collect();
+        let locators = results
+            .iter()
+            .filter_map(|result| result.as_ref().ok())
+            .map(|skills| {
+                skills
+                    .iter()
+                    .map(|skill| skill.source_url.clone())
+                    .collect()
+            })
+            .collect();
         Arc::new(Self {
-            results: Mutex::new(results.into_iter().collect()),
+            results: Mutex::new(results),
+            locators: Mutex::new(locators),
+            calls: AtomicUsize::new(0),
         })
     }
 }
@@ -405,12 +424,46 @@ impl AgentSkillResolver for ScriptedSkills {
         &self,
         _owner: &SubjectId,
         _references: &[SkillRef],
-    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+    ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
         self.results
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .pop_front()
             .expect("scripted skill result")
+            .map(|skills| {
+                skills
+                    .into_iter()
+                    .map(|skill| ResolvedAgentSkill {
+                        source: SkillSource::Ornn,
+                        id: SkillId::new(skill.id),
+                        version: skill.version.expect("resolved literal"),
+                        archive_sha256: skill.archive_sha256,
+                    })
+                    .collect()
+            })
+    }
+
+    fn runtime_skills(
+        &self,
+        material: &[ResolvedAgentSkill],
+    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
+        let locators = self
+            .locators
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("scripted runtime locators");
+        Ok(material
+            .iter()
+            .zip(locators)
+            .map(|(skill, source_url)| AgentSkill {
+                id: skill.id.as_str().to_owned(),
+                version: Some(skill.version.clone()),
+                archive_sha256: skill.archive_sha256.clone(),
+                source_url,
+            })
+            .collect())
     }
 }
 
@@ -838,13 +891,13 @@ async fn transient_skill_resolution_retries_then_materializes_exact_archive() {
     let reference = SkillRef {
         source: SkillSource::Ornn,
         id: SkillId::new("research"),
-        version: Some("7".into()),
+        version: Some("7.0".into()),
     };
     let material = AgentSkill {
         id: "research".into(),
-        version: Some("7".into()),
+        version: Some("7.0".into()),
         archive_sha256: "e".repeat(64),
-        source_url: "https://ornn.example/skills/research/7.tar.gz".into(),
+        source_url: "https://ornn.example/skills/research/7.0.tar.gz".into(),
     };
     let skills = ScriptedSkills::new([
         Err(AgentSkillResolutionError::Unavailable(
@@ -852,7 +905,7 @@ async fn transient_skill_resolution_retries_then_materializes_exact_archive() {
         )),
         Ok(vec![material.clone()]),
     ]);
-    let harness = Harness::new(skills).await;
+    let harness = Harness::new(skills.clone()).await;
     let agent = harness.admit("skills", vec![reference]).await;
 
     harness.run(&agent.id, harness.now).await;
@@ -885,6 +938,11 @@ async fn transient_skill_resolution_retries_then_materializes_exact_archive() {
     let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
     let home = &snapshot.homes[&AgentSlot::new(agent.id.to_string())];
     assert_eq!(home.skills, [material]);
+    assert_eq!(skills.calls.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        ready.work.resolved_skills.as_ref().unwrap()[0].version,
+        "7.0"
+    );
 }
 
 #[tokio::test]
@@ -892,11 +950,11 @@ async fn lost_home_reply_retries_with_a_rotated_locator_for_the_same_archive() {
     let reference = SkillRef {
         source: SkillSource::Ornn,
         id: SkillId::new("research"),
-        version: Some("7".into()),
+        version: Some("@stable".into()),
     };
     let first = AgentSkill {
         id: "research".into(),
-        version: Some("7".into()),
+        version: Some("7.0".into()),
         archive_sha256: "e".repeat(64),
         source_url: "https://ornn.example/temporary/a.tar.gz".into(),
     };
@@ -905,7 +963,7 @@ async fn lost_home_reply_retries_with_a_rotated_locator_for_the_same_archive() {
         ..first.clone()
     };
     let skills = ScriptedSkills::new([Ok(vec![first.clone()]), Ok(vec![second])]);
-    let harness = Harness::new(skills).await;
+    let harness = Harness::new(skills.clone()).await;
     let agent = harness
         .admit("rotated-skill-locator", vec![reference])
         .await;
@@ -928,6 +986,9 @@ async fn lost_home_reply_retries_with_a_rotated_locator_for_the_same_archive() {
     let ready = harness.stored(&agent.id).await;
     assert_eq!(ready.status, AgentStatus::Ready);
     assert!(ready.work.cleanup_debt.is_empty());
+    assert_eq!(skills.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(ready.profile, agent.profile);
+    assert_eq!(retrying.work.resolved_skills, ready.work.resolved_skills);
     let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
     assert_eq!(
         snapshot.homes[&AgentSlot::new(agent.id.to_string())].skills,

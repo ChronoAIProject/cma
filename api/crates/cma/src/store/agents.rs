@@ -103,6 +103,10 @@ pub(super) fn agent_updated_at(agent: &Agent) -> &str {
 }
 
 pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreError> {
+    agent
+        .work
+        .validate_resolved_skills(&agent.profile.content.skills)
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     let lease = agent.work.lease.as_ref();
     let mut document = doc! {
         "_id": agent.id.as_str(),
@@ -143,6 +147,10 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
 
 pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
     let agent: Agent = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    agent
+        .work
+        .validate_resolved_skills(&agent.profile.content.skills)
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     let status = record_bson(&agent.status).map_err(SandboxStoreError::Corrupt)?;
     let revision = signed(agent.revision, "agent revision").map_err(SandboxStoreError::Corrupt)?;
     let last_seq = signed(agent.conversation.last_seq, "agent log sequence")
@@ -220,7 +228,7 @@ async fn classify_miss(
 #[async_trait::async_trait]
 impl AgentStore for MongoSandboxStore {
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
-        if agent.revision != 1 {
+        if agent.revision != 1 || agent.work.resolved_skills.is_some() {
             return Err(SandboxStoreError::Conflict);
         }
         if agent.conversation.last_seq != 0 {
@@ -272,6 +280,12 @@ impl AgentStore for MongoSandboxStore {
                     "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
                         .map_err(SandboxStoreError::Corrupt)?,
                     "record.title": record_title_value(&agent),
+                    "owner": agent.owner.as_str(),
+                    "record.owner": agent.owner.as_str(),
+                    "record.profile": record_bson(&agent.profile)
+                        .map_err(SandboxStoreError::Corrupt)?,
+                    "record.work.resolved_skills": record_bson(&agent.work.resolved_skills)
+                        .map_err(SandboxStoreError::Corrupt)?,
                 },
                 doc! { "$set": agent_replacement_fields(&agent)? },
             )
