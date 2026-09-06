@@ -83,6 +83,7 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
     pub runtime_version: String,
@@ -109,6 +110,7 @@ impl SandboxWorkerConfig {
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Self {
         Self {
+            execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
             runtime_version: runtime_version.into(),
@@ -116,6 +118,17 @@ impl SandboxWorkerConfig {
             retry_delay: DEFAULT_RETRY,
             policy,
         }
+    }
+
+    pub fn with_execution(
+        mut self,
+        execution: layer2_core::sandbox::ProvisioningExecution,
+    ) -> Self {
+        self.execution = execution;
+        self.lease_duration = self.lease_duration.max(Duration::from_secs(
+            layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
+        ));
+        self
     }
 }
 

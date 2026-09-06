@@ -19,7 +19,11 @@ pub(crate) async fn run(
         &request.commands,
         &workspace,
         &config.process_env,
-        CommandLimits::install(request.timeout_seconds, request.output_limit_bytes)?,
+        CommandLimits::install(
+            request.timeout_seconds,
+            request.total_timeout_seconds,
+            request.output_limit_bytes,
+        )?,
     )
     .await?;
     Ok(SetupReceipt {

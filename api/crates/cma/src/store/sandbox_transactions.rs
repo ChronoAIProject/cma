@@ -170,6 +170,11 @@ async fn apply_transaction(
             current
                 .validate_checkpoint_capture_successor(sandbox)
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+            layer2_core::sandbox::ProvisioningExecution::validate_successor(
+                current.work.execution,
+                sandbox.work.execution,
+            )
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             current
                 .validate_runtime_generation_successor(sandbox)
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
@@ -241,6 +246,19 @@ async fn apply_transaction(
             if workspace.revision != next {
                 return Err(ApplyError::Domain(SandboxStoreError::Conflict));
             }
+            let aggregate = store
+                .workspaces
+                .find_one(doc! { "_id": workspace.id.as_str() })
+                .session(&mut *session)
+                .await
+                .map_err(ApplyError::Driver)?
+                .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+            let current = read_workspace(&aggregate).map_err(ApplyError::Domain)?;
+            layer2_core::sandbox::ProvisioningExecution::validate_successor(
+                current.work.execution,
+                workspace.work.execution,
+            )
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             let advanced = store
                 .workspaces
                 .update_one(

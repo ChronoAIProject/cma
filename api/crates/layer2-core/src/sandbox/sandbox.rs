@@ -62,6 +62,9 @@ pub struct Sandbox {
 
 impl Sandbox {
     pub fn validate(&self) -> Result<(), SandboxModelError> {
+        if let Some(execution) = self.work.execution {
+            execution.validate()?;
+        }
         if self.name.trim().is_empty() || self.name.len() > 64 {
             return Err(SandboxModelError::invalid_value("sandbox.name"));
         }

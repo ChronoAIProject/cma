@@ -211,6 +211,18 @@ impl WorkspaceStore for MongoSandboxStore {
         expected_revision: u64,
         workspace: Workspace,
     ) -> Result<(), SandboxStoreError> {
+        let current = self
+            .get_workspace(&workspace.id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if current.revision != expected_revision {
+            return Err(SandboxStoreError::Conflict);
+        }
+        layer2_core::sandbox::ProvisioningExecution::validate_successor(
+            current.work.execution,
+            workspace.work.execution,
+        )
+        .map_err(|_| SandboxStoreError::Conflict)?;
         if workspace.revision
             != expected_revision
                 .checked_add(1)

@@ -26,11 +26,22 @@ pub(crate) struct CommandLimits {
 }
 
 impl CommandLimits {
-    pub(crate) fn install(timeout_seconds: u64, output_limit: u32) -> Result<Self> {
+    pub(crate) fn install(
+        timeout_seconds: u64,
+        total_timeout_seconds: u64,
+        output_limit: u32,
+    ) -> Result<Self> {
         if timeout_seconds == 0 || timeout_seconds > MAX_COMMAND_SECONDS {
             return Err(RuntimeError::rejected(
                 "invalid_timeout",
                 format!("command timeout must be between 1 and {MAX_COMMAND_SECONDS} seconds"),
+            ));
+        }
+        if total_timeout_seconds < timeout_seconds || total_timeout_seconds > TOTAL_COMMAND_SECONDS
+        {
+            return Err(RuntimeError::rejected(
+                "invalid_total_timeout",
+                format!("total timeout must be between the command timeout and {TOTAL_COMMAND_SECONDS} seconds"),
             ));
         }
         if output_limit == 0 || output_limit > MAX_OUTPUT_BYTES {
@@ -41,7 +52,7 @@ impl CommandLimits {
         }
         Ok(Self {
             timeout: Duration::from_secs(timeout_seconds),
-            total_timeout: Duration::from_secs(TOTAL_COMMAND_SECONDS),
+            total_timeout: Duration::from_secs(total_timeout_seconds),
             output_limit: output_limit as usize,
         })
     }
@@ -69,7 +80,10 @@ pub(crate) async fn run_shell_commands(
         if now >= total_deadline {
             return Err(RuntimeError::rejected(
                 "command_total_timeout",
-                format!("command {index} was not started before the 1800 second total deadline"),
+                format!(
+                    "command {index} was not started before the {} second total deadline",
+                    limits.total_timeout.as_secs()
+                ),
             ));
         }
         let deadline = std::cmp::min(now + limits.timeout, total_deadline);

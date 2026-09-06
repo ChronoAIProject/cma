@@ -8,7 +8,7 @@ use layer2_core::sandbox::{
     Agent, AgentMessageAssembly, AgentMessageOutcome, AgentOperationDelivery, AgentOrigin,
     AgentStatus, AgentUpdateRecorder, AgentWorkState, AgentWorkStep, ConversationState,
     QueuedMessageState, SandboxCheckpointRef, SandboxLifecycleOperation, SandboxRevivePhase,
-    SandboxWorkState, QUEUED_MESSAGE_DISPATCH_GRACE_SECONDS,
+    QUEUED_MESSAGE_DISPATCH_GRACE_SECONDS,
 };
 use layer2_core::{AgentId, AgentProfileId, RuntimeCapability};
 use layer3_adapter::{
@@ -291,7 +291,7 @@ async fn begin_queue_phase(harness: &Harness, id: &SandboxId, now: SystemTime) {
     next.lifecycle.checkpoints.publish(checkpoint).unwrap();
     next.status = SandboxStatus::Paused;
     next.runtime = None;
-    next.work = SandboxWorkState::new(SandboxWorkStep::None, stamp.clone());
+    next.work.schedule(SandboxWorkStep::None, stamp.clone());
     next.begin_revive(SandboxReviveCause::AgentMessage, stamp.clone())
         .unwrap();
     let Some(SandboxLifecycleOperation::Revive { phase, .. }) = next.lifecycle.operation.as_mut()

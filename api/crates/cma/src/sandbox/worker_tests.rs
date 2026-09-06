@@ -43,6 +43,7 @@ use super::worker::{
 
 mod checkpoint_consistency_tests;
 mod checkpoint_maintenance_tests;
+mod execution_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod reconciliation_tests;
@@ -496,6 +497,23 @@ impl Harness {
         lease_duration: Duration,
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Arc<SandboxWorker> {
+        self.worker_with_execution(
+            holder,
+            credentials,
+            lease_duration,
+            policy,
+            Default::default(),
+        )
+    }
+
+    fn worker_with_execution(
+        &self,
+        holder: &str,
+        credentials: Arc<dyn SandboxCredentialController>,
+        lease_duration: Duration,
+        policy: Arc<dyn SandboxPolicySource>,
+        execution: layer2_core::sandbox::ProvisioningExecution,
+    ) -> Arc<SandboxWorker> {
         let dependencies = SandboxWorkerDependencies {
             store: self.store.clone(),
             adapter: Arc::clone(&self.adapter),
@@ -514,7 +532,8 @@ impl Harness {
             operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
         };
         let mut config =
-            SandboxWorkerConfig::with_policy_source(holder, "test", runtime_image(), policy);
+            SandboxWorkerConfig::with_policy_source(holder, "test", runtime_image(), policy)
+                .with_execution(execution);
         config.lease_duration = lease_duration;
         config.retry_delay = Duration::from_secs(5);
         SandboxWorker::new(dependencies, config)

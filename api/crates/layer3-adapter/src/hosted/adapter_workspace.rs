@@ -13,6 +13,11 @@ pub(super) async fn prepare(
     handle: &RuntimeHandle,
     request: &WorkspaceRequest,
 ) -> crate::Result<WorkspaceReceipt> {
+    if !(1..=1_000).contains(&request.clone_depth) {
+        return Err(AdapterError::Rejected(
+            "workspace clone depth is invalid".into(),
+        ));
+    }
     let state = adapter.known_state(handle).await?;
     validate_operation(
         &request.operation_id,
@@ -52,7 +57,12 @@ pub(super) async fn setup(
         &request.request_sha256,
         request.has_valid_sha256(),
     )?;
-    if request.timeout_seconds == 0 || request.output_limit_bytes == 0 {
+    if request.timeout_seconds == 0
+        || request.timeout_seconds > 600
+        || request.total_timeout_seconds < request.timeout_seconds
+        || request.total_timeout_seconds > 1_800
+        || request.output_limit_bytes == 0
+    {
         return Err(AdapterError::Rejected(
             "workspace setup command bounds are invalid".into(),
         ));

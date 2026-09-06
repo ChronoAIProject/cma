@@ -104,3 +104,34 @@ fn production_clone_urls_are_public_github_repositories_only() {
         );
     }
 }
+
+#[tokio::test]
+async fn clone_depth_limits_the_actual_git_history() {
+    let home = root("custom-depth");
+    let source = fixture(&home);
+    for _ in 0..3 {
+        git(&source, &["commit", "--allow-empty", "-m", "next"]);
+    }
+    let request = WorkspaceRequest::with_clone_depth(
+        "clone-custom",
+        "wks-custom",
+        "copy",
+        WorkspaceSource::Clone {
+            url: format!("file://{}", source.display()),
+            reference: None,
+        },
+        2,
+    );
+    prepare(&home, true, &request).await.unwrap();
+    let output = std::process::Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(home.join("copy"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "2");
+    for depth in [0, 1_001] {
+        assert!(validate_clone_depth(depth).is_err());
+    }
+    std::fs::remove_dir_all(home).unwrap();
+}

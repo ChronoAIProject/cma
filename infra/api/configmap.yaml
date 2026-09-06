@@ -7,6 +7,10 @@ metadata:
     app.kubernetes.io/name: cma-api
     app.kubernetes.io/part-of: cma
 data:
+  # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
+  CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
+  CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
+  CHRONO_CLONE_DEPTH: "50"
   # Address the control plane binds.
   CHRONO_SERVER_BIND: "0.0.0.0:8080"
   # How callers are authenticated. Stated explicitly rather than left to the

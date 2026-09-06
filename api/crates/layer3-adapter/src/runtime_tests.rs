@@ -10,7 +10,7 @@ fn install_request_digest_has_a_stable_golden_encoding() {
     );
     assert_eq!(
         request.request_sha256,
-        "2d5efe78bf8ba771e71bfc90da3d9410c73c5afde97f746ac45431b802dcddaa"
+        "3933c5d0d0ea7259b3ba39409a43093a729319c0c71bf038489c74bbe8467dc2"
     );
     assert!(request.has_valid_sha256());
 }
@@ -32,6 +32,13 @@ fn install_request_digest_covers_only_execution_fields() {
     assert_eq!(renamed.request_sha256, original.request_sha256);
 
     let variants = [
+        InstallRequest::with_timeouts(
+            &original.operation_id,
+            original.commands.clone(),
+            original.timeout_seconds,
+            original.total_timeout_seconds + 1,
+            original.output_limit_bytes,
+        ),
         InstallRequest::bounded(
             &original.operation_id,
             vec!["printf changed".into()],

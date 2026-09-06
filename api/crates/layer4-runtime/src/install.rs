@@ -43,7 +43,11 @@ async fn run_owned(config: &RuntimeConfig, request: &InstallRequest) -> Result<I
         );
     }
 
-    let limits = CommandLimits::install(request.timeout_seconds, request.output_limit_bytes)?;
+    let limits = CommandLimits::install(
+        request.timeout_seconds,
+        request.total_timeout_seconds,
+        request.output_limit_bytes,
+    )?;
     let outcome = run_shell_commands(&request.commands, &config.home, &config.install_env, limits)
         .await
         .map(|commands| InstallReceipt {

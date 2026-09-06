@@ -31,6 +31,9 @@ fn validate_request(request: &InstallRequest) -> crate::Result<()> {
         || request.operation_id.chars().any(char::is_control)
         || !request.has_valid_sha256()
         || request.timeout_seconds == 0
+        || request.timeout_seconds > 600
+        || request.total_timeout_seconds < request.timeout_seconds
+        || request.total_timeout_seconds > 1_800
         || request.output_limit_bytes == 0
     {
         return Err(AdapterError::Rejected(

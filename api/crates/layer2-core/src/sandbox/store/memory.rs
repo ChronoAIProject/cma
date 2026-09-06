@@ -99,6 +99,11 @@ impl SandboxStore for InMemorySandboxStore {
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
+                || crate::sandbox::ProvisioningExecution::validate_successor(
+                    current.work.execution,
+                    sandbox.work.execution,
+                )
+                .is_err()
                 || current
                     .validate_checkpoint_capture_successor(&sandbox)
                     .is_err()
@@ -157,6 +162,15 @@ impl WorkspaceStore for InMemorySandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let id = workspace.id.clone();
         let mut state = self.lock();
+        if state.workspaces.get(&id).is_some_and(|current| {
+            crate::sandbox::ProvisioningExecution::validate_successor(
+                current.work.execution,
+                workspace.work.execution,
+            )
+            .is_err()
+        }) {
+            return Err(SandboxStoreError::Conflict);
+        }
         save_record!(state, workspaces, id, expected_revision, workspace)
     }
 
@@ -366,6 +380,11 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
                     current.owner != sandbox.owner
+                        || crate::sandbox::ProvisioningExecution::validate_successor(
+                            current.work.execution,
+                            sandbox.work.execution,
+                        )
+                        .is_err()
                         || current
                             .validate_checkpoint_capture_successor(&sandbox)
                             .is_err()
@@ -393,6 +412,15 @@ impl SandboxTransactionStore for InMemorySandboxStore {
             } => {
                 let id = workspace.id.clone();
                 let sandbox_id = workspace.sandbox_id.clone();
+                if candidate.workspaces.get(&id).is_some_and(|current| {
+                    crate::sandbox::ProvisioningExecution::validate_successor(
+                        current.work.execution,
+                        workspace.work.execution,
+                    )
+                    .is_err()
+                }) {
+                    return Err(SandboxStoreError::Conflict);
+                }
                 save_record!(candidate, workspaces, id, expected_revision, *workspace)?;
                 append_sandbox_event(&mut candidate, &sandbox_id, event_at, event)?;
             }

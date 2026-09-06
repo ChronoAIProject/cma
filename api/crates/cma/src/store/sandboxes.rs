@@ -362,6 +362,11 @@ impl SandboxStore for MongoSandboxStore {
         current
             .validate_checkpoint_capture_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;
+        layer2_core::sandbox::ProvisioningExecution::validate_successor(
+            current.work.execution,
+            sandbox.work.execution,
+        )
+        .map_err(|_| SandboxStoreError::Conflict)?;
         current
             .validate_runtime_generation_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;

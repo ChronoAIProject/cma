@@ -20,6 +20,40 @@ fn limits(timeout: Duration, output_limit: usize) -> CommandLimits {
     }
 }
 
+#[test]
+fn requested_total_deadline_is_validated_and_retained() {
+    let custom = CommandLimits::install(2, 3, 1_024).unwrap();
+    assert_eq!(custom.timeout, Duration::from_secs(2));
+    assert_eq!(custom.total_timeout, Duration::from_secs(3));
+    for (command, total) in [(0, 1), (601, 1_800), (2, 1), (1, 1_801)] {
+        assert!(CommandLimits::install(command, total, 1_024).is_err());
+    }
+}
+
+#[tokio::test]
+async fn total_deadline_stops_the_batch_before_a_later_side_effect() {
+    let root = root("total-deadline");
+    let error = run_shell_commands(
+        &[
+            "sleep 0.08".into(),
+            "sleep 0.08".into(),
+            "touch should-not-exist".into(),
+        ],
+        &root,
+        &BTreeMap::new(),
+        CommandLimits {
+            timeout: Duration::from_millis(100),
+            total_timeout: Duration::from_millis(120),
+            output_limit: 1_024,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "command_timeout");
+    assert!(!root.join("should-not-exist").exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn shell_receipts_hash_both_bounded_streams() {
     let root = root("hashes");

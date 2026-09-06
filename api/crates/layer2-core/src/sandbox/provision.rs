@@ -47,6 +47,8 @@ pub struct SandboxWorkLease {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxWorkState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<super::ProvisioningExecution>,
     pub step: SandboxWorkStep,
     pub ready_at: String,
     pub next_fence: u64,
@@ -58,6 +60,7 @@ pub struct SandboxWorkState {
 impl SandboxWorkState {
     pub fn new(step: SandboxWorkStep, ready_at: String) -> Self {
         Self {
+            execution: None,
             step,
             ready_at,
             next_fence: 1,

@@ -62,6 +62,7 @@ fn valid_prepare_request(
         request.has_valid_sha256(),
         record,
     ) && crate::paths::safe_component(&request.name, "workspace name").is_ok()
+        && crate::workspace_source::validate_clone_depth(request.clone_depth).is_ok()
         && match &request.source {
             layer3_adapter::WorkspaceSource::Clone { url, reference } => {
                 crate::workspace_source::validate_clone_url(url, allow_local_git).is_ok()
@@ -83,6 +84,7 @@ fn valid_setup_request(request: &layer3_adapter::WorkspaceSetupRequest, record: 
     ) && crate::paths::safe_component(&request.name, "workspace name").is_ok()
         && crate::command::CommandLimits::install(
             request.timeout_seconds,
+            request.total_timeout_seconds,
             request.output_limit_bytes,
         )
         .is_ok()

@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 pub const DEFAULT_HOME_DIRECTORY: &str = "/home/cma";
 pub const DEFAULT_SUPERVISOR_PROGRAM: &str = "/usr/local/bin/layer4-runtime";
 pub const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 600;
+pub const DEFAULT_TOTAL_TIMEOUT_SECONDS: u64 = 1_800;
 pub const DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES: u32 = 32 * 1024;
 
 /// Provider-owned opaque runtime address.
@@ -166,6 +167,8 @@ pub struct InstallRequest {
     pub commands: Vec<String>,
     #[serde(rename = "timeout_s")]
     pub timeout_seconds: u64,
+    #[serde(rename = "total_timeout_s")]
+    pub total_timeout_seconds: u64,
     #[serde(rename = "output_limit")]
     pub output_limit_bytes: u32,
 }
@@ -197,11 +200,28 @@ impl InstallRequest {
         timeout_seconds: u64,
         output_limit_bytes: u32,
     ) -> Self {
+        Self::with_timeouts(
+            operation_id,
+            commands,
+            timeout_seconds,
+            DEFAULT_TOTAL_TIMEOUT_SECONDS,
+            output_limit_bytes,
+        )
+    }
+
+    pub fn with_timeouts(
+        operation_id: impl Into<String>,
+        commands: Vec<String>,
+        timeout_seconds: u64,
+        total_timeout_seconds: u64,
+        output_limit_bytes: u32,
+    ) -> Self {
         let mut request = Self {
             operation_id: operation_id.into(),
             request_sha256: String::new(),
             commands,
             timeout_seconds,
+            total_timeout_seconds,
             output_limit_bytes,
         };
         request.request_sha256 = request.computed_sha256();
@@ -211,8 +231,9 @@ impl InstallRequest {
     /// Digest the exact execution-affecting fields with a versioned encoding.
     pub fn computed_sha256(&self) -> String {
         let mut digest = Sha256::new();
-        digest.update(b"chrono.install.request.v1\0");
+        digest.update(b"chrono.install.request.v2\0");
         digest.update(self.timeout_seconds.to_be_bytes());
+        digest.update(self.total_timeout_seconds.to_be_bytes());
         digest.update(self.output_limit_bytes.to_be_bytes());
         digest.update(
             u32::try_from(self.commands.len())

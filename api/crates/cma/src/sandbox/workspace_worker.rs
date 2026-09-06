@@ -1,11 +1,10 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use layer2_core::profiles::WorkspaceProfileRef;
 use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, WorkspaceLifecycleStore};
 use layer2_core::sandbox::{
-    Sandbox, SandboxEventKind, SandboxStatus, Workspace, WorkspaceService, WorkspaceSource,
-    WorkspaceStatus, WorkspaceWorkStep,
+    Sandbox, SandboxEventKind, SandboxStatus, Workspace, WorkspaceSource, WorkspaceStatus,
+    WorkspaceWorkStep,
 };
 use layer2_core::{rfc3339_at, WorkspaceId};
 use layer3_adapter::{
@@ -16,9 +15,11 @@ use layer3_adapter::{
 use self::support::{
     claimed_fence, failure, valid_prepare_receipt, valid_setup_receipt, WorkerFailure,
 };
-use super::worker::{ProfileWorkspaceProvisioner, SandboxDependencyError};
 
+mod execution;
+mod profile;
 mod support;
+pub(crate) use profile::DurableProfileWorkspaceProvisioner;
 
 const DEFAULT_LEASE: Duration = Duration::from_secs(15 * 60);
 const DEFAULT_RETRY: Duration = Duration::from_secs(30);
@@ -31,6 +32,7 @@ pub(crate) struct WorkspaceWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct WorkspaceWorkerConfig {
+    pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
     pub lease_duration: Duration,
@@ -40,11 +42,23 @@ pub(crate) struct WorkspaceWorkerConfig {
 impl WorkspaceWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
         }
+    }
+
+    pub fn with_execution(
+        mut self,
+        execution: layer2_core::sandbox::ProvisioningExecution,
+    ) -> Self {
+        self.execution = execution;
+        self.lease_duration = self.lease_duration.max(Duration::from_secs(
+            layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
+        ));
+        self
     }
 }
 
@@ -155,6 +169,7 @@ impl WorkspaceWorker {
         workspace: Workspace,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let workspace = self.pin_execution(workspace).await?;
         let (_, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,
@@ -166,11 +181,16 @@ impl WorkspaceWorker {
             },
             WorkspaceSource::Empty => RuntimeWorkspaceSource::Init,
         };
-        let request = WorkspaceRequest::new(
+        let request = WorkspaceRequest::with_clone_depth(
             workspace.operation_id(WorkspaceWorkStep::Prepare),
             workspace.id.to_string(),
             workspace.name.clone(),
             source,
+            workspace
+                .work
+                .execution
+                .expect("execution policy was persisted")
+                .clone_depth,
         );
         match self
             .dependencies
@@ -199,15 +219,23 @@ impl WorkspaceWorker {
     }
 
     async fn setup(&self, workspace: Workspace, now: SystemTime) -> Result<(), SandboxStoreError> {
+        let workspace = self.pin_execution(workspace).await?;
         let (_, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,
         };
-        let request = WorkspaceSetupRequest::new(
+        let execution = workspace
+            .work
+            .execution
+            .expect("execution policy was persisted");
+        let request = WorkspaceSetupRequest::with_timeouts(
             workspace.operation_id(WorkspaceWorkStep::Setup),
             workspace.id.to_string(),
             workspace.name.clone(),
             workspace.profile.content.setup_commands.clone(),
+            execution.command_timeout_seconds,
+            execution.total_timeout_seconds,
+            layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
         );
         match self
             .dependencies
@@ -430,59 +458,5 @@ impl WorkspaceWorker {
                 event,
             })
             .await
-    }
-}
-
-pub(crate) struct DurableProfileWorkspaceProvisioner {
-    service: Arc<WorkspaceService>,
-    worker: Arc<WorkspaceWorker>,
-}
-
-impl DurableProfileWorkspaceProvisioner {
-    pub fn new(service: Arc<WorkspaceService>, worker: Arc<WorkspaceWorker>) -> Self {
-        Self { service, worker }
-    }
-}
-
-#[async_trait::async_trait]
-impl ProfileWorkspaceProvisioner for DurableProfileWorkspaceProvisioner {
-    async fn create_profile_workspace(
-        &self,
-        sandbox: &Sandbox,
-        _runtime: &RuntimeHandle,
-        profile: &WorkspaceProfileRef,
-        index: u16,
-        _operation_id: &str,
-    ) -> Result<(), SandboxDependencyError> {
-        let workspace = self
-            .service
-            .create_profile_workspace(sandbox, profile, index)
-            .await
-            .map_err(|error| match error {
-                layer2_core::sandbox::WorkspaceServiceError::Unavailable(detail) => {
-                    SandboxDependencyError::Transient(detail)
-                }
-                error @ layer2_core::sandbox::WorkspaceServiceError::LimitReached { .. } => {
-                    SandboxDependencyError::ResourceQuota(error.to_string())
-                }
-                error => SandboxDependencyError::Validation(error.to_string()),
-            })?;
-        let workspace = self
-            .worker
-            .run_until_ready(&workspace.id, SystemTime::now())
-            .await
-            .map_err(|error| SandboxDependencyError::Transient(error.to_string()))?;
-        match workspace.status {
-            WorkspaceStatus::Ready => Ok(()),
-            WorkspaceStatus::Failed => Err(SandboxDependencyError::Validation(
-                workspace.failed.map_or_else(
-                    || "workspace preparation failed".into(),
-                    |failure| failure.detail,
-                ),
-            )),
-            _ => Err(SandboxDependencyError::Transient(
-                "workspace lifecycle has not reached ready".into(),
-            )),
-        }
     }
 }
