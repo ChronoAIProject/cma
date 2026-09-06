@@ -1,6 +1,12 @@
 import { createParser } from 'eventsource-parser';
 import type { ResolvedConfig } from '../config.js';
-import { ProtocolError, ValidationError } from '../errors.js';
+import {
+  CmaError,
+  ProtocolError,
+  RequestAborted,
+  TransportError,
+  ValidationError,
+} from '../errors.js';
 import { raceWithAbortSignal, requestResponse, type OperationOptions } from '../http.js';
 import { segment } from '../resources.js';
 import { launchEvent, type LaunchEvent } from './events.js';
@@ -61,7 +67,11 @@ export async function streamLaunchEvents(
       const { done, value } = await raceWithAbortSignal(signal, () => reader.read());
       if (value !== undefined && value.byteLength > 1_048_576)
         throw new ProtocolError('Progress event chunk exceeds its boundary');
-      parser.feed(done ? decoder.decode() : decoder.decode(value, { stream: true }));
+      try {
+        parser.feed(done ? decoder.decode() : decoder.decode(value, { stream: true }));
+      } catch (cause) {
+        throw new ProtocolError('The progress companion returned invalid UTF-8 or SSE', { cause });
+      }
       if (failure !== undefined)
         throw new ProtocolError('The progress companion returned an invalid event', {
           cause: failure,
@@ -69,11 +79,19 @@ export async function streamLaunchEvents(
       while (pending.length > 0) {
         const event = pending.shift()!;
         if (event.seq <= cursor) throw new ProtocolError('Progress events did not advance');
-        await options.onEvent(event);
+        try {
+          await options.onEvent(event);
+        } catch (cause) {
+          throw new ProtocolError('The progress event was not acknowledged', { cause });
+        }
         cursor = event.seq;
       }
       if (done) return;
     }
+  } catch (cause) {
+    if (signal.aborted) throw new RequestAborted(undefined, { cause });
+    if (cause instanceof CmaError) throw cause;
+    throw new TransportError('The progress companion could not be read', { cause });
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();

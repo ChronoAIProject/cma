@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, ProtocolError, ValidationError } from '../src/errors.js';
+import {
+  ApiError,
+  ProtocolError,
+  RequestAborted,
+  TransportError,
+  ValidationError,
+} from '../src/errors.js';
 import { Launches, repeatChoiceFrom } from '../src/launch/index.js';
 import { createClient } from '../src/client.js';
 import { launchEventKind } from '../src/launch/events.js';
@@ -191,6 +197,44 @@ describe('progress companion', () => {
     controller.abort();
     await expect(
       sdk('').launches.stream(launchFixture.id, { signal: controller.signal, onEvent: vi.fn() }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(RequestAborted);
+  });
+
+  it('normalizes invalid UTF-8, transport interruption, and in-flight cancellation', async () => {
+    const from = (body: BodyInit) =>
+      createClient({
+        baseUrl: 'https://cma.example.test',
+        fetch: vi.fn(
+          async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
+        ),
+      });
+    await expect(
+      from(new Uint8Array([255])).launches.stream(launchFixture.id, { onEvent: vi.fn() }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    const failed = new ReadableStream({
+      start(controller) {
+        controller.error(new TypeError('offline'));
+      },
+    });
+    await expect(
+      from(failed).launches.stream(launchFixture.id, { onEvent: vi.fn() }),
+    ).rejects.toBeInstanceOf(TransportError);
+    const controller = new AbortController();
+    const cancel = vi.fn();
+    const stream = new ReadableStream({
+      start(source) {
+        source.enqueue(new TextEncoder().encode(wire(1)));
+      },
+      cancel,
+    });
+    const acknowledge = vi.fn(() => controller.abort());
+    await expect(
+      from(stream).launches.stream(launchFixture.id, {
+        signal: controller.signal,
+        onEvent: acknowledge,
+      }),
+    ).rejects.toBeInstanceOf(RequestAborted);
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });
