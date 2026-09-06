@@ -17,6 +17,7 @@ use context::{Case, Context};
 async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
     if op.contains("/admin/")
+        || op.contains("/profile-authoring/")
         || [
             "GET /api/v1/conformance",
             "GET /api/v1/defaults",

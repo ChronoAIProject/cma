@@ -8,6 +8,7 @@ export { Profiles } from './profiles.js';
 export { Marketplace, type MarketplaceListOptions } from './marketplace.js';
 export { readDefaults, type PlatformDefaults } from './defaults.js';
 export * from './admin/index.js';
+export * from './profile-authoring/index.js';
 export * from './triggers.js';
 export * from './auth.js';
 export * from './responses.js';

@@ -19,6 +19,7 @@ import { Launches } from './launch/index.js';
 import { Authentication } from './auth.js';
 import { Responses } from './responses.js';
 import { UnsupportedInterfaces } from './unsupported.js';
+import { ProfileAuthoring } from './profile-authoring/index.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
@@ -28,6 +29,7 @@ export class Cma {
   readonly workspaces: Workspaces;
   readonly worktrees: Worktrees;
   readonly admin: Administration;
+  readonly profileAuthoring: ProfileAuthoring;
   readonly triggerAuthoring: TriggerAuthoring;
   readonly triggers: TriggerAuthoring;
   readonly auth: Authentication;
@@ -51,6 +53,7 @@ export class Cma {
     this.workspaces = new Workspaces(this.#config);
     this.worktrees = new Worktrees(this.#config);
     this.admin = new Administration(this.#config);
+    this.profileAuthoring = new ProfileAuthoring(this.#config);
     this.triggerAuthoring = new TriggerAuthoring(this.#config);
     this.triggers = this.triggerAuthoring;
     this.auth = new Authentication(this.#config);

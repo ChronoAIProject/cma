@@ -163,11 +163,18 @@ describe('shared public contract', () => {
       }
       const invoke = async () => dispatch[fixture.operation]!(context(client, fixture));
       if (mode === 'raw-wire-only') {
-        // Typed operations do not expose arbitrary wire padding; this is only an error-codec check.
-        expect(await errorFromResponse(response(fixture))).toMatchObject({
-          status: 413,
-          code: 'request_too_large',
+        // Closed query/header shapes and raw padding cannot be emitted by these typed methods.
+        const body = fixture.response.body as Record<string, unknown>;
+        const error = await errorFromResponse(response(fixture));
+        expect(error).toBeInstanceOf(ApiError);
+        expect(error).toMatchObject({
+          status: fixture.response.status,
+          code: body.code,
         });
+        const standard = ['type', 'title', 'status', 'detail', 'instance', 'code'];
+        expect((error as ApiError).extensions).toEqual(
+          Object.fromEntries(Object.entries(body).filter(([key]) => !standard.includes(key))),
+        );
         expect(fetch).not.toHaveBeenCalled();
         return;
       }

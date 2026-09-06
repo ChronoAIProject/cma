@@ -13,6 +13,58 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("authoring-skills-limit-zero", Classification::Local),
+    (
+        "authoring-skills-limit-overflow",
+        Classification::TypedShape,
+    ),
+    ("authoring-skills-limit-too-large", Classification::Local),
+    ("authoring-skills-limit-text", Classification::TypedShape),
+    ("authoring-skills-query-too-long", Classification::Local),
+    ("authoring-skills-query-control", Classification::Local),
+    ("authoring-skills-query-byte-limit", Classification::Local),
+    ("authoring-skills-cursor-empty", Classification::Local),
+    ("authoring-skills-cursor-too-long", Classification::Local),
+    ("authoring-skills-cursor-control", Classification::Local),
+    ("authoring-skills-unknown-query", Classification::QueryShape),
+    (
+        "authoring-skills-duplicate-query",
+        Classification::QueryShape,
+    ),
+    (
+        "authoring-skills-forbidden-before-query",
+        Classification::TypedShape,
+    ),
+    (
+        "authoring-skills-anonymous-before-query",
+        Classification::TypedShape,
+    ),
+    ("authoring-resolve-invalid-json", Classification::RawJson),
+    ("authoring-resolve-body-too-large", Classification::BodySize),
+    (
+        "authoring-resolve-missing-content-type",
+        Classification::MediaType,
+    ),
+    (
+        "authoring-resolve-wrong-content-type",
+        Classification::MediaType,
+    ),
+    (
+        "authoring-resolve-invalid-body-type",
+        Classification::TypedShape,
+    ),
+    (
+        "authoring-resolve-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "authoring-resolve-forbidden-before-body",
+        Classification::RawJson,
+    ),
+    (
+        "authoring-resolve-anonymous-before-body",
+        Classification::RawJson,
+    ),
     ("oversized-admin-put", Classification::BodySize),
     ("oversized-admin-patch", Classification::BodySize),
     ("oversized-admin-post", Classification::BodySize),
@@ -675,11 +727,15 @@ pub fn classify(case: &Case) -> Option<Classification> {
 
 pub fn assert_unrepresentable(case: &Case, class: Classification) {
     match class {
-        Classification::MediaType => assert!(
-            !case.request.headers.contains_key("content-type"),
-            "{}",
-            case.id
-        ),
+        Classification::MediaType => {
+            let content_type = case.request.headers.get("content-type").map(String::as_str);
+            assert_eq!(
+                content_type,
+                (case.id == "authoring-resolve-wrong-content-type").then_some("text/plain"),
+                "{}",
+                case.id
+            );
+        }
         Classification::RawJson => assert!(
             serde_json::from_str::<serde_json::Value>(&case.request.expanded_raw_body().unwrap())
                 .is_err(),
@@ -694,7 +750,12 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
         }
         Classification::QueryShape => {
             let url = reqwest::Url::parse(&format!("http://fixture{}", case.request.path)).unwrap();
+            if case.id == "authoring-skills-duplicate-query" {
+                assert_eq!(url.query_pairs().filter(|(key, _)| key == "q").count(), 2);
+                return;
+            }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/profile-authoring/skills" => &["q", "limit", "cursor"],
                 "GET /api/v1/agui/events" => &["thread_id", "starting_after", "follow"],
                 "GET /api/v1/conversations/{id}/items" => &["after", "limit"],
                 "GET /api/v1/triggers/{id}/embed" => &["placement_id"],

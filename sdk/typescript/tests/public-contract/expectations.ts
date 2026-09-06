@@ -3,6 +3,21 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['authoring-skills-limit-zero', 'invalid_profile_authoring_query'],
+  ['authoring-skills-limit-overflow', 'invalid_profile_authoring_query'],
+  ['authoring-skills-limit-too-large', 'invalid_profile_authoring_query'],
+  ['authoring-skills-limit-text', 'invalid_profile_authoring_query'],
+  ['authoring-skills-query-too-long', 'invalid_profile_authoring_query'],
+  ['authoring-skills-query-control', 'invalid_profile_authoring_query'],
+  ['authoring-skills-query-byte-limit', 'invalid_profile_authoring_query'],
+  ['authoring-skills-cursor-empty', 'invalid_profile_authoring_query'],
+  ['authoring-skills-cursor-too-long', 'invalid_profile_authoring_query'],
+  ['authoring-skills-cursor-control', 'invalid_profile_authoring_query'],
+  ['authoring-skills-forbidden-before-query', 'forbidden'],
+  ['authoring-skills-anonymous-before-query', 'not_authenticated'],
+  ['authoring-resolve-invalid-body-type', 'invalid_json'],
+  ['authoring-resolve-forbidden-before-body', 'forbidden'],
+  ['authoring-resolve-anonymous-before-body', 'not_authenticated'],
   ['sandbox-invalid-query', 'invalid_query'],
   ['admin-invalid-query', 'invalid_admin_request'],
   ['admin-settings-invalid', 'invalid_request'],
@@ -44,16 +59,42 @@ export function expectation(
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
   if (browserOperations.has(fixture.operation)) return 'browser-only';
   const body = fixture.response.body as Record<string, unknown>;
+  if (['authoring-skills-unknown-query', 'authoring-skills-duplicate-query'].includes(fixture.id)) {
+    assert.equal(fixture.operation, 'GET /api/v1/profile-authoring/skills');
+    assert.equal(body.code, 'invalid_profile_authoring_query');
+    const query = new URL(fixture.request.path, 'https://contract.example').searchParams;
+    if (fixture.id === 'authoring-skills-unknown-query') assert(query.has('unknown'));
+    else assert.equal(query.getAll('q').length, 2);
+    return 'raw-wire-only';
+  }
+  if (
+    ['authoring-resolve-missing-content-type', 'authoring-resolve-wrong-content-type'].includes(
+      fixture.id,
+    )
+  ) {
+    assert.equal(fixture.operation, 'POST /api/v1/profile-authoring/repositories/resolve');
+    assert.equal(body.code, 'invalid_json');
+    assert.equal(fixture.response.status, 415);
+    assert.equal(
+      fixture.request.headers['content-type'],
+      fixture.id === 'authoring-resolve-missing-content-type' ? undefined : 'text/plain',
+    );
+    return 'raw-wire-only';
+  }
   if (fixture.request.rawBody !== undefined) {
     if (fixture.request.rawBodyRepeat !== undefined && fixture.response.status === 413) {
-      assert.equal(body.code, 'request_too_large');
+      assert.equal(
+        body.code,
+        fixture.id === 'authoring-resolve-body-too-large' ? 'invalid_json' : 'request_too_large',
+      );
       assert(Buffer.byteLength(fixture.request.rawBody, 'utf8') > 2_097_152);
       return 'raw-wire-only';
     }
     assert.throws(() => JSON.parse(fixture.request.rawBody!));
     assert.equal(
       body.code,
-      fixture.operation.includes('/api/v1/admin/') ? 'malformed_json' : 'invalid_json',
+      localCodes.get(fixture.id) ??
+        (fixture.operation.includes('/api/v1/admin/') ? 'malformed_json' : 'invalid_json'),
     );
     return 'preflight-validation';
   }

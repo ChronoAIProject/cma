@@ -15,6 +15,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | Resource Group | Operations |
 | --- | --- |
 | `agent_profiles()`, `workspace_profiles()`, `sandbox_profiles()` | `list`, `read`, `create`, `save`, `publish`, `list_revisions`, `read_revision`, `set_visibility`, `retire` |
+| `profile_authoring()` | `bounds`, `services`, `search_skills`, read-only `resolve_repository` |
 | `marketplace::<C>()` | `list`, `read`, `fork` |
 | `sandboxes()` | `list`, `read`, `create`, `delete`, `pause`, `revive`, `events` |
 | `workspaces()` | `list`, `read`, `create`, `delete` |

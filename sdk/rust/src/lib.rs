@@ -29,6 +29,7 @@ mod error;
 mod http;
 pub mod instances;
 pub mod launches;
+pub mod profile_authoring;
 pub mod profiles;
 mod resources;
 pub mod responses;

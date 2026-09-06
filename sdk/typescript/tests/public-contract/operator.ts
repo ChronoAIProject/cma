@@ -2,6 +2,12 @@ import type { ProfileKind } from '../../src/index.js';
 import type { Dispatch } from './context.js';
 
 export const operatorDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/profile-authoring/bounds': ({ client }) => client.profileAuthoring.bounds(),
+  'GET /api/v1/profile-authoring/services': ({ client }) => client.profileAuthoring.services(),
+  'GET /api/v1/profile-authoring/skills': ({ client, options }) =>
+    client.profileAuthoring.searchSkills(options),
+  'POST /api/v1/profile-authoring/repositories/resolve': ({ client, body }) =>
+    client.profileAuthoring.resolveRepository(body),
   'GET /api/v1/admin/settings': ({ client }) => client.admin.readSettings(),
   'PUT /api/v1/admin/settings': ({ client, body }) => client.admin.replaceSettings(body),
   'PATCH /api/v1/admin/settings': ({ client, body }) => client.admin.patchSettings(body),

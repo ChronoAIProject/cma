@@ -2,6 +2,7 @@ use super::context::{Context, decode};
 use cma_sdk::{
     Result,
     admin::{ActivityListOptions, ProfileListOptions, SandboxListOptions},
+    profile_authoring::ProfileAuthoringSkillSearch,
 };
 
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
@@ -10,6 +11,28 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "GET /api/v1/conformance" => c.check(c.client.read_conformance().await),
         "GET /api/v1/defaults" => c.check(c.client.read_defaults().await),
         "GET /openapi.json" => c.check(c.client.read_openapi().await),
+        "GET /api/v1/profile-authoring/bounds" => {
+            c.check(c.client.profile_authoring().bounds().await)
+        }
+        "GET /api/v1/profile-authoring/services" => {
+            c.check(c.client.profile_authoring().services().await)
+        }
+        "GET /api/v1/profile-authoring/skills" => c.check(
+            c.client
+                .profile_authoring()
+                .search_skills(&ProfileAuthoringSkillSearch {
+                    q: c.q("q"),
+                    limit: c.number("limit")?,
+                    cursor: c.q("cursor"),
+                })
+                .await,
+        ),
+        "POST /api/v1/profile-authoring/repositories/resolve" => c.check(
+            c.client
+                .profile_authoring()
+                .resolve_repository(&c.body()?)
+                .await,
+        ),
         "GET /api/v1/admin/settings" => c.check(admin.read_settings().await),
         "PUT /api/v1/admin/settings" => c.check(admin.replace_settings(&c.body()?).await),
         "PATCH /api/v1/admin/settings" => c.check(admin.patch_settings(&c.body()?).await),
