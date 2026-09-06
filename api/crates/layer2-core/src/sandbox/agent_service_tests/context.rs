@@ -314,22 +314,59 @@ async fn first_input_durably_requests_revive_and_obeys_the_admission_bound() {
     let agent_revision = agent.revision;
     agent.status = AgentStatus::Paused;
     agent.revision += 1;
-    harness.store.save_agent(agent_revision, agent.clone()).await.unwrap();
-    let mut sandbox = harness.store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    harness
+        .store
+        .save_agent(agent_revision, agent.clone())
+        .await
+        .unwrap();
+    let mut sandbox = harness
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
     let revision = sandbox.revision;
     sandbox.status = SandboxStatus::Paused;
-    sandbox.lifecycle.checkpoints.latest = Some(crate::sandbox::lifecycle_test_support::checkpoint(1, NOW));
+    sandbox.lifecycle.checkpoints.latest =
+        Some(crate::sandbox::lifecycle_test_support::checkpoint(1, NOW));
     sandbox.revision += 1;
-    harness.store.commit(SandboxTransaction::SaveSandboxAndAppend {
-        expected_revision: revision, sandbox: Box::new(sandbox), event_at: NOW.into(),
-        event: SandboxEventKind::Created,
-    }).await.unwrap();
+    harness
+        .store
+        .commit(SandboxTransaction::SaveSandboxAndAppend {
+            expected_revision: revision,
+            sandbox: Box::new(sandbox),
+            event_at: NOW.into(),
+            event: SandboxEventKind::Created,
+        })
+        .await
+        .unwrap();
     let before = tokio::time::Instant::now();
-    assert_eq!(harness.service.await_input_ready(&caller("owner", true), &agent.id).await,
-        Err(AgentContextError::AdmissionTimeout));
+    assert_eq!(
+        harness
+            .service
+            .await_input_ready(&caller("owner", true), &agent.id)
+            .await,
+        Err(AgentContextError::AdmissionTimeout)
+    );
     assert_eq!(before.elapsed(), AGENT_CONTEXT_ADMISSION_BOUND);
-    let sandbox = harness.store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    let sandbox = harness
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(sandbox.status, SandboxStatus::Reviving);
-    assert!(matches!(sandbox.lifecycle.operation, Some(SandboxLifecycleOperation::Revive { .. })));
-    assert!(harness.store.get_agent(&agent.id).await.unwrap().unwrap().conversation.active_turn.is_none());
+    assert!(matches!(
+        sandbox.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Revive { .. })
+    ));
+    assert!(harness
+        .store
+        .get_agent(&agent.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .conversation
+        .active_turn
+        .is_none());
 }
