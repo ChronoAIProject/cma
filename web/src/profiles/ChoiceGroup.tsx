@@ -10,7 +10,11 @@ export function ChoiceGroup<Value extends string>({
 }: {
   readonly label: string;
   readonly value: Value;
-  readonly options: readonly { readonly value: Value; readonly label: string }[];
+  readonly options: readonly {
+    readonly value: Value;
+    readonly label: string;
+    readonly disabled?: boolean;
+  }[];
   readonly onChange: (value: Value) => void;
   readonly disabled?: boolean;
   readonly describedBy?: string;
@@ -30,7 +34,7 @@ export function ChoiceGroup<Value extends string>({
             name={name}
             value={option.value}
             checked={option.value === value}
-            disabled={disabled}
+            disabled={disabled || option.disabled}
             onChange={() => onChange(option.value)}
           />
           <span>{option.label}</span>

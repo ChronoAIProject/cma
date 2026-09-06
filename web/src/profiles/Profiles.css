@@ -232,6 +232,98 @@
 .skill-picker__results p {
   margin: 4px 0;
 }
+.profile-field-pair,
+.profile-location-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.profile-field-pair > .profile-field {
+  margin-bottom: 24px;
+}
+.profile-location-options {
+  margin-bottom: 8px;
+}
+.profile-location-options + p {
+  margin-bottom: 24px;
+}
+.profile-location-options label {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+  padding: 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.profile-location-options label:has(input:checked) {
+  border-color: var(--dsw-alias-brand-primary);
+}
+.profile-location-options span {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font: var(--dsw-font-s-14);
+}
+.profile-location-options svg {
+  flex: none;
+}
+.profile-ordered-list,
+.profile-picker-results,
+.profile-service-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.profile-ordered-list > li,
+.profile-picker-results > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  overflow-wrap: anywhere;
+}
+.profile-ordered-list > li > p {
+  grid-column: 1 / -1;
+}
+.profile-order-actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+.profile-command {
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+}
+.profile-picker-results {
+  max-height: 300px;
+  overflow: auto;
+}
+.profile-service-list label {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 0;
+}
+.profile-service-list small {
+  display: block;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+.profile-environment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+.profile-environment-row > button {
+  margin-top: 24px;
+}
 @media (max-width: 30rem) {
   .profiles-home,
   .profile-editor {
@@ -267,5 +359,20 @@
     flex: 1;
     padding-right: 8px;
     padding-left: 8px;
+  }
+  .profile-field-pair,
+  .profile-location-options,
+  .profile-environment-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .profile-environment-row > button {
+    margin: 0 0 16px;
+    justify-self: end;
+  }
+  .profile-ordered-list > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .profile-order-actions {
+    justify-self: end;
   }
 }

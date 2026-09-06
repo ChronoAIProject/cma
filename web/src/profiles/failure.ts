@@ -19,6 +19,19 @@ const FIELD_NAMES: Readonly<Record<string, string>> = {
   permission_level: 'permissionLevel',
   skills: 'skills',
   system_prompt: 'systemPrompt',
+  'location.url': 'repositoryUrl',
+  'location.reference': 'repositoryReference',
+  'location.name': 'locationName',
+  agent_profiles: 'agentProfiles',
+  workspace_profiles: 'workspaceProfiles',
+  cpu_millis: 'cpuMillis',
+  memory_mib: 'memoryMib',
+  max_workspaces: 'maxWorkspaces',
+  max_agents_per_workspace: 'maxAgentsPerWorkspace',
+  environment_variables: 'environmentVariables',
+  'environment_variables.name': 'environmentVariables',
+  'environment_variables.value': 'environmentVariables',
+  commands: 'commands',
 };
 
 const REASONS: Readonly<Record<string, string>> = {
@@ -32,13 +45,32 @@ const REASONS: Readonly<Record<string, string>> = {
   private_reference: 'Publish the referenced profiles publicly before sharing this profile.',
   secret_like_environment_value:
     'Remove sensitive environment values before making this profile public.',
+  invalid_repository: 'Enter the HTTPS URL of a GitHub repository.',
+  invalid_repository_reference: 'Check the repository branch or tag.',
+  invalid_workspace_name: 'Choose a valid directory name.',
+  invalid_command: 'Each command must fit 4,096 bytes; multiline commands need a complete heredoc.',
+  too_many_commands: 'Reduce the number of commands in this profile.',
+  reserved_environment_variable:
+    'Choose an environment variable name that is not reserved by the system.',
+  duplicate_environment_variable: 'Give each environment variable a different name.',
+  invalid_environment_value: 'Remove null characters from the environment value.',
+  cpu_out_of_bounds: 'Choose a CPU size within the deployment limits.',
+  memory_out_of_bounds: 'Choose a memory size within the deployment limits.',
 };
 
 export function profileFailure(error: unknown): ProfileFailure {
   const problem = record(error);
   const code = typeof problem.code === 'string' ? problem.code : '';
   const reason = typeof problem.reason === 'string' ? problem.reason : '';
-  const field = typeof problem.field === 'string' ? FIELD_NAMES[problem.field] : undefined;
+  const path = typeof problem.path === 'string' ? problem.path.split(/[.[]/, 1)[0] : undefined;
+  const field =
+    reason === 'invalid_workspace_name'
+      ? 'directoryName'
+      : typeof problem.field === 'string'
+        ? FIELD_NAMES[problem.field]
+        : path === undefined
+          ? undefined
+          : FIELD_NAMES[path];
   const status = typeof problem.status === 'number' ? problem.status : undefined;
   const conflict = code === 'profile_version_conflict';
   const known: Readonly<Record<string, string>> = {
