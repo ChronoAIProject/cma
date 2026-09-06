@@ -121,6 +121,12 @@ impl AgentWorker {
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
         validate_lineage(agent, &sandbox, &workspace, &worktree)?;
+        if sandbox.lifecycle.checkpoint_capture.is_some() {
+            return Err(WorkerFailure::retryable(
+                "agent_checkpoint_in_progress",
+                "checkpoint writer resumption is pending",
+            ));
+        }
         let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
             self.dependencies.adapter.as_ref(),
             &sandbox,

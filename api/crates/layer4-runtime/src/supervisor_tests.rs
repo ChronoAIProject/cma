@@ -130,6 +130,68 @@ async fn writer_resume_is_an_idempotent_noop_without_an_active_hold() {
         other => panic!("writer resume no-op failed: {other:?}"),
     }
     assert_eq!(supervisor.phase().await, Phase::Provisioned);
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::Install(InstallRequest::new(
+                "delayed-hold",
+                Vec::new()
+            )))
+            .await,
+        ResponseFrame::Install(_)
+    ));
+    assert!(matches!(
+        supervisor.dispatch(credential("delayed-hold")).await,
+        ResponseFrame::Credential(_)
+    ));
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::CheckpointForTeardown(CheckpointHoldRequest {
+                    checkpoint: CheckpointRequest {
+                        epoch: 1,
+                        exclusions: Vec::new()
+                    },
+                    writer_resume_token: token,
+                }))
+                .await
+        )
+        .code,
+        "checkpoint_hold_retired"
+    );
+    assert!(supervisor.held_checkpoint.lock().await.is_none());
+    cleanup(&home);
+}
+
+#[tokio::test]
+async fn checkpoint_writer_tokens_reject_nonempty_and_symlink_records() {
+    let home = root("invalid-writer-tokens");
+    let config = RuntimeConfig::for_test(home.clone());
+    let directory = config.checkpoint_root.join("checkpoint-writer-state");
+    let supervisor = supervisor(config);
+    std::fs::create_dir_all(&directory).unwrap();
+    let token = "f".repeat(64);
+    let marker = directory.join(&token);
+    std::fs::write(&marker, b"not-an-empty-token-record").unwrap();
+    let request = RequestFrame::ResumeCheckpointWriters(CheckpointWriterResumeRequest {
+        writer_resume_token: token,
+    });
+    assert_eq!(
+        failure(supervisor.dispatch(request.clone()).await).code,
+        "checkpoint_writer_state_invalid"
+    );
+    std::fs::remove_file(&marker).unwrap();
+    let target = directory.join("empty-target");
+    std::fs::write(&target, b"").unwrap();
+    std::os::unix::fs::symlink(&target, &marker).unwrap();
+    assert_eq!(
+        failure(supervisor.dispatch(request.clone()).await).code,
+        "checkpoint_writer_state_invalid"
+    );
+    std::fs::remove_file(&marker).unwrap();
+    assert!(matches!(
+        supervisor.dispatch(request).await,
+        ResponseFrame::ResumeCheckpointWriters(receipt) if receipt.writers_resumed
+    ));
     cleanup(&home);
 }
 
@@ -267,7 +329,7 @@ async fn held_checkpoint_fences_mutations_and_replays_until_exact_resume() {
     let resumed = supervisor
         .dispatch(RequestFrame::ResumeCheckpointWriters(
             CheckpointWriterResumeRequest {
-                writer_resume_token: hold.writer_resume_token,
+                writer_resume_token: hold.writer_resume_token.clone(),
             },
         ))
         .await;
@@ -276,6 +338,33 @@ async fn held_checkpoint_fences_mutations_and_replays_until_exact_resume() {
         ResponseFrame::ResumeCheckpointWriters(receipt) if receipt.writers_resumed
     ));
     assert!(supervisor.held_checkpoint.lock().await.is_none());
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::CheckpointForTeardown(hold.clone()))
+                .await
+        )
+        .code,
+        "checkpoint_hold_retired"
+    );
+    let restarted = Supervisor::new(
+        RuntimeConfig::for_test(home.clone()),
+        SupervisorBoundary::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        restarted.dispatch(credential("held-restarted")).await,
+        ResponseFrame::Credential(_)
+    ));
+    assert_eq!(
+        failure(
+            restarted
+                .dispatch(RequestFrame::CheckpointForTeardown(hold))
+                .await
+        )
+        .code,
+        "checkpoint_hold_retired"
+    );
     assert!(matches!(
         supervisor
             .dispatch(RequestFrame::Checkpoint(CheckpointRequest {

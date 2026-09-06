@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::agent_worker::AgentWorker;
+use super::checkpoint_maintenance::SandboxCheckpointMaintenance;
 use super::worker::SandboxWorker;
 use super::workspace_worker::WorkspaceWorker;
 
@@ -44,6 +45,13 @@ impl SandboxSweep for WorkspaceWorker {
     }
 }
 
+#[async_trait::async_trait]
+impl SandboxSweep for SandboxCheckpointMaintenance {
+    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        self.run_once(now).await
+    }
+}
+
 impl SandboxScheduler {
     pub(crate) fn new(worker: Arc<SandboxWorker>) -> Self {
         Self {
@@ -63,6 +71,13 @@ impl SandboxScheduler {
         Self {
             worker,
             sweep_interval: DEFAULT_SWEEP_INTERVAL,
+        }
+    }
+
+    pub(crate) fn for_checkpoints(worker: Arc<SandboxCheckpointMaintenance>) -> Self {
+        Self {
+            worker,
+            sweep_interval: Duration::from_secs(15),
         }
     }
 

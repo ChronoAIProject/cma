@@ -10,6 +10,7 @@ use layer3_adapter::SandboxAdapter;
 use super::{
     agent_skills::AgentSkillResolver,
     agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies},
+    checkpoint_maintenance::SandboxCheckpointMaintenance,
     credential::SandboxCredentialController,
     live_agent_stopper::DurableLiveAgentStopper,
     reconciliation::SandboxReconciler,
@@ -48,6 +49,7 @@ pub(crate) struct SandboxLifecycleComposition {
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
     agent: SandboxScheduler,
+    checkpoints: SandboxScheduler,
 }
 
 impl SandboxLifecycleComposition {
@@ -62,6 +64,12 @@ impl SandboxLifecycleComposition {
             config.deployment_id.clone(),
             config.runtime_version.clone(),
         );
+        let checkpoints = SandboxScheduler::for_checkpoints(SandboxCheckpointMaintenance::new(
+            dependencies.store.clone(),
+            Arc::clone(&dependencies.adapter),
+            config.deployment_id.clone(),
+            format!("{}:checkpoint", config.holder),
+        ));
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let workspace_worker = WorkspaceWorker::new(
@@ -116,6 +124,7 @@ impl SandboxLifecycleComposition {
 
         Self {
             reconciliation,
+            checkpoints,
             sandbox: SandboxScheduler::new(sandbox_worker),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             agent: SandboxScheduler::for_agents(agent_worker),
@@ -132,7 +141,7 @@ impl SandboxLifecycleComposition {
     pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
         let signal = shutdown.subscribe();
         shutdown.push(self.reconciliation.spawn(signal));
-        for scheduler in [self.sandbox, self.workspace, self.agent] {
+        for scheduler in [self.checkpoints, self.sandbox, self.workspace, self.agent] {
             let signal = shutdown.subscribe();
             shutdown.push(scheduler.spawn(signal));
         }

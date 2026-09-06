@@ -42,6 +42,7 @@ use super::worker::{
 };
 
 mod checkpoint_consistency_tests;
+mod checkpoint_maintenance_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod reconciliation_tests;

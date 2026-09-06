@@ -2,6 +2,7 @@
 
 mod agent_skills;
 mod agent_worker;
+mod checkpoint_maintenance;
 mod checkpoint_purger;
 mod composition;
 mod credential;
