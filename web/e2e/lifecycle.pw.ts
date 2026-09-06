@@ -1,5 +1,6 @@
 import { test, expect } from './harness';
-import { createToRevive } from './lifecycle-creation';
+import { identifier, object, required } from './environment';
+import { createToRevive, workspaceAgentButton } from './lifecycle-creation';
 
 test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and rotation preserve work', async ({
   harness: h,
@@ -32,15 +33,25 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
     .click();
   const trust = page.getByLabel('I trust this profile', { exact: true });
   if (await trust.isVisible()) await trust.check();
+  const workspaceAdmission = page.waitForResponse(
+    (response) =>
+      response.url() === `${h.config.baseURL}/api/v1/sandboxes/${sandboxId}/workspaces` &&
+      response.request().method() === 'POST',
+  );
   await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
+  const workspaceResponse = await workspaceAdmission;
+  expect(workspaceResponse.status()).toBe(201);
+  const createdWorkspace = object(await workspaceResponse.json());
+  expect(createdWorkspace.sandbox_id).toBe(sandboxId);
+  const workspace = {
+    id: identifier(createdWorkspace.id, 'J6 created Workspace ID'),
+    path: required(createdWorkspace.path, 'J6 created Workspace path'),
+  };
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const agentIds: string[] = [];
   for (let index = 0; index < 2; index++) {
     await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
-    await page
-      .locator('.sandbox-page__workspace')
-      .getByRole('button', { name: 'New agent', exact: true })
-      .click();
+    await workspaceAgentButton(page, workspace).click();
     const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
     await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
     await dialog.getByRole('radio', { name: 'Public', exact: true }).check();
@@ -76,7 +87,7 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeEnabled({
     timeout: 180_000,
   });
-  await createToRevive(page, h, sandboxId);
+  await createToRevive(page, h, sandboxId, workspace);
   await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled({
     timeout: 540_000,
