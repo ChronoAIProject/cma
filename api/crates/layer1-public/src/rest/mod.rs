@@ -15,11 +15,12 @@ mod agent_openapi_shapes;
 mod agent_operate;
 mod agents;
 #[cfg(test)]
-mod agents_tests;
+pub(crate) mod agents_tests;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
+mod defaults;
 mod embed;
 #[cfg(test)]
 mod embed_tests;
@@ -41,10 +42,10 @@ mod profiles_workspace;
 mod trigger_assets_test_support;
 
 mod idempotency;
-mod instance_problem;
+pub(crate) mod instance_problem;
 mod instances;
 mod instances_openapi_shapes;
-mod instances_problem;
+pub(crate) mod instances_problem;
 #[cfg(test)]
 mod instances_tests;
 mod launch_events;

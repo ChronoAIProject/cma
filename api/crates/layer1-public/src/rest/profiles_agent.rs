@@ -323,8 +323,24 @@ pub(super) async fn read_revision(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, revision)): Path<(String, u32)>,
 ) -> Result<Json<AgentProfileRevisionView>, ProfileProblem> {
-    authorized(&caller)?;
-    let profile = owned(&state, &caller.subject, &id).await?;
+    super::profiles::require_revision_read(&caller)?;
+    if id != layer2_core::DEFAULT_AGENT_PROFILE_ID && !generated_id_is_valid(&id, "agp_") {
+        return Err(ProfileProblem::NotFound);
+    }
+    let profile = state
+        .agents
+        .agent_profile(&layer2_core::AgentProfileId(id))
+        .await
+        .map_err(|error| ProfileProblem::from_store(error, "content"))?
+        .filter(|profile| {
+            super::profiles::revision_visible(
+                &caller,
+                &profile.owner,
+                profile.visibility,
+                profile.retired_at.is_some(),
+            )
+        })
+        .ok_or(ProfileProblem::NotFound)?;
     let revision = state
         .agents
         .agent_profile_revision(&profile.id, revision)

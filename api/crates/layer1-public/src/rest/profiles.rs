@@ -74,6 +74,28 @@ pub(super) fn generated_id_is_valid(value: &str, prefix: &str) -> bool {
     })
 }
 
+pub(super) fn require_revision_read(caller: &Caller) -> Result<(), ProfileProblem> {
+    if caller.authorization.allows(Capability::ManageOwnProfiles)
+        || caller.authorization.allows(Capability::UseOwnSandboxes)
+    {
+        Ok(())
+    } else {
+        Err(ProfileProblem::Forbidden)
+    }
+}
+
+pub(super) fn revision_visible(
+    caller: &Caller,
+    owner: &layer2_core::SubjectId,
+    visibility: layer2_core::profiles::ProfileVisibility,
+    retired: bool,
+) -> bool {
+    owner == &caller.subject
+        || (!retired
+            && caller.authorization.allows(Capability::UseOwnSandboxes)
+            && visibility == layer2_core::profiles::ProfileVisibility::Public)
+}
+
 pub(super) fn profile_page(query: ProfilePageQuery) -> Result<ProfilePageRequest, ProfileProblem> {
     let limit = query.limit.unwrap_or(100);
     if limit == 0 || limit > 200 {
@@ -155,5 +177,9 @@ pub fn profiles_router(state: ProfilesState) -> Router {
         .merge(super::profiles_workspace::routes())
         .merge(super::profiles_sandbox::routes())
         .merge(super::profiles_marketplace::routes())
+        .route(
+            "/api/v1/defaults",
+            axum::routing::get(super::defaults::read),
+        )
         .with_state(state)
 }
