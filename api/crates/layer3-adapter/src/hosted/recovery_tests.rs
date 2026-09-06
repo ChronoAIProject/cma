@@ -176,14 +176,42 @@ async fn new_deployment_adopts_the_exact_persisted_old_image_before_rotation() {
 async fn restore_bootstrap_replays_exactly_and_fences_work_until_exact_restore() {
     let backend = InMemoryHostedBackend::default();
     let adapter = adapter(backend.clone(), "runtime:new");
+    let original = adapter.provision(&spec()).await.unwrap();
+    adapter
+        .run_install(
+            &original,
+            &InstallRequest::new("initial-install", Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(
+            &original,
+            CredentialFrame {
+                operation_id: "initial-credential".into(),
+                value: RuntimeCredential::new("opaque-runtime-key"),
+                custody_generation: Some(1),
+            },
+        )
+        .await
+        .unwrap();
+    let checkpoint = adapter
+        .checkpoint(
+            &original,
+            &crate::CheckpointRequest {
+                epoch: 1,
+                exclusions: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
     let handle = adapter
         .provision_runtime(&RuntimeProvisionRequest::new(2, spec()))
         .await
         .unwrap();
-    let digest = "a".repeat(64);
     let restore = RestoreRequest {
-        object_reference: format!("home-{digest}.cma"),
-        sha256: digest,
+        object_reference: checkpoint.object_reference,
+        sha256: checkpoint.sha256,
     };
     let bootstrap = RestoreBootstrapRequest::new(
         "sandbox:sbx-recovery:restore-bootstrap:v1",
@@ -249,4 +277,58 @@ async fn restore_bootstrap_replays_exactly_and_fences_work_until_exact_restore()
         Err(AdapterError::Rejected(_))
     ));
     adapter.restore(&handle, &restore).await.unwrap();
+    adapter
+        .prepare_workspace(
+            &handle,
+            &WorkspaceRequest::new(
+                "workspace:wks-after-restore:prepare:v1",
+                "wks-after-restore",
+                "after-restore",
+                WorkspaceSource::Init,
+            ),
+        )
+        .await
+        .unwrap();
+    adapter.restore(&handle, &restore).await.unwrap();
+    assert!(backend
+        .snapshot(&handle)
+        .await
+        .unwrap()
+        .workspaces
+        .contains_key("after-restore"));
+}
+
+#[tokio::test]
+async fn missing_archive_is_not_acknowledged_as_a_successful_restore() {
+    let backend = InMemoryHostedBackend::default();
+    let adapter = adapter(backend, "runtime:new");
+    let handle = adapter.provision(&spec()).await.unwrap();
+    adapter
+        .run_install(&handle, &InstallRequest::new("install", Vec::new()))
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(
+            &handle,
+            CredentialFrame {
+                operation_id: "credential".into(),
+                value: RuntimeCredential::new("opaque-runtime-key"),
+                custody_generation: Some(1),
+            },
+        )
+        .await
+        .unwrap();
+    let digest = "a".repeat(64);
+    assert!(matches!(
+        adapter
+            .restore(
+                &handle,
+                &RestoreRequest {
+                    object_reference: format!("home-{digest}.cma"),
+                    sha256: digest,
+                }
+            )
+            .await,
+        Err(AdapterError::Rejected(_))
+    ));
 }

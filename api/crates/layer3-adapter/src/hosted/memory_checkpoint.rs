@@ -2,20 +2,31 @@ use super::state::{digest, refused, require_credential};
 use super::MemoryRuntime;
 use crate::wire::{Acknowledgement, ResponseFrame, WireOperation};
 use crate::{
-    CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt, CheckpointRequest,
-    CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest, ResourceReading, RestoreRequest,
-    RuntimeHandle, WriterState,
+    AgentHomePlan, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
+    CheckpointRequest, CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest,
+    ResourceReading, RestoreRequest, WorkspaceReceipt, WorktreeReceipt, WriterState,
 };
+
+#[derive(Clone, Serialize)]
+pub(super) struct HomeArchive {
+    sandbox_id: String,
+    workspaces: BTreeMap<String, WorkspaceReceipt>,
+    worktrees: Vec<((String, String), WorktreeReceipt)>,
+    homes: BTreeMap<AgentSlot, AgentHomePlan>,
+    conversations: BTreeMap<AgentSlot, String>,
+}
+
+type Archives = Mutex<BTreeMap<String, HomeArchive>>;
 
 pub(super) fn capture(
     runtime: &mut MemoryRuntime,
-    handle: &RuntimeHandle,
+    archives: &Archives,
     request: CheckpointRequest,
     operation: WireOperation,
 ) -> crate::Result<ResponseFrame> {
     require_credential(runtime, operation)?;
     runtime.writer_fence_captures += 1;
-    let sha256 = capture_digest(runtime, handle, request.epoch);
+    let sha256 = capture_archive(runtime, archives, request.epoch)?;
     Ok(ResponseFrame::Checkpoint(CheckpointReceipt {
         epoch: request.epoch,
         object_reference: format!("home-{sha256}.cma"),
@@ -26,7 +37,7 @@ pub(super) fn capture(
 
 pub(super) fn capture_for_teardown(
     runtime: &mut MemoryRuntime,
-    handle: &RuntimeHandle,
+    archives: &Archives,
     request: CheckpointHoldRequest,
     operation: WireOperation,
 ) -> crate::Result<ResponseFrame> {
@@ -42,7 +53,7 @@ pub(super) fn capture_for_teardown(
         };
     }
     runtime.writer_fence_captures += 1;
-    let sha256 = capture_digest(runtime, handle, request.checkpoint.epoch);
+    let sha256 = capture_archive(runtime, archives, request.checkpoint.epoch)?;
     let receipt = CheckpointHoldReceipt {
         checkpoint: CheckpointReceipt {
             epoch: request.checkpoint.epoch,
@@ -87,6 +98,7 @@ pub(super) fn resume_writers(
 
 pub(super) fn restore(
     runtime: &mut MemoryRuntime,
+    archives: &Archives,
     request: RestoreRequest,
     operation: WireOperation,
 ) -> crate::Result<ResponseFrame> {
@@ -100,6 +112,26 @@ pub(super) fn restore(
     {
         return refused(operation, "restore_bootstrap_conflict");
     }
+    if let Some(restored) = &runtime.restored_object {
+        return if restored == &request.object_reference {
+            Ok(ResponseFrame::Restore(Acknowledgement::default()))
+        } else {
+            refused(operation, "restore_replay_conflict")
+        };
+    }
+    let archives = archives.lock().expect("in-memory checkpoint archive lock");
+    let Some(archive) = archives.get(&request.sha256) else {
+        return refused(operation, "restore_archive_missing");
+    };
+    if request.object_reference != format!("home-{}.cma", request.sha256)
+        || archive.sandbox_id != provider_request_identity(&runtime.request)?.sandbox_id
+    {
+        return refused(operation, "restore_archive_identity_mismatch");
+    }
+    runtime.workspaces = archive.workspaces.clone();
+    runtime.worktrees = archive.worktrees.iter().cloned().collect();
+    runtime.homes = archive.homes.clone();
+    runtime.restored_conversations = archive.conversations.clone();
     runtime.restored_object = Some(request.object_reference);
     Ok(ResponseFrame::Restore(Acknowledgement::default()))
 }
@@ -117,7 +149,38 @@ pub(super) fn resources(runtime: &MemoryRuntime) -> crate::Result<ResponseFrame>
     }))
 }
 
-fn capture_digest(runtime: &MemoryRuntime, handle: &RuntimeHandle, epoch: u64) -> String {
-    let marker = format!("{}:{epoch}:{}", handle.0, runtime.writer_fence_captures);
-    digest(marker.as_bytes())
+fn capture_archive(
+    runtime: &MemoryRuntime,
+    archives: &Archives,
+    epoch: u64,
+) -> crate::Result<String> {
+    let archive = HomeArchive {
+        sandbox_id: provider_request_identity(&runtime.request)?.sandbox_id,
+        workspaces: runtime.workspaces.clone(),
+        worktrees: runtime
+            .worktrees
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        homes: runtime.homes.clone(),
+        conversations: runtime
+            .agents
+            .iter()
+            .map(|(slot, agent)| (slot.clone(), agent.conversation_id.clone()))
+            .collect(),
+    };
+    let bytes = serde_json::to_vec(&(epoch, &archive))
+        .map_err(|error| crate::AdapterError::Rejected(error.to_string()))?;
+    let sha256 = digest(&bytes);
+    archives
+        .lock()
+        .expect("in-memory checkpoint archive lock")
+        .insert(sha256.clone(), archive);
+    Ok(sha256)
 }
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+use serde::Serialize;
+
+use super::super::deployment::provider_request_identity;
