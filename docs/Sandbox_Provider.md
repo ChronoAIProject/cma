@@ -1,5 +1,31 @@
 # Sandbox provider: observed production contract
 
+## Current Runtime Contract
+
+The Sandbox/Agent implementation requires runtime contract **3**, declared by
+the image label `dev.chrono.cma.runtime-contract`. The control plane provisions
+one isolated runtime per Sandbox, with Workspaces, dedicated Worktrees and
+per-Agent homes. It does not create one pod per Agent or run Agents in a main
+checkout. Software installation completes as `cma` before credential delivery
+or activation of the credential-bearing loopback proxy.
+
+The final image must demonstrate whole-home writer-fenced checkpoint/restore,
+operation receipts, credential generations, per-Agent configuration and exact
+conversation resumption. Changing `CHRONO_SANDBOX_IMAGE` requires an immutable
+digest and triggers recorded rotation; a new tag or label is not evidence.
+See [CMA Model](CMA_Model.md) for the current contract and
+[Operations](CMA_Operations.md) for the final verification register.
+
+The historical provider observations in sections 1-7 below remain unchanged.
+They establish only behavior on their recorded versions. Section 8 records
+Agent-home experiments on a contract-2 image with Codex 0.147.0 and codex-acp
+1.4.0. Its G-A3 result was corrected by #835: the bridge **does** discover skills
+added after startup. Do not cite those historical experiments as proof that the
+final contract-3 image or production rollout passed. Re-run G-A1-G-A5 and the
+Sandbox/restart/rotation gates against that final digest before public readiness.
+
+## Historical Provider Evidence
+
 This document records what the hosted sandbox provider actually did when it
 was driven against production on 2026-08-23 UTC. It is evidence, not a design
 for how a provider ought to behave. The complete request, response, Kubernetes
