@@ -101,7 +101,9 @@ pub use conversation::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
     MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
-pub use conversation_recorder::DurableAgentUpdateRecorder;
+pub use conversation_recorder::{
+    AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,
+};
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxSignInState,
 };

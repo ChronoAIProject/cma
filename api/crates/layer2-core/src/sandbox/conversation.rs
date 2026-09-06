@@ -12,6 +12,8 @@ pub struct AgentMessageAssembly {
     pub(crate) message_id: Option<String>,
     pub(crate) content: String,
     pub(crate) prompt_evidence: bool,
+    pub(crate) live_message: Option<super::conversation_recorder::live::AgentLiveMessageIdentity>,
+    pub(crate) live_thought: Option<super::conversation_recorder::live::AgentLiveMessageIdentity>,
 }
 
 impl AgentMessageAssembly {
@@ -53,6 +55,10 @@ pub enum AgentConversationError {
 
 #[async_trait::async_trait]
 pub trait AgentUpdateRecorder: Send + Sync {
+    fn subscribe_live(&self, _id: &AgentId) -> Option<super::AgentLiveSubscription> {
+        None
+    }
+
     async fn record_update(
         &self,
         id: &AgentId,

@@ -15,8 +15,14 @@ use super::{
 
 const MAX_CONVERSATION_COMMIT_RETRIES: usize = 8;
 
+#[path = "conversation_live.rs"]
+pub(super) mod live;
+
+pub use live::{AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription};
+
 pub struct DurableAgentUpdateRecorder {
     store: Arc<dyn AgentConversationUpdateStore>,
+    live: live::AgentLiveHub,
 }
 
 impl DurableAgentUpdateRecorder {
@@ -24,12 +30,19 @@ impl DurableAgentUpdateRecorder {
     where
         S: AgentConversationUpdateStore + 'static,
     {
-        Arc::new(Self { store })
+        Arc::new(Self {
+            store,
+            live: live::AgentLiveHub::default(),
+        })
     }
 }
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
+    fn subscribe_live(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
+        Some(self.live.subscribe(id))
+    }
+
     async fn record_update(
         &self,
         id: &AgentId,
@@ -56,13 +69,18 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             }
             let folded = fold_update(&current, assembly, update.clone(), &appended_at)?;
             let FoldedConversationUpdate::Changed(change) = folded else {
-                let FoldedConversationUpdate::Quiet(next_assembly) = folded else {
+                let FoldedConversationUpdate::Quiet(mut next_assembly) = folded else {
                     unreachable!()
                 };
+                let fragment =
+                    live::accepted_fragment(&current, assembly, &mut next_assembly, &update);
                 *assembly = next_assembly;
+                self.live.publish(fragment);
                 return Ok(AgentUpdateOutcome::quiet());
             };
-            let change = *change;
+            let mut change = *change;
+            let fragment =
+                live::accepted_fragment(&current, assembly, &mut change.assembly, &update);
             let mutation = AgentConversationMutation {
                 admission_guard: None,
                 expected_agent_revision: current.revision,
@@ -75,6 +93,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             match self.store.commit_agent_conversation(mutation).await {
                 Ok(appended) => {
                     *assembly = change.assembly;
+                    self.live.publish(fragment);
                     return Ok(AgentUpdateOutcome {
                         appended,
                         turn_closed: change.turn_closed,
