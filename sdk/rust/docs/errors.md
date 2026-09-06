@@ -4,7 +4,8 @@
 
 The client returns `cma_sdk::Error`. `Error::Api` represents a structured
 non-success response, `Error::Protocol` rejects an invalid response boundary,
-and `Error::Transport` covers failures before a complete HTTP answer is read.
+`Error::Transport` covers failures before a complete HTTP answer is read, and
+`Error::Validation` rejects invalid caller input before sending it.
 
 ```rust,no_run
 use cma_sdk::{Client, Error};
@@ -19,3 +20,22 @@ match client.read_conformance().await {
 # Ok(())
 # }
 ```
+
+`Error::Api` preserves HTTP `status`, stable `code`, the safe problem `message`,
+`request_id`, validated `retry_after`, and structured `extensions`. Retry delays
+support positive seconds and future HTTP dates. Missing, malformed, zero, or
+past delays are ignored. Use `extension("field")`, `extension("path")`, or
+`extension("reason")` for string-valued hints; inspect `extensions` directly for
+structured limits and counts. Do not infer machine behavior by parsing prose.
+
+`is_unauthenticated()` identifies HTTP 401. `is_retryable()` identifies transport
+failures, HTTP 429, and HTTP 5xx; it is a classification, not a retry policy.
+The SDK performs no automatic retries. A timed-out mutation may already have
+been accepted: retry only with its original key and unchanged body, and do not
+assume that a new key is safe. Authorization, trust, conflict, and validation
+refusals require the caller to address their cause.
+
+Malformed problem documents, a problem status that contradicts the HTTP status,
+oversized responses, and unexpected successful status codes are protocol errors
+rather than fabricated resource values. Transport failures omit request URLs
+and credentials from their messages.

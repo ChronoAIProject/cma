@@ -1,0 +1,314 @@
+//! Agent resource, command, and durable read projections.
+
+use crate::instances::{AgentStatus, Failure, SandboxStatus, WorkspaceStatus, WorktreeStatus};
+use crate::profiles::{PermissionLevel, ProfileReference, SkillReference, ThinkingEffort};
+use serde::{Deserialize, Serialize};
+
+string_enum! { /// Durable first-message delivery state.
+    pub enum FirstMessageDelivery { Queued => "queued", DispatchFenced => "dispatch_fenced", WriteConfirmed => "write_confirmed", ExecutionObserved => "execution_observed", Completed => "completed", Failed => "failed", RecoveryRequired => "recovery_required" }
+}
+string_enum! { /// Owner decision for one pending Agent approval.
+    pub enum ApprovalDecision { Allow => "allow", Deny => "deny", Abort => "abort" }
+}
+string_enum! { /// Stop reason accepted by the owner-facing command.
+    pub enum StopReason { Owner => "owner" }
+}
+
+/// Durable state of the message supplied at Agent creation.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FirstMessageState {
+    /// Current delivery state.
+    pub state: FirstMessageDelivery,
+    /// Queue timestamp.
+    pub queued_at: String,
+    /// Completion timestamp.
+    pub completed_at: Option<String>,
+    /// Failure timestamp.
+    pub failed_at: Option<String>,
+}
+
+/// Public configuration granted to an Agent.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentProfileSummary {
+    /// Source profile identifier.
+    pub id: String,
+    /// Immutable source revision.
+    #[serde(deserialize_with = "crate::resources::deserialize_positive")]
+    pub revision: u32,
+    /// Source content digest.
+    pub digest: String,
+    /// Explicit model, when configured.
+    pub model: Option<String>,
+    /// Granted reasoning effort.
+    pub thinking_effort: ThinkingEffort,
+    /// Granted approval policy.
+    pub permission_level: PermissionLevel,
+    /// Granted skills.
+    pub skills: Vec<SkillReference>,
+}
+
+/// Immutable source profile identity embedded in parent resources.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct InstanceProfileReference {
+    /// Profile identifier.
+    pub id: String,
+    /// Immutable revision number.
+    #[serde(deserialize_with = "crate::resources::deserialize_positive")]
+    pub revision: u32,
+    /// Immutable content digest.
+    pub digest: String,
+}
+
+/// Worktree details embedded in the Agent resource.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentWorktree {
+    /// Worktree identifier.
+    pub id: String,
+    /// Allocated name.
+    pub name: String,
+    /// Runtime path.
+    pub path: String,
+    /// Allocated Git branch.
+    pub branch: String,
+    /// Starting commit.
+    pub base_commit: String,
+    /// Allocation status.
+    pub status: WorktreeStatus,
+}
+
+/// Workspace details embedded in the Agent resource.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentWorkspace {
+    /// Workspace identifier.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Runtime path.
+    pub path: String,
+    /// Preparation or removal status.
+    pub status: WorkspaceStatus,
+    /// Immutable source profile identity.
+    pub profile: InstanceProfileReference,
+    /// Resolved Git commit, when applicable.
+    pub resolved_commit: Option<String>,
+}
+
+/// Sandbox details embedded in the Agent resource.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentSandbox {
+    /// Sandbox identifier.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Runtime lifecycle status.
+    pub status: SandboxStatus,
+    /// Immutable source profile identity.
+    pub profile: InstanceProfileReference,
+}
+
+/// Owner-facing Agent list item.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentSummary {
+    /// Agent identifier.
+    pub id: String,
+    /// Owning Sandbox identifier.
+    pub sandbox_id: String,
+    /// Owning Workspace identifier.
+    pub workspace_id: String,
+    /// Allocated Worktree identifier.
+    pub worktree_id: String,
+    /// Current status.
+    pub status: AgentStatus,
+    /// Granted profile configuration.
+    pub profile: AgentProfileSummary,
+    /// Human-readable title, when available.
+    pub title: Option<String>,
+    /// Creation timestamp.
+    pub created_at: String,
+    /// Last update timestamp.
+    pub updated_at: String,
+}
+
+/// Complete owner-facing Agent resource with its hierarchy.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Agent {
+    /// Agent identifier.
+    pub id: String,
+    /// Current status.
+    pub status: AgentStatus,
+    /// Granted profile configuration.
+    pub profile: AgentProfileSummary,
+    /// Allocated Worktree.
+    pub worktree: AgentWorktree,
+    /// Owning Workspace.
+    pub workspace: AgentWorkspace,
+    /// Owning Sandbox.
+    pub sandbox: AgentSandbox,
+    /// Public conformance identifiers.
+    pub conforms_to: Vec<String>,
+    /// Granted capability identifiers.
+    pub reach: Vec<String>,
+    /// Human-readable title.
+    pub title: Option<String>,
+    /// Owner-facing pause notice.
+    pub paused_notice: Option<String>,
+    /// Creation-message delivery state.
+    pub first_message: Option<FirstMessageState>,
+    /// Last safe failure.
+    pub failure: Option<Failure>,
+    /// Recorded terminal stop reason.
+    pub stop_reason: Option<String>,
+    /// Creation timestamp.
+    pub created_at: String,
+    /// Last update timestamp.
+    pub updated_at: String,
+    /// Readiness timestamp.
+    pub ready_at: Option<String>,
+    /// Stop timestamp.
+    pub stopped_at: Option<String>,
+    /// Deletion timestamp.
+    pub deleted_at: Option<String>,
+}
+
+/// Create an Agent in an existing Workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CreateAgentRequest {
+    /// Immutable Agent profile reference.
+    pub agent_profile: ProfileReference,
+    /// Optional owner title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Optional creation message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_message: Option<String>,
+}
+
+/// Text sent as a new message or steering input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AgentTextRequest {
+    /// Owner-provided text.
+    pub text: String,
+}
+
+/// Answer one pending approval request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ApprovalDecisionRequest {
+    /// Explicit owner decision.
+    pub decision: ApprovalDecision,
+}
+
+/// Request to stop an Agent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct StopAgentRequest {
+    /// Optional explicit owner reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<StopReason>,
+}
+
+/// Accepted input response; queued work has not necessarily executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct InputAccepted {
+    /// Whether the input was placed in the durable queue.
+    pub queued: bool,
+}
+
+/// Durable outcome of a transcript turn.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TranscriptOutcome {
+    /// Turn has not reached a durable terminal outcome.
+    Active,
+    /// Turn completed successfully.
+    Completed {
+        /// Completion timestamp.
+        at: String,
+    },
+    /// Turn failed.
+    Failed {
+        /// Failure timestamp.
+        at: String,
+        /// Safe failure information.
+        failure: Failure,
+    },
+    /// Owner interrupted the turn.
+    Interrupted {
+        /// Interruption timestamp.
+        at: String,
+    },
+}
+
+/// One durably recorded conversation turn.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TranscriptTurn {
+    /// Monotonic turn sequence.
+    pub turn_sequence: u64,
+    /// Start timestamp.
+    pub started_at: String,
+    /// Owner message.
+    pub owner_message: String,
+    /// Durable Agent messages.
+    pub agent_messages: Vec<String>,
+    /// Current or terminal turn outcome.
+    pub outcome: TranscriptOutcome,
+}
+
+/// Transcript folded through one durable log position.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentTranscript {
+    /// Agent identifier.
+    pub agent_id: String,
+    /// Last included durable event sequence.
+    pub through_seq: u64,
+    /// Conversation turns in durable order.
+    pub turns: Vec<TranscriptTurn>,
+}
+
+/// Durable usage folded through one log position.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentUsage {
+    /// Agent identifier.
+    pub agent_id: String,
+    /// Last included event sequence.
+    pub through_seq: u64,
+    /// Recorded input tokens.
+    pub input_tokens: u64,
+    /// Recorded output tokens.
+    pub output_tokens: u64,
+    /// Last recorded context usage.
+    pub context_used: u64,
+    /// Reported context window, when known.
+    pub context_window: Option<u64>,
+}
+
+/// Runtime resources attributed to the Agent's entire Sandbox.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentResources {
+    /// Agent identifier.
+    pub agent_id: String,
+    /// Sandbox whose counters are reported.
+    pub sandbox_id: String,
+    /// Runtime uptime in milliseconds.
+    pub uptime_ms: u64,
+    /// CPU time in microseconds, when known.
+    pub cpu_usage_usec: Option<u64>,
+    /// CPU allocation in millicores, when known.
+    pub cpu_millis_limit: Option<u64>,
+    /// Used memory in bytes, when known.
+    pub memory_bytes_used: Option<u64>,
+    /// Memory limit in bytes, when known.
+    pub memory_bytes_limit: Option<u64>,
+    /// Peak memory use in bytes, when known.
+    pub memory_bytes_peak: Option<u64>,
+    /// Memory stall ratio in permille, when known.
+    pub stall_permille: Option<u64>,
+    /// Resource ceiling events, when known.
+    pub ceiling_hits: Option<u64>,
+    /// Failed allocations, when known.
+    pub allocation_failures: Option<u64>,
+    /// Runtime process kills, when known.
+    pub kills: Option<u64>,
+    /// Received network bytes, when known.
+    pub received_bytes: Option<u64>,
+    /// Sent network bytes, when known.
+    pub sent_bytes: Option<u64>,
+}

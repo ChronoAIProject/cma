@@ -1,7 +1,5 @@
-//! Async Rust client for CMA's temporary public discovery boundary.
-//!
-//! Resource APIs were removed with the retired domain model in issue #801.
-//! They return with the replacement public contract in issue #819.
+//! Async Rust client for CMA discovery, profiles, marketplace, and REST resources.
+//! Durable REST event polling is supported; live protocol streams are not.
 //!
 //! ```no_run
 //! use cma_sdk::Client;
@@ -16,9 +14,16 @@
 
 #![deny(missing_docs)]
 
+#[macro_use]
+mod macros;
+pub mod agents;
 mod client;
 mod conformance;
 mod error;
+mod http;
+pub mod instances;
+pub mod profiles;
+mod resources;
 
 /// Executable integration guides shipped with the crate.
 pub mod guides {
@@ -37,3 +42,4 @@ pub mod guides {
 pub use client::{Client, ClientBuilder};
 pub use conformance::Conformance;
 pub use error::{Error, Result};
+pub use resources::{EventOptions, IdempotencyKey, PageOptions, ResourceList, ResourcePage};
