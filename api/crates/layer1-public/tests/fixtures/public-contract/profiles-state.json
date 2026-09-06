@@ -881,6 +881,124 @@
       }
     },
     {
+      "id": "state-workspace-create-unpublished-reference",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-create-unpublished-reference"
+        },
+        "body": {
+          "name": "Unpublished workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": { "type": "directory", "name": "contract" },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [{ "id": "$agent_profile_id", "revision": 1 }]
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": { "content-type": "application/json" },
+        "body": {
+          "id": "wkp_22222222222222222222222222222222",
+          "owner": "contract-owner",
+          "name": "Unpublished workspace",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "location": { "type": "directory", "name": "contract" },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [
+              { "id": "agp_11111111111111111111111111111111", "revision": 1 }
+            ]
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "unpublished_workspace_profile_id": "/id",
+        "unpublished_workspace_created": "/created_at",
+        "unpublished_workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "state-sandbox-create-unpublished-reference",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-create-unpublished-reference"
+        },
+        "body": {
+          "name": "Unpublished sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [
+              { "id": "$workspace_profile_id", "revision": 1 }
+            ],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": { "content-type": "application/json" },
+        "body": {
+          "id": "sbp_22222222222222222222222222222222",
+          "owner": "contract-owner",
+          "name": "Unpublished sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [
+              { "id": "wkp_11111111111111111111111111111111", "revision": 1 }
+            ],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "unpublished_sandbox_profile_id": "/id",
+        "unpublished_sandbox_created": "/created_at",
+        "unpublished_sandbox_updated": "/updated_at"
+      }
+    },
+    {
       "id": "state-retire-reference-agent",
       "operation": "POST /api/v1/agent-profiles/{id}/retire",
       "scenario": "profiles_owner",
@@ -933,13 +1051,13 @@
       "scenario": "profiles_owner",
       "request": {
         "method": "POST",
-        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "path": "/api/v1/workspace-profiles/$unpublished_workspace_profile_id/revisions",
         "headers": {
           "content-type": "application/json",
           "idempotency-key": "state-workspace-publish-reference"
         },
         "body": {
-          "draft_version": 2
+          "draft_version": 1
         }
       },
       "response": {
@@ -1019,13 +1137,13 @@
       "scenario": "profiles_owner",
       "request": {
         "method": "POST",
-        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "path": "/api/v1/sandbox-profiles/$unpublished_sandbox_profile_id/revisions",
         "headers": {
           "content-type": "application/json",
           "idempotency-key": "state-sandbox-publish-reference"
         },
         "body": {
-          "draft_version": 2
+          "draft_version": 1
         }
       },
       "response": {
