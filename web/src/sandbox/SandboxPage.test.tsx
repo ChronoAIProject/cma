@@ -40,8 +40,8 @@ it('pages the complete Sandbox event timeline before displaying it', async () =>
       onNavigate={vi.fn()}
     />,
   );
-  expect(await screen.findByText('workspace created')).toBeInTheDocument();
-  expect(screen.getByText('created')).toBeInTheDocument();
+  expect(await screen.findByText('Workspace created')).toBeInTheDocument();
+  expect(screen.getByText('Sandbox created')).toBeInTheDocument();
   expect(readSandboxEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 1, 2]);
 });
 

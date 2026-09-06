@@ -5,7 +5,9 @@ import type { TreeAction } from './shell/Tree';
 import { RiskConfirmation } from './ui/RiskConfirmation';
 
 export type CreateAction =
-  Extract<TreeAction, { kind: 'new_agent' | 'new_workspace' }> | { kind: 'new_agent' };
+  | Extract<TreeAction, { kind: 'new_agent' | 'new_workspace' }>
+  | { kind: 'new_agent' }
+  | { kind: 'new_sandbox' };
 type LifecycleAction = Exclude<TreeAction, { kind: 'new_agent' | 'new_workspace' }>;
 
 export function useResourceActions(

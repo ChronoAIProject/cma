@@ -1,0 +1,87 @@
+.create-form {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+}
+.create-form h3,
+.create-form p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.create-form h3 {
+  font: var(--dsw-font-s-strong-14);
+}
+.create-form__field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.create-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.create-profile-picker,
+.create-profile-picker__selection {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.create-profile-picker__list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  max-height: 300px;
+  padding: 0;
+  margin: 0;
+  overflow: auto;
+  list-style: none;
+}
+.create-profile-picker__list button {
+  justify-content: flex-start;
+  width: 100%;
+  height: auto;
+  min-height: 40px;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.create-profile-picker__list button span {
+  color: inherit;
+}
+.create-profile-picker__selection {
+  padding: 16px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.create-trust {
+  min-width: 0;
+  padding: 16px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.create-trust pre {
+  max-height: 200px;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+.create-trust__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.create-error {
+  color: var(--dsw-alias-state-error-primary);
+}
+@media (max-width: 30rem) {
+  .create-profile-picker__list button {
+    min-height: 44px;
+  }
+}

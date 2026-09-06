@@ -48,3 +48,9 @@
   margin-top: 16px;
   color: var(--dsw-alias-brand-primary);
 }
+.console__empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}

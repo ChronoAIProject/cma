@@ -5,7 +5,16 @@ import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Button } from '../ui/Button';
-import { IconPauseOutline16, IconPlayOutline16, IconTrashOutline16 } from '../ui/icons';
+import {
+  IconPauseOutline16,
+  IconPlayOutline16,
+  IconPlusOutline16,
+  IconTrashOutline16,
+} from '../ui/icons';
+import { ProvisioningProgress } from './ProvisioningProgress';
+import { sandboxProgress, workspaceProgress } from './progress';
+import { readSandboxHistory } from './eventHistory';
+import { eventLabel, statusLabel } from '../vocabulary/status';
 import './SandboxPage.css';
 
 type State =
@@ -18,22 +27,18 @@ type State =
       events: readonly SandboxEvent[];
     };
 
-async function load(client: CmaWebClient, id: string, signal: AbortSignal): Promise<State> {
+async function load(
+  client: CmaWebClient,
+  id: string,
+  signal: AbortSignal,
+  previous: readonly SandboxEvent[] = [],
+): Promise<Extract<State, { status: 'ready' }>> {
   const sandbox = await client.readSandbox(id, { signal });
   if (sandbox.id !== id) throw new Error('Sandbox projection referred to another resource.');
   const workspaces = await Promise.all(
     sandbox.workspaces.map((workspace) => client.readWorkspace(workspace.id, { signal })),
   );
-  const events: SandboxEvent[] = [];
-  let cursor = 0;
-  for (;;) {
-    const page = await client.readSandboxEvents(id, { cursor, signal });
-    if (page.length === 0) break;
-    if (page.some((event) => event.sandboxId !== id || event.seq <= cursor))
-      throw new Error('Sandbox events did not advance.');
-    events.push(...page);
-    cursor = Math.max(...page.map((event) => event.seq));
-  }
+  const events = await readSandboxHistory(client, id, signal, previous);
   return { status: 'ready', sandbox, workspaces, events };
 }
 
@@ -56,22 +61,55 @@ export function SandboxPage({
 }) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [retry, setRetry] = useState(0);
+  const [pollError, setPollError] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
   useEffect(() => {
     const abort = new AbortController();
-    void load(client, sandboxId, abort.signal)
-      .then((next) => {
-        if (!abort.signal.aborted) setState(next);
-      })
-      .catch((error: unknown) => {
-        if (!abort.signal.aborted)
-          setState({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'Sandbox unavailable.',
-          });
-      });
-    return () => abort.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let previous: readonly SandboxEvent[] = [];
+    let loaded = false;
+    const poll = () => {
+      void load(client, sandboxId, abort.signal, previous)
+        .then((next) => {
+          if (abort.signal.aborted) return;
+          loaded = true;
+          previous = next.events;
+          setState(next);
+          setPollError(false);
+          if (
+            [
+              'provisioning',
+              'installing',
+              'reviving',
+              'rotating',
+              'credential_rotating',
+              'retiring',
+              'pausing',
+            ].includes(next.sandbox.status) ||
+            next.workspaces.some(
+              (workspace) => workspace.status === 'preparing' || workspace.status === 'removing',
+            )
+          )
+            timer = setTimeout(poll, 1500);
+        })
+        .catch((error: unknown) => {
+          if (abort.signal.aborted) return;
+          if (loaded) {
+            setPollError(true);
+            timer = setTimeout(poll, 5000);
+          } else
+            setState({
+              status: 'error',
+              message: error instanceof Error ? error.message : 'Sandbox unavailable.',
+            });
+        });
+    };
+    poll();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
   }, [client, sandboxId, revision, retry]);
   useEffect(() => {
     heading.current?.focus();
@@ -106,9 +144,18 @@ export function SandboxPage({
           <h1 ref={heading} tabIndex={-1}>
             {sandbox.name}
           </h1>
-          <p>{sandbox.status.replaceAll('_', ' ')}</p>
+          <p>{statusLabel(sandbox.status)}</p>
         </div>
         <div className="sandbox-page__actions">
+          {permissions.createWorkspace ? (
+            <Button
+              icon={<IconPlusOutline16 />}
+              disabled={busy || sandbox.status !== 'active'}
+              onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
+            >
+              New workspace
+            </Button>
+          ) : null}
           {permissions.pauseSandbox ? (
             <Button
               icon={sandbox.status === 'paused' ? <IconPlayOutline16 /> : <IconPauseOutline16 />}
@@ -120,7 +167,7 @@ export function SandboxPage({
                 })
               }
             >
-              {sandbox.status === 'paused' ? 'Revive' : 'Pause'}
+              {sandbox.status === 'paused' ? 'Resume' : 'Pause'}
             </Button>
           ) : null}
           {permissions.deleteSandbox ? (
@@ -135,6 +182,14 @@ export function SandboxPage({
           ) : null}
         </div>
       </header>
+      {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
+      {['provisioning', 'installing', 'failed'].includes(sandbox.status) ? (
+        <ProvisioningProgress
+          title="Sandbox preparation"
+          steps={sandboxProgress(sandbox, events)}
+          failure={sandbox.failure}
+        />
+      ) : null}
       <section className="sandbox-page__band">
         <h2>Profile</h2>
         <dl>
@@ -162,11 +217,6 @@ export function SandboxPage({
           )}
         </dl>
       </section>
-      {sandbox.failure === undefined ? null : (
-        <p role="alert">
-          {sandbox.failure.detail} <code>{sandbox.failure.class}</code>
-        </p>
-      )}
       <section className="sandbox-page__band">
         <h2>Workspaces</h2>
         {workspaces.length === 0 ? (
@@ -178,7 +228,23 @@ export function SandboxPage({
               <p>
                 <code>{workspace.path}</code>
               </p>
-              <p>{workspace.status}</p>
+              <p>{statusLabel(workspace.status)}</p>
+              {['preparing', 'failed'].includes(workspace.status) ? (
+                <ProvisioningProgress
+                  title={`${workspace.name} preparation`}
+                  steps={workspaceProgress(workspace, events)}
+                  failure={workspace.failure}
+                />
+              ) : null}
+              {permissions.createAgent ? (
+                <Button
+                  icon={<IconPlusOutline16 />}
+                  disabled={busy || sandbox.status !== 'active' || workspace.status !== 'ready'}
+                  onClick={() => onAction({ kind: 'new_agent', workspaceId: workspace.id })}
+                >
+                  New agent
+                </Button>
+              ) : null}
               <ul>
                 {workspace.agents.map((agent) => {
                   const route = { kind: 'agent', agentId: agent.id } as const;
@@ -202,7 +268,7 @@ export function SandboxPage({
                         {agent.title?.trim() || 'Untitled agent'}
                       </a>
                       <span>
-                        {sandbox.status === 'paused' ? 'Paused' : agent.status.replaceAll('_', ' ')}
+                        {sandbox.status === 'paused' ? 'Paused' : statusLabel(agent.status)}
                       </span>
                     </li>
                   );
@@ -220,7 +286,7 @@ export function SandboxPage({
           <ol className="sandbox-page__events">
             {events.map((event) => (
               <li key={event.seq}>
-                <span>{event.kind.type.replaceAll('_', ' ')}</span>
+                <span>{eventLabel(event.kind.type)}</span>
                 <time dateTime={event.appendedAt}>
                   {new Date(event.appendedAt).toLocaleString()}
                 </time>
