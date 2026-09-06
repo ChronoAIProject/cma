@@ -7,13 +7,16 @@ use layer2_core::sandbox::store::{
     SandboxStoreError,
 };
 use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{doc, Bson, Timestamp};
+use mongodb::options::ReadConcern;
 
 use super::agent_log::{log_document, read_entry, scan_complete_log_with_session};
 use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
-use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
+use super::sandbox_events::{
+    append_in_transaction, reconcile_event_with_snapshot_session, TransactionEventError,
+};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -105,11 +108,16 @@ pub(super) async fn commit_lifecycle(
             CommitOutcome::Committed => return Ok(()),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
+                let snapshot_time = session.operation_time().ok_or_else(|| {
+                    SandboxStoreError::Unavailable(format!(
+                        "sandbox lifecycle commit remained unknown without an operation time: {error}"
+                    ))
+                })?;
                 let commit_error = error.to_string();
                 let unresolved = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("sandbox lifecycle commit", async move {
-                    if reconcile_lifecycle(&store, &receipt).await? {
+                    if reconcile_lifecycle(&store, &receipt, snapshot_time).await? {
                         Ok(())
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
@@ -357,10 +365,20 @@ fn classify_log_write(error: mongodb::error::Error) -> ApplyError {
 async fn reconcile_lifecycle(
     store: &MongoSandboxStore,
     receipt: &LifecycleReceipt,
+    snapshot_time: Timestamp,
 ) -> Result<bool, SandboxStoreError> {
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .snapshot_time(snapshot_time)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     let sandbox = store
         .sandboxes
         .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         .as_ref()
@@ -373,6 +391,8 @@ async fn reconcile_lifecycle(
         let actual = store
             .agents
             .find_one(doc! { "_id": expected.id.as_str() })
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut session)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
             .as_ref()
@@ -390,6 +410,8 @@ async fn reconcile_lifecycle(
                 "seq": signed(expected.seq, "reconciled lifecycle log sequence")
                     .map_err(SandboxStoreError::Corrupt)?,
             })
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut session)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
             .as_ref()
@@ -400,7 +422,10 @@ async fn reconcile_lifecycle(
         }
     }
     for expected in &receipt.events {
-        if reconcile_event(store, expected).await?.is_none() {
+        if reconcile_event_with_snapshot_session(store, expected, &mut session)
+            .await?
+            .is_none()
+        {
             return Ok(false);
         }
     }

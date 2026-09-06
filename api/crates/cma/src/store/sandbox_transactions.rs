@@ -2,15 +2,18 @@
 
 use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, SandboxTransactionStore};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind, WorkspaceStatus};
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Timestamp};
+use mongodb::options::ReadConcern;
 
 use super::agents::{agent_document, read_agent};
 use super::sandbox_events::{
-    append_in_transaction, event_document, read_event, reconcile_event, TransactionEventError,
+    append_in_transaction, event_document, reconcile_event_with_snapshot_session,
+    TransactionEventError,
 };
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, unsigned,
-    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_origin_fields, sandbox_replacement_fields};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
@@ -286,7 +289,15 @@ async fn reconcile(
     store: &MongoSandboxStore,
     transaction: &SandboxTransaction,
     receipt: &Receipt,
+    snapshot_time: Timestamp,
 ) -> Result<bool, SandboxStoreError> {
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .snapshot_time(snapshot_time)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     match (transaction, receipt) {
         (
             SandboxTransaction::CreateWorktreeAndAgent {
@@ -297,6 +308,8 @@ async fn reconcile(
             let stored_worktree = store
                 .worktrees
                 .find_one(doc! { "_id": worktree.id.as_str() })
+                .read_concern(ReadConcern::snapshot())
+                .session(&mut session)
                 .await
                 .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
                 .as_ref()
@@ -305,6 +318,8 @@ async fn reconcile(
             let stored_agent = store
                 .agents
                 .find_one(doc! { "_id": agent.id.as_str() })
+                .read_concern(ReadConcern::snapshot())
+                .session(&mut session)
                 .await
                 .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
                 .as_ref()
@@ -312,26 +327,25 @@ async fn reconcile(
                 .transpose()?;
             Ok(stored_worktree.as_ref() == Some(worktree.as_ref())
                 && stored_agent.as_ref() == Some(agent.as_ref())
-                && reconcile_event(store, event).await?.is_some())
+                && reconcile_event_with_snapshot_session(store, event, &mut session)
+                    .await?
+                    .is_some())
         }
         (SandboxTransaction::SaveSandboxAndAppend { sandbox, .. }, Receipt::SaveSandbox(event)) => {
             let stored = store
                 .sandboxes
                 .find_one(doc! { "_id": sandbox.id.as_str() })
+                .read_concern(ReadConcern::snapshot())
+                .session(&mut session)
                 .await
                 .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
                 .as_ref()
                 .map(read_sandbox)
                 .transpose()?;
-            let stored_event = store
-                .sandbox_events
-                .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, event.seq) })
-                .await
-                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-                .as_ref()
-                .map(read_event)
-                .transpose()?;
-            Ok(stored.as_ref() == Some(sandbox.as_ref()) && stored_event.as_ref() == Some(event))
+            Ok(stored.as_ref() == Some(sandbox.as_ref())
+                && reconcile_event_with_snapshot_session(store, event, &mut session)
+                    .await?
+                    .is_some())
         }
         (
             SandboxTransaction::SaveWorkspaceAndAppend { workspace, .. },
@@ -340,13 +354,17 @@ async fn reconcile(
             let stored = store
                 .workspaces
                 .find_one(doc! { "_id": workspace.id.as_str() })
+                .read_concern(ReadConcern::snapshot())
+                .session(&mut session)
                 .await
                 .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
                 .as_ref()
                 .map(read_workspace)
                 .transpose()?;
             Ok(stored.as_ref() == Some(workspace.as_ref())
-                && reconcile_event(store, event).await?.is_some())
+                && reconcile_event_with_snapshot_session(store, event, &mut session)
+                    .await?
+                    .is_some())
         }
         _ => Err(SandboxStoreError::Corrupt(
             "transaction receipt kind does not match its command".into(),
@@ -398,13 +416,29 @@ impl SandboxTransactionStore for MongoSandboxStore {
                 CommitOutcome::Committed => return Ok(()),
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
-                    return if reconcile(self, &transaction, &receipt).await? {
-                        Ok(())
-                    } else {
-                        Err(SandboxStoreError::Unavailable(format!(
-                            "sandbox transaction commit remained unknown: {error}"
-                        )))
-                    };
+                    let snapshot_time = session.operation_time().ok_or_else(|| {
+                        SandboxStoreError::Unavailable(format!(
+                            "sandbox transaction commit remained unknown without an operation time: {error}"
+                        ))
+                    })?;
+                    let commit_error = error.to_string();
+                    let unresolved = commit_error.clone();
+                    let store = self.clone();
+                    return wait_for_reconciliation("sandbox transaction", async move {
+                        if reconcile(&store, &transaction, &receipt, snapshot_time).await? {
+                            Ok(())
+                        } else {
+                            Err(SandboxStoreError::Unavailable(format!(
+                                "sandbox transaction commit remained unknown: {unresolved}"
+                            )))
+                        }
+                    })
+                    .await
+                    .map_err(|deadline| {
+                        SandboxStoreError::Unavailable(format!(
+                            "{deadline}; ambiguous commit: {commit_error}"
+                        ))
+                    })?;
                 }
                 CommitOutcome::Failed(error) => {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
