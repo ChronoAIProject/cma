@@ -31,3 +31,16 @@ it('accepts exactly bounded text without changing its contents', () => {
     }),
   ).toEqual({});
 });
+
+it.each([undefined, '', 'latest', '1.2.0', '01.2', '1.02', '1.2\n', '1'.repeat(19) + '.0'])(
+  'rejects an unpinned or nonliteral skill version %s before saving',
+  (version) => {
+    expect(
+      validateAgentProfile({
+        name: 'Pinned agent',
+        description: '',
+        content: { ...AGENT_PROFILE.draft, skills: [{ source: 'ornn', id: 'research', version }] },
+      }),
+    ).toEqual({ skills: 'Choose a published major.minor version for each skill.' });
+  },
+);

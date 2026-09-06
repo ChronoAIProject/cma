@@ -21,5 +21,21 @@ export function createProfileViewsClient(sdk: Cma): ProfileViewsClient {
     workspace: profileEditor(sdk.workspaceProfiles, workspaceContent),
     sandbox: profileEditor(sdk.sandboxProfiles, sandboxContent),
     marketplace: marketplaceClient(sdk),
+    authoring: {
+      readCapacityBounds: async (options) => {
+        const bounds = await sdk.profileAuthoring.bounds(options);
+        return {
+          minCpuMillis: bounds.min_cpu_millis,
+          maxCpuMillis: bounds.max_cpu_millis,
+          minMemoryMib: bounds.min_memory_mib,
+          maxMemoryMib: bounds.max_memory_mib,
+        };
+      },
+      listServices: (options) => sdk.profileAuthoring.services(options),
+      searchSkills: (query, options) =>
+        sdk.profileAuthoring.searchSkills({ q: query, cursor: options?.cursor }, options),
+      resolveRepository: ({ url, reference }, options) =>
+        sdk.profileAuthoring.resolveRepository({ url, reference }, options),
+    },
   };
 }

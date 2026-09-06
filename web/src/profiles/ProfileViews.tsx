@@ -1,6 +1,7 @@
 import type { AppRoute } from '../routing/routes';
 import type {
   CapacityBounds,
+  ProfileAuthoringClient,
   ProfileContents,
   ProfileEditorClient,
   ProfilesClient,
@@ -27,6 +28,7 @@ export interface ProfileViewsClient {
   readonly workspace: ProfileEditorClient<ProfileContents['workspace']>;
   readonly sandbox: ProfileEditorClient<ProfileContents['sandbox']>;
   readonly marketplace: MarketplaceClient;
+  readonly authoring?: ProfileAuthoringClient;
 }
 
 export function ProfileViews({
@@ -93,7 +95,7 @@ export function ProfileViews({
           return (
             <AgentProfileEditor
               client={client.agent}
-              catalog={skills}
+              catalog={skills ?? client.authoring}
               profileId={profileId}
               onSaved={onSaved}
             />
@@ -104,7 +106,7 @@ export function ProfileViews({
               client={client.workspace}
               profiles={client.profiles}
               marketplace={client.marketplace}
-              resolver={resolver}
+              resolver={resolver ?? client.authoring}
               profileId={profileId}
               onSaved={onSaved}
             />
@@ -115,8 +117,9 @@ export function ProfileViews({
               client={client.sandbox}
               profiles={client.profiles}
               marketplace={client.marketplace}
-              services={services}
+              services={services ?? client.authoring}
               bounds={bounds}
+              boundsClient={client.authoring}
               profileId={profileId}
               onSaved={onSaved}
             />

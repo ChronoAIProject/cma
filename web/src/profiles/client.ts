@@ -57,6 +57,13 @@ export interface CapacityBounds {
   readonly maxMemoryMib: number;
 }
 
+export interface CapacityBoundsClient {
+  readCapacityBounds(options?: ReadOptions): Promise<CapacityBounds>;
+}
+
+export interface ProfileAuthoringClient
+  extends CapacityBoundsClient, RepositoryResolver, ServiceCatalogClient, SkillCatalogClient {}
+
 /** Optional public authoring capabilities; no first-party-only transport is implied. */
 export interface RepositoryResolver {
   resolveRepository(

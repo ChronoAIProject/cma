@@ -33,6 +33,15 @@ function publicClient() {
   const fetch = vi.fn(async (url: string | URL | Request) => {
     const path = new URL(String(url), 'https://cma.example.test').pathname;
     if (path === '/api/v1/sandboxes') return Response.json({ items: [] });
+    if (path === '/api/v1/profile-authoring/skills') return Response.json({ items: [] });
+    if (path === '/api/v1/profile-authoring/services') return Response.json([]);
+    if (path === '/api/v1/profile-authoring/bounds')
+      return Response.json({
+        min_cpu_millis: 1000,
+        max_cpu_millis: 8000,
+        min_memory_mib: 1024,
+        max_memory_mib: 16384,
+      });
     const match =
       /^\/api\/v1\/(marketplace\/)?(agent|workspace|sandbox)-profiles(?:\/[^/]+)?$/.exec(path);
     const kind = match?.[2];
@@ -75,7 +84,7 @@ it.each(cases)(
     if (route.kind === 'marketplace_profile')
       expect(screen.getByRole('button', { name: 'Use' })).toBeDisabled();
     if (route.kind === 'profile' && route.profileKind === 'agent')
-      expect(screen.getByText('The skill catalogue is unavailable.')).toBeInTheDocument();
+      expect(await screen.findByText('No matching skills')).toBeInTheDocument();
     expect(clients.fetch.mock.calls.every(([url]) => String(url).startsWith('/api/v1/'))).toBe(
       true,
     );

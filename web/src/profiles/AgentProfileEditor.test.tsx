@@ -101,11 +101,9 @@ describe('Agent profile editing', () => {
     );
     await screen.findByRole('heading', { name: AGENT_PROFILE.name });
     await actor.click(await screen.findByRole('button', { name: 'Add Research' }));
-    expect(screen.getByLabelText('Version for research')).toHaveValue('1.2.0');
-    expect(screen.getByLabelText('Version for research')).toHaveAccessibleDescription(
-      'Leave this empty to use the latest available version.',
-    );
-    fireEvent.change(screen.getByLabelText('Version for research'), { target: { value: '1.1.0' } });
+    expect(screen.getByRole('button', { name: 'Version for research' })).toHaveTextContent('1.2');
+    await actor.click(screen.getByRole('button', { name: 'Version for research' }));
+    await actor.click(screen.getByRole('menuitemradio', { name: '1.1' }));
     await actor.click(screen.getByRole('radio', { name: 'Very high' }));
     await actor.click(screen.getByRole('radio', { name: 'Autonomous' }));
     await actor.click(screen.getByRole('button', { name: 'Save draft' }));
@@ -117,7 +115,7 @@ describe('Agent profile editing', () => {
         content: expect.objectContaining({
           thinkingEffort: 'x_high',
           permissionLevel: 'autonomous',
-          skills: [{ source: 'ornn', id: 'research', version: '1.1.0' }],
+          skills: [{ source: 'ornn', id: 'research', version: '1.1' }],
         }),
       }),
       expect.objectContaining({ idempotencyKey: expect.any(String) }),

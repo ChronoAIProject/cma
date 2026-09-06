@@ -45,7 +45,7 @@ export const SKILL_CATALOG: SkillCatalogClient = {
               id: 'research',
               name: 'Research',
               description: 'Plan and verify repository changes.',
-              versions: ['1.2.0', '1.1.0'],
+              versions: ['1.2', '1.1'],
             },
           ],
   }),
