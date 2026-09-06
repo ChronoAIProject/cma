@@ -87,7 +87,7 @@ export function WherePicker({
         setSelectedWorkspace(workspaceDetail);
         setEvents(history);
         setError(undefined);
-        onReady(detail.status === 'active' && (!workspace || selected?.status === 'ready'));
+        onReady(acceptsCreation(detail.status) && (!workspace || selected?.status === 'ready'));
         if (
           ['provisioning', 'installing', 'reviving'].includes(detail.status) ||
           detail.workspaces.some((item) => item.status === 'preparing')
@@ -124,7 +124,7 @@ export function WherePicker({
             ...all.map((item) => ({
               value: item.id,
               label: item.name,
-              unavailable: ['failed', 'retiring', 'retired', 'paused'].includes(item.status)
+              unavailable: ['failed', 'retiring', 'retired'].includes(item.status)
                 ? statusLabel(item.status)
                 : undefined,
             })),
@@ -186,7 +186,7 @@ export function WherePicker({
         {onNewWorkspace === undefined ? null : (
           <Button
             icon={<IconPlusOutline16 />}
-            disabled={disabled || current?.status !== 'active'}
+            disabled={disabled || current === undefined || !acceptsCreation(current.status)}
             onClick={onNewWorkspace}
           >
             New workspace
@@ -203,4 +203,8 @@ export function WherePicker({
       )}
     </div>
   );
+}
+
+function acceptsCreation(status: SandboxSummary['status']): boolean {
+  return ['active', 'paused', 'reviving'].includes(status);
 }

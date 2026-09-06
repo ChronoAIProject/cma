@@ -8,16 +8,17 @@ use layer2_core::sandbox::store::{
     WorkspaceAdmissionStore,
 };
 use layer2_core::sandbox::{
-    SandboxEvent, SandboxEventKind, Workspace, WorkspaceOrigin, WorkspaceStatus, WorkspaceWorkStep,
+    SandboxEvent, SandboxEventKind, SandboxReviveCause, Workspace, WorkspaceOrigin,
+    WorkspaceStatus, WorkspaceWorkStep,
 };
 use mongodb::bson::{doc, Bson};
 
 use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
-use super::sandboxes::read_sandbox;
+use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
 
@@ -34,6 +35,7 @@ enum AdmissionReceipt {
     Created {
         workspace: Workspace,
         event: SandboxEvent,
+        revival_event: Option<Box<SandboxEvent>>,
     },
     Existing(Workspace),
 }
@@ -204,13 +206,11 @@ async fn apply_admission(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::SandboxNotReady))?;
-    if sandbox.status != admission.kind.allowed_status()
-        || sandbox.lifecycle.checkpoint_capture.is_some()
-    {
+    if !admission.kind.accepts(&sandbox) {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
     candidate
-        .validate_for_admission(&sandbox, admission.kind.allowed_status())
+        .validate_for_admission(&sandbox, sandbox.status)
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
     if !candidate.origin_matches_sandbox_profile(&sandbox) {
         return Err(ApplyError::Domain(
@@ -285,6 +285,45 @@ async fn apply_admission(
             },
         ));
     }
+    let revival_event =
+        if admission.kind == WorkspaceAdmissionKind::SandboxProfile {
+            None
+        } else {
+            let mut next = sandbox.clone();
+            let cause = match admission.kind {
+                WorkspaceAdmissionKind::Trigger => SandboxReviveCause::TriggerLaunch,
+                _ => SandboxReviveCause::WorkspaceCreation,
+            };
+            let revival = next
+                .record_creation_admission(cause, admission.event_at.clone())
+                .map_err(|error| {
+                    ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
+                })?;
+            let updated = store.sandboxes.update_one(doc! {
+            "_id": sandbox.id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "revision": signed(sandbox.revision, "sandbox revision")
+                .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+        }, doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? })
+            .session(&mut *session).await.map_err(ApplyError::Driver)?;
+            if updated.matched_count != 1 {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+            let event = match revival {
+                Some(event) => Some(Box::new(
+                    append_in_transaction(
+                        store,
+                        session,
+                        &sandbox.id,
+                        admission.event_at.clone(),
+                        event,
+                    )
+                    .await?,
+                )),
+                None => None,
+            };
+            event
+        };
     store
         .workspaces
         .insert_one(workspace_document(candidate).map_err(ApplyError::Domain)?)
@@ -304,6 +343,7 @@ async fn apply_admission(
     Ok(AdmissionReceipt::Created {
         workspace: candidate.clone(),
         event,
+        revival_event,
     })
 }
 
@@ -385,9 +425,19 @@ async fn reconcile_admission(
     receipt: &AdmissionReceipt,
 ) -> Result<bool, SandboxStoreError> {
     match receipt {
-        AdmissionReceipt::Created { workspace, event } => Ok(reconcile_workspace(store, workspace)
-            .await?
-            && reconcile_event(store, event).await?.is_some()),
+        AdmissionReceipt::Created {
+            workspace,
+            event,
+            revival_event,
+        } => {
+            let revival_matches = match revival_event {
+                Some(event) => reconcile_event(store, event).await?.is_some(),
+                None => true,
+            };
+            Ok(reconcile_workspace(store, workspace).await?
+                && reconcile_event(store, event).await?.is_some()
+                && revival_matches)
+        }
         AdmissionReceipt::Existing(workspace) => reconcile_workspace(store, workspace).await,
     }
 }

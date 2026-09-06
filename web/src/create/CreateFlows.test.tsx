@@ -141,6 +141,64 @@ it('creates a Workspace inside the selected active Sandbox with its reviewed set
   );
 });
 
+it.each(['paused', 'reviving'] as const)(
+  'creates a Workspace in a %s Sandbox without a separate revive request',
+  async (status) => {
+    const user = userEvent.setup();
+    const createWorkspace = vi.fn().mockResolvedValue(workspaceFixture());
+    const reviveSandbox = vi.fn();
+    render(
+      <NewWorkspaceCard
+        client={agentClient({
+          createWorkspace,
+          reviveSandbox,
+          readSandbox: async () => sandboxFixture(status),
+        })}
+        catalog={creationClient()}
+        sandboxId="sbx_1"
+        initial={CREATION_WORKSPACE}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByText(`Sandbox: ${status === 'paused' ? 'Paused' : 'In progress'}`);
+    await user.click(screen.getByRole('checkbox', { name: 'I trust this profile' }));
+    await user.click(screen.getByRole('button', { name: 'Create workspace' }));
+    expect(createWorkspace).toHaveBeenCalledTimes(1);
+    expect(reviveSandbox).not.toHaveBeenCalled();
+  },
+);
+
+it('admits an Agent in a paused location through the normal create request', async () => {
+  const user = userEvent.setup();
+  const createAgent = vi.fn().mockResolvedValue(AGENT_DETAIL);
+  const reviveSandbox = vi.fn();
+  render(
+    <NewAgentCard
+      client={agentClient({
+        createAgent,
+        reviveSandbox,
+        listSandboxes: async () => ({ items: [sandboxFixture('paused')] }),
+        readSandbox: async () => sandboxFixture('paused'),
+      })}
+      catalog={creationClient()}
+      initial={CREATION_AGENT}
+      onCreated={vi.fn()}
+      onChanged={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await chooseOption(user, 'Sandbox', 'Atlas');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled());
+  await chooseOption(user, 'Workspace', 'chrono-bot');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  await user.click(screen.getByRole('button', { name: 'Create agent' }));
+  expect(createAgent).toHaveBeenCalledTimes(1);
+  expect(reviveSandbox).not.toHaveBeenCalled();
+});
+
 it('steps through location/profile/title and preserves the first message byte for byte', async () => {
   const user = userEvent.setup();
   const createAgent = vi.fn().mockResolvedValue(AGENT_DETAIL);

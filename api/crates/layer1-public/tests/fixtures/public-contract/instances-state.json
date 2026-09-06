@@ -804,15 +804,15 @@
       "captures": {}
     },
     {
-      "id": "state-workspace-parent-paused",
+      "id": "state-workspace-parent-retiring",
       "operation": "POST /api/v1/sandboxes/{id}/workspaces",
-      "scenario": "instances_paused",
+      "scenario": "instances_lifecycle",
       "request": {
         "method": "POST",
         "path": "/api/v1/sandboxes/sbx_route/workspaces",
         "headers": {
           "content-type": "application/json",
-          "idempotency-key": "state-workspace-parent-paused"
+          "idempotency-key": "state-workspace-parent-retiring"
         },
         "body": {
           "workspace_profile": {
@@ -836,6 +836,47 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "state-workspace-parent-paused",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-parent-paused"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_33333333333333333333333333333333",
+          "sandbox_id": "sbx_route",
+          "name": "contract-project",
+          "path": "/home/cma/contract-project",
+          "source": { "type": "empty" },
+          "status": "preparing",
+          "profile": { "id": "wkp_contract", "revision": 1 },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "paused_workspace_created": "/created_at",
+        "paused_workspace_id": "/id"
+      }
     },
     {
       "id": "state-workspace-capacity",

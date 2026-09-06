@@ -21,6 +21,8 @@ use crate::sandbox::{
 
 use super::InMemorySandboxStore;
 
+mod creation_revival;
+
 pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
 
 fn sandbox(limit: u8) -> Sandbox {

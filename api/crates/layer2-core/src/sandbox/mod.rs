@@ -21,6 +21,7 @@ mod conversation;
 mod conversation_fold;
 mod conversation_fold_support;
 mod conversation_recorder;
+mod creation_admission;
 mod credential;
 mod error;
 mod event;

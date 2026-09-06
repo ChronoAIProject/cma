@@ -32,8 +32,13 @@ pub(super) fn validate_lifecycle_agent_phase(
 ) -> Result<(), SandboxStoreError> {
     let phase = agent_phase(current, &mutation.sandbox, mutation.agents.is_empty());
     match phase {
-        AgentPhase::Pause => validate_all_live_scope(agents, mutation, touched)?,
-        AgentPhase::Reopen => validate_all_live_scope(agents, mutation, touched)?,
+        AgentPhase::Pause => {
+            if mutation.agent_scope != SandboxLifecycleAgentScope::AllLive {
+                return Err(invalid("pause requires the exact live-agent scope"));
+            }
+            validate_all_live_scope(current, agents, mutation, touched)?;
+        }
+        AgentPhase::Reopen => validate_all_live_scope(current, agents, mutation, touched)?,
         AgentPhase::QueueProgress => {
             if mutation.agent_scope != SandboxLifecycleAgentScope::Touched
                 || mutation.agents.len() != 1
@@ -49,7 +54,7 @@ pub(super) fn validate_lifecycle_agent_phase(
             }
         }
         AgentPhase::QueueCompletion => {
-            validate_queue_completion_set(agents, mutation, touched)?;
+            validate_queue_completion_set(current, agents, mutation, touched)?;
         }
         AgentPhase::SandboxOnly => {
             if mutation.agent_scope != SandboxLifecycleAgentScope::Touched
@@ -146,12 +151,13 @@ fn agent_phase(current: &Sandbox, next: &Sandbox, no_agents: bool) -> AgentPhase
 }
 
 fn validate_all_live_scope(
+    sandbox: &Sandbox,
     agents: &[(Agent, u64)],
     mutation: &SandboxLifecycleMutation,
     touched: &BTreeSet<crate::AgentId>,
 ) -> Result<(), SandboxStoreError> {
-    let live = live_ids(agents);
-    if mutation.agent_scope != SandboxLifecycleAgentScope::AllLive || *touched != live {
+    let live = live_ids(sandbox, agents);
+    if mutation.agent_scope == SandboxLifecycleAgentScope::Touched || *touched != live {
         return Err(invalid("lifecycle phase requires the exact live-agent set"));
     }
     Ok(())
@@ -329,15 +335,19 @@ fn exact_queue_fence(
 }
 
 fn validate_queue_completion_set(
+    sandbox: &Sandbox,
     agents: &[(Agent, u64)],
     mutation: &SandboxLifecycleMutation,
     touched: &BTreeSet<crate::AgentId>,
 ) -> Result<(), SandboxStoreError> {
-    if mutation.agent_scope != SandboxLifecycleAgentScope::AllLive {
+    if mutation.agent_scope == SandboxLifecycleAgentScope::Touched {
         return Err(invalid("queue completion has an invalid agent scope"));
     }
-    let expected_touched = live_ids(agents);
-    for (agent, _) in agents.iter().filter(|(agent, _)| agent.status.is_live()) {
+    let expected_touched = live_ids(sandbox, agents);
+    for (agent, _) in agents
+        .iter()
+        .filter(|(agent, _)| sandbox.restores_agent(agent))
+    {
         let queue_settled = agent
             .conversation
             .queued_messages
@@ -386,7 +396,7 @@ fn validate_final_publication_agents(
     }
     let settled = agents
         .iter()
-        .filter(|(agent, _)| agent.status.is_live())
+        .filter(|(agent, _)| sandbox.restores_agent(agent))
         .all(|(agent, _)| {
             agent.status == AgentStatus::Ready
                 && agent.conversation.active_turn.is_none()
@@ -469,10 +479,10 @@ fn first_message_is_terminal(agent: &Agent) -> bool {
         .is_none_or(|message| message.is_terminal())
 }
 
-fn live_ids(agents: &[(Agent, u64)]) -> BTreeSet<crate::AgentId> {
+fn live_ids(sandbox: &Sandbox, agents: &[(Agent, u64)]) -> BTreeSet<crate::AgentId> {
     agents
         .iter()
-        .filter(|(agent, _)| agent.status.is_live())
+        .filter(|(agent, _)| sandbox.restores_agent(agent))
         .map(|(agent, _)| agent.id.clone())
         .collect()
 }

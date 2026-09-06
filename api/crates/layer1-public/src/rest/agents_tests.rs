@@ -659,6 +659,80 @@ async fn create_replays_exactly_and_exposes_only_public_state() {
 }
 
 #[tokio::test]
+async fn paused_parent_creation_returns_201_and_replays_without_a_second_revival() {
+    let fixture = fixture().await;
+    let current = fixture
+        .store
+        .get_sandbox(&fixture.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut paused = current.clone();
+    paused.status = SandboxStatus::Paused;
+    paused.runtime = None;
+    paused.lifecycle.checkpoints =
+        super::instances_tests::paused_sandbox(fixture.sandbox_id.as_str(), OWNER)
+            .lifecycle
+            .checkpoints;
+    paused.revision = current.revision + 1;
+    fixture
+        .store
+        .save_sandbox(current.revision, paused)
+        .await
+        .unwrap();
+    let path = format!("/api/v1/workspaces/{}/agents", fixture.workspace_id);
+    let body = json!({ "agent_profile": { "id": "agp_route", "revision": 1 }, "first_message": "Inspect after revival" });
+    let admitted = response(
+        &fixture.router,
+        request(
+            Method::POST,
+            &path,
+            OWNER,
+            Some("paused-create"),
+            Some(body.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(admitted.0, StatusCode::CREATED);
+    let parent = fixture
+        .store
+        .get_sandbox(&fixture.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        parent.lifecycle.operation,
+        Some(layer2_core::sandbox::SandboxLifecycleOperation::Revive {
+            cause: layer2_core::sandbox::SandboxReviveCause::AgentCreation,
+            ..
+        })
+    ));
+    let replay = response(
+        &fixture.router,
+        request(
+            Method::POST,
+            &path,
+            OWNER,
+            Some("paused-create"),
+            Some(body),
+        ),
+    )
+    .await;
+    assert_eq!(admitted, replay);
+    assert_eq!(
+        fixture
+            .store
+            .get_sandbox(&fixture.sandbox_id)
+            .await
+            .unwrap(),
+        Some(parent)
+    );
+    let value: Value = serde_json::from_slice(&admitted.1).unwrap();
+    assert_eq!(value["status"], "starting");
+    assert_eq!(value["first_message"]["state"], "queued");
+}
+
+#[tokio::test]
 async fn detail_and_read_refusals_use_the_frozen_capability_grants() {
     let fixture = fixture().await;
     let mut agent = seeded_agent("agt_grants", AgentStatus::Ready, 2, None);

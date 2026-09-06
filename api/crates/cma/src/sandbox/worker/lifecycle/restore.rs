@@ -262,7 +262,7 @@ impl SandboxWorker {
         let agents = self.lifecycle_agents(&sandbox).await?;
         if !agents
             .iter()
-            .filter(|agent| agent.status.is_live())
+            .filter(|agent| sandbox.restores_agent(agent))
             .all(|agent| {
                 agent.status == AgentStatus::Ready
                     && require_quiet_agent(agent).is_ok()
@@ -331,7 +331,7 @@ pub(super) fn replacement_runtime_generation(
 ) -> Result<u64, WorkerFailure> {
     let next_agent_generation = agents
         .iter()
-        .filter(|agent| agent.status.is_live())
+        .filter(|agent| sandbox.restores_agent(agent))
         .map(|agent| {
             agent
                 .conversation

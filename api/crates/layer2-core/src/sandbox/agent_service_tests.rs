@@ -6,7 +6,7 @@ use crate::profiles::store::AgentProfileStore;
 use crate::profiles::{content_digest, AgentProfileRef, AgentProfileRevision, ProfileVisibility};
 use crate::sandbox::service_trust::{validate_agent_profile, validate_agent_revision};
 use crate::sandbox::store::{
-    AgentLogStore, AgentStore, SandboxEventStore, SandboxStoreError, WorktreeStore,
+    AgentLogStore, AgentStore, SandboxEventStore, SandboxStore, SandboxStoreError, WorktreeStore,
 };
 use crate::{AgentId, AgentProfileId, Capability, SubjectId};
 
@@ -60,6 +60,52 @@ async fn create_snapshots_profile_and_atomically_materializes_initial_records() 
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn paused_agent_creation_admits_first_message_and_schedules_revival() {
+    let (service, store, _, reference) = setup(
+        SandboxStatus::Active,
+        WorkspaceStatus::Ready,
+        3,
+        "owner",
+        ProfileVisibility::Private,
+    )
+    .await;
+    let mut parent = store
+        .get_sandbox(&workspace(WorkspaceStatus::Ready).sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = parent.revision;
+    parent.status = SandboxStatus::Paused;
+    parent.runtime = None;
+    parent.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+    parent.lifecycle.checkpoints.latest = Some(super::lifecycle_test_support::checkpoint(1, NOW));
+    parent.revision += 1;
+    store.save_sandbox(revision, parent.clone()).await.unwrap();
+    let agent = service
+        .create(
+            &caller("owner", true),
+            &workspace(WorkspaceStatus::Ready).id,
+            request(reference, AgentOrigin::Manual),
+        )
+        .await
+        .unwrap();
+    assert_eq!(agent.status, AgentStatus::Starting);
+    assert_eq!(
+        agent.conversation.first_message.as_ref().unwrap().state,
+        FirstMessageDelivery::Queued
+    );
+    let reviving = store.get_sandbox(&parent.id).await.unwrap().unwrap();
+    assert!(matches!(
+        reviving.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Revive {
+            cause: SandboxReviveCause::AgentCreation,
+            ..
+        })
+    ));
+    assert!(!reviving.restores_agent(&agent));
 }
 
 #[tokio::test]

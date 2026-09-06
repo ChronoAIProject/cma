@@ -95,6 +95,7 @@ impl SandboxCheckpointAgentGuard {
 pub enum SandboxLifecycleAgentScope {
     Touched,
     AllLive,
+    RestoreParticipants,
 }
 
 /// One agent row and its gap-free log additions in a sandbox lifecycle commit.
@@ -293,10 +294,14 @@ pub fn validate_lifecycle_mutation(
         )?;
     }
 
-    if mutation.agent_scope == SandboxLifecycleAgentScope::AllLive {
+    if mutation.agent_scope != SandboxLifecycleAgentScope::Touched {
         let live = agents
             .iter()
-            .filter(|(agent, _)| agent.status.is_live())
+            .filter(|(agent, _)| match mutation.agent_scope {
+                SandboxLifecycleAgentScope::AllLive => agent.status.is_live(),
+                SandboxLifecycleAgentScope::RestoreParticipants => current.restores_agent(agent),
+                SandboxLifecycleAgentScope::Touched => unreachable!(),
+            })
             .map(|(agent, _)| agent.id.clone())
             .collect::<BTreeSet<_>>();
         if live != touched {

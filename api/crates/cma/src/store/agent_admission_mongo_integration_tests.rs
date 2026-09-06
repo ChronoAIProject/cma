@@ -33,6 +33,9 @@ use super::super::sandbox_mongo::{start_transaction, MongoSandboxStore};
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "agent_admission_mongo_integration_tests/creation_revival.rs"]
+mod creation_revival;
+
 async fn fixture(
     suffix: &str,
 ) -> (

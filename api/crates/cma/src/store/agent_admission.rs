@@ -3,7 +3,7 @@
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{SandboxEventKind, SandboxStatus, WorkspaceStatus};
+use layer2_core::sandbox::{AgentOrigin, SandboxEventKind, SandboxReviveCause, WorkspaceStatus};
 use mongodb::bson::doc;
 
 use super::agent_admission_records::{
@@ -211,7 +211,7 @@ async fn apply_admission(
     if sandbox.owner != workspace.owner {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
     }
-    if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.checkpoint_capture.is_some() {
+    if !sandbox.accepts_creation_admission() {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
 
@@ -244,7 +244,18 @@ async fn apply_admission(
     )
     .map_err(ApplyError::Domain)?;
     let next_workspace = next_workspace(&workspace)?;
-    let next_sandbox = next_sandbox(&sandbox, &admission.event_at)?;
+    let mut next_sandbox = sandbox.clone();
+    next_sandbox
+        .revision
+        .checked_add(1)
+        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+    let cause = match admission.origin {
+        AgentOrigin::Manual => SandboxReviveCause::AgentCreation,
+        AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
+    };
+    let revival = next_sandbox
+        .record_creation_admission(cause, admission.event_at.clone())
+        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
     advance_workspace(store, &workspace, &next_workspace, session).await?;
     advance_sandbox(store, &sandbox, &next_sandbox, session).await?;
 
@@ -267,6 +278,19 @@ async fn apply_admission(
         .await
         .map_err(classify_log_insert)?;
 
+    let revival_event = match revival {
+        Some(event) => Some(
+            append_in_transaction(
+                store,
+                session,
+                &sandbox.id,
+                admission.event_at.clone(),
+                event,
+            )
+            .await?,
+        ),
+        None => None,
+    };
     let worktree_event = append_in_transaction(
         store,
         session,
@@ -294,6 +318,7 @@ async fn apply_admission(
         creation,
         workspace: next_workspace,
         sandbox: next_sandbox,
+        revival_event,
         worktree_event,
         agent_event,
     })))
@@ -311,20 +336,6 @@ fn next_workspace(
         .revision
         .checked_add(1)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
-    Ok(next)
-}
-
-fn next_sandbox(
-    sandbox: &layer2_core::sandbox::Sandbox,
-    event_at: &str,
-) -> Result<layer2_core::sandbox::Sandbox, ApplyError> {
-    let mut next = sandbox.clone();
-    next.revision = next
-        .revision
-        .checked_add(1)
-        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
-    next.updated_at = event_at.to_owned();
-    next.last_activity_at = event_at.to_owned();
     Ok(next)
 }
 
@@ -375,7 +386,10 @@ async fn advance_sandbox(
                 "revision": signed(previous.revision, "sandbox revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
             },
-            doc! { "$set": sandbox_replacement_fields(next).map_err(ApplyError::Domain)? },
+            doc! {
+                "$set": sandbox_replacement_fields(next).map_err(ApplyError::Domain)?,
+                "$inc": { "workspace_admission_fence": 1_i64 },
+            },
         )
         .session(session)
         .await
