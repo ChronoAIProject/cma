@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::{SandboxProfileStore, WorkspaceProfileStore};
+use crate::sandbox::{SandboxCredentialPrerequisite, SandboxCredentialPrerequisiteError};
 use crate::{now_rfc3339, Caller, Capability, LaunchId, SubjectId};
 
 use super::launch_service_support::{
@@ -77,6 +78,8 @@ impl LaunchPolicySource for LaunchPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchServiceError {
+    #[error("renewable Sandbox credential setup is required")]
+    CredentialSetupRequired,
     #[error("forbidden")]
     Forbidden,
     #[error("Trigger launches are disabled")]
@@ -114,6 +117,7 @@ pub enum LaunchServiceError {
 impl LaunchServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::CredentialSetupRequired => "sandbox_credential_setup_required",
             Self::Forbidden => "forbidden",
             Self::Disabled => "triggers_disabled",
             Self::TriggerNotFound => "trigger_not_found",
@@ -143,6 +147,7 @@ pub struct LaunchService {
     pub(super) contexts: Arc<dyn LaunchContextReader>,
     pub(super) connections: Arc<dyn ServiceConnectionBroker>,
     pub(super) policy: Arc<dyn LaunchPolicySource>,
+    pub(super) credentials: Arc<dyn SandboxCredentialPrerequisite>,
 }
 
 impl LaunchService {
@@ -153,6 +158,7 @@ impl LaunchService {
         contexts: Arc<C>,
         connections: Arc<B>,
         policy: Arc<S>,
+        credentials: Arc<dyn SandboxCredentialPrerequisite>,
     ) -> Arc<Self>
     where
         T: TriggerStore + 'static,
@@ -174,7 +180,25 @@ impl LaunchService {
             contexts,
             connections,
             policy,
+            credentials,
         })
+    }
+
+    pub(super) async fn require_sandbox_credentials(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<(), LaunchServiceError> {
+        self.credentials
+            .check(owner)
+            .await
+            .map_err(|error| match error {
+                SandboxCredentialPrerequisiteError::SetupRequired => {
+                    LaunchServiceError::CredentialSetupRequired
+                }
+                SandboxCredentialPrerequisiteError::Unavailable(detail) => {
+                    LaunchServiceError::Unavailable(detail)
+                }
+            })
     }
 
     pub async fn create_or_resume(
@@ -215,6 +239,17 @@ impl LaunchService {
             let resolved = self
                 .resolve(caller, &trigger, &profiles, request.choice)
                 .await?;
+            let trust = LaunchTrustManifest::resolve(
+                self.sandbox_profiles.as_ref(),
+                self.workspace_profiles.as_ref(),
+                &profiles,
+                &resolved.resolution,
+                &caller.subject,
+            )
+            .await?;
+            if resolved.resolution.sandbox.is_pending() {
+                self.require_sandbox_credentials(&caller.subject).await?;
+            }
             let checked_at = now_rfc3339();
             let requirements = if resolved.resolution.sandbox.is_pending() {
                 RequirementsSnapshot {
@@ -239,14 +274,6 @@ impl LaunchService {
                 &requirements,
                 resolved.resolution.sandbox.is_pending(),
             )?;
-            let trust = LaunchTrustManifest::resolve(
-                self.sandbox_profiles.as_ref(),
-                self.workspace_profiles.as_ref(),
-                &profiles,
-                &resolved.resolution,
-                &caller.subject,
-            )
-            .await?;
             let review = ReviewRequirements::build(
                 &requirements,
                 trust.confirmation_digest.clone(),

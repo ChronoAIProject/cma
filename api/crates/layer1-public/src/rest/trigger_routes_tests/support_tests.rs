@@ -24,7 +24,8 @@ use layer2_core::profiles::{
 };
 use layer2_core::sandbox::{
     Agent, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep, ConversationState,
-    FirstMessageRecord, Sandbox, Workspace,
+    FirstMessageRecord, FixedSandboxCredentialPrerequisite, Sandbox, SandboxCredentialPrerequisite,
+    Workspace,
 };
 use layer2_core::trigger_domain::{
     BrokerHandoff, BrokerHandoffState, InMemoryLaunchStore, InMemoryTriggerStore,
@@ -347,14 +348,23 @@ pub struct TestApp {
 
 impl TestApp {
     pub async fn new() -> Self {
-        Self::configured(false).await
+        Self::configured(false, Arc::new(FixedSandboxCredentialPrerequisite::Ready)).await
     }
 
     pub async fn private_profiles() -> Self {
-        Self::configured(true).await
+        Self::configured(true, Arc::new(FixedSandboxCredentialPrerequisite::Ready)).await
     }
 
-    async fn configured(private_profiles: bool) -> Self {
+    pub async fn with_credential_prerequisite(
+        prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Self {
+        Self::configured(false, prerequisite).await
+    }
+
+    async fn configured(
+        private_profiles: bool,
+        prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Self {
         let profiles = Arc::new(InMemoryProfileStore::default());
         let (agent, _workspace, _sandbox) = publish_profiles(&profiles, private_profiles).await;
         let resolver: Arc<dyn TriggerProfileResolver> = profiles.clone();
@@ -379,6 +389,7 @@ impl TestApp {
             contexts.clone(),
             broker.clone(),
             policy.clone(),
+            prerequisite,
         );
         let connections = ServiceConnectionService::new(launches.clone(), broker.clone());
         let operations = Arc::new(MemoryOperationStore::default());

@@ -84,7 +84,12 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         .await;
         let registry = Arc::new(agents::TestRegistry);
         hierarchy_router(HierarchyState::new(
-            SandboxService::new(store.clone(), profiles.clone(), SandboxPolicy::default()),
+            SandboxService::new(
+                store.clone(),
+                profiles.clone(),
+                SandboxPolicy::default(),
+                Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+            ),
             WorkspaceService::new(store.clone(), profiles.clone()),
             HierarchyReadService::new(store.clone()),
             operations.clone(),

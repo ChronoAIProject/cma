@@ -234,7 +234,12 @@ async fn composition(name: &str) -> crate::AgentConversationState {
         let profiles = Arc::new(InMemoryProfileStore::default());
         agents::publish_profile(&profiles).await;
         state.context = AgentContextService::new(
-            SandboxService::new(store.clone(), profiles.clone(), SandboxPolicy::default()),
+            SandboxService::new(
+                store.clone(),
+                profiles.clone(),
+                SandboxPolicy::default(),
+                Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+            ),
             WorkspaceService::new(store.clone(), profiles.clone()),
             AgentService::new(
                 store,

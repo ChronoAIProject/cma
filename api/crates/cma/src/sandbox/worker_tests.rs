@@ -394,7 +394,12 @@ impl Harness {
             retention_grace: retention,
             baseline_services: vec![ServiceId::new("baseline-model")],
         };
-        let service = SandboxService::new(store.clone(), profiles, policy.clone());
+        let service = SandboxService::new(
+            store.clone(),
+            profiles,
+            policy.clone(),
+            Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+        );
         let actions = ActionLog::default();
         let credentials = MemoryCredentials::new(actions.clone());
         let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());

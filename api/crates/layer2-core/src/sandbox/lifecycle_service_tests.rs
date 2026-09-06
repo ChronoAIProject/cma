@@ -11,7 +11,12 @@ use super::*;
 async fn owner_pause_and_revive_expose_typed_idempotent_outcomes() {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let store = Arc::new(InMemorySandboxStore::default());
-    let service = SandboxService::new(store.clone(), profiles, SandboxPolicy::default());
+    let service = SandboxService::new(
+        store.clone(),
+        profiles,
+        SandboxPolicy::default(),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::UseOwnSandboxes]);
     let active = stored_sandbox();
     store.create_sandbox(active.clone()).await.unwrap();
@@ -55,7 +60,12 @@ async fn owner_pause_and_revive_expose_typed_idempotent_outcomes() {
 async fn lifecycle_authorization_happens_before_lookup_and_foreign_ids_are_hidden() {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let store = Arc::new(InMemorySandboxStore::default());
-    let service = SandboxService::new(store.clone(), profiles, SandboxPolicy::default());
+    let service = SandboxService::new(
+        store.clone(),
+        profiles,
+        SandboxPolicy::default(),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let value = stored_sandbox();
     store.create_sandbox(value.clone()).await.unwrap();
 
@@ -88,7 +98,12 @@ async fn lifecycle_authorization_happens_before_lookup_and_foreign_ids_are_hidde
 async fn ineligible_lifecycle_states_have_route_specific_errors() {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let store = Arc::new(InMemorySandboxStore::default());
-    let service = SandboxService::new(store.clone(), profiles, SandboxPolicy::default());
+    let service = SandboxService::new(
+        store.clone(),
+        profiles,
+        SandboxPolicy::default(),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::UseOwnSandboxes]);
     let mut retiring = stored_sandbox();
     retiring.status = SandboxStatus::Retiring;

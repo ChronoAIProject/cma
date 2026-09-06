@@ -40,7 +40,12 @@ impl ContextHarness {
             agent_profile,
         };
         let service = AgentContextService::new(
-            SandboxService::new(store.clone(), profiles.clone(), SandboxPolicy::default()),
+            SandboxService::new(
+                store.clone(),
+                profiles.clone(),
+                SandboxPolicy::default(),
+                Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+            ),
             WorkspaceService::new(store.clone(), profiles.clone()),
             agents.clone(),
             profiles.clone(),

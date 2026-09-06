@@ -73,6 +73,7 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
                 Arc::new(ExhaustedRevision(InMemorySandboxStore::default())),
                 profiles.clone(),
                 SandboxPolicy::default(),
+                Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
             ),
             WorkspaceService::new(store.clone(), profiles),
             HierarchyReadService::new(store),

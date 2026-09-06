@@ -22,6 +22,11 @@ struct TokenResponse {
     expires_in: Option<u64>,
 }
 
+#[derive(Deserialize)]
+struct TokenError {
+    error: String,
+}
+
 pub(super) async fn refresh_if_needed(
     auth: &AuthState,
     state: &mut SubjectAuthState,
@@ -63,9 +68,22 @@ pub(super) async fn refresh_if_needed(
         .await
         .map_err(|error| StoreError::Unavailable(format!("refresh provider token: {error}")))?;
     if !response.status().is_success() {
-        state.tokens = None;
-        auth.store.put_subject(state.clone()).await?;
-        return Ok(());
+        let status = response.status();
+        // Only an explicit rejected grant revokes local custody; provider outages
+        // and client configuration failures must not destroy renewable authority.
+        if matches!(status.as_u16(), 400 | 401)
+            && response
+                .json::<TokenError>()
+                .await
+                .is_ok_and(|body| body.error == "invalid_grant")
+        {
+            state.tokens = None;
+            auth.store.put_subject(state.clone()).await?;
+            return Ok(());
+        }
+        return Err(StoreError::Unavailable(
+            "provider token refresh was not accepted".into(),
+        ));
     }
     let body = response.json::<TokenResponse>().await.map_err(|error| {
         StoreError::Malformed(format!("provider refresh response is invalid: {error}"))
@@ -75,15 +93,29 @@ pub(super) async fn refresh_if_needed(
             "provider refresh response contains an empty access token".into(),
         ));
     }
+    if body
+        .refresh_token
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+        || body.expires_in == Some(0)
+    {
+        return Err(StoreError::Malformed(
+            "provider refresh response contains unusable token metadata".into(),
+        ));
+    }
     let retained_refresh = body
         .refresh_token
         .map(SecretValue::new)
         .or_else(|| state.tokens.as_ref()?.refresh_token.clone());
+    let expires_at = SystemTime::now()
+        .checked_add(Duration::from_secs(
+            body.expires_in.unwrap_or(DEFAULT_TOKEN_LIFETIME.as_secs()),
+        ))
+        .ok_or_else(|| StoreError::Malformed("provider refresh lifetime is out of range".into()))?;
     state.tokens = Some(DurableSubjectTokens {
         access_token: SecretValue::new(body.access_token),
         refresh_token: retained_refresh,
-        expires_at: SystemTime::now()
-            + Duration::from_secs(body.expires_in.unwrap_or(DEFAULT_TOKEN_LIFETIME.as_secs())),
+        expires_at,
     });
     auth.store.put_subject(state.clone()).await
 }

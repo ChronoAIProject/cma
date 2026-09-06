@@ -39,7 +39,12 @@ pub(crate) async fn conversation_fixture_with_registry<R: AgentRuntimeRegistry +
     let reads = AgentReadService::new(store.clone(), Arc::new(TestResources));
     let operations = AgentOperationService::new(store.clone(), registry);
     let context = AgentContextService::new(
-        SandboxService::new(store.clone(), profiles.clone(), SandboxPolicy::default()),
+        SandboxService::new(
+            store.clone(),
+            profiles.clone(),
+            SandboxPolicy::default(),
+            Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+        ),
         WorkspaceService::new(store.clone(), profiles.clone()),
         agents,
         profiles,

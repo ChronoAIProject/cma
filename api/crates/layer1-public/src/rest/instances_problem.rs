@@ -6,6 +6,7 @@ use layer2_core::sandbox::{
 use super::{problem_document, problem_response};
 
 pub(crate) enum HierarchyProblem {
+    CredentialSetupRequired,
     Forbidden,
     SandboxNotFound,
     WorkspaceNotFound,
@@ -28,6 +29,7 @@ pub(crate) enum HierarchyProblem {
 impl HierarchyProblem {
     pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
+            SandboxServiceError::CredentialSetupRequired => Self::CredentialSetupRequired,
             SandboxServiceError::Forbidden => Self::Forbidden,
             SandboxServiceError::ProfileNotFound => Self::ProfileNotFound("sandbox"),
             SandboxServiceError::NotFound => Self::SandboxNotFound,
@@ -121,6 +123,13 @@ impl HierarchyProblem {
 impl IntoResponse for HierarchyProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code, fields) = match self {
+            Self::CredentialSetupRequired => (
+                StatusCode::CONFLICT,
+                "sandbox-credential-setup-required",
+                super::problems::SANDBOX_CREDENTIAL_SETUP_DETAIL,
+                "sandbox_credential_setup_required".to_owned(),
+                vec![],
+            ),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "forbidden",

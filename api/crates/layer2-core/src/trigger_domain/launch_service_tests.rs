@@ -24,6 +24,7 @@ use crate::{
 
 use super::*;
 
+mod credential_prerequisite;
 mod request_validation;
 mod trust;
 
@@ -207,6 +208,7 @@ impl Fixture {
             self.contexts.clone(),
             self.broker.clone(),
             Arc::new(policy),
+            Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
         )
     }
 
@@ -1709,6 +1711,7 @@ async fn fixture_with_workspace_configuration(
         contexts.clone(),
         broker.clone(),
         policy,
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     Fixture {
         profiles,

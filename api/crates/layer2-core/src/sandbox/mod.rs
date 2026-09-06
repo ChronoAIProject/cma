@@ -23,6 +23,7 @@ mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
 mod credential;
+mod credential_prerequisite;
 mod error;
 mod event;
 mod execution;
@@ -111,6 +112,10 @@ pub use conversation_recorder::{
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxSignInState,
+};
+pub use credential_prerequisite::{
+    FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
+    SandboxCredentialPrerequisiteError,
 };
 pub use error::SandboxModelError;
 pub use event::{

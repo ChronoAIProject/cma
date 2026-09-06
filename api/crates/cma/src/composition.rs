@@ -94,10 +94,20 @@ impl ControlPlaneComposition {
             config.baseline_services.clone(),
         ));
         let adapter = production_adapter(config, Arc::clone(&stores.checkpoint_objects)).await?;
+        let auth = AuthState::with_store_and_nyxid_public_url(
+            config.auth_mode.clone(),
+            Some(SignInRecords {
+                users: Arc::clone(&users),
+                activity: Arc::clone(&activity),
+            }),
+            stores.auth.clone(),
+            config.nyxid_public_url.clone(),
+        );
         let sandbox_service = SandboxService::with_policy_source(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
             sandbox_policy.clone(),
+            auth.clone(),
         );
         let workspace_service = WorkspaceService::new(
             stores.sandbox_model.clone(),
@@ -131,15 +141,6 @@ impl ControlPlaneComposition {
             Arc::clone(&operations),
         );
         let recorder = ActivityRecorder::new(Arc::clone(&activity));
-        let auth = AuthState::with_store_and_nyxid_public_url(
-            config.auth_mode.clone(),
-            Some(SignInRecords {
-                users: Arc::clone(&users),
-                activity: Arc::clone(&activity),
-            }),
-            stores.auth.clone(),
-            config.nyxid_public_url.clone(),
-        );
         let profile_authoring = ProfileAuthoringService::new(
             authoring_bounds,
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
@@ -217,6 +218,7 @@ impl ControlPlaneComposition {
             .map_err(|error| format!("service connection broker is not usable: {error}"))?,
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
+            credentials: auth.clone(),
             stores: Arc::clone(&stores),
             directory: users,
             settings: Arc::clone(&settings),

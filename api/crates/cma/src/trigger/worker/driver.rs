@@ -406,6 +406,10 @@ fn connection_error(error: ServiceConnectionError) -> LaunchResourceError {
 
 fn sandbox_service_error(error: SandboxServiceError) -> LaunchResourceError {
     match error {
+        SandboxServiceError::CredentialSetupRequired => LaunchResourceError::terminal(
+            "sandbox_credential_setup_required",
+            "Sign in to CMA with this same account before starting a new Launch",
+        ),
         SandboxServiceError::Unavailable(_) => dependency_unavailable(),
         SandboxServiceError::InvalidState => LaunchResourceError::retryable(
             "sandbox_state_changed",
@@ -472,3 +476,7 @@ fn resource_corrupt() -> LaunchResourceError {
         "Stored launch resource data is not usable",
     )
 }
+
+#[cfg(test)]
+#[path = "driver_credential_tests.rs"]
+mod credential_prerequisite_tests;

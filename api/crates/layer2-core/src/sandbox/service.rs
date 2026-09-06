@@ -11,7 +11,9 @@ use crate::profiles::SandboxProfileRef;
 use crate::{now_rfc3339, Caller, Capability, StoreError};
 
 use super::store::{Page, PageRequest, SandboxServiceStore, SandboxStoreError, SandboxTransaction};
-use super::{Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus};
+use super::{
+    Sandbox, SandboxCredentialPrerequisite, SandboxEvent, SandboxEventKind, SandboxStatus,
+};
 
 pub const DEFAULT_OWNER_SANDBOX_LIMIT: u16 = 3;
 pub const DEFAULT_VISITOR_SANDBOX_LIMIT: u16 = 1;
@@ -87,6 +89,8 @@ impl Default for SandboxPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxServiceError {
+    #[error("renewable Sandbox credential setup is required")]
+    CredentialSetupRequired,
     #[error("forbidden")]
     Forbidden,
     #[error("sandbox profile not found")]
@@ -116,6 +120,7 @@ pub enum SandboxServiceError {
 impl SandboxServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::CredentialSetupRequired => "sandbox_credential_setup_required",
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "sandbox_profile_not_found",
             Self::NotFound => "sandbox_not_found",
@@ -138,21 +143,28 @@ pub struct SandboxService {
     pub(super) workspace_profiles: Arc<dyn WorkspaceProfileStore>,
     pub(super) profile_uses: Arc<dyn ProfileUseRecorder>,
     pub(super) policy: Arc<dyn SandboxPolicySource>,
+    pub(super) credentials: Arc<dyn SandboxCredentialPrerequisite>,
 }
 
 impl SandboxService {
-    pub fn new<S, P>(store: Arc<S>, profiles: Arc<P>, policy: SandboxPolicy) -> Arc<Self>
+    pub fn new<S, P>(
+        store: Arc<S>,
+        profiles: Arc<P>,
+        policy: SandboxPolicy,
+        credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Arc<Self>
     where
         S: SandboxServiceStore + 'static,
         P: SandboxProfileStore + WorkspaceProfileStore + ProfileUseRecorder + 'static,
     {
-        Self::with_policy_source(store, profiles, Arc::new(policy))
+        Self::with_policy_source(store, profiles, Arc::new(policy), credentials)
     }
 
     pub fn with_policy_source<S, P>(
         store: Arc<S>,
         profiles: Arc<P>,
         policy: Arc<dyn SandboxPolicySource>,
+        credentials: Arc<dyn SandboxCredentialPrerequisite>,
     ) -> Arc<Self>
     where
         S: SandboxServiceStore + 'static,
@@ -167,6 +179,7 @@ impl SandboxService {
             workspace_profiles,
             profile_uses,
             policy,
+            credentials,
         )
     }
 
@@ -176,6 +189,7 @@ impl SandboxService {
         workspace_profiles: Arc<dyn WorkspaceProfileStore>,
         profile_uses: Arc<dyn ProfileUseRecorder>,
         policy: Arc<dyn SandboxPolicySource>,
+        credentials: Arc<dyn SandboxCredentialPrerequisite>,
     ) -> Arc<Self>
     where
         S: SandboxServiceStore + 'static,
@@ -186,6 +200,7 @@ impl SandboxService {
             workspace_profiles,
             profile_uses,
             policy,
+            credentials,
         })
     }
 

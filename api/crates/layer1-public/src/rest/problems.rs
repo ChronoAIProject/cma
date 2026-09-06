@@ -11,6 +11,8 @@ use utoipa::ToSchema;
 
 use super::PROBLEM_BASE;
 
+pub(super) const SANDBOX_CREDENTIAL_SETUP_DETAIL: &str = "Sign in to CMA through /auth/login with this same account to authorize renewable Sandbox credentials. For keyed operations, retry this refused command with a new Idempotency-Key after sign-in succeeds.";
+
 /// RFC 9457 problem details returned by REST refusals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ProblemDocument {
@@ -137,6 +139,10 @@ impl IntoResponse for Problem {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "credential_prerequisite_problem_tests.rs"]
+mod credential_prerequisite_tests;
 
 #[cfg(test)]
 mod tests {
