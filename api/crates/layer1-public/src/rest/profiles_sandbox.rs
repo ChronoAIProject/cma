@@ -143,6 +143,7 @@ pub(super) async fn create(
             validate_workspace_references(
                 &command_state,
                 &owner,
+                None,
                 &profile.draft.workspace_profiles,
             )
             .await?;
@@ -247,6 +248,7 @@ pub(super) async fn update(
             validate_workspace_references(
                 &command_state,
                 &owner,
+                Some(&profile.id),
                 &profile.draft.workspace_profiles,
             )
             .await?;
@@ -289,6 +291,7 @@ pub(super) async fn publish(
             validate_workspace_references(
                 &command_state,
                 &owner,
+                Some(&profile.id),
                 &profile.draft.workspace_profiles,
             )
             .await?;

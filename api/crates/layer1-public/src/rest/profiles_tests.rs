@@ -27,6 +27,8 @@ mod defaults_tests;
 mod public_revision_tests;
 #[path = "profiles_public_values_tests.rs"]
 mod public_values_tests;
+#[path = "profiles_reference_tests.rs"]
+mod reference_tests;
 
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);

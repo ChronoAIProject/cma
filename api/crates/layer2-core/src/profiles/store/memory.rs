@@ -1,5 +1,9 @@
 use async_trait::async_trait;
 
+use crate::profiles::references::{
+    reference_is_readable, verify_agent_revision, verify_workspace_revision,
+};
+
 use super::*;
 
 macro_rules! save_draft {
@@ -45,7 +49,7 @@ macro_rules! retire_profile {
 impl AgentProfileStore for InMemoryProfileStore {
     async fn create_agent_profile(&self, profile: AgentProfile) -> Result<(), ProfileStoreError> {
         profile.validate()?;
-        if profile.draft_version == 0 {
+        if profile.draft_version == 0 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
         let mut state = self.lock();
@@ -163,7 +167,7 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
         profile: WorkspaceProfile,
     ) -> Result<(), ProfileStoreError> {
         profile.validate()?;
-        if profile.draft_version == 0 {
+        if profile.draft_version == 0 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
         let mut state = self.lock();
@@ -205,16 +209,24 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
         if profile.draft_version != expected || profile.retired_at.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
+        let inherited = super::reference_memory::workspace_authority(&state, profile)?;
         for reference in &profile.draft.agent_profiles {
             let revision = state
                 .agent_revisions
                 .get(&(reference.id.clone(), reference.revision))
                 .ok_or(ProfileStoreError::ReferenceUnavailable)?;
+            verify_agent_revision(reference, revision)?;
             let referenced = state
                 .agents
                 .get(&revision.profile_id)
                 .ok_or(ProfileStoreError::ReferenceUnavailable)?;
-            if !readable(&profile.owner, &referenced.owner, referenced.visibility) {
+            if !reference_is_readable(
+                &profile.owner,
+                &referenced.owner,
+                referenced.visibility,
+                referenced.retired_at.is_some(),
+                inherited.contains_agent(reference),
+            ) {
                 return Err(ProfileStoreError::ReferenceUnavailable);
             }
         }
@@ -303,7 +315,7 @@ impl SandboxProfileStore for InMemoryProfileStore {
         &self,
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError> {
-        if profile.draft_version == 0 {
+        if profile.draft_version == 0 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
         let mut state = self.lock();
@@ -370,16 +382,24 @@ impl SandboxProfileStore for InMemoryProfileStore {
             return Err(ProfileStoreError::Conflict);
         }
         let mut workspace_names = BTreeSet::new();
+        let inherited = super::reference_memory::sandbox_authority(&state, &profile)?;
         for reference in &profile.draft.workspace_profiles {
             let revision = state
                 .workspace_revisions
                 .get(&(reference.id.clone(), reference.revision))
                 .ok_or(ProfileStoreError::ReferenceUnavailable)?;
+            verify_workspace_revision(reference, revision)?;
             let referenced = state
                 .workspaces
                 .get(&revision.profile_id)
                 .ok_or(ProfileStoreError::ReferenceUnavailable)?;
-            if !readable(&profile.owner, &referenced.owner, referenced.visibility) {
+            if !reference_is_readable(
+                &profile.owner,
+                &referenced.owner,
+                referenced.visibility,
+                referenced.retired_at.is_some(),
+                inherited.contains_workspace(reference),
+            ) {
                 return Err(ProfileStoreError::ReferenceUnavailable);
             }
             if !workspace_names.insert(revision.content.name.as_str()) {

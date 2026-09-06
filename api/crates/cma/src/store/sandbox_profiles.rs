@@ -1,14 +1,11 @@
 //! Mongo persistence for sandbox profile drafts and revisions.
 
-use std::collections::BTreeSet;
-
 use layer2_core::ids::{SandboxProfileId, SubjectId};
 use layer2_core::profiles::store::{
     ProfilePage, ProfilePageRequest, ProfileStoreError, SandboxProfileStore,
 };
 use layer2_core::profiles::{
-    content_digest, ProfileCapacityBounds, ProfileError, SandboxProfile, SandboxProfileRevision,
-    WorkspaceProfileRevision,
+    content_digest, ProfileCapacityBounds, SandboxProfile, SandboxProfileRevision,
 };
 use mongodb::bson::Document;
 
@@ -16,8 +13,8 @@ use super::profile_documents::{
     decode_record, profile_document, revision_document, save_draft, ProfileDocumentInput,
 };
 use super::profiles::{
-    advance_publication, get_profile, get_revision, list_profiles, list_revisions,
-    readable_revision, retire_profile, PublishError,
+    advance_publication, get_profile, get_revision, list_profiles, list_revisions, retire_profile,
+    PublishError,
 };
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, nullable, record_bson,
@@ -88,30 +85,13 @@ pub(super) fn read_revision(
     Ok(revision)
 }
 
-fn read_workspace_reference(
-    document: &Document,
-    profile_id: &str,
-    revision: u32,
-) -> Result<WorkspaceProfileRevision, ProfileStoreError> {
-    let stored: WorkspaceProfileRevision = decode_record(document)?;
-    if stored.profile_id.as_str() != profile_id
-        || stored.revision != revision
-        || content_digest(&stored.content)? != stored.digest
-    {
-        return Err(ProfileStoreError::Corrupt(
-            "referenced workspace profile revision is inconsistent".into(),
-        ));
-    }
-    Ok(stored)
-}
-
 #[async_trait::async_trait]
 impl SandboxProfileStore for MongoProfileStore {
     async fn create_sandbox_profile(
         &self,
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError> {
-        if profile.draft_version != 1 {
+        if profile.draft_version != 1 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
         self.sandbox_profiles
@@ -201,44 +181,9 @@ impl SandboxProfileStore for MongoProfileStore {
                     return Err(error);
                 }
             };
-            let mut names = BTreeSet::new();
-            let mut reference_error = None;
-            for reference in &profile.draft.workspace_profiles {
-                match readable_revision(
-                    &self.workspace_revisions,
-                    &self.workspace_profiles,
-                    reference.id.as_str(),
-                    reference.revision,
-                    &profile.owner,
-                    &mut session,
-                )
-                .await
-                {
-                    Ok(document) => match read_workspace_reference(
-                        &document,
-                        reference.id.as_str(),
-                        reference.revision,
-                    ) {
-                        Ok(revision) if names.insert(revision.content.name.clone()) => {}
-                        Ok(_) => {
-                            reference_error = Some(PublishError::Domain(
-                                ProfileError::new("duplicate_workspace_name", "workspace_profiles")
-                                    .into(),
-                            ));
-                            break;
-                        }
-                        Err(error) => {
-                            reference_error = Some(PublishError::Domain(error));
-                            break;
-                        }
-                    },
-                    Err(error) => {
-                        reference_error = Some(error);
-                        break;
-                    }
-                }
-            }
-            if let Some(error) = reference_error {
+            if let Err(error) =
+                super::profile_references::sandbox_references(self, &profile, &mut session).await
+            {
                 let _ = session.abort_transaction().await;
                 match error {
                     PublishError::Domain(error) => return Err(error),

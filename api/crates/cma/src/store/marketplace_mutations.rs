@@ -1,7 +1,5 @@
 use layer2_core::ids::{AgentProfileId, SandboxProfileId, SubjectId, WorkspaceProfileId};
-use layer2_core::profiles::store::{
-    AgentProfileStore, ProfileStoreError, SandboxProfileStore, WorkspaceProfileStore,
-};
+use layer2_core::profiles::store::ProfileStoreError;
 use layer2_core::profiles::{
     AgentProfile, AgentProfileRef, ForkedProfile, MarketplaceError, MarketplaceLocator,
     ProfileVisibility, SandboxProfile, SandboxProfileRef, WorkspaceProfile, WorkspaceProfileRef,
@@ -35,9 +33,14 @@ async fn create_agent_fork(
         updated_at: now,
         retired_at: None,
     };
-    AgentProfileStore::create_agent_profile(store, profile.clone())
+    profile
+        .validate()
+        .map_err(|error| store_error(error.into()))?;
+    store
+        .agent_profiles
+        .insert_one(super::agent_profiles::document(&profile).map_err(store_error)?)
         .await
-        .map_err(store_error)?;
+        .map_err(|error| MarketplaceError::Unavailable(error.to_string()))?;
     Ok(ForkedProfile::Agent(profile))
 }
 
@@ -62,9 +65,14 @@ async fn create_workspace_fork(
         updated_at: now,
         retired_at: None,
     };
-    WorkspaceProfileStore::create_workspace_profile(store, profile.clone())
+    profile
+        .validate()
+        .map_err(|error| store_error(error.into()))?;
+    store
+        .workspace_profiles
+        .insert_one(super::workspace_profiles::document(&profile).map_err(store_error)?)
         .await
-        .map_err(store_error)?;
+        .map_err(|error| MarketplaceError::Unavailable(error.to_string()))?;
     Ok(ForkedProfile::Workspace(profile))
 }
 
@@ -89,9 +97,11 @@ async fn create_sandbox_fork(
         updated_at: now,
         retired_at: None,
     };
-    SandboxProfileStore::create_sandbox_profile(store, profile.clone())
+    store
+        .sandbox_profiles
+        .insert_one(super::sandbox_profiles::document(&profile).map_err(store_error)?)
         .await
-        .map_err(store_error)?;
+        .map_err(|error| MarketplaceError::Unavailable(error.to_string()))?;
     Ok(ForkedProfile::Sandbox(profile))
 }
 

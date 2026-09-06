@@ -278,12 +278,9 @@ fn next_revision<I: Clone + Eq + std::hash::Hash, R>(
         .ok_or(ProfileStoreError::Conflict)
 }
 
-fn readable(owner: &SubjectId, profile_owner: &SubjectId, visibility: ProfileVisibility) -> bool {
-    owner == profile_owner || visibility == ProfileVisibility::Public
-}
-
 mod admin_memory;
 mod marketplace_memory;
 mod marketplace_public_values;
 mod marketplace_support;
 mod memory;
+mod reference_memory;
