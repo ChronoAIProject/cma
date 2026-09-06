@@ -12,6 +12,7 @@ use super::{
     agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies},
     credential::SandboxCredentialController,
     live_agent_stopper::DurableLiveAgentStopper,
+    reconciliation::SandboxReconciler,
     scheduler::SandboxScheduler,
     worker::{
         CheckpointObjectPurger, SandboxWorker, SandboxWorkerConfig, SandboxWorkerDependencies,
@@ -43,6 +44,7 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
     agent: SandboxScheduler,
@@ -53,6 +55,13 @@ impl SandboxLifecycleComposition {
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
     ) -> Self {
+        let reconciliation = SandboxReconciler::new(
+            dependencies.store.clone(),
+            Arc::clone(&dependencies.adapter),
+            Arc::clone(&dependencies.policy),
+            config.deployment_id.clone(),
+            config.runtime_version.clone(),
+        );
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let workspace_worker = WorkspaceWorker::new(
@@ -106,13 +115,23 @@ impl SandboxLifecycleComposition {
         );
 
         Self {
+            reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             agent: SandboxScheduler::for_agents(agent_worker),
         }
     }
 
+    pub(crate) async fn initialize(&self) -> Result<(), String> {
+        self.reconciliation
+            .initialize(std::time::SystemTime::now())
+            .await
+            .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
+    }
+
     pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+        let signal = shutdown.subscribe();
+        shutdown.push(self.reconciliation.spawn(signal));
         for scheduler in [self.sandbox, self.workspace, self.agent] {
             let signal = shutdown.subscribe();
             shutdown.push(scheduler.spawn(signal));

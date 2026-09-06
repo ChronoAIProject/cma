@@ -72,6 +72,7 @@ async fn serve() -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .map_err(|error| format!("cannot bind {}: {error}", config.bind))?;
+    composition.sandbox_lifecycle.initialize().await?;
     tracing::info!(
         bind = %config.bind,
         public_url = %config.public_url,

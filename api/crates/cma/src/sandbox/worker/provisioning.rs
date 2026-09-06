@@ -25,10 +25,12 @@ impl SandboxWorker {
             Ok(handle) => {
                 let mut next = sandbox;
                 next.runtime = Some(RuntimeBinding {
+                    provision_generation: Some(1),
                     runtime_id: handle.0,
                     runtime_version: self.config.runtime_version.clone(),
                     bound_at: rfc3339_at(now),
                 });
+                next.lifecycle.runtime_generation_high_water = 1;
                 self.advance_status(
                     next,
                     SandboxStatus::Installing,
@@ -52,30 +54,6 @@ impl SandboxWorker {
         let Some(runtime) = runtime(&sandbox) else {
             return self.fail_corrupt_claim(sandbox, now).await;
         };
-        let attached = match self
-            .dependencies
-            .adapter
-            .provision(&sandbox_spec(&sandbox, &self.config.deployment_id))
-            .await
-        {
-            Ok(handle) if handle == runtime => handle,
-            Ok(_) => {
-                return self
-                    .handle_failure(
-                        sandbox,
-                        WorkerFailure::terminal_security(
-                            "provider reattached a different runtime identity",
-                        ),
-                        now,
-                    )
-                    .await
-            }
-            Err(error) => {
-                return self
-                    .handle_failure(sandbox, adapter_failure(error), now)
-                    .await
-            }
-        };
         let request = InstallRequest::new(
             format!("sandbox-install-v1:{}", sandbox.id),
             sandbox.profile.content.software_install_commands.clone(),
@@ -83,7 +61,7 @@ impl SandboxWorker {
         match self
             .dependencies
             .adapter
-            .run_install(&attached, &request)
+            .run_install(&runtime, &request)
             .await
         {
             Ok(_) => {

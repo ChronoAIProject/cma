@@ -43,6 +43,8 @@ use super::worker::{
 
 mod checkpoint_consistency_tests;
 mod lifecycle_queue_tests;
+mod lifecycle_recovery_tests;
+mod reconciliation_tests;
 
 const PROFILE_TIME: &str = "2026-09-05T00:00:00Z";
 
@@ -794,7 +796,7 @@ async fn worker_pauses_and_revives_a_sandbox_from_its_held_checkpoint() {
         ))
         .await
         .unwrap();
-    for _ in 0..7 {
+    for _ in 0..8 {
         harness.run(&paused.id, revive_at).await;
     }
     let revived = harness.stored(&paused.id).await;
@@ -848,7 +850,7 @@ async fn worker_rotates_an_image_through_checkpoint_restore_without_installing_a
         .await
         .unwrap();
 
-    for _ in 0..10 {
+    for _ in 0..11 {
         harness.run(&active.id, rotation_at).await;
     }
     let rotated = harness.stored(&active.id).await;
@@ -878,13 +880,32 @@ async fn restarted_worker_reattaches_before_install_with_a_fence_independent_ide
     let created = harness.create().await;
     let now = start_time(&created);
     harness.run(&created.id, now).await;
-    let installing = harness.stored(&created.id).await;
+    let mut installing = harness.stored(&created.id).await;
+    let revision = installing.revision;
+    installing.runtime.as_mut().unwrap().runtime_version =
+        CodexSandboxSpec::default().deployment.image.uri;
+    installing.revision += 1;
+    harness
+        .store
+        .save_sandbox(revision, installing.clone())
+        .await
+        .unwrap();
     let expected_runtime = installing.runtime.as_ref().unwrap().runtime_id.clone();
 
     let restarted: Arc<dyn SandboxAdapter> = Arc::new(CodexAdapter::with_backend(
         harness.backend.clone(),
         CodexSandboxSpec::default(),
     ));
+    crate::sandbox::reconciliation::SandboxReconciler::new(
+        harness.store.clone(),
+        restarted.clone(),
+        Arc::new(harness.policy.clone()),
+        "test".into(),
+        "runtime-v2".into(),
+    )
+    .initialize(now)
+    .await
+    .unwrap();
     let worker = harness.worker_with_adapter("restarted-worker", restarted);
     assert!(worker.run_one(&created.id, now).await.unwrap());
 

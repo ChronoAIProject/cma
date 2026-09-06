@@ -243,6 +243,7 @@ fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
         status: SandboxStatus::Active,
         failure: None,
         runtime: Some(RuntimeBinding {
+            provision_generation: Some(1),
             runtime_id: format!("runtime-{id}"),
             runtime_version: version.into(),
             bound_at: NOW.into(),
@@ -261,7 +262,10 @@ fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
             max_workspaces: 4,
             max_agents_per_workspace: 4,
         },
-        lifecycle: Default::default(),
+        lifecycle: layer2_core::sandbox::SandboxLifecycleState {
+            runtime_generation_high_water: 1,
+            ..Default::default()
+        },
         last_activity_at: NOW.into(),
         created_at: NOW.into(),
         updated_at: NOW.into(),
