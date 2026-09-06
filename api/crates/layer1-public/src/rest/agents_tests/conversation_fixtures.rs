@@ -6,6 +6,12 @@ use super::*;
 
 pub(crate) async fn conversation_fixture(
 ) -> (crate::AgentConversationState, Arc<InMemorySandboxStore>) {
+    conversation_fixture_with_registry(TestRegistry::new()).await
+}
+
+pub(crate) async fn conversation_fixture_with_registry<R: AgentRuntimeRegistry + 'static>(
+    registry: Arc<R>,
+) -> (crate::AgentConversationState, Arc<InMemorySandboxStore>) {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let sandbox = sandbox("sbx_route", OWNER);
@@ -24,7 +30,6 @@ pub(crate) async fn conversation_fixture(
     store.create_sandbox(sandbox).await.unwrap();
     store.create_workspace(workspace).await.unwrap();
     publish_profile(&profiles).await;
-    let registry = TestRegistry::new();
     let agents = AgentService::new(
         store.clone(),
         profiles.clone(),

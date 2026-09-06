@@ -381,4 +381,4 @@ pub(crate) async fn runtime_inventory(
 
 #[cfg(test)]
 #[path = "admin_tests.rs"]
-mod tests;
+pub(super) mod tests;

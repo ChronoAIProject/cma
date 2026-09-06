@@ -28,10 +28,9 @@ use layer2_core::sandbox::{
 };
 use layer2_core::trigger_domain::{
     BrokerHandoff, BrokerHandoffState, InMemoryLaunchStore, InMemoryTriggerStore,
-    LaunchContextReader, LaunchPolicy, LaunchResolutionError, LaunchService,
-    ServiceConnectionBroker, ServiceConnectionError, ServiceConnectionMetadata,
-    ServiceConnectionService, ServiceRequirement, ServiceRequirementState, TriggerProfileResolver,
-    TriggerService,
+    LaunchContextReader, LaunchResolutionError, LaunchService, ServiceConnectionBroker,
+    ServiceConnectionError, ServiceConnectionMetadata, ServiceConnectionService,
+    ServiceRequirement, ServiceRequirementState, TriggerProfileResolver, TriggerService,
 };
 use layer2_core::{
     rfc3339_at, AgentId, AgentProfileId, Authorization, Capability, DirectoryQuery, OperationClaim,
@@ -43,9 +42,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use super::super::{
-    trigger_router, LaunchQuota, LaunchQuotaError, LaunchQuotaPermit, LaunchQuotaRefusal,
-    TriggerRoutesState,
+    trigger_assets_router, trigger_router, LaunchQuota, LaunchQuotaError, LaunchQuotaPermit,
+    LaunchQuotaRefusal, TriggerAssetsState, TriggerRoutesState,
 };
+use super::store_faults::{FaultLaunchStore, FaultPolicy, FaultTriggerStore};
 use crate::AuthenticatedSubject;
 
 pub const OWNER: &str = "publisher";
@@ -60,12 +60,16 @@ type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 struct MemoryOperationStore {
     records: Mutex<HashMap<OperationKey, OperationRecord>>,
     reservations: AtomicUsize,
+    failure: Mutex<Option<Result<OperationReservation, StoreError>>>,
 }
 
 #[async_trait]
 impl OperationStore for MemoryOperationStore {
     async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError> {
         self.reservations.fetch_add(1, Ordering::SeqCst);
+        if let Some(result) = self.failure.lock().unwrap().as_ref() {
+            return result.clone();
+        }
         let key = (
             claim.subject().to_string(),
             claim.operation().to_owned(),
@@ -168,6 +172,7 @@ struct BrokerState {
     observed: BrokerHandoffState,
     metadata: Vec<ServiceConnectionMetadata>,
     metadata_reads: usize,
+    failure: Option<ServiceConnectionError>,
 }
 
 impl Default for BrokerState {
@@ -178,6 +183,7 @@ impl Default for BrokerState {
             observed: BrokerHandoffState::Pending,
             metadata: Vec::new(),
             metadata_reads: 0,
+            failure: None,
         }
     }
 }
@@ -188,6 +194,16 @@ pub struct StubBroker {
 }
 
 impl StubBroker {
+    pub fn fail(&self, error: ServiceConnectionError) {
+        self.state.lock().unwrap().failure = Some(error);
+    }
+
+    fn check(&self) -> Result<(), ServiceConnectionError> {
+        match self.state.lock().unwrap().failure.as_ref() {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
     pub fn set_metadata(&self, metadata: Vec<ServiceConnectionMetadata>) {
         self.state.lock().unwrap().metadata = metadata;
     }
@@ -216,6 +232,7 @@ impl ServiceConnectionBroker for StubBroker {
         _owner: &SubjectId,
         _services: &[ServiceId],
     ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        self.check()?;
         let mut state = self.state.lock().unwrap();
         state.metadata_reads += 1;
         Ok(state.metadata.clone())
@@ -226,6 +243,7 @@ impl ServiceConnectionBroker for StubBroker {
         _owner: &SubjectId,
         services: &[ServiceId],
     ) -> Result<Vec<ServiceRequirement>, ServiceConnectionError> {
+        self.check()?;
         let state = self.state.lock().unwrap().requirement;
         Ok(services
             .iter()
@@ -240,6 +258,7 @@ impl ServiceConnectionBroker for StubBroker {
         _service: &ServiceId,
         intent_id: &str,
     ) -> Result<BrokerHandoff, ServiceConnectionError> {
+        self.check()?;
         self.state.lock().unwrap().create_calls += 1;
         Ok(BrokerHandoff {
             external_id: format!("external-{intent_id}"),
@@ -254,6 +273,7 @@ impl ServiceConnectionBroker for StubBroker {
         _external_id: &str,
         _service: &ServiceId,
     ) -> Result<BrokerHandoffState, ServiceConnectionError> {
+        self.check()?;
         Ok(self.state.lock().unwrap().observed)
     }
 }
@@ -263,6 +283,7 @@ struct QuotaState {
     reserve_calls: AtomicUsize,
     settlements: Mutex<Vec<bool>>,
     refuse: AtomicBool,
+    unavailable: AtomicBool,
 }
 
 #[derive(Clone, Default)]
@@ -271,6 +292,9 @@ pub struct TestQuota {
 }
 
 impl TestQuota {
+    pub fn unavailable(&self) {
+        self.state.unavailable.store(true, Ordering::SeqCst);
+    }
     pub fn refuse(&self) {
         self.state.refuse.store(true, Ordering::SeqCst);
     }
@@ -291,6 +315,9 @@ impl LaunchQuota for TestQuota {
         _caller: &layer2_core::Caller,
     ) -> Result<LaunchQuotaPermit, LaunchQuotaError> {
         self.state.reserve_calls.fetch_add(1, Ordering::SeqCst);
+        if self.state.unavailable.load(Ordering::SeqCst) {
+            return Err(LaunchQuotaError::Unavailable);
+        }
         if self.state.refuse.load(Ordering::SeqCst) {
             return Err(LaunchQuotaError::ResourceQuota(
                 LaunchQuotaRefusal::visitor_launches(
@@ -311,17 +338,32 @@ pub struct TestApp {
     pub contexts: Arc<StubContext>,
     pub broker: Arc<StubBroker>,
     pub quota: Arc<TestQuota>,
+    pub definitions: Arc<FaultTriggerStore>,
+    pub launches: Arc<FaultLaunchStore>,
+    pub policy: Arc<FaultPolicy>,
     operations: Arc<MemoryOperationStore>,
     pub agent_snapshot: AgentProfileSnapshot,
 }
 
 impl TestApp {
     pub async fn new() -> Self {
+        Self::configured(false).await
+    }
+
+    pub async fn private_profiles() -> Self {
+        Self::configured(true).await
+    }
+
+    async fn configured(private_profiles: bool) -> Self {
         let profiles = Arc::new(InMemoryProfileStore::default());
-        let (agent, _workspace, _sandbox) = publish_profiles(&profiles).await;
+        let (agent, _workspace, _sandbox) = publish_profiles(&profiles, private_profiles).await;
         let resolver: Arc<dyn TriggerProfileResolver> = profiles.clone();
-        let definitions = Arc::new(InMemoryTriggerStore::new(resolver));
-        let launches = Arc::new(InMemoryLaunchStore::new(definitions.clone()));
+        let memory_definitions = Arc::new(InMemoryTriggerStore::new(resolver));
+        let launches = Arc::new(FaultLaunchStore::new(Arc::new(InMemoryLaunchStore::new(
+            memory_definitions.clone(),
+        ))));
+        let definitions = Arc::new(FaultTriggerStore::new(memory_definitions));
+        let policy = Arc::new(FaultPolicy::default());
         let contexts = Arc::new(StubContext::default());
         let broker = Arc::new(StubBroker::default());
         broker.set_requirement(ServiceRequirementState::Missing);
@@ -336,10 +378,7 @@ impl TestApp {
             launches.clone(),
             contexts.clone(),
             broker.clone(),
-            Arc::new(LaunchPolicy {
-                enabled: true,
-                orchestration_paused: false,
-            }),
+            policy.clone(),
         );
         let connections = ServiceConnectionService::new(launches.clone(), broker.clone());
         let operations = Arc::new(MemoryOperationStore::default());
@@ -352,12 +391,22 @@ impl TestApp {
             connections,
             operation_store,
             launch_quota,
+        ))
+        .merge(trigger_assets_router(
+            TriggerAssetsState::new(definitions.clone(), "https://cma.example")
+                .expect("fixture public origin is valid"),
+        ))
+        .merge(crate::agui::launch_companion_router(
+            crate::agui::LaunchCompanionState::new(launches.clone()),
         ));
         Self {
             router,
             contexts,
             broker,
             quota,
+            definitions,
+            launches,
+            policy,
             operations,
             agent_snapshot: AgentProfileSnapshot::from(&agent),
         }
@@ -365,6 +414,10 @@ impl TestApp {
 
     pub fn operation_reservations(&self) -> usize {
         self.operations.reservations.load(Ordering::SeqCst)
+    }
+
+    pub fn fail_operations(&self, failure: Result<OperationReservation, StoreError>) {
+        *self.operations.failure.lock().unwrap() = Some(failure);
     }
 
     pub fn set_existing_agent(&self, trigger_id: &str) {
@@ -558,6 +611,7 @@ pub fn launch_body(start_if_ready: bool) -> Value {
 
 async fn publish_profiles(
     profiles: &InMemoryProfileStore,
+    private: bool,
 ) -> (
     layer2_core::profiles::AgentProfileRevision,
     WorkspaceProfileRef,
@@ -570,7 +624,11 @@ async fn publish_profiles(
             owner: SubjectId::new(OWNER),
             name: "Route Agent".into(),
             description: String::new(),
-            visibility: ProfileVisibility::Public,
+            visibility: if private {
+                ProfileVisibility::Private
+            } else {
+                ProfileVisibility::Public
+            },
             forked_from: None,
             uses_count: 0,
             draft: AgentProfileContent {

@@ -1,0 +1,883 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "auth-trusted-session",
+      "operation": "GET /auth/session",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": true,
+          "subject": "contract-developer",
+          "capabilities": [
+            "create_sandbox",
+            "use_own_sandboxes",
+            "delete_own_sandbox",
+            "manage_own_profiles",
+            "publish_triggers",
+            "launch_triggers"
+          ],
+          "visitor": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-trusted-login-return",
+      "operation": "GET /auth/login",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login?return_to=%2Ft%2Fpublic-contract%2Fplacement-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "location": "/t/public-contract/placement-contract"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-trusted-register-return",
+      "operation": "GET /auth/login",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login?screen=register&return_to=%2Fagents%2Fagt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "location": "/agents/agt_contract"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-trusted-callback",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback",
+        "headers": {}
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "location": "/"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-trusted-logout",
+      "operation": "GET /auth/logout",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/logout",
+        "headers": {}
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "location": "/",
+          "set-cookie": "cma_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-trusted-signup-closed",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [],
+          "email_signup": false,
+          "invite_code_required": true,
+          "register_available": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-anonymous-session",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-expired-browser-session",
+      "operation": "GET /auth/session",
+      "scenario": "auth_expired",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-visitor-session",
+      "operation": "GET /auth/session",
+      "scenario": "auth_visitor",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": true,
+          "subject": "contract-visitor",
+          "capabilities": [
+            "use_own_sandboxes",
+            "delete_own_sandbox",
+            "launch_triggers"
+          ],
+          "visitor": true,
+          "display_name": "Contract Visitor",
+          "email": "visitor@example.test"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-visitor-logout",
+      "operation": "GET /auth/logout",
+      "scenario": "auth_visitor",
+      "request": {
+        "method": "GET",
+        "path": "/auth/logout",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "location": "/",
+          "set-cookie": "cma_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-revoked-browser-session",
+      "operation": "GET /auth/session",
+      "scenario": "auth_visitor",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-missing-authority-denied",
+      "operation": "GET /auth/session",
+      "scenario": "auth_missing_authority",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": true,
+          "subject": "contract-visitor",
+          "capabilities": [],
+          "visitor": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-available",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_available",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [
+            "github",
+            "google"
+          ],
+          "email_signup": true,
+          "invite_code_required": false,
+          "register_available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-available-cached",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_available",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [
+            "github",
+            "google"
+          ],
+          "email_signup": true,
+          "invite_code_required": false,
+          "register_available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-unavailable",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [],
+          "email_signup": false,
+          "invite_code_required": true,
+          "register_available": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-unavailable-cached",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [],
+          "email_signup": false,
+          "invite_code_required": true,
+          "register_available": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-malformed",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_malformed",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [],
+          "email_signup": false,
+          "invite_code_required": true,
+          "register_available": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-malformed-cached",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_malformed",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [],
+          "email_signup": false,
+          "invite_code_required": true,
+          "register_available": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-disabled",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [],
+          "email_signup": false,
+          "invite_code_required": false,
+          "register_available": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-disabled-cached",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [],
+          "email_signup": false,
+          "invite_code_required": false,
+          "register_available": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-ambient_failure",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_ambient_failure",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [
+            "github",
+            "google"
+          ],
+          "email_signup": true,
+          "invite_code_required": false,
+          "register_available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-signup-ambient_failure-cached",
+      "operation": "GET /auth/signup-options",
+      "scenario": "auth_options_ambient_failure",
+      "request": {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=300",
+          "content-type": "application/json"
+        },
+        "body": {
+          "social_providers": [
+            "github",
+            "google"
+          ],
+          "email_signup": true,
+          "invite_code_required": false,
+          "register_available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-session-store-unavailable",
+      "operation": "GET /auth/session",
+      "scenario": "auth_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Authentication authority is temporarily unavailable.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-login-store-unavailable",
+      "operation": "GET /auth/login",
+      "scenario": "auth_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Authentication authority is temporarily unavailable.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-callback-store-unavailable",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Authentication authority is temporarily unavailable.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-logout-store-unavailable",
+      "operation": "GET /auth/logout",
+      "scenario": "auth_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/auth/logout",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Authentication authority is temporarily unavailable.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-login-open-redirect-refused",
+      "operation": "GET /auth/login",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login?return_to=https%3A%2F%2Fexternal.example.test",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "title": "Invalid sign-in return target",
+          "detail": "Only a canonical CMA workflow path may be restored."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-login-retired-return-refused",
+      "operation": "GET /auth/login",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login?return_to=%2Fchats%2Fretired",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "title": "Invalid sign-in return target",
+          "detail": "Only a canonical CMA workflow path may be restored."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-login-discovery-unavailable",
+      "operation": "GET /auth/login",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "title": "Identity provider unavailable",
+          "detail": "The identity provider could not complete this request.",
+          "code": "identity_discovery_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-callback-missing-state",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "title": "Sign-in could not be completed",
+          "detail": "Start a new sign-in attempt.",
+          "code": "login_state_missing",
+          "login_url": "/auth/login"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-callback-missing-binding",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback?state=contract-state",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json",
+          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        },
+        "body": {
+          "title": "Sign-in could not be completed",
+          "detail": "Start a new sign-in attempt.",
+          "code": "login_browser_binding_missing",
+          "login_url": "/auth/login"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-callback-invalid-state",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback?state=contract-state",
+        "headers": {
+          "cookie": "cma_login_contract-state=contract-binding"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json",
+          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        },
+        "body": {
+          "title": "Sign-in could not be completed",
+          "detail": "Start a new sign-in attempt.",
+          "code": "login_state_invalid",
+          "login_url": "/auth/login"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-callback-expired-state",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_callback_expired",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback?state=contract-state",
+        "headers": {
+          "cookie": "cma_login_contract-state=contract-binding"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json",
+          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        },
+        "body": {
+          "title": "Sign-in could not be completed",
+          "detail": "Start a new sign-in attempt.",
+          "code": "login_state_expired",
+          "login_url": "/auth/login"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-callback-cancelled",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_callback_cancelled",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback?state=contract-state&error=access_denied",
+        "headers": {
+          "cookie": "cma_login_contract-state=contract-binding"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json",
+          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        },
+        "body": {
+          "title": "Sign-in could not be completed",
+          "detail": "Start a new sign-in attempt.",
+          "code": "login_cancelled",
+          "login_url": "/auth/login"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-callback-code-missing",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_callback_code_missing",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback?state=contract-state",
+        "headers": {
+          "cookie": "cma_login_contract-state=contract-binding"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json",
+          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        },
+        "body": {
+          "title": "Sign-in could not be completed",
+          "detail": "Start a new sign-in attempt.",
+          "code": "login_code_missing",
+          "login_url": "/auth/login"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

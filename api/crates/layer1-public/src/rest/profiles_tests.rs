@@ -155,9 +155,54 @@ fn fixture_with_scanner(
     marketplace_enabled: bool,
     scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
 ) -> (Router, Arc<MemorySettingsStore>) {
+    fixture_with_ports(
+        marketplace_enabled,
+        scanner,
+        Arc::new(MemoryOperationStore::default()),
+    )
+}
+
+pub(super) fn fixture_with_public_scanner(
+    scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
+) -> Router {
+    fixture_with_scanner(true, scanner).0
+}
+
+pub(super) fn fixture_with_operations(operations: Arc<dyn OperationStore>) -> Router {
+    fixture_with_ports(true, Arc::new(["SECRET_TOKEN".into()]), operations).0
+}
+
+pub(super) fn fixture_with_profile_store<S>(profiles: Arc<S>) -> Router
+where
+    S: layer2_core::profiles::AgentProfileStore
+        + layer2_core::profiles::WorkspaceProfileStore
+        + layer2_core::profiles::SandboxProfileStore
+        + layer2_core::profiles::MarketplaceStore
+        + 'static,
+{
+    profiles_router(ProfilesState::new(
+        profiles,
+        Arc::new(MemoryOperationStore::default()),
+        settings_service(Arc::new(MemorySettingsStore::new(true))),
+        ProfileRoutePolicy {
+            capacity_bounds: ProfileCapacityBounds {
+                min_cpu_millis: 250,
+                max_cpu_millis: 4_000,
+                min_memory_mib: 256,
+                max_memory_mib: 8_192,
+            },
+            public_value_scanner: Arc::new(["SECRET_TOKEN".into()]),
+        },
+    ))
+}
+
+fn fixture_with_ports(
+    marketplace_enabled: bool,
+    scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
+    operations: Arc<dyn OperationStore>,
+) -> (Router, Arc<MemorySettingsStore>) {
     let settings = Arc::new(MemorySettingsStore::new(marketplace_enabled));
     let profiles = Arc::new(InMemoryProfileStore::default());
-    let operations: Arc<dyn OperationStore> = Arc::new(MemoryOperationStore::default());
     let router = profiles_router(ProfilesState::new(
         profiles,
         operations,
@@ -175,7 +220,7 @@ fn fixture_with_scanner(
     (router, settings)
 }
 
-fn fixture(marketplace_enabled: bool) -> Router {
+pub(super) fn fixture(marketplace_enabled: bool) -> Router {
     fixture_with_settings(marketplace_enabled).0
 }
 

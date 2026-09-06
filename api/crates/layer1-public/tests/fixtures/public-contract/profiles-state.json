@@ -1,0 +1,1549 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "state-agent-create",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-create"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_created": "/created_at",
+        "agent_profile_id": "/id",
+        "agent_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "state-agent-create-invalid",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-create-invalid"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-invalid",
+          "title": "profile invalid",
+          "status": 422,
+          "detail": "The profile does not satisfy its validation contract.",
+          "code": "profile_invalid",
+          "field": "model",
+          "reason": "invalid_model"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-update-invalid",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/$agent_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-update-invalid"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-invalid",
+          "title": "profile invalid",
+          "status": 422,
+          "detail": "The profile does not satisfy its validation contract.",
+          "code": "profile_invalid",
+          "field": "model",
+          "reason": "invalid_model"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-stale-publish",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-stale-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-version-conflict",
+          "title": "profile version conflict",
+          "status": 409,
+          "detail": "The profile draft changed before this operation completed.",
+          "code": "profile_version_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-publish",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-publish"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "agp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_published": "/published_at"
+      }
+    },
+    {
+      "id": "state-workspace-create",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-create"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [
+              {
+                "id": "$agent_profile_id",
+                "revision": 1
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [
+              {
+                "id": "agp_11111111111111111111111111111111",
+                "revision": 1
+              }
+            ]
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_created": "/created_at",
+        "workspace_profile_id": "/id",
+        "workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "state-workspace-create-invalid",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-create-invalid"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "../outside"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-invalid",
+          "title": "profile invalid",
+          "status": 422,
+          "detail": "The profile does not satisfy its validation contract.",
+          "code": "profile_invalid",
+          "field": "name",
+          "reason": "invalid_workspace_name"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-create-reference",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-create-reference"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [
+              {
+                "id": "agp_99999999999999999999999999999999",
+                "revision": 1
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-reference-invalid",
+          "title": "profile reference invalid",
+          "status": 422,
+          "detail": "A referenced profile revision is unavailable to this owner.",
+          "code": "profile_reference_invalid",
+          "path": "content.agent_profiles[0]"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-update-invalid",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-update-invalid"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "../outside"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-invalid",
+          "title": "profile invalid",
+          "status": 422,
+          "detail": "The profile does not satisfy its validation contract.",
+          "code": "profile_invalid",
+          "field": "name",
+          "reason": "invalid_workspace_name"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-update-reference",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-update-reference"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [
+              {
+                "id": "agp_99999999999999999999999999999999",
+                "revision": 1
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-reference-invalid",
+          "title": "profile reference invalid",
+          "status": 422,
+          "detail": "A referenced profile revision is unavailable to this owner.",
+          "code": "profile_reference_invalid",
+          "path": "content.agent_profiles[0]"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-stale-publish",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-stale-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-version-conflict",
+          "title": "profile version conflict",
+          "status": 409,
+          "detail": "The profile draft changed before this operation completed.",
+          "code": "profile_version_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-publish",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-publish"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "wkp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [
+              {
+                "id": "agp_11111111111111111111111111111111",
+                "revision": 1
+              }
+            ]
+          },
+          "digest": "6501727ec40a11c68ffa5ebaa2944c7bcacdcfed6c62d1c39b92af41ac113f0a",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_published": "/published_at",
+        "workspace_state_digest": "/digest"
+      }
+    },
+    {
+      "id": "state-sandbox-create",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-create"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [
+              {
+                "id": "$workspace_profile_id",
+                "revision": 1
+              }
+            ],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [
+              {
+                "id": "wkp_11111111111111111111111111111111",
+                "revision": 1
+              }
+            ],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_created": "/created_at",
+        "sandbox_profile_id": "/id",
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "state-sandbox-create-invalid",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-create-invalid"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 0,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-invalid",
+          "title": "profile invalid",
+          "status": 422,
+          "detail": "The profile does not satisfy its validation contract.",
+          "code": "profile_invalid",
+          "field": "cpu_millis",
+          "reason": "cpu_out_of_bounds"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-create-reference",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-create-reference"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [
+              {
+                "id": "wkp_99999999999999999999999999999999",
+                "revision": 1
+              }
+            ],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-reference-invalid",
+          "title": "profile reference invalid",
+          "status": 422,
+          "detail": "A referenced profile revision is unavailable to this owner.",
+          "code": "profile_reference_invalid",
+          "path": "content.workspace_profiles[0]"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-update-invalid",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-update-invalid"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 0,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-invalid",
+          "title": "profile invalid",
+          "status": 422,
+          "detail": "The profile does not satisfy its validation contract.",
+          "code": "profile_invalid",
+          "field": "cpu_millis",
+          "reason": "cpu_out_of_bounds"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-update-reference",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-update-reference"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [
+              {
+                "id": "wkp_99999999999999999999999999999999",
+                "revision": 1
+              }
+            ],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-reference-invalid",
+          "title": "profile reference invalid",
+          "status": 422,
+          "detail": "A referenced profile revision is unavailable to this owner.",
+          "code": "profile_reference_invalid",
+          "path": "content.workspace_profiles[0]"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-stale-publish",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-stale-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-version-conflict",
+          "title": "profile version conflict",
+          "status": 409,
+          "detail": "The profile draft changed before this operation completed.",
+          "code": "profile_version_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-publish",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-publish"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "sbp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [
+              {
+                "id": "wkp_11111111111111111111111111111111",
+                "revision": 1
+              }
+            ],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "digest": "59c2e8c6cda922e6fef4cb01da7fcc348a2224e9580dba66ef00fde2300177cb",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_published": "/published_at",
+        "sandbox_state_digest": "/digest"
+      }
+    },
+    {
+      "id": "state-retire-reference-agent",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/$agent_profile_id/retire",
+        "headers": {
+          "idempotency-key": "state-retire-reference-agent"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "retired_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "b5e94ac09e0cdb09812702455b001fd6333416c0a48d8b9252028d380c9beec1",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_retired": "/retired_at",
+        "agent_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "state-workspace-publish-reference",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-publish-reference"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-reference-invalid",
+          "title": "profile reference invalid",
+          "status": 422,
+          "detail": "A referenced profile revision is unavailable to this owner.",
+          "code": "profile_reference_invalid",
+          "path": "content.agent_profiles[0]"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-retire-reference-workspace",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/$workspace_profile_id/retire",
+        "headers": {
+          "idempotency-key": "state-retire-reference-workspace"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": [
+              {
+                "id": "agp_11111111111111111111111111111111",
+                "revision": 1
+              }
+            ]
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "retired_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "6501727ec40a11c68ffa5ebaa2944c7bcacdcfed6c62d1c39b92af41ac113f0a",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "workspace_retired": "/retired_at",
+        "workspace_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "state-sandbox-publish-reference",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-publish-reference"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-reference-invalid",
+          "title": "profile reference invalid",
+          "status": 422,
+          "detail": "A referenced profile revision is unavailable to this owner.",
+          "code": "profile_reference_invalid",
+          "path": "content.workspace_profiles[0]"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-marketplace-disabled-agent-read",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "marketplace_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles/agp_default",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/marketplace-disabled",
+          "title": "marketplace disabled",
+          "status": 503,
+          "detail": "The profile marketplace is disabled by the operator.",
+          "code": "marketplace_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-marketplace-disabled-agent-fork",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "marketplace_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/agp_default/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-marketplace-disabled-agent-fork"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/marketplace-disabled",
+          "title": "marketplace disabled",
+          "status": 503,
+          "detail": "The profile marketplace is disabled by the operator.",
+          "code": "marketplace_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-marketplace-disabled-workspace-read",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "marketplace_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/workspace-profiles/wkp_default",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/marketplace-disabled",
+          "title": "marketplace disabled",
+          "status": 503,
+          "detail": "The profile marketplace is disabled by the operator.",
+          "code": "marketplace_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-marketplace-disabled-workspace-fork",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "marketplace_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/workspace-profiles/wkp_default/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-marketplace-disabled-workspace-fork"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/marketplace-disabled",
+          "title": "marketplace disabled",
+          "status": 503,
+          "detail": "The profile marketplace is disabled by the operator.",
+          "code": "marketplace_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-marketplace-disabled-sandbox-read",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "marketplace_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/sandbox-profiles/sbp_default",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/marketplace-disabled",
+          "title": "marketplace disabled",
+          "status": 503,
+          "detail": "The profile marketplace is disabled by the operator.",
+          "code": "marketplace_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-marketplace-disabled-sandbox-fork",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "marketplace_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/sandbox-profiles/sbp_default/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-marketplace-disabled-sandbox-fork"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/marketplace-disabled",
+          "title": "marketplace disabled",
+          "status": 503,
+          "detail": "The profile marketplace is disabled by the operator.",
+          "code": "marketplace_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "profiles_scanner_unavailable-create",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_scanner_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profiles_scanner_unavailable-create"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_created": "/created_at",
+        "sandbox_profile_id": "/id",
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "profiles_scanner_unavailable-private-publish",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_scanner_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profiles_scanner_unavailable-private-publish"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "sbp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_published": "/published_at"
+      }
+    },
+    {
+      "id": "profiles_scanner_unavailable-visibility",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_scanner_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profiles_scanner_unavailable-visibility"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-secret-scanner-unavailable",
+          "title": "profile secret scanner unavailable",
+          "status": 503,
+          "detail": "Public profile values could not be checked. Publication was refused.",
+          "code": "profile_secret_scanner_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "profiles_scanner_later_unavailable-create",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_scanner_later_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profiles_scanner_later_unavailable-create"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "visibility": "private",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_created": "/created_at",
+        "sandbox_profile_id": "/id",
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "profiles_scanner_later_unavailable-private-publish",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_scanner_later_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profiles_scanner_later_unavailable-private-publish"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "profile_id": "sbp_11111111111111111111111111111111",
+          "revision": 1,
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+          "published_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_published": "/published_at"
+      }
+    },
+    {
+      "id": "profiles_scanner_later_unavailable-visibility",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_scanner_later_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profiles_scanner_later_unavailable-visibility"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbp_11111111111111111111111111111111",
+          "owner": "contract-owner",
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "visibility": "public",
+          "uses_count": 0,
+          "draft": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          },
+          "draft_version": 1,
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "latest_revision": {
+            "revision": 1,
+            "digest": "20dc38c62330973a724a459d5f24dd41efc29ccae179e74ef7504ba9d479ce89",
+            "published_at": "2026-09-05T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "profiles_scanner_later_unavailable-public-publish",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_scanner_later_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/$sandbox_profile_id/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "profiles_scanner_later_unavailable-public-publish"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-secret-scanner-unavailable",
+          "title": "profile secret scanner unavailable",
+          "status": 503,
+          "detail": "Public profile values could not be checked. Publication was refused.",
+          "code": "profile_secret_scanner_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

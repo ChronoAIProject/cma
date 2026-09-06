@@ -1,0 +1,1725 @@
+{
+  "version": 1,
+  "openapi_operations": 110,
+  "operations": {
+    "DELETE /api/v1/agents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_stopped",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/agents.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/agents.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/agents.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "DELETE /api/v1/responses/{response_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "responses_field_unsupported"
+      ],
+      "unsupported_success": "api/crates/layer1-public/src/responses/retrieve.rs# Delete always calls field_refusal(delete); durable Agent history cannot be deleted as a separate Response resource."
+    },
+    "DELETE /api/v1/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_invalid_state",
+        "sandbox_not_found",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "DELETE /api/v1/triggers/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "trigger_already_published",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "DELETE /api/v1/workspaces/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "workspace_has_live_agents",
+        "workspace_not_found"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "GET /api/v1/admin/activity": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/runtime-inventory": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "operator_service_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/admin/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "settings_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_instance_query",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_instance_query",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/resources": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "agent_resources_unsupported",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/terminal": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/pty/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "capability_unsupported",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ],
+      "unsupported_success": "api/crates/layer1-public/src/pty/mod.rs# The terminal handler always returns capability_unsupported after successful ownership lookup; terminal attachment is not implemented."
+    },
+    "GET /api/v1/agents/{id}/transcript": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agui/agents/{id}/sandbox": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "thread_not_found"
+      ]
+    },
+    "GET /api/v1/agui/capabilities": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": []
+    },
+    "GET /api/v1/agui/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "cursor_beyond_end",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_replay_query",
+        "not_authenticated",
+        "thread_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_deleted",
+        "agent_turn_failed",
+        "failed",
+        "input_not_written",
+        "operator",
+        "owner",
+        "runtime_lost",
+        "sandbox_retired"
+      ],
+      "opaque_protocol_failures": "api/crates/layer1-public/src/agui/events.rs# RUN_ERROR propagates arbitrary persisted TurnFailed.failure.class values; fixed agent_turn_failed and input_not_written have Core producers. Stopped.reason is restricted by Core AgentStopReason to owner, operator, runtime_lost, sandbox_retired, and failed, and Deleted maps to fixed agent_deleted. Opaque external failure classes are not a finite catalog.",
+      "unreachable_protocol_failures": {
+        "provisioning_timeout": "api/crates/layer1-public/src/agui/replay.rs# GET replay does not perform readiness admission; provisioning_timeout belongs to initiating requests, not durable AgentLog projection.",
+        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection."
+      }
+    },
+    "GET /api/v1/agui/launches/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "cursor_beyond_end",
+        "invalid_launch_event_query",
+        "launch_not_found",
+        "launch_store_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/conformance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": []
+    },
+    "GET /api/v1/conversations/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "conversation_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/conversations/{id}/items": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "conversation_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "responses_field_unsupported"
+      ]
+    },
+    "GET /api/v1/defaults": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/defaults.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "defaults_unavailable",
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_launch_cursor",
+        "launch_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "launch_not_found",
+        "launch_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "cursor_beyond_end",
+        "invalid_launch_event_query",
+        "launch_not_found",
+        "launch_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches/{id}/requirements": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "launch_not_found",
+        "launch_service_unavailable",
+        "not_authenticated",
+        "service_connection_unavailable"
+      ]
+    },
+    "GET /api/v1/marketplace/{kind}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_profile_page",
+        "marketplace_disabled",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ],
+      "unreachable_problems": {
+        "forbidden": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Marketplace GET handlers require authentication and enabled settings, but no management capability."
+      }
+    },
+    "GET /api/v1/marketplace/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "marketplace_disabled",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ],
+      "unreachable_problems": {
+        "forbidden": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Marketplace GET handlers require authentication and enabled settings, but no management capability."
+      }
+    },
+    "GET /api/v1/responses/{response_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "response_not_found",
+        "responses_field_unsupported"
+      ],
+      "required_protocol_failures": [
+        "agent_turn_failed",
+        "input_not_written"
+      ],
+      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/retrieve.rs# project maps arbitrary persisted TurnFailed.failure.class into ResponseObject.error.code with status=failed; retrieval remains HTTP200. Fixed agent_turn_failed and input_not_written have Core producers, but opaque external failure classes are not a finite catalog.",
+      "unreachable_protocol_failures": {
+        "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
+        "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
+        "operator": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Operator is not converted into a ResponseError.",
+        "owner": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Owner is not converted into a ResponseError.",
+        "provisioning_timeout": "api/crates/layer1-public/src/responses/stream.rs# provisioning_timeout creates a failure frame during POST readiness admission; retrieval has no readiness wait or persisted timeout failure.",
+        "response_unavailable": "api/crates/layer1-public/src/responses/retrieve.rs# GET read failures return typed HTTP refusals; fixed response_unavailable is only produced by the admitted POST stream.",
+        "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
+        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError."
+      }
+    },
+    "GET /api/v1/sandbox-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandbox-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandbox-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandbox-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "invalid_page",
+        "invalid_query",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "invalid_page",
+        "not_authenticated",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/workspaces": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/service-connections/{handoff_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/service_connections.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "service_connection_changed",
+        "service_connection_not_found",
+        "service_connection_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_trigger_page",
+        "not_authenticated",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/public/{public_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/public/{public_id}/badge.svg": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "badge-unavailable",
+        "invalid-badge-query"
+      ]
+    },
+    "GET /api/v1/triggers/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/embed": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_embed_query",
+        "not_authenticated",
+        "trigger_embed_not_found",
+        "trigger_not_published",
+        "trigger_store_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/placements": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_placement_query",
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/stats": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspaces/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "workspace_not_found"
+      ]
+    },
+    "GET /api/v1/workspaces/{id}/worktrees": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worktrees.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "workspace_not_found"
+      ]
+    },
+    "GET /api/v1/worktrees/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worktrees.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "worktree_not_found"
+      ]
+    },
+    "GET /auth/callback": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "login_browser_binding_missing",
+        "login_cancelled",
+        "login_code_missing",
+        "login_state_expired",
+        "login_state_invalid",
+        "login_state_missing",
+        "store_failed"
+      ]
+    },
+    "GET /auth/login": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "identity_discovery_failed",
+        "store_failed"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/cma/src/auth/flow.rs# Invalid return destinations use the redirect-flow error document without a code field."
+      }
+    },
+    "GET /auth/logout": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "store_failed"
+      ]
+    },
+    "GET /auth/session": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "store_failed"
+      ],
+      "non_problem_statuses": {
+        "401": "api/crates/cma/src/auth/session_routes.rs# Unsigned browser session is an authentication-state response with authenticated false, not a problem document."
+      }
+    },
+    "GET /auth/signup-options": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": []
+    },
+    "PATCH /api/v1/admin/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_request",
+        "malformed_json",
+        "not_authenticated",
+        "request_too_large",
+        "settings_conflict",
+        "settings_unavailable",
+        "unsupported_media_type"
+      ]
+    },
+    "POST /api/v1/admin/profiles/{kind}/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable",
+        "profile_not_found",
+        "profile_protected"
+      ]
+    },
+    "POST /api/v1/admin/sandboxes/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "POST /api/v1/admin/settings/reset": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_request",
+        "malformed_json",
+        "not_authenticated",
+        "request_too_large",
+        "settings_conflict",
+        "settings_unavailable",
+        "unsupported_media_type"
+      ]
+    },
+    "POST /api/v1/admin/triggers/pause": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/triggers/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable"
+      ]
+    },
+    "POST /api/v1/agent-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agent-profiles/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/profiles_agent.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/profiles_agent.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/profiles_agent.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/agent-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner."
+      }
+    },
+    "POST /api/v1/agents/{id}/approvals/{request_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_approval_not_pending",
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/input": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_message_queue_full",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/interrupt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/agent_operate.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/agent_operate.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/agent_operate.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/agents/{id}/steer": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/stop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_ready",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agui/run": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_approval_not_pending",
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_json",
+        "invalid_run_request",
+        "not_authenticated",
+        "provisioning_timeout",
+        "thread_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_turn_failed",
+        "failed",
+        "operator",
+        "owner",
+        "runtime_lost",
+        "sandbox_retired"
+      ],
+      "opaque_protocol_failures": "api/crates/layer1-public/src/agui/events.rs# RUN_ERROR propagates arbitrary persisted TurnFailed.failure.class values. Stopped.reason is restricted by Core AgentStopReason to owner, operator, runtime_lost, sandbox_retired, and failed. Opaque external failure classes are not a finite catalog.",
+      "unreachable_protocol_failures": {
+        "agent_deleted": "api/crates/layer1-public/src/agui/replay.rs# Following::queue ends an admitted run at its first terminal turn or Stopped event. Core deletion requires Stopped or Failed, and startup failure cannot follow run admission, so a later Deleted event cannot be the admitted run's terminal outcome.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_operation_settlement.rs# Pre-write rejection persists input_not_written but returns RuntimeUnavailable before POST opens its stream; later GET replay can project the durable TurnFailed.",
+        "provisioning_timeout": "api/crates/layer1-public/src/agui/run.rs# Readiness timeout is a typed HTTP refusal before POST opens its stream, not an AG-UI RUN_ERROR.",
+        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection."
+      }
+    },
+    "POST /api/v1/conversations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_limit_reached",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_context_override",
+        "invalid_json",
+        "not_authenticated",
+        "provisioning_timeout",
+        "responses_field_unsupported",
+        "sandbox_not_found",
+        "sandbox_required",
+        "workspace_not_found"
+      ]
+    },
+    "POST /api/v1/launches/{id}/cancel": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "launch_changed",
+        "launch_not_found",
+        "launch_not_startable",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/launches.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/launches.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/launches.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/launches/{id}/start": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_launch_request",
+        "json_content_type_required",
+        "launch_changed",
+        "launch_not_found",
+        "launch_not_startable",
+        "launch_requirements_not_met",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "triggers_disabled",
+        "trust_confirmation_mismatch"
+      ]
+    },
+    "POST /api/v1/marketplace/{kind}/{id}/fork": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "marketplace_disabled",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_ready",
+        "conversation_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_json",
+        "not_authenticated",
+        "previous_response_id_conflict",
+        "response_in_progress",
+        "responses_field_unsupported"
+      ],
+      "required_protocol_failures": [
+        "agent_turn_failed",
+        "provisioning_timeout",
+        "response_unavailable"
+      ],
+      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/stream.rs# Admitted streams project arbitrary persisted TurnFailed.failure.class through retrieve::project and emit fixed provisioning_timeout or response_unavailable for readiness and following-read failures. Opaque external failure classes are not a finite catalog.",
+      "unreachable_protocol_failures": {
+        "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
+        "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_operation_settlement.rs# Pre-write rejection persists input_not_written but returns RuntimeUnavailable before POST opens its stream; later GET retrieval can project the durable TurnFailed.",
+        "operator": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Operator is not converted into a ResponseError.",
+        "owner": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Owner is not converted into a ResponseError.",
+        "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
+        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError."
+      }
+    },
+    "POST /api/v1/responses/{response_id}/cancel": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "responses_field_unsupported"
+      ],
+      "unsupported_success": "api/crates/layer1-public/src/responses/retrieve.rs# Cancel always calls field_refusal(background); background execution and cancellation are outside the supported Responses subset."
+    },
+    "POST /api/v1/sandbox-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/sandbox-profiles/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/sandbox-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_secret_scanner_unavailable",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_sandbox_name",
+        "invalid_trust_confirmation",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_limit_reached",
+        "sandbox_name_conflict",
+        "sandbox_profile_not_found",
+        "store_failed",
+        "trust_confirmation_required"
+      ],
+      "unreachable_problems": {
+        "invalid_sandbox_origin": "api/crates/layer1-public/src/rest/sandboxes.rs# create constructs SandboxOrigin::Manual; callers cannot submit an origin, and service_creation.rs validates Manual successfully before the manual admission path.",
+        "sandbox_origin_conflict": "api/crates/layer2-core/src/sandbox/service_creation.rs# REST create supplies Manual origin and does not call create_for_launch or reconcile_launch_replay, where conflicting frozen Launch-origin requests produce this error."
+      }
+    },
+    "POST /api/v1/sandboxes/{id}/pause": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_lifecycle_unavailable",
+        "sandbox_not_active",
+        "sandbox_not_found",
+        "store_failed",
+        "stored_sandbox_corrupt"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/sandboxes/{id}/revive": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_lifecycle_unavailable",
+        "sandbox_not_found",
+        "sandbox_not_paused",
+        "store_failed",
+        "stored_sandbox_corrupt"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/sandboxes/{id}/workspaces": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_trust_confirmation",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_not_ready",
+        "store_failed",
+        "trust_confirmation_required",
+        "workspace_limit_reached",
+        "workspace_name_conflict",
+        "workspace_not_found",
+        "workspace_profile_invalid",
+        "workspace_profile_not_found"
+      ],
+      "unreachable_problems": {
+        "invalid_workspace_origin": "api/crates/layer2-core/src/sandbox/workspace_service.rs# REST calls create, which constructs WorkspaceOrigin::Manual and WorkspaceAdmissionKind::Manual; InvalidOrigin validates the separate create_for_launch launch_id argument.",
+        "workspace_origin_conflict": "api/crates/layer2-core/src/sandbox/store/memory/workspace_lifecycle.rs# REST WorkspaceService::create always admits Manual origin/kind: origin_matches_sandbox_profile returns true for Manual, and origin replay conflicts are checked only for non-Manual admission. The production workspace_admission.rs applies the same branches."
+      }
+    },
+    "POST /api/v1/service-connections": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/service_connections.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_service_connection",
+        "json_content_type_required",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "service_connection_changed",
+        "service_connection_intent_reused",
+        "service_connection_not_found",
+        "service_connection_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/triggers": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "description_too_long",
+        "first_message_too_long",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_profile_reference",
+        "invalid_title",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "signup_hint_too_long",
+        "store_failed",
+        "trigger_already_exists",
+        "trigger_service_unavailable"
+      ]
+    },
+    "POST /api/v1/triggers/public/{public_id}/launches": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_launch_request",
+        "json_content_type_required",
+        "launch_changed",
+        "launch_quota_unavailable",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "resource_quota",
+        "store_failed",
+        "trigger_not_found",
+        "trigger_repeat_choice_required",
+        "trigger_retired",
+        "triggers_disabled"
+      ]
+    },
+    "POST /api/v1/triggers/{id}/placements": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_placement_url",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "placement_label_too_long",
+        "placement_source_already_exists",
+        "placement_url_too_long",
+        "store_failed",
+        "too_many_placements",
+        "trigger_not_found",
+        "trigger_retired",
+        "trigger_service_unavailable"
+      ]
+    },
+    "POST /api/v1/triggers/{id}/placements/{placement_id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "placement_not_found",
+        "store_failed",
+        "trigger_not_found",
+        "trigger_retired",
+        "trigger_service_unavailable"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/trigger_placements.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/trigger_placements.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/trigger_placements.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/triggers/{id}/publish": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# The publish handler calls the real TriggerService and projects typed Core-store errors. trigger_revision_overflow is emitted by Trigger::publish in layer2-core/src/trigger_domain/mod.rs when its retained-revision count cannot increment as u32; the corpus proves this exact Core-port error projection, not dynamic execution of a four-billion-entry model boundary.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "trigger_draft_changed",
+        "trigger_not_found",
+        "trigger_reference_not_public",
+        "trigger_reference_unavailable",
+        "trigger_retired",
+        "trigger_revision_overflow",
+        "trigger_service_unavailable"
+      ]
+    },
+    "POST /api/v1/triggers/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "trigger_not_found",
+        "trigger_not_published",
+        "trigger_service_unavailable"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/workspace-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/workspace-profiles/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/profiles_workspace.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/profiles_workspace.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/profiles_workspace.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/workspace-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner."
+      }
+    },
+    "POST /api/v1/workspaces/{id}/agents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_limit_reached",
+        "agent_profile_not_found",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "workspace_not_found",
+        "workspace_not_ready"
+      ],
+      "unreachable_problems": {
+        "agent_operation_in_flight": "api/crates/layer2-core/src/sandbox/agent_service.rs# REST create supplies Manual origin and generates a fresh AgentId, yielding manual:{agent_id}; admission creation-key reuse is reachable through repeated Trigger origin, not a manual request under the generated-identity invariant. Agent input/control concurrency remains independently required on its operations."
+      }
+    },
+    "PUT /api/v1/admin/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_request",
+        "malformed_json",
+        "not_authenticated",
+        "request_too_large",
+        "settings_conflict",
+        "settings_unavailable",
+        "unsupported_media_type"
+      ]
+    },
+    "PUT /api/v1/agent-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/agent-profiles/{id}/visibility": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_public_refused",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner."
+      }
+    },
+    "PUT /api/v1/sandbox-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/sandbox-profiles/{id}/visibility": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_public_refused",
+        "profile_secret_scanner_unavailable",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_reference_invalid": "api/crates/layer1-public/src/rest/profiles_problem.rs# Visibility dependency refusals are projected through from_marketplace as profile_public_refused, not the draft reference-validation problem."
+      }
+    },
+    "PUT /api/v1/triggers/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "description_too_long",
+        "first_message_too_long",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_profile_reference",
+        "invalid_title",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "signup_hint_too_long",
+        "store_failed",
+        "trigger_draft_changed",
+        "trigger_not_found",
+        "trigger_retired",
+        "trigger_service_unavailable",
+        "trigger_version_overflow"
+      ]
+    },
+    "PUT /api/v1/workspace-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/workspace-profiles/{id}/visibility": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_public_refused",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner.",
+        "profile_reference_invalid": "api/crates/layer1-public/src/rest/profiles_problem.rs# Visibility dependency refusals are projected through from_marketplace as profile_public_refused, not the draft reference-validation problem."
+      }
+    }
+  }
+}
