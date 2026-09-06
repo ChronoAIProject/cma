@@ -1,4 +1,7 @@
-use layer3_adapter::{WorkspaceReceipt, WorkspaceRequest, WorkspaceSource};
+use layer3_adapter::{
+    WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
+    WorkspaceSource,
+};
 
 use super::*;
 use crate::config::RuntimeConfig;
@@ -70,6 +73,90 @@ fn scan(config: &RuntimeConfig) -> Result<Vec<Pending>> {
 fn cleanup(config: &RuntimeConfig) {
     let _ = std::fs::remove_dir_all(&config.home);
     let _ = std::fs::remove_dir_all(&config.state_root);
+}
+
+#[test]
+fn every_durable_removal_state_blocks_new_and_recovering_preparations() {
+    for status in [
+        Status::Started,
+        Status::Completed,
+        Status::Failed,
+        Status::Indeterminate,
+    ] {
+        let config = config(&format!("remove-barrier-{status:?}"));
+        let prepare = request();
+        let prepare_ticket = begin_ticket(&config, &prepare);
+        let prepare_path = prepare_ticket.path.clone();
+        let remove = WorkspaceRemoveRequest::new(
+            "workspace:wks_journal:remove:v1",
+            "wks_journal",
+            "project",
+        );
+        let Begin::New(ticket) = begin::<WorkspaceRemoveReceipt, _>(
+            &config.state_root,
+            &config.home,
+            config.allow_local_git,
+            &config.sandbox_id,
+            &remove.workspace_id,
+            "remove",
+            &remove.operation_id,
+            &remove.request_sha256,
+            &remove,
+        )
+        .unwrap() else {
+            panic!("expected a new removal intent")
+        };
+        match status {
+            Status::Started => (),
+            Status::Completed => ticket
+                .complete(&WorkspaceRemoveReceipt {
+                    operation_id: remove.operation_id,
+                    request_sha256: remove.request_sha256,
+                    workspace_id: remove.workspace_id,
+                })
+                .unwrap(),
+            Status::Failed => ticket
+                .fail(&RuntimeError::rejected(
+                    "workspace_invalid",
+                    "cannot inspect existing directory",
+                ))
+                .unwrap(),
+            Status::Indeterminate => {
+                ticket
+                    .indeterminate("removal outcome needs recovery")
+                    .unwrap();
+            }
+        }
+
+        let pending = scan(&config).unwrap();
+        assert!(pending.iter().all(|entry| entry.kind == "remove"));
+        assert_eq!(pending.len(), usize::from(status == Status::Started));
+        let stored = io::read_record(&prepare_path).unwrap().unwrap();
+        assert_eq!(stored.status, Status::Failed);
+        assert_eq!(stored.failure.unwrap().code, "workspace_removed");
+        let blocked = begin::<WorkspaceReceipt, _>(
+            &config.state_root,
+            &config.home,
+            config.allow_local_git,
+            &config.sandbox_id,
+            &prepare.workspace_id,
+            "prepare",
+            &prepare.operation_id,
+            &prepare.request_sha256,
+            &prepare,
+        );
+        assert!(
+            matches!(blocked, Err(error) if error.code == "workspace_removed" && !error.retryable)
+        );
+        let successor = WorkspaceRequest::new(
+            "workspace:wks_next:prepare:v1",
+            "wks_next",
+            "project",
+            WorkspaceSource::Init,
+        );
+        let _ = begin_ticket(&config, &successor);
+        cleanup(&config);
+    }
 }
 
 #[test]

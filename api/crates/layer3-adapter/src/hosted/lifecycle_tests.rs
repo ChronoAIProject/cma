@@ -1028,6 +1028,10 @@ async fn stale_workspace_operations_cannot_act_on_a_reused_name() {
         .prepare_workspace(&handle, &successor)
         .await
         .unwrap();
+    assert!(matches!(
+        adapter.prepare_workspace(&handle, &old_prepare).await,
+        Err(AdapterError::Rejected(_))
+    ));
     let stale_setup = WorkspaceSetupRequest::new(
         "workspace:wks-old:setup:v1",
         "wks-old",
@@ -1051,6 +1055,67 @@ async fn stale_workspace_operations_cannot_act_on_a_reused_name() {
         .expect("a terminal old replay returns its original acknowledgement");
     let snapshot = backend.snapshot(&handle).await.unwrap();
     assert_eq!(snapshot.workspaces["shared"].workspace_id, "wks-new");
+}
+
+#[tokio::test]
+async fn removing_an_absent_workspace_blocks_its_delayed_first_prepare() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let handle = adapter.provision(&sandbox_spec(false)).await.unwrap();
+    adapter
+        .run_install(
+            &handle,
+            &InstallRequest::new("sandbox-install-v1:absent-workspace", Vec::new()),
+        )
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(&handle, credential())
+        .await
+        .unwrap();
+    let removal = WorkspaceRemoveRequest::new("workspace:wks_old:remove:v1", "wks_old", "shared");
+    adapter.remove_workspace(&handle, &removal).await.unwrap();
+    let delayed = WorkspaceRequest::new(
+        "workspace:wks_old:prepare:v1",
+        "wks_old",
+        "shared",
+        WorkspaceSource::Init,
+    );
+    assert!(matches!(
+        adapter.prepare_workspace(&handle, &delayed).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    assert!(backend
+        .snapshot(&handle)
+        .await
+        .unwrap()
+        .workspaces
+        .is_empty());
+
+    let successor = WorkspaceRequest::new(
+        "workspace:wks_next:prepare:v1",
+        "wks_next",
+        "shared",
+        WorkspaceSource::Init,
+    );
+    adapter
+        .prepare_workspace(&handle, &successor)
+        .await
+        .unwrap();
+    adapter.remove_workspace(&handle, &removal).await.unwrap();
+    let setup = WorkspaceSetupRequest::new(
+        "workspace:wks_old:setup:v1",
+        "wks_old",
+        "shared",
+        vec!["touch stale".into()],
+    );
+    assert!(matches!(
+        adapter.run_workspace_setup(&handle, &setup).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    assert_eq!(
+        backend.snapshot(&handle).await.unwrap().workspaces["shared"].workspace_id,
+        "wks_next"
+    );
 }
 
 #[tokio::test]

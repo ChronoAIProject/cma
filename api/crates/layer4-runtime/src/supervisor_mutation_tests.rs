@@ -10,8 +10,8 @@ use layer3_adapter::wire::{
 use layer3_adapter::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentLaunch, AgentSlot,
     CredentialFrame, HomeFile, InstallRequest, RuntimeCredential, WorkspaceReceipt,
-    WorkspaceRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt,
-    WorktreeRequest,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource,
+    WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
 };
 use sha2::{Digest, Sha256};
 
@@ -129,6 +129,155 @@ async fn prepare_workspace(supervisor: &Supervisor) -> WorkspaceReceipt {
         ResponseFrame::PrepareWorkspace(receipt) => receipt,
         other => panic!("workspace preparation failed: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn workspace_removal_before_first_prepare_survives_restart_and_name_reuse() {
+    let config = RuntimeConfig::for_test(root("workspace-remove-before-prepare"));
+    let supervisor = provision(&config).await;
+    let remove = WorkspaceRemoveRequest::new("workspace:wks_old:remove:v1", "wks_old", "project");
+    let removed = supervisor
+        .dispatch(RequestFrame::RemoveWorkspace(remove.clone()))
+        .await;
+    assert!(
+        matches!(removed, ResponseFrame::RemoveWorkspace(_)),
+        "{removed:?}"
+    );
+    assert!(!config.home.join("project").exists());
+    drop(supervisor);
+
+    let supervisor = recreate(&config).await;
+    let delayed = WorkspaceRequest::new(
+        "workspace:wks_old:prepare:v1",
+        "wks_old",
+        "project",
+        WorkspaceSource::Init,
+    );
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::PrepareWorkspace(delayed.clone()))
+                .await
+        )
+        .code,
+        "workspace_removed"
+    );
+    assert!(!config.home.join("project").exists());
+    let successor = WorkspaceRequest::new(
+        "workspace:wks_successor:prepare:v1",
+        "wks_successor",
+        "project",
+        WorkspaceSource::Init,
+    );
+    let prepared = supervisor
+        .dispatch(RequestFrame::PrepareWorkspace(successor))
+        .await;
+    assert!(
+        matches!(prepared, ResponseFrame::PrepareWorkspace(_)),
+        "{prepared:?}"
+    );
+    let setup = WorkspaceSetupRequest::new(
+        "workspace:wks_old:setup:v1",
+        "wks_old",
+        "project",
+        vec!["touch stale-setup".into()],
+    );
+    for request in [
+        RequestFrame::PrepareWorkspace(delayed.clone()),
+        RequestFrame::WorkspaceSetup(setup),
+    ] {
+        let error = failure(supervisor.dispatch(request).await);
+        assert_eq!(error.code, "workspace_removed");
+        assert!(!error.retryable);
+    }
+    assert_eq!(
+        supervisor
+            .dispatch(RequestFrame::RemoveWorkspace(remove))
+            .await,
+        removed
+    );
+    assert!(!config.home.join("project/stale-setup").exists());
+    crate::workspace_source::require_workspace_identity(
+        &config.home.join("project"),
+        "wks_successor",
+    )
+    .unwrap();
+    drop(supervisor);
+
+    let supervisor = recreate(&config).await;
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::PrepareWorkspace(delayed))
+                .await
+        )
+        .code,
+        "workspace_removed"
+    );
+    crate::workspace_source::require_workspace_identity(
+        &config.home.join("project"),
+        "wks_successor",
+    )
+    .unwrap();
+    assert!(!config.home.join(".cma/preparing/wks_old").exists());
+    cleanup(&config);
+}
+
+#[tokio::test]
+async fn workspace_removal_overrides_completed_prepare_and_setup_replays() {
+    let config = RuntimeConfig::for_test(root("workspace-remove-completed"));
+    let supervisor = provision(&config).await;
+    let prepare = WorkspaceRequest::new(
+        "workspace:wks_mutations:prepare:v1",
+        "wks_mutations",
+        "project",
+        WorkspaceSource::Init,
+    );
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::PrepareWorkspace(prepare.clone()))
+            .await,
+        ResponseFrame::PrepareWorkspace(_)
+    ));
+    let setup = WorkspaceSetupRequest::new(
+        "workspace:wks_mutations:setup:v1",
+        "wks_mutations",
+        "project",
+        vec!["touch first-setup".into()],
+    );
+    let response = supervisor
+        .dispatch(RequestFrame::WorkspaceSetup(setup.clone()))
+        .await;
+    assert!(
+        matches!(response, ResponseFrame::WorkspaceSetup(_)),
+        "{response:?}"
+    );
+    assert!(config.home.join("project/first-setup").exists());
+    let response = supervisor
+        .dispatch(RequestFrame::RemoveWorkspace(WorkspaceRemoveRequest::new(
+            "workspace:wks_mutations:remove:v1",
+            "wks_mutations",
+            "project",
+        )))
+        .await;
+    assert!(
+        matches!(response, ResponseFrame::RemoveWorkspace(_)),
+        "{response:?}"
+    );
+    drop(supervisor);
+
+    let supervisor = recreate(&config).await;
+    for request in [
+        RequestFrame::PrepareWorkspace(prepare),
+        RequestFrame::WorkspaceSetup(setup),
+    ] {
+        assert_eq!(
+            failure(supervisor.dispatch(request).await).code,
+            "workspace_removed"
+        );
+    }
+    assert!(!config.home.join("project").exists());
+    cleanup(&config);
 }
 
 async fn add_worktree(supervisor: &Supervisor, base: String) -> (WorktreeRequest, WorktreeReceipt) {

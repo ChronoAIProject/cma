@@ -83,6 +83,9 @@ pub(crate) fn begin<T: DeserializeOwned, R: Serialize>(
     request: &R,
 ) -> Result<Begin<T>> {
     validate_identity(workspace_id, kind, operation_id, request_sha256)?;
+    if kind != "remove" {
+        require_present(state_root, home, allow_local_git, sandbox_id, workspace_id)?;
+    }
     let request = serde_json::to_value(request).map_err(|error| {
         RuntimeError::rejected(
             "workspace_request_invalid",
@@ -184,17 +187,63 @@ pub(crate) fn started(
         }
     }
     let records = io::reconcile(files)?;
-    Ok(records
+    let mut pending = Vec::new();
+    for file in records
         .into_iter()
         .filter(|file| file.record.status == Status::Started)
-        .map(|file| Pending {
-            kind: file.record.kind.clone(),
-            ticket: Ticket {
-                path: file.path,
-                record: file.record,
-            },
-        })
-        .collect())
+    {
+        let ticket = Ticket {
+            path: file.path,
+            record: file.record,
+        };
+        if ticket.record.kind != "remove" {
+            if let Err(error) = require_present(
+                state_root,
+                home,
+                allow_local_git,
+                sandbox_id,
+                &ticket.record.workspace_id,
+            ) {
+                if error.code != "workspace_removed" {
+                    return Err(error);
+                }
+                ticket.fail(&error)?;
+                continue;
+            }
+        }
+        pending.push(Pending {
+            kind: ticket.record.kind.clone(),
+            ticket,
+        });
+    }
+    Ok(pending)
+}
+
+// The removal intent is a permanent barrier, including before its I/O completes.
+fn require_present(
+    state_root: &Path,
+    home: &Path,
+    allow_local_git: bool,
+    sandbox_id: &str,
+    workspace_id: &str,
+) -> Result<()> {
+    let operation_id = format!("workspace:{workspace_id}:remove:v1");
+    let Some(record) = io::read_record(&io::journal_path(state_root, &operation_id))? else {
+        return Ok(());
+    };
+    validate_stored(&record, home, allow_local_git)?;
+    if record.sandbox_id != sandbox_id
+        || record.operation_id != operation_id
+        || record.kind != "remove"
+    {
+        return Err(corrupt(
+            "workspace removal barrier belongs to another operation",
+        ));
+    }
+    Err(RuntimeError::rejected(
+        "workspace_removed",
+        "workspace removal was admitted; preparation and setup cannot resume",
+    ))
 }
 
 impl Pending {
