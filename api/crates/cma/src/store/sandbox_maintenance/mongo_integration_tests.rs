@@ -30,7 +30,7 @@ use crate::store::sandbox_mongo_integration_tests::sandbox;
 const IDLE_AT: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:30:00Z";
 
-async fn database() -> (Client, String, MongoSandboxStore) {
+pub(in crate::store) async fn database() -> (Client, String, MongoSandboxStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(uri).await.unwrap();
@@ -39,7 +39,7 @@ async fn database() -> (Client, String, MongoSandboxStore) {
     (client, name, store)
 }
 
-fn active_sandbox(id: &str) -> Sandbox {
+pub(in crate::store) fn active_sandbox(id: &str) -> Sandbox {
     let mut value = sandbox(id);
     value.name = id.into();
     value.runtime = Some(RuntimeBinding {
@@ -50,7 +50,7 @@ fn active_sandbox(id: &str) -> Sandbox {
     value
 }
 
-fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
+pub(in crate::store) fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
     Agent {
         id: AgentId(id.into()),
         worktree_id: WorktreeId(format!("wkt_{id}")),
@@ -99,7 +99,11 @@ fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
     }
 }
 
-async fn insert_agent(store: &MongoSandboxStore, agent: &Agent, appended_at: &str) {
+pub(in crate::store) async fn insert_agent(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    appended_at: &str,
+) {
     store
         .agents
         .insert_one(agent_document(agent).unwrap())
@@ -121,7 +125,7 @@ async fn insert_agent(store: &MongoSandboxStore, agent: &Agent, appended_at: &st
         .unwrap();
 }
 
-async fn fixture(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
+pub(in crate::store) async fn fixture(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
     let sandbox = active_sandbox(id);
     store.create_sandbox(sandbox.clone()).await.unwrap();
     let agent = ready_agent(&sandbox, &format!("agt_{id}"));
@@ -521,6 +525,7 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
     working.conversation.last_seq = 3;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            admission_guard: None,
             expected_agent_revision: ready.revision,
             expected_last_seq: ready.conversation.last_seq,
             runtime_generation: 1,

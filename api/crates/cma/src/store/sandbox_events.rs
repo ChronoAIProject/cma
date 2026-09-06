@@ -73,6 +73,42 @@ pub(super) enum TransactionEventError {
     Driver(mongodb::error::Error),
 }
 
+pub(super) async fn validate_in_transaction(
+    store: &MongoSandboxStore,
+    sandbox_id: &SandboxId,
+    last_seq: u64,
+    session: &mut ClientSession,
+) -> Result<(), TransactionEventError> {
+    let mut cursor = store
+        .sandbox_events
+        .find(doc! { "sandbox_id": sandbox_id.as_str() })
+        .sort(doc! { "seq": 1 })
+        .session(&mut *session)
+        .await
+        .map_err(TransactionEventError::Driver)?;
+    let mut sequence = 0_u64;
+    while let Some(document) = cursor
+        .stream(&mut *session)
+        .try_next()
+        .await
+        .map_err(TransactionEventError::Driver)?
+    {
+        let event = read_event(&document).map_err(TransactionEventError::Domain)?;
+        if sequence.checked_add(1) != Some(event.seq) || event.seq > last_seq {
+            return Err(TransactionEventError::Domain(
+                SandboxStoreError::SequenceConflict,
+            ));
+        }
+        sequence = event.seq;
+    }
+    if sequence != last_seq {
+        return Err(TransactionEventError::Domain(
+            SandboxStoreError::SequenceConflict,
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn append_in_transaction(
     store: &MongoSandboxStore,
     session: &mut ClientSession,

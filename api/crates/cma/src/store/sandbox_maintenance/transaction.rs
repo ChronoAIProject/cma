@@ -12,11 +12,12 @@ use mongodb::ClientSession;
 use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::super::sandbox_events::{
-    append_in_transaction, reconcile_event_with_snapshot_session, TransactionEventError,
+    append_in_transaction, reconcile_event_with_snapshot_session, validate_in_transaction,
+    TransactionEventError,
 };
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
-use super::evidence::{fence_live_agents, live_activities, validate_events};
+use super::evidence::{fence_live_agents, live_activities};
 
 pub(super) enum MaintenanceRequest {
     Inactivity(SandboxInactivityPauseRequest),
@@ -119,7 +120,7 @@ pub(super) async fn apply(
             event,
         } => (expected_revision, *sandbox, event),
     };
-    validate_events(store, &current.id, last_seq, session).await?;
+    validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
     fence_live_agents(store, &agents, session).await?;

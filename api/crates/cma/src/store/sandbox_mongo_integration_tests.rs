@@ -516,6 +516,7 @@ fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMutation {
     agent.conversation.active_turn = Some(turn_sequence);
     agent.conversation.last_seq += 2;
     AgentConversationMutation {
+        admission_guard: None,
         expected_agent_revision,
         expected_last_seq,
         runtime_generation: 1,

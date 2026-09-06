@@ -1,0 +1,156 @@
+//! Complete Mongo runtime authority and atomic recovery from runtime loss.
+
+use futures_util::TryStreamExt;
+use layer2_core::sandbox::store::{
+    validate_sandbox_runtime_loss_request, Page, PageRequest, SandboxReconciliationStore,
+    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest, SandboxStoreError, MAX_PAGE_SIZE,
+};
+use layer2_core::sandbox::Sandbox;
+use mongodb::bson::doc;
+
+use super::sandbox_mongo::{
+    commit_transaction, is_transient, start_transaction, wait_for_reconciliation, CommitOutcome,
+    MongoSandboxStore, TRANSACTION_ATTEMPTS,
+};
+use super::sandboxes::read_sandbox;
+use transaction::{apply, ApplyError, RecoveryApplication};
+
+mod agents;
+#[cfg(test)]
+mod mongo_integration_tests;
+mod reconciliation;
+mod transaction;
+
+#[async_trait::async_trait]
+impl SandboxReconciliationStore for MongoSandboxStore {
+    async fn sandbox_runtime_authority(
+        &self,
+        page: &PageRequest,
+    ) -> Result<Page<Sandbox>, SandboxStoreError> {
+        if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        let mut filter = doc! {};
+        if let Some(cursor) = &page.cursor {
+            filter.insert("_id", doc! { "$gt": cursor });
+        }
+        let mut cursor = self
+            .sandboxes
+            .find(filter)
+            .sort(doc! { "_id": 1 })
+            .limit(i64::from(page.limit) + 1)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        let mut items = Vec::new();
+        while let Some(document) = cursor
+            .try_next()
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        {
+            items.push(read_sandbox(&document)?);
+        }
+        let has_more = items.len() > usize::from(page.limit);
+        if has_more {
+            items.pop();
+        }
+        let next = has_more.then(|| {
+            items
+                .last()
+                .expect("bounded runtime authority page has a last item")
+                .id
+                .to_string()
+        });
+        Ok(Page { items, next })
+    }
+
+    async fn recover_runtime_loss(
+        &self,
+        request: SandboxRuntimeLossRequest,
+    ) -> Result<SandboxRuntimeLossOutcome, SandboxStoreError> {
+        validate_sandbox_runtime_loss_request(&request)?;
+        recover(self, request).await
+    }
+}
+
+async fn recover(
+    store: &MongoSandboxStore,
+    request: SandboxRuntimeLossRequest,
+) -> Result<SandboxRuntimeLossOutcome, SandboxStoreError> {
+    let mut last_transient = None;
+    for attempt in 0..TRANSACTION_ATTEMPTS {
+        if attempt > 0 {
+            tokio::task::yield_now().await;
+        }
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => {
+                last_transient = Some(error.to_string());
+                continue;
+            }
+            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+        };
+        if let Err(error) = start_transaction(&mut session).await {
+            if is_transient(&error) {
+                last_transient = Some(error.to_string());
+                continue;
+            }
+            return Err(SandboxStoreError::Unavailable(error.to_string()));
+        }
+        let receipt = match apply(store, &request, &mut session).await {
+            Ok(RecoveryApplication::Complete(outcome)) => {
+                let _ = session.abort_transaction().await;
+                return Ok(outcome);
+            }
+            Ok(RecoveryApplication::Persist(receipt)) => receipt,
+            Err(ApplyError::Domain(error)) => {
+                let _ = session.abort_transaction().await;
+                return Err(error);
+            }
+            Err(ApplyError::Driver(error)) if is_transient(&error) => {
+                let _ = session.abort_transaction().await;
+                last_transient = Some(error.to_string());
+                continue;
+            }
+            Err(ApplyError::Driver(error)) => {
+                let _ = session.abort_transaction().await;
+                return Err(SandboxStoreError::Unavailable(error.to_string()));
+            }
+        };
+        match commit_transaction(&mut session).await {
+            CommitOutcome::Committed => return Ok(receipt.outcome),
+            CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+            CommitOutcome::Unknown(error) => {
+                let snapshot_time = session.operation_time().ok_or_else(|| {
+                    SandboxStoreError::Unavailable(format!(
+                        "runtime-loss commit remained unknown without an operation time: {error}"
+                    ))
+                })?;
+                let commit_error = error.to_string();
+                let unresolved = commit_error.clone();
+                let store = store.clone();
+                return wait_for_reconciliation("runtime-loss recovery commit", async move {
+                    if reconciliation::reconcile(&store, &receipt, snapshot_time).await? {
+                        Ok(receipt.outcome)
+                    } else {
+                        Err(SandboxStoreError::Unavailable(format!(
+                            "runtime-loss recovery commit remained unknown: {unresolved}"
+                        )))
+                    }
+                })
+                .await
+                .map_err(|deadline| {
+                    SandboxStoreError::Unavailable(format!(
+                        "{deadline}; ambiguous commit: {commit_error}"
+                    ))
+                })?;
+            }
+            CommitOutcome::Failed(error) => {
+                return Err(SandboxStoreError::Unavailable(error.to_string()))
+            }
+        }
+    }
+    Err(SandboxStoreError::Unavailable(format!(
+        "runtime-loss recovery exhausted its retry budget: {}",
+        last_transient.unwrap_or_else(|| "no driver result".into())
+    )))
+}
