@@ -19,6 +19,9 @@ use crate::sandbox::{
 
 use super::agent_admission_tests::*;
 
+#[path = "agent_live_tests.rs"]
+mod live_tests;
+
 async fn ready_agent(
     first_message: Option<&str>,
 ) -> (super::InMemorySandboxStore, crate::sandbox::Agent) {
